@@ -413,6 +413,10 @@ func Lookup(name string) (ToolMeta, bool) {
 	return meta, ok
 }
 
+// Must returns the ToolMeta for the given name, panicking if not found.
+// This follows the standard Go Must pattern (regexp.MustCompile, template.Must);
+// all callers use it in package-level var blocks, so panics occur at init-time
+// and surface immediately on startup rather than at runtime.
 func Must(name string) ToolMeta {
 	meta, ok := Lookup(name)
 	if !ok {

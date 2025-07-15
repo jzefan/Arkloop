@@ -31,9 +31,8 @@ type DialectHelper interface {
 	// IntervalAdd returns an expression that adds a duration to a timestamp expression.
 	// PostgreSQL: expr + INTERVAL '24 hours'  SQLite: datetime(expr, '+24 hours')
 	//
-	// TODO(m5): The current signature leaks both dialect formats to the caller.
-	// Consider IntervalAdd(expr string, duration time.Duration) string and let
-	// each dialect format internally. Blocked on updating all callers + tests.
+	// NOTE: IntervalAdd requires both dialect-specific format strings from the caller.
+	// Consider accepting time.Duration if this function gains more callers.
 	IntervalAdd(expr string, pgInterval string, sqliteModifier string) string
 
 	// JSONCast wraps an expression with a JSON type cast.
