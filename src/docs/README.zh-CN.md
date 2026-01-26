@@ -35,6 +35,7 @@ Windows：先启动 Docker Desktop（Linux Engine）再执行下述命令。
 - 把 `.env` 里的 `ARKLOOP_DATABASE_URL` 配到你运行 API 的环境变量里（IDE Run Config 或终端）
   - Windows（PowerShell）：`$env:ARKLOOP_DATABASE_URL="postgresql+asyncpg://..."; python -m uvicorn services.api.main:configure_app --factory --app-dir src`
   - Linux/macOS：`ARKLOOP_DATABASE_URL="postgresql+asyncpg://..." python -m uvicorn services.api.main:configure_app --factory --app-dir src`
+  - 或设置 `ARKLOOP_LOAD_DOTENV=1`，让应用从仓库根目录 `.env` 读取（不覆盖已存在 env）
 
 集成测试（会自动读取仓库根目录 `.env`）：
 - `python -m pytest -q -m integration`
