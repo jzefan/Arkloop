@@ -5,7 +5,7 @@ import logging
 from fastapi.testclient import TestClient
 
 from services.api.error_envelope import ApiError
-from services.api.main import create_app
+from services.api.main import configure_app
 from services.api.trace import TRACE_ID_HEADER
 
 
@@ -20,7 +20,7 @@ def _assert_has_trace_id(response) -> str:
 
 
 def test_known_error_envelope_has_trace_id_header_and_body() -> None:
-    app = create_app()
+    app = configure_app()
 
     @app.get("/__test__/known-error")
     async def _known_error() -> None:
@@ -45,7 +45,7 @@ def test_known_error_envelope_has_trace_id_header_and_body() -> None:
 
 
 def test_unhandled_error_envelope_has_trace_id_header_and_body() -> None:
-    app = create_app()
+    app = configure_app()
 
     @app.get("/__test__/crash")
     async def _crash() -> None:
@@ -64,7 +64,7 @@ def test_unhandled_error_envelope_has_trace_id_header_and_body() -> None:
 
 
 def test_trace_id_is_bound_to_log_records_within_same_request(caplog) -> None:
-    app = create_app()
+    app = configure_app()
     logger = logging.getLogger("tests.trace_id")
 
     @app.get("/__test__/log-and-known-error")

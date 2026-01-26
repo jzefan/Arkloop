@@ -7,9 +7,9 @@
 
 由于工程代码全部位于 `src/` 下，从仓库根目录启动时需要把 `src` 加到模块搜索路径：
 
-- 推荐（跨平台）：`python -m uvicorn services.api.main:app --app-dir src --host 127.0.0.1 --port 8000`
-- Windows 备选（PowerShell）：`$env:PYTHONPATH="src"; python -m uvicorn services.api.main:app --host 127.0.0.1 --port 8000`
-- Linux/macOS 备选（bash/zsh）：`PYTHONPATH=src python -m uvicorn services.api.main:app --host 127.0.0.1 --port 8000`
+- 推荐（跨平台）：`python -m uvicorn services.api.main:configure_app --factory --app-dir src --host 127.0.0.1 --port 8000`
+- Windows 备选（PowerShell）：`$env:PYTHONPATH="src"; python -m uvicorn services.api.main:configure_app --factory --host 127.0.0.1 --port 8000`
+- Linux/macOS 备选（bash/zsh）：`PYTHONPATH=src python -m uvicorn services.api.main:configure_app --factory --host 127.0.0.1 --port 8000`
 
 说明：当前结构化 JSON 只覆盖 Arkloop 应用日志；uvicorn 自身的启动/访问日志仍由 uvicorn 默认配置控制。
 

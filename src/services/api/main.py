@@ -1,3 +1,5 @@
+"""API 服务的 composition root：集中做依赖注入与启动配置。"""
+
 from __future__ import annotations
 
 from typing import Dict
@@ -17,8 +19,11 @@ async def healthz() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-def create_app() -> FastAPI:
+def configure_logging() -> None:
     configure_json_logging(component="api")
+
+
+def create_app() -> FastAPI:
     app = FastAPI(title="Arkloop API")
     install_unhandled_exception_middleware(app)
     install_error_handlers(app)
@@ -27,4 +32,6 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+def configure_app() -> FastAPI:
+    configure_logging()
+    return create_app()
