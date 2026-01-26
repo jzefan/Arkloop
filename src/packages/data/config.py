@@ -5,6 +5,8 @@ import os
 from typing import Optional
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from packages.config import load_dotenv_if_enabled
+
 _PRIMARY_DATABASE_URL_ENV = "ARKLOOP_DATABASE_URL"
 _FALLBACK_DATABASE_URL_ENV = "DATABASE_URL"
 
@@ -41,6 +43,8 @@ class DatabaseConfig:
         required: bool = False,
         allow_fallback: bool = True,
     ) -> Optional["DatabaseConfig"]:
+        load_dotenv_if_enabled(override=False)
+
         raw = os.getenv(_PRIMARY_DATABASE_URL_ENV)
         if allow_fallback and not raw:
             raw = os.getenv(_FALLBACK_DATABASE_URL_ENV)

@@ -19,13 +19,14 @@
 - Windows（PowerShell）：`Copy-Item .env.example .env`
 - Linux/macOS：`cp .env.example .env`
 
-编辑 `.env`，至少设置 `POSTGRES_PASSWORD`（并保持 `DATABASE_URL` 与其一致）。
+编辑 `.env`，至少设置 `POSTGRES_PASSWORD`（并保持 `ARKLOOP_DATABASE_URL` 与其一致）。
 Windows：先启动 Docker Desktop（Linux Engine）再执行下述命令。
 
 启动 / 停止：
 - 启动：`docker compose up -d`
 - 停止：`docker compose down`
 - 清理数据（会删除本地 volume）：`docker compose down -v`
+  - 如果你修改了 `POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB`，需要先执行一次 `down -v` 重新初始化数据目录
 
 连通性检查（不依赖本机安装 psql）：
 - `docker compose exec -T postgres psql -U arkloop -d arkloop -c "select 1;"`
@@ -34,6 +35,9 @@ Windows：先启动 Docker Desktop（Linux Engine）再执行下述命令。
 - 把 `.env` 里的 `ARKLOOP_DATABASE_URL` 配到你运行 API 的环境变量里（IDE Run Config 或终端）
   - Windows（PowerShell）：`$env:ARKLOOP_DATABASE_URL="postgresql+asyncpg://..."; python -m uvicorn services.api.main:configure_app --factory --app-dir src`
   - Linux/macOS：`ARKLOOP_DATABASE_URL="postgresql+asyncpg://..." python -m uvicorn services.api.main:configure_app --factory --app-dir src`
+
+集成测试（会自动读取仓库根目录 `.env`）：
+- `python -m pytest -q -m integration`
 
 ## 1. 项目概述
 
