@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 
 from services.api.error_envelope import ApiError
@@ -59,4 +61,26 @@ def test_unhandled_error_envelope_has_trace_id_header_and_body() -> None:
     assert payload["code"] == "internal_error"
     assert payload["message"] == "内部错误"
     assert "details" not in payload
+
+
+def test_trace_id_is_bound_to_log_records_within_same_request(caplog) -> None:
+    app = create_app()
+    logger = logging.getLogger("tests.trace_id")
+
+    @app.get("/__test__/log-and-known-error")
+    async def _log_and_known_error() -> None:
+        logger.info("测试日志")
+        raise ApiError(code="known_error", message="已知错误", status_code=400)
+
+    caplog.set_level(logging.INFO, logger="tests.trace_id")
+
+    client = TestClient(app)
+    response = client.get("/__test__/log-and-known-error")
+    assert response.status_code == 400
+
+    trace_id = _assert_has_trace_id(response)
+
+    records = [r for r in caplog.records if r.name == "tests.trace_id" and r.getMessage() == "测试日志"]
+    assert records
+    assert all(getattr(r, "trace_id", None) == trace_id for r in records)
 
