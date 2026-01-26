@@ -19,14 +19,22 @@ def test_compose_yaml_defines_postgres_without_hardcoded_password() -> None:
 
     password_line = re.search(r"(?m)^\s{6}POSTGRES_PASSWORD:\s*(.+)$", content)
     assert password_line, "compose.yaml 必须通过变量注入 POSTGRES_PASSWORD"
-    assert password_line.group(1).strip().startswith("${POSTGRES_PASSWORD"), "禁止在仓库写死真实密码"
+    assert password_line.group(1).strip().startswith(
+        "${ARKLOOP_POSTGRES_PASSWORD",
+    ), "禁止在仓库写死真实密码"
 
 
 def test_env_example_and_gitignore_for_dotenv() -> None:
     root = _repo_root()
 
     env_example = (root / ".env.example").read_text(encoding="utf-8")
-    for key in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "DATABASE_URL", "ARKLOOP_DATABASE_URL"):
+    for key in (
+        "ARKLOOP_POSTGRES_USER",
+        "ARKLOOP_POSTGRES_PASSWORD",
+        "ARKLOOP_POSTGRES_DB",
+        "ARKLOOP_POSTGRES_PORT",
+        "ARKLOOP_DATABASE_URL",
+    ):
         assert re.search(rf"(?m)^{re.escape(key)}=", env_example)
 
     gitignore = (root / ".gitignore").read_text(encoding="utf-8")

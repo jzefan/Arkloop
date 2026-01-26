@@ -3,11 +3,11 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-arkloop}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-arkloop}
+      POSTGRES_USER: ${ARKLOOP_POSTGRES_USER:-arkloop}
+      POSTGRES_PASSWORD: ${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${ARKLOOP_POSTGRES_DB:-arkloop}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${ARKLOOP_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
