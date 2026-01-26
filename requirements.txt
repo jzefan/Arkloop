@@ -1,3 +1,15 @@
 fastapi>=0.110
+starlette>=0.40,<0.51
+pydantic>=2.0,<3.0
+pydantic-core>=2.0,<3.0
+annotated-types>=0.6.0
+typing-inspection>=0.4.0
+typing-extensions>=4.8.0
+annotated-doc>=0.0.2
+anyio>=3.4,<5
+sniffio>=1.1
+idna>=2.8
+exceptiongroup>=1.0.2; python_version < "3.11"
 uvicorn>=0.27
-
+click>=7.0
+h11>=0.8
