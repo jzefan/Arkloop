@@ -13,6 +13,28 @@
 
 说明：当前结构化 JSON 只覆盖 Arkloop 应用日志；uvicorn 自身的启动/访问日志仍由 uvicorn 默认配置控制。
 
+## 0.1 本地启动（PostgreSQL / docker compose）
+
+一次性准备（生成本机私有配置，不要提交到仓库）：
+- Windows（PowerShell）：`Copy-Item .env.example .env`
+- Linux/macOS：`cp .env.example .env`
+
+编辑 `.env`，至少设置 `POSTGRES_PASSWORD`（并保持 `DATABASE_URL` 与其一致）。
+Windows：先启动 Docker Desktop（Linux Engine）再执行下述命令。
+
+启动 / 停止：
+- 启动：`docker compose up -d`
+- 停止：`docker compose down`
+- 清理数据（会删除本地 volume）：`docker compose down -v`
+
+连通性检查（不依赖本机安装 psql）：
+- `docker compose exec -T postgres psql -U arkloop -d arkloop -c "select 1;"`
+
+应用侧 `DATABASE_URL`：
+- 把 `.env` 里的 `DATABASE_URL` 配到你运行 API 的环境变量里（IDE Run Config 或终端）
+  - Windows（PowerShell）：`$env:DATABASE_URL="postgresql://..."; python -m uvicorn services.api.main:configure_app --factory --app-dir src`
+  - Linux/macOS：`DATABASE_URL="postgresql://..." python -m uvicorn services.api.main:configure_app --factory --app-dir src`
+
 ## 1. 项目概述
 
 Arkloop 是一个面向企业场景的「Agent Loop」系统，包含：

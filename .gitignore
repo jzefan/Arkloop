@@ -25,3 +25,6 @@ htmlcov/
 Thumbs.db
 .DS_Store
 
+.env
+.env.*
+!.env.example
