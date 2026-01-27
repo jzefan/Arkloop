@@ -3,6 +3,11 @@
 本目录（`src/docs`）用于存放工程文档与使用说明。
 商业/法律相关文档请放在仓库根目录的 `docs/`。
 
+文档按主题拆分在子目录中：
+- `src/docs/guides/`：上手指南、工具说明
+- `src/docs/specs/`：规范与契约（API/SSE、日志、数据等）
+- `src/docs/roadmap/`：路线图与阶段计划
+
 ## 0. 本地启动（API）
 
 由于工程代码全部位于 `src/` 下，从仓库根目录启动时需要把 `src` 加到模块搜索路径：
@@ -181,7 +186,7 @@ Prompt 拼装与模型调用必须在服务端（或受控网关）完成。
 - 明确交付形态与数据边界
 - 定义后台域模型、审计要求、定价/倍率模型
 - 定义 OpenAI/Anthropic provider 管线接口
-- 日志与可观测性约定：`src/docs/logging-and-observability.zh-CN.md`
+- 日志与可观测性约定：`src/docs/specs/logging-and-observability.zh-CN.md`
 
 ### Phase 1 — 最小可交付纵切（Vertical Slice）
 - 鉴权（tenant/user/role）
@@ -206,9 +211,9 @@ Prompt 拼装与模型调用必须在服务端（或受控网关）完成。
 
 ## 11. 进一步阅读（工程文档）
 
-- 后端 API 与 SSE（Phase 1 规范草案）：`src/docs/api-and-sse.zh-CN.md`
-- 项目开发路线（从 0 到可用）：`src/docs/development-roadmap.zh-CN.md`
-- Tools 与 Skills 规范：`src/docs/skills-and-tools.zh-CN.md`
-- pytest 与测试策略：`src/docs/testing-and-pytest.zh-CN.md`
-- 日志与可观测性：`src/docs/logging-and-observability.zh-CN.md`
-- 数据库架构与数据模型：`src/docs/database-architecture.zh-CN.md`
+- 后端 API 与 SSE（Phase 1 规范草案）：`src/docs/specs/api-and-sse.zh-CN.md`
+- 项目开发路线（从 0 到可用）：`src/docs/roadmap/development-roadmap.zh-CN.md`
+- Tools 与 Skills 规范：`src/docs/guides/skills-and-tools.zh-CN.md`
+- pytest 与测试策略：`src/docs/specs/testing-and-pytest.zh-CN.md`
+- 日志与可观测性：`src/docs/specs/logging-and-observability.zh-CN.md`
+- 数据库架构与数据模型：`src/docs/specs/database-architecture.zh-CN.md`

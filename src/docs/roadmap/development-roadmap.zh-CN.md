@@ -33,7 +33,7 @@
   - logger 默认输出 JSON（便于 Loki/ELK 采集），并包含 `trace_id`
   - API 错误模型与响应 Header 都返回 `trace_id`（便于前端/CLI 报错关联）
   - 工具参数/结果默认只记录 hash（避免敏感明文进日志）
-  - 约定见：`src/docs/logging-and-observability.zh-CN.md`
+  - 约定见：`src/docs/specs/logging-and-observability.zh-CN.md`
 
 ### Phase 1：最小可跑 Agent Loop（2–4 周）
 
@@ -92,7 +92,7 @@
 ## 5. 文档与测试如何同步
 
 建议把“会变”的实现细节和“不变”的协议分开：
-- `src/docs/api-and-sse.zh-CN.md`：协议与端点（偏稳定）
-- `src/docs/skills-and-tools.zh-CN.md`：Tool/Skill 规范（偏稳定）
-- `src/docs/testing-and-pytest.zh-CN.md`：测试原则（偏稳定）
+- `src/docs/specs/api-and-sse.zh-CN.md`：协议与端点（偏稳定）
+- `src/docs/guides/skills-and-tools.zh-CN.md`：Tool/Skill 规范（偏稳定）
+- `src/docs/specs/testing-and-pytest.zh-CN.md`：测试原则（偏稳定）
 - 具体实现细节写在代码内的 README 或模块 docstring（可变）
