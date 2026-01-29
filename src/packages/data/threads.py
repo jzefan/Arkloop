@@ -132,11 +132,21 @@ class MessageRepository(ABC):
     async def create(
         self,
         *,
+        org_id: uuid.UUID,
         thread_id: uuid.UUID,
         role: str,
         content: str,
         created_by_user_id: uuid.UUID | None = None,
     ) -> Message: ...
+
+    @abstractmethod
+    async def list_by_thread(
+        self,
+        *,
+        org_id: uuid.UUID,
+        thread_id: uuid.UUID,
+        limit: int = 200,
+    ) -> list[Message]: ...
 
 
 class SqlAlchemyThreadRepository(ThreadRepository):
@@ -187,18 +197,20 @@ class SqlAlchemyMessageRepository(MessageRepository):
     async def create(
         self,
         *,
+        org_id: uuid.UUID,
         thread_id: uuid.UUID,
         role: str,
         content: str,
         created_by_user_id: uuid.UUID | None = None,
     ) -> Message:
         async with self._session.begin_nested():
-            thread_org_stmt = sa.select(_threads.c.org_id).where(_threads.c.id == thread_id).limit(1)
-            thread_row = (await self._session.execute(thread_org_stmt)).one_or_none()
+            thread_stmt = (
+                sa.select(_threads.c.id).where(_threads.c.id == thread_id).where(_threads.c.org_id == org_id).limit(1)
+            )
+            thread_row = (await self._session.execute(thread_stmt)).one_or_none()
             if thread_row is None:
                 raise ThreadNotFoundError(thread_id=thread_id)
 
-            org_id = thread_row[0]
             stmt = (
                 sa.insert(_messages)
                 .values(
@@ -220,6 +232,34 @@ class SqlAlchemyMessageRepository(MessageRepository):
             )
             row = (await self._session.execute(stmt)).mappings().one()
             return Message(**row)
+
+    async def list_by_thread(
+        self,
+        *,
+        org_id: uuid.UUID,
+        thread_id: uuid.UUID,
+        limit: int = 200,
+    ) -> list[Message]:
+        if limit <= 0:
+            raise ValueError("limit 必须为正数")
+
+        stmt = (
+            sa.select(
+                _messages.c.id,
+                _messages.c.org_id,
+                _messages.c.thread_id,
+                _messages.c.created_by_user_id,
+                _messages.c.role,
+                _messages.c.content,
+                _messages.c.created_at,
+            )
+            .where(_messages.c.org_id == org_id)
+            .where(_messages.c.thread_id == thread_id)
+            .order_by(_messages.c.created_at.asc(), _messages.c.id.asc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).mappings().all()
+        return [Message(**row) for row in rows]
 
 
 __all__ = [

@@ -118,6 +118,9 @@ class OrgMembershipRepository(ABC):
     @abstractmethod
     async def get_by_org_and_user(self, *, org_id: uuid.UUID, user_id: uuid.UUID) -> OrgMembership | None: ...
 
+    @abstractmethod
+    async def get_default_for_user(self, *, user_id: uuid.UUID) -> OrgMembership | None: ...
+
 
 class SqlAlchemyOrgRepository(OrgRepository):
     def __init__(self, session: AsyncSession) -> None:
@@ -198,6 +201,22 @@ class SqlAlchemyOrgMembershipRepository(OrgMembershipRepository):
             )
             .where(_org_memberships.c.org_id == org_id)
             .where(_org_memberships.c.user_id == user_id)
+        )
+        row = (await self._session.execute(stmt)).mappings().one_or_none()
+        return None if row is None else OrgMembership(**row)
+
+    async def get_default_for_user(self, *, user_id: uuid.UUID) -> OrgMembership | None:
+        stmt = (
+            sa.select(
+                _org_memberships.c.id,
+                _org_memberships.c.org_id,
+                _org_memberships.c.user_id,
+                _org_memberships.c.role,
+                _org_memberships.c.created_at,
+            )
+            .where(_org_memberships.c.user_id == user_id)
+            .order_by(_org_memberships.c.created_at.asc())
+            .limit(1)
         )
         row = (await self._session.execute(stmt)).mappings().one_or_none()
         return None if row is None else OrgMembership(**row)

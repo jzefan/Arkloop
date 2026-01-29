@@ -88,6 +88,7 @@ async def _roundtrip(sqlalchemy_url: str) -> None:
             thread = await thread_repo.create(org_id=org.id, created_by_user_id=user.id, title="t")
 
             message = await message_repo.create(
+                org_id=org.id,
                 thread_id=thread.id,
                 role="user",
                 content="hello",
