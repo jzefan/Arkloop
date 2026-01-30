@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import uuid
 
 from packages.data.credentials import UserCredentialRepository
@@ -11,6 +12,12 @@ from .tokens import JwtAccessTokenService
 
 class InvalidCredentialsError(Exception):
     ...
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedAccessToken:
+    token: str
+    user_id: uuid.UUID
 
 
 class UserNotFoundError(LookupError):
@@ -33,13 +40,14 @@ class AuthService:
         self._password_hasher = password_hasher
         self._token_service = token_service
 
-    async def issue_access_token(self, *, login: str, password: str) -> str:
+    async def issue_access_token(self, *, login: str, password: str) -> IssuedAccessToken:
         credential = await self._credential_repo.get_by_login(login)
         if credential is None:
             raise InvalidCredentialsError("invalid_credentials")
         if not self._password_hasher.verify_password(password, credential.password_hash):
             raise InvalidCredentialsError("invalid_credentials")
-        return self._token_service.issue(user_id=credential.user_id)
+        token = self._token_service.issue(user_id=credential.user_id)
+        return IssuedAccessToken(token=token, user_id=credential.user_id)
 
     def verify_access_token(self, *, token: str) -> uuid.UUID:
         return self._token_service.verify(token)
@@ -51,5 +59,4 @@ class AuthService:
         return user
 
 
-__all__ = ["AuthService", "InvalidCredentialsError", "UserNotFoundError"]
-
+__all__ = ["AuthService", "InvalidCredentialsError", "IssuedAccessToken", "UserNotFoundError"]

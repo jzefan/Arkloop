@@ -39,6 +39,7 @@ from packages.data.threads import (
     ThreadRepository,
 )
 
+from .audit import AuditLogWriter, get_audit_log_writer
 from .authorization import Actor, Authorizer
 from .db import get_db_session
 from .error_envelope import ApiError
@@ -98,6 +99,57 @@ def _parse_bearer_token(authorization: str | None) -> str:
         )
 
     return token.strip()
+
+
+def _request_trace_id(request: Request) -> str:
+    trace_id = getattr(request.state, "trace_id", None)
+    if isinstance(trace_id, str) and trace_id:
+        return trace_id
+    trace_id = uuid.uuid4().hex
+    request.state.trace_id = trace_id
+    return trace_id
+
+async def _authorize_or_audit(
+    action: str,
+    *,
+    request: Request,
+    authorizer: Authorizer,
+    audit: AuditLogWriter,
+    actor: Actor,
+    resource_org_id: uuid.UUID,
+    resource_owner_user_id: uuid.UUID | None,
+    target_type: str,
+    target_id: str,
+) -> None:
+    try:
+        await authorizer.authorize(
+            action,
+            actor=actor,
+            resource_org_id=resource_org_id,
+            resource_owner_user_id=resource_owner_user_id,
+        )
+    except ApiError as exc:
+        if exc.status_code != 403 or exc.code != "policy.denied":
+            raise
+
+        trace_id = _request_trace_id(request)
+        deny_reason = "owner_mismatch"
+        if actor.org_id != resource_org_id:
+            deny_reason = "org_mismatch"
+        elif resource_owner_user_id is None:
+            deny_reason = "no_owner"
+
+        await audit.write_access_denied(
+            trace_id=trace_id,
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            resource_org_id=resource_org_id,
+            resource_owner_user_id=resource_owner_user_id,
+            deny_reason=deny_reason,
+        )
+        raise
 
 
 async def _get_user_repo(session: AsyncSession = Depends(get_db_session)) -> UserRepository:
@@ -234,17 +286,23 @@ async def _get_thread_or_404(*, thread_id: uuid.UUID, thread_repo: ThreadReposit
 
 @_v1_router.post("/auth/login", response_model=LoginResponse)
 async def login(
-    body: LoginRequest, auth_service: AuthService = Depends(_get_auth_service)
+    request: Request,
+    body: LoginRequest,
+    auth_service: AuthService = Depends(_get_auth_service),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
 ) -> LoginResponse:
+    trace_id = _request_trace_id(request)
     try:
-        token = await auth_service.issue_access_token(login=body.login, password=body.password)
+        issued = await auth_service.issue_access_token(login=body.login, password=body.password)
     except InvalidCredentialsError as exc:
+        await audit.write_login_failed(trace_id=trace_id, login=body.login)
         raise ApiError(
             code="auth.invalid_credentials",
             message="账号或密码错误",
             status_code=401,
         ) from exc
-    return LoginResponse(access_token=token, token_type="bearer")
+    await audit.write_login_succeeded(trace_id=trace_id, user_id=issued.user_id, login=body.login)
+    return LoginResponse(access_token=issued.token, token_type="bearer")
 
 
 @_v1_router.get("/me", response_model=MeResponse)
@@ -279,18 +337,25 @@ async def create_thread(
 @_v1_router.post("/threads/{thread_id}/messages", response_model=MessageResponse, status_code=201)
 async def create_message(
     thread_id: uuid.UUID,
+    request: Request,
     body: CreateMessageRequest,
     actor: Actor = Depends(_get_current_actor),
     authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
     thread_repo: ThreadRepository = Depends(_get_thread_repo),
     message_repo: MessageRepository = Depends(_get_message_repo),
 ) -> MessageResponse:
     thread = await _get_thread_or_404(thread_id=thread_id, thread_repo=thread_repo)
-    await authorizer.authorize(
+    await _authorize_or_audit(
         "messages.create",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
         actor=actor,
         resource_org_id=thread.org_id,
         resource_owner_user_id=thread.created_by_user_id,
+        target_type="thread",
+        target_id=str(thread.id),
     )
 
     try:
@@ -318,18 +383,25 @@ async def create_message(
 @_v1_router.get("/threads/{thread_id}/messages", response_model=list[MessageResponse])
 async def list_messages(
     thread_id: uuid.UUID,
+    request: Request,
     actor: Actor = Depends(_get_current_actor),
     authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
     thread_repo: ThreadRepository = Depends(_get_thread_repo),
     message_repo: MessageRepository = Depends(_get_message_repo),
     limit: int = Query(200, ge=1, le=500),
 ) -> list[MessageResponse]:
     thread = await _get_thread_or_404(thread_id=thread_id, thread_repo=thread_repo)
-    await authorizer.authorize(
+    await _authorize_or_audit(
         "messages.list",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
         actor=actor,
         resource_org_id=thread.org_id,
         resource_owner_user_id=thread.created_by_user_id,
+        target_type="thread",
+        target_id=str(thread.id),
     )
 
     messages = await message_repo.list_by_thread(
@@ -355,16 +427,22 @@ async def create_run(
     request: Request,
     actor: Actor = Depends(_get_current_actor),
     authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
     thread_repo: ThreadRepository = Depends(_get_thread_repo),
     run_event_repo: RunEventRepository = Depends(_get_run_event_repo),
     run_executor: RunExecutor = Depends(get_run_executor),
 ) -> CreateRunResponse:
     thread = await _get_thread_or_404(thread_id=thread_id, thread_repo=thread_repo)
-    await authorizer.authorize(
+    await _authorize_or_audit(
         "runs.create",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
         actor=actor,
         resource_org_id=thread.org_id,
         resource_owner_user_id=thread.created_by_user_id,
+        target_type="thread",
+        target_id=str(thread.id),
     )
 
     trace_id = getattr(request.state, "trace_id", None)
@@ -395,6 +473,7 @@ async def stream_run_events(
     follow: bool = Query(True),
     actor: Actor = Depends(_get_current_actor),
     authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
     run_event_repo: RunEventRepository = Depends(_get_run_event_repo),
     sse_config: SseConfig = Depends(get_sse_config),
 ) -> StreamingResponse:
@@ -402,11 +481,16 @@ async def stream_run_events(
     if run is None:
         raise ApiError(code="runs.not_found", message="Run 不存在", status_code=404)
 
-    await authorizer.authorize(
+    await _authorize_or_audit(
         "runs.events",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
         actor=actor,
         resource_org_id=run.org_id,
         resource_owner_user_id=run.created_by_user_id,
+        target_type="run",
+        target_id=str(run.id),
     )
 
     async def _stream():

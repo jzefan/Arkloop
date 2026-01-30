@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .config import AuthConfig
 from .password_hasher import BcryptPasswordHasher, PasswordHasher
-from .service import AuthService, InvalidCredentialsError, UserNotFoundError
+from .service import AuthService, InvalidCredentialsError, IssuedAccessToken, UserNotFoundError
 from .tokens import JwtAccessTokenService, TokenError, TokenExpiredError, TokenInvalidError
 
 __all__ = [
@@ -10,6 +10,7 @@ __all__ = [
     "AuthService",
     "BcryptPasswordHasher",
     "InvalidCredentialsError",
+    "IssuedAccessToken",
     "JwtAccessTokenService",
     "PasswordHasher",
     "TokenError",
@@ -17,4 +18,3 @@ __all__ = [
     "TokenInvalidError",
     "UserNotFoundError",
 ]
-
