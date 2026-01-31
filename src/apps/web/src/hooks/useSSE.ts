@@ -1,40 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createSSEClient, type RunEvent, type SSEClient, type SSEClientState } from '../sse'
-
-function lastSeqStorageKey(runId: string): string {
-  return `arkloop:sse:last_seq:${runId}`
-}
-
-function readLastSeqFromStorage(runId: string): number {
-  if (!runId) return 0
-  try {
-    const raw = localStorage.getItem(lastSeqStorageKey(runId))
-    if (!raw) return 0
-    const parsed = Number.parseInt(raw, 10)
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
-  } catch {
-    return 0
-  }
-}
-
-function writeLastSeqToStorage(runId: string, seq: number): void {
-  if (!runId) return
-  if (!Number.isFinite(seq) || seq < 0) return
-  try {
-    localStorage.setItem(lastSeqStorageKey(runId), String(seq))
-  } catch {
-    // 忽略存储失败（无痕模式/禁用存储等）
-  }
-}
-
-function clearLastSeqInStorage(runId: string): void {
-  if (!runId) return
-  try {
-    localStorage.removeItem(lastSeqStorageKey(runId))
-  } catch {
-    // 忽略存储失败
-  }
-}
+import { clearLastSeqInStorage, readLastSeqFromStorage, writeLastSeqToStorage } from '../storage'
 
 export type UseSSEOptions = {
   runId: string

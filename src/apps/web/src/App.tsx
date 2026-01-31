@@ -9,58 +9,16 @@ import {
   register,
   type CreateRunResponse,
   type MeResponse,
-  type ThreadResponse,
 } from './api'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useSSE } from './hooks/useSSE'
 import { RunEventsPanel } from './components/RunEventsPanel'
+import { clearRunDemoSession, readRunDemoSession, writeRunDemoSession } from './storage'
 
 type AppError = {
   message: string
   traceId?: string
   code?: string
-}
-
-type RunDemoSession = {
-  thread: ThreadResponse
-  run: CreateRunResponse
-  messageContent: string
-}
-
-const RUN_DEMO_SESSION_KEY = 'arkloop:web:run_demo_session'
-
-function readRunDemoSession(): RunDemoSession | null {
-  try {
-    const raw = localStorage.getItem(RUN_DEMO_SESSION_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') return null
-
-    const obj = parsed as Partial<RunDemoSession>
-    if (!obj.run || typeof obj.run.run_id !== 'string' || obj.run.run_id.length === 0) return null
-    if (!obj.thread || typeof obj.thread.id !== 'string' || obj.thread.id.length === 0) return null
-    if (typeof obj.messageContent !== 'string') return null
-
-    return obj as RunDemoSession
-  } catch {
-    return null
-  }
-}
-
-function writeRunDemoSession(session: RunDemoSession): void {
-  try {
-    localStorage.setItem(RUN_DEMO_SESSION_KEY, JSON.stringify(session))
-  } catch {
-    // 忽略存储失败
-  }
-}
-
-function clearRunDemoSession(): void {
-  try {
-    localStorage.removeItem(RUN_DEMO_SESSION_KEY)
-  } catch {
-    // 忽略存储失败
-  }
 }
 
 function normalizeError(error: unknown): AppError {
@@ -285,7 +243,7 @@ function MeCard({
 }
 
 function RunDemoCard({ accessToken }: { accessToken: string }) {
-  const [thread, setThread] = useState<ThreadResponse | null>(null)
+  const [threadId, setThreadId] = useState<string | null>(null)
   const [run, setRun] = useState<CreateRunResponse | null>(null)
   const [messageContent, setMessageContent] = useState('Hello, Arkloop!')
   const [loading, setLoading] = useState(false)
@@ -301,12 +259,11 @@ function RunDemoCard({ accessToken }: { accessToken: string }) {
 
   // 刷新后恢复上一次的 run（用于 after_seq 续传）
   useEffect(() => {
-    if (run || thread) return
+    if (run || threadId) return
     const session = readRunDemoSession()
     if (!session) return
-    setThread(session.thread)
-    setRun(session.run)
-    setMessageContent(session.messageContent)
+    setThreadId(session.threadId)
+    setRun({ run_id: session.runId, trace_id: session.traceId })
   }, [])
 
   // 当 run 创建后自动连接 SSE
@@ -324,7 +281,7 @@ function RunDemoCard({ accessToken }: { accessToken: string }) {
     try {
       // 创建线程
       const threadResp = await createThread(accessToken)
-      setThread(threadResp)
+      setThreadId(threadResp.id)
 
       // 创建消息
       await createMessage(accessToken, threadResp.id, { content: messageContent })
@@ -332,7 +289,7 @@ function RunDemoCard({ accessToken }: { accessToken: string }) {
       // 创建运行
       const runResp = await createRun(accessToken, threadResp.id)
       setRun(runResp)
-      writeRunDemoSession({ thread: threadResp, run: runResp, messageContent })
+      writeRunDemoSession({ threadId: threadResp.id, runId: runResp.run_id, traceId: runResp.trace_id })
     } catch (err) {
       setError(normalizeError(err))
     } finally {
@@ -344,7 +301,7 @@ function RunDemoCard({ accessToken }: { accessToken: string }) {
     sse.disconnect()
     sse.reset()
     clearRunDemoSession()
-    setThread(null)
+    setThreadId(null)
     setRun(null)
     setError(null)
   }
@@ -387,10 +344,10 @@ function RunDemoCard({ accessToken }: { accessToken: string }) {
             )}
           </div>
 
-          {thread && (
+          {threadId && (
             <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-4 py-3 text-sm">
               <div className="text-slate-300">thread_id</div>
-              <div className="mt-1 font-mono text-xs text-slate-100">{thread.id}</div>
+              <div className="mt-1 font-mono text-xs text-slate-100">{threadId}</div>
             </div>
           )}
 
