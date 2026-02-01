@@ -25,6 +25,7 @@ from packages.data.identity import (
 from packages.data.runs import SqlAlchemyRunEventRepository
 from services.api.main import configure_app
 from services.api.trace import TRACE_ID_HEADER
+from services.worker import Worker
 
 pytestmark = pytest.mark.integration
 
@@ -301,5 +302,96 @@ def test_run_events_sse_streams_and_resumes(monkeypatch) -> None:
                     resumed = _collect_sse_json_events(resp, expected=len(expected) - 1)
 
                 assert [(event["seq"], event["type"]) for event in resumed] == expected[1:]
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_worker_job_restores_trace_id_and_is_replayable_via_sse(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_worker_job_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            app = configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+                org_id = thread_resp.json()["org_id"]
+
+                run_resp = client.post(f"/v1/threads/{thread_id}/runs", headers=headers)
+                assert run_resp.status_code == 201
+                run_payload = run_resp.json()
+                run_id = uuid.UUID(run_payload["run_id"])
+                expected_trace_id = run_payload["trace_id"]
+
+                job_payload = {
+                    "job_id": str(uuid.uuid4()),
+                    "type": "worker.ping",
+                    "trace_id": expected_trace_id,
+                    "org_id": org_id,
+                    "run_id": str(run_id),
+                    "payload": {"kind": "test"},
+                }
+
+                async def _run_worker_job() -> None:
+                    database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
+                    try:
+                        worker = Worker(database=database)
+                        await worker.handle_job(job_payload)
+                    finally:
+                        await database.dispose()
+
+                anyio.run(_run_worker_job)
+
+                with client.stream(
+                    "GET",
+                    f"/v1/runs/{run_id}/events?after_seq=0&follow=0",
+                    headers=headers,
+                ) as resp:
+                    assert resp.status_code == 200
+                    events = _collect_sse_json_events(resp, expected=2)
+
+                assert [(event["seq"], event["type"]) for event in events] == [
+                    (1, "run.started"),
+                    (2, "worker.job.received"),
+                ]
+                assert events[1]["data"]["trace_id"] == expected_trace_id
+
+                with client.stream(
+                    "GET",
+                    f"/v1/runs/{run_id}/events?after_seq=1&follow=0",
+                    headers=headers,
+                ) as resp:
+                    assert resp.status_code == 200
+                    resumed = _collect_sse_json_events(resp, expected=1)
+
+                assert [(event["seq"], event["type"]) for event in resumed] == [(2, "worker.job.received")]
+                assert resumed[0]["data"]["trace_id"] == expected_trace_id
     finally:
         anyio.run(_drop_database, admin_dsn, database)

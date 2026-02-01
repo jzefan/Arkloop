@@ -7,7 +7,7 @@ import logging
 import sys
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
-from .context import get_trace_id
+from .context import get_org_id, get_run_id, get_trace_id
 
 _INSTALLED = False
 _ORIGINAL_FACTORY: Optional[Callable[..., logging.LogRecord]] = None
@@ -139,6 +139,12 @@ class JsonLineFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec="milliseconds")
+        org_id = getattr(record, "org_id", None)
+        if org_id is None:
+            org_id = getattr(record, "_ctx_org_id", None)
+        run_id = getattr(record, "run_id", None)
+        if run_id is None:
+            run_id = getattr(record, "_ctx_run_id", None)
         payload: dict[str, Any] = {
             "ts": ts.replace("+00:00", "Z"),
             "level": record.levelname.lower(),
@@ -146,6 +152,8 @@ class JsonLineFormatter(logging.Formatter):
             "logger": record.name,
             "component": getattr(record, "component", None),
             "trace_id": getattr(record, "trace_id", None),
+            "org_id": org_id,
+            "run_id": run_id,
         }
         payload.update(_extract_extra(record))
         payload = _apply_redaction(payload, rules=self._rules)
@@ -177,6 +185,8 @@ def install_trace_log_record_factory(*, component: Optional[str] = None) -> None
             raise RuntimeError("LogRecordFactory 未初始化")
         record = _ORIGINAL_FACTORY(*args, **kwargs)
         record.trace_id = get_trace_id()
+        record._ctx_org_id = get_org_id()
+        record._ctx_run_id = get_run_id()
         if component is not None:
             record.component = component
         return record
