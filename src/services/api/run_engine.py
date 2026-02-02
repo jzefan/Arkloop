@@ -5,6 +5,7 @@ import uuid
 from packages.agent_core import AgentRunContext, AgentRunner
 from packages.data import Database
 from packages.data.runs import RunNotFoundError, SqlAlchemyRunEventRepository
+from packages.data.threads import SqlAlchemyMessageRepository
 
 
 class RunEngine:
@@ -32,6 +33,8 @@ class RunEngine:
                         input_json["route_id"] = route_id.strip()
 
             context = AgentRunContext(run_id=run_id, trace_id=trace_id, input_json=input_json)
+            assistant_deltas: list[str] = []
+            completed = False
             async for event in self._runner.run(context=context):
                 await repo.append_event(
                     run_id=run_id,
@@ -40,7 +43,34 @@ class RunEngine:
                     tool_name=event.tool_name,
                     error_class=event.error_class,
                 )
+                if event.type == "message.delta":
+                    delta = _extract_assistant_delta(event.data_json)
+                    if delta is not None:
+                        assistant_deltas.append(delta)
+                elif event.type == "run.completed":
+                    completed = True
+
+            if completed:
+                content = "".join(assistant_deltas)
+                if content:
+                    message_repo = SqlAlchemyMessageRepository(session)
+                    await message_repo.create(
+                        org_id=run.org_id,
+                        thread_id=run.thread_id,
+                        role="assistant",
+                        content=content,
+                    )
             await session.commit()
+
+
+def _extract_assistant_delta(data_json: object) -> str | None:
+    if not isinstance(data_json, dict):
+        return None
+    role = data_json.get("role")
+    if role is not None and role != "assistant":
+        return None
+    delta = data_json.get("content_delta")
+    return delta if isinstance(delta, str) and delta else None
 
 
 __all__ = ["RunEngine"]

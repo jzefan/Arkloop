@@ -160,3 +160,34 @@ def test_llm_gateway_stream_emits_provider_fallback_as_run_event() -> None:
     assert events[0].data_json["to_api_mode"] == "chat_completions"
     assert events[0].data_json["status_code"] == 404
     assert events[0].data_json["trace_id"] == "d" * 32
+
+
+def test_llm_gateway_stream_closes_underlying_stream_on_completed() -> None:
+    emitter = RunEventEmitter(
+        run_id=uuid.UUID(int=9),
+        trace_id="e" * 32,
+        event_id_factory=_FakeEventIdFactory(),
+        clock=_fixed_clock,
+    )
+
+    closed = False
+
+    async def _stub_stream():
+        nonlocal closed
+        try:
+            yield LlmStreamRunCompleted()
+            await anyio.sleep(999)
+        finally:
+            closed = True
+
+    async def _collect():
+        events = []
+        stream = _stub_stream()
+        async for event in run_events_from_llm_stream(emitter=emitter, stream=stream):
+            events.append(event)
+        return events
+
+    events = anyio.run(_collect)
+
+    assert [event.type for event in events] == ["run.completed"]
+    assert closed is True

@@ -164,7 +164,7 @@
     - 本地执行（示例以 PowerShell 为主；Linux/macOS 把 `$env:XXX=...` 换成 `export XXX=...`）：
       - `.\.venv\Scripts\python -c "exec('import anyio\\nfrom packages.llm_gateway.anthropic import AnthropicGatewayConfig, AnthropicLlmGateway\\nfrom packages.llm_gateway import LlmGatewayRequest, LlmMessage, LlmTextPart\\ncfg=AnthropicGatewayConfig.from_env(required=True)\\ngw=AnthropicLlmGateway(config=cfg)\\nreq=LlmGatewayRequest(model=\"claude-xxx\", messages=[LlmMessage(role=\"user\", content=[LlmTextPart(text=\"hello\")])], max_output_tokens=128)\\nasync def main():\\n  async for e in gw.stream(request=req):\\n    print(type(e).__name__, getattr(e, \"content_delta\", \"\"), getattr(getattr(e, \"usage\", None), \"total_tokens\", None))\\nanyio.run(main)\\n')"`。
 
-#### P34 — Provider 路由规则 v1（openai/anthropic + base_url + openai_api_mode）
+#### P34 — Provider 路由规则 v1（openai/anthropic + base_url + openai_api_mode）(已完成)
 - 目标：实现最小可用的路由规则引擎：同一个 run 根据输入与策略选择 provider、模型与凭证，并把上游差异隐藏在 adapter 后面。
 - 关键点：
   - 路由规则是配置，不是写死 if/else；v1 先保证“可配置、可测试、可回放”，UI 可以后置。
@@ -175,7 +175,7 @@
   - unit pytest：给定固定规则与 org 设置，路由选择可预测、可回放。
   - integration pytest：未开启 BYOK 的 org 无法使用 BYOK credential（返回稳定错误码/事件）。
 
-#### P35 — 把流式输出“沉淀成消息”（让 Chat 可用）
+#### P35 — 把流式输出“沉淀成消息”（让 Chat 可用）(已完成)
 - 目标：assistant 输出不只停留在 `run_events`，还要能沉淀到 `messages`（用于对话历史/刷新恢复）。
 - 关键点：
   - `run_events` 仍是唯一真相；`messages` 是“可用视图”（materialized view），可由事件重建。

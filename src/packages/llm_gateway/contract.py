@@ -229,47 +229,55 @@ async def run_events_from_llm_stream(
     emitter: RunEventEmitter,
     stream: AsyncIterator[LlmGatewayStreamEvent],
 ) -> AsyncIterator[RunEvent]:
-    async for item in stream:
-        if isinstance(item, LlmStreamMessageDelta):
-            if not item.content_delta:
+    close = getattr(stream, "aclose", None)
+    try:
+        async for item in stream:
+            if isinstance(item, LlmStreamMessageDelta):
+                if not item.content_delta:
+                    continue
+                yield emitter.emit(type="message.delta", data_json=item.to_data_json())
                 continue
-            yield emitter.emit(type="message.delta", data_json=item.to_data_json())
-            continue
 
-        if isinstance(item, LlmStreamToolCall):
-            yield emitter.emit(
-                type="tool.call",
-                data_json=item.to_data_json(),
-                tool_name=item.tool_name,
-            )
-            continue
+            if isinstance(item, LlmStreamToolCall):
+                yield emitter.emit(
+                    type="tool.call",
+                    data_json=item.to_data_json(),
+                    tool_name=item.tool_name,
+                )
+                continue
 
-        if isinstance(item, LlmStreamToolResult):
-            yield emitter.emit(
-                type="tool.result",
-                data_json=item.to_data_json(),
-                tool_name=item.tool_name,
-                error_class=item.error.error_class if item.error is not None else None,
-            )
-            continue
+            if isinstance(item, LlmStreamToolResult):
+                yield emitter.emit(
+                    type="tool.result",
+                    data_json=item.to_data_json(),
+                    tool_name=item.tool_name,
+                    error_class=item.error.error_class if item.error is not None else None,
+                )
+                continue
 
-        if isinstance(item, LlmStreamProviderFallback):
-            yield emitter.emit(type="run.provider_fallback", data_json=item.to_data_json())
-            continue
+            if isinstance(item, LlmStreamProviderFallback):
+                yield emitter.emit(type="run.provider_fallback", data_json=item.to_data_json())
+                continue
 
-        if isinstance(item, LlmStreamRunCompleted):
-            yield emitter.emit(type="run.completed", data_json=item.to_data_json())
-            return
+            if isinstance(item, LlmStreamRunCompleted):
+                yield emitter.emit(type="run.completed", data_json=item.to_data_json())
+                return
 
-        if isinstance(item, LlmStreamRunFailed):
-            yield emitter.emit(
-                type="run.failed",
-                data_json=item.to_data_json(),
-                error_class=item.error.error_class,
-            )
-            return
+            if isinstance(item, LlmStreamRunFailed):
+                yield emitter.emit(
+                    type="run.failed",
+                    data_json=item.to_data_json(),
+                    error_class=item.error.error_class,
+                )
+                return
 
-        raise TypeError(f"未知的 LLM Gateway 事件类型: {type(item)!r}")
+            raise TypeError(f"未知的 LLM Gateway 事件类型: {type(item)!r}")
+    finally:
+        if close is not None:
+            try:
+                await close()
+            except Exception:
+                pass
 
     error = _internal_stream_ended_error()
     yield emitter.emit(
