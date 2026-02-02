@@ -9,11 +9,16 @@ from fastapi import FastAPI, Request
 
 from packages.data import Database
 from packages.data.runs import RunNotFoundError
-from packages.llm_gateway.agent_runner import LlmGatewayAgentRunner
 from packages.llm_gateway.stub import StubLlmGateway, StubLlmGatewayConfig
+from packages.llm_routing import ProviderRouter, ProviderRoutingConfig
 from packages.observability.context import new_trace_id, trace_id_context
 
 from .error_envelope import ApiError
+from .provider_routed_runner import (
+    AlwaysDisabledOrgByokPolicy,
+    EnvProviderGatewayFactory,
+    ProviderRoutedAgentRunner,
+)
 from .run_engine import RunEngine
 
 
@@ -98,7 +103,14 @@ def configure_run_executor(app: FastAPI) -> None:
         return
     stub_config = StubLlmGatewayConfig.from_env()
     stub_gateway = StubLlmGateway(config=stub_config)
-    runner = LlmGatewayAgentRunner(gateway=stub_gateway)
+    routing_config = ProviderRoutingConfig.from_env()
+    router = ProviderRouter(config=routing_config)
+    runner = ProviderRoutedAgentRunner(
+        database=database,
+        router=router,
+        byok_policy=AlwaysDisabledOrgByokPolicy(),
+        gateway_factory=EnvProviderGatewayFactory(stub_gateway=stub_gateway),
+    )
     engine = RunEngine(database=database, runner=runner)
     install_run_executor(
         app,

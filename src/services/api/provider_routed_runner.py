@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import os
+from typing import AsyncIterator, Protocol
+import uuid
+
+from packages.agent_core import AgentRunContext, AgentRunner, RunEvent, RunEventEmitter
+from packages.data import Database
+from packages.data.threads import SqlAlchemyMessageRepository
+from packages.llm_gateway import (
+    ERROR_CLASS_INTERNAL_ERROR,
+    LlmGatewayError,
+    LlmGatewayRequest,
+    LlmMessage,
+    LlmTextPart,
+    run_events_from_llm_stream,
+)
+from packages.llm_gateway.anthropic import AnthropicGatewayConfig, AnthropicLlmGateway
+from packages.llm_gateway.gateway import LlmGateway
+from packages.llm_gateway.openai import OpenAiGatewayConfig, OpenAiLlmGateway
+from packages.llm_routing import ProviderCredential, ProviderRouteDenied, ProviderRouter
+
+
+class OrgByokPolicy(Protocol):
+    async def is_byok_enabled(self, *, org_id: uuid.UUID) -> bool: ...
+
+
+class AlwaysDisabledOrgByokPolicy:
+    async def is_byok_enabled(self, *, org_id: uuid.UUID) -> bool:
+        _ = org_id
+        return False
+
+
+class ProviderGatewayFactory(Protocol):
+    def create(self, *, credential: ProviderCredential) -> LlmGateway: ...
+
+
+class EnvProviderGatewayFactory:
+    def __init__(self, *, stub_gateway: LlmGateway) -> None:
+        self._stub_gateway = stub_gateway
+
+    def create(self, *, credential: ProviderCredential) -> LlmGateway:
+        if credential.provider_kind == "stub":
+            return self._stub_gateway
+
+        api_key_env = credential.api_key_env
+        if not api_key_env:
+            raise ValueError("缺少 api_key_env")
+        api_key = (os.getenv(api_key_env) or "").strip()
+        if not api_key:
+            raise ValueError(f"缺少环境变量 {api_key_env}")
+
+        if credential.provider_kind == "openai":
+            base_url = credential.base_url or OpenAiGatewayConfig.base_url
+            cfg = OpenAiGatewayConfig(
+                api_key=api_key,
+                base_url=base_url,
+                api_mode=credential.openai_api_mode or "auto",
+            )
+            return OpenAiLlmGateway(config=cfg)
+
+        if credential.provider_kind == "anthropic":
+            base_url = credential.base_url or AnthropicGatewayConfig.base_url
+            cfg = AnthropicGatewayConfig(
+                api_key=api_key,
+                base_url=base_url,
+                advanced_json=dict(credential.advanced_json),
+            )
+            return AnthropicLlmGateway(config=cfg)
+
+        raise ValueError(f"未知 provider_kind: {credential.provider_kind}")
+
+
+class ProviderRoutedAgentRunner(AgentRunner):
+    def __init__(
+        self,
+        *,
+        database: Database,
+        router: ProviderRouter,
+        byok_policy: OrgByokPolicy,
+        gateway_factory: ProviderGatewayFactory,
+    ) -> None:
+        self._database = database
+        self._router = router
+        self._byok_policy = byok_policy
+        self._gateway_factory = gateway_factory
+
+    async def run(self, *, context: AgentRunContext) -> AsyncIterator[RunEvent]:
+        emitter = RunEventEmitter(run_id=context.run_id, trace_id=context.trace_id)
+
+        try:
+            org_id = _required_uuid(context.input_json.get("org_id"), label="org_id")
+            thread_id = _required_uuid(context.input_json.get("thread_id"), label="thread_id")
+        except Exception:
+            error = LlmGatewayError(error_class=ERROR_CLASS_INTERNAL_ERROR, message="Run 输入缺失")
+            yield emitter.emit(type="run.failed", error_class=error.error_class, data_json=error.to_json())
+            return
+
+        byok_enabled = await self._byok_policy.is_byok_enabled(org_id=org_id)
+        decision = self._router.decide(input_json=context.input_json, byok_enabled=byok_enabled)
+
+        if isinstance(decision, ProviderRouteDenied):
+            yield emitter.emit(
+                type="run.failed",
+                error_class=decision.error_class,
+                data_json=decision.to_run_failed_data_json(),
+            )
+            return
+
+        yield emitter.emit(type="run.route.selected", data_json=decision.to_run_event_data_json())
+
+        try:
+            request = await self._build_request(
+                org_id=org_id,
+                thread_id=thread_id,
+                model=decision.route.model,
+            )
+            gateway = self._gateway_factory.create(credential=decision.credential)
+        except Exception:
+            error = LlmGatewayError(error_class=ERROR_CLASS_INTERNAL_ERROR, message="路由初始化失败")
+            yield emitter.emit(type="run.failed", error_class=error.error_class, data_json=error.to_json())
+            return
+
+        async for event in run_events_from_llm_stream(
+            emitter=emitter,
+            stream=gateway.stream(request=request),
+        ):
+            yield event
+
+    async def _build_request(
+        self,
+        *,
+        org_id: uuid.UUID,
+        thread_id: uuid.UUID,
+        model: str,
+    ) -> LlmGatewayRequest:
+        async with self._database.sessionmaker() as session:
+            repo = SqlAlchemyMessageRepository(session)
+            messages = await repo.list_by_thread(org_id=org_id, thread_id=thread_id, limit=200)
+
+        llm_messages = [
+            LlmMessage(role=item.role, content=[LlmTextPart(text=item.content)]) for item in messages
+        ]
+        return LlmGatewayRequest(model=model, messages=llm_messages)
+
+
+def _required_uuid(value: object, *, label: str) -> uuid.UUID:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} 缺失")
+    try:
+        return uuid.UUID(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"{label} 非法") from exc
+
+
+__all__ = [
+    "AlwaysDisabledOrgByokPolicy",
+    "EnvProviderGatewayFactory",
+    "OrgByokPolicy",
+    "ProviderGatewayFactory",
+    "ProviderRoutedAgentRunner",
+]

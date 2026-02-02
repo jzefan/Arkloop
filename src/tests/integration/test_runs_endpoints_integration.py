@@ -140,6 +140,28 @@ async def _wait_for_stub_events(
         await database.dispose()
 
 
+async def _wait_for_final_event(
+    sqlalchemy_url: str,
+    run_id: uuid.UUID,
+    final_type: str,
+    timeout_seconds: float = 5.0,
+) -> list:
+    database = Database.from_config(DatabaseConfig(url=sqlalchemy_url))
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            async with database.sessionmaker() as session:
+                repo = SqlAlchemyRunEventRepository(session)
+                events = await repo.list_events(run_id=run_id, after_seq=0)
+            if events and events[-1].type == final_type:
+                return events
+            if time.monotonic() > deadline:
+                raise AssertionError(f"等待 {final_type} 超时")
+            await anyio.sleep(0.02)
+    finally:
+        await database.dispose()
+
+
 def _collect_sse_json_events(
     response, *, expected: int, timeout_seconds: float = 5.0
 ) -> list[dict]:
@@ -393,5 +415,88 @@ def test_worker_job_restores_trace_id_and_is_replayable_via_sse(monkeypatch) -> 
 
                 assert [(event["seq"], event["type"]) for event in resumed] == [(2, "worker.job.received")]
                 assert resumed[0]["data"]["trace_id"] == expected_trace_id
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_run_route_denies_byok_when_org_not_enabled(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_runs_route_byok_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    routing_json = json.dumps(
+        {
+            "default_route_id": "stub",
+            "credentials": [
+                {"id": "stub_cred", "scope": "platform", "provider_kind": "stub"},
+                {
+                    "id": "org_byok_openai",
+                    "scope": "org",
+                    "provider_kind": "openai",
+                    "api_key_env": "ORG_OPENAI_API_KEY",
+                    "base_url": "https://example.test/v1",
+                    "openai_api_mode": "chat_completions",
+                },
+            ],
+            "routes": [
+                {"id": "stub", "model": "stub", "credential_id": "stub_cred"},
+                {"id": "byok", "model": "gpt-test", "credential_id": "org_byok_openai"},
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_PROVIDER_ROUTING_JSON", routing_json)
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            app = configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+
+                run_resp = client.post(
+                    f"/v1/threads/{thread_id}/runs",
+                    headers=headers,
+                    json={"route_id": "byok"},
+                )
+                assert run_resp.status_code == 201
+                run_id = uuid.UUID(run_resp.json()["run_id"])
+
+                events = anyio.run(
+                    _wait_for_final_event,
+                    test_sqlalchemy_url,
+                    run_id,
+                    "run.failed",
+                )
+                assert [event.type for event in events] == ["run.started", "run.failed"]
+                failed = events[-1]
+                assert failed.error_class == "policy.denied"
+                assert failed.data_json["code"] == "policy.byok_disabled"
+                assert failed.data_json["error_class"] == "policy.denied"
     finally:
         anyio.run(_drop_database, admin_dsn, database)

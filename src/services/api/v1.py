@@ -289,6 +289,14 @@ class CreateRunResponse(BaseModel):
     trace_id: str
 
 
+class CreateRunRequest(BaseModel):
+    route_id: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+    )
+
+
 async def _get_thread_or_404(*, thread_id: uuid.UUID, thread_repo: ThreadRepository):
     thread = await thread_repo.get_by_id(thread_id)
     if thread is None:
@@ -487,6 +495,7 @@ async def list_messages(
 async def create_run(
     thread_id: uuid.UUID,
     request: Request,
+    body: CreateRunRequest | None = None,
     actor: Actor = Depends(_get_current_actor),
     authorizer: Authorizer = Depends(_get_authorizer),
     audit: AuditLogWriter = Depends(get_audit_log_writer),
@@ -511,10 +520,15 @@ async def create_run(
         trace_id = uuid.uuid4().hex
         request.state.trace_id = trace_id
 
+    started_data: dict[str, object] = {}
+    if body is not None and body.route_id:
+        started_data["route_id"] = body.route_id
+
     run, _started = await run_event_repo.create_run_with_started_event(
         org_id=thread.org_id,
         thread_id=thread.id,
         created_by_user_id=actor.user_id,
+        started_data=started_data,
     )
     run_executor.enqueue(run_id=run.id)
     return CreateRunResponse(run_id=run.id, trace_id=trace_id)
