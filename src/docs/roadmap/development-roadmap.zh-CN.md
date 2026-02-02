@@ -153,7 +153,16 @@
   - 失败必须落 `run.failed`，并带稳定错误码与 `trace_id`。
 - 依赖：P30、P31
 - 验收：
+  - unit pytest（离线）：`src/tests/unit/test_anthropic_llm_gateway.py` 覆盖 messages streaming、错误返回、以及高级 JSON 配置白名单校验。
   - integration pytest：默认仍走 stub（不连公网）；另提供可选的“手工验收步骤”用于本地连真 provider（不进 CI）。
+  - 手工（连真 provider）：
+    - 设置环境变量（建议 `base_url` 带 `/v1`；例如官方 `https://api.anthropic.com/v1`）：
+      - `ARKLOOP_ANTHROPIC_API_KEY=...`
+      - `ARKLOOP_ANTHROPIC_BASE_URL=https://api.anthropic.com/v1`（可选）
+      - `ARKLOOP_ANTHROPIC_VERSION=2023-06-01`（可选）
+      - `ARKLOOP_ANTHROPIC_ADVANCED_JSON={"extra_headers":{...},"extra_query":{...},"timeout_ms":5000}`（可选；严禁在 JSON 中写入任何 secret）
+    - 本地执行（示例以 PowerShell 为主；Linux/macOS 把 `$env:XXX=...` 换成 `export XXX=...`）：
+      - `.\.venv\Scripts\python -c "exec('import anyio\\nfrom packages.llm_gateway.anthropic import AnthropicGatewayConfig, AnthropicLlmGateway\\nfrom packages.llm_gateway import LlmGatewayRequest, LlmMessage, LlmTextPart\\ncfg=AnthropicGatewayConfig.from_env(required=True)\\ngw=AnthropicLlmGateway(config=cfg)\\nreq=LlmGatewayRequest(model=\"claude-xxx\", messages=[LlmMessage(role=\"user\", content=[LlmTextPart(text=\"hello\")])], max_output_tokens=128)\\nasync def main():\\n  async for e in gw.stream(request=req):\\n    print(type(e).__name__, getattr(e, \"content_delta\", \"\"), getattr(getattr(e, \"usage\", None), \"total_tokens\", None))\\nanyio.run(main)\\n')"`。
 
 #### P34 — Provider 路由规则 v1（openai/anthropic + base_url + openai_api_mode）
 - 目标：实现最小可用的路由规则引擎：同一个 run 根据输入与策略选择 provider、模型与凭证，并把上游差异隐藏在 adapter 后面。
