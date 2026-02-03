@@ -77,16 +77,29 @@ def _parse_dotenv_line(raw_line: str) -> Optional[Tuple[str, str]]:
     return key, value
 
 
-def _load_dotenv(path: Path, *, override: bool) -> None:
+def read_dotenv(path: Path) -> dict[str, str]:
     content = path.read_text(encoding="utf-8-sig")
+    values: dict[str, str] = {}
     for raw_line in content.splitlines():
         parsed = _parse_dotenv_line(raw_line)
         if parsed is None:
             continue
         key, value = parsed
+        values[key] = value
+    return values
+
+
+def load_dotenv(path: Path, *, override: bool = False) -> dict[str, str]:
+    values = read_dotenv(path)
+    for key, value in values.items():
         if not override and key in os.environ:
             continue
         os.environ[key] = value
+    return values
+
+
+def _load_dotenv(path: Path, *, override: bool) -> None:
+    load_dotenv(path, override=override)
 
 
 def load_dotenv_if_enabled(*, override: bool = False) -> bool:
@@ -108,3 +121,5 @@ def load_dotenv_if_enabled(*, override: bool = False) -> bool:
         _LOADED_DOTENV_PATHS.add(resolved)
         return True
 
+
+__all__ = ["load_dotenv", "load_dotenv_if_enabled", "read_dotenv"]
