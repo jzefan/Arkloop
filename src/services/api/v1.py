@@ -328,6 +328,28 @@ async def login(
     return LoginResponse(access_token=issued.token, token_type="bearer")
 
 
+@_v1_router.post("/auth/refresh", response_model=LoginResponse)
+async def refresh_token(
+    request: Request,
+    auth_service: AuthService = Depends(_get_auth_service),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
+) -> LoginResponse:
+    trace_id = _request_trace_id(request)
+    token = _parse_bearer_token(request.headers.get("Authorization"))
+
+    try:
+        issued = await auth_service.refresh_access_token(token=token)
+    except (TokenExpiredError, TokenInvalidError, UserNotFoundError) as exc:
+        raise ApiError(
+            code="auth.invalid_token",
+            message="token 无效或已过期",
+            status_code=401,
+        ) from exc
+
+    await audit.write_token_refreshed(trace_id=trace_id, user_id=issued.user_id)
+    return LoginResponse(access_token=issued.token, token_type="bearer")
+
+
 @_v1_router.post("/auth/register", response_model=RegisterResponse, status_code=201)
 async def register(
     request: Request,

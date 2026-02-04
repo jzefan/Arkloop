@@ -197,7 +197,7 @@
 - 验收：
   - integration pytest：创建多个 thread 后 `GET /v1/threads` 顺序稳定且只返回本 org 可见数据；`PATCH title` 后 `GET /v1/threads/{id}` 能读到更新结果。
 
-#### P35.2 — Token Refresh v1（不引入 refresh token）
+#### P35.2 — Token Refresh v1（不引入 refresh token）(已完成)
 - 目标：提供 `POST /v1/auth/refresh`，在 access token 仍有效时签发新 token，避免长会话中频繁重新登录。
 - 关键点：
   - Phase 1 不引入 refresh token 与会话表：仅校验现有 bearer token + 用户存在，再签发新 token。

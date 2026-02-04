@@ -49,6 +49,12 @@ class AuthService:
         token = self._token_service.issue(user_id=credential.user_id)
         return IssuedAccessToken(token=token, user_id=credential.user_id)
 
+    async def refresh_access_token(self, *, token: str) -> IssuedAccessToken:
+        user_id = self.verify_access_token(token=token)
+        await self.get_user(user_id=user_id)
+        refreshed = self._token_service.issue(user_id=user_id)
+        return IssuedAccessToken(token=refreshed, user_id=user_id)
+
     def verify_access_token(self, *, token: str) -> uuid.UUID:
         return self._token_service.verify(token)
 
