@@ -261,6 +261,9 @@ class MeResponse(BaseModel):
 class CreateThreadRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
 
+class UpdateThreadRequest(BaseModel):
+    title: str | None = Field(..., max_length=200)
+
 
 class ThreadResponse(BaseModel):
     id: uuid.UUID
@@ -403,6 +406,105 @@ async def create_thread(
         created_by_user_id=thread.created_by_user_id,
         title=thread.title,
         created_at=thread.created_at,
+    )
+
+@_v1_router.get("/threads", response_model=list[ThreadResponse])
+async def list_threads(
+    actor: Actor = Depends(_get_current_actor),
+    thread_repo: ThreadRepository = Depends(_get_thread_repo),
+    limit: int = Query(50, ge=1, le=200),
+    before_created_at: datetime | None = Query(default=None),
+    before_id: uuid.UUID | None = Query(default=None),
+) -> list[ThreadResponse]:
+    if (before_created_at is None) != (before_id is None):
+        raise ApiError(
+            code="validation_error",
+            message="请求参数校验失败",
+            status_code=422,
+            details={"reason": "cursor_incomplete", "required": ["before_created_at", "before_id"]},
+        )
+
+    threads = await thread_repo.list_by_owner(
+        org_id=actor.org_id,
+        owner_user_id=actor.user_id,
+        limit=limit,
+        before_created_at=before_created_at,
+        before_id=before_id,
+    )
+    return [
+        ThreadResponse(
+            id=item.id,
+            org_id=item.org_id,
+            created_by_user_id=item.created_by_user_id,
+            title=item.title,
+            created_at=item.created_at,
+        )
+        for item in threads
+    ]
+
+
+@_v1_router.get("/threads/{thread_id}", response_model=ThreadResponse)
+async def get_thread(
+    thread_id: uuid.UUID,
+    request: Request,
+    actor: Actor = Depends(_get_current_actor),
+    authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
+    thread_repo: ThreadRepository = Depends(_get_thread_repo),
+) -> ThreadResponse:
+    thread = await _get_thread_or_404(thread_id=thread_id, thread_repo=thread_repo)
+    await _authorize_or_audit(
+        "threads.get",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
+        actor=actor,
+        resource=Resource(org_id=thread.org_id, owner_user_id=thread.created_by_user_id),
+        target_type="thread",
+        target_id=str(thread.id),
+    )
+
+    return ThreadResponse(
+        id=thread.id,
+        org_id=thread.org_id,
+        created_by_user_id=thread.created_by_user_id,
+        title=thread.title,
+        created_at=thread.created_at,
+    )
+
+
+@_v1_router.patch("/threads/{thread_id}", response_model=ThreadResponse)
+async def patch_thread(
+    thread_id: uuid.UUID,
+    request: Request,
+    body: UpdateThreadRequest,
+    actor: Actor = Depends(_get_current_actor),
+    authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
+    thread_repo: ThreadRepository = Depends(_get_thread_repo),
+) -> ThreadResponse:
+    thread = await _get_thread_or_404(thread_id=thread_id, thread_repo=thread_repo)
+    await _authorize_or_audit(
+        "threads.update",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
+        actor=actor,
+        resource=Resource(org_id=thread.org_id, owner_user_id=thread.created_by_user_id),
+        target_type="thread",
+        target_id=str(thread.id),
+    )
+
+    updated = await thread_repo.update_title(thread_id=thread.id, title=body.title)
+    if updated is None:
+        raise ApiError(code="threads.not_found", message="Thread 不存在", status_code=404)
+
+    return ThreadResponse(
+        id=updated.id,
+        org_id=updated.org_id,
+        created_by_user_id=updated.created_by_user_id,
+        title=updated.title,
+        created_at=updated.created_at,
     )
 
 

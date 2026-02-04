@@ -126,6 +126,25 @@ class ThreadRepository(ABC):
     @abstractmethod
     async def get_by_id(self, thread_id: uuid.UUID) -> Thread | None: ...
 
+    @abstractmethod
+    async def list_by_owner(
+        self,
+        *,
+        org_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        limit: int = 50,
+        before_created_at: datetime | None = None,
+        before_id: uuid.UUID | None = None,
+    ) -> list[Thread]: ...
+
+    @abstractmethod
+    async def update_title(
+        self,
+        *,
+        thread_id: uuid.UUID,
+        title: str | None,
+    ) -> Thread | None: ...
+
 
 class MessageRepository(ABC):
     @abstractmethod
@@ -185,6 +204,69 @@ class SqlAlchemyThreadRepository(ThreadRepository):
             )
             .where(_threads.c.id == thread_id)
             .limit(1)
+        )
+        row = (await self._session.execute(stmt)).mappings().one_or_none()
+        return None if row is None else Thread(**row)
+
+    async def list_by_owner(
+        self,
+        *,
+        org_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        limit: int = 50,
+        before_created_at: datetime | None = None,
+        before_id: uuid.UUID | None = None,
+    ) -> list[Thread]:
+        if limit <= 0:
+            raise ValueError("limit 必须为正数")
+
+        if (before_created_at is None) != (before_id is None):
+            raise ValueError("before_created_at 与 before_id 需要同时提供")
+
+        stmt = (
+            sa.select(
+                _threads.c.id,
+                _threads.c.org_id,
+                _threads.c.created_by_user_id,
+                _threads.c.title,
+                _threads.c.created_at,
+            )
+            .where(_threads.c.org_id == org_id)
+            .where(_threads.c.created_by_user_id == owner_user_id)
+        )
+
+        if before_created_at is not None and before_id is not None:
+            stmt = stmt.where(
+                sa.or_(
+                    _threads.c.created_at < before_created_at,
+                    sa.and_(
+                        _threads.c.created_at == before_created_at,
+                        _threads.c.id < before_id,
+                    ),
+                )
+            )
+
+        stmt = stmt.order_by(_threads.c.created_at.desc(), _threads.c.id.desc()).limit(limit)
+        rows = (await self._session.execute(stmt)).mappings().all()
+        return [Thread(**row) for row in rows]
+
+    async def update_title(
+        self,
+        *,
+        thread_id: uuid.UUID,
+        title: str | None,
+    ) -> Thread | None:
+        stmt = (
+            sa.update(_threads)
+            .where(_threads.c.id == thread_id)
+            .values(title=title)
+            .returning(
+                _threads.c.id,
+                _threads.c.org_id,
+                _threads.c.created_by_user_id,
+                _threads.c.title,
+                _threads.c.created_at,
+            )
         )
         row = (await self._session.execute(stmt)).mappings().one_or_none()
         return None if row is None else Thread(**row)

@@ -184,7 +184,7 @@
 - 验收：
   - integration pytest：完成 run 后，`GET /threads/{id}/messages` 能看到 assistant 消息。
 
-#### P35.1 — Threads API 完整化 v1（列表/详情/标题更新）
+#### P35.1 — Threads API 完整化 v1（列表/详情/标题更新）(已完成)
 - 目标：补齐 Chat 必需的 threads 端点，让 Web/CLI 能稳定管理会话：
   - `GET /v1/threads`：列出当前用户可见的 threads（最小分页/排序）。
   - `GET /v1/threads/{thread_id}`：获取 thread 详情（用于刷新恢复与校验）。
