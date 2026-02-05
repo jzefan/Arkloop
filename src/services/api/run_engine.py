@@ -11,6 +11,7 @@ from packages.data.threads import SqlAlchemyMessageRepository
 _EVENT_COMMIT_BATCH_SIZE = 20
 _EVENT_COMMIT_MAX_INTERVAL_SECONDS = 0.2
 _RUN_CANCEL_EVENT_TYPES: tuple[str, ...] = ("run.cancel_requested", "run.cancelled")
+_STREAMING_EVENT_TYPES: frozenset[str] = frozenset({"message.delta", "llm.response.chunk"})
 
 
 class RunEngine:
@@ -78,6 +79,7 @@ class RunEngine:
                     error_class=event.error_class,
                 )
                 pending_events_since_commit += 1
+                is_streaming_event = event.type in _STREAMING_EVENT_TYPES
                 if event.type == "message.delta":
                     delta = _extract_assistant_delta(event.data_json)
                     if delta is not None:
@@ -86,7 +88,7 @@ class RunEngine:
                     completed = True
                     continue
 
-                if event.type != "message.delta":
+                if not is_streaming_event:
                     await session.commit()
                     pending_events_since_commit = 0
                     last_commit_at = time.monotonic()

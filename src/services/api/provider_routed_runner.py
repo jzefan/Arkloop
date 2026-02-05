@@ -20,6 +20,26 @@ from packages.llm_gateway.gateway import LlmGateway
 from packages.llm_gateway.openai import OpenAiGatewayConfig, OpenAiLlmGateway
 from packages.llm_routing import ProviderCredential, ProviderRouteDenied, ProviderRouter
 
+_LLM_DEBUG_EVENTS_ENV = "ARKLOOP_LLM_DEBUG_EVENTS"
+_TRUTHY = {"1", "true", "yes", "y", "on"}
+_FALSY = {"0", "false", "no", "n", "off"}
+
+
+def _parse_bool(value: str) -> bool:
+    cleaned = value.strip().casefold()
+    if cleaned in _TRUTHY:
+        return True
+    if cleaned in _FALSY:
+        return False
+    raise ValueError("必须为布尔值（0/1、true/false）")
+
+
+def _llm_debug_events_enabled() -> bool:
+    raw = os.getenv(_LLM_DEBUG_EVENTS_ENV)
+    if not raw:
+        return False
+    return _parse_bool(raw)
+
 
 class OrgByokPolicy(Protocol):
     async def is_byok_enabled(self, *, org_id: uuid.UUID) -> bool: ...
@@ -38,6 +58,7 @@ class ProviderGatewayFactory(Protocol):
 class EnvProviderGatewayFactory:
     def __init__(self, *, stub_gateway: LlmGateway) -> None:
         self._stub_gateway = stub_gateway
+        self._emit_llm_debug_events = _llm_debug_events_enabled()
 
     def create(self, *, credential: ProviderCredential) -> LlmGateway:
         if credential.provider_kind == "stub":
@@ -56,6 +77,7 @@ class EnvProviderGatewayFactory:
                 api_key=api_key,
                 base_url=base_url,
                 api_mode=credential.openai_api_mode or "auto",
+                emit_llm_debug_events=self._emit_llm_debug_events,
             )
             return OpenAiLlmGateway(config=cfg)
 
@@ -65,6 +87,7 @@ class EnvProviderGatewayFactory:
                 api_key=api_key,
                 base_url=base_url,
                 advanced_json=dict(credential.advanced_json),
+                emit_llm_debug_events=self._emit_llm_debug_events,
             )
             return AnthropicLlmGateway(config=cfg)
 
