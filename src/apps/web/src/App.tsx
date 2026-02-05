@@ -18,8 +18,10 @@ import {
 } from './api'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useSSE } from './hooks/useSSE'
+import { LlmDebugPanel } from './components/LlmDebugPanel'
 import { RunEventsPanel } from './components/RunEventsPanel'
 import { SSEApiError } from './sse'
+import { selectFreshRunEvents } from './runEventProcessing'
 import {
   clearActiveThreadIdInStorage,
   readActiveThreadIdFromStorage,
@@ -230,6 +232,7 @@ function ChatMvp({
   const [sending, setSending] = useState(false)
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [showEvents, setShowEvents] = useState(false)
+  const [showDebug, setShowDebug] = useState(false)
 
   const [error, setError] = useState<AppError | null>(null)
 
@@ -361,6 +364,7 @@ function ChatMvp({
     setAssistantDraft('')
     setCancelSubmitting(false)
     setShowEvents(false)
+    setShowDebug(false)
     setActiveRunId(null)
     sse.disconnect()
     sse.clearEvents()
@@ -385,10 +389,12 @@ function ChatMvp({
 
   useEffect(() => {
     if (!activeRunId) return
-    if (sse.events.length <= processedEventCountRef.current) return
-
-    const fresh = sse.events.slice(processedEventCountRef.current)
-    processedEventCountRef.current = sse.events.length
+    const { fresh, nextProcessedCount } = selectFreshRunEvents({
+      events: sse.events,
+      activeRunId,
+      processedCount: processedEventCountRef.current,
+    })
+    processedEventCountRef.current = nextProcessedCount
 
     for (const event of fresh) {
       if (event.type === 'message.delta') {
@@ -655,43 +661,61 @@ function ChatMvp({
                 {showEvents ? '隐藏事件' : '显示事件'}
               </button>
             ) : null}
+
+            {activeRunId || sse.events.length > 0 ? (
+              <button
+                className="rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-200 hover:bg-slate-950/60"
+                onClick={() => setShowDebug((v) => !v)}
+                type="button"
+              >
+                {showDebug ? '隐藏调试' : '调试'}
+              </button>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-          {!activeThreadId ? (
-            <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/20 px-4 py-10 text-center text-sm text-slate-500">
-              选择一个会话，或点击“新建”开始聊天
-            </div>
-          ) : messagesLoading ? (
-            <div className="px-2 py-10 text-center text-sm text-slate-500">
-              加载消息中...
-            </div>
-          ) : (
-            <>
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={[
-                    'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm',
-                    msg.role === 'user'
-                      ? 'ml-auto bg-indigo-600/20 text-indigo-50 ring-1 ring-indigo-500/30'
-                      : 'mr-auto bg-slate-950/40 text-slate-100 ring-1 ring-slate-800',
-                  ].join(' ')}
-                >
-                  {msg.content}
-                </div>
-              ))}
+        <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            {!activeThreadId ? (
+              <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/20 px-4 py-10 text-center text-sm text-slate-500">
+                选择一个会话，或点击“新建”开始聊天
+              </div>
+            ) : messagesLoading ? (
+              <div className="px-2 py-10 text-center text-sm text-slate-500">
+                加载消息中...
+              </div>
+            ) : (
+              <>
+                {messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={[
+                      'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm',
+                      msg.role === 'user'
+                        ? 'ml-auto bg-indigo-600/20 text-indigo-50 ring-1 ring-indigo-500/30'
+                        : 'mr-auto bg-slate-950/40 text-slate-100 ring-1 ring-slate-800',
+                    ].join(' ')}
+                  >
+                    {msg.content}
+                  </div>
+                ))}
 
-              {assistantDraft ? (
-                <div className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-slate-950/40 px-4 py-3 text-sm text-slate-100 ring-1 ring-slate-800">
-                  {assistantDraft}
-                </div>
-              ) : null}
+                {assistantDraft ? (
+                  <div className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-slate-950/40 px-4 py-3 text-sm text-slate-100 ring-1 ring-slate-800">
+                    {assistantDraft}
+                  </div>
+                ) : null}
 
-              {terminalSseError ? <ErrorCallout error={terminalSseError} /> : null}
-            </>
-          )}
+                {terminalSseError ? <ErrorCallout error={terminalSseError} /> : null}
+              </>
+            )}
+          </div>
+
+          {showDebug && (activeRunId || sse.events.length > 0) ? (
+            <div className="w-[440px] shrink-0 overflow-y-auto border-l border-slate-800 p-4">
+              <LlmDebugPanel events={sse.events} onClear={sse.clearEvents} />
+            </div>
+          ) : null}
         </div>
 
         {showEvents && activeRunId ? (

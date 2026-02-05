@@ -33,6 +33,8 @@ function EventTypeTag({ type }: { type: string }) {
     'run.completed': 'bg-blue-900/60 text-blue-200',
     'run.failed': 'bg-rose-900/60 text-rose-200',
     'message.delta': 'bg-violet-900/60 text-violet-200',
+    'llm.request': 'bg-slate-700 text-slate-200',
+    'llm.response.chunk': 'bg-slate-700 text-slate-200',
     'tool.call': 'bg-amber-900/60 text-amber-200',
     'tool.result': 'bg-cyan-900/60 text-cyan-200',
   }
