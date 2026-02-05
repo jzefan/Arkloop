@@ -21,12 +21,28 @@ class InMemoryUserRepository:
         self._users: dict[uuid.UUID, User] = {}
 
     async def create(self, *, display_name: str) -> User:
-        user = User(id=uuid.uuid4(), display_name=display_name, created_at=datetime.now(timezone.utc))
+        user = User(
+            id=uuid.uuid4(),
+            display_name=display_name,
+            tokens_invalid_before=datetime.fromtimestamp(0, tz=timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
         self._users[user.id] = user
         return user
 
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         return self._users.get(user_id)
+
+    async def bump_tokens_invalid_before(self, *, user_id: uuid.UUID, tokens_invalid_before: datetime) -> None:
+        user = self._users.get(user_id)
+        if user is None:
+            return
+        self._users[user_id] = User(
+            id=user.id,
+            display_name=user.display_name,
+            tokens_invalid_before=max(user.tokens_invalid_before, tokens_invalid_before),
+            created_at=user.created_at,
+        )
 
 
 class InMemoryUserCredentialRepository:

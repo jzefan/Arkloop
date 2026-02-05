@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import uuid
 
 from packages.data.credentials import UserCredentialRepository
 from packages.data.identity import User, UserRepository
 
 from .password_hasher import PasswordHasher
-from .tokens import JwtAccessTokenService
+from .tokens import JwtAccessTokenService, TokenInvalidError, VerifiedAccessToken
 
 
 class InvalidCredentialsError(Exception):
@@ -50,12 +51,11 @@ class AuthService:
         return IssuedAccessToken(token=token, user_id=credential.user_id)
 
     async def refresh_access_token(self, *, token: str) -> IssuedAccessToken:
-        user_id = self.verify_access_token(token=token)
-        await self.get_user(user_id=user_id)
-        refreshed = self._token_service.issue(user_id=user_id)
-        return IssuedAccessToken(token=refreshed, user_id=user_id)
+        user = await self.authenticate_user(token=token)
+        refreshed = self._token_service.issue(user_id=user.id)
+        return IssuedAccessToken(token=refreshed, user_id=user.id)
 
-    def verify_access_token(self, *, token: str) -> uuid.UUID:
+    def verify_access_token(self, *, token: str) -> VerifiedAccessToken:
         return self._token_service.verify(token)
 
     async def get_user(self, *, user_id: uuid.UUID) -> User:
@@ -63,6 +63,20 @@ class AuthService:
         if user is None:
             raise UserNotFoundError(user_id=user_id)
         return user
+
+    async def authenticate_user(self, *, token: str) -> User:
+        verified = self.verify_access_token(token=token)
+        user = await self.get_user(user_id=verified.user_id)
+        if verified.issued_at < user.tokens_invalid_before:
+            raise TokenInvalidError("token 已失效")
+        return user
+
+    async def logout(self, *, user_id: uuid.UUID, now: datetime | None = None) -> None:
+        tokens_invalid_before = datetime.now(timezone.utc) if now is None else now
+        await self._user_repo.bump_tokens_invalid_before(
+            user_id=user_id,
+            tokens_invalid_before=tokens_invalid_before,
+        )
 
 
 __all__ = ["AuthService", "InvalidCredentialsError", "IssuedAccessToken", "UserNotFoundError"]

@@ -210,8 +210,7 @@ async def _get_current_user(
     token = _parse_bearer_token(request.headers.get("Authorization"))
 
     try:
-        user_id = auth_service.verify_access_token(token=token)
-        return await auth_service.get_user(user_id=user_id)
+        return await auth_service.authenticate_user(token=token)
     except TokenExpiredError as exc:
         raise ApiError(code="auth.token_expired", message=str(exc), status_code=401) from exc
     except TokenInvalidError as exc:
@@ -238,6 +237,10 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class LogoutResponse(BaseModel):
+    ok: bool = True
 
 
 class RegisterRequest(BaseModel):
@@ -348,6 +351,24 @@ async def refresh_token(
 
     await audit.write_token_refreshed(trace_id=trace_id, user_id=issued.user_id)
     return LoginResponse(access_token=issued.token, token_type="bearer")
+
+
+@_v1_router.post("/auth/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
+    current_user: User = Depends(_get_current_user),
+    auth_service: AuthService = Depends(_get_auth_service),
+    session: AsyncSession = Depends(get_db_session),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
+) -> LogoutResponse:
+    trace_id = _request_trace_id(request)
+
+    await auth_service.logout(user_id=current_user.id)
+    await session.commit()
+
+    await audit.write_logout(trace_id=trace_id, user_id=current_user.id)
+
+    return LogoutResponse()
 
 
 @_v1_router.post("/auth/register", response_model=RegisterResponse, status_code=201)

@@ -18,12 +18,28 @@ class InMemoryUserRepository:
         self._users: dict[uuid.UUID, User] = {}
 
     async def create(self, *, display_name: str) -> User:
-        user = User(id=uuid.uuid4(), display_name=display_name, created_at=datetime.now(timezone.utc))
+        user = User(
+            id=uuid.uuid4(),
+            display_name=display_name,
+            tokens_invalid_before=datetime.fromtimestamp(0, tz=timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
         self._users[user.id] = user
         return user
 
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         return self._users.get(user_id)
+
+    async def bump_tokens_invalid_before(self, *, user_id: uuid.UUID, tokens_invalid_before: datetime) -> None:
+        user = self._users.get(user_id)
+        if user is None:
+            return
+        self._users[user_id] = User(
+            id=user.id,
+            display_name=user.display_name,
+            tokens_invalid_before=max(user.tokens_invalid_before, tokens_invalid_before),
+            created_at=user.created_at,
+        )
 
 
 class InMemoryUserCredentialRepository:
@@ -166,4 +182,41 @@ def test_refresh_rejects_invalid_token(monkeypatch) -> None:
             "/v1/auth/refresh",
             headers={"Authorization": "Bearer not-a-jwt"},
         )
+    _assert_auth_error_has_trace_id(response, expected_code="auth.invalid_token")
+
+
+def test_refresh_rejects_logged_out_token(monkeypatch) -> None:
+    monkeypatch.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+
+    app = configure_app()
+
+    user_repo = InMemoryUserRepository()
+    credential_repo = InMemoryUserCredentialRepository()
+
+    async def _override_user_repo() -> InMemoryUserRepository:
+        return user_repo
+
+    async def _override_credential_repo() -> InMemoryUserCredentialRepository:
+        return credential_repo
+
+    app.dependency_overrides[api_v1._get_user_repo] = _override_user_repo
+    app.dependency_overrides[api_v1._get_credential_repo] = _override_credential_repo
+
+    installed_auth = getattr(app.state, "auth", None)
+    assert installed_auth is not None
+    token_service = installed_auth.token_service
+
+    async def _seed() -> str:
+        user = await user_repo.create(display_name="Alice")
+        old_token = token_service.issue(user_id=user.id, now=datetime.now(timezone.utc) - timedelta(seconds=10))
+        await user_repo.bump_tokens_invalid_before(
+            user_id=user.id,
+            tokens_invalid_before=datetime.now(timezone.utc),
+        )
+        return old_token
+
+    token = anyio.run(_seed)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/auth/refresh", headers={"Authorization": f"Bearer {token}"})
     _assert_auth_error_has_trace_id(response, expected_code="auth.invalid_token")

@@ -87,6 +87,33 @@ class AuditLogWriter:
             metadata_json={},
         )
 
+    async def write_logout(self, *, trace_id: str, user_id: uuid.UUID) -> None:
+        if self.database is None:
+            return
+        async with self.database.sessionmaker() as session:
+            try:
+                membership_repo = SqlAlchemyOrgMembershipRepository(session)
+                membership = await membership_repo.get_default_for_user(user_id=user_id)
+                org_id = None if membership is None else membership.org_id
+
+                repo = SqlAlchemyAuditLogRepository(session)
+                await repo.create(
+                    org_id=org_id,
+                    actor_user_id=user_id,
+                    action="auth.logout",
+                    target_type="user",
+                    target_id=str(user_id),
+                    trace_id=trace_id,
+                    metadata_json={},
+                )
+                await session.commit()
+            except Exception:
+                try:
+                    await session.rollback()
+                except Exception:
+                    _logger.exception("回滚登出审计失败", extra={"user_id": str(user_id)})
+                _logger.exception("写入登出审计失败", extra={"user_id": str(user_id)})
+
     async def write_user_registered(self, *, trace_id: str, user_id: uuid.UUID, login: str) -> None:
         if self.database is None:
             return

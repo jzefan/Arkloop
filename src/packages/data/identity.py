@@ -42,6 +42,12 @@ _users = sa.Table(
     ),
     sa.Column("display_name", sa.Text(), nullable=False),
     sa.Column(
+        "tokens_invalid_before",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.text("to_timestamp(0)"),
+    ),
+    sa.Column(
         "created_at",
         sa.TIMESTAMP(timezone=True),
         nullable=False,
@@ -80,6 +86,7 @@ class Org:
 class User:
     id: uuid.UUID
     display_name: str
+    tokens_invalid_before: datetime
     created_at: datetime
 
 
@@ -109,6 +116,9 @@ class UserRepository(ABC):
 
     @abstractmethod
     async def get_by_id(self, user_id: uuid.UUID) -> User | None: ...
+
+    @abstractmethod
+    async def bump_tokens_invalid_before(self, *, user_id: uuid.UUID, tokens_invalid_before: datetime) -> None: ...
 
 
 class OrgMembershipRepository(ABC):
@@ -158,17 +168,41 @@ class SqlAlchemyUserRepository(UserRepository):
         stmt = (
             sa.insert(_users)
             .values(display_name=display_name)
-            .returning(_users.c.id, _users.c.display_name, _users.c.created_at)
+            .returning(
+                _users.c.id,
+                _users.c.display_name,
+                _users.c.tokens_invalid_before,
+                _users.c.created_at,
+            )
         )
         row = (await self._session.execute(stmt)).mappings().one()
         return User(**row)
 
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
-        stmt = sa.select(_users.c.id, _users.c.display_name, _users.c.created_at).where(
-            _users.c.id == user_id
+        stmt = (
+            sa.select(
+                _users.c.id,
+                _users.c.display_name,
+                _users.c.tokens_invalid_before,
+                _users.c.created_at,
+            )
+            .where(_users.c.id == user_id)
         )
         row = (await self._session.execute(stmt)).mappings().one_or_none()
         return None if row is None else User(**row)
+
+    async def bump_tokens_invalid_before(self, *, user_id: uuid.UUID, tokens_invalid_before: datetime) -> None:
+        stmt = (
+            sa.update(_users)
+            .where(_users.c.id == user_id)
+            .values(
+                tokens_invalid_before=sa.func.greatest(
+                    _users.c.tokens_invalid_before,
+                    tokens_invalid_before,
+                )
+            )
+        )
+        await self._session.execute(stmt)
 
 
 class SqlAlchemyOrgMembershipRepository(OrgMembershipRepository):
