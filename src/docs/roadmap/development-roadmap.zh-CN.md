@@ -66,7 +66,7 @@
 - 主线 B：让企业能“真正管理”（Console + 权限 + 审计 + Key 管控）
 
 推荐执行顺序（不强制，但能减少互相阻塞）：
-- 主线 A：P30 → P31 → P32 → P33 → P34 → P35 → P35.1 → P35.2 → P35.3 → P36
+- 主线 A：P30 → P31 → P32 → P33 → P34 → P35 → P35.1 → P35.2 → P35.3 → P35.4 → P35.5 → P35.6 → P36
 - 主线 B：P40 → P41 → P42 → P60 → P43 → P62 → P44 → P45 → P46
 
 ### 3.1 已完成（仓库现状对应的 Pxx）
@@ -217,12 +217,45 @@
 - 验收：
   - integration pytest：logout 后旧 token 访问受保护接口被拒绝；重新登录或 refresh 后的新 token 可正常访问。
 
+#### P35.4 — Runs API 完整化 v1（run 详情读取）
+- 目标：补齐 Web Chat 刷新恢复与排障所需的 run 读取端点：
+  - `GET /v1/runs/{run_id}`：返回 run 元数据（`run_id/thread_id/status/created_at/...`），用于刷新后校验与展示。
+- 关键点：
+  - 权限边界与 `GET /v1/runs/{run_id}/events` 一致：同 org + owner-only；拒绝要写审计，并返回稳定错误码与 `trace_id`。
+  - `runs.status` 必须可解释：优先由 `run_events` 推导（例如读取最后一个终态事件），或在写入终态事件时同步更新（二选一，写死并测试）。
+  - 错误码稳定：`runs.not_found`、`policy.denied`、`auth.*`；响应与 header 都应包含 `trace_id`。
+- 依赖：P20（run_events）+ P21（鉴权/审计）
+- 验收：
+  - integration pytest：创建 run 后可 `GET /v1/runs/{id}`；越权/跨 org 被拒绝且 `code + trace_id` 可读；不存在返回 404 `runs.not_found`。
+
+#### P35.5 — Run Cancel v1（停止生成/幂等）
+- 目标：提供 `POST /v1/runs/{run_id}:cancel`，允许 Web/CLI 主动停止生成，并形成可回放事件。
+- 关键点：
+  - 取消必须幂等：重复调用不报错；对同一 run 的取消事件语义稳定（避免前端因重复事件产生抖动）。
+  - 事件流同源：取消必须落 `run_events`（建议 `run.cancel_requested` + 最终 `run.cancelled`），并保证 `seq` 单调递增。
+  - 尽量停止执行：executor/runner 需识别取消信号，至少保证取消后不再写入新的 `message.delta`。
+  - 审计：记录 actor、run_id、trace_id；不记录敏感明文。
+- 依赖：P20、P21、P31
+- 验收：
+  - integration pytest：对运行中的 run 调用 cancel 后，事件流出现取消事件且后续不再产生新 delta；重复 cancel 仍 200；无权限返回 403 且 `trace_id` 可定位。
+
+#### P35.6 — Thread 最近 Run 查询 v1（刷新恢复增强，可选但建议）
+- 目标：提供“从 thread 找回 run”的后端能力，降低仅依赖前端本地持久化的脆弱性：
+  - `GET /v1/threads/{thread_id}/runs?limit=...`：按时间倒序返回 run 列表（至少 `run_id/status/created_at`），用于刷新恢复与“是否仍在生成”的判断。
+- 关键点：
+  - 列表排序稳定：默认按 `created_at desc, id desc`；不使用 offset 分页。
+  - 权限边界与 thread 一致；跨 org/跨 owner 不泄漏。
+  - `status` 语义与 P35.4 保持一致（推导或同步更新，不能两套口径）。
+- 依赖：P35.1 + P35.4
+- 验收：
+  - integration pytest：同 thread 创建多次 run 后顺序稳定；跨 thread/跨 org 不返回数据；错误码与 `trace_id` 可定位。
+
 #### P36 — Web Chat MVP（从演示页走向可用页）
 - 目标：Web 侧提供最小可用聊天体验：线程、消息列表、输入框、流式渲染、刷新后恢复。
 - 关键点：
   - SSE 断线重连用 `after_seq`，前端只做消费与展示，不拼接敏感策略。
   - 错误展示要能定位：至少显示 `code` + `trace_id`。
-- 依赖：P35、P35.1、P35.2、P35.3
+- 依赖：P35、P35.1、P35.2、P35.3、P35.4；建议完成 P35.5（可停止生成）与 P35.6（刷新恢复增强）
 - 验收：
   - 手工：正常对话、断线重连、刷新恢复。
   - unit/组件测试：关键 hook（SSE parser、重连策略）有基础覆盖。
