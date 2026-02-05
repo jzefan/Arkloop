@@ -151,6 +151,17 @@ export async function getMe(accessToken: string): Promise<MeResponse> {
   })
 }
 
+export type LogoutResponse = {
+  ok: boolean
+}
+
+export async function logout(accessToken: string): Promise<LogoutResponse> {
+  return await apiFetch<LogoutResponse>('/v1/auth/logout', {
+    method: 'POST',
+    accessToken,
+  })
+}
+
 // Threads API
 
 export type CreateThreadRequest = {
@@ -173,6 +184,27 @@ export async function createThread(
     method: 'POST',
     accessToken,
     body: JSON.stringify(req ?? {}),
+  })
+}
+
+export type ListThreadsRequest = {
+  limit?: number
+  before_created_at?: string
+  before_id?: string
+}
+
+export async function listThreads(
+  accessToken: string,
+  req?: ListThreadsRequest,
+): Promise<ThreadResponse[]> {
+  const sp = new URLSearchParams()
+  if (req?.limit) sp.set('limit', String(req.limit))
+  if (req?.before_created_at) sp.set('before_created_at', req.before_created_at)
+  if (req?.before_id) sp.set('before_id', req.before_id)
+  const suffix = sp.toString() ? `?${sp.toString()}` : ''
+  return await apiFetch<ThreadResponse[]>(`/v1/threads${suffix}`, {
+    method: 'GET',
+    accessToken,
   })
 }
 
@@ -230,6 +262,40 @@ export async function createRun(
   threadId: string,
 ): Promise<CreateRunResponse> {
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
+    method: 'POST',
+    accessToken,
+  })
+}
+
+export type ThreadRunResponse = {
+  run_id: string
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  created_at: string
+}
+
+export async function listThreadRuns(
+  accessToken: string,
+  threadId: string,
+  limit = 50,
+): Promise<ThreadRunResponse[]> {
+  return await apiFetch<ThreadRunResponse[]>(
+    `/v1/threads/${threadId}/runs?limit=${limit}`,
+    {
+      method: 'GET',
+      accessToken,
+    },
+  )
+}
+
+export type CancelRunResponse = {
+  ok: boolean
+}
+
+export async function cancelRun(
+  accessToken: string,
+  runId: string,
+): Promise<CancelRunResponse> {
+  return await apiFetch<CancelRunResponse>(`/v1/runs/${runId}:cancel`, {
     method: 'POST',
     accessToken,
   })

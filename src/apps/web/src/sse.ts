@@ -3,6 +3,8 @@
  * 支持 after_seq 断线续传
  */
 
+const TRACE_ID_HEADER = 'X-Trace-Id'
+
 export type SSEEvent = {
   id?: string
   event?: string
@@ -22,6 +24,35 @@ export type RunEvent = {
 
 export type SSEClientState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'error'
 
+type ErrorEnvelope = {
+  code?: unknown
+  message?: unknown
+  details?: unknown
+  trace_id?: unknown
+}
+
+export class SSEApiError extends Error {
+  readonly status: number
+  readonly code?: string
+  readonly traceId?: string
+  readonly details?: unknown
+
+  constructor(params: {
+    status: number
+    message: string
+    code?: string
+    traceId?: string
+    details?: unknown
+  }) {
+    super(params.message)
+    this.name = 'SSEApiError'
+    this.status = params.status
+    this.code = params.code
+    this.traceId = params.traceId
+    this.details = params.details
+  }
+}
+
 export type SSEClientOptions = {
   url: string
   accessToken: string
@@ -32,6 +63,16 @@ export type SSEClientOptions = {
   onError?: (error: Error) => void
   maxRetries?: number
   retryDelayMs?: number
+}
+
+async function readJsonSafely(response: Response): Promise<unknown | null> {
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -150,11 +191,21 @@ export class SSEClient {
 
       const error = err instanceof Error ? err : new Error(String(err))
 
-      // 非中止错误才重试
-      if (error.name !== 'AbortError') {
-        this.options.onError?.(error)
-        await this.scheduleRetry()
+      if (error.name === 'AbortError') return
+
+      this.options.onError?.(error)
+
+      const isNonRetryableClientError =
+        error instanceof SSEApiError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 429
+      if (isNonRetryableClientError) {
+        this.setState('error')
+        return
       }
+
+      await this.scheduleRetry()
     }
   }
 
@@ -176,7 +227,30 @@ export class SSEClient {
     })
 
     if (!response.ok) {
-      throw new Error(`SSE 连接失败: HTTP ${response.status}`)
+      const headerTraceId = response.headers.get(TRACE_ID_HEADER) ?? undefined
+      const payload = await readJsonSafely(response)
+      if (payload && typeof payload === 'object') {
+        const env = payload as ErrorEnvelope
+        const traceId =
+          typeof env.trace_id === 'string' ? env.trace_id : headerTraceId
+        const code = typeof env.code === 'string' ? env.code : undefined
+        const message =
+          typeof env.message === 'string'
+            ? env.message
+            : `SSE 连接失败（HTTP ${response.status}）`
+        throw new SSEApiError({
+          status: response.status,
+          message,
+          code,
+          traceId,
+          details: env.details,
+        })
+      }
+      throw new SSEApiError({
+        status: response.status,
+        message: `SSE 连接失败（HTTP ${response.status}）`,
+        traceId: headerTraceId,
+      })
     }
 
     if (!response.body) {

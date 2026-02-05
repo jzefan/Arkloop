@@ -1,10 +1,4 @@
-export type RunDemoSession = {
-  threadId: string
-  runId: string
-  traceId: string
-}
-
-const RUN_DEMO_SESSION_KEY = 'arkloop:web:run_demo_session'
+const ACTIVE_THREAD_ID_KEY = 'arkloop:web:active_thread_id'
 
 function canUseLocalStorage(): boolean {
   try {
@@ -16,6 +10,36 @@ function canUseLocalStorage(): boolean {
 
 function lastSeqStorageKey(runId: string): string {
   return `arkloop:sse:last_seq:${runId}`
+}
+
+export function readActiveThreadIdFromStorage(): string | null {
+  if (!canUseLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(ACTIVE_THREAD_ID_KEY)
+    if (!raw) return null
+    return raw.trim() ? raw : null
+  } catch {
+    return null
+  }
+}
+
+export function writeActiveThreadIdToStorage(threadId: string): void {
+  if (!canUseLocalStorage()) return
+  if (!threadId.trim()) return
+  try {
+    localStorage.setItem(ACTIVE_THREAD_ID_KEY, threadId)
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export function clearActiveThreadIdInStorage(): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.removeItem(ACTIVE_THREAD_ID_KEY)
+  } catch {
+    // 忽略存储失败
+  }
 }
 
 export function readLastSeqFromStorage(runId: string): number {
@@ -48,41 +72,3 @@ export function clearLastSeqInStorage(runId: string): void {
     // 忽略存储失败
   }
 }
-
-export function readRunDemoSession(): RunDemoSession | null {
-  if (!canUseLocalStorage()) return null
-  try {
-    const raw = localStorage.getItem(RUN_DEMO_SESSION_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') return null
-
-    const obj = parsed as Partial<RunDemoSession>
-    if (!obj.runId || typeof obj.runId !== 'string' || obj.runId.length === 0) return null
-    if (!obj.threadId || typeof obj.threadId !== 'string' || obj.threadId.length === 0) return null
-    if (!obj.traceId || typeof obj.traceId !== 'string' || obj.traceId.length === 0) return null
-
-    return { runId: obj.runId, threadId: obj.threadId, traceId: obj.traceId }
-  } catch {
-    return null
-  }
-}
-
-export function writeRunDemoSession(session: RunDemoSession): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.setItem(RUN_DEMO_SESSION_KEY, JSON.stringify(session))
-  } catch {
-    // 忽略存储失败
-  }
-}
-
-export function clearRunDemoSession(): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.removeItem(RUN_DEMO_SESSION_KEY)
-  } catch {
-    // 忽略存储失败
-  }
-}
-
