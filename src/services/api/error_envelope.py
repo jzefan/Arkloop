@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
+
+from packages.observability.context import trace_id_context
 
 from .trace import TRACE_ID_HEADER, new_trace_id
 
@@ -107,6 +110,8 @@ def install_error_handlers(app: FastAPI) -> None:
 
 
 def install_unhandled_exception_middleware(app: FastAPI) -> None:
+    logger = logging.getLogger("arkloop.api")
+
     @app.middleware("http")
     async def _unhandled_exception_middleware(
         request: Request,
@@ -116,6 +121,15 @@ def install_unhandled_exception_middleware(app: FastAPI) -> None:
             return await call_next(request)
         except Exception:
             trace_id = _ensure_trace_id(request)
+            with trace_id_context(trace_id):
+                logger.exception(
+                    "unhandled exception",
+                    extra={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "query_params": dict(request.query_params),
+                    },
+                )
             return _error_response(
                 status_code=500,
                 code="internal_error",
