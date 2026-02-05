@@ -305,6 +305,10 @@ class RunResponse(BaseModel):
     trace_id: str
 
 
+class CancelRunResponse(BaseModel):
+    ok: bool = True
+
+
 class CreateRunRequest(BaseModel):
     route_id: str | None = Field(
         default=None,
@@ -740,6 +744,42 @@ async def get_run(
         created_at=run.created_at,
         trace_id=_request_trace_id(request),
     )
+
+
+@_v1_router.post("/runs/{run_id}:cancel", response_model=CancelRunResponse)
+async def cancel_run(
+    run_id: uuid.UUID,
+    request: Request,
+    actor: Actor = Depends(_get_current_actor),
+    authorizer: Authorizer = Depends(_get_authorizer),
+    audit: AuditLogWriter = Depends(get_audit_log_writer),
+    run_event_repo: RunEventRepository = Depends(_get_run_event_repo),
+    session: AsyncSession = Depends(get_db_session),
+) -> CancelRunResponse:
+    run = await run_event_repo.get_run(run_id=run_id)
+    if run is None:
+        raise ApiError(code="runs.not_found", message="Run 不存在", status_code=404)
+
+    await _authorize_or_audit(
+        "runs.cancel",
+        request=request,
+        authorizer=authorizer,
+        audit=audit,
+        actor=actor,
+        resource=Resource(org_id=run.org_id, owner_user_id=run.created_by_user_id),
+        target_type="run",
+        target_id=str(run.id),
+    )
+
+    trace_id = _request_trace_id(request)
+    await run_event_repo.request_cancel(
+        run_id=run.id,
+        requested_by_user_id=actor.user_id,
+        trace_id=trace_id,
+    )
+    await session.commit()
+    await audit.write_run_cancel_requested(trace_id=trace_id, actor=actor, run_id=run.id)
+    return CancelRunResponse()
 
 
 def _to_rfc3339_millis_z(value: datetime) -> str:

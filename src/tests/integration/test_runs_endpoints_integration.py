@@ -169,6 +169,29 @@ async def _wait_for_stub_events(
         await database.dispose()
 
 
+async def _wait_for_min_deltas(
+    sqlalchemy_url: str,
+    run_id: uuid.UUID,
+    min_deltas: int,
+    timeout_seconds: float = 5.0,
+) -> list:
+    database = Database.from_config(DatabaseConfig(url=sqlalchemy_url))
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            async with database.sessionmaker() as session:
+                repo = SqlAlchemyRunEventRepository(session)
+                events = await repo.list_events(run_id=run_id, after_seq=0)
+            delta_count = sum(1 for item in events if item.type == "message.delta")
+            if delta_count >= min_deltas:
+                return events
+            if time.monotonic() > deadline:
+                raise AssertionError("等待 message.delta 超时")
+            await anyio.sleep(0.02)
+    finally:
+        await database.dispose()
+
+
 async def _wait_for_final_event(
     sqlalchemy_url: str,
     run_id: uuid.UUID,
@@ -387,6 +410,103 @@ def test_get_run_returns_status_and_enforces_policy(monkeypatch) -> None:
                 missing_payload = missing.json()
                 assert missing_payload["code"] == "runs.not_found"
                 assert missing_payload["trace_id"] == missing.headers[TRACE_ID_HEADER]
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_cancel_run_writes_cancel_events_and_stops_deltas(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_runs_cancel_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "50")
+            m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0.05")
+            command.upgrade(alembic_cfg, "head")
+
+            alice_login = "alice"
+            alice_password = "pwdpwdpwd"
+            bob_login = "bob"
+            bob_password = "pwdpwdpwd"
+            anyio.run(
+                _seed_org_with_users,
+                test_sqlalchemy_url,
+                [
+                    (alice_login, alice_password, "Alice"),
+                    (bob_login, bob_password, "Bob"),
+                ],
+            )
+
+            app = configure_app()
+            with TestClient(app) as client:
+                alice_auth = client.post(
+                    "/v1/auth/login",
+                    json={"login": alice_login, "password": alice_password},
+                )
+                assert alice_auth.status_code == 200
+                alice_token = alice_auth.json()["access_token"]
+                alice_headers = {"Authorization": f"Bearer {alice_token}"}
+
+                bob_auth = client.post(
+                    "/v1/auth/login",
+                    json={"login": bob_login, "password": bob_password},
+                )
+                assert bob_auth.status_code == 200
+                bob_token = bob_auth.json()["access_token"]
+                bob_headers = {"Authorization": f"Bearer {bob_token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=alice_headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+
+                run_resp = client.post(f"/v1/threads/{thread_id}/runs", headers=alice_headers)
+                assert run_resp.status_code == 201
+                run_id = uuid.UUID(run_resp.json()["run_id"])
+
+                anyio.run(_wait_for_min_deltas, test_sqlalchemy_url, run_id, 2)
+
+                denied = client.post(f"/v1/runs/{run_id}:cancel", headers=bob_headers)
+                assert denied.status_code == 403
+                denied_payload = denied.json()
+                assert denied_payload["code"] == "policy.denied"
+                assert denied_payload["trace_id"] == denied.headers[TRACE_ID_HEADER]
+
+                cancel1 = client.post(f"/v1/runs/{run_id}:cancel", headers=alice_headers)
+                assert cancel1.status_code == 200
+                assert cancel1.json()["ok"] is True
+                assert TRACE_ID_HEADER in cancel1.headers
+                assert cancel1.headers[TRACE_ID_HEADER]
+
+                cancel2 = client.post(f"/v1/runs/{run_id}:cancel", headers=alice_headers)
+                assert cancel2.status_code == 200
+                assert cancel2.json()["ok"] is True
+
+                events = anyio.run(_wait_for_final_event, test_sqlalchemy_url, run_id, "run.cancelled")
+                types = [event.type for event in events]
+                assert types[-1] == "run.cancelled"
+                assert types.count("run.cancel_requested") == 1
+                assert types.count("run.cancelled") == 1
+                assert "run.completed" not in types
+
+                cancel_requested_seq = next(
+                    event.seq for event in events if event.type == "run.cancel_requested"
+                )
+                delta_seqs = [event.seq for event in events if event.type == "message.delta"]
+                assert delta_seqs
+                assert all(seq < cancel_requested_seq for seq in delta_seqs)
     finally:
         anyio.run(_drop_database, admin_dsn, database)
 

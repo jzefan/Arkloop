@@ -10,6 +10,7 @@ from packages.data.threads import SqlAlchemyMessageRepository
 
 _EVENT_COMMIT_BATCH_SIZE = 20
 _EVENT_COMMIT_MAX_INTERVAL_SECONDS = 0.2
+_RUN_CANCEL_EVENT_TYPES: tuple[str, ...] = ("run.cancel_requested", "run.cancelled")
 
 
 class RunEngine:
@@ -23,6 +24,18 @@ class RunEngine:
             run = await repo.get_run(run_id=run_id)
             if run is None:
                 raise RunNotFoundError(run_id=run_id)
+
+            cancel_type = await repo.get_latest_event_type(run_id=run_id, types=_RUN_CANCEL_EVENT_TYPES)
+            if cancel_type == "run.cancelled":
+                return
+            if cancel_type == "run.cancel_requested":
+                await repo.append_event(
+                    run_id=run_id,
+                    type="run.cancelled",
+                    data_json={"trace_id": trace_id},
+                )
+                await session.commit()
+                return
 
             started_event = await repo.list_events(run_id=run_id, after_seq=0, limit=1)
             input_json: dict[str, object] = {
@@ -42,6 +55,20 @@ class RunEngine:
             pending_events_since_commit = 0
             last_commit_at = time.monotonic()
             async for event in self._runner.run(context=context):
+                await repo.lock_run_row(run_id=run_id)
+                cancel_type = await repo.get_latest_event_type(run_id=run_id, types=_RUN_CANCEL_EVENT_TYPES)
+                if cancel_type == "run.cancel_requested":
+                    await repo.append_event(
+                        run_id=run_id,
+                        type="run.cancelled",
+                        data_json={"trace_id": trace_id},
+                    )
+                    await session.commit()
+                    return
+                if cancel_type == "run.cancelled":
+                    await session.commit()
+                    return
+
                 await repo.append_event(
                     run_id=run_id,
                     ts=event.ts,

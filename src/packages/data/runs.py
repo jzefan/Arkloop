@@ -167,6 +167,15 @@ class RunEventRepository(ABC):
     ) -> RunEvent: ...
 
     @abstractmethod
+    async def request_cancel(
+        self,
+        *,
+        run_id: uuid.UUID,
+        requested_by_user_id: uuid.UUID | None,
+        trace_id: str,
+    ) -> RunEvent | None: ...
+
+    @abstractmethod
     async def list_events(
         self,
         *,
@@ -273,6 +282,39 @@ class SqlAlchemyRunEventRepository(RunEventRepository):
                 error_class=error_class,
             )
 
+    async def request_cancel(
+        self,
+        *,
+        run_id: uuid.UUID,
+        requested_by_user_id: uuid.UUID | None,
+        trace_id: str,
+    ) -> RunEvent | None:
+        async with self._session.begin_nested():
+            await self.lock_run_row(run_id=run_id)
+
+            terminal = await self.get_latest_event_type(
+                run_id=run_id,
+                types=("run.completed", "run.failed", "run.cancelled"),
+            )
+            if terminal is not None:
+                return None
+
+            existing = await self.get_latest_event_type(
+                run_id=run_id,
+                types=("run.cancel_requested", "run.cancelled"),
+            )
+            if existing is not None:
+                return None
+
+            data_json: dict[str, Any] = {"trace_id": trace_id}
+            if requested_by_user_id is not None:
+                data_json["requested_by_user_id"] = str(requested_by_user_id)
+            return await self._insert_event(
+                run_id=run_id,
+                type="run.cancel_requested",
+                data_json=data_json,
+            )
+
     async def list_events(
         self,
         *,
@@ -301,6 +343,12 @@ class SqlAlchemyRunEventRepository(RunEventRepository):
         )
         rows = (await self._session.execute(stmt)).mappings().all()
         return [RunEvent(**row) for row in rows]
+
+    async def lock_run_row(self, *, run_id: uuid.UUID) -> None:
+        stmt = sa.select(_runs.c.id).where(_runs.c.id == run_id).with_for_update()
+        row = (await self._session.execute(stmt)).one_or_none()
+        if row is None:
+            raise RunNotFoundError(run_id=run_id)
 
     async def _allocate_seq(self, *, run_id: uuid.UUID) -> int:
         stmt = (

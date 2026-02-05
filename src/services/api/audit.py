@@ -114,6 +114,23 @@ class AuditLogWriter:
                     _logger.exception("回滚登出审计失败", extra={"user_id": str(user_id)})
                 _logger.exception("写入登出审计失败", extra={"user_id": str(user_id)})
 
+    async def write_run_cancel_requested(
+        self,
+        *,
+        trace_id: str,
+        actor: Actor,
+        run_id: uuid.UUID,
+    ) -> None:
+        await self._write(
+            org_id=actor.org_id,
+            actor_user_id=actor.user_id,
+            action="runs.cancel",
+            target_type="run",
+            target_id=str(run_id),
+            trace_id=trace_id,
+            metadata_json={"result": "requested"},
+        )
+
     async def write_user_registered(self, *, trace_id: str, user_id: uuid.UUID, login: str) -> None:
         if self.database is None:
             return

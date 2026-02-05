@@ -228,7 +228,7 @@
 - 验收：
   - integration pytest：创建 run 后可 `GET /v1/runs/{id}`；越权/跨 org 被拒绝且 `code + trace_id` 可读；不存在返回 404 `runs.not_found`。
 
-#### P35.5 — Run Cancel v1（停止生成/幂等）
+#### P35.5 — Run Cancel v1（停止生成/幂等）(已完成)
 - 目标：提供 `POST /v1/runs/{run_id}:cancel`，允许 Web/CLI 主动停止生成，并形成可回放事件。
 - 关键点：
   - 取消必须幂等：重复调用不报错；对同一 run 的取消事件语义稳定（避免前端因重复事件产生抖动）。
