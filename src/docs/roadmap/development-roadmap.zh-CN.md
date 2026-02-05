@@ -207,7 +207,7 @@
 - 验收：
   - unit pytest：有效 token 可 refresh 并获得新 token；过期/无效 token 返回 401 且 `code + trace_id` 可读。
 
-#### P35.3 — Logout v1（明确 token 失效策略）
+#### P35.3 — Logout v1（明确 token 失效策略）(已完成)
 - 目标：提供 `POST /v1/auth/logout`，并定义“登出后 token 何时失效”的稳定策略，保证 Web/CLI 行为一致且可审计。
 - 关键点：
   - 不能只做前端清 token：需要服务端可验证的失效策略（例如 `users.tokens_invalid_before` 或 `users.token_version`），避免泄露 token 后无法止损。
