@@ -46,6 +46,89 @@
 - Azure OpenAI 等“协议相近但不完全一致”的接入不作为 v1 目标；后期可以新增一个 provider（而不是强行塞进 OpenAI-compatible）。
 - Vault：作为长期路线；前期不实现 Vault 兼容层代码，但在数据模型与服务边界上保留“迁移点”（见后续 P9x）。
 
+### 1.5 部署与服务边界（API / Worker / Console 分离策略）
+
+架构决策不是性能优化，是地基。以下边界必须在编码前固定，避免后续从"胖进程"里拆分的返工成本。
+
+- **API 服务（`src/services/api/`）只做编排，不执行 Agent Loop**：
+  - 职责：HTTP 端点（Chat + Console 管理）、SSE 推送（从 `run_events` 表读取）、任务下发（投递 job 到队列）。
+  - 不 import `AgentLoop`、不调用 `LlmGateway.stream()`、不执行任何 `ToolExecutor`。
+  - Console 的管理类端点（审计查询、凭证管理、org 设置、模型目录）全部在 API 服务内，是普通 CRUD，和 Agent 执行无关。
+- **Worker 服务（`src/services/worker/`）消费队列，执行 Agent Loop**：
+  - 职责：从任务队列取 job -> 运行 `RunEngine`（AgentLoop + ToolExecutor）-> 写 `run_events`。
+  - 所有工具执行（web_search、web_fetch、echo、noop、未来的 shell/code_execute）都在 Worker 内发生。
+  - Worker 是无状态的，水平扩缩容 = 加实例数（k8s HPA / docker compose replicas）。
+  - 多用户并发 = 队列里多个 job 分配给 N 个 Worker 实例。
+- **`agent-core`（`src/packages/agent_core/`）是纯逻辑层**：
+  - 不触网、不读写文件、不起进程（已在 `skills-and-tools.zh-CN.md` 约定）。
+  - 不关心自己跑在 API 进程还是 Worker 进程里。
+- **当前过渡状态**：
+  - `InProcessStubRunExecutor` 在 API 进程内通过 `asyncio.Queue` 直接执行 `RunEngine`，这是为了开发调试方便。
+  - 在引入真实外部 I/O 工具（P55 web_search / P56 web_fetch）时，必须完成 Worker 迁移（见 P54.5）。
+  - 迁移路径：把 `InProcessStubRunExecutor._execute()` 的逻辑搬到 `Worker.handle_job()` 调用 `RunEngine.execute()`，API 侧改为往队列投递 job payload。
+- **未来扩展（不在当前阶段实现，但架构必须兼容）**：
+  - sub-agent 并行调用多个工具（例如同时跑 10-20 个 web_fetch）：Worker 内部用 `asyncio.gather()` + `asyncio.Semaphore` 限流，不需要额外服务。
+  - 当单 Worker 的并发 I/O 成为瓶颈时（信号：连接池打满影响 LLM 调用延迟），可以引入 `RemoteToolExecutor`，把工具执行通过消息队列委托给独立的 tool execution service。`ToolExecutor` 协议已经是异步的，上层 `DispatchingToolExecutor` 不需要改动。
+  - Sandbox 执行（P91 的 shell/code_execute）天然需要独立容器/nsjail，走的是 `SandboxToolExecutor` 实现，和进程内工具执行是同一个 `ToolExecutor` 协议的不同实现。
+
+### 1.6 工具执行分层策略（按风险等级划分执行边界）
+
+工具的执行位置不按功能类别划分，按风险等级划分：
+
+- **进程内执行（Worker 进程内，asyncio）**：
+  - 适用于：只读、无代码执行、I/O 密集型工具（web_search、web_fetch、memory_search、echo、noop）。
+  - 安全边界：URL 黑名单（禁止内网访问）、超时、信号量限流。
+  - 不需要容器隔离，不需要独立服务。
+- **容器隔离执行（独立沙箱）**：
+  - 适用于：执行不受信任代码的工具（shell、code_execute、未来的自定义脚本）。
+  - 安全边界：文件系统隔离、网络限制、资源限额（CPU/内存/时间）、进程隔离（Docker container / gVisor / nsjail）。
+  - 通过 `SandboxToolExecutor` 实现（委托给外部容器服务），是 `ToolExecutor` 协议的另一个实现。
+- **外部 API 调用（本质上也是进程内）**：
+  - 适用于：调用第三方服务的工具（Firecrawl、Tavily、Serper 等）。
+  - 和"进程内执行"没有本质区别 -- 只是发一个 HTTP 请求。
+  - 安全边界：API key 不下发前端、不落日志明文；超时；错误不能让 run 崩溃。
+
+分界线总结：**只读 + 无代码执行 = 进程内；任意代码执行 = 必须隔离。**
+
+### 1.7 内置工具的 Provider 抽象（web_search / web_fetch 的多 backend 策略）
+
+web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backend 抽象（与 LLM Gateway 的 provider 模式一致）：
+
+- **web_search**：
+  - 定义 `WebSearchProvider` 协议：`async def search(*, query: str, max_results: int) -> list[WebSearchResult]`。
+  - SearXNG adapter：自部署、免费、私有化部署友好；通过 HTTP API 调用本地/远程 SearXNG 实例。
+  - Tavily / Serper adapter：付费 API、开箱即用。
+  - 通过配置选择 backend（环境变量 `ARKLOOP_WEB_SEARCH_PROVIDER=searxng|tavily|serper`）；未来可扩展为 org 级配置。
+- **web_fetch**：
+  - 定义 `WebFetchProvider` 协议：`async def fetch(*, url: str, max_length: int) -> WebFetchResult`。
+  - Basic adapter：纯 HTTP fetch（`httpx.AsyncClient`）+ HTML 正文提取（readability / trafilatura）。轻量、零外部服务依赖。
+  - Firecrawl / Jina Reader adapter：处理 JS 渲染、anti-bot、结构化提取。通过 HTTP API 调用外部服务。
+  - 通过配置选择 backend（环境变量 `ARKLOOP_WEB_FETCH_PROVIDER=basic|firecrawl|jina`）。
+- **好处**：
+  - Console 管理后台可以让管理员选择搜索/抓取引擎后端。
+  - 前端 debug 面板可以显示实际走了哪个 provider。
+  - 新增 backend 只需实现协议，不改上层工具代码。
+  - 与 LLM Gateway 的 provider 抽象保持架构一致性。
+- **目录结构（建议）**：
+  ```
+  src/packages/agent_core/builtin_tools/
+      web_search/
+          __init__.py
+          provider.py       # WebSearchProvider 协议 + WebSearchResult
+          searxng.py         # SearXNG adapter
+          tavily.py          # Tavily adapter
+          executor.py        # WebSearchToolExecutor（实现 ToolExecutor）
+          config.py          # 从环境变量/配置读取 backend 选择
+      web_fetch/
+          __init__.py
+          provider.py        # WebFetchProvider 协议 + WebFetchResult
+          basic.py           # 纯 HTTP + readability
+          firecrawl.py       # Firecrawl adapter
+          executor.py        # WebFetchToolExecutor（实现 ToolExecutor）
+          config.py
+          url_policy.py      # URL 安全策略（内网黑名单）
+  ```
+
 ## 2. 任务拆分规则（Pxx 粒度）
 
 每个 Pxx 任务必须满足：
@@ -381,7 +464,7 @@
 下面按四条主线拆成薄片。每条线内部有依赖顺序，跨线尽量减少阻塞。
 
 **推荐执行顺序（主线 C 优先，这是产品核心价值）：**
-- 主线 C（Agent Loop）先行：P50 -> P51 -> P52 -> P53 -> P54 -> P55 -> P56 -> P57 -> P58 -> P59
+- 主线 C（Agent Loop）先行：P50 -> P51 -> P52 -> P53 -> P54 -> P54.5 -> P55 -> P56 -> P57 -> P58 -> P59
 - 主线 B（Console 管理后台）跟进：P40 -> P41 -> P42 -> P60 -> P43 -> P62 -> P44 -> P45 -> P46
 - 主线 D（前端产品化）穿插：可在 P53 之后开始（此时 tool_call 事件流已稳定）
 - 主线 E（Vault/高级安全）最后
@@ -501,43 +584,106 @@
   - integration pytest：创建 run（stub gateway 模拟 tool_call echo），SSE 事件流包含 tool.call(echo) -> tool.result -> message.delta -> run.completed。
   - unit pytest：echo 工具输入输出稳定。
 
-#### P55 -- 内置工具 #2：web_search（只读、低风险）
+#### P54.5 -- RunEngine 迁移到 Worker（API 不再执行 Agent Loop）
 
-- 目标：实现 web_search 工具，使 Agent 能搜索互联网。
+- 目标：把 `RunEngine.execute()` 从 API 进程迁移到 Worker 进程，API 侧改为投递 job 到队列，实现 1.5 节约定的服务边界。
+- 现状分析：
+  - `InProcessStubRunExecutor` 在 API 进程内通过 `asyncio.Queue` 直接运行 `RunEngine`，适合开发调试但不适合生产。
+  - `Worker.handle_job()` 目前只写了 `worker.job.received` 事件，没有调用 `RunEngine`。
+  - 任务队列机制尚未实现（API -> Worker 的 job 投递）。
+- 关键点：
+  - 任务队列 v1 建议用 PostgreSQL `LISTEN/NOTIFY` + `run` 表状态轮询（避免过早引入 Redis 依赖）；后续可替换为 Redis Stream / BullMQ 等。
+  - `InProcessStubRunExecutor` 保留作为开发/测试模式（通过配置切换：`ARKLOOP_RUN_EXECUTOR=in_process|worker`），但默认模式改为 `worker`。
+  - Worker 内的 `RunEngine` 组装逻辑（ToolRegistry、ToolExecutor、ProviderRouter 等）从 `configure_run_executor` 迁移到 Worker 的 composition root。
+  - API 侧 `POST /v1/threads/{thread_id}/runs` 改为：写 `runs` 表 + 投递 job -> 立即返回 `run_id`；不再等待执行完成。
+  - SSE 推送不受影响（已经是从 `run_events` 表读取）。
+- 具体改动范围：
+  - `src/services/worker/worker.py`：`handle_job()` 调用 `RunEngine.execute()`。
+  - `src/services/worker/composition.py`（新建）：Worker 的依赖组装（Database、ProviderRouter、ToolRegistry、ToolExecutor、RunEngine）。
+  - `src/services/api/run_executor.py`：新增 `QueuedRunExecutor`（投递 job 到队列）；`InProcessStubRunExecutor` 保留但降级为开发模式。
+  - `src/services/api/main.py`：根据配置选择 executor 模式。
+- 依赖：P54（echo/noop 验证全链路通过后再迁移，降低风险）
+- 验收：
+  - integration pytest：通过 API 创建 run -> Worker 消费 job -> 事件写入 -> SSE 可回放。
+  - integration pytest：API 进程内不再 import AgentLoop 或 LlmGateway（可通过 import 检查或进程隔离测试验证）。
+  - 手工验证：`docker compose up` 同时启动 API + Worker，创建 run 后事件流正常。
+
+#### P55 -- 内置工具 #2：web_search（多 backend、只读、低风险）
+
+- 目标：实现 web_search 工具，使 Agent 能搜索互联网。采用策略模式支持多种搜索后端（见 1.7 节）。
 - 关键点：
   - 输入：`{ "query": "...", "max_results": 5 }`。
   - 输出：`{ "results": [{ "title": "...", "url": "...", "snippet": "..." }] }`。
-  - 后端选择搜索 API（建议 SearXNG 自部署或 Tavily/Serper 等付费 API）。
-  - API key 通过环境变量注入，不落库、不下发前端。
+  - `WebSearchProvider` 协议：`async def search(*, query: str, max_results: int) -> list[WebSearchResult]`。
+  - v1 先实现一个默认 backend（建议 SearXNG，自部署友好；或 Tavily，开箱即用）；第二个 backend 作为 P55.1 跟进。
+  - backend 选择通过环境变量配置：`ARKLOOP_WEB_SEARCH_PROVIDER=searxng|tavily|serper`。
+  - API key 通过环境变量注入，不落库、不下发前端、不落日志明文。
   - risk_level: "low"，side_effects: false。
   - 必须有 timeout（建议 10 秒）和错误处理（搜索失败不能让整个 run 崩溃）。
+  - 在 Worker 进程内执行（asyncio），不需要容器隔离（见 1.6 节）。
 - 具体改动范围：
-  - 新建 `src/packages/agent_core/builtin_tools/web_search.py`。
-  - 新建 `src/packages/agent_core/builtin_tools/web_search_config.py`（配置类，从环境变量读取 API key 和 base_url）。
-- 依赖：P54（确认内置工具链路已通）
+  - 新建 `src/packages/agent_core/builtin_tools/web_search/` 目录。
+  - 新建 `provider.py`：`WebSearchProvider` 协议 + `WebSearchResult` 数据类。
+  - 新建默认 backend adapter（例如 `searxng.py` 或 `tavily.py`）。
+  - 新建 `executor.py`：`WebSearchToolExecutor`（实现 `ToolExecutor`，内部调用 `WebSearchProvider`）。
+  - 新建 `config.py`：从环境变量读取 backend 选择、API key env 名、base_url。
+- 依赖：P54.5（Worker 迁移完成后，工具在 Worker 进程内执行）
 - 验收：
-  - unit pytest：mock HTTP 响应，验证输入输出 schema 稳定。
+  - unit pytest：mock HTTP 响应，验证输入输出 schema 稳定；provider 协议满足。
   - unit pytest：搜索超时返回明确错误（不崩溃）。
+  - unit pytest：未配置 backend 时返回明确错误。
   - 手工验证：连接真实搜索 API，Agent 能搜索并引用结果回答。
 
-#### P56 -- 内置工具 #3：web_fetch（只读、中风险）
+#### P55.1 -- web_search 第二 backend（可选，按需跟进）
 
-- 目标：实现 web_fetch 工具，使 Agent 能抓取网页内容。
+- 目标：为 web_search 增加第二个 backend adapter，验证 `WebSearchProvider` 协议的可扩展性。
+- 关键点：
+  - 如果 P55 做了 SearXNG，这里做 Tavily（或反过来）。
+  - 通过切换环境变量 `ARKLOOP_WEB_SEARCH_PROVIDER` 即可切换 backend，不改上层代码。
+- 依赖：P55
+- 验收：
+  - unit pytest：两个 backend 的输出都符合 `WebSearchResult` schema。
+  - 手工验证：切换 backend 后 Agent 搜索行为一致。
+
+#### P56 -- 内置工具 #3：web_fetch（多 backend、只读、中风险）
+
+- 目标：实现 web_fetch 工具，使 Agent 能抓取网页内容。采用策略模式支持多种抓取后端（见 1.7 节）。
 - 关键点：
   - 输入：`{ "url": "...", "max_length": 50000 }`。
   - 输出：`{ "content": "...", "title": "...", "url": "...", "truncated": false }`。
-  - URL 白名单/黑名单：禁止访问内网地址（127.0.0.1、10.x、192.168.x 等）。
+  - `WebFetchProvider` 协议：`async def fetch(*, url: str, max_length: int) -> WebFetchResult`。
+  - v1 先实现 Basic adapter（纯 HTTP fetch + HTML 正文提取）；Firecrawl / Jina Reader 作为 P56.1 跟进。
+  - backend 选择通过环境变量配置：`ARKLOOP_WEB_FETCH_PROVIDER=basic|firecrawl|jina`。
+  - URL 安全策略（`url_policy.py`）：禁止访问内网地址（127.0.0.1、10.x、192.168.x、169.254.x 等）。
   - 内容截断：超过 max_length 截断并标记 `truncated: true`。
   - HTML -> 纯文本/Markdown 转换（建议 readability 算法或 trafilatura）。
   - risk_level: "medium"，side_effects: false。
   - timeout: 15 秒。
+  - 在 Worker 进程内执行（asyncio），不需要容器隔离（见 1.6 节）。
 - 具体改动范围：
-  - 新建 `src/packages/agent_core/builtin_tools/web_fetch.py`。
-  - 新建 `src/packages/agent_core/builtin_tools/url_policy.py`（URL 安全策略：内网地址黑名单）。
-- 依赖：P54
+  - 新建 `src/packages/agent_core/builtin_tools/web_fetch/` 目录。
+  - 新建 `provider.py`：`WebFetchProvider` 协议 + `WebFetchResult` 数据类。
+  - 新建 `basic.py`：Basic adapter（`httpx.AsyncClient` + readability/trafilatura）。
+  - 新建 `executor.py`：`WebFetchToolExecutor`（实现 `ToolExecutor`，内部调用 `WebFetchProvider`）。
+  - 新建 `config.py`：从环境变量读取 backend 选择。
+  - 新建 `url_policy.py`：URL 安全策略（内网地址黑名单）。
+- 依赖：P54.5（Worker 迁移完成后，工具在 Worker 进程内执行）
 - 验收：
-  - unit pytest：内网地址被拒绝；截断逻辑正确；HTML 转文本基本可读。
+  - unit pytest：内网地址被拒绝；截断逻辑正确；HTML 转文本基本可读；provider 协议满足。
   - unit pytest：超时返回明确错误。
+  - unit pytest：未配置 backend 时 fallback 到 basic。
+
+#### P56.1 -- web_fetch 增强 backend（Firecrawl / Jina Reader）
+
+- 目标：为 web_fetch 增加增强 backend adapter（Firecrawl 或 Jina Reader），处理 JS 渲染页面和 anti-bot 场景。
+- 关键点：
+  - Firecrawl / Jina Reader 本身是外部 API 服务，adapter 只是发 HTTP 请求（和调 LLM API 没有本质区别）。
+  - 通过切换环境变量 `ARKLOOP_WEB_FETCH_PROVIDER` 即可切换 backend。
+  - API key 通过环境变量注入。
+- 依赖：P56
+- 验收：
+  - unit pytest：mock Firecrawl/Jina API 响应，输出符合 `WebFetchResult` schema。
+  - 手工验证：抓取 JS 渲染页面，内容提取正确。
 
 #### P57 -- MCP 客户端协议适配 v1
 
