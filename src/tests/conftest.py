@@ -28,6 +28,26 @@ def pytest_configure(config) -> None:
     )
     if selects_external:
         os.environ.setdefault("ARKLOOP_LOAD_DOTENV", "1")
+        _prefer_test_dotenv_file()
+
+
+def _prefer_test_dotenv_file() -> None:
+    # 显式指定了 dotenv 文件时，保持用户选择
+    if os.getenv("ARKLOOP_DOTENV_FILE"):
+        return
+
+    repo_root = _repo_root(Path(__file__).resolve())
+    test_dotenv = repo_root / ".env.test"
+    if test_dotenv.is_file():
+        os.environ["ARKLOOP_DOTENV_FILE"] = str(test_dotenv)
+
+
+def _repo_root(start: Path) -> Path:
+    current = start.resolve()
+    for parent in (current, *current.parents):
+        if (parent / "pyproject.toml").is_file():
+            return parent
+    return current
 
 
 def _layer_from_path(path: Path) -> str | None:

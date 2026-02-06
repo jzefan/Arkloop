@@ -41,6 +41,13 @@ def test_env_example_and_gitignore_for_dotenv() -> None:
     ):
         assert re.search(rf"(?m)^{re.escape(key)}=", env_example)
 
+    env_test_example_path = root / ".env.test.example"
+    assert env_test_example_path.exists()
+    env_test_example = env_test_example_path.read_text(encoding="utf-8")
+    for key in ("ARKLOOP_DATABASE_URL", "ARKLOOP_PROVIDER_ROUTING_JSON"):
+        assert re.search(rf"(?m)^{re.escape(key)}=", env_test_example)
+
     gitignore = (root / ".gitignore").read_text(encoding="utf-8")
     assert re.search(r"(?m)^\.env$", gitignore)
     assert re.search(r"(?m)^!\.env\.example$", gitignore)
+    assert re.search(r"(?m)^!\.env\.test\.example$", gitignore)
