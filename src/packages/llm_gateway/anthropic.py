@@ -153,6 +153,47 @@ def _merge_usage(current: LlmUsage | None, update: LlmUsage | None) -> LlmUsage 
     return merged
 
 
+@dataclass(slots=True)
+class _AnthropicToolUseBlock:
+    tool_call_id: str
+    tool_name: str
+    input_json: Mapping[str, Any] | None = None
+    input_json_parts: list[str] = field(default_factory=list)
+
+
+def _parse_json_object(value: str) -> Mapping[str, Any]:
+    cleaned = value.strip()
+    if not cleaned:
+        return {}
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, Mapping):
+        raise ValueError("tool_use.input 必须是 JSON object")
+    return dict(parsed)
+
+
+def _drain_tool_use_blocks(
+    tool_use_blocks: dict[int, _AnthropicToolUseBlock],
+) -> list[LlmStreamToolCall]:
+    tool_calls: list[LlmStreamToolCall] = []
+    for index in sorted(tool_use_blocks.keys()):
+        block = tool_use_blocks[index]
+        if block.input_json_parts:
+            arguments_json = _parse_json_object("".join(block.input_json_parts))
+        elif block.input_json is not None:
+            arguments_json = dict(block.input_json)
+        else:
+            arguments_json = {}
+        tool_calls.append(
+            LlmStreamToolCall(
+                tool_call_id=block.tool_call_id,
+                tool_name=block.tool_name,
+                arguments_json=arguments_json,
+            )
+        )
+    tool_use_blocks.clear()
+    return tool_calls
+
+
 def _provider_error_class_from_status(status_code: int) -> str:
     if status_code in {408, 425, 429}:
         return ERROR_CLASS_PROVIDER_RETRYABLE
@@ -560,6 +601,7 @@ class AnthropicLlmGateway(LlmGateway):
                     return
 
                 usage: LlmUsage | None = None
+                tool_use_blocks: dict[int, _AnthropicToolUseBlock] = {}
                 async for data in _aiter_sse_events(resp.aiter_lines()):
                     item = _try_parse_json(data)
                     if self._config.emit_llm_debug_events:
@@ -573,6 +615,18 @@ class AnthropicLlmGateway(LlmGateway):
                             truncated=truncated,
                         )
                     if data.strip() == "[DONE]":
+                        try:
+                            for tool_call in _drain_tool_use_blocks(tool_use_blocks):
+                                yield tool_call
+                        except ValueError as exc:
+                            yield LlmStreamRunFailed(
+                                error=LlmGatewayError(
+                                    error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                                    message="Anthropic tool_use 输入解析失败",
+                                    details={"reason": str(exc)},
+                                )
+                            )
+                            return
                         yield LlmStreamRunCompleted(usage=usage)
                         return
 
@@ -588,11 +642,26 @@ class AnthropicLlmGateway(LlmGateway):
                         raw_delta = item.get("delta")
                         if not isinstance(raw_delta, Mapping):
                             continue
-                        if raw_delta.get("type") != "text_delta":
+                        delta_type = raw_delta.get("type")
+                        if delta_type == "text_delta":
+                            text = raw_delta.get("text")
+                            if isinstance(text, str) and text:
+                                yield LlmStreamMessageDelta(content_delta=text, role="assistant")
                             continue
-                        text = raw_delta.get("text")
-                        if isinstance(text, str) and text:
-                            yield LlmStreamMessageDelta(content_delta=text, role="assistant")
+                        if delta_type == "input_json_delta":
+                            index = item.get("index")
+                            if not isinstance(index, int):
+                                continue
+                            block = tool_use_blocks.get(index)
+                            if block is None:
+                                continue
+                            partial_json = raw_delta.get("partial_json")
+                            if not isinstance(partial_json, str):
+                                partial_json = raw_delta.get("json")
+                            if not isinstance(partial_json, str):
+                                continue
+                            if partial_json:
+                                block.input_json_parts.append(partial_json)
                         continue
 
                     if typ == "content_block_start":
@@ -601,19 +670,50 @@ class AnthropicLlmGateway(LlmGateway):
                             continue
                         if block.get("type") != "tool_use":
                             continue
+                        index = item.get("index")
+                        if not isinstance(index, int):
+                            continue
                         tool_call_id = block.get("id")
                         tool_name = block.get("name")
-                        arguments = block.get("input")
                         if not isinstance(tool_call_id, str) or not tool_call_id.strip():
                             continue
                         if not isinstance(tool_name, str) or not tool_name.strip():
                             continue
-                        if not isinstance(arguments, Mapping):
-                            continue
-                        yield LlmStreamToolCall(
+                        arguments = block.get("input")
+                        tool_use_blocks[index] = _AnthropicToolUseBlock(
                             tool_call_id=tool_call_id.strip(),
                             tool_name=tool_name.strip(),
-                            arguments_json=dict(arguments),
+                            input_json=dict(arguments) if isinstance(arguments, Mapping) else None,
+                        )
+                        continue
+
+                    if typ == "content_block_stop":
+                        index = item.get("index")
+                        if not isinstance(index, int):
+                            continue
+                        block = tool_use_blocks.pop(index, None)
+                        if block is None:
+                            continue
+                        try:
+                            if block.input_json_parts:
+                                arguments_json = _parse_json_object("".join(block.input_json_parts))
+                            elif block.input_json is not None:
+                                arguments_json = dict(block.input_json)
+                            else:
+                                arguments_json = {}
+                        except (TypeError, ValueError) as exc:
+                            yield LlmStreamRunFailed(
+                                error=LlmGatewayError(
+                                    error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                                    message="Anthropic tool_use 输入解析失败",
+                                    details={"reason": str(exc)},
+                                )
+                            )
+                            return
+                        yield LlmStreamToolCall(
+                            tool_call_id=block.tool_call_id,
+                            tool_name=block.tool_name,
+                            arguments_json=arguments_json,
                         )
                         continue
 
@@ -632,6 +732,18 @@ class AnthropicLlmGateway(LlmGateway):
                         continue
 
                     if typ == "message_stop":
+                        try:
+                            for tool_call in _drain_tool_use_blocks(tool_use_blocks):
+                                yield tool_call
+                        except ValueError as exc:
+                            yield LlmStreamRunFailed(
+                                error=LlmGatewayError(
+                                    error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                                    message="Anthropic tool_use 输入解析失败",
+                                    details={"reason": str(exc)},
+                                )
+                            )
+                            return
                         yield LlmStreamRunCompleted(usage=usage)
                         return
 

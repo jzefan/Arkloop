@@ -460,7 +460,7 @@
 - 状态说明：
   - 本步只完成 AgentLoop 与 ToolExecutor 集成，不包含 P53（OpenAI/Anthropic 的 tool_call 流式解析扩展）。
 
-#### P53 -- LLM Gateway 支持 tool_call 流式解析
+#### P53 -- LLM Gateway 支持 tool_call 流式解析（已完成）
 
 - 目标：确保 OpenAI 和 Anthropic 的 gateway 实现能正确从流式响应中解析 tool_call（function_call / tool_use），并映射为 `LlmStreamToolCall` 事件。
 - 现状分析：
@@ -471,8 +471,8 @@
   - OpenAI chat_completions 的 tool_call 在 `delta.tool_calls` 中分片到达；需要缓冲并在完整后产出。
   - OpenAI responses API 的 tool_call 在 `output` 中以 `function_call` item 到达。
   - Anthropic 的 tool_use 在 `content_block_start` / `content_block_delta` / `content_block_stop` 中到达。
-  - gateway 在收到 tool_call 后不应产出 `LlmStreamRunCompleted`，因为循环还没结束；应该产出 `LlmStreamToolCall` 然后等待外部提供 tool_result 并发起下一轮请求。
-  - 这意味着 gateway 的 `stream()` 职责可能需要调整：每次 `stream()` 只处理一轮 LLM 调用，循环由上层 AgentLoop 驱动。
+  - gateway 在单轮流式输出中遇到 tool_call 时，需要产出 `LlmStreamToolCall`（通常在该轮 `LlmStreamRunCompleted` 之前），并继续把该轮流读到结束。
+  - `LlmStreamRunCompleted` 在当前实现中代表“单轮结束信号”；整个 run 的 `run.completed` 仍由上层 AgentLoop 根据是否存在 tool_call 决定。
 - 具体改动范围：
   - `src/packages/llm_gateway/openai.py`：确保 tool_call 解析 -> `LlmStreamToolCall` 映射正确。
   - `src/packages/llm_gateway/anthropic.py`：同上。

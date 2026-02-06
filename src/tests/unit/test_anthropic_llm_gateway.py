@@ -186,9 +186,29 @@ def test_anthropic_gateway_http_error_emits_run_failed() -> None:
 
 
 def test_anthropic_gateway_emits_tool_call_placeholder_events() -> None:
+    start_event = {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {"type": "tool_use", "id": "toolu_1", "name": "search", "input": {}},
+    }
+    delta1_event = {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"type": "input_json_delta", "partial_json": '{"q":"hi"'},
+    }
+    delta2_event = {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"type": "input_json_delta", "partial_json": "}"},
+    }
+    stop_event = {"type": "content_block_stop", "index": 0}
+    message_stop_event = {"type": "message_stop"}
     sse = (
-        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"search","input":{"q":"hi"}}}\n\n'
-        'data: {"type":"message_stop"}\n\n'
+        f"data: {json.dumps(start_event)}\n\n"
+        f"data: {json.dumps(delta1_event)}\n\n"
+        f"data: {json.dumps(delta2_event)}\n\n"
+        f"data: {json.dumps(stop_event)}\n\n"
+        f"data: {json.dumps(message_stop_event)}\n\n"
     )
 
     def _handler(request: httpx.Request) -> httpx.Response:

@@ -24,6 +24,7 @@ from .contract import (
     LlmStreamProviderFallback,
     LlmStreamRunCompleted,
     LlmStreamRunFailed,
+    LlmStreamToolCall,
     LlmUsage,
 )
 from .gateway import LlmGateway
@@ -499,6 +500,7 @@ class OpenAiLlmGateway(LlmGateway):
                     return
 
                 usage: LlmUsage | None = None
+                tool_call_buffer = _OpenAiChatToolCallBuffer()
                 async for data in _aiter_sse_data(resp.aiter_lines()):
                     item = _try_parse_json(data)
                     if self._config.emit_llm_debug_events:
@@ -513,6 +515,19 @@ class OpenAiLlmGateway(LlmGateway):
                         )
 
                     if data.strip() == "[DONE]":
+                        if api_mode != "responses":
+                            try:
+                                for tool_call in tool_call_buffer.drain():
+                                    yield tool_call
+                            except ValueError as exc:
+                                yield LlmStreamRunFailed(
+                                    error=LlmGatewayError(
+                                        error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                                        message="OpenAI tool_call 参数解析失败",
+                                        details={"reason": str(exc)},
+                                    )
+                                )
+                                return
                         yield LlmStreamRunCompleted(usage=usage)
                         return
 
@@ -530,11 +545,25 @@ class OpenAiLlmGateway(LlmGateway):
                             yield event
                         continue
 
-                    delta, usage_update = _chat_completions_delta_from_chunk(item)
+                    tool_call_buffer.update_from_chunk(item)
+                    delta, usage_update, should_flush_tool_calls = _chat_completions_delta_from_chunk(item)
                     if usage_update is not None:
                         usage = usage_update
                     if delta is not None:
                         yield delta
+                    if should_flush_tool_calls:
+                        try:
+                            for tool_call in tool_call_buffer.drain():
+                                yield tool_call
+                        except ValueError as exc:
+                            yield LlmStreamRunFailed(
+                                error=LlmGatewayError(
+                                    error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                                    message="OpenAI tool_call 参数解析失败",
+                                    details={"reason": str(exc)},
+                                )
+                            )
+                            return
         except _ResponsesNotSupportedError:
             raise
         except Exception as exc:
@@ -550,11 +579,112 @@ class OpenAiLlmGateway(LlmGateway):
             raise
 
 
+@dataclass(slots=True)
+class _OpenAiChatToolCallParts:
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    arguments_parts: list[str] = field(default_factory=list)
+
+
+class _OpenAiChatToolCallBuffer:
+    def __init__(self) -> None:
+        self._calls: dict[int, _OpenAiChatToolCallParts] = {}
+        self._emitted: set[int] = set()
+
+    def update_from_chunk(self, chunk: Any) -> None:
+        if not isinstance(chunk, Mapping):
+            return
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            return
+        delta = first.get("delta")
+        if not isinstance(delta, Mapping):
+            return
+        tool_calls = delta.get("tool_calls")
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return
+        for raw in tool_calls:
+            if not isinstance(raw, Mapping):
+                continue
+            index = raw.get("index")
+            if not isinstance(index, int):
+                continue
+            parts = self._calls.setdefault(index, _OpenAiChatToolCallParts())
+
+            tool_call_id = raw.get("id")
+            if isinstance(tool_call_id, str) and tool_call_id.strip():
+                parts.tool_call_id = tool_call_id.strip()
+
+            function = raw.get("function")
+            if not isinstance(function, Mapping):
+                continue
+            tool_name = function.get("name")
+            if isinstance(tool_name, str) and tool_name.strip():
+                parts.tool_name = tool_name.strip()
+            arguments = function.get("arguments")
+            if isinstance(arguments, str) and arguments:
+                parts.arguments_parts.append(arguments)
+
+    def drain(self) -> list[LlmStreamToolCall]:
+        emitted: list[LlmStreamToolCall] = []
+        invalid: list[tuple[int, list[str]]] = []
+        for index in sorted(self._calls.keys()):
+            if index in self._emitted:
+                continue
+            parts = self._calls[index]
+            tool_call_id = (parts.tool_call_id or "").strip()
+            tool_name = (parts.tool_name or "").strip()
+            if not tool_call_id or not tool_name:
+                missing: list[str] = []
+                if not tool_call_id:
+                    missing.append("id")
+                if not tool_name:
+                    missing.append("function.name")
+                invalid.append((index, missing))
+                self._emitted.add(index)
+                continue
+            arguments_json = _parse_json_object("".join(parts.arguments_parts))
+            emitted.append(
+                LlmStreamToolCall(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments_json=arguments_json,
+                )
+            )
+            self._emitted.add(index)
+
+        for index in self._emitted:
+            self._calls.pop(index, None)
+        self._emitted.clear()
+
+        if invalid:
+            rendered = ", ".join(
+                f"tool_calls[{index}] 缺少 {', '.join(missing)}" for index, missing in invalid[:3]
+            )
+            if len(invalid) > 3:
+                rendered = f"{rendered} 等"
+            raise ValueError(rendered)
+        return emitted
+
+
+def _parse_json_object(value: str) -> Mapping[str, Any]:
+    cleaned = value.strip()
+    if not cleaned:
+        return {}
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, Mapping):
+        raise ValueError("arguments 必须是 JSON object")
+    return dict(parsed)
+
+
 def _chat_completions_delta_from_chunk(
     chunk: Any,
-) -> tuple[LlmStreamMessageDelta | None, LlmUsage | None]:
+) -> tuple[LlmStreamMessageDelta | None, LlmUsage | None, bool]:
     if not isinstance(chunk, Mapping):
-        return None, None
+        return None, None, False
 
     usage = None
     raw_usage = chunk.get("usage")
@@ -563,25 +693,30 @@ def _chat_completions_delta_from_chunk(
 
     choices = chunk.get("choices")
     if not isinstance(choices, list) or not choices:
-        return None, usage
+        return None, usage, False
 
     first = choices[0]
     if not isinstance(first, Mapping):
-        return None, usage
+        return None, usage, False
 
     delta = first.get("delta")
     if not isinstance(delta, Mapping):
-        return None, usage
+        return None, usage, False
+
+    finish_reason = first.get("finish_reason")
+    should_flush_tool_calls = (
+        isinstance(finish_reason, str) and finish_reason.strip().casefold() == "tool_calls"
+    )
 
     content = delta.get("content")
     if not isinstance(content, str) or not content:
-        return None, usage
+        return None, usage, should_flush_tool_calls
 
     role = delta.get("role")
     if not isinstance(role, str) or not role:
         role = "assistant"
 
-    return LlmStreamMessageDelta(content_delta=content, role=role), usage
+    return LlmStreamMessageDelta(content_delta=content, role=role), usage, should_flush_tool_calls
 
 
 async def _events_from_openai_responses_stream_event(
@@ -606,6 +741,20 @@ async def _events_from_openai_responses_stream_event(
             raw_usage = response.get("usage")
             if isinstance(raw_usage, Mapping):
                 usage = _usage_from_mapping(raw_usage)
+            output = response.get("output")
+            if isinstance(output, list):
+                try:
+                    for tool_call in _tool_calls_from_openai_responses_output(output):
+                        yield tool_call
+                except ValueError as exc:
+                    yield LlmStreamRunFailed(
+                        error=LlmGatewayError(
+                            error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
+                            message="OpenAI responses tool_call 参数解析失败",
+                            details={"reason": str(exc)},
+                        )
+                    )
+                    return
         yield LlmStreamRunCompleted(usage=usage)
         return
 
@@ -634,6 +783,41 @@ async def _events_from_openai_responses_stream_event(
                 message=message,
             )
         )
+
+
+def _tool_calls_from_openai_responses_output(output: list[Any]) -> list[LlmStreamToolCall]:
+    tool_calls: list[LlmStreamToolCall] = []
+    for raw in output:
+        if not isinstance(raw, Mapping):
+            continue
+        if raw.get("type") != "function_call":
+            continue
+
+        tool_call_id = raw.get("id") or raw.get("call_id")
+        tool_name = raw.get("name") or raw.get("tool_name")
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            raise ValueError("缺少 function_call.id")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            raise ValueError("缺少 function_call.name")
+
+        arguments = raw.get("arguments")
+        if arguments is None:
+            arguments_json: Mapping[str, Any] = {}
+        elif isinstance(arguments, Mapping):
+            arguments_json = dict(arguments)
+        elif isinstance(arguments, str):
+            arguments_json = _parse_json_object(arguments)
+        else:
+            raise ValueError("function_call.arguments 类型不支持")
+
+        tool_calls.append(
+            LlmStreamToolCall(
+                tool_call_id=tool_call_id.strip(),
+                tool_name=tool_name.strip(),
+                arguments_json=arguments_json,
+            )
+        )
+    return tool_calls
 
 
 def _import_httpx() -> Any:
