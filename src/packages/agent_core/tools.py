@@ -83,7 +83,7 @@ class ToolAllowlist:
 
 @dataclass(frozen=True, slots=True)
 class ToolCallDecision:
-    tool_call_id: uuid.UUID
+    tool_call_id: str
     allowed: bool
     events: tuple[RunEvent, ...]
 
@@ -99,8 +99,9 @@ class ToolPolicyEnforcer:
         emitter: RunEventEmitter,
         tool_name: str,
         args_json: Mapping[str, Any],
+        tool_call_id: str | None = None,
     ) -> ToolCallDecision:
-        tool_call_id = uuid.uuid4()
+        resolved_tool_call_id = _resolve_tool_call_id(tool_call_id)
         try:
             args_hash: str | None = sha256_json(args_json)
         except (TypeError, ValueError):
@@ -108,7 +109,7 @@ class ToolPolicyEnforcer:
         spec = self._registry.get(tool_name)
 
         call_payload: dict[str, Any] = {
-            "tool_call_id": str(tool_call_id),
+            "tool_call_id": resolved_tool_call_id,
             "tool_name": tool_name,
             "args_hash": args_hash,
         }
@@ -126,12 +127,16 @@ class ToolPolicyEnforcer:
                     "code": POLICY_DENIED_CODE,
                     "message": "工具参数非法",
                     "deny_reason": DENY_REASON_TOOL_ARGS_INVALID,
-                    "tool_call_id": str(tool_call_id),
+                    "tool_call_id": resolved_tool_call_id,
                     "tool_name": tool_name,
                     "allowlist": self._allowlist.to_sorted_list(),
                 },
             )
-            return ToolCallDecision(tool_call_id=tool_call_id, allowed=False, events=(call_event, denied))
+            return ToolCallDecision(
+                tool_call_id=resolved_tool_call_id,
+                allowed=False,
+                events=(call_event, denied),
+            )
 
         if spec is None:
             denied = emitter.emit(
@@ -142,20 +147,24 @@ class ToolPolicyEnforcer:
                     "code": POLICY_DENIED_CODE,
                     "message": "工具未注册",
                     "deny_reason": DENY_REASON_TOOL_UNKNOWN,
-                    "tool_call_id": str(tool_call_id),
+                    "tool_call_id": resolved_tool_call_id,
                     "tool_name": tool_name,
                     "args_hash": args_hash,
                     "allowlist": self._allowlist.to_sorted_list(),
                 },
             )
-            return ToolCallDecision(tool_call_id=tool_call_id, allowed=False, events=(call_event, denied))
+            return ToolCallDecision(
+                tool_call_id=resolved_tool_call_id,
+                allowed=False,
+                events=(call_event, denied),
+            )
 
         if not self._allowlist.allows(tool_name):
             denied_payload: dict[str, Any] = {
                 "code": POLICY_DENIED_CODE,
                 "message": "工具不在 allowlist 内",
                 "deny_reason": DENY_REASON_TOOL_NOT_IN_ALLOWLIST,
-                "tool_call_id": str(tool_call_id),
+                "tool_call_id": resolved_tool_call_id,
                 "tool_name": tool_name,
                 "args_hash": args_hash,
                 "allowlist": self._allowlist.to_sorted_list(),
@@ -167,9 +176,26 @@ class ToolPolicyEnforcer:
                 error_class=POLICY_DENIED_CODE,
                 data_json=denied_payload,
             )
-            return ToolCallDecision(tool_call_id=tool_call_id, allowed=False, events=(call_event, denied))
+            return ToolCallDecision(
+                tool_call_id=resolved_tool_call_id,
+                allowed=False,
+                events=(call_event, denied),
+            )
 
-        return ToolCallDecision(tool_call_id=tool_call_id, allowed=True, events=(call_event,))
+        return ToolCallDecision(
+            tool_call_id=resolved_tool_call_id,
+            allowed=True,
+            events=(call_event,),
+        )
+
+
+def _resolve_tool_call_id(tool_call_id: str | None) -> str:
+    if tool_call_id is None:
+        return str(uuid.uuid4())
+    cleaned = tool_call_id.strip()
+    if not cleaned:
+        return str(uuid.uuid4())
+    return cleaned
 
 
 __all__ = [

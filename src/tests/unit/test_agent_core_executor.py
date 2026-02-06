@@ -44,7 +44,7 @@ class _RecordingToolExecutor:
         usage: Mapping[str, Any] | None = None,
         error: Exception | None = None,
     ) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, dict[str, Any], str | None]] = []
         self._result_json = dict(result_json or {"ok": True})
         self._usage = dict(usage or {"tool_calls": 1})
         self._error = error
@@ -55,9 +55,10 @@ class _RecordingToolExecutor:
         tool_name: str,
         args: dict[str, Any],
         context: ToolExecutionContext,
+        tool_call_id: str | None = None,
     ) -> ToolExecutionResult:
         _ = context
-        self.calls.append((tool_name, dict(args)))
+        self.calls.append((tool_name, dict(args), tool_call_id))
         if self._error is not None:
             raise self._error
         return ToolExecutionResult(
@@ -107,7 +108,7 @@ def test_dispatching_tool_executor_dispatches_to_bound_executor() -> None:
     assert result.result_json == {"message": "ok"}
     assert result.usage == {"tool_calls": 1}
     assert result.duration_ms >= 0
-    assert bound_executor.calls == [("echo", {"q": "hi"})]
+    assert bound_executor.calls == [("echo", {"q": "hi"}, result.events[0].data_json["tool_call_id"])]
     assert [event.type for event in result.events] == ["tool.call"]
 
 
@@ -190,3 +191,33 @@ def test_dispatching_tool_executor_converts_executor_exception_to_stable_error()
     assert "secret text" not in str(result.error.details)
     assert result.duration_ms >= 0
     assert [event.type for event in result.events] == ["tool.call"]
+
+
+def test_dispatching_tool_executor_propagates_given_tool_call_id() -> None:
+    registry = ToolRegistry(
+        specs=[ToolSpec(name="echo", version="1", description="回显", risk_level="low")]
+    )
+    allowlist = ToolAllowlist.from_names(["echo"])
+    enforcer = ToolPolicyEnforcer(registry=registry, allowlist=allowlist)
+    bound_executor = _RecordingToolExecutor()
+    executor = DispatchingToolExecutor(
+        registry=registry,
+        policy_enforcer=enforcer,
+        executors={"echo": bound_executor},
+    )
+    context = _build_context()
+
+    async def _run() -> ToolExecutionResult:
+        return await executor.execute(
+            tool_name="echo",
+            args={"q": "hi"},
+            context=context,
+            tool_call_id="call_123",
+        )
+
+    result = anyio.run(_run)
+
+    assert result.error is None
+    assert [event.type for event in result.events] == ["tool.call"]
+    assert result.events[0].data_json["tool_call_id"] == "call_123"
+    assert bound_executor.calls == [("echo", {"q": "hi"}, "call_123")]

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
-from typing import Any, AsyncIterator, Callable, Mapping, Protocol
+from typing import Any, AsyncIterator, Mapping
+import uuid
 
 from packages.llm_gateway import (
     ERROR_CLASS_INTERNAL_STREAM_ENDED,
@@ -22,47 +24,17 @@ from packages.llm_gateway import (
 from packages.llm_gateway.gateway import LlmGateway
 
 from .events import RunEvent, RunEventEmitter
+from .executor import (
+    ERROR_CLASS_TOOL_EXECUTION_FAILED,
+    ToolExecutionContext,
+    ToolExecutionError,
+    ToolExecutionResult,
+    ToolExecutor,
+)
 from .runner import AgentRunContext
+from .stub_executor import StubToolExecutor
 
 ERROR_CLASS_AGENT_MAX_ITERATIONS_EXCEEDED = "agent.max_iterations_exceeded"
-
-
-class ToolCallExecutor(Protocol):
-    async def execute(
-        self,
-        *,
-        tool_call: LlmStreamToolCall,
-        context: AgentRunContext,
-    ) -> LlmStreamToolResult: ...
-
-
-@dataclass(slots=True)
-class StubToolExecutor:
-    result_factory: Callable[[LlmStreamToolCall], Mapping[str, Any]] | None = None
-
-    async def execute(
-        self,
-        *,
-        tool_call: LlmStreamToolCall,
-        context: AgentRunContext,
-    ) -> LlmStreamToolResult:
-        _ = context
-        payload_factory = self.result_factory or _default_stub_tool_result
-        payload = dict(payload_factory(tool_call))
-        return LlmStreamToolResult(
-            tool_call_id=tool_call.tool_call_id,
-            tool_name=tool_call.tool_name,
-            result_json=payload,
-        )
-
-
-def _default_stub_tool_result(tool_call: LlmStreamToolCall) -> Mapping[str, Any]:
-    return {
-        "stub": True,
-        "tool_name": tool_call.tool_name,
-        "tool_call_id": tool_call.tool_call_id,
-        "echo_arguments": dict(tool_call.arguments_json),
-    }
 
 
 class AgentLoop:
@@ -70,7 +42,7 @@ class AgentLoop:
         self,
         *,
         gateway: LlmGateway,
-        tool_executor: ToolCallExecutor | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> None:
         self._gateway = gateway
         self._tool_executor = tool_executor or StubToolExecutor()
@@ -110,9 +82,8 @@ class AgentLoop:
             if turn.assistant_text:
                 messages.append(_assistant_message(turn.assistant_text))
 
-            if turn.tool_results:
-                for tool_result in turn.tool_results:
-                    messages.append(_tool_result_message(tool_result))
+            for tool_result in turn.tool_results:
+                messages.append(_tool_result_message(tool_result))
 
             completed_tool_result_ids = {item.tool_call_id for item in turn.tool_results}
 
@@ -129,13 +100,46 @@ class AgentLoop:
                 yield emitter.emit(type="run.completed", data_json=turn.completed_data_json)
                 return
 
-            for tool_call in turn.tool_calls:
-                if tool_call.tool_call_id in completed_tool_result_ids:
-                    continue
-                if _cancelled(context):
-                    yield emitter.emit(type="run.cancelled", data_json={"reason": "cancel_signal"})
-                    return
-                tool_result = await self._tool_executor.execute(tool_call=tool_call, context=context)
+            pending_tool_calls = tuple(
+                item for item in turn.tool_calls if item.tool_call_id not in completed_tool_result_ids
+            )
+            if not pending_tool_calls:
+                yield emitter.emit(type="run.completed", data_json=turn.completed_data_json)
+                return
+
+            if _cancelled(context):
+                yield emitter.emit(type="run.cancelled", data_json={"reason": "cancel_signal"})
+                return
+
+            execution_outcomes = await self._execute_tool_calls(
+                context=context,
+                tool_calls=pending_tool_calls,
+            )
+            for outcome in execution_outcomes:
+                emitted_tool_call = False
+                for execution_event in outcome.result.events:
+                    if execution_event.type == "tool.call":
+                        emitted_tool_call = True
+                    yield emitter.emit(
+                        type=execution_event.type,
+                        data_json=execution_event.data_json,
+                        tool_name=execution_event.tool_name,
+                        error_class=execution_event.error_class,
+                    )
+
+                if not emitted_tool_call:
+                    yield emitter.emit(
+                        type="tool.call",
+                        data_json=outcome.tool_call.to_data_json(),
+                        tool_name=outcome.tool_call.tool_name,
+                    )
+
+                resolved_tool_call_id = _resolved_tool_call_id(outcome=outcome)
+                tool_result = _tool_result_from_execution(
+                    tool_call_id=resolved_tool_call_id,
+                    tool_name=outcome.tool_call.tool_name,
+                    execution_result=outcome.result,
+                )
                 messages.append(_tool_result_message(tool_result))
                 yield emitter.emit(
                     type="tool.result",
@@ -143,14 +147,6 @@ class AgentLoop:
                     tool_name=tool_result.tool_name,
                     error_class=tool_result.error.error_class if tool_result.error is not None else None,
                 )
-
-            # 该轮工具结果已由 gateway 补齐，AgentLoop 不再发起新一轮请求。
-            has_manual_execution = any(
-                tool_call.tool_call_id not in completed_tool_result_ids for tool_call in turn.tool_calls
-            )
-            if not has_manual_execution:
-                yield emitter.emit(type="run.completed", data_json=turn.completed_data_json)
-                return
 
         yield _emit_max_iterations_failed(emitter=emitter, max_iterations=context.max_iterations)
 
@@ -195,9 +191,6 @@ class AgentLoop:
 
                 if isinstance(item, LlmStreamToolCall):
                     tool_calls.append(item)
-                    events.append(
-                        emitter.emit(type="tool.call", data_json=item.to_data_json(), tool_name=item.tool_name)
-                    )
                     continue
 
                 if isinstance(item, LlmStreamToolResult):
@@ -244,6 +237,60 @@ class AgentLoop:
             completed_data_json=completed_payload,
         )
 
+    async def _execute_tool_calls(
+        self,
+        *,
+        context: AgentRunContext,
+        tool_calls: tuple[LlmStreamToolCall, ...],
+    ) -> tuple["_ToolExecutionOutcome", ...]:
+        execution_context = _tool_execution_context(context=context)
+        execution_tasks = [
+            self._tool_executor.execute(
+                tool_name=tool_call.tool_name,
+                args=dict(tool_call.arguments_json),
+                context=execution_context,
+                tool_call_id=tool_call.tool_call_id,
+            )
+            for tool_call in tool_calls
+        ]
+        raw_results = await asyncio.gather(*execution_tasks, return_exceptions=True)
+
+        outcomes: list[_ToolExecutionOutcome] = []
+        for tool_call, raw_result in zip(tool_calls, raw_results):
+            if isinstance(raw_result, ToolExecutionResult):
+                result = raw_result
+            elif isinstance(raw_result, Exception):
+                result = ToolExecutionResult(
+                    error=ToolExecutionError(
+                        error_class=ERROR_CLASS_TOOL_EXECUTION_FAILED,
+                        message="工具执行失败",
+                        details={
+                            "tool_name": tool_call.tool_name,
+                            "tool_call_id": tool_call.tool_call_id,
+                            "exception_type": type(raw_result).__name__,
+                        },
+                    )
+                )
+            else:
+                result = ToolExecutionResult(
+                    error=ToolExecutionError(
+                        error_class=ERROR_CLASS_TOOL_EXECUTION_FAILED,
+                        message="工具执行返回了未知结果",
+                        details={
+                            "tool_name": tool_call.tool_name,
+                            "tool_call_id": tool_call.tool_call_id,
+                        },
+                    )
+                )
+            outcomes.append(_ToolExecutionOutcome(tool_call=tool_call, result=result))
+        return tuple(outcomes)
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolExecutionOutcome:
+    tool_call: LlmStreamToolCall
+    result: ToolExecutionResult
+
 
 @dataclass(frozen=True, slots=True)
 class _TurnResult:
@@ -271,6 +318,41 @@ def _assistant_message(content: str) -> LlmMessage:
     return LlmMessage(role="assistant", content=[LlmTextPart(text=content)])
 
 
+def _tool_result_from_execution(
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    execution_result: ToolExecutionResult,
+) -> LlmStreamToolResult:
+    error = None
+    if execution_result.error is not None:
+        error = LlmGatewayError(
+            error_class=execution_result.error.error_class,
+            message=execution_result.error.message,
+            details=dict(execution_result.error.details),
+        )
+    return LlmStreamToolResult(
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        result_json=(
+            dict(execution_result.result_json)
+            if execution_result.result_json is not None
+            else None
+        ),
+        error=error,
+    )
+
+
+def _resolved_tool_call_id(*, outcome: _ToolExecutionOutcome) -> str:
+    for event in outcome.result.events:
+        if event.type != "tool.call":
+            continue
+        tool_call_id = event.data_json.get("tool_call_id")
+        if isinstance(tool_call_id, str) and tool_call_id.strip():
+            return tool_call_id
+    return outcome.tool_call.tool_call_id
+
+
 def _tool_result_message(tool_result: LlmStreamToolResult) -> LlmMessage:
     payload: dict[str, Any] = {
         "tool_call_id": tool_result.tool_call_id,
@@ -282,6 +364,26 @@ def _tool_result_message(tool_result: LlmStreamToolResult) -> LlmMessage:
         payload["error"] = tool_result.error.to_json()
     content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return LlmMessage(role="tool", content=[LlmTextPart(text=content)])
+
+
+def _tool_execution_context(*, context: AgentRunContext) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        run_id=context.run_id,
+        trace_id=context.trace_id,
+        org_id=_optional_uuid(context.input_json.get("org_id")),
+    )
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        return uuid.UUID(cleaned)
+    except ValueError:
+        return None
 
 
 def _cancelled(context: AgentRunContext) -> bool:
@@ -310,5 +412,4 @@ __all__ = [
     "AgentLoop",
     "ERROR_CLASS_AGENT_MAX_ITERATIONS_EXCEEDED",
     "StubToolExecutor",
-    "ToolCallExecutor",
 ]

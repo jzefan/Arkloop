@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import time
 from typing import Any, Callable, Mapping
 
-from .executor import ToolExecutionContext, ToolExecutionResult, _duration_ms
+from .executor import ToolExecutionContext, ToolExecutionResult
 
 StubResultFactory = Callable[[str, dict[str, Any], ToolExecutionContext], Mapping[str, Any]]
 
@@ -19,7 +19,9 @@ class StubToolExecutor:
         tool_name: str,
         args: dict[str, Any],
         context: ToolExecutionContext,
+        tool_call_id: str | None = None,
     ) -> ToolExecutionResult:
+        _ = tool_call_id
         started = time.monotonic()
         payload_factory = self.result_factory or _default_result_factory
         payload = dict(payload_factory(tool_name, args, context))
@@ -37,5 +39,11 @@ def _default_result_factory(
         "echo_arguments": dict(args),
         "trace_id": context.trace_id,
     }
+
+
+def _duration_ms(started: float) -> int:
+    elapsed = time.monotonic() - started
+    millis = int(elapsed * 1000)
+    return millis if millis >= 0 else 0
 
 __all__ = ["StubToolExecutor", "StubResultFactory"]

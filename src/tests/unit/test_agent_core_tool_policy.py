@@ -96,3 +96,58 @@ def test_tool_call_is_denied_when_not_in_allowlist_and_emits_replayable_events()
 
     resumed = [event for event in decision.events if event.seq > 1]
     assert [(event.seq, event.type) for event in resumed] == [(2, "policy.denied")]
+
+
+def test_tool_policy_enforcer_reuses_given_tool_call_id() -> None:
+    run_id = uuid.UUID(int=7)
+    emitter = RunEventEmitter(
+        run_id=run_id,
+        trace_id="c" * 32,
+        event_id_factory=_FakeEventIdFactory(),
+        clock=_fixed_clock,
+    )
+    registry = ToolRegistry(
+        specs=[ToolSpec(name="echo", version="1", description="回显", risk_level="low")]
+    )
+    allowlist = ToolAllowlist.from_names(["echo"])
+    enforcer = ToolPolicyEnforcer(registry=registry, allowlist=allowlist)
+
+    decision = enforcer.request_tool_call(
+        emitter=emitter,
+        tool_name="echo",
+        args_json={"text": "hi"},
+        tool_call_id="external_call_1",
+    )
+
+    assert decision.allowed is True
+    assert decision.tool_call_id == "external_call_1"
+    assert [event.type for event in decision.events] == ["tool.call"]
+    assert decision.events[0].data_json["tool_call_id"] == "external_call_1"
+
+
+def test_tool_policy_enforcer_generates_tool_call_id_for_blank_input() -> None:
+    emitter = RunEventEmitter(
+        run_id=uuid.UUID(int=9),
+        trace_id="d" * 32,
+        event_id_factory=_FakeEventIdFactory(),
+        clock=_fixed_clock,
+    )
+    registry = ToolRegistry(
+        specs=[ToolSpec(name="echo", version="1", description="回显", risk_level="low")]
+    )
+    enforcer = ToolPolicyEnforcer(
+        registry=registry,
+        allowlist=ToolAllowlist.from_names(["echo"]),
+    )
+
+    decision = enforcer.request_tool_call(
+        emitter=emitter,
+        tool_name="echo",
+        args_json={"text": "hi"},
+        tool_call_id="   ",
+    )
+
+    assert decision.allowed is True
+    assert decision.tool_call_id
+    uuid.UUID(decision.tool_call_id)
+    assert decision.events[0].data_json["tool_call_id"] == decision.tool_call_id

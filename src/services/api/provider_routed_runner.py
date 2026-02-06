@@ -4,7 +4,13 @@ import os
 from typing import AsyncIterator, Protocol
 import uuid
 
-from packages.agent_core import AgentRunContext, AgentRunner, RunEvent, RunEventEmitter
+from packages.agent_core import (
+    AgentRunContext,
+    AgentRunner,
+    RunEvent,
+    RunEventEmitter,
+    ToolExecutor,
+)
 from packages.agent_core.loop import AgentLoop
 from packages.data import Database
 from packages.data.threads import SqlAlchemyMessageRepository
@@ -103,11 +109,13 @@ class ProviderRoutedAgentRunner(AgentRunner):
         router: ProviderRouter,
         byok_policy: OrgByokPolicy,
         gateway_factory: ProviderGatewayFactory,
+        tool_executor: ToolExecutor,
     ) -> None:
         self._database = database
         self._router = router
         self._byok_policy = byok_policy
         self._gateway_factory = gateway_factory
+        self._tool_executor = tool_executor
 
     async def run(self, *, context: AgentRunContext) -> AsyncIterator[RunEvent]:
         emitter = RunEventEmitter(run_id=context.run_id, trace_id=context.trace_id)
@@ -146,7 +154,7 @@ class ProviderRoutedAgentRunner(AgentRunner):
             yield emitter.emit(type="run.failed", error_class=error.error_class, data_json=error.to_json())
             return
 
-        loop = AgentLoop(gateway=gateway)
+        loop = AgentLoop(gateway=gateway, tool_executor=self._tool_executor)
         async for event in loop.run(
             context=context,
             emitter=emitter,

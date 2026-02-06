@@ -54,6 +54,7 @@ class ToolExecutor(Protocol):
         tool_name: str,
         args: dict[str, Any],
         context: ToolExecutionContext,
+        tool_call_id: str | None = None,
     ) -> ToolExecutionResult: ...
 
 
@@ -83,6 +84,7 @@ class DispatchingToolExecutor(ToolExecutor):
         tool_name: str,
         args: dict[str, Any],
         context: ToolExecutionContext,
+        tool_call_id: str | None = None,
     ) -> ToolExecutionResult:
         started = time.monotonic()
         emitter = context.emitter or RunEventEmitter(
@@ -93,6 +95,7 @@ class DispatchingToolExecutor(ToolExecutor):
             emitter=emitter,
             tool_name=tool_name,
             args_json=args,
+            tool_call_id=tool_call_id,
         )
         policy_events = tuple(decision.events)
 
@@ -104,7 +107,7 @@ class DispatchingToolExecutor(ToolExecutor):
                     message="工具调用被策略拒绝",
                     details={
                         "tool_name": tool_name,
-                        "tool_call_id": str(decision.tool_call_id),
+                        "tool_call_id": decision.tool_call_id,
                         "deny_reason": denied_event.data_json.get("deny_reason"),
                     },
                 ),
@@ -120,7 +123,7 @@ class DispatchingToolExecutor(ToolExecutor):
                     message="工具未绑定执行器",
                     details={
                         "tool_name": tool_name,
-                        "tool_call_id": str(decision.tool_call_id),
+                        "tool_call_id": decision.tool_call_id,
                     },
                 ),
                 duration_ms=_duration_ms(started),
@@ -128,7 +131,12 @@ class DispatchingToolExecutor(ToolExecutor):
             )
 
         try:
-            result = await executor.execute(tool_name=tool_name, args=args, context=context)
+            result = await executor.execute(
+                tool_name=tool_name,
+                args=args,
+                context=context,
+                tool_call_id=decision.tool_call_id,
+            )
         except Exception as exc:
             return ToolExecutionResult(
                 error=ToolExecutionError(
@@ -136,7 +144,7 @@ class DispatchingToolExecutor(ToolExecutor):
                     message="工具执行失败",
                     details={
                         "tool_name": tool_name,
-                        "tool_call_id": str(decision.tool_call_id),
+                        "tool_call_id": decision.tool_call_id,
                         "exception_type": type(exc).__name__,
                     },
                 ),

@@ -23,11 +23,37 @@ from packages.data.identity import (
     SqlAlchemyUserRepository,
 )
 from packages.data.runs import SqlAlchemyRunEventRepository
+from packages.llm_gateway import (
+    LlmGatewayRequest,
+    LlmStreamMessageDelta,
+    LlmStreamRunCompleted,
+    LlmStreamToolCall,
+)
 from services.api.main import configure_app
+from services.api.provider_routed_runner import EnvProviderGatewayFactory
 from services.api.trace import TRACE_ID_HEADER
 from services.worker import Worker
 
 pytestmark = pytest.mark.integration
+
+
+class _P52ScriptedGateway:
+    def __init__(self) -> None:
+        self.requests: list[LlmGatewayRequest] = []
+
+    async def stream(self, *, request: LlmGatewayRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield LlmStreamToolCall(
+                tool_call_id="p52_call_1",
+                tool_name="echo",
+                arguments_json={"text": "hello"},
+            )
+            yield LlmStreamRunCompleted()
+            return
+
+        yield LlmStreamMessageDelta(content_delta="tool loop done", role="assistant")
+        yield LlmStreamRunCompleted()
 
 
 def _repo_root() -> Path:
@@ -720,6 +746,112 @@ def test_run_events_sse_streams_and_resumes(monkeypatch) -> None:
                     resumed = _collect_sse_json_events(resp, expected=len(expected) - 1)
 
                 assert [(event["seq"], event["type"]) for event in resumed] == expected[1:]
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_p52_tool_executor_pipeline_events_and_sse_resume(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_runs_p52_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_SSE_POLL_SECONDS", "0.01")
+            m.setenv("ARKLOOP_SSE_HEARTBEAT_SECONDS", "0.05")
+            scripted_gateway = _P52ScriptedGateway()
+
+            def _patched_create(self, *, credential):
+                _ = (self, credential)
+                return scripted_gateway
+
+            m.setattr(EnvProviderGatewayFactory, "create", _patched_create)
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            app = configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+
+                run_resp = client.post(f"/v1/threads/{thread_id}/runs", headers=headers)
+                assert run_resp.status_code == 201
+                run_id = uuid.UUID(run_resp.json()["run_id"])
+
+                events = anyio.run(_wait_for_final_event, test_sqlalchemy_url, run_id, "run.completed")
+                types = [item.type for item in events]
+                assert types == [
+                    "run.started",
+                    "run.route.selected",
+                    "tool.call",
+                    "policy.denied",
+                    "tool.result",
+                    "message.delta",
+                    "run.completed",
+                ]
+
+                tool_call = next(item for item in events if item.type == "tool.call")
+                denied = next(item for item in events if item.type == "policy.denied")
+                tool_result = next(item for item in events if item.type == "tool.result")
+                assert tool_call.data_json["tool_call_id"] == "p52_call_1"
+                assert denied.data_json["tool_call_id"] == "p52_call_1"
+                assert tool_result.data_json["tool_call_id"] == "p52_call_1"
+                assert tool_result.error_class == "policy.denied"
+
+                assert len(scripted_gateway.requests) == 2
+                second_turn_tool_messages = [
+                    item for item in scripted_gateway.requests[1].messages if item.role == "tool"
+                ]
+                assert second_turn_tool_messages
+                last_tool_payload = json.loads(second_turn_tool_messages[-1].content[0].text)
+                assert last_tool_payload["tool_call_id"] == "p52_call_1"
+                assert last_tool_payload["error"]["error_class"] == "policy.denied"
+
+                with client.stream(
+                    "GET",
+                    f"/v1/runs/{run_id}/events?after_seq=0&follow=0",
+                    headers=headers,
+                ) as resp:
+                    assert resp.status_code == 200
+                    all_sse_events = _collect_sse_json_events(resp, expected=len(events))
+
+                assert [item["type"] for item in all_sse_events] == types
+                tool_result_seq = next(
+                    item["seq"] for item in all_sse_events if item["type"] == "tool.result"
+                )
+                expected_tail = [item for item in all_sse_events if item["seq"] > tool_result_seq]
+                with client.stream(
+                    "GET",
+                    f"/v1/runs/{run_id}/events?after_seq={tool_result_seq}&follow=0",
+                    headers=headers,
+                ) as resp:
+                    assert resp.status_code == 200
+                    resumed = _collect_sse_json_events(resp, expected=len(expected_tail))
+
+                assert [(item["seq"], item["type"]) for item in resumed] == [
+                    (item["seq"], item["type"]) for item in expected_tail
+                ]
     finally:
         anyio.run(_drop_database, admin_dsn, database)
 

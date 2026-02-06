@@ -439,7 +439,7 @@
   - unit pytest：未注册的 tool 调用返回明确错误。
   - unit pytest：policy 拦截的 tool 不会到达 executor。
 
-#### P52 -- Agent Loop 集成 ToolExecutor
+#### P52 -- Agent Loop 集成 ToolExecutor（已完成）
 
 - 目标：把 P50 的循环骨架与 P51 的 ToolExecutor 对接：LLM 返回 tool_call -> ToolPolicyEnforcer 校验 -> ToolExecutor 执行 -> 结果拼回 messages -> 下一轮。
 - 关键点：
@@ -457,6 +457,8 @@
   - unit pytest：policy.denied 的 tool_call 被正确处理，LLM 收到拒绝信息并继续。
   - unit pytest：并行 tool_call 全部执行并正确拼回。
   - integration pytest：通过 API 创建 run，SSE 事件流包含完整的 tool.call / tool.result / message.delta 序列。
+- 状态说明：
+  - 本步只完成 AgentLoop 与 ToolExecutor 集成，不包含 P53（OpenAI/Anthropic 的 tool_call 流式解析扩展）。
 
 #### P53 -- LLM Gateway 支持 tool_call 流式解析
 

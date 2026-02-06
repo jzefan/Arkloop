@@ -7,6 +7,12 @@ import uuid
 
 from fastapi import FastAPI, Request
 
+from packages.agent_core import (
+    DispatchingToolExecutor,
+    ToolAllowlist,
+    ToolPolicyEnforcer,
+    ToolRegistry,
+)
 from packages.data import Database
 from packages.data.runs import RunNotFoundError
 from packages.llm_gateway.stub import StubLlmGateway, StubLlmGatewayConfig
@@ -105,11 +111,22 @@ def configure_run_executor(app: FastAPI) -> None:
     stub_gateway = StubLlmGateway(config=stub_config)
     routing_config = ProviderRoutingConfig.from_env()
     router = ProviderRouter(config=routing_config)
+    tool_registry = ToolRegistry()
+    tool_allowlist = ToolAllowlist.from_names([])
+    tool_policy_enforcer = ToolPolicyEnforcer(
+        registry=tool_registry,
+        allowlist=tool_allowlist,
+    )
+    tool_executor = DispatchingToolExecutor(
+        registry=tool_registry,
+        policy_enforcer=tool_policy_enforcer,
+    )
     runner = ProviderRoutedAgentRunner(
         database=database,
         router=router,
         byok_policy=AlwaysDisabledOrgByokPolicy(),
         gateway_factory=EnvProviderGatewayFactory(stub_gateway=stub_gateway),
+        tool_executor=tool_executor,
     )
     engine = RunEngine(database=database, runner=runner)
     install_run_executor(
