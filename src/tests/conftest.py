@@ -11,7 +11,7 @@ def _selects_marker(markexpr: str, marker: str) -> bool:
     return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(marker)}(?![A-Za-z0-9_])", markexpr))
 
 def _excludes_marker(markexpr: str, marker: str) -> bool:
-    return bool(re.search(rf"(?<![A-Za-z0-9_])not\\s+{re.escape(marker)}(?![A-Za-z0-9_])", markexpr))
+    return bool(re.search(rf"(?<![A-Za-z0-9_])not\s+{re.escape(marker)}(?![A-Za-z0-9_])", markexpr))
 
 
 def pytest_configure(config) -> None:
