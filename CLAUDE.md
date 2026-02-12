@@ -73,7 +73,7 @@
 * 提交标题限制为 70 个字符以内，并使用小写
 * 保持此文件简洁，避免冗余
 * `requirements*.txt` 需要显式补齐关键运行依赖（例如 FastAPI 的 `starlette`、Pydantic 的 `pydantic-core`/`annotated-types`/`typing-inspection`、pytest 的 `pluggy`/`pygments`），避免在 `--no-deps` 或受限镜像环境中出现缺包
-
+* 在开始前，请检查项目中是否有Project.md,如果有,请查看
 ### 一般规范
 
 * 不要使用 emoji
@@ -82,8 +82,7 @@
 ### 额外规范
 * 不要创建无意义/没有实际作用的文件/文件夹
 
-* 我的系统为Windows
-* 但项目应该可以基于Linux/Windows/MacOS三段运行
+* 项目应基于Linux/Windows/MacOS三段运行
 
 * **模块应自上而下注入
 
@@ -110,3 +109,4 @@
 7.以假装理解为耻，以诚实无知为菜
 8.以盲目修改为耻，以谨慎重构为荣
 
+在创建commit时请检查是否有commit.md文件,如果有,请查看
