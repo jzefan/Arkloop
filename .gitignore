@@ -30,3 +30,5 @@ Thumbs.db
 !.env.example
 !.env.test.example
 .VSCodeCounter
+
+.venv312/

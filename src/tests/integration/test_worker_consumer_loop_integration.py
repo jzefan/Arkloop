@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import re
@@ -254,5 +255,146 @@ def test_worker_loop_consumes_pg_job_and_is_replayable_via_sse(monkeypatch) -> N
 
                 assert resumed[0]["type"] == "worker.job.received"
                 assert resumed[-1]["type"] == "run.completed"
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_worker_loop_dedupes_duplicate_run_jobs_via_run_lock(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_worker_lock_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
+            m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
+            m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
+            m.setenv("ARKLOOP_LLM_DEBUG_EVENTS", "0")
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            app = configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+                org_id = uuid.UUID(thread_resp.json()["org_id"])
+
+                run_resp = client.post(f"/v1/threads/{thread_id}/runs", headers=headers)
+                assert run_resp.status_code == 201
+                payload = run_resp.json()
+                run_id = uuid.UUID(payload["run_id"])
+                trace_id = payload["trace_id"]
+
+                async def _enqueue_job() -> uuid.UUID:
+                    database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
+                    try:
+                        async with database.sessionmaker() as session:
+                            queue = SqlAlchemyPgJobQueue(session)
+                            job_id = await queue.enqueue_run(
+                                org_id=org_id,
+                                run_id=run_id,
+                                trace_id=trace_id,
+                                payload={"source": "integration_test"},
+                            )
+                            await session.commit()
+                            return job_id
+                    finally:
+                        await database.dispose()
+
+                job_id1 = anyio.run(_enqueue_job)
+                job_id2 = anyio.run(_enqueue_job)
+
+                async def _run_workers_concurrently() -> None:
+                    loop_config = WorkerLoopConfig(concurrency=1, poll_seconds=0, heartbeat_seconds=0)
+                    database1, loop1 = create_container(
+                        database_config=DatabaseConfig(url=test_sqlalchemy_url),
+                        loop_config=loop_config,
+                    )
+                    database2, loop2 = create_container(
+                        database_config=DatabaseConfig(url=test_sqlalchemy_url),
+                        loop_config=loop_config,
+                    )
+                    try:
+                        started = asyncio.Event()
+                        release = asyncio.Event()
+                        original_handle_job = loop1._worker.handle_job
+
+                        async def _blocking_handle_job(payload_json) -> None:
+                            started.set()
+                            await release.wait()
+                            await original_handle_job(payload_json)
+
+                        loop1._worker.handle_job = _blocking_handle_job  # type: ignore[assignment]
+
+                        task1 = asyncio.create_task(loop1.run_once())
+                        await asyncio.wait_for(started.wait(), timeout=5)
+                        processed2 = await loop2.run_once()
+                        assert processed2 is True
+                        release.set()
+                        processed1 = await task1
+                        assert processed1 is True
+                    finally:
+                        await database1.dispose()
+                        await database2.dispose()
+
+                anyio.run(_run_workers_concurrently)
+
+                async def _get_job_status(job_id: uuid.UUID) -> str:
+                    database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
+                    try:
+                        async with database.sessionmaker() as session:
+                            row = (
+                                await session.execute(
+                                    sa.text("SELECT status FROM jobs WHERE id = :job_id"),
+                                    {"job_id": job_id},
+                                )
+                            ).one_or_none()
+                            assert row is not None
+                            return str(row[0])
+                    finally:
+                        await database.dispose()
+
+                statuses = sorted([anyio.run(_get_job_status, job_id1), anyio.run(_get_job_status, job_id2)])
+                assert statuses == ["done", "queued"]
+
+                async def _count_received_events() -> int:
+                    database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
+                    try:
+                        async with database.sessionmaker() as session:
+                            row = (
+                                await session.execute(
+                                    sa.text(
+                                        "SELECT count(*) FROM run_events "
+                                        "WHERE run_id = :run_id AND type = 'worker.job.received'"
+                                    ),
+                                    {"run_id": run_id},
+                                )
+                            ).one()
+                            return int(row[0])
+                    finally:
+                        await database.dispose()
+
+                assert anyio.run(_count_received_events) == 1
     finally:
         anyio.run(_drop_database, admin_dsn, database)
