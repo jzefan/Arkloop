@@ -567,7 +567,7 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - unit pytest：mock Anthropic 流式响应（含 tool_use blocks），正确产出 `LlmStreamToolCall`。
   - 手工验证（可选）：连接真实 provider，发送需要 tool 调用的请求，确认事件流正确。
 
-#### P54 -- 内置工具 #1：echo / noop（最小验证）
+#### P54 -- 内置工具 #1：echo / noop（最小验证）(已完成)
 
 - 目标：实现第一个真正的内置工具，用于端到端验证 Agent Loop 全链路。
 - 关键点：
@@ -584,7 +584,7 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - integration pytest：创建 run（stub gateway 模拟 tool_call echo），SSE 事件流包含 tool.call(echo) -> tool.result -> message.delta -> run.completed。
   - unit pytest：echo 工具输入输出稳定。
 
-#### P54.2 -- JobQueue 抽象 + PostgreSQL 队列 v1（占位但可用）
+#### P54.2 -- JobQueue 抽象 + PostgreSQL 队列 v1（占位但可用）(已完成)
 
 - 目标：把“run 执行投递/领取/确认”从 API/Worker 业务代码中抽成稳定边界，避免后续在 Redis/NATS/Kafka 等队列之间迁移时返工。
 - 关键点：
@@ -592,17 +592,19 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - **v1 实现不引入新基础设施**：基于 PostgreSQL（表 + `SELECT ... FOR UPDATE SKIP LOCKED`），可选 `LISTEN/NOTIFY` 做唤醒信号。
   - job payload 需要版本化（schema version），为未来多语言 worker（含 Rust）共存留空间。
   - 失败语义要稳定：可观测（日志/metrics）、可追责（审计/trace_id）、可重放（DB 可查询）。
+  - 增加 `max_attempts`：超过阈值后 job 标记为 `dead`，由上层决定是否写入 `run_events` 审计事件。
 - 具体改动范围：
   - 新建 `src/packages/job_queue/`（或放入现有 `src/packages/*` 的合适目录）：
     - `protocol.py`：抽象接口与 payload schema（含版本）。
     - `pg_queue.py`：PG 实现（enqueue/lease/ack/nack）。
-  - 新建 Alembic migration：创建 `jobs` 表（最小字段：id、job_type、payload_json、status、available_at、leased_until、attempts、created_at、updated_at）。
+  - 新建 Alembic migration：创建 `jobs` 表（最小字段：id、job_type、payload_json、status、available_at、leased_until、lease_token、attempts、created_at、updated_at）。
   - `src/services/api/`：提供 enqueue 的调用点（仅投递，不执行）。
   - `src/services/worker/`：提供 lease/ack/nack 的调用点（仅消费，不提供 HTTP）。
 - 依赖：无（可独立落地）
 - 验收：
   - unit pytest：PG lease 具备互斥（并发 worker 不重复领取同一 job），并能 ack/nack 后改变状态。
   - integration pytest：API 投递 job 后，worker 能从 DB lease 到 job。
+  - 参考用例：`src/tests/integration/test_job_queue_pg_integration.py`。
 
 #### P54.3 -- Worker composition root + 并发消费 loop（可水平扩容）
 

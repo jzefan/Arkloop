@@ -19,6 +19,7 @@ from packages.observability.logging import configure_json_logging
 
 from .db import install_database
 from .error_envelope import install_error_handlers, install_unhandled_exception_middleware
+from .job_queue import configure_job_queue
 from .run_executor import configure_run_executor
 from .sse import configure_sse
 from .trace import install_trace_id_middleware
@@ -106,6 +107,7 @@ def configure_app() -> FastAPI:
     configure_logging()
     app = create_app()
     configure_database(app)
+    configure_job_queue(app)
     configure_run_executor(app)
     configure_auth(app)
     configure_sse(app)
