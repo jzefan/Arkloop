@@ -143,6 +143,16 @@ def test_agent_loop_supports_multi_turn_with_parallel_tool_calls() -> None:
         ("echo", {"query": "pong"}, "call_2"),
     ]
     assert len(gateway.requests) == 2
+    assistant_tool_calls = [
+        message
+        for message in gateway.requests[1].messages
+        if message.role == "assistant" and message.tool_calls
+    ]
+    assert len(assistant_tool_calls) == 1
+    assert [tool_call.tool_call_id for tool_call in assistant_tool_calls[0].tool_calls] == [
+        "call_1",
+        "call_2",
+    ]
     tool_messages = [message for message in gateway.requests[1].messages if message.role == "tool"]
     assert len(tool_messages) == 2
     payloads = [json.loads(message.content[0].text) for message in tool_messages]
@@ -205,6 +215,16 @@ def test_agent_loop_policy_denied_is_sent_back_to_llm_and_keeps_tool_call_id() -
     payload = json.loads(tool_message.content[0].text)
     assert payload["tool_call_id"] == "deny_1"
     assert payload["error"]["error_class"] == POLICY_DENIED_CODE
+
+    assistant_tool_calls = [
+        message
+        for message in gateway.requests[1].messages
+        if message.role == "assistant" and message.tool_calls
+    ]
+    assert len(assistant_tool_calls) == 1
+    assert [tool_call.tool_call_id for tool_call in assistant_tool_calls[0].tool_calls] == [
+        "deny_1",
+    ]
 
 
 def test_agent_loop_rewrites_blank_tool_call_id_consistently() -> None:

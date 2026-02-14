@@ -25,6 +25,7 @@ from .contract import (
     LlmStreamRunCompleted,
     LlmStreamRunFailed,
     LlmStreamToolCall,
+    ToolSpec,
     LlmUsage,
 )
 from .gateway import LlmGateway
@@ -172,6 +173,46 @@ def _to_openai_chat_messages(request: LlmGatewayRequest) -> list[dict[str, Any]]
     messages: list[dict[str, Any]] = []
     for message in request.messages:
         text = "".join(part.text for part in message.content)
+        if message.role == "assistant" and message.tool_calls:
+            payload: dict[str, Any] = {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": [
+                    {
+                        "id": tool_call.tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.tool_name,
+                            "arguments": json.dumps(
+                                dict(tool_call.arguments_json),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ],
+            }
+            messages.append(payload)
+            continue
+
+        if message.role == "tool":
+            parsed = _try_parse_json(text)
+            if isinstance(parsed, Mapping):
+                tool_call_id = parsed.get("tool_call_id")
+                if isinstance(tool_call_id, str) and tool_call_id.strip():
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id.strip(),
+                            "content": _tool_output_text_from_envelope(parsed),
+                        }
+                    )
+                    continue
+            messages.append({"role": "tool", "content": text})
+            continue
+
         messages.append({"role": message.role, "content": text})
     return messages
 
@@ -180,6 +221,46 @@ def _to_openai_responses_input(request: LlmGatewayRequest) -> list[dict[str, Any
     items: list[dict[str, Any]] = []
     for message in request.messages:
         text = "".join(part.text for part in message.content)
+        if message.role == "assistant" and message.tool_calls:
+            if text:
+                items.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "input_text", "text": text}],
+                    }
+                )
+            for tool_call in message.tool_calls:
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.tool_call_id,
+                        "name": tool_call.tool_name,
+                        "arguments": json.dumps(
+                            dict(tool_call.arguments_json),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    }
+                )
+            continue
+
+        if message.role == "tool":
+            parsed = _try_parse_json(text)
+            if not isinstance(parsed, Mapping):
+                raise ValueError("tool message 不是合法 JSON")
+            tool_call_id = parsed.get("tool_call_id")
+            if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+                raise ValueError("tool message 缺少 tool_call_id")
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call_id.strip(),
+                    "output": _tool_output_text_from_envelope(parsed),
+                }
+            )
+            continue
+
         items.append(
             {
                 "role": message.role,
@@ -187,6 +268,36 @@ def _to_openai_responses_input(request: LlmGatewayRequest) -> list[dict[str, Any
             }
         )
     return items
+
+
+def _tool_output_text_from_envelope(envelope: Mapping[str, Any]) -> str:
+    result = envelope.get("result")
+    if result is not None:
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    error = envelope.get("error")
+    if error is not None:
+        return json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    return json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _to_openai_tools(*, specs: list[ToolSpec], api_mode: str) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for spec in specs:
+        schema = dict(spec.json_schema)
+        if api_mode == "responses":
+            payload: dict[str, Any] = {"type": "function", "name": spec.name, "parameters": schema}
+            if spec.description is not None:
+                payload["description"] = spec.description
+            tools.append(payload)
+            continue
+
+        function: dict[str, Any] = {"name": spec.name, "parameters": schema}
+        if spec.description is not None:
+            function["description"] = spec.description
+        tools.append({"type": "function", "function": function})
+    return tools
 
 
 async def _aiter_sse_data(lines: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -378,6 +489,10 @@ class OpenAiLlmGateway(LlmGateway):
             payload["messages"] = _to_openai_chat_messages(request)
             if request.max_output_tokens is not None:
                 payload["max_tokens"] = int(request.max_output_tokens)
+
+        if request.tools:
+            payload["tools"] = _to_openai_tools(specs=request.tools, api_mode=api_mode)
+            payload["tool_choice"] = "auto"
 
         if self._config.emit_llm_debug_events:
             yield LlmStreamLlmRequest(

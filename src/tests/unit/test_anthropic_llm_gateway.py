@@ -17,6 +17,7 @@ from packages.llm_gateway import (
     LlmStreamRunFailed,
     LlmStreamToolCall,
     LlmTextPart,
+    ToolSpec,
 )
 from packages.llm_gateway.anthropic import AnthropicGatewayConfig, AnthropicLlmGateway
 
@@ -89,6 +90,109 @@ def test_anthropic_gateway_messages_streams_deltas_and_completed_with_usage() ->
     assert items[1].content_delta == " world"
     assert items[2].usage is not None
     assert items[2].usage.total_tokens == 3
+
+
+def test_anthropic_gateway_sends_tools_and_tool_results() -> None:
+    sse = 'data: {"type":"message_stop"}\n\n'
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages"
+
+        payload = json.loads(request.content)
+        assert payload["tools"] == [
+            {
+                "name": "echo",
+                "description": "echo tool",
+                "input_schema": {"type": "object"},
+            }
+        ]
+        assert payload["messages"] == [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "echo",
+                        "input": {"text": "hi"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_1",
+                        "content": '{"text":"ok"}',
+                    }
+                ],
+            },
+        ]
+
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=sse.encode("utf-8"),
+        )
+
+    transport = httpx.MockTransport(_handler)
+    client = httpx.AsyncClient(base_url="https://example.test/v1", transport=transport)
+    gateway = AnthropicLlmGateway(
+        config=AnthropicGatewayConfig(
+            api_key="sk-test",
+            base_url="https://example.test/v1",
+            anthropic_version="2023-06-01",
+            total_timeout_seconds=5.0,
+        ),
+        client=client,
+    )
+
+    request = LlmGatewayRequest(
+        model="claude-test",
+        messages=[
+            LlmMessage(role="user", content=[LlmTextPart(text="hi")]),
+            LlmMessage(
+                role="assistant",
+                content=[],
+                tool_calls=[
+                    LlmStreamToolCall(
+                        tool_call_id="call_1",
+                        tool_name="echo",
+                        arguments_json={"text": "hi"},
+                    )
+                ],
+            ),
+            LlmMessage(
+                role="tool",
+                content=[
+                    LlmTextPart(
+                        text=json.dumps(
+                            {
+                                "tool_call_id": "call_1",
+                                "tool_name": "echo",
+                                "result": {"text": "ok"},
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                ],
+            ),
+        ],
+        tools=[ToolSpec(name="echo", description="echo tool", json_schema={"type": "object"})],
+        max_output_tokens=5,
+    )
+
+    async def _collect() -> list[object]:
+        items: list[object] = []
+        async for item in gateway.stream(request=request):
+            items.append(item)
+        await client.aclose()
+        return items
+
+    items = anyio.run(_collect)
+    assert [type(item) for item in items] == [LlmStreamRunCompleted]
 
 
 def test_anthropic_gateway_applies_advanced_json_extra_headers_and_query() -> None:

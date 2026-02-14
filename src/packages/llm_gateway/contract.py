@@ -66,9 +66,13 @@ class LlmTextPart:
 class LlmMessage:
     role: str
     content: list[LlmTextPart]
+    tool_calls: list["LlmStreamToolCall"] = field(default_factory=list)
 
     def to_json(self) -> JsonObject:
-        return {"role": self.role, "content": [part.to_json() for part in self.content]}
+        payload: JsonObject = {"role": self.role, "content": [part.to_json() for part in self.content]}
+        if self.tool_calls:
+            payload["tool_calls"] = [tool_call.to_data_json() for tool_call in self.tool_calls]
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

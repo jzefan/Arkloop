@@ -79,8 +79,8 @@ class AgentLoop:
                 yield emitter.emit(type="run.cancelled", data_json={"reason": "cancel_signal"})
                 return
 
-            if turn.assistant_text:
-                messages.append(_assistant_message(turn.assistant_text))
+            if turn.assistant_text or turn.tool_calls:
+                messages.append(_assistant_message(turn.assistant_text, tool_calls=turn.tool_calls))
 
             for tool_result in turn.tool_results:
                 messages.append(_tool_result_message(tool_result))
@@ -314,8 +314,9 @@ def _copy_request(*, request: LlmGatewayRequest, messages: list[LlmMessage]) -> 
     )
 
 
-def _assistant_message(content: str) -> LlmMessage:
-    return LlmMessage(role="assistant", content=[LlmTextPart(text=content)])
+def _assistant_message(content: str, *, tool_calls: tuple[LlmStreamToolCall, ...] = ()) -> LlmMessage:
+    parts = [LlmTextPart(text=content)] if content else []
+    return LlmMessage(role="assistant", content=parts, tool_calls=list(tool_calls))
 
 
 def _tool_result_from_execution(

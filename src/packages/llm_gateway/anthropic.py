@@ -25,6 +25,7 @@ from .contract import (
     LlmStreamRunCompleted,
     LlmStreamRunFailed,
     LlmStreamToolCall,
+    ToolSpec,
     LlmUsage,
 )
 from .gateway import LlmGateway
@@ -315,15 +316,79 @@ def _anthropic_error_details(error_json: Any | None, *, status_code: int) -> dic
 def _to_anthropic_messages(request: LlmGatewayRequest) -> tuple[str | None, list[dict[str, Any]]]:
     system_parts: list[str] = []
     messages: list[dict[str, Any]] = []
+    pending_tool_results: list[dict[str, Any]] = []
+
+    def _flush_tool_results() -> None:
+        if not pending_tool_results:
+            return
+        messages.append({"role": "user", "content": list(pending_tool_results)})
+        pending_tool_results.clear()
+
     for message in request.messages:
         text = "".join(part.text for part in message.content)
         if message.role == "system":
             if text:
                 system_parts.append(text)
             continue
+
+        if message.role == "tool":
+            pending_tool_results.append(_tool_result_block_from_tool_message(text))
+            continue
+
+        _flush_tool_results()
+
+        if message.role == "assistant" and message.tool_calls:
+            blocks: list[dict[str, Any]] = []
+            if text:
+                blocks.append({"type": "text", "text": text})
+            blocks.extend(
+                {
+                    "type": "tool_use",
+                    "id": tool_call.tool_call_id,
+                    "name": tool_call.tool_name,
+                    "input": dict(tool_call.arguments_json),
+                }
+                for tool_call in message.tool_calls
+            )
+            messages.append({"role": "assistant", "content": blocks})
+            continue
+
         messages.append({"role": message.role, "content": [{"type": "text", "text": text}]})
+
+    _flush_tool_results()
+
     system = "\n".join(system_parts) if system_parts else None
     return system, messages
+
+
+def _tool_result_block_from_tool_message(text: str) -> dict[str, Any]:
+    parsed = _try_parse_json(text)
+    if not isinstance(parsed, Mapping):
+        raise ValueError("tool message 不是合法 JSON")
+    tool_call_id = parsed.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        raise ValueError("tool message 缺少 tool_call_id")
+
+    result = parsed.get("result")
+    error = parsed.get("error")
+    is_error = error is not None
+    content_source: Any = {"error": error} if is_error else result
+    content = json.dumps(content_source, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    block: dict[str, Any] = {"type": "tool_result", "tool_use_id": tool_call_id.strip(), "content": content}
+    if is_error:
+        block["is_error"] = True
+    return block
+
+
+def _to_anthropic_tools(*, specs: list[ToolSpec]) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for spec in specs:
+        payload: dict[str, Any] = {"name": spec.name, "input_schema": dict(spec.json_schema)}
+        if spec.description is not None:
+            payload["description"] = spec.description
+        tools.append(payload)
+    return tools
 
 
 async def _aiter_sse_events(lines: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -501,6 +566,8 @@ class AnthropicLlmGateway(LlmGateway):
             payload["system"] = system
         if request.temperature is not None:
             payload["temperature"] = float(request.temperature)
+        if request.tools:
+            payload["tools"] = _to_anthropic_tools(specs=request.tools)
 
         if self._config.emit_llm_debug_events:
             yield LlmStreamLlmRequest(
