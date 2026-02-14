@@ -6,7 +6,7 @@
 - 全程使用中文输出和回答
 
 # 全球开发指南
-
+* 请根据第一性原理，检查有没有过度设计，能不能继续简化，不要写过多的兼容性代码
 ## 架构原则
 
 ### SOLID 原则
@@ -70,21 +70,19 @@
 ### 包管理与项目标准
 
 * Node.js 项目优先使用 pnpm
-* 提交标题限制为 70 个字符以内，并使用小写
+* 提交标题commit请查看commit.md的需求
 * 保持此文件简洁，避免冗余
-* `requirements*.txt` 需要显式补齐关键运行依赖（例如 FastAPI 的 `starlette`、Pydantic 的 `pydantic-core`/`annotated-types`/`typing-inspection`、pytest 的 `pluggy`/`pygments`），避免在 `--no-deps` 或受限镜像环境中出现缺包
 * 在开始前，请检查项目中是否有Project.md,如果有,请查看
 ### 一般规范
 
 * 不要使用 emoji
-* 不要使用 emoji
-* 不要使用 emoji
+
 ### 额外规范
 * 不要创建无意义/没有实际作用的文件/文件夹
 
 * 项目应基于Linux/Windows/MacOS三段运行
 
-* **模块应自上而下注入
+* 模块应自上而下注入
 
 * 请不要简化问题,简化操作
 * 不要试图偷懒/摸鱼,保持代码质量
