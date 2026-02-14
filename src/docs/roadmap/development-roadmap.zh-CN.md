@@ -624,13 +624,13 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - integration pytest：`src/tests/integration/test_worker_consumer_loop_integration.py` 覆盖 enqueue -> worker loop 消费 -> job ack(done) -> SSE 回放/续传。
   - 手工验证：`docker compose up` 同时启动 API + Worker，run 能在 worker 中完成而非 API 中完成。
 
-#### P54.5 -- RunEngine 迁移到 Worker（API 不再执行 Agent Loop）
+#### P54.5 -- RunEngine 迁移到 Worker（API 不再执行 Agent Loop）(已完成)
 
 - 目标：把 `RunEngine.execute()` 从 API 进程迁移到 Worker 进程，API 侧改为投递 job 到队列，实现 1.5 节约定的服务边界。
-- 现状分析：
-  - `InProcessStubRunExecutor` 在 API 进程内通过 `asyncio.Queue` 直接运行 `RunEngine`，适合开发调试但不适合生产。
-  - `Worker.handle_job()` 目前只写了 `worker.job.received` 事件，没有调用 `RunEngine`。
-  - 任务队列机制尚未实现（API -> Worker 的 job 投递）。
+- 完成情况：
+  - API 默认只做编排：创建 run 后投递 `run.execute` job，不再在 API 进程内执行 Agent Loop。
+  - Worker `handle_job()` 在 `run.execute` 下调用 `RunEngine.execute()`，并把执行过程统一写入 `run_events`。
+  - `InProcessStubRunExecutor` 作为开发/测试模式保留（`ARKLOOP_RUN_EXECUTOR=in_process`），用于本地演示与稳定测试。
 - 关键点：
   - 任务队列 v1 建议用 PostgreSQL `LISTEN/NOTIFY` + `run` 表状态轮询（避免过早引入 Redis 依赖）；后续可替换为 Redis Stream / BullMQ 等。
   - `InProcessStubRunExecutor` 保留作为开发/测试模式（通过配置切换：`ARKLOOP_RUN_EXECUTOR=in_process|worker`），但默认模式改为 `worker`。

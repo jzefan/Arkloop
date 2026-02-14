@@ -45,7 +45,7 @@ from .audit import AuditLogWriter, get_audit_log_writer
 from .authorization import Actor, Authorizer, Resource
 from .db import get_db_session
 from .error_envelope import ApiError
-from .run_executor import RunExecutor, get_run_executor
+from .run_executor import InProcessStubRunExecutor, RunExecutor, get_run_executor
 from .sse import SseConfig, get_sse_config, sse_comment, sse_event
 
 _v1_router = APIRouter(prefix="/v1")
@@ -696,8 +696,19 @@ async def create_run(
         created_by_user_id=actor.user_id,
         started_data=started_data,
     )
+
+    if isinstance(run_executor, InProcessStubRunExecutor):
+        await session.commit()
+        await run_executor.enqueue(org_id=thread.org_id, run_id=run.id, trace_id=trace_id)
+        return CreateRunResponse(run_id=run.id, trace_id=trace_id)
+
+    await run_executor.enqueue(
+        org_id=thread.org_id,
+        run_id=run.id,
+        trace_id=trace_id,
+        session=session,
+    )
     await session.commit()
-    run_executor.enqueue(run_id=run.id)
     return CreateRunResponse(run_id=run.id, trace_id=trace_id)
 
 

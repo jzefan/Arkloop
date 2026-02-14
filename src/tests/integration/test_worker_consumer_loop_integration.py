@@ -153,7 +153,8 @@ def test_worker_loop_consumes_pg_job_and_is_replayable_via_sse(monkeypatch) -> N
             m.setenv("DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
-            m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
+            m.setenv("ARKLOOP_RUN_EXECUTOR", "worker")
+            m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "1")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
             m.setenv("ARKLOOP_LLM_DEBUG_EVENTS", "0")
@@ -181,23 +182,32 @@ def test_worker_loop_consumes_pg_job_and_is_replayable_via_sse(monkeypatch) -> N
                 run_id = uuid.UUID(payload["run_id"])
                 trace_id = payload["trace_id"]
 
-                async def _enqueue_job() -> uuid.UUID:
+                async def _find_job_id() -> uuid.UUID:
                     database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
                     try:
                         async with database.sessionmaker() as session:
-                            queue = SqlAlchemyPgJobQueue(session)
-                            job_id = await queue.enqueue_run(
-                                org_id=org_id,
-                                run_id=run_id,
-                                trace_id=trace_id,
-                                payload={"source": "integration_test"},
-                            )
-                            await session.commit()
+                            row = (
+                                await session.execute(
+                                    sa.text(
+                                        "SELECT id, payload_json->>'trace_id' AS trace_id, payload_json->>'org_id' AS org_id "
+                                        "FROM jobs "
+                                        "WHERE payload_json->>'run_id' = :run_id "
+                                        "ORDER BY created_at ASC "
+                                        "LIMIT 1"
+                                    ),
+                                    {"run_id": str(run_id)},
+                                )
+                            ).one_or_none()
+                            assert row is not None
+                            job_id = uuid.UUID(str(row[0]))
+                            assert row[1] == trace_id
+                            assert row[2] == str(org_id)
                             return job_id
                     finally:
                         await database.dispose()
 
-                job_id = anyio.run(_enqueue_job)
+                job_id = anyio.run(_find_job_id)
+                assert job_id
 
                 async def _run_worker_once() -> None:
                     database, loop = create_container(
@@ -278,6 +288,7 @@ def test_worker_loop_dedupes_duplicate_run_jobs_via_run_lock(monkeypatch) -> Non
             m.setenv("DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_RUN_EXECUTOR", "in_process")
             m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")

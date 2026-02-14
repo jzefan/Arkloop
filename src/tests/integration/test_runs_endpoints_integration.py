@@ -37,6 +37,11 @@ from services.worker import Worker
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _force_in_process_run_executor(monkeypatch) -> None:
+    monkeypatch.setenv("ARKLOOP_RUN_EXECUTOR", "in_process")
+
+
 class _P52ScriptedGateway:
     def __init__(self) -> None:
         self.requests: list[LlmGatewayRequest] = []
@@ -349,6 +354,93 @@ def test_create_run_persists_run_started_event(monkeypatch) -> None:
                 run_id = uuid.UUID(payload["run_id"])
                 events = anyio.run(_list_events, test_sqlalchemy_url, run_id)
                 assert events[0] == (1, "run.started")
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_create_run_rolls_back_when_job_enqueue_fails_in_worker_mode(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_runs_enqueue_fail_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_RUN_EXECUTOR", "worker")
+            m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            import services.api.main as api_main
+
+            def _configure_failing_job_queue(app) -> None:
+                from services.api.job_queue import install_job_queue_factory
+
+                class _FailingJobQueue:
+                    async def enqueue_run(self, *_args, **_kwargs):
+                        raise RuntimeError("enqueue failed")
+
+                    async def lease(self, *_args, **_kwargs):
+                        raise NotImplementedError
+
+                    async def heartbeat(self, *_args, **_kwargs):
+                        raise NotImplementedError
+
+                    async def ack(self, *_args, **_kwargs):
+                        raise NotImplementedError
+
+                    async def nack(self, *_args, **_kwargs):
+                        raise NotImplementedError
+
+                install_job_queue_factory(app, lambda _session: _FailingJobQueue())
+
+            m.setattr(api_main, "configure_job_queue", _configure_failing_job_queue)
+
+            app = api_main.configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = uuid.UUID(thread_resp.json()["id"])
+                org_id = uuid.UUID(thread_resp.json()["org_id"])
+
+                run_resp = client.post(f"/v1/threads/{thread_id}/runs", headers=headers)
+                assert run_resp.status_code == 500
+                assert run_resp.json()["code"] == "internal_error"
+
+                async def _list_runs() -> int:
+                    database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
+                    try:
+                        async with database.sessionmaker() as session:
+                            repo = SqlAlchemyRunEventRepository(session)
+                            runs = await repo.list_runs_by_thread(
+                                org_id=org_id,
+                                thread_id=thread_id,
+                                limit=50,
+                            )
+                            return len(runs)
+                    finally:
+                        await database.dispose()
+
+                assert anyio.run(_list_runs) == 0
     finally:
         anyio.run(_drop_database, admin_dsn, database)
 

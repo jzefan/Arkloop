@@ -3,57 +3,114 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 import uuid
 
 from fastapi import FastAPI, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.agent_core import (
-    DispatchingToolExecutor,
-    ToolAllowlist,
-    ToolPolicyEnforcer,
-    ToolRegistry,
-)
-from packages.agent_core.builtin_tools import (
-    builtin_agent_tool_specs,
-    builtin_llm_tool_specs,
-    create_builtin_tool_executors,
-)
 from packages.data import Database
 from packages.data.runs import RunNotFoundError
-from packages.llm_gateway import ToolSpec as LlmToolSpec
-from packages.llm_gateway.stub import StubLlmGateway, StubLlmGatewayConfig
-from packages.llm_routing import ProviderRouter, ProviderRoutingConfig
+from packages.job_queue import JobQueue
 from packages.observability.context import new_trace_id, trace_id_context
 
 from .error_envelope import ApiError
-from .provider_routed_runner import (
-    AlwaysDisabledOrgByokPolicy,
-    EnvProviderGatewayFactory,
-    ProviderRoutedAgentRunner,
-)
-from .run_engine import RunEngine
 
 _TOOL_ALLOWLIST_ENV = "ARKLOOP_TOOL_ALLOWLIST"
+_RUN_EXECUTOR_ENV = "ARKLOOP_RUN_EXECUTOR"
+_RUN_EXECUTOR_IN_PROCESS = "in_process"
+_RUN_EXECUTOR_WORKER = "worker"
+
+if TYPE_CHECKING:
+    from packages.llm_gateway import ToolSpec as LlmToolSpec
+
+
+class StubAgentConfig(Protocol):
+    enabled: bool
 
 
 class RunExecutor(Protocol):
-    def enqueue(self, *, run_id: uuid.UUID) -> None: ...
+    async def enqueue(
+        self,
+        *,
+        org_id: uuid.UUID,
+        run_id: uuid.UUID,
+        trace_id: str | None,
+        session: AsyncSession | None = None,
+    ) -> None: ...
 
     async def start(self) -> None: ...
 
     async def stop(self) -> None: ...
 
 
+JobQueueFactory = Callable[[AsyncSession], JobQueue]
+
+
+class QueuedRunExecutor(RunExecutor):
+    def __init__(self, *, database: Database, job_queue_factory: JobQueueFactory) -> None:
+        self._database = database
+        self._job_queue_factory = job_queue_factory
+        self._logger = logging.getLogger("arkloop.api")
+
+    async def enqueue(
+        self,
+        *,
+        org_id: uuid.UUID,
+        run_id: uuid.UUID,
+        trace_id: str | None,
+        session: AsyncSession | None = None,
+    ) -> None:
+        async def _enqueue(target: AsyncSession) -> uuid.UUID:
+            queue = self._job_queue_factory(target)
+            return await queue.enqueue_run(
+                org_id=org_id,
+                run_id=run_id,
+                trace_id=trace_id,
+                payload={"source": "api"},
+            )
+
+        if session is None:
+            async with self._database.sessionmaker() as new_session:
+                job_id = await _enqueue(new_session)
+                await new_session.commit()
+        else:
+            job_id = await _enqueue(session)
+        self._logger.info(
+            "run job 已投递",
+            extra={"job_id": str(job_id), "org_id": str(org_id), "run_id": str(run_id)},
+        )
+
+    async def start(self) -> None:
+        return
+
+    async def stop(self) -> None:
+        return
+
+
+class _RunEngine(Protocol):
+    async def execute(self, *, run_id: uuid.UUID, trace_id: str) -> None: ...
+
+
 class InProcessStubRunExecutor(RunExecutor):
-    def __init__(self, *, engine: RunEngine, config: StubLlmGatewayConfig) -> None:
+    def __init__(self, *, engine: _RunEngine, config: StubAgentConfig) -> None:
         self._engine = engine
         self._config = config
         self._queue: asyncio.Queue[uuid.UUID] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._logger = logging.getLogger("arkloop.stub_agent")
 
-    def enqueue(self, *, run_id: uuid.UUID) -> None:
+    async def enqueue(
+        self,
+        *,
+        org_id: uuid.UUID,
+        run_id: uuid.UUID,
+        trace_id: str | None,
+        session: AsyncSession | None = None,
+    ) -> None:
+        _ = org_id
+        _ = trace_id
+        _ = session
         if not self._config.enabled:
             return
         self._queue.put_nowait(run_id)
@@ -116,10 +173,61 @@ def configure_run_executor(app: FastAPI) -> None:
     database = getattr(app.state, "database", None)
     if not isinstance(database, Database):
         return
+
+    mode = _parse_run_executor_mode()
+    if mode == _RUN_EXECUTOR_WORKER:
+        factory = getattr(app.state, "job_queue_factory", None)
+        if not callable(factory):
+            raise RuntimeError("job_queue_factory 未配置，无法启用 worker RunExecutor")
+        install_run_executor(app, QueuedRunExecutor(database=database, job_queue_factory=factory))
+        return
+
+    if mode == _RUN_EXECUTOR_IN_PROCESS:
+        install_run_executor(app, _create_in_process_executor(database=database))
+        return
+
+    raise RuntimeError(f"未知 RunExecutor 模式: {mode}")
+
+
+def _parse_run_executor_mode() -> str:
+    raw = (os.getenv(_RUN_EXECUTOR_ENV) or "").strip()
+    if not raw:
+        return _RUN_EXECUTOR_WORKER
+    cleaned = raw.casefold().replace("-", "_")
+    if cleaned in {"worker", "queued"}:
+        return _RUN_EXECUTOR_WORKER
+    if cleaned in {"in_process", "inprocess", "inproc"}:
+        return _RUN_EXECUTOR_IN_PROCESS
+    raise ValueError(f"{_RUN_EXECUTOR_ENV} 必须为 worker 或 in_process")
+
+
+def _create_in_process_executor(*, database: Database) -> InProcessStubRunExecutor:
+    from packages.agent_core import (
+        DispatchingToolExecutor,
+        ToolAllowlist,
+        ToolPolicyEnforcer,
+        ToolRegistry,
+    )
+    from packages.agent_core.builtin_tools import (
+        builtin_agent_tool_specs,
+        builtin_llm_tool_specs,
+        create_builtin_tool_executors,
+    )
+    from packages.llm_gateway.stub import StubLlmGateway, StubLlmGatewayConfig
+    from packages.llm_routing import ProviderRouter, ProviderRoutingConfig
+
+    from .provider_routed_runner import (
+        AlwaysDisabledOrgByokPolicy,
+        EnvProviderGatewayFactory,
+        ProviderRoutedAgentRunner,
+    )
+    from .run_engine import RunEngine
+
     stub_config = StubLlmGatewayConfig.from_env()
     stub_gateway = StubLlmGateway(config=stub_config)
     routing_config = ProviderRoutingConfig.from_env()
     router = ProviderRouter(config=routing_config)
+
     tool_registry = ToolRegistry(specs=builtin_agent_tool_specs())
     tool_allowlist_names = _parse_tool_allowlist_names()
     _warn_unknown_tool_allowlist_names(
@@ -136,6 +244,7 @@ def configure_run_executor(app: FastAPI) -> None:
         policy_enforcer=tool_policy_enforcer,
         executors=create_builtin_tool_executors(),
     )
+
     allowed_llm_tool_specs = _select_llm_tool_specs(
         allowed_names=set(tool_allowlist_names),
         specs=builtin_llm_tool_specs(),
@@ -149,10 +258,7 @@ def configure_run_executor(app: FastAPI) -> None:
         tool_specs=allowed_llm_tool_specs,
     )
     engine = RunEngine(database=database, runner=runner)
-    install_run_executor(
-        app,
-        InProcessStubRunExecutor(engine=engine, config=stub_config),
-    )
+    return InProcessStubRunExecutor(engine=engine, config=stub_config)
 
 
 def _parse_tool_allowlist_names() -> list[str]:
@@ -193,8 +299,8 @@ def _warn_unknown_tool_allowlist_names(*, allowlist_names: list[str], known_name
 
 __all__ = [
     "InProcessStubRunExecutor",
+    "QueuedRunExecutor",
     "RunExecutor",
-    "StubLlmGatewayConfig",
     "configure_run_executor",
     "get_run_executor",
     "install_run_executor",
