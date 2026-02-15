@@ -4,6 +4,7 @@ from .client import (
     McpClientError,
     McpDisconnectedError,
     McpRpcError,
+    McpSseClient,
     McpStdioClient,
     McpTimeoutError,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "McpDisconnectedError",
     "McpRpcError",
     "McpServerConfig",
+    "McpSseClient",
     "McpStdioClient",
     "McpTimeoutError",
     "McpToolExecutor",

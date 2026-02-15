@@ -795,7 +795,7 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - unit pytest：async 入口在事件循环中可用；配置错误/握手失败行为可观测（不静默）。
   - （如实现缓存）unit pytest：缓存命中/失效逻辑正确（mtime 变化触发刷新）。
 
-#### P58 -- MCP SSE 传输层
+#### P58 -- MCP SSE 传输层（已完成）
 
 - 目标：在 P57 stdio 传输的基础上，增加 SSE 传输层（远程 MCP server）。
 - 关键点：

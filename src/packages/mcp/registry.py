@@ -11,7 +11,7 @@ from packages.agent_core.executor import ToolExecutor
 from packages.agent_core.tools import ToolSpec as AgentToolSpec
 from packages.llm_gateway import ToolSpec as LlmToolSpec
 
-from .client import McpStdioClient, McpTool
+from .client import McpSseClient, McpStdioClient, McpTool
 from .config import McpConfig, McpServerConfig
 from .executor import McpToolExecutor
 from .pool import McpStdioClientPool
@@ -144,6 +144,10 @@ async def load_mcp_tool_registration_from_env_async(*, pool: McpStdioClientPool 
 
 
 async def _discover_server_tools(server: McpServerConfig):
+    if server.transport == "sse":
+        async with McpSseClient(server=server) as client:
+            return await client.list_tools(timeout_ms=server.call_timeout_ms)
+
     async with McpStdioClient(server=server) as client:
         return await client.list_tools(timeout_ms=server.call_timeout_ms)
 
