@@ -652,7 +652,7 @@ function ChatMvp({
               </button>
             ) : null}
 
-            {activeRunId ? (
+            {activeRunId || sse.events.length > 0 ? (
               <button
                 className="rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-200 hover:bg-slate-950/60"
                 onClick={() => setShowEvents((v) => !v)}
@@ -718,13 +718,14 @@ function ChatMvp({
           ) : null}
         </div>
 
-        {showEvents && activeRunId ? (
+        {showEvents && (activeRunId || sse.events.length > 0) ? (
           <div className="border-t border-slate-800 p-4">
             <RunEventsPanel
               events={sse.events}
               state={sse.state}
               lastSeq={sse.lastSeq}
               error={sse.error}
+              allowReconnect={activeRunId != null}
               onReconnect={sse.reconnect}
               onClear={sse.clearEvents}
             />

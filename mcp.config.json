@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "textarttools": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-remote@latest", "https://mcp.textarttools.com/sse"],
+      "callTimeoutMs": 20000
+    }
+  }
+}

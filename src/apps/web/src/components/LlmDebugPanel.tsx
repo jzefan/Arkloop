@@ -92,6 +92,13 @@ function formatJson(value: unknown): string {
   }
 }
 
+function payloadSummary(value: unknown): string {
+  if (value == null) return 'null'
+  if (Array.isArray(value)) return `array(${value.length})`
+  if (isRecord(value)) return `object(${Object.keys(value).length})`
+  return typeof value
+}
+
 export function LlmDebugPanel({ events, onClear }: LlmDebugPanelProps) {
   const groups = parseLlmGroups(events)
 
@@ -119,7 +126,7 @@ export function LlmDebugPanel({ events, onClear }: LlmDebugPanelProps) {
           </div>
         ) : (
           <div className="space-y-3">
-            {groups.map((group, index) => {
+            {groups.map((group) => {
               const request = group.request
               const title = request
                 ? `${request.providerKind ?? '-'} / ${request.apiMode ?? '-'} ${request.path ?? ''}`
@@ -130,6 +137,8 @@ export function LlmDebugPanel({ events, onClear }: LlmDebugPanelProps) {
                   ? group.chunks.slice(-MAX_RENDERED_CHUNKS)
                   : group.chunks
               const clipped = group.chunks.length > chunks.length
+              const rawChars = chunks.reduce((acc, chunk) => acc + (chunk.raw?.length ?? 0), 0)
+              const truncatedChunks = chunks.reduce((acc, chunk) => acc + (chunk.truncated ? 1 : 0), 0)
 
               const chunkLines = chunks
                 .map((chunk) => {
@@ -143,7 +152,6 @@ export function LlmDebugPanel({ events, onClear }: LlmDebugPanelProps) {
                 <details
                   key={group.llmCallId}
                   className="rounded-xl border border-slate-800 bg-slate-950/20"
-                  open={index === groups.length - 1 ? true : undefined}
                 >
                   <summary className="cursor-pointer select-none px-4 py-3 text-sm text-slate-200">
                     <span className="font-mono text-xs text-slate-500">#{request?.seq ?? '-'}</span>{' '}
@@ -155,31 +163,49 @@ export function LlmDebugPanel({ events, onClear }: LlmDebugPanelProps) {
                     {request ? (
                       <div>
                         <div className="text-xs font-medium text-slate-300">input</div>
-                        <pre className="mt-2 overflow-x-auto rounded bg-slate-950/50 p-2 text-xs text-slate-400">
-                          {formatJson({
-                            llm_call_id: group.llmCallId,
-                            provider_kind: request.providerKind,
-                            api_mode: request.apiMode,
-                            base_url: request.baseUrl,
-                            path: request.path,
-                            payload: request.payload,
-                          })}
-                        </pre>
+                        <div className="mt-1 text-xs text-slate-500">
+                          llm_call_id: <span className="font-mono text-slate-400">{group.llmCallId}</span>
+                          {request.baseUrl ? (
+                            <>
+                              {' '}
+                              base_url: <span className="font-mono text-slate-400">{request.baseUrl}</span>
+                            </>
+                          ) : null}
+                        </div>
+                        <details className="mt-2 rounded bg-slate-950/30 px-3 py-2">
+                          <summary className="cursor-pointer select-none text-xs text-slate-400">
+                            查看 payload（{payloadSummary(request.payload)}）
+                          </summary>
+                          <pre className="mt-2 overflow-x-auto rounded bg-slate-950/50 p-2 text-xs text-slate-400">
+                            {formatJson(request.payload)}
+                          </pre>
+                        </details>
                       </div>
                     ) : null}
 
                     <div>
                       <div className="flex items-center justify-between">
-                        <div className="text-xs font-medium text-slate-300">output (raw)</div>
+                        <div className="text-xs font-medium text-slate-300">output</div>
                         {clipped ? (
                           <div className="text-xs text-slate-500">
                             仅显示最近 {MAX_RENDERED_CHUNKS} 条
                           </div>
                         ) : null}
                       </div>
-                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-slate-950/50 p-2 text-xs text-slate-400">
-                        {chunkLines || '暂无 chunk'}
-                      </pre>
+                      <div className="mt-1 text-xs text-slate-500">
+                        chunk_count: <span className="font-mono text-slate-400">{group.chunks.length}</span>{' '}
+                        raw_chars: <span className="font-mono text-slate-400">{rawChars}</span>{' '}
+                        truncated: <span className="font-mono text-slate-400">{truncatedChunks}</span>
+                      </div>
+
+                      <details className="mt-2 rounded bg-slate-950/30 px-3 py-2">
+                        <summary className="cursor-pointer select-none text-xs text-slate-400">
+                          查看原始 raw（按 chunk 分段）
+                        </summary>
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-slate-950/50 p-2 text-xs text-slate-400">
+                          {chunkLines || '暂无 chunk'}
+                        </pre>
+                      </details>
 
                       {chunks.some((c) => c.json != null) ? (
                         <details className="mt-2 rounded bg-slate-950/30 px-3 py-2">

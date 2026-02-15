@@ -1,25 +1,26 @@
 后端
-.\.venv\Scripts\activate.ps1
-$env:ARKLOOP_LOAD_DOTENV=1
-$env:ARKLOOP_DOTENV_FILE=".env.test"
+.\.venv\bin\activate
+export ARKLOOP_LOAD_DOTENV=1
+export ARKLOOP_DOTENV_FILE=".env.test"
 docker compose up -d postgres
 python -m alembic upgrade head
 python -m uvicorn services.api.main:configure_app --factory --app-dir src --host 127.0.0.1 --port 8000
 
-前端
+# Worker（另开一个终端，保持同样的 .env 配置）
+PYTHONPATH=src python -m services.worker.main
+
+# 前端
 pnpm -C src/apps/web dev
 
-# 前端Debug
-$env:ARKLOOP_LLM_DEBUG_EVENTS=1 
+# 前端Debug(好像前后端都要运行一次吧)
+export ARKLOOP_LLM_DEBUG_EVENTS=1 
 
 
 测试
 pytest
 pytest -m integration
 
-# integration 建议使用独立环境文件（避免命中真实 LLM）
-# 1) 复制 .env.test.example 为 .env.test 并填写数据库配置
-# 2) 直接运行 pytest -m integration（conftest 会优先加载 .env.test）
+# integration 优先使用.env.test,请不要配置真实大模型,integration会报错
 
 #llm发消息
 python -m arkloop chat --profile llm --message "你好你是谁"

@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { type RunEvent, type SSEClientState } from '../sse'
 
 type RunEventsPanelProps = {
@@ -5,16 +6,19 @@ type RunEventsPanelProps = {
   state: SSEClientState
   lastSeq: number
   error: Error | null
+  allowReconnect?: boolean
   onReconnect: () => void
   onClear: () => void
 }
+
+const MAX_STREAM_PREVIEW_CHARS = 800
 
 const STATE_LABELS: Record<SSEClientState, string> = {
   idle: '未连接',
   connecting: '连接中...',
   connected: '已连接',
   reconnecting: '重连中...',
-  closed: '已断开',
+  closed: '已关闭',
   error: '连接错误',
 }
 
@@ -27,14 +31,244 @@ const STATE_COLORS: Record<SSEClientState, string> = {
   error: 'bg-rose-500',
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function collapseRunEvents(events: RunEvent[]): RunEvent[] {
+  const collapsed: RunEvent[] = []
+
+  let pendingMessage: {
+    first: RunEvent
+    last: RunEvent
+    deltaCount: number
+    totalChars: number
+    preview: string
+    previewTruncated: boolean
+  } | null = null
+
+  let pendingChunks: {
+    first: RunEvent
+    last: RunEvent
+    llmCallId: string
+    chunkCount: number
+    rawChars: number
+    truncatedCount: number
+    statusCodes: Set<number>
+    providerKind?: string
+    apiMode?: string
+  } | null = null
+
+  const flushMessage = () => {
+    if (!pendingMessage) return
+    const { first, last, deltaCount, totalChars, preview, previewTruncated } = pendingMessage
+    collapsed.push({
+      event_id: first.event_id,
+      run_id: first.run_id,
+      seq: first.seq,
+      ts: first.ts,
+      type: 'message.stream',
+      tool_name: undefined,
+      error_class: undefined,
+      data: {
+        seq_from: first.seq,
+        seq_to: last.seq,
+        delta_count: deltaCount,
+        content_chars: totalChars,
+        content_preview: preview,
+        truncated: previewTruncated,
+      },
+    })
+    pendingMessage = null
+  }
+
+  const flushChunks = () => {
+    if (!pendingChunks) return
+    const {
+      first,
+      last,
+      llmCallId,
+      chunkCount,
+      rawChars,
+      truncatedCount,
+      statusCodes,
+      providerKind,
+      apiMode,
+    } = pendingChunks
+
+    collapsed.push({
+      event_id: first.event_id,
+      run_id: first.run_id,
+      seq: first.seq,
+      ts: first.ts,
+      type: 'llm.response.stream',
+      tool_name: undefined,
+      error_class: undefined,
+      data: {
+        llm_call_id: llmCallId,
+        provider_kind: providerKind,
+        api_mode: apiMode,
+        seq_from: first.seq,
+        seq_to: last.seq,
+        chunk_count: chunkCount,
+        raw_chars: rawChars,
+        truncated_chunks: truncatedCount,
+        status_codes: Array.from(statusCodes).sort((a, b) => a - b),
+      },
+    })
+    pendingChunks = null
+  }
+
+  for (const event of events) {
+    if (event.type === 'message.delta') {
+      flushChunks()
+      if (!isRecord(event.data)) {
+        flushMessage()
+        collapsed.push(event)
+        continue
+      }
+      const role = event.data.role
+      if (role != null && role !== 'assistant') {
+        flushMessage()
+        collapsed.push(event)
+        continue
+      }
+      const delta = typeof event.data.content_delta === 'string' ? event.data.content_delta : ''
+      if (!delta) {
+        continue
+      }
+
+      if (!pendingMessage) {
+        pendingMessage = {
+          first: event,
+          last: event,
+          deltaCount: 0,
+          totalChars: 0,
+          preview: '',
+          previewTruncated: false,
+        }
+      }
+
+      pendingMessage.last = event
+      pendingMessage.deltaCount += 1
+      pendingMessage.totalChars += delta.length
+      if (!pendingMessage.previewTruncated) {
+        const remaining = MAX_STREAM_PREVIEW_CHARS - pendingMessage.preview.length
+        if (remaining > 0) {
+          pendingMessage.preview += delta.slice(0, remaining)
+          if (delta.length > remaining) {
+            pendingMessage.previewTruncated = true
+          }
+        } else {
+          pendingMessage.previewTruncated = true
+        }
+      }
+      continue
+    }
+
+    if (event.type === 'llm.response.chunk') {
+      flushMessage()
+      if (!isRecord(event.data)) {
+        flushChunks()
+        collapsed.push(event)
+        continue
+      }
+
+      const llmCallId = typeof event.data.llm_call_id === 'string' ? event.data.llm_call_id : ''
+      if (!llmCallId) {
+        flushChunks()
+        collapsed.push(event)
+        continue
+      }
+
+      const providerKind =
+        typeof event.data.provider_kind === 'string' ? event.data.provider_kind : undefined
+      const apiMode = typeof event.data.api_mode === 'string' ? event.data.api_mode : undefined
+      const raw = typeof event.data.raw === 'string' ? event.data.raw : ''
+      const truncated = typeof event.data.truncated === 'boolean' ? event.data.truncated : false
+      const statusCode = typeof event.data.status_code === 'number' ? event.data.status_code : null
+
+      if (!pendingChunks || pendingChunks.llmCallId !== llmCallId) {
+        flushChunks()
+        pendingChunks = {
+          first: event,
+          last: event,
+          llmCallId,
+          chunkCount: 0,
+          rawChars: 0,
+          truncatedCount: 0,
+          statusCodes: new Set<number>(),
+          providerKind,
+          apiMode,
+        }
+      }
+
+      pendingChunks.last = event
+      pendingChunks.chunkCount += 1
+      pendingChunks.rawChars += raw.length
+      if (truncated) pendingChunks.truncatedCount += 1
+      if (statusCode != null) pendingChunks.statusCodes.add(statusCode)
+      continue
+    }
+
+    if (event.type === 'llm.request') {
+      flushMessage()
+      flushChunks()
+      if (!isRecord(event.data)) {
+        collapsed.push(event)
+        continue
+      }
+      const llmCallId = typeof event.data.llm_call_id === 'string' ? event.data.llm_call_id : undefined
+      const providerKind =
+        typeof event.data.provider_kind === 'string' ? event.data.provider_kind : undefined
+      const apiMode = typeof event.data.api_mode === 'string' ? event.data.api_mode : undefined
+      const baseUrl = typeof event.data.base_url === 'string' ? event.data.base_url : undefined
+      const path = typeof event.data.path === 'string' ? event.data.path : undefined
+      const payload = event.data.payload
+      const payloadSummary = isRecord(payload)
+        ? { kind: 'object', keys: Object.keys(payload).length }
+        : Array.isArray(payload)
+          ? { kind: 'array', items: payload.length }
+          : payload == null
+            ? { kind: 'null' }
+            : { kind: typeof payload }
+
+      collapsed.push({
+        ...event,
+        type: 'llm.request.summary',
+        data: {
+          llm_call_id: llmCallId,
+          provider_kind: providerKind,
+          api_mode: apiMode,
+          base_url: baseUrl,
+          path,
+          payload: payloadSummary,
+        },
+      })
+      continue
+    }
+
+    flushMessage()
+    flushChunks()
+    collapsed.push(event)
+  }
+
+  flushMessage()
+  flushChunks()
+  return collapsed
+}
+
 function EventTypeTag({ type }: { type: string }) {
   const colorMap: Record<string, string> = {
     'run.started': 'bg-emerald-900/60 text-emerald-200',
     'run.completed': 'bg-blue-900/60 text-blue-200',
     'run.failed': 'bg-rose-900/60 text-rose-200',
     'message.delta': 'bg-violet-900/60 text-violet-200',
+    'message.stream': 'bg-violet-900/60 text-violet-200',
     'llm.request': 'bg-slate-700 text-slate-200',
+    'llm.request.summary': 'bg-slate-700 text-slate-200',
     'llm.response.chunk': 'bg-slate-700 text-slate-200',
+    'llm.response.stream': 'bg-slate-700 text-slate-200',
     'tool.call': 'bg-amber-900/60 text-amber-200',
     'tool.result': 'bg-cyan-900/60 text-cyan-200',
   }
@@ -93,10 +327,17 @@ export function RunEventsPanel({
   state,
   lastSeq,
   error,
+  allowReconnect = true,
   onReconnect,
   onClear,
 }: RunEventsPanelProps) {
-  const canReconnect = state === 'closed' || state === 'error'
+  const canReconnect = allowReconnect && (state === 'closed' || state === 'error')
+  const [compact, setCompact] = useState(true)
+
+  const displayEvents = useMemo(() => {
+    if (!compact) return events
+    return collapseRunEvents(events)
+  }, [compact, events])
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm">
@@ -122,6 +363,13 @@ export function RunEventsPanel({
           )}
           <button
             className="rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-950/60"
+            onClick={() => setCompact((value) => !value)}
+            type="button"
+          >
+            {compact ? '原始' : '精简'}
+          </button>
+          <button
+            className="rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-950/60"
             onClick={onClear}
             type="button"
           >
@@ -137,12 +385,12 @@ export function RunEventsPanel({
       )}
 
       <div className="max-h-96 overflow-y-auto">
-        {events.length === 0 ? (
+        {displayEvents.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-slate-500">
             暂无事件
           </div>
         ) : (
-          events.map(event => (
+          displayEvents.map(event => (
             <EventItem key={event.event_id} event={event} />
           ))
         )}
