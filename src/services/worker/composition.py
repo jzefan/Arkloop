@@ -21,6 +21,7 @@ from packages.job_queue import JobQueue, SqlAlchemyPgJobQueue
 from packages.llm_gateway import ToolSpec as LlmToolSpec
 from packages.llm_gateway.stub import StubLlmGateway, StubLlmGatewayConfig
 from packages.llm_routing import ProviderRouter, ProviderRoutingConfig
+from packages.mcp import load_mcp_tool_registration_from_env
 from services.api.provider_routed_runner import (
     AlwaysDisabledOrgByokPolicy,
     EnvProviderGatewayFactory,
@@ -56,6 +57,9 @@ def create_worker(*, database: Database) -> Worker:
     router = ProviderRouter(config=routing_config)
 
     tool_registry = ToolRegistry(specs=builtin_agent_tool_specs())
+    mcp_registration = load_mcp_tool_registration_from_env()
+    for spec in mcp_registration.agent_specs:
+        tool_registry.register(spec)
     tool_allowlist_names = _parse_tool_allowlist_names()
     _warn_unknown_tool_allowlist_names(
         allowlist_names=tool_allowlist_names,
@@ -66,14 +70,16 @@ def create_worker(*, database: Database) -> Worker:
         registry=tool_registry,
         allowlist=tool_allowlist,
     )
+    executors = dict(create_builtin_tool_executors())
+    executors.update(mcp_registration.executors)
     tool_executor = DispatchingToolExecutor(
         registry=tool_registry,
         policy_enforcer=tool_policy_enforcer,
-        executors=create_builtin_tool_executors(),
+        executors=executors,
     )
     allowed_llm_tool_specs = _select_llm_tool_specs(
         allowed_names=set(tool_allowlist_names),
-        specs=builtin_llm_tool_specs(),
+        specs=builtin_llm_tool_specs() + mcp_registration.llm_specs,
     )
     runner = ProviderRoutedAgentRunner(
         database=database,

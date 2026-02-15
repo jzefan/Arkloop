@@ -229,6 +229,11 @@ def _create_in_process_executor(*, database: Database) -> InProcessStubRunExecut
     router = ProviderRouter(config=routing_config)
 
     tool_registry = ToolRegistry(specs=builtin_agent_tool_specs())
+    from packages.mcp import load_mcp_tool_registration_from_env
+
+    mcp_registration = load_mcp_tool_registration_from_env()
+    for spec in mcp_registration.agent_specs:
+        tool_registry.register(spec)
     tool_allowlist_names = _parse_tool_allowlist_names()
     _warn_unknown_tool_allowlist_names(
         allowlist_names=tool_allowlist_names,
@@ -239,15 +244,17 @@ def _create_in_process_executor(*, database: Database) -> InProcessStubRunExecut
         registry=tool_registry,
         allowlist=tool_allowlist,
     )
+    executors = dict(create_builtin_tool_executors())
+    executors.update(mcp_registration.executors)
     tool_executor = DispatchingToolExecutor(
         registry=tool_registry,
         policy_enforcer=tool_policy_enforcer,
-        executors=create_builtin_tool_executors(),
+        executors=executors,
     )
 
     allowed_llm_tool_specs = _select_llm_tool_specs(
         allowed_names=set(tool_allowlist_names),
-        specs=builtin_llm_tool_specs(),
+        specs=builtin_llm_tool_specs() + mcp_registration.llm_specs,
     )
     runner = ProviderRoutedAgentRunner(
         database=database,
