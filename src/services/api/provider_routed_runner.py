@@ -146,19 +146,26 @@ class ProviderRoutedAgentRunner(AgentRunner):
         yield emitter.emit(type="run.route.selected", data_json=decision.to_run_event_data_json())
 
         try:
+            merged_tool_specs = _merge_tool_specs(self._tool_specs, context.tool_specs)
+            merged_tool_specs = _filter_tool_specs(
+                merged_tool_specs,
+                allowlist=context.tool_allowlist,
+            )
             request = await self._build_request(
                 org_id=org_id,
                 thread_id=thread_id,
                 model=decision.route.model,
-                tool_specs=_merge_tool_specs(self._tool_specs, context.tool_specs),
+                tool_specs=merged_tool_specs,
             )
+            request = _apply_request_overrides(request=request, context=context)
             gateway = self._gateway_factory.create(credential=decision.credential)
         except Exception:
             error = LlmGatewayError(error_class=ERROR_CLASS_INTERNAL_ERROR, message="路由初始化失败")
             yield emitter.emit(type="run.failed", error_class=error.error_class, data_json=error.to_json())
             return
 
-        loop = AgentLoop(gateway=gateway, tool_executor=self._tool_executor)
+        tool_executor = context.tool_executor or self._tool_executor
+        loop = AgentLoop(gateway=gateway, tool_executor=tool_executor)
         async for event in loop.run(
             context=context,
             emitter=emitter,
@@ -182,6 +189,37 @@ class ProviderRoutedAgentRunner(AgentRunner):
             LlmMessage(role=item.role, content=[LlmTextPart(text=item.content)]) for item in messages
         ]
         return LlmGatewayRequest(model=model, messages=llm_messages, tools=list(tool_specs))
+
+
+def _filter_tool_specs(
+    specs: tuple[ToolSpec, ...],
+    *,
+    allowlist: tuple[str, ...] | None,
+) -> tuple[ToolSpec, ...]:
+    if allowlist is None:
+        return specs
+    allowed = set(allowlist)
+    return tuple(spec for spec in specs if spec.name in allowed)
+
+
+def _apply_request_overrides(*, request: LlmGatewayRequest, context: AgentRunContext) -> LlmGatewayRequest:
+    messages = list(request.messages)
+    system_prompt = context.system_prompt
+    if isinstance(system_prompt, str) and system_prompt.strip():
+        messages.insert(0, LlmMessage(role="system", content=[LlmTextPart(text=system_prompt)]))
+
+    max_output_tokens = request.max_output_tokens
+    if context.max_output_tokens is not None:
+        max_output_tokens = context.max_output_tokens
+
+    return LlmGatewayRequest(
+        model=request.model,
+        messages=messages,
+        temperature=request.temperature,
+        max_output_tokens=max_output_tokens,
+        tools=list(request.tools),
+        metadata=dict(request.metadata),
+    )
 
 
 def _required_uuid(value: object, *, label: str) -> uuid.UUID:

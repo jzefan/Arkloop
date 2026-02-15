@@ -49,6 +49,9 @@ class RunEngine:
                     route_id = data_json.get("route_id")
                     if isinstance(route_id, str) and route_id.strip():
                         input_json["route_id"] = route_id.strip()
+                    skill_id = data_json.get("skill_id")
+                    if isinstance(skill_id, str) and skill_id.strip():
+                        input_json["skill_id"] = skill_id.strip()
 
             context = AgentRunContext(run_id=run_id, trace_id=trace_id, input_json=input_json)
             assistant_deltas: list[str] = []

@@ -88,6 +88,38 @@ class _P54ScriptedGateway:
         yield LlmStreamRunCompleted()
 
 
+class _P59ScriptedGateway:
+    def __init__(self, *, prompt_sentinel: str) -> None:
+        self.requests: list[LlmGatewayRequest] = []
+        self._prompt_sentinel = prompt_sentinel
+
+    async def stream(self, *, request: LlmGatewayRequest):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            assert request.messages
+            assert request.messages[0].role == "system"
+            assert self._prompt_sentinel in request.messages[0].content[0].text
+            assert request.max_output_tokens == 64
+            assert request.tools == []
+
+            yield LlmStreamToolCall(
+                tool_call_id="p59_echo_1",
+                tool_name="echo",
+                arguments_json={"text": "hello"},
+            )
+            yield LlmStreamRunCompleted()
+            return
+
+        tool_messages = [item for item in request.messages if item.role == "tool"]
+        assert tool_messages
+        payload = json.loads(tool_messages[-1].content[0].text)
+        assert payload["tool_call_id"] == "p59_echo_1"
+        assert payload["error"]["error_class"] == "policy.denied"
+
+        yield LlmStreamMessageDelta(content_delta="skill ok", role="assistant")
+        yield LlmStreamRunCompleted()
+
+
 def _repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:
@@ -1072,6 +1104,77 @@ def test_p54_builtin_echo_tool_executes_and_sse_resume(monkeypatch) -> None:
                 assert [(item["seq"], item["type"]) for item in resumed] == [
                     (item["seq"], item["type"]) for item in expected_tail
                 ]
+    finally:
+        anyio.run(_drop_database, admin_dsn, database)
+
+
+def test_p59_skill_runtime_enforces_allowlist_and_injects_system_prompt(monkeypatch) -> None:
+    config = DatabaseConfig.from_env(allow_fallback=True)
+    if config is None:
+        pytest.skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+
+    repo_root = _repo_root()
+    alembic_cfg = Config(str(repo_root / "alembic.ini"))
+
+    database = f"arkloop_runs_p59_{uuid.uuid4().hex}"
+    sqlalchemy_url = config.url
+    admin_dsn = _replace_database(_to_asyncpg_dsn(sqlalchemy_url), "postgres")
+    test_sqlalchemy_url = _replace_database(sqlalchemy_url, database)
+
+    anyio.run(_create_database, admin_dsn, database)
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
+            m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+            m.setenv("ARKLOOP_LLM_DEBUG_EVENTS", "0")
+            m.setenv("ARKLOOP_SSE_POLL_SECONDS", "0.01")
+            m.setenv("ARKLOOP_SSE_HEARTBEAT_SECONDS", "0.05")
+            m.setenv("ARKLOOP_TOOL_ALLOWLIST", "echo")
+            scripted_gateway = _P59ScriptedGateway(prompt_sentinel="NO_TOOLS_PROMPT_SENTINEL")
+
+            def _patched_create(self, *, credential):
+                _ = (self, credential)
+                return scripted_gateway
+
+            m.setattr(EnvProviderGatewayFactory, "create", _patched_create)
+            command.upgrade(alembic_cfg, "head")
+
+            login = "alice"
+            password = "pwdpwdpwd"
+            anyio.run(_seed_auth, test_sqlalchemy_url, login, password)
+
+            app = configure_app()
+            with TestClient(app) as client:
+                auth = client.post("/v1/auth/login", json={"login": login, "password": password})
+                assert auth.status_code == 200
+                token = auth.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                thread_resp = client.post("/v1/threads", json={"title": "t"}, headers=headers)
+                assert thread_resp.status_code == 201
+                thread_id = thread_resp.json()["id"]
+
+                run_resp = client.post(
+                    f"/v1/threads/{thread_id}/runs",
+                    json={"skill_id": "demo_no_tools@1"},
+                    headers=headers,
+                )
+                assert run_resp.status_code == 201
+                run_id = uuid.UUID(run_resp.json()["run_id"])
+
+                events = anyio.run(_wait_for_final_event, test_sqlalchemy_url, run_id, "run.completed")
+                types = [item.type for item in events]
+                assert types == [
+                    "run.started",
+                    "run.route.selected",
+                    "tool.call",
+                    "policy.denied",
+                    "tool.result",
+                    "message.delta",
+                    "run.completed",
+                ]
+                assert len(scripted_gateway.requests) == 2
     finally:
         anyio.run(_drop_database, admin_dsn, database)
 

@@ -811,12 +811,14 @@ web_search 和 web_fetch 不绑死一种实现，采用策略模式做多 backen
   - unit pytest：mock SSE 连接，验证请求/响应流程。
   - 手工验证：连接一个远程 MCP server，调用工具成功。
 
-#### P59 -- Skill 运行时 v1（加载 + 执行 + 约束）
+#### P59 -- Skill 运行时 v1（加载 + 执行 + 约束）（已完成）
 
 - 目标：实现 skill 的最小运行时：从 `src/skills/` 加载 skill 定义，注入 tool_allowlist 与预算约束，通过 AgentLoop 执行。
-- 现状分析：
-  - `src/docs/guides/skills-and-tools.zh-CN.md` 定义了 skill.yaml 和 prompt.md 的规范。
-  - 代码中完全没有 skill 相关实现。
+- 完成情况：
+  - 已实现 `src/packages/skill_runtime/`：schema/loader/runner，支持 `skill.yaml + prompt.md` 加载与约束注入。
+  - 已新增内置示例 skill：`src/skills/demo_no_tools/`（用于 pytest 与手工验收）。
+  - API 创建 run 支持 `skill_id`（`id` 或 `id@version`），并写入 `run.started.data.skill_id`。
+  - Worker 与 in_process 运行路径均注入 `SkillRunner`（system prompt / allowlist / budgets）。
 - 关键点：
   - Skill 定义格式：`skill.yaml`（元数据 + 约束）+ `prompt.md`（提示词模板）。
   - Skill Registry：加载 `src/skills/` 下所有 skill 定义。

@@ -372,6 +372,8 @@ def _tool_execution_context(*, context: AgentRunContext) -> ToolExecutionContext
         run_id=context.run_id,
         trace_id=context.trace_id,
         org_id=_optional_uuid(context.input_json.get("org_id")),
+        timeout_ms=context.tool_timeout_ms,
+        budget=dict(context.tool_budget),
     )
 
 

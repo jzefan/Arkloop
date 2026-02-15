@@ -89,6 +89,16 @@ async def create_worker(*, database: Database) -> Worker:
         tool_executor=tool_executor,
         tool_specs=allowed_llm_tool_specs,
     )
+    from packages.skill_runtime import SkillRunner, builtin_skills_root, load_skill_registry
+
+    skill_registry = load_skill_registry(builtin_skills_root())
+    runner = SkillRunner(
+        base_runner=runner,
+        registry=skill_registry,
+        tool_registry=tool_registry,
+        tool_executors=executors,
+        base_tool_allowlist_names=frozenset(tool_allowlist_names),
+    )
     engine = RunEngine(database=database, runner=runner)
     return Worker(database=database, engine=engine)
 

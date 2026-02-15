@@ -321,6 +321,11 @@ class CreateRunRequest(BaseModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
     )
+    skill_id: str | None = Field(
+        default=None,
+        max_length=129,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}(?:@[A-Za-z0-9][A-Za-z0-9._:-]{0,63})?$",
+    )
 
 
 async def _get_thread_or_404(*, thread_id: uuid.UUID, thread_repo: ThreadRepository):
@@ -689,6 +694,8 @@ async def create_run(
     started_data: dict[str, object] = {}
     if body is not None and body.route_id:
         started_data["route_id"] = body.route_id
+    if body is not None and body.skill_id and body.skill_id.strip():
+        started_data["skill_id"] = body.skill_id.strip()
 
     run, _started = await run_event_repo.create_run_with_started_event(
         org_id=thread.org_id,
