@@ -106,7 +106,7 @@ src/services/worker_go/
 
 命名收口策略（避免中途频繁改名）：
 - WG-01 ~ WG-09 期间，固定使用 `worker_go`，避免双栈阶段路径抖动。
-- WG-10 完成且通过稳定观察窗口后，可以把 `worker_go` 改名为 `worker`。
+- WG-10 完成且通过稳定观察窗口后，需要把 `worker_go` 改名为 `worker`（同时更新 go.mod module path 与 import path）。
 - 改名前先清理旧 Python Worker 入口，确保同一仓库只保留一个“生产 worker”目录含义。
 - 改名属于收口动作，不影响对外 API 契约；应单独作为一次可回滚变更提交。
 
@@ -344,16 +344,36 @@ src/services/worker_go/
 
 ### WG-10 下线 Python Worker
 
-- 目标：Worker 迁移完成。
+- 目标：彻底结束双栈迁移；生产路径不再依赖 Python worker/bridge；目录与命名收口为 `worker`。
 - 改动：
-  - 移除 Python Worker 生产流量入口。
-  - 保留短期应急文档与回切脚本。
-  - 完成目录收口：把 `src/services/worker_go/` 重命名为 `src/services/worker/`（或保留 `worker_go`，二选一且写入 ADR）。
+  - 移除 bridge 路径（按你的要求：硬切后不再保留 go_bridge/python bridge）：
+    - 下线 `src/services/worker_bridge/`（不再作为生产依赖）
+    - 停止投递与消费 `jobs.job_type=run.execute.go_bridge`
+    - 删除/清理环境变量与文档：
+      - `ARKLOOP_WORKER_BRIDGE_URL`
+      - `ARKLOOP_WORKER_BRIDGE_TOKEN`
+      - `ARKLOOP_WORKER_GO_EXECUTOR`（迁移期硬切开关，WG10 删除）
+  - 统一队列 job_type（简化生产语义）：
+    - API enqueue 回归只投递 `jobs.job_type=run.execute`
+    - Go Worker 成为 `run.execute` 的唯一消费者（Python worker 不再存在）
+    - 清理迁移期常量与分流逻辑：`run.execute.go_bridge` / `run.execute.go_native`
+  - 下线 Python Worker 生产入口：
+    - 移除 `src/services/worker/` 作为可运行生产 worker 的语义（可直接删除目录；历史可通过 git 追溯）
+    - 清理相关运行文档与 CI/脚本入口，确保仓库内只存在一个“生产 worker”定义
+  - 目录/模块命名收口（按你选择：重命名为 worker）：
+    - 把 `src/services/worker_go/` 重命名为 `src/services/worker/`
+    - 更新 `go.mod` module path：`arkloop/services/worker_go` -> `arkloop/services/worker`
+    - 更新所有 Go import path、构建命令、文档与 CI 路径
+    - 这一步要求单独原子提交，便于回滚（大面积重命名不和业务逻辑混在一个提交里）
+  - 运维与文档更新：
+    - `.env.example` / `.env.test.example`：移除 bridge 相关变量，保留最小必要 worker 配置
+    - `docs/使用方式for human.md`：删除 Python worker/bridge 启动说明，统一为 Go worker
 - 验收：
-  - 连续两个发布周期无 P1/P2 级故障。
-  - 仓库内只存在一个生产 Worker 入口目录定义，运维脚本与 CI 路径一致。
+  - 连续两个发布周期无 P1/P2 级故障
+  - Go 单栈生产运行：不启动 Python worker/bridge 也能稳定完成 run（含取消、工具、MCP/skill）
+  - 仓库内只存在一个生产 Worker 入口目录定义，运维脚本与 CI 路径一致
 - 回滚：
-  - 应急时按脚本切回桥接或 Python Worker（限时）。
+  - 通过发布系统回滚到 WG-10 之前的稳定版本（仅作为应急手段；回滚版本可能临时重新引入 Python bridge/worker）
 
 ## 5. 全仓 Go 计划（Worker 之后）
 
