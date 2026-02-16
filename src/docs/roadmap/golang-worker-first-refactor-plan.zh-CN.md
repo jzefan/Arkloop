@@ -159,13 +159,17 @@ src/services/worker_go/
 - 回滚：
   - 通过开关停用 Go Worker，恢复 Python Worker 消费。
 
-### WG-03 消费循环对齐（并发/心跳/advisory lock）
+### WG-03 消费循环对齐（并发/心跳/advisory lock）（已完成）
 
 - 目标：对齐 `WorkerConsumerLoop` 的并发和去重语义。
 - 改动：
   - 实现 `concurrency/poll/lease/heartbeat` 参数。
   - 加入 `pg_try_advisory_lock` 防重复执行。
   - 实现失心跳与失租约时的 nack/中止策略。
+  - 产出消费循环：`src/services/worker_go/internal/consumer/config.go`、`src/services/worker_go/internal/consumer/loop.go`。
+  - 产出锁实现：`src/services/worker_go/internal/consumer/advisory_lock.go`。
+  - 产出执行器占位：`src/services/worker_go/internal/executor/noop.go`。
+  - 产出测试：`src/services/worker_go/internal/consumer/loop_test.go`、`src/services/worker_go/internal/consumer/loop_integration_test.go`。
 - 验收：
   - 重复 job 并发场景下，单 run 仅执行一次。
   - 心跳中断后 job 正确回队或终止。
