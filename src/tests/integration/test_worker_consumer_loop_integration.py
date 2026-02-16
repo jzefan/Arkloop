@@ -31,6 +31,11 @@ from services.worker.consumer_loop import WorkerLoopConfig
 
 pytestmark = pytest.mark.integration
 
+_STUB_PROVIDER_ROUTING_JSON = (
+    '{"default_route_id":"default","credentials":[{"id":"stub_default","scope":"platform",'
+    '"provider_kind":"stub"}],"routes":[{"id":"default","model":"stub","credential_id":"stub_default"}]}'
+)
+
 
 def _repo_root() -> Path:
     current = Path(__file__).resolve()
@@ -154,6 +159,7 @@ def test_worker_loop_consumes_pg_job_and_is_replayable_via_sse(monkeypatch) -> N
             m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
             m.setenv("ARKLOOP_RUN_EXECUTOR", "worker")
+            m.setenv("ARKLOOP_PROVIDER_ROUTING_JSON", _STUB_PROVIDER_ROUTING_JSON)
             m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "1")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
@@ -289,6 +295,7 @@ def test_worker_loop_dedupes_duplicate_run_jobs_via_run_lock(monkeypatch) -> Non
             m.setenv("ARKLOOP_DATABASE_URL", test_sqlalchemy_url)
             m.setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
             m.setenv("ARKLOOP_RUN_EXECUTOR", "in_process")
+            m.setenv("ARKLOOP_PROVIDER_ROUTING_JSON", _STUB_PROVIDER_ROUTING_JSON)
             m.setenv("ARKLOOP_STUB_AGENT_ENABLED", "0")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")

@@ -114,12 +114,15 @@ src/services/worker_go/
 
 说明：每个薄片都要求“独立可验收、可回滚、默认不破坏生产路径”。
 
-### WG-00 契约冻结与基线回归
+### WG-00 契约冻结与基线回归（已完成）
 
 - 目标：把队列与事件不变量固化成可执行契约。
 - 改动：
   - 提炼现有关键集成测试场景为“迁移基线用例清单”。
   - 输出事件序列 golden 样例（run.started -> worker.job.received -> ... -> run.completed）。
+  - 产出基线文档：`src/docs/specs/go-worker-migration-baseline.zh-CN.md`。
+  - 产出 golden 样例：`src/tests/contracts/golden/run-events/run_execute_success.v1.json`。
+  - 产出校验用例：`src/tests/integration/test_worker_migration_baseline_integration.py`。
 - 验收：
   - 基线测试在当前 Python 实现 100% 通过。
 - 回滚：
