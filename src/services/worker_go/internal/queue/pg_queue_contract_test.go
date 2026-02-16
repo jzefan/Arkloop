@@ -193,6 +193,7 @@ func TestPgQueueLeaseCanFilterByJobType(t *testing.T) {
 
 	orgID := uuid.New()
 	runID := uuid.New()
+	otherJobType := "run.execute.test_other"
 
 	pythonJobID, err := queue.EnqueueRun(
 		context.Background(),
@@ -212,22 +213,22 @@ func TestPgQueueLeaseCanFilterByJobType(t *testing.T) {
 		orgID,
 		runID,
 		"0123456789abcdef0123456789abcdef",
-		RunExecuteQueueJobTypeGoBridge,
-		map[string]any{"note": "go_bridge"},
+		otherJobType,
+		map[string]any{"note": "other"},
 		nil,
 	)
 	if err != nil {
 		t.Fatalf("enqueue go job failed: %v", err)
 	}
 
-	leaseGo, err := queue.Lease(context.Background(), 60, []string{RunExecuteQueueJobTypeGoBridge})
+	leaseGo, err := queue.Lease(context.Background(), 60, []string{otherJobType})
 	if err != nil {
 		t.Fatalf("lease go job failed: %v", err)
 	}
 	if leaseGo == nil {
 		t.Fatal("expected go lease but got nil")
 	}
-	if leaseGo.JobID != goJobID || leaseGo.JobType != RunExecuteQueueJobTypeGoBridge {
+	if leaseGo.JobID != goJobID || leaseGo.JobType != otherJobType {
 		t.Fatalf("unexpected go lease: %+v", leaseGo)
 	}
 	if err := queue.Ack(context.Background(), *leaseGo); err != nil {

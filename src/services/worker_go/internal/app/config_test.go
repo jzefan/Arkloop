@@ -40,7 +40,7 @@ func TestLoadConfigFromEnv_ParsesOverrides(t *testing.T) {
 	t.Setenv(workerPollSecondsEnv, "0.5")
 	t.Setenv(workerLeaseSecondsEnv, "45")
 	t.Setenv(workerHeartbeatSecondsEnv, "9")
-	t.Setenv(workerQueueJobTypesEnv, "run.execute,run.execute.go_bridge")
+	t.Setenv(workerQueueJobTypesEnv, "run.execute")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -59,7 +59,7 @@ func TestLoadConfigFromEnv_ParsesOverrides(t *testing.T) {
 	if cfg.HeartbeatSeconds != 9 {
 		t.Fatalf("unexpected heartbeat seconds: %v", cfg.HeartbeatSeconds)
 	}
-	if !slices.Equal(cfg.QueueJobTypes, []string{"run.execute", "run.execute.go_bridge"}) {
+	if !slices.Equal(cfg.QueueJobTypes, []string{"run.execute"}) {
 		t.Fatalf("unexpected queue_job_types: %#v", cfg.QueueJobTypes)
 	}
 }
@@ -73,5 +73,13 @@ func TestLoadConfigFromEnv_RejectsInvalidValue(t *testing.T) {
 	}
 	if got, want := err.Error(), workerConcurrencyEnv; !strings.Contains(got, want) {
 		t.Fatalf("error mismatch: got %q, want to contain %q", got, want)
+	}
+}
+
+func TestLoadConfigFromEnv_RejectsUnknownJobType(t *testing.T) {
+	t.Setenv(workerQueueJobTypesEnv, "run.execute.go_native")
+	_, err := LoadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected error but got nil")
 	}
 }

@@ -152,9 +152,6 @@ def test_go_worker_executes_run_via_native_engine(monkeypatch) -> None:
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
             m.setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
 
-            m.setenv("ARKLOOP_WORKER_GO_TRAFFIC_PERCENT", "100")
-            m.setenv("ARKLOOP_WORKER_GO_EXECUTOR", "native")
-
             command.upgrade(alembic_cfg, "head")
 
             login = "alice"
@@ -181,7 +178,7 @@ def test_go_worker_executes_run_via_native_engine(monkeypatch) -> None:
             env["ARKLOOP_WORKER_CONCURRENCY"] = "1"
             env["ARKLOOP_WORKER_POLL_SECONDS"] = "0.05"
             env["ARKLOOP_WORKER_HEARTBEAT_SECONDS"] = "0"
-            env["ARKLOOP_WORKER_QUEUE_JOB_TYPES"] = "run.execute.go_native"
+            env["ARKLOOP_WORKER_QUEUE_JOB_TYPES"] = "run.execute"
 
             proc = subprocess.Popen(
                 ["go", "run", "./cmd/worker"],

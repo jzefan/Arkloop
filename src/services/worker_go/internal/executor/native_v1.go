@@ -192,3 +192,11 @@ func requiredUUID(values map[string]any, key string) (uuid.UUID, error) {
 	}
 	return id, nil
 }
+
+func stringPtr(value string) *string {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return nil
+	}
+	return &cleaned
+}

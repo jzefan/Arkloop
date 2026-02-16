@@ -18,11 +18,8 @@ from packages.job_queue import (
     JOB_STATUS_DEAD,
     JOB_STATUS_DONE,
     RUN_EXECUTE_JOB_TYPE,
-    RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE,
     SqlAlchemyPgJobQueue,
 )
-from services.worker import WorkerJobPayload
-from services.worker.job_queue import get_job_queue as get_worker_job_queue
 
 pytestmark = pytest.mark.integration
 
@@ -126,7 +123,7 @@ def test_pg_job_queue_lease_is_mutually_exclusive(migrated_database_url: str) ->
 
             async def _lease_once(tag: str):
                 async with database.sessionmaker() as session:
-                    queue = get_worker_job_queue(session)
+                    queue = SqlAlchemyPgJobQueue(session)
                     await ready.put(tag)
                     await start.wait()
                     lease = await queue.lease(lease_seconds=60)
@@ -146,12 +143,12 @@ def test_pg_job_queue_lease_is_mutually_exclusive(migrated_database_url: str) ->
             assert leases[0].job_type == RUN_EXECUTE_JOB_TYPE
 
             async with database.sessionmaker() as session:
-                queue = get_worker_job_queue(session)
+                queue = SqlAlchemyPgJobQueue(session)
                 await queue.nack(lease=leases[0], delay_seconds=0)
                 await session.commit()
 
             async with database.sessionmaker() as session:
-                queue = get_worker_job_queue(session)
+                queue = SqlAlchemyPgJobQueue(session)
                 lease = await queue.lease(lease_seconds=60)
                 assert lease is not None
                 await queue.ack(lease=lease)
@@ -172,9 +169,7 @@ def test_pg_job_queue_lease_is_mutually_exclusive(migrated_database_url: str) ->
     anyio.run(_run)
 
 
-def test_pg_job_queue_payload_is_compatible_with_worker_job_payload(
-    migrated_database_url: str,
-) -> None:
+def test_pg_job_queue_payload_contains_required_fields(migrated_database_url: str) -> None:
     database = Database.from_config(DatabaseConfig(url=migrated_database_url))
 
     async def _run() -> None:
@@ -194,17 +189,17 @@ def test_pg_job_queue_payload_is_compatible_with_worker_job_payload(
                 await session.commit()
 
             async with database.sessionmaker() as session:
-                queue = get_worker_job_queue(session)
+                queue = SqlAlchemyPgJobQueue(session)
                 lease = await queue.lease(lease_seconds=60)
                 await session.commit()
 
             assert lease is not None
-            job = WorkerJobPayload.from_json(lease.payload_json)
-            assert job.job_id == job_id
-            assert job.job_type == RUN_EXECUTE_JOB_TYPE
-            assert job.org_id == org_id
-            assert job.run_id == run_id
-            assert job.trace_id is not None
+            payload = dict(lease.payload_json)
+            assert payload["job_id"] == str(job_id)
+            assert payload["type"] == RUN_EXECUTE_JOB_TYPE
+            assert payload["org_id"] == str(org_id)
+            assert payload["run_id"] == str(run_id)
+            assert isinstance(payload.get("trace_id"), str)
         finally:
             await database.dispose()
 
@@ -268,6 +263,7 @@ def test_pg_job_queue_lease_can_filter_by_job_type(migrated_database_url: str) -
             org_id = uuid.uuid4()
             run_id = uuid.uuid4()
             trace_id = uuid.uuid4().hex
+            other_job_type = "run.execute.test_other"
 
             async with database.sessionmaker() as session:
                 queue = SqlAlchemyPgJobQueue(session)
@@ -277,28 +273,28 @@ def test_pg_job_queue_lease_can_filter_by_job_type(migrated_database_url: str) -
                     trace_id=trace_id,
                     payload={"note": "python"},
                 )
-                go_job_id = await queue.enqueue_run(
+                other_job_id = await queue.enqueue_run(
                     org_id=org_id,
                     run_id=run_id,
                     trace_id=trace_id,
-                    queue_job_type=RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE,
-                    payload={"note": "go_bridge"},
+                    queue_job_type=other_job_type,
+                    payload={"note": "other"},
                 )
                 await session.commit()
 
             async with database.sessionmaker() as session:
-                queue = get_worker_job_queue(session)
+                queue = SqlAlchemyPgJobQueue(session)
                 lease = await queue.lease(
                     lease_seconds=60,
-                    job_types=(RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE,),
+                    job_types=(other_job_type,),
                 )
                 assert lease is not None
-                assert lease.job_id == go_job_id
+                assert lease.job_id == other_job_id
                 await queue.ack(lease=lease)
                 await session.commit()
 
             async with database.sessionmaker() as session:
-                queue = get_worker_job_queue(session)
+                queue = SqlAlchemyPgJobQueue(session)
                 lease = await queue.lease(lease_seconds=60, job_types=(RUN_EXECUTE_JOB_TYPE,))
                 assert lease is not None
                 assert lease.job_id == python_job_id
@@ -312,16 +308,16 @@ def test_pg_job_queue_lease_can_filter_by_job_type(migrated_database_url: str) -
                         {"job_id": python_job_id},
                     )
                 ).one_or_none()
-                go_status = (
+                other_status = (
                     await session.execute(
                         sa.text("SELECT status FROM jobs WHERE id = :job_id"),
-                        {"job_id": go_job_id},
+                        {"job_id": other_job_id},
                     )
                 ).one_or_none()
                 assert python_status is not None
-                assert go_status is not None
+                assert other_status is not None
                 assert python_status[0] == JOB_STATUS_DONE
-                assert go_status[0] == JOB_STATUS_DONE
+                assert other_status[0] == JOB_STATUS_DONE
         finally:
             await database.dispose()
 

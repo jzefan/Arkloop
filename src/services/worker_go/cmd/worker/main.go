@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 
@@ -111,6 +110,7 @@ func normalizePostgresDSN(raw string) string {
 }
 
 func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, queueJobTypes []string) (consumer.Handler, error) {
+	_ = queueJobTypes
 	if logger == nil {
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
@@ -118,55 +118,10 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, queueJobTypes []s
 		return nil, fmt.Errorf("pool 不能为空")
 	}
 
-	handlers := map[string]consumer.Handler{}
-
 	native, err := executor.NewNativeRunEngineV1Handler(pool, logger)
 	if err != nil {
 		return nil, err
 	}
-	handlers[queue.RunExecuteJobType] = native
-	handlers[queue.RunExecuteQueueJobTypeGoNative] = native
-
-	if contains(queueJobTypes, queue.RunExecuteQueueJobTypeGoBridge) {
-		bridgeURL := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_URL"))
-		if bridgeURL == "" {
-			return nil, fmt.Errorf("缺少 ARKLOOP_WORKER_BRIDGE_URL（当前配置会消费 run.execute.go_bridge）")
-		}
-		token := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_TOKEN"))
-		if token == "" {
-			return nil, fmt.Errorf("已设置 ARKLOOP_WORKER_BRIDGE_URL 但缺少 ARKLOOP_WORKER_BRIDGE_TOKEN")
-		}
-
-		bridge, err := executor.NewPyBridgeHTTPHandler(bridgeURL, token, logger)
-		if err != nil {
-			return nil, err
-		}
-		handlers[queue.RunExecuteQueueJobTypeGoBridge] = bridge
-		logger.Info("worker_go 已启用 python bridge handler", app.LogFields{}, map[string]any{"bridge_url": bridgeURL})
-	}
-
-	dispatcher, err := executor.NewJobTypeDispatchHandler(handlers)
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("worker_go 已启用 job_type dispatcher", app.LogFields{}, map[string]any{"handlers": sortedKeys(handlers)})
-	return dispatcher, nil
-}
-
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
-}
-
-func sortedKeys(values map[string]consumer.Handler) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
+	logger.Info("worker_go 已启用 native handler", app.LogFields{}, map[string]any{"job_type": queue.RunExecuteJobType})
+	return native, nil
 }

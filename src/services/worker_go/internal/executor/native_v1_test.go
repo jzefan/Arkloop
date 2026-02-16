@@ -40,7 +40,7 @@ func TestNativeRunEngineV1HandlerWritesEventsAndMessage(t *testing.T) {
 
 	lease := queue.JobLease{
 		JobID:       jobID,
-		JobType:     queue.RunExecuteQueueJobTypeGoNative,
+		JobType:     queue.RunExecuteJobType,
 		PayloadJSON: workerPayloadJSON(jobID, orgID, runID, traceID),
 		Attempts:    1,
 		LeasedUntil: time.Now().Add(time.Minute),
@@ -117,7 +117,7 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 
 	lease := queue.JobLease{
 		JobID:       jobID,
-		JobType:     queue.RunExecuteQueueJobTypeGoNative,
+		JobType:     queue.RunExecuteJobType,
 		PayloadJSON: workerPayloadJSON(jobID, orgID, runID, traceID),
 		Attempts:    1,
 		LeasedUntil: time.Now().Add(time.Minute),

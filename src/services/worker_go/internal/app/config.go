@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"arkloop/services/worker_go/internal/queue"
 )
 
 const (
@@ -15,7 +17,7 @@ const (
 	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
 )
 
-// Config 与 Python WorkerLoopConfig 对齐。
+// Config 与 worker loop 行为对齐。
 type Config struct {
 	Concurrency      int
 	PollSeconds      float64
@@ -30,7 +32,7 @@ func DefaultConfig() Config {
 		PollSeconds:      0.25,
 		LeaseSeconds:     30,
 		HeartbeatSeconds: 10,
-		QueueJobTypes:    []string{"run.execute"},
+		QueueJobTypes:    []string{queue.RunExecuteJobType},
 	}
 }
 
@@ -99,6 +101,11 @@ func (c Config) Validate() error {
 	}
 	if len(c.QueueJobTypes) == 0 {
 		return fmt.Errorf("queue_job_types 不能为空")
+	}
+	for _, jobType := range c.QueueJobTypes {
+		if jobType != queue.RunExecuteJobType {
+			return fmt.Errorf("queue_job_types 仅支持 %s", queue.RunExecuteJobType)
+		}
 	}
 	return nil
 }

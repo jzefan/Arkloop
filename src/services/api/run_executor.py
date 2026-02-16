@@ -13,8 +13,6 @@ from packages.data import Database
 from packages.data.runs import RunNotFoundError
 from packages.job_queue import (
     RUN_EXECUTE_JOB_TYPE,
-    RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE,
-    RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE,
     JobQueue,
 )
 from packages.observability.context import new_trace_id, trace_id_context
@@ -25,10 +23,6 @@ _TOOL_ALLOWLIST_ENV = "ARKLOOP_TOOL_ALLOWLIST"
 _RUN_EXECUTOR_ENV = "ARKLOOP_RUN_EXECUTOR"
 _RUN_EXECUTOR_IN_PROCESS = "in_process"
 _RUN_EXECUTOR_WORKER = "worker"
-_WORKER_GO_TRAFFIC_PERCENT_ENV = "ARKLOOP_WORKER_GO_TRAFFIC_PERCENT"
-_WORKER_GO_EXECUTOR_ENV = "ARKLOOP_WORKER_GO_EXECUTOR"
-_WORKER_GO_EXECUTOR_BRIDGE = "bridge"
-_WORKER_GO_EXECUTOR_NATIVE = "native"
 
 if TYPE_CHECKING:
     from packages.llm_gateway import ToolSpec as LlmToolSpec
@@ -218,46 +212,9 @@ def _parse_run_executor_mode() -> str:
     raise ValueError(f"{_RUN_EXECUTOR_ENV} 必须为 worker 或 in_process")
 
 
-def _parse_worker_go_traffic_percent() -> int:
-    raw = (os.getenv(_WORKER_GO_TRAFFIC_PERCENT_ENV) or "").strip()
-    if not raw:
-        return 0
-    value = int(raw)
-    if value < 0 or value > 100:
-        raise ValueError(f"{_WORKER_GO_TRAFFIC_PERCENT_ENV} 必须在 0~100 之间")
-    return value
-
-
 def _select_queue_job_type(*, run_id: uuid.UUID) -> str:
-    percent = _parse_worker_go_traffic_percent()
-    if percent <= 0:
-        return RUN_EXECUTE_JOB_TYPE
-
-    executor = _parse_worker_go_executor()
-    target = (
-        RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE
-        if executor == _WORKER_GO_EXECUTOR_NATIVE
-        else RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE
-    )
-    if percent >= 100:
-        return target
-
-    bucket = int(run_id.int % 100)
-    if bucket < percent:
-        return target
+    _ = run_id
     return RUN_EXECUTE_JOB_TYPE
-
-
-def _parse_worker_go_executor() -> str:
-    raw = (os.getenv(_WORKER_GO_EXECUTOR_ENV) or "").strip()
-    if not raw:
-        return _WORKER_GO_EXECUTOR_BRIDGE
-    cleaned = raw.casefold().replace("-", "_")
-    if cleaned in {_WORKER_GO_EXECUTOR_BRIDGE, "go_bridge"}:
-        return _WORKER_GO_EXECUTOR_BRIDGE
-    if cleaned in {_WORKER_GO_EXECUTOR_NATIVE, "go_native"}:
-        return _WORKER_GO_EXECUTOR_NATIVE
-    raise ValueError(f"{_WORKER_GO_EXECUTOR_ENV} 必须为 bridge 或 native")
 
 
 def _create_in_process_executor(*, database: Database) -> InProcessStubRunExecutor:
