@@ -8,6 +8,7 @@ import uuid
 
 RUN_EXECUTE_JOB_TYPE = "run.execute"
 RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE = "run.execute.go_bridge"
+RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE = "run.execute.go_native"
 
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_LEASED = "leased"
@@ -83,6 +84,8 @@ __all__ = [
     "JOB_STATUS_LEASED",
     "JOB_STATUS_QUEUED",
     "RUN_EXECUTE_JOB_TYPE",
+    "RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE",
+    "RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE",
     "JobLease",
     "JobLeaseLostError",
     "JobQueue",

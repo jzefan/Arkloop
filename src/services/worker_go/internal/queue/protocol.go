@@ -11,6 +11,7 @@ import (
 const (
 	RunExecuteJobType              = "run.execute"
 	RunExecuteQueueJobTypeGoBridge = "run.execute.go_bridge"
+	RunExecuteQueueJobTypeGoNative = "run.execute.go_native"
 
 	JobStatusQueued = "queued"
 	JobStatusLeased = "leased"

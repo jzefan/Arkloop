@@ -57,6 +57,9 @@ func SetupPostgresDatabase(t *testing.T, prefix string) *PostgresDatabase {
 	if err := initJobsSchema(t, dbURL.String()); err != nil {
 		t.Fatalf("init jobs schema failed: %v", err)
 	}
+	if err := initRunsSchema(t, dbURL.String()); err != nil {
+		t.Fatalf("init runs schema failed: %v", err)
+	}
 
 	return &PostgresDatabase{
 		DSN:      dbURL.String(),
@@ -116,6 +119,7 @@ func initJobsSchema(t *testing.T, dsn string) error {
 	defer conn.Close(context.Background())
 
 	statements := []string{
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
 		`CREATE TABLE jobs (
 			id UUID PRIMARY KEY,
 			job_type TEXT NOT NULL,
@@ -131,6 +135,55 @@ func initJobsSchema(t *testing.T, dsn string) error {
 		`CREATE INDEX ix_jobs_job_type ON jobs (job_type)`,
 		`CREATE INDEX ix_jobs_status_available_at ON jobs (status, available_at)`,
 		`CREATE INDEX ix_jobs_status_leased_until ON jobs (status, leased_until)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := conn.Exec(context.Background(), statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func initRunsSchema(t *testing.T, dsn string) error {
+	t.Helper()
+
+	conn, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+
+	statements := []string{
+		`CREATE TABLE runs (
+			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			thread_id UUID NOT NULL,
+			created_by_user_id UUID NULL,
+			status TEXT NOT NULL DEFAULT 'running',
+			next_event_seq BIGINT NOT NULL DEFAULT 1,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE run_events (
+			event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			run_id UUID NOT NULL,
+			seq BIGINT NOT NULL,
+			ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+			type TEXT NOT NULL,
+			data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+			tool_name TEXT NULL,
+			error_class TEXT NULL,
+			CONSTRAINT uq_run_events_run_id_seq UNIQUE (run_id, seq)
+		)`,
+		`CREATE TABLE messages (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id UUID NOT NULL,
+			thread_id UUID NOT NULL,
+			created_by_user_id UUID NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 	}
 
 	for _, statement := range statements {
