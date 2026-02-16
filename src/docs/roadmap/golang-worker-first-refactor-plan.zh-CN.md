@@ -240,14 +240,48 @@ src/services/worker_go/
 
 ### WG-07 原生 Go RunEngine v1（先不做复杂工具）
 
-- 目标：开始去桥接，先实现最小原生执行闭环。
+- 目标：开始去桥接，先把“原生执行闭环”打通（读 run/写事件/归并 message/取消语义），为 WG-08/WG-09 的 Provider/Tool/MCP/Skill 原生化提供稳定底座。
 - 改动：
-  - Go 实现 run 读取、取消检查、事件写入、message 归并。
-  - v1 仅支持无工具或 `echo/noop`。
+  - 增加新的 Go 原生队列 job_type（仅用于迁移期分流；不改冻结契约 `payload_json["type"]=run.execute`）：
+    - Python：新增 `packages.job_queue.RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE="run.execute.go_native"`
+    - Go：新增 `worker_go/internal/queue.RunExecuteQueueJobTypeGoNative`
+  - API enqueue 增加“Go 执行器选择”硬切开关（不做百分比灰度；切换以发布/环境为单位）：
+    - `ARKLOOP_WORKER_GO_EXECUTOR=bridge|native`（默认 `bridge`）
+    - 当 API 侧已选择走 Go Worker（例如 `ARKLOOP_WORKER_GO_TRAFFIC_PERCENT=100`）时：
+      - executor=bridge：投递 `jobs.job_type=run.execute.go_bridge`
+      - executor=native：投递 `jobs.job_type=run.execute.go_native`
+  - Go Worker 支持按 `lease.JobType` 选择执行器（迁移期允许同时消费 go_bridge/go_native，便于清理残留队列）：
+    - `run.execute.go_bridge`：沿用 `PyBridgeHTTPHandler`
+    - `run.execute.go_native`：新增 `NativeRunEngineV1Handler`
+  - 原生执行器 v1（先不引入 Provider/Tools；只做 echo/noop 级闭环）：
+    - 解析并校验 `jobs.payload_json`（至少 `org_id/run_id/trace_id/job_id/type`）
+    - 对齐 Python Worker 的前置检查：
+      - run 存在且 `run.org_id == payload.org_id`
+      - run 已终态（completed/failed/cancelled）直接跳过（只 ack，不追加事件）
+    - 写入 `worker.job.received` 事件（字段对齐 Python：`trace_id/job_id/job_type/org_id`）
+    - 对齐取消语义：
+      - 若发现 `run.cancel_requested`：立即追加 `run.cancelled` 并结束
+      - 若已 `run.cancelled`：直接结束
+    - 产出最小事件主干（与 golden 主干一致）：
+      - `run.route.selected`（v1 可先写最小字段：`route_id`；WG-08 再对齐完整 provider 字段）
+      - `message.delta`（至少 1 条；echo/noop 可用确定性文本分片）
+      - `run.completed`
+    - 归并 assistant delta，写入 `messages` 表（`role=assistant`、`created_by_user_id=NULL`）
+    - Go 侧事件写入必须复用 `runs.next_event_seq` 分配 seq，保持严格单调递增与唯一约束（语义对齐 `SqlAlchemyRunEventRepository._allocate_seq`）。
+  - 代码产出（建议路径，允许按实际拆分微调）：
+    - `src/services/worker_go/internal/executor/native_v1.go`（Handler：前置检查 + worker.job.received + 调用 RunEngine）
+    - `src/services/worker_go/internal/runengine/v1.go`（最小执行闭环：取消检查、事件写入、message 归并）
+    - `src/services/worker_go/internal/data/run_events_repo.go`、`src/services/worker_go/internal/data/messages_repo.go`（可选：收拢 pgx SQL，避免散落）
+  - 测试资产：
+    - Go：RunEngine v1 的单元/集成测试（事件 seq、取消、message 归并）
+    - Python functional：新增 `src/tests/functional/test_go_worker_native_functional.py`（对齐 golden 事件主干）
 - 验收：
-  - 与桥接模式对比，事件主干结构一致。
+  - `cd src/services/worker_go && go test ./...`
+  - `python -m pytest -m functional src/tests/functional/test_go_worker_native_functional.py`
+  - 事件主干对齐：至少保证类型序列与 `run_execute_success.v1.json` 一致，且终态事件唯一。
 - 回滚：
-  - 对指定 route 或 job_type 切回桥接执行。
+  - 把 `ARKLOOP_WORKER_GO_EXECUTOR` 切回 `bridge`，恢复 go_bridge 路径（迁移期兜底）。
+  - 若队列里仍存在 `run.execute.go_native` 的残留 job：短期让 bridge worker 同时消费 `run.execute.go_bridge,run.execute.go_native` 清队列，完成后再收敛配置。
 
 ### WG-08 原生 Provider + Tool 框架
 
