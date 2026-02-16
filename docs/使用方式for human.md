@@ -9,6 +9,17 @@ python -m uvicorn services.api.main:configure_app --factory --app-dir src --host
 # Worker（另开一个终端，保持同样的 .env 配置）
 PYTHONPATH=src python -m services.worker.main
 
+# Worker（桥接模式：Go 消费 + Python 执行）
+# 1) 启动 bridge（另开一个终端）
+export ARKLOOP_WORKER_BRIDGE_TOKEN=please_change_me
+python -m uvicorn services.worker_bridge.main:configure_app --factory --app-dir src --host 127.0.0.1 --port 18080
+
+# 2) 启动 Go Worker（另开一个终端，保持同样的 .env 配置）
+export ARKLOOP_WORKER_BRIDGE_URL=http://127.0.0.1:18080
+export ARKLOOP_WORKER_BRIDGE_TOKEN=please_change_me
+cd /Users/qqqqqf/Documents/Arkloop/src/services/worker_go
+go run ./cmd/worker
+
 # 前端
 pnpm -C src/apps/web dev
 

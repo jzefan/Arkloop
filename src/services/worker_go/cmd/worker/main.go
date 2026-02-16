@@ -57,9 +57,14 @@ func run() error {
 		return err
 	}
 
+	handler, err := chooseHandler(logger)
+	if err != nil {
+		return err
+	}
+
 	loop, err := consumer.NewLoop(
 		queueClient,
-		executor.NoopHandler{},
+		handler,
 		locker,
 		consumer.Config{
 			Concurrency:      cfg.Concurrency,
@@ -73,7 +78,7 @@ func run() error {
 		return err
 	}
 
-	logger.Info("worker_go 进入消费模式（noop handler）", app.LogFields{}, nil)
+	logger.Info("worker_go 进入消费模式", app.LogFields{}, nil)
 	return loop.Run(ctx)
 }
 
@@ -101,4 +106,23 @@ func normalizePostgresDSN(raw string) string {
 	}
 	_, _ = os.Stderr.WriteString(fmt.Sprintf("warning: unknown postgres scheme %q, keep original dsn\n", parsed.Scheme))
 	return raw
+}
+
+func chooseHandler(logger *app.JSONLogger) (consumer.Handler, error) {
+	bridgeURL := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_URL"))
+	if bridgeURL == "" {
+		logger.Info("worker_go 使用 noop handler", app.LogFields{}, nil)
+		return executor.NoopHandler{}, nil
+	}
+	token := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_TOKEN"))
+	if token == "" {
+		return nil, fmt.Errorf("已设置 ARKLOOP_WORKER_BRIDGE_URL 但缺少 ARKLOOP_WORKER_BRIDGE_TOKEN")
+	}
+
+	handler, err := executor.NewPyBridgeHTTPHandler(bridgeURL, token, logger)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("worker_go 使用 python bridge http handler", app.LogFields{}, map[string]any{"bridge_url": bridgeURL})
+	return handler, nil
 }

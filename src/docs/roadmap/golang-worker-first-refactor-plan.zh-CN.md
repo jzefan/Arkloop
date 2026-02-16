@@ -176,16 +176,22 @@ src/services/worker_go/
 - 回滚：
   - 只需切回 Python Worker。
 
-### WG-04 执行桥接协议（Go Worker -> Python Engine）
+### WG-04 执行桥接协议（Go Worker -> Python Engine）（已完成）
 
-- 目标：在不重写 RunEngine 的前提下，让 Go Worker 能执行真实任务。
+- 目标：在不重写 `RunEngine` 的前提下，让 Go Worker 能执行真实任务。
 - 改动：
-  - 定义最小桥接协议（建议 gRPC 或本地 HTTP）：`ExecuteRun(run_id, trace_id)`。
-  - Python 侧新增轻量执行适配层，内部复用现有 `RunEngine`。
+  - 新增 Python bridge 服务：`src/services/worker_bridge/main.py`
+    - `POST /internal/bridge/execute-run`（`Authorization: Bearer <token>`）
+    - 内部复用 `services.worker.composition.create_worker(...)`，执行链路保持与 Python Worker 一致。
+  - Go Worker 增加 HTTP bridge handler：`src/services/worker_go/internal/executor/py_bridge_http.go`
+    - 通过 `ARKLOOP_WORKER_BRIDGE_URL` / `ARKLOOP_WORKER_BRIDGE_TOKEN` 转发 `payload_json`。
+  - Go Worker 入口按环境变量选择 handler：`src/services/worker_go/cmd/worker/main.go`。
+  - 产出 functional 测试：`src/tests/functional/test_go_worker_bridge_functional.py`（跨进程验证 Go->Python 桥接闭环）。
 - 验收：
-  - Go Worker 可消费真实 job，并驱动 Python 引擎产出完整 `run_events`。
+  - `python -m pytest -m functional src/tests/functional/test_go_worker_bridge_functional.py`
+  - `cd src/services/worker_go && go test ./...`
 - 回滚：
-  - 关闭桥接开关，回到 Python Worker 全量处理。
+  - 取消 `ARKLOOP_WORKER_BRIDGE_URL`，Go Worker 回到 noop handler；或直接停用 Go Worker，恢复 Python Worker 消费。
 
 ### WG-05 灰度路由（按 job_type/比例切流）
 
