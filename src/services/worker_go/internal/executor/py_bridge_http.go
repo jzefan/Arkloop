@@ -8,10 +8,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"arkloop/services/worker_go/internal/app"
 	"arkloop/services/worker_go/internal/queue"
 )
+
+const defaultBridgeRequestTimeout = 30 * time.Minute
 
 type PyBridgeHTTPHandler struct {
 	endpoint string
@@ -36,7 +39,7 @@ func NewPyBridgeHTTPHandler(bridgeURL string, token string, logger *app.JSONLogg
 	return &PyBridgeHTTPHandler{
 		endpoint: cleanedURL + "/internal/bridge/execute-run",
 		token:    cleanedToken,
-		client:   &http.Client{},
+		client:   &http.Client{Timeout: defaultBridgeRequestTimeout},
 		logger:   logger,
 	}, nil
 }
@@ -109,4 +112,3 @@ func stringPtr(value string) *string {
 	copied := value
 	return &copied
 }
-

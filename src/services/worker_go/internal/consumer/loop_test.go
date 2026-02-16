@@ -49,7 +49,7 @@ func TestRunOnceNacksWhenRunLockIsBusy(t *testing.T) {
 	if fakeQueue.nackCount != 1 {
 		t.Fatalf("nack should be called once, got %d", fakeQueue.nackCount)
 	}
-	if len(fakeQueue.nackDelays) != 1 || fakeQueue.nackDelays[0] != 0 {
+	if len(fakeQueue.nackDelays) != 1 || fakeQueue.nackDelays[0] != -1 {
 		t.Fatalf("unexpected nack delay: %+v", fakeQueue.nackDelays)
 	}
 }

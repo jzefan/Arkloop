@@ -112,8 +112,7 @@ func normalizePostgresDSN(raw string) string {
 func chooseHandler(logger *app.JSONLogger) (consumer.Handler, error) {
 	bridgeURL := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_URL"))
 	if bridgeURL == "" {
-		logger.Info("worker_go 使用 noop handler", app.LogFields{}, nil)
-		return executor.NoopHandler{}, nil
+		return nil, fmt.Errorf("缺少 ARKLOOP_WORKER_BRIDGE_URL：当前版本仅支持 bridge 执行（或等待 WG07 原生执行器）")
 	}
 	token := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_BRIDGE_TOKEN"))
 	if token == "" {

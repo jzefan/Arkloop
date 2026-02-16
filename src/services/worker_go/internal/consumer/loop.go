@@ -72,13 +72,13 @@ func (l *Loop) Run(ctx context.Context) error {
 				default:
 				}
 
-				_, err := l.RunOnce(ctx)
+				processed, err := l.RunOnce(ctx)
 				if err != nil {
 					errCh <- err
 					return
 				}
 
-				if l.config.PollSeconds <= 0 {
+				if processed || l.config.PollSeconds <= 0 {
 					continue
 				}
 				wait := time.Duration(l.config.PollSeconds * float64(time.Second))
@@ -138,9 +138,8 @@ func (l *Loop) processLease(ctx context.Context, lease queue.JobLease) {
 				return
 			}
 			if !acquired {
-				delay := 0
 				l.logger.Info("run 正在执行，延后重试", fields, nil)
-				l.safeNack(ctx, lease, &delay)
+				l.safeNack(ctx, lease, nil)
 				return
 			}
 			defer func() {

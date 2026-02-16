@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	RunExecuteJobType = "run.execute"
+	RunExecuteJobType              = "run.execute"
 	RunExecuteQueueJobTypeGoBridge = "run.execute.go_bridge"
 
 	JobStatusQueued = "queued"
