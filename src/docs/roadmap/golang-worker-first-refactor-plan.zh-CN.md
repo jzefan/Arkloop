@@ -143,13 +143,16 @@ src/services/worker_go/
 - 回滚：
   - 不切流量，直接停用 Go Worker 进程。
 
-### WG-02 PG 队列协议对齐（lease/ack/nack）
+### WG-02 PG 队列协议对齐（lease/ack/nack）（已完成）
 
 - 目标：用 Go 对齐 `SqlAlchemyPgJobQueue` 的核心语义。
 - 改动：
   - 实现 `lease/heartbeat/ack/nack`。
   - 对齐重试退避与 dead-letter 条件。
   - 对齐 `lease_token` 校验逻辑。
+  - 产出协议定义：`src/services/worker_go/internal/queue/protocol.go`、`src/services/worker_go/internal/queue/retry.go`。
+  - 产出 PG 实现：`src/services/worker_go/internal/queue/pg_queue.go`。
+  - 产出契约测试：`src/services/worker_go/internal/queue/pg_queue_contract_test.go`。
 - 验收：
   - 契约测试通过。
   - 并发租约不出现重复消费。
