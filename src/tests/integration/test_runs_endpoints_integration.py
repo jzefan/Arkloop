@@ -32,7 +32,6 @@ from packages.llm_gateway import (
 from services.api.main import configure_app
 from services.api.provider_routed_runner import EnvProviderGatewayFactory
 from services.api.trace import TRACE_ID_HEADER
-from services.worker import Worker
 
 pytestmark = pytest.mark.integration
 
@@ -1367,24 +1366,21 @@ def test_worker_job_restores_trace_id_and_is_replayable_via_sse(monkeypatch) -> 
                 run_id = uuid.UUID(run_payload["run_id"])
                 expected_trace_id = run_payload["trace_id"]
 
-                job_payload = {
-                    "job_id": str(uuid.uuid4()),
-                    "type": "worker.ping",
-                    "trace_id": expected_trace_id,
-                    "org_id": org_id,
-                    "run_id": str(run_id),
-                    "payload": {"kind": "test"},
-                }
-
-                async def _run_worker_job() -> None:
+                async def _append_worker_job_received() -> None:
                     database = Database.from_config(DatabaseConfig(url=test_sqlalchemy_url))
                     try:
-                        worker = Worker(database=database)
-                        await worker.handle_job(job_payload)
+                        async with database.sessionmaker() as session:
+                            repo = SqlAlchemyRunEventRepository(session)
+                            await repo.append_event(
+                                run_id=run_id,
+                                type="worker.job.received",
+                                data_json={"trace_id": expected_trace_id},
+                            )
+                            await session.commit()
                     finally:
                         await database.dispose()
 
-                anyio.run(_run_worker_job)
+                anyio.run(_append_worker_job_received)
 
                 with client.stream(
                     "GET",

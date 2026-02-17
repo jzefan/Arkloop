@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.data import Database
 from packages.data.runs import RunNotFoundError
-from packages.job_queue import JobQueue
+from packages.job_queue import (
+    RUN_EXECUTE_JOB_TYPE,
+    JobQueue,
+)
 from packages.observability.context import new_trace_id, trace_id_context
 
 from .error_envelope import ApiError
@@ -61,12 +64,15 @@ class QueuedRunExecutor(RunExecutor):
         trace_id: str | None,
         session: AsyncSession | None = None,
     ) -> None:
+        queue_job_type = _select_queue_job_type(run_id=run_id)
+
         async def _enqueue(target: AsyncSession) -> uuid.UUID:
             queue = self._job_queue_factory(target)
             return await queue.enqueue_run(
                 org_id=org_id,
                 run_id=run_id,
                 trace_id=trace_id,
+                queue_job_type=queue_job_type,
                 payload={"source": "api"},
             )
 
@@ -78,7 +84,12 @@ class QueuedRunExecutor(RunExecutor):
             job_id = await _enqueue(session)
         self._logger.info(
             "run job 已投递",
-            extra={"job_id": str(job_id), "org_id": str(org_id), "run_id": str(run_id)},
+            extra={
+                "job_id": str(job_id),
+                "org_id": str(org_id),
+                "run_id": str(run_id),
+                "queue_job_type": queue_job_type,
+            },
         )
 
     async def start(self) -> None:
@@ -199,6 +210,11 @@ def _parse_run_executor_mode() -> str:
     if cleaned in {"in_process", "inprocess", "inproc"}:
         return _RUN_EXECUTOR_IN_PROCESS
     raise ValueError(f"{_RUN_EXECUTOR_ENV} 必须为 worker 或 in_process")
+
+
+def _select_queue_job_type(*, run_id: uuid.UUID) -> str:
+    _ = run_id
+    return RUN_EXECUTE_JOB_TYPE
 
 
 def _create_in_process_executor(*, database: Database) -> InProcessStubRunExecutor:
