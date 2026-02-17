@@ -15,6 +15,7 @@ import (
 )
 
 var safeIdentifierRegex = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var dotenvKeyRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type PostgresDatabase struct {
 	DSN      string
@@ -237,24 +238,81 @@ func loadDotenvIfEnabled(t *testing.T) {
 		return
 	}
 
+	allowedKeys := map[string]struct{}{
+		"DATABASE_URL":         {},
+		"ARKLOOP_DATABASE_URL": {},
+	}
+
 	for _, line := range strings.Split(string(content), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		key, value, ok := parseDotenvLine(line)
+		if !ok {
 			continue
 		}
-		key, value, found := strings.Cut(trimmed, "=")
-		if !found {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		if key == "" {
+		if _, allowed := allowedKeys[key]; !allowed {
 			continue
 		}
 		if _, exists := os.LookupEnv(key); exists {
 			continue
 		}
-		os.Setenv(key, strings.TrimSpace(value))
+		os.Setenv(key, value)
 	}
+}
+
+func parseDotenvLine(raw string) (string, string, bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	if strings.HasPrefix(line, "export ") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+	}
+
+	idx := strings.Index(line, "=")
+	if idx <= 0 {
+		return "", "", false
+	}
+
+	key := strings.TrimSpace(line[:idx])
+	if key == "" || !dotenvKeyRegex.MatchString(key) {
+		return "", "", false
+	}
+
+	value := strings.TrimSpace(line[idx+1:])
+	if value == "" {
+		return key, "", true
+	}
+
+	if len(value) >= 2 {
+		quote := value[0]
+		if (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+			return key, value[1 : len(value)-1], true
+		}
+	}
+
+	return key, stripInlineComment(value), true
+}
+
+func stripInlineComment(value string) string {
+	// 仅处理 "value  # comment" 的场景，保留无空格的 "#".
+	for i := 1; i < len(value); i++ {
+		if value[i] != '#' {
+			continue
+		}
+		prev := value[i-1]
+		if prev != ' ' && prev != '\t' {
+			continue
+		}
+		start := i - 1
+		for start > 0 {
+			ch := value[start-1]
+			if ch != ' ' && ch != '\t' {
+				break
+			}
+			start--
+		}
+		return strings.TrimSpace(value[:start])
+	}
+	return strings.TrimSpace(value)
 }
 
 func repoRoot(t *testing.T) string {
