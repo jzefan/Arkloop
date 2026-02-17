@@ -6,10 +6,9 @@ docker compose up -d postgres
 python -m alembic upgrade head
 python -m uvicorn services.api.main:configure_app --factory --app-dir src --host 127.0.0.1 --port 8000
 
-# Worker（另开一个终端，保持同样的 .env 配置）
-PYTHONPATH=src python -m services.worker.main
-
-cd /Users/qqqqqf/Documents/Arkloop/src/services/worker_go
+# Worker（另开一个终端）
+export ARKLOOP_LOAD_DOTENV=1
+cd ./src/services/worker_go
 go run ./cmd/worker
 
 # 前端
