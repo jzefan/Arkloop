@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
@@ -28,6 +31,12 @@ type OpenAIGateway struct {
 	client *http.Client
 }
 
+const (
+	openAIMaxErrorBodyBytes  = 4096
+	openAIMaxDebugChunkBytes = 8192
+	openAIMaxResponseBytes   = 1024 * 1024
+)
+
 func NewOpenAIGateway(cfg OpenAIGatewayConfig) *OpenAIGateway {
 	timeout := cfg.TotalTimeout
 	if timeout <= 0 {
@@ -43,14 +52,15 @@ func NewOpenAIGateway(cfg OpenAIGatewayConfig) *OpenAIGateway {
 	}
 	cfg.TotalTimeout = timeout
 	return &OpenAIGateway{
-		cfg: cfg,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		cfg:    cfg,
+		client: &http.Client{},
 	}
 }
 
 func (g *OpenAIGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
+	ctx, cancel := context.WithTimeout(ctx, g.cfg.TotalTimeout)
+	defer cancel()
+
 	apiMode := g.cfg.APIMode
 	if apiMode != "auto" && apiMode != "responses" && apiMode != "chat_completions" {
 		apiMode = "auto"
@@ -62,16 +72,6 @@ func (g *OpenAIGateway) Stream(ctx context.Context, request Request, yield func(
 
 	if apiMode == "responses" {
 		return g.responses(ctx, request, yield, false)
-	}
-
-	if apiMode != "auto" {
-		return yield(StreamRunFailed{
-			Error: GatewayError{
-				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI api_mode 未实现",
-				Details:    map[string]any{"api_mode": apiMode},
-			},
-		})
 	}
 
 	if err := g.responses(ctx, request, yield, true); err != nil {
@@ -100,6 +100,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	payload := map[string]any{
 		"model":    request.Model,
 		"messages": toOpenAIChatMessages(request.Messages),
+		"stream":   true,
 	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
@@ -144,6 +145,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(g.cfg.APIKey))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := g.client.Do(req)
 	if err != nil {
@@ -157,46 +159,48 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-
 	status := resp.StatusCode
 	if status < 200 || status >= 300 {
+		body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxErrorBodyBytes)
+		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI 请求失败")
+
 		errClass := errorClassFromStatus(status)
-		message := "OpenAI 请求失败"
-		if strings.TrimSpace(string(body)) != "" {
-			message = "OpenAI 请求失败（响应体已截断）"
-		}
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: errClass,
 				Message:    message,
-				Details:    map[string]any{"status_code": status},
+				Details:    details,
 			},
 		}
 		if g.cfg.EmitDebugEvents {
-			raw := string(body)
+			raw, rawTruncated := truncateUTF8(string(body), openAIMaxDebugChunkBytes)
 			chunk := StreamLlmResponseChunk{
 				LlmCallID:    llmCallID,
 				ProviderKind: "openai",
 				APIMode:      "chat_completions",
 				Raw:          raw,
 				StatusCode:   &status,
-				Truncated:    true,
+				Truncated:    bodyTruncated || rawTruncated,
 			}
 			_ = yield(chunk)
 		}
 		return yield(failed)
 	}
 
+	if isEventStream(resp.Header.Get("Content-Type")) {
+		return g.streamChatCompletionsSSE(ctx, resp.Body, llmCallID, status, yield)
+	}
+
+	body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxResponseBytes)
 	if g.cfg.EmitDebugEvents {
-		raw := string(body)
+		raw, rawTruncated := truncateUTF8(string(body), openAIMaxDebugChunkBytes)
 		chunk := StreamLlmResponseChunk{
 			LlmCallID:    llmCallID,
 			ProviderKind: "openai",
 			APIMode:      "chat_completions",
 			Raw:          raw,
 			StatusCode:   &status,
-			Truncated:    true,
+			Truncated:    bodyTruncated || rawTruncated,
 		}
 		if err := yield(chunk); err != nil {
 			return err
@@ -205,24 +209,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 
 	content, toolCalls, err := parseOpenAIChatCompletion(body)
 	if err != nil {
-		if errors.Is(err, errOpenAIToolCallArguments) {
-			failed := StreamRunFailed{
-				Error: GatewayError{
-					ErrorClass: ErrorClassProviderNonRetryable,
-					Message:    "OpenAI tool_call 参数解析失败",
-					Details:    map[string]any{"reason": err.Error()},
-				},
-			}
-			return yield(failed)
-		}
-		failed := StreamRunFailed{
-			Error: GatewayError{
-				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI 响应解析失败",
-				Details:    map[string]any{"reason": err.Error()},
-			},
-		}
-		return yield(failed)
+		return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
 	}
 
 	if strings.TrimSpace(content) != "" {
@@ -263,8 +250,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	}
 
 	payload := map[string]any{
-		"model": request.Model,
-		"input": input,
+		"model":  request.Model,
+		"input":  input,
+		"stream": true,
 	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
@@ -308,6 +296,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(g.cfg.APIKey))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := g.client.Do(req)
 	if err != nil {
@@ -320,59 +309,58 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	status := resp.StatusCode
 
+	if status < 200 || status >= 300 {
+		body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxErrorBodyBytes)
+		if g.cfg.EmitDebugEvents {
+			raw, rawTruncated := truncateUTF8(string(body), openAIMaxDebugChunkBytes)
+			chunk := StreamLlmResponseChunk{
+				LlmCallID:    llmCallID,
+				ProviderKind: "openai",
+				APIMode:      "responses",
+				Raw:          raw,
+				StatusCode:   &status,
+				Truncated:    bodyTruncated || rawTruncated,
+			}
+			_ = yield(chunk)
+		}
+		if allowFallback && isOpenAIResponsesNotSupported(status, body) {
+			return &openAIResponsesNotSupportedError{StatusCode: status}
+		}
+
+		errClass := errorClassFromStatus(status)
+		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI 请求失败")
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: errClass,
+				Message:    message,
+				Details:    details,
+			},
+		})
+	}
+
+	if isEventStream(resp.Header.Get("Content-Type")) {
+		return g.streamResponsesSSE(ctx, resp.Body, llmCallID, status, yield)
+	}
+
+	body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxResponseBytes)
 	if g.cfg.EmitDebugEvents {
-		raw := string(body)
+		raw, rawTruncated := truncateUTF8(string(body), openAIMaxDebugChunkBytes)
 		chunk := StreamLlmResponseChunk{
 			LlmCallID:    llmCallID,
 			ProviderKind: "openai",
 			APIMode:      "responses",
 			Raw:          raw,
 			StatusCode:   &status,
-			Truncated:    true,
+			Truncated:    bodyTruncated || rawTruncated,
 		}
 		_ = yield(chunk)
 	}
 
-	if status < 200 || status >= 300 {
-		if allowFallback && isOpenAIResponsesNotSupported(status, body) {
-			return &openAIResponsesNotSupportedError{StatusCode: status}
-		}
-
-		errClass := errorClassFromStatus(status)
-		message := "OpenAI 请求失败"
-		if strings.TrimSpace(string(body)) != "" {
-			message = "OpenAI 请求失败（响应体已截断）"
-		}
-		return yield(StreamRunFailed{
-			Error: GatewayError{
-				ErrorClass: errClass,
-				Message:    message,
-				Details:    map[string]any{"status_code": status},
-			},
-		})
-	}
-
 	content, toolCalls, err := parseOpenAIResponses(body)
 	if err != nil {
-		if errors.Is(err, errOpenAIToolCallArguments) {
-			return yield(StreamRunFailed{
-				Error: GatewayError{
-					ErrorClass: ErrorClassProviderNonRetryable,
-					Message:    "OpenAI responses tool_call 参数解析失败",
-					Details:    map[string]any{"reason": err.Error()},
-				},
-			})
-		}
-		return yield(StreamRunFailed{
-			Error: GatewayError{
-				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI responses 响应解析失败",
-				Details:    map[string]any{"reason": err.Error()},
-			},
-		})
+		return yield(openAIParseFailure(err, "OpenAI responses 响应解析失败", "OpenAI responses tool_call 参数解析失败"))
 	}
 
 	if strings.TrimSpace(content) != "" {
@@ -400,6 +388,312 @@ func errorClassFromStatus(status int) string {
 		}
 		return ErrorClassProviderNonRetryable
 	}
+}
+
+type openAIChatCompletionStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content   *string                         `json:"content"`
+			Role      *string                         `json:"role"`
+			ToolCalls []openAIChatCompletionToolDelta `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+type openAIChatCompletionToolDelta struct {
+	Index    *int   `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type openAIChatToolCallAccum struct {
+	ID            string
+	Name          string
+	ArgumentParts []string
+}
+
+type openAIChatToolCallBuffer struct {
+	calls map[int]*openAIChatToolCallAccum
+}
+
+func newOpenAIChatToolCallBuffer() *openAIChatToolCallBuffer {
+	return &openAIChatToolCallBuffer{calls: map[int]*openAIChatToolCallAccum{}}
+}
+
+func (b *openAIChatToolCallBuffer) Add(delta openAIChatCompletionToolDelta, fallbackIndex int) {
+	idx := fallbackIndex
+	if delta.Index != nil {
+		idx = *delta.Index
+	}
+	call, ok := b.calls[idx]
+	if !ok {
+		call = &openAIChatToolCallAccum{}
+		b.calls[idx] = call
+	}
+	if value := strings.TrimSpace(delta.ID); value != "" {
+		call.ID = value
+	}
+	if value := strings.TrimSpace(delta.Function.Name); value != "" {
+		call.Name = value
+	}
+	if delta.Function.Arguments != "" {
+		call.ArgumentParts = append(call.ArgumentParts, delta.Function.Arguments)
+	}
+}
+
+func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
+	if len(b.calls) == 0 {
+		return nil, nil
+	}
+
+	indexes := make([]int, 0, len(b.calls))
+	for idx := range b.calls {
+		indexes = append(indexes, idx)
+	}
+	sort.Ints(indexes)
+
+	toolCalls := make([]ToolCall, 0, len(indexes))
+	for _, idx := range indexes {
+		item := b.calls[idx]
+		if item == nil {
+			continue
+		}
+		if strings.TrimSpace(item.ID) == "" {
+			return nil, fmt.Errorf("tool_calls[%d] 缺少 id", idx)
+		}
+		if strings.TrimSpace(item.Name) == "" {
+			return nil, fmt.Errorf("tool_calls[%d] 缺少 function.name", idx)
+		}
+
+		argumentsJSON := map[string]any{}
+		joinedArgs := strings.TrimSpace(strings.Join(item.ArgumentParts, ""))
+		if joinedArgs != "" {
+			var parsedArgs any
+			if err := json.Unmarshal([]byte(joinedArgs), &parsedArgs); err != nil {
+				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+			}
+			obj, ok := parsedArgs.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+			}
+			argumentsJSON = obj
+		}
+
+		toolCalls = append(toolCalls, ToolCall{
+			ToolCallID:    item.ID,
+			ToolName:      item.Name,
+			ArgumentsJSON: argumentsJSON,
+		})
+	}
+
+	b.calls = map[int]*openAIChatToolCallAccum{}
+	return toolCalls, nil
+}
+
+func (g *OpenAIGateway) streamChatCompletionsSSE(
+	ctx context.Context,
+	body io.Reader,
+	llmCallID string,
+	status int,
+	yield func(StreamEvent) error,
+) error {
+	toolBuffer := newOpenAIChatToolCallBuffer()
+	terminalEmitted := false
+
+	err := forEachSSEData(ctx, body, func(data string) error {
+		raw, rawTruncated := truncateUTF8(data, openAIMaxDebugChunkBytes)
+		var chunkJSON any
+		if strings.TrimSpace(data) != "" && data != "[DONE]" {
+			_ = json.Unmarshal([]byte(data), &chunkJSON)
+		}
+
+		if g.cfg.EmitDebugEvents {
+			chunk := StreamLlmResponseChunk{
+				LlmCallID:    llmCallID,
+				ProviderKind: "openai",
+				APIMode:      "chat_completions",
+				Raw:          raw,
+				ChunkJSON:    chunkJSON,
+				StatusCode:   &status,
+				Truncated:    rawTruncated,
+			}
+			if err := yield(chunk); err != nil {
+				return err
+			}
+		}
+
+		if strings.TrimSpace(data) == "[DONE]" {
+			calls, err := toolBuffer.Drain()
+			if err != nil {
+				return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
+			}
+			for _, call := range calls {
+				if err := yield(call); err != nil {
+					return err
+				}
+			}
+			terminalEmitted = true
+			return yield(StreamRunCompleted{})
+		}
+
+		var parsed openAIChatCompletionStreamChunk
+		if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+			return nil
+		}
+		if len(parsed.Choices) == 0 {
+			return nil
+		}
+		choice := parsed.Choices[0]
+		role := "assistant"
+		if choice.Delta.Role != nil && strings.TrimSpace(*choice.Delta.Role) != "" {
+			role = strings.TrimSpace(*choice.Delta.Role)
+		}
+		if choice.Delta.Content != nil && strings.TrimSpace(*choice.Delta.Content) != "" {
+			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.Content, Role: role}); err != nil {
+				return err
+			}
+		}
+		for idx, toolDelta := range choice.Delta.ToolCalls {
+			toolBuffer.Add(toolDelta, idx)
+		}
+
+		if choice.FinishReason != nil && strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "tool_calls") {
+			calls, err := toolBuffer.Drain()
+			if err != nil {
+				return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
+			}
+			for _, call := range calls {
+				if err := yield(call); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if terminalEmitted {
+		return nil
+	}
+	return yield(StreamRunFailed{Error: InternalStreamEndedError()})
+}
+
+func (g *OpenAIGateway) streamResponsesSSE(
+	ctx context.Context,
+	body io.Reader,
+	llmCallID string,
+	status int,
+	yield func(StreamEvent) error,
+) error {
+	terminalEmitted := false
+
+	err := forEachSSEData(ctx, body, func(data string) error {
+		raw, rawTruncated := truncateUTF8(data, openAIMaxDebugChunkBytes)
+		var chunkJSON any
+		if strings.TrimSpace(data) != "" && data != "[DONE]" {
+			_ = json.Unmarshal([]byte(data), &chunkJSON)
+		}
+
+		if g.cfg.EmitDebugEvents {
+			chunk := StreamLlmResponseChunk{
+				LlmCallID:    llmCallID,
+				ProviderKind: "openai",
+				APIMode:      "responses",
+				Raw:          raw,
+				ChunkJSON:    chunkJSON,
+				StatusCode:   &status,
+				Truncated:    rawTruncated,
+			}
+			if err := yield(chunk); err != nil {
+				return err
+			}
+		}
+
+		if strings.TrimSpace(data) == "[DONE]" {
+			if terminalEmitted {
+				return nil
+			}
+			terminalEmitted = true
+			return yield(StreamRunFailed{Error: InternalStreamEndedError()})
+		}
+
+		var parsed any
+		if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+			return nil
+		}
+		root, ok := parsed.(map[string]any)
+		if !ok {
+			return nil
+		}
+
+		typ, _ := root["type"].(string)
+		if delta := openAIResponsesDeltaText(root); strings.TrimSpace(delta) != "" {
+			if err := yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant"}); err != nil {
+				return err
+			}
+		}
+
+		if typ == "response.completed" {
+			respObj, _ := root["response"].(map[string]any)
+			outputRaw, _ := respObj["output"].([]any)
+			toolCalls, err := openAIResponsesToolCalls(outputRaw)
+			if err != nil {
+				return yield(openAIParseFailure(err, "OpenAI responses 响应解析失败", "OpenAI responses tool_call 参数解析失败"))
+			}
+			for _, call := range toolCalls {
+				if err := yield(call); err != nil {
+					return err
+				}
+			}
+			terminalEmitted = true
+			return yield(StreamRunCompleted{})
+		}
+
+		if typ == "response.failed" || typ == "response.error" {
+			message := "OpenAI responses 失败"
+			if errObj, ok := root["error"].(map[string]any); ok {
+				if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+					message = strings.TrimSpace(msg)
+				}
+			}
+			terminalEmitted = true
+			return yield(StreamRunFailed{
+				Error: GatewayError{
+					ErrorClass: ErrorClassProviderNonRetryable,
+					Message:    message,
+				},
+			})
+		}
+
+		if errObj, ok := root["error"].(map[string]any); ok && errObj != nil {
+			message := "OpenAI responses 返回错误"
+			if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+				message = strings.TrimSpace(msg)
+			}
+			terminalEmitted = true
+			return yield(StreamRunFailed{
+				Error: GatewayError{
+					ErrorClass: ErrorClassProviderNonRetryable,
+					Message:    message,
+				},
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if terminalEmitted {
+		return nil
+	}
+	return yield(StreamRunFailed{Error: InternalStreamEndedError()})
 }
 
 func toOpenAIChatMessages(messages []Message) []map[string]any {
@@ -810,4 +1104,242 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 	}
 
 	return contentBuilder.String(), toolCalls, nil
+}
+
+func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
+	toolCalls := []ToolCall{}
+	for idx, rawItem := range output {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := item["type"].(string); typ != "function_call" {
+			continue
+		}
+
+		toolCallID, _ := item["call_id"].(string)
+		if strings.TrimSpace(toolCallID) == "" {
+			toolCallID, _ = item["id"].(string)
+		}
+		toolCallID = strings.TrimSpace(toolCallID)
+		if toolCallID == "" {
+			return nil, fmt.Errorf("output[%d] 缺少 function_call.id", idx)
+		}
+
+		toolName, _ := item["name"].(string)
+		if strings.TrimSpace(toolName) == "" {
+			toolName, _ = item["tool_name"].(string)
+		}
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			return nil, fmt.Errorf("output[%d] 缺少 function_call.name", idx)
+		}
+
+		argumentsJSON := map[string]any{}
+		if rawArgs, ok := item["arguments"]; ok && rawArgs != nil {
+			switch casted := rawArgs.(type) {
+			case map[string]any:
+				argumentsJSON = casted
+			case string:
+				arguments := strings.TrimSpace(casted)
+				if arguments != "" {
+					var parsedArgs any
+					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
+						return nil, fmt.Errorf("%w: output[%d].arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+					}
+					obj, ok := parsedArgs.(map[string]any)
+					if !ok {
+						return nil, fmt.Errorf("%w: output[%d].arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+					}
+					argumentsJSON = obj
+				}
+			default:
+				return nil, fmt.Errorf("%w: output[%d].arguments 类型不支持", errOpenAIToolCallArguments, idx)
+			}
+		}
+
+		toolCalls = append(toolCalls, ToolCall{
+			ToolCallID:    toolCallID,
+			ToolName:      toolName,
+			ArgumentsJSON: argumentsJSON,
+		})
+	}
+	return toolCalls, nil
+}
+
+func openAIResponsesDeltaText(event map[string]any) string {
+	typ, _ := event["type"].(string)
+	if typ == "" || !strings.HasSuffix(typ, ".delta") {
+		return ""
+	}
+
+	if rawDelta, ok := event["delta"].(string); ok {
+		return rawDelta
+	}
+
+	deltaObj, ok := event["delta"].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	if value, ok := deltaObj["value"].(string); ok {
+		return value
+	}
+	if value, ok := deltaObj["text"].(string); ok {
+		return value
+	}
+	rawContent, ok := deltaObj["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, rawItem := range rawContent {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if txt, ok := item["text"].(string); ok {
+			b.WriteString(txt)
+			continue
+		}
+		txtObj, ok := item["text"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if value, ok := txtObj["value"].(string); ok {
+			b.WriteString(value)
+		}
+	}
+	return b.String()
+}
+
+func openAIParseFailure(err error, message string, toolCallMessage string) StreamRunFailed {
+	if errors.Is(err, errOpenAIToolCallArguments) {
+		return StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassProviderNonRetryable,
+				Message:    toolCallMessage,
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		}
+	}
+	return StreamRunFailed{
+		Error: GatewayError{
+			ErrorClass: ErrorClassInternalError,
+			Message:    message,
+			Details:    map[string]any{"reason": err.Error()},
+		},
+	}
+}
+
+func openAIErrorMessageAndDetails(body []byte, status int, fallback string) (string, map[string]any) {
+	details := map[string]any{"status_code": status}
+
+	var parsed any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fallback, details
+	}
+	root, ok := parsed.(map[string]any)
+	if !ok {
+		return fallback, details
+	}
+	errObj, ok := root["error"].(map[string]any)
+	if !ok {
+		return fallback, details
+	}
+
+	for _, key := range []string{"type", "code", "param"} {
+		if value, exists := errObj[key]; exists && value != nil {
+			switch casted := value.(type) {
+			case string:
+				if strings.TrimSpace(casted) != "" {
+					details["openai_error_"+key] = strings.TrimSpace(casted)
+				}
+			case float64, bool, int:
+				details["openai_error_"+key] = casted
+			default:
+				details["openai_error_"+key] = fmt.Sprintf("%v", casted)
+			}
+		}
+	}
+
+	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+		return strings.TrimSpace(msg), details
+	}
+	return fallback, details
+}
+
+func isEventStream(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+}
+
+func truncateUTF8(value string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 {
+		return "", true
+	}
+	raw := []byte(value)
+	if len(raw) <= maxBytes {
+		return value, false
+	}
+	truncated := raw[:maxBytes]
+	for len(truncated) > 0 && !utf8.Valid(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return string(truncated), true
+}
+
+func readAllWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		maxBytes = openAIMaxErrorBodyBytes
+	}
+	limited := io.LimitReader(r, int64(maxBytes)+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(body) <= maxBytes {
+		return body, false, nil
+	}
+	return body[:maxBytes], true, nil
+}
+
+func forEachSSEData(ctx context.Context, r io.Reader, handle func(string) error) error {
+	reader := bufio.NewReader(r)
+	dataLines := []string{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+
+		cleaned := strings.TrimRight(line, "\r\n")
+		if cleaned == "" {
+			if len(dataLines) > 0 {
+				data := strings.Join(dataLines, "\n")
+				dataLines = dataLines[:0]
+				if err := handle(data); err != nil {
+					return err
+				}
+			}
+		} else if strings.HasPrefix(cleaned, ":") {
+			// ignore
+		} else if strings.HasPrefix(cleaned, "data:") {
+			dataLines = append(dataLines, strings.TrimLeft(cleaned[len("data:"):], " "))
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	if len(dataLines) > 0 {
+		if err := handle(strings.Join(dataLines, "\n")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
