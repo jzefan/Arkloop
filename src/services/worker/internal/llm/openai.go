@@ -141,7 +141,13 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.BaseURL+"/chat/completions", bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassInternalError,
+				Message:    "OpenAI 请求构造失败",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(g.cfg.APIKey))
 	req.Header.Set("Content-Type", "application/json")
@@ -292,7 +298,13 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.BaseURL+"/responses", bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassInternalError,
+				Message:    "OpenAI 请求构造失败",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(g.cfg.APIKey))
 	req.Header.Set("Content-Type", "application/json")

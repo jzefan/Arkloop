@@ -94,8 +94,7 @@ func (l *Loop) Run(
 		if turn.CompletedDataJSON == nil {
 			internal := llm.InternalStreamEndedError()
 			event := emitter.Emit("run.failed", internal.ToJSON(), nil, stringPtr(internal.ErrorClass))
-			_ = yield(event)
-			return nil
+			return yield(event)
 		}
 
 		if len(turn.ToolCalls) == 0 {

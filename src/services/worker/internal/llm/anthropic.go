@@ -119,7 +119,13 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.BaseURL+"/messages", bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassInternalError,
+				Message:    "Anthropic 请求构造失败",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
 	}
 	req.Header.Set("x-api-key", strings.TrimSpace(g.cfg.APIKey))
 	req.Header.Set("anthropic-version", g.cfg.AnthropicVersion)
