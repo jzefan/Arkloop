@@ -218,7 +218,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
 	}
 
-	if strings.TrimSpace(content) != "" {
+	if content != "" {
 		if err := yield(StreamMessageDelta{ContentDelta: content, Role: "assistant"}); err != nil {
 			return err
 		}
@@ -375,7 +375,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		return yield(openAIParseFailure(err, "OpenAI responses 响应解析失败", "OpenAI responses tool_call 参数解析失败"))
 	}
 
-	if strings.TrimSpace(content) != "" {
+	if content != "" {
 		if err := yield(StreamMessageDelta{ContentDelta: content, Role: "assistant"}); err != nil {
 			return err
 		}
@@ -565,7 +565,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		if choice.Delta.Role != nil && strings.TrimSpace(*choice.Delta.Role) != "" {
 			role = strings.TrimSpace(*choice.Delta.Role)
 		}
-		if choice.Delta.Content != nil && strings.TrimSpace(*choice.Delta.Content) != "" {
+		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.Content, Role: role}); err != nil {
 				return err
 			}
@@ -645,7 +645,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 		}
 
 		typ, _ := root["type"].(string)
-		if delta := openAIResponsesDeltaText(root); strings.TrimSpace(delta) != "" {
+		if delta := openAIResponsesDeltaText(root); delta != "" {
 			if err := yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant"}); err != nil {
 				return err
 			}

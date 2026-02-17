@@ -16,22 +16,22 @@ import (
 const ErrorClassAgentMaxIterationsExceeded = "agent.max_iterations_exceeded"
 
 type RunContext struct {
-	RunID          uuid.UUID
-	TraceID        string
-	InputJSON      map[string]any
-	MaxIterations  int
-	SystemPrompt   string
+	RunID           uuid.UUID
+	TraceID         string
+	InputJSON       map[string]any
+	MaxIterations   int
+	SystemPrompt    string
 	MaxOutputTokens *int
-	ToolTimeoutMs  *int
-	ToolBudget     map[string]any
-	ToolExecutor   *tools.DispatchingExecutor
-	ToolSpecs      []llm.ToolSpec
-	CancelSignal   func() bool
+	ToolTimeoutMs   *int
+	ToolBudget      map[string]any
+	ToolExecutor    *tools.DispatchingExecutor
+	ToolSpecs       []llm.ToolSpec
+	CancelSignal    func() bool
 }
 
 type Loop struct {
-	gateway       llm.Gateway
-	toolExecutor  *tools.DispatchingExecutor
+	gateway      llm.Gateway
+	toolExecutor *tools.DispatchingExecutor
 }
 
 func NewLoop(gateway llm.Gateway, toolExecutor *tools.DispatchingExecutor) *Loop {
@@ -162,12 +162,12 @@ func (l *Loop) Run(
 }
 
 type turnResult struct {
-	Events           []events.RunEvent
-	Terminal         bool
-	Cancelled        bool
-	ToolCalls        []llm.ToolCall
-	ToolResults      []llm.StreamToolResult
-	AssistantText    string
+	Events            []events.RunEvent
+	Terminal          bool
+	Cancelled         bool
+	ToolCalls         []llm.ToolCall
+	ToolResults       []llm.StreamToolResult
+	AssistantText     string
 	CompletedDataJSON map[string]any
 }
 
@@ -194,7 +194,7 @@ func (l *Loop) runSingleTurn(
 
 		switch typed := item.(type) {
 		case llm.StreamMessageDelta:
-			if strings.TrimSpace(typed.ContentDelta) == "" {
+			if typed.ContentDelta == "" {
 				return nil
 			}
 			assistantChunks = append(assistantChunks, typed.ContentDelta)
@@ -263,12 +263,12 @@ func (l *Loop) runSingleTurn(
 
 func copyRequest(request llm.Request, messages []llm.Message) llm.Request {
 	return llm.Request{
-		Model:          request.Model,
-		Messages:       append([]llm.Message{}, messages...),
-		Temperature:    request.Temperature,
+		Model:           request.Model,
+		Messages:        append([]llm.Message{}, messages...),
+		Temperature:     request.Temperature,
 		MaxOutputTokens: request.MaxOutputTokens,
-		Tools:          append([]llm.ToolSpec{}, request.Tools...),
-		Metadata:       copyMap(request.Metadata),
+		Tools:           append([]llm.ToolSpec{}, request.Tools...),
+		Metadata:        copyMap(request.Metadata),
 	}
 }
 
@@ -383,4 +383,3 @@ func stringPtr(value string) *string {
 	}
 	return &cleaned
 }
-

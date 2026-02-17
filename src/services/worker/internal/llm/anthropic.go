@@ -189,7 +189,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		})
 	}
 
-	if strings.TrimSpace(content) != "" {
+	if content != "" {
 		if err := yield(StreamMessageDelta{ContentDelta: content, Role: "assistant"}); err != nil {
 			return err
 		}

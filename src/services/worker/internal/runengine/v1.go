@@ -47,12 +47,12 @@ type EngineV1 struct {
 	stubGateway     llm.Gateway
 	emitDebugEvents bool
 
-	toolRegistry      *tools.Registry
-	toolExecutors     map[string]tools.Executor
-	allLlmToolSpecs   []llm.ToolSpec
-	baseAllowlistSet  map[string]struct{}
-	baseToolExecutor  *tools.DispatchingExecutor
-	baseLlmToolSpecs  []llm.ToolSpec
+	toolRegistry     *tools.Registry
+	toolExecutors    map[string]tools.Executor
+	allLlmToolSpecs  []llm.ToolSpec
+	baseAllowlistSet map[string]struct{}
+	baseToolExecutor *tools.DispatchingExecutor
+	baseLlmToolSpecs []llm.ToolSpec
 
 	skillRegistry *skills.Registry
 }
@@ -62,13 +62,13 @@ type ExecuteInput struct {
 }
 
 type EngineV1Deps struct {
-	Router         *routing.ProviderRouter
-	StubGateway    llm.Gateway
+	Router          *routing.ProviderRouter
+	StubGateway     llm.Gateway
 	EmitDebugEvents bool
 
-	ToolRegistry          *tools.Registry
-	ToolExecutors         map[string]tools.Executor
-	AllLlmToolSpecs       []llm.ToolSpec
+	ToolRegistry           *tools.Registry
+	ToolExecutors          map[string]tools.Executor
+	AllLlmToolSpecs        []llm.ToolSpec
 	BaseToolAllowlistNames []string
 
 	SkillRegistry *skills.Registry
@@ -286,9 +286,9 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 
 	agentRequest := llm.Request{
-		Model:    selected.Route.Model,
-		Messages: llmMessages,
-		Tools:    append([]llm.ToolSpec{}, toolSpecs...),
+		Model:           selected.Route.Model,
+		Messages:        llmMessages,
+		Tools:           append([]llm.ToolSpec{}, toolSpecs...),
 		MaxOutputTokens: maxOutputTokens,
 	}
 
@@ -641,7 +641,7 @@ func extractAssistantDelta(dataJSON map[string]any) string {
 		return ""
 	}
 	delta, _ := dataJSON["content_delta"].(string)
-	if strings.TrimSpace(delta) == "" {
+	if delta == "" {
 		return ""
 	}
 	return delta
