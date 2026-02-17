@@ -4,24 +4,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
 )
 
 const defaultAnthropicVersion = "2023-06-01"
+const maxAnthropicResponseBytes = 4096 * 4
+
+var errAnthropicToolUseInput = errors.New("anthropic_tool_use_input")
 
 type AnthropicGatewayConfig struct {
-	APIKey          string
-	BaseURL         string
+	APIKey           string
+	BaseURL          string
 	AnthropicVersion string
-	EmitDebugEvents bool
-	TotalTimeout    time.Duration
-	AdvancedJSON    map[string]any
+	EmitDebugEvents  bool
+	TotalTimeout     time.Duration
+	AdvancedJSON     map[string]any
 }
 
 type AnthropicGateway struct {
@@ -57,7 +62,16 @@ func NewAnthropicGateway(cfg AnthropicGatewayConfig) *AnthropicGateway {
 func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
 	llmCallID := uuid.NewString()
 
-	system, messages := splitSystemMessage(request.Messages)
+	system, messages, err := toAnthropicMessages(request.Messages)
+	if err != nil {
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassInternalError,
+				Message:    "Anthropic messages 构造失败",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
+	}
 	maxTokens := 1024
 	if request.MaxOutputTokens != nil && *request.MaxOutputTokens > 0 {
 		maxTokens = *request.MaxOutputTokens
@@ -65,7 +79,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 
 	payload := map[string]any{
 		"model":      request.Model,
-		"messages":   toAnthropicMessages(messages),
+		"messages":   messages,
 		"max_tokens": maxTokens,
 	}
 	if system != "" {
@@ -123,7 +137,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096*4))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxAnthropicResponseBytes))
 	status := resp.StatusCode
 
 	if g.cfg.EmitDebugEvents {
@@ -149,8 +163,17 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		})
 	}
 
-	content, err := parseAnthropicText(body)
+	content, toolCalls, err := parseAnthropicMessage(body)
 	if err != nil {
+		if errors.Is(err, errAnthropicToolUseInput) {
+			return yield(StreamRunFailed{
+				Error: GatewayError{
+					ErrorClass: ErrorClassProviderNonRetryable,
+					Message:    "Anthropic tool_use 输入解析失败",
+					Details:    map[string]any{"reason": err.Error()},
+				},
+			})
+		}
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
@@ -166,40 +189,129 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		}
 	}
 
+	for _, call := range toolCalls {
+		if err := yield(call); err != nil {
+			return err
+		}
+	}
+
 	return yield(StreamRunCompleted{})
 }
 
-func splitSystemMessage(messages []Message) (string, []Message) {
-	out := make([]Message, 0, len(messages))
+func toAnthropicMessages(messages []Message) (string, []map[string]any, error) {
 	systemParts := []string{}
+	out := []map[string]any{}
+	pendingToolResults := []map[string]any{}
+
+	flushToolResults := func() {
+		if len(pendingToolResults) == 0 {
+			return
+		}
+		out = append(out, map[string]any{
+			"role":    "user",
+			"content": pendingToolResults,
+		})
+		pendingToolResults = []map[string]any{}
+	}
+
 	for _, message := range messages {
+		text := joinParts(message.Content)
 		if message.Role == "system" {
-			systemParts = append(systemParts, joinParts(message.Content))
+			if strings.TrimSpace(text) != "" {
+				systemParts = append(systemParts, text)
+			}
 			continue
 		}
-		out = append(out, message)
-	}
-	return strings.TrimSpace(strings.Join(systemParts, "\n")), out
-}
 
-func toAnthropicMessages(messages []Message) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
+		if message.Role == "tool" {
+			block, err := anthropicToolResultBlock(text)
+			if err != nil {
+				return "", nil, err
+			}
+			pendingToolResults = append(pendingToolResults, block)
+			continue
+		}
+
+		flushToolResults()
+
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			blocks := []map[string]any{}
+			if strings.TrimSpace(text) != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": text})
+			}
+			for _, call := range message.ToolCalls {
+				blocks = append(blocks, map[string]any{
+					"type":  "tool_use",
+					"id":    call.ToolCallID,
+					"name":  call.ToolName,
+					"input": mapOrEmpty(call.ArgumentsJSON),
+				})
+			}
+			out = append(out, map[string]any{
+				"role":    "assistant",
+				"content": blocks,
+			})
+			continue
+		}
+
 		out = append(out, map[string]any{
 			"role": message.Role,
 			"content": []map[string]any{
-				{"type": "text", "text": joinParts(message.Content)},
+				{"type": "text", "text": text},
 			},
 		})
 	}
-	return out
+
+	flushToolResults()
+	return strings.TrimSpace(strings.Join(systemParts, "\n")), out, nil
+}
+
+func anthropicToolResultBlock(text string) (map[string]any, error) {
+	var parsed any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return nil, fmt.Errorf("tool message 不是合法 JSON")
+	}
+	envelope, ok := parsed.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("tool message 不是合法 JSON")
+	}
+
+	toolCallID, _ := envelope["tool_call_id"].(string)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if toolCallID == "" {
+		return nil, fmt.Errorf("tool message 缺少 tool_call_id")
+	}
+
+	isError := false
+	var contentSource any
+	if errObj, ok := envelope["error"]; ok && errObj != nil {
+		isError = true
+		contentSource = map[string]any{"error": errObj}
+	} else {
+		contentSource = envelope["result"]
+	}
+
+	content, err := stablejson.Encode(contentSource)
+	if err != nil {
+		content = "{}"
+	}
+
+	block := map[string]any{
+		"type":        "tool_result",
+		"tool_use_id": toolCallID,
+		"content":     content,
+	}
+	if isError {
+		block["is_error"] = true
+	}
+	return block, nil
 }
 
 func toAnthropicTools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
 		payload := map[string]any{
-			"name":        spec.Name,
+			"name":         spec.Name,
 			"input_schema": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -210,27 +322,64 @@ func toAnthropicTools(specs []ToolSpec) []map[string]any {
 	return out
 }
 
-func parseAnthropicText(body []byte) (string, error) {
+func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("response 根不是对象")
+		return "", nil, fmt.Errorf("response 根不是对象")
 	}
 	content, ok := root["content"].([]any)
 	if !ok || len(content) == 0 {
-		return "", fmt.Errorf("response 缺少 content")
+		return "", nil, fmt.Errorf("response 缺少 content")
 	}
-	first, ok := content[0].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("content[0] 类型错误")
-	}
-	if typ, _ := first["type"].(string); typ != "text" {
-		return "", fmt.Errorf("content[0] 非 text")
-	}
-	text, _ := first["text"].(string)
-	return text, nil
-}
 
+	var b strings.Builder
+	toolCalls := []ToolCall{}
+
+	for idx, rawItem := range content {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		if typ == "text" {
+			text, _ := item["text"].(string)
+			b.WriteString(text)
+			continue
+		}
+		if typ != "tool_use" {
+			continue
+		}
+
+		toolCallID, _ := item["id"].(string)
+		toolCallID = strings.TrimSpace(toolCallID)
+		if toolCallID == "" {
+			return "", nil, fmt.Errorf("content[%d] 缺少 tool_use.id", idx)
+		}
+		toolName, _ := item["name"].(string)
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			return "", nil, fmt.Errorf("content[%d] 缺少 tool_use.name", idx)
+		}
+
+		argumentsJSON := map[string]any{}
+		if rawInput, ok := item["input"]; ok && rawInput != nil {
+			obj, ok := rawInput.(map[string]any)
+			if !ok {
+				return "", nil, fmt.Errorf("%w: content[%d].input 必须是 JSON object", errAnthropicToolUseInput, idx)
+			}
+			argumentsJSON = obj
+		}
+
+		toolCalls = append(toolCalls, ToolCall{
+			ToolCallID:    toolCallID,
+			ToolName:      toolName,
+			ArgumentsJSON: argumentsJSON,
+		})
+	}
+
+	return b.String(), toolCalls, nil
+}
