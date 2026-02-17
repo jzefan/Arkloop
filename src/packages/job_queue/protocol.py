@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 import uuid
 
 RUN_EXECUTE_JOB_TYPE = "run.execute"
@@ -52,12 +52,18 @@ class JobQueue(ABC):
         org_id: uuid.UUID,
         run_id: uuid.UUID,
         trace_id: str | None,
+        queue_job_type: str | None = None,
         payload: Mapping[str, Any] | None = None,
         available_at: datetime | None = None,
     ) -> uuid.UUID: ...
 
     @abstractmethod
-    async def lease(self, *, lease_seconds: int = 30) -> JobLease | None: ...
+    async def lease(
+        self,
+        *,
+        lease_seconds: int = 30,
+        job_types: Sequence[str] | None = None,
+    ) -> JobLease | None: ...
 
     @abstractmethod
     async def heartbeat(self, *, lease: JobLease, lease_seconds: int = 30) -> None: ...

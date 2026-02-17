@@ -106,7 +106,7 @@ src/services/worker_go/
 
 命名收口策略（避免中途频繁改名）：
 - WG-01 ~ WG-09 期间，固定使用 `worker_go`，避免双栈阶段路径抖动。
-- WG-10 完成且通过稳定观察窗口后，可以把 `worker_go` 改名为 `worker`。
+- WG-10 完成且通过稳定观察窗口后，需要把 `worker_go` 改名为 `worker`（同时更新 go.mod module path 与 import path）。
 - 改名前先清理旧 Python Worker 入口，确保同一仓库只保留一个“生产 worker”目录含义。
 - 改名属于收口动作，不影响对外 API 契约；应单独作为一次可回滚变更提交。
 
@@ -114,136 +114,266 @@ src/services/worker_go/
 
 说明：每个薄片都要求“独立可验收、可回滚、默认不破坏生产路径”。
 
-### WG-00 契约冻结与基线回归
+### WG-00 契约冻结与基线回归（已完成）
 
 - 目标：把队列与事件不变量固化成可执行契约。
 - 改动：
   - 提炼现有关键集成测试场景为“迁移基线用例清单”。
   - 输出事件序列 golden 样例（run.started -> worker.job.received -> ... -> run.completed）。
+  - 产出基线文档：`src/docs/specs/go-worker-migration-baseline.zh-CN.md`。
+  - 产出 golden 样例：`src/tests/contracts/golden/run-events/run_execute_success.v1.json`。
+  - 产出校验用例：`src/tests/integration/test_worker_migration_baseline_integration.py`。
 - 验收：
   - 基线测试在当前 Python 实现 100% 通过。
 - 回滚：
   - 无需回滚，仅文档与测试资产。
 
-### WG-01 Go Worker 工程骨架
+### WG-01 Go Worker 工程骨架（已完成）
 
 - 目标：建立可运行的 Go Worker 最小骨架，不接管流量。
 - 改动：
   - 新建 Go 模块（建议 `src/services/worker_go/`）。
   - 实现配置加载与日志字段规范（对齐 `trace_id/org_id/run_id/job_id`）。
   - 支持 Linux/Windows/macOS 构建与本地运行。
+  - 产出骨架代码：`src/services/worker_go/cmd/worker/main.go`、`src/services/worker_go/internal/app/*`。
+  - 产出说明文档：`src/services/worker_go/README.zh-CN.md`。
 - 验收：
   - `go test ./...` 基本通过。
   - Worker 可启动并优雅退出（不消费任务）。
 - 回滚：
   - 不切流量，直接停用 Go Worker 进程。
 
-### WG-02 PG 队列协议对齐（lease/ack/nack）
+### WG-02 PG 队列协议对齐（lease/ack/nack）（已完成）
 
 - 目标：用 Go 对齐 `SqlAlchemyPgJobQueue` 的核心语义。
 - 改动：
   - 实现 `lease/heartbeat/ack/nack`。
   - 对齐重试退避与 dead-letter 条件。
   - 对齐 `lease_token` 校验逻辑。
+  - 产出协议定义：`src/services/worker_go/internal/queue/protocol.go`、`src/services/worker_go/internal/queue/retry.go`。
+  - 产出 PG 实现：`src/services/worker_go/internal/queue/pg_queue.go`。
+  - 产出契约测试：`src/services/worker_go/internal/queue/pg_queue_contract_test.go`。
 - 验收：
   - 契约测试通过。
   - 并发租约不出现重复消费。
 - 回滚：
   - 通过开关停用 Go Worker，恢复 Python Worker 消费。
 
-### WG-03 消费循环对齐（并发/心跳/advisory lock）
+### WG-03 消费循环对齐（并发/心跳/advisory lock）（已完成）
 
 - 目标：对齐 `WorkerConsumerLoop` 的并发和去重语义。
 - 改动：
   - 实现 `concurrency/poll/lease/heartbeat` 参数。
   - 加入 `pg_try_advisory_lock` 防重复执行。
   - 实现失心跳与失租约时的 nack/中止策略。
+  - 产出消费循环：`src/services/worker_go/internal/consumer/config.go`、`src/services/worker_go/internal/consumer/loop.go`。
+  - 产出锁实现：`src/services/worker_go/internal/consumer/advisory_lock.go`。
+  - 产出执行器占位：`src/services/worker_go/internal/executor/noop.go`。
+  - 产出测试：`src/services/worker_go/internal/consumer/loop_test.go`、`src/services/worker_go/internal/consumer/loop_integration_test.go`。
 - 验收：
   - 重复 job 并发场景下，单 run 仅执行一次。
   - 心跳中断后 job 正确回队或终止。
 - 回滚：
   - 只需切回 Python Worker。
 
-### WG-04 执行桥接协议（Go Worker -> Python Engine）
+### WG-04 执行桥接协议（Go Worker -> Python Engine）（已完成）
 
-- 目标：在不重写 RunEngine 的前提下，让 Go Worker 能执行真实任务。
+- 目标：在不重写 `RunEngine` 的前提下，让 Go Worker 能执行真实任务。
 - 改动：
-  - 定义最小桥接协议（建议 gRPC 或本地 HTTP）：`ExecuteRun(run_id, trace_id)`。
-  - Python 侧新增轻量执行适配层，内部复用现有 `RunEngine`。
+  - 新增 Python bridge 服务：`src/services/worker_bridge/main.py`
+    - `POST /internal/bridge/execute-run`（`Authorization: Bearer <token>`）
+    - 内部复用 `services.worker.composition.create_worker(...)`，执行链路保持与 Python Worker 一致。
+  - Go Worker 增加 HTTP bridge handler：`src/services/worker_go/internal/executor/py_bridge_http.go`
+    - 通过 `ARKLOOP_WORKER_BRIDGE_URL` / `ARKLOOP_WORKER_BRIDGE_TOKEN` 转发 `payload_json`。
+  - Go Worker 入口按环境变量选择 handler：`src/services/worker_go/cmd/worker/main.go`。
+  - 产出 functional 测试：`src/tests/functional/test_go_worker_bridge_functional.py`（跨进程验证 Go->Python 桥接闭环）。
 - 验收：
-  - Go Worker 可消费真实 job，并驱动 Python 引擎产出完整 `run_events`。
+  - `python -m pytest -m functional src/tests/functional/test_go_worker_bridge_functional.py`
+  - `cd src/services/worker_go && go test ./...`
 - 回滚：
-  - 关闭桥接开关，回到 Python Worker 全量处理。
+  - 取消 `ARKLOOP_WORKER_BRIDGE_URL`，Go Worker 回到 noop handler；或直接停用 Go Worker，恢复 Python Worker 消费。
 
-### WG-05 灰度路由（按 job_type/比例切流）
+### WG-05 灰度路由（按 job_type/比例切流）（已完成）
 
 - 目标：让 Go Worker 可灰度，不做一次性总切换。
 - 改动：
-  - 增加 job 路由策略（例如独立 `job_type` 或按比例投递）。
-  - 建立对照监控：吞吐、失败率、平均执行时长、重试率。
+  - 增加 queue job_type 分流常量：
+    - Python：`packages.job_queue.RUN_EXECUTE_QUEUE_JOB_TYPE_GO_BRIDGE`
+    - Go：`worker_go/internal/queue.RunExecuteQueueJobTypeGoBridge`
+  - API enqueue 增加灰度开关：`ARKLOOP_WORKER_GO_TRAFFIC_PERCENT`（0~100，按 `run_id` 分桶，确定性路由）。
+    - 0：投递 `jobs.job_type=run.execute`
+    - 100：投递 `jobs.job_type=run.execute.go_bridge`
+    - `payload_json["type"]` 始终保持 `run.execute`（冻结契约不变）
+  - Worker 增加 lease 过滤：`ARKLOOP_WORKER_QUEUE_JOB_TYPES`
+    - Python Worker/Go Worker 均可配置消费的 `jobs.job_type` allowlist
+  - advisory lock 去重判断改为基于 `payload_json["type"]`，避免 job_type 分流导致去重失效。
+  - 补齐测试：
+    - Python integration：`test_job_queue_lease_can_filter_by_job_type`
+    - Go contract：`TestPgQueueLeaseCanFilterByJobType`
+    - Python unit：`test_run_executor_go_traffic_routing.py`
 - 验收：
-  - 5% -> 20% -> 50% -> 100% 灰度期间指标不劣化。
+  - 默认配置（0%）下所有 unit 测试通过。
+  - `jobs.job_type` 过滤后仅消费目标类型，不误 ack/nack 其它类型。
 - 回滚：
-  - 秒级回切到 Python Worker 路径。
+  - API 侧把 `ARKLOOP_WORKER_GO_TRAFFIC_PERCENT` 设为 0，恢复投递到 Python job_type。
+  - Worker 侧把 `ARKLOOP_WORKER_QUEUE_JOB_TYPES` 调整为包含目标类型即可接管残留队列。
 
-### WG-06 Go Worker 全量接管（桥接模式）
+### WG-06 Go Worker 全量接管（桥接模式）（已完成）
 
-- 目标：Go Worker 接管所有消费，但执行内核仍可先走 Python。
+- 目标：Go Worker 接管所有消费，但执行内核仍先走 Python bridge。
 - 改动：
-  - 生产默认消费者改为 Go Worker。
-  - Python Worker 保留为冷备。
+  - 通过环境变量完成“默认消费者”切换（避免在代码里硬编码生产路径）：
+    - API：`ARKLOOP_WORKER_GO_TRAFFIC_PERCENT=100`（enqueue 统一投递 `jobs.job_type=run.execute.go_bridge`）
+    - Go Worker：`ARKLOOP_WORKER_QUEUE_JOB_TYPES=run.execute.go_bridge`（只消费 go_bridge 队列 job_type）
+    - Python bridge：保持运行（`ARKLOOP_WORKER_BRIDGE_TOKEN` 必填）
+  - Python Worker 保留为冷备：
+    - 冷备接管：`ARKLOOP_WORKER_QUEUE_JOB_TYPES=run.execute,run.execute.go_bridge`
+  - 补齐示例配置与运行说明：
+    - `.env.example` / `.env.test.example`
+    - `docs/使用方式for human.md`
 - 验收：
-  - 稳定运行一个发布周期，无关键故障。
+  - 桥接模式 functional 测试可跑通（WG04）。
+  - 切换 `ARKLOOP_WORKER_GO_TRAFFIC_PERCENT` 后，队列路由可控且可回滚。
 - 回滚：
-  - 切换消费者开关恢复 Python Worker。
+  - API 把 `ARKLOOP_WORKER_GO_TRAFFIC_PERCENT` 设为 0。
+  - 启动 Python Worker（包含 go_bridge job_type），停用 Go Worker。
 
 ### WG-07 原生 Go RunEngine v1（先不做复杂工具）
 
-- 目标：开始去桥接，先实现最小原生执行闭环。
+- 目标：开始去桥接，先把“原生执行闭环”打通（读 run/写事件/归并 message/取消语义），为 WG-08/WG-09 的 Provider/Tool/MCP/Skill 原生化提供稳定底座。
 - 改动：
-  - Go 实现 run 读取、取消检查、事件写入、message 归并。
-  - v1 仅支持无工具或 `echo/noop`。
+  - 增加新的 Go 原生队列 job_type（仅用于迁移期分流；不改冻结契约 `payload_json["type"]=run.execute`）：
+    - Python：新增 `packages.job_queue.RUN_EXECUTE_QUEUE_JOB_TYPE_GO_NATIVE="run.execute.go_native"`
+    - Go：新增 `worker_go/internal/queue.RunExecuteQueueJobTypeGoNative`
+  - API enqueue 增加“Go 执行器选择”硬切开关（不做百分比灰度；切换以发布/环境为单位）：
+    - `ARKLOOP_WORKER_GO_EXECUTOR=bridge|native`（默认 `bridge`）
+    - 当 API 侧已选择走 Go Worker（例如 `ARKLOOP_WORKER_GO_TRAFFIC_PERCENT=100`）时：
+      - executor=bridge：投递 `jobs.job_type=run.execute.go_bridge`
+      - executor=native：投递 `jobs.job_type=run.execute.go_native`
+  - Go Worker 支持按 `lease.JobType` 选择执行器（迁移期允许同时消费 go_bridge/go_native，便于清理残留队列）：
+    - `run.execute.go_bridge`：沿用 `PyBridgeHTTPHandler`
+    - `run.execute.go_native`：新增 `NativeRunEngineV1Handler`
+  - 原生执行器 v1（先不引入 Provider/Tools；只做 echo/noop 级闭环）：
+    - 解析并校验 `jobs.payload_json`（至少 `org_id/run_id/trace_id/job_id/type`）
+    - 对齐 Python Worker 的前置检查：
+      - run 存在且 `run.org_id == payload.org_id`
+      - run 已终态（completed/failed/cancelled）直接跳过（只 ack，不追加事件）
+    - 写入 `worker.job.received` 事件（字段对齐 Python：`trace_id/job_id/job_type/org_id`）
+    - 对齐取消语义：
+      - 若发现 `run.cancel_requested`：立即追加 `run.cancelled` 并结束
+      - 若已 `run.cancelled`：直接结束
+    - 产出最小事件主干（与 golden 主干一致）：
+      - `run.route.selected`（v1 可先写最小字段：`route_id`；WG-08 再对齐完整 provider 字段）
+      - `message.delta`（至少 1 条；echo/noop 可用确定性文本分片）
+      - `run.completed`
+    - 归并 assistant delta，写入 `messages` 表（`role=assistant`、`created_by_user_id=NULL`）
+    - Go 侧事件写入必须复用 `runs.next_event_seq` 分配 seq，保持严格单调递增与唯一约束（语义对齐 `SqlAlchemyRunEventRepository._allocate_seq`）。
+  - 代码产出（建议路径，允许按实际拆分微调）：
+    - `src/services/worker_go/internal/executor/native_v1.go`（Handler：前置检查 + worker.job.received + 调用 RunEngine）
+    - `src/services/worker_go/internal/runengine/v1.go`（最小执行闭环：取消检查、事件写入、message 归并）
+    - `src/services/worker_go/internal/data/run_events_repo.go`、`src/services/worker_go/internal/data/messages_repo.go`（可选：收拢 pgx SQL，避免散落）
+  - 测试资产：
+    - Go：RunEngine v1 的单元/集成测试（事件 seq、取消、message 归并）
+    - Python functional：新增 `src/tests/functional/test_go_worker_native_functional.py`（对齐 golden 事件主干）
 - 验收：
-  - 与桥接模式对比，事件主干结构一致。
+  - `cd src/services/worker_go && go test ./...`
+  - `python -m pytest -m functional src/tests/functional/test_go_worker_native_functional.py`
+  - 事件主干对齐：至少保证类型序列与 `run_execute_success.v1.json` 一致，且终态事件唯一。
 - 回滚：
-  - 对指定 route 或 job_type 切回桥接执行。
+  - 把 `ARKLOOP_WORKER_GO_EXECUTOR` 切回 `bridge`，恢复 go_bridge 路径（迁移期兜底）。
+  - 若队列里仍存在 `run.execute.go_native` 的残留 job：短期让 bridge worker 同时消费 `run.execute.go_bridge,run.execute.go_native` 清队列，完成后再收敛配置。
 
 ### WG-08 原生 Provider + Tool 框架
 
-- 目标：替换 Python 的核心执行依赖。
+- 目标：让 Go 原生 RunEngine 具备“可用的 Provider + Tool 执行”能力，覆盖桥接模式的主干功能，为 WG-10 移除 python bridge 做准备。
 - 改动：
-  - Go 实现 OpenAI/Anthropic 最小网关适配。
-  - Go 实现 Tool Registry/Allowlist/Policy。
-  - 先迁移低风险工具：`echo`、`noop`、`web_search`、`web_fetch`。
+  - Go 侧实现 Provider 路由（对齐 `packages.llm_routing` 的 JSON 配置与决策语义）：
+    - 复用现有环境变量：`ARKLOOP_PROVIDER_ROUTING_JSON`
+    - 输出 `run.route.selected` 事件字段尽量对齐 Python（至少包含 `route_id/model/provider_kind/scope/credential_id`）
+  - Go 侧实现最小 LLM Gateway 抽象与 provider 适配：
+    - OpenAI：先覆盖项目现有用法（与 `openai_api_mode` 兼容）
+    - Anthropic：先覆盖流式
+    - Stub provider：用于 CI/本地可重复测试（不依赖真实 key）
+  - Go 侧实现 Agent Loop（对齐 `packages.agent_core.loop.AgentLoop` 的核心语义）：
+    - 流式输出写 `message.delta`
+    - LLM debug 事件（默认关闭）：`ARKLOOP_LLM_DEBUG_EVENTS=1` 时追加 `llm.request/llm.response.chunk`
+    - tool call/result、终态 completed/failed、max_iterations 等边界条件行为对齐
+  - Go 侧实现 Tool 框架（注册表 + allowlist + policy）：
+    - allowlist 复用 `ARKLOOP_TOOL_ALLOWLIST`（语义与 Python 保持一致）
+    - 事件对齐：`tool.call` / `tool.result` / `policy.denied` / `budget.exceeded`
+  - 首批迁移低风险工具（与 Python builtin_tools 保持协议一致，优先复用同名 env）：
+    - `echo`、`noop`
+    - `web_search`（沿用 `ARKLOOP_WEB_SEARCH_PROVIDER` 等配置）
+    - `web_fetch`（沿用 `ARKLOOP_WEB_FETCH_PROVIDER` 等配置）
+  - 代码产出（建议路径）：
+    - `src/services/worker_go/internal/routing/*`（provider routing config 解析 + decision）
+    - `src/services/worker_go/internal/llm/*`（gateway 抽象 + openai/anthropic/stub）
+    - `src/services/worker_go/internal/agent/loop.go`（Agent Loop）
+    - `src/services/worker_go/internal/tools/*`（tool spec + executor）
 - 验收：
-  - 关键工具链路端到端通过。
-  - 错误分类与审计字段保持兼容。
+  - `go test ./...` 全通过（含 provider/tool contract）
+  - 端到端 run：SSE 回放可用，`run_events.seq` 单调递增，终态事件唯一
+  - 错误分类与字段兼容：`error_class/tool_name/trace_id` 与 Python 保持一致语义
 - 回滚：
-  - 单工具级别可回退到桥接执行。
+  - WG-10 删除 bridge 前：把 `ARKLOOP_WORKER_GO_EXECUTOR` 切回 `bridge`，回到 Python engine 执行路径。
 
 ### WG-09 MCP/Skill 迁移策略收口
 
-- 目标：处理最复杂的 Python 特有能力。
-- 改动（两选一，建议先 A 后 B）：
-  - A：MCP/Skill 继续由 Python sidecar 提供，Go 只做编排。
-  - B：逐步原生化 MCP 会话池与 Skill runtime。
+- 目标：解决最复杂的 Python 特有能力，并收敛到“Go Worker 单栈可运行”（不依赖 Python sidecar 才算完成）。
+- 改动：
+  - Skill runtime 原生化（对齐 `packages.skill_runtime` 行为与 error_class）：
+    - 复用现有 skills 目录结构：`src/skills/<skill_id>/skill.yaml + prompt.md`
+    - 对齐 skill 解析与校验：
+      - `skill.not_found`、`skill.version_mismatch`、`skill.invalid_id` 等错误类型
+    - 对齐注入策略：把 skill 的 `prompt_md/tool_allowlist/budgets` 注入到单次 run 的上下文
+  - MCP 工具原生化（优先覆盖项目当前实际用法，避免过度设计）：
+    - 复用现有配置入口：`ARKLOOP_MCP_CONFIG_FILE`（JSON schema 与 Python 保持一致）
+    - 优先实现 `transport=stdio`（覆盖当前 `mcp.config.json` 的用法：spawn command + stdio 协议）
+    - 实现最小 session pool（复用进程，避免每次 tool call 都启动新进程）
+    - 把 MCP tools 注册进 Go ToolRegistry，并纳入 allowlist/policy 体系（统一审计与风险控制）
+    - 超时语义对齐：遵循 `callTimeoutMs`（超时转为 `tool.result` 的 error_class，而不是静默失败）
+  - 兼容性要求：
+    - `run_events` 的事件类型、seq、终态语义保持不变量
+    - `tool.call/tool.result` 需要可关联（`tool_call_id` 等字段不丢）
 - 验收：
-  - 关键 MCP 工具与 skill 调用可稳定运行。
+  - Skill：至少用 `src/skills/demo_no_tools` 跑通一条 run（能看到 skill prompt 生效且不调用工具）
+  - MCP：用本地 fake MCP server（测试夹具）验证一次完整 tool call/result 闭环；同时验证 stdio transport 的跨平台可运行性
+  - Go 单栈：在不启动 Python bridge/worker 的情况下，端到端 run 可完成（completed/failed/cancelled 均可测）
 - 回滚：
-  - 保留 sidecar 路径作为长期兜底。
+  - 在 WG-10 删除 bridge 前，如 MCP/skill 原生化出现 P1/P2：允许短期回到 `ARKLOOP_WORKER_GO_EXECUTOR=bridge` 回避风险，但必须在 WG-10 前再次收敛回 Go 单栈。
 
 ### WG-10 下线 Python Worker
 
-- 目标：Worker 迁移完成。
+- 目标：彻底结束双栈迁移；生产路径不再依赖 Python worker/bridge；目录与命名收口为 `worker`。
 - 改动：
-  - 移除 Python Worker 生产流量入口。
-  - 保留短期应急文档与回切脚本。
-  - 完成目录收口：把 `src/services/worker_go/` 重命名为 `src/services/worker/`（或保留 `worker_go`，二选一且写入 ADR）。
+  - 移除 bridge 路径（按你的要求：硬切后不再保留 go_bridge/python bridge）：
+    - 下线 `src/services/worker_bridge/`（不再作为生产依赖）
+    - 停止投递与消费 `jobs.job_type=run.execute.go_bridge`
+    - 删除/清理环境变量与文档：
+      - `ARKLOOP_WORKER_BRIDGE_URL`
+      - `ARKLOOP_WORKER_BRIDGE_TOKEN`
+      - `ARKLOOP_WORKER_GO_EXECUTOR`（迁移期硬切开关，WG10 删除）
+  - 统一队列 job_type（简化生产语义）：
+    - API enqueue 回归只投递 `jobs.job_type=run.execute`
+    - Go Worker 成为 `run.execute` 的唯一消费者（Python worker 不再存在）
+    - 清理迁移期常量与分流逻辑：`run.execute.go_bridge` / `run.execute.go_native`
+  - 下线 Python Worker 生产入口：
+    - 移除 `src/services/worker/` 作为可运行生产 worker 的语义（可直接删除目录；历史可通过 git 追溯）
+    - 清理相关运行文档与 CI/脚本入口，确保仓库内只存在一个“生产 worker”定义
+  - 目录/模块命名收口（按你选择：重命名为 worker）：
+    - 把 `src/services/worker_go/` 重命名为 `src/services/worker/`
+    - 更新 `go.mod` module path：`arkloop/services/worker_go` -> `arkloop/services/worker`
+    - 更新所有 Go import path、构建命令、文档与 CI 路径
+    - 这一步要求单独原子提交，便于回滚（大面积重命名不和业务逻辑混在一个提交里）
+  - 运维与文档更新：
+    - `.env.example` / `.env.test.example`：移除 bridge 相关变量，保留最小必要 worker 配置
+    - `docs/使用方式for human.md`：删除 Python worker/bridge 启动说明，统一为 Go worker
 - 验收：
-  - 连续两个发布周期无 P1/P2 级故障。
-  - 仓库内只存在一个生产 Worker 入口目录定义，运维脚本与 CI 路径一致。
+  - 连续两个发布周期无 P1/P2 级故障
+  - Go 单栈生产运行：不启动 Python worker/bridge 也能稳定完成 run（含取消、工具、MCP/skill）
+  - 仓库内只存在一个生产 Worker 入口目录定义，运维脚本与 CI 路径一致
 - 回滚：
-  - 应急时按脚本切回桥接或 Python Worker（限时）。
+  - 通过发布系统回滚到 WG-10 之前的稳定版本（仅作为应急手段；回滚版本可能临时重新引入 Python bridge/worker）
 
 ## 5. 全仓 Go 计划（Worker 之后）
 
