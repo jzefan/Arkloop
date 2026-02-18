@@ -20,6 +20,17 @@ const anthropicMaxDebugChunkBytes = 8192
 
 var errAnthropicToolUseInput = errors.New("anthropic_tool_use_input")
 
+// advanced_json 中禁止注入的关键字段；无论 payload 是否已有该 key 都报错
+var anthropicAdvancedJSONDenylist = map[string]struct{}{
+	"model":       {},
+	"messages":    {},
+	"max_tokens":  {},
+	"stream":      {},
+	"tools":       {},
+	"tool_choice": {},
+	"system":      {},
+}
+
 type AnthropicGatewayConfig struct {
 	APIKey           string
 	BaseURL          string
@@ -91,7 +102,19 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	if len(request.Tools) > 0 {
 		payload["tools"] = toAnthropicTools(request.Tools)
 	}
-	// advanced_json 补充未被显式字段占用的 key，已存在的 key 不覆盖
+	// 先校验 advanced_json 是否包含禁止注入的字段，有则立即失败
+	for k := range g.cfg.AdvancedJSON {
+		if _, denied := anthropicAdvancedJSONDenylist[k]; denied {
+			return yield(StreamRunFailed{
+				Error: GatewayError{
+					ErrorClass: ErrorClassInternalError,
+					Message:    fmt.Sprintf("advanced_json 不允许设置关键字段: %s", k),
+					Details:    map[string]any{"denied_key": k},
+				},
+			})
+		}
+	}
+	// 补充 payload 中不存在的 key
 	for k, v := range g.cfg.AdvancedJSON {
 		if _, exists := payload[k]; !exists {
 			payload[k] = v
