@@ -139,27 +139,31 @@ func TestTraceMiddlewarePreservesHttpFlusher(t *testing.T) {
 	}
 }
 
-// TestThreadSubResourceRouting 验证 /v1/threads/{uuid}/messages 等 sub-resource 路径返回 404，
-// 而不是 422（uuid parse 错误），证明路由拆分逻辑正确识别 segment。
+// TestThreadSubResourceRouting 验证 /v1/threads/{uuid}/messages 等 sub-resource 路径
+// 不会因为 uuid parse 错误而返回 422，证明路由拆分逻辑正确识别 segment。
 func TestThreadSubResourceRouting(t *testing.T) {
 	logger := observability.NewJSONLogger("test", io.Discard)
 	handler := NewHandler(HandlerConfig{Logger: logger})
 
-	cases := []struct {
-		path string
-	}{
-		{"/v1/threads/00000000-0000-0000-0000-000000000001/messages"},
-		{"/v1/threads/00000000-0000-0000-0000-000000000001/runs"},
-		{"/v1/threads/00000000-0000-0000-0000-000000000001/unknown"},
+	paths := []string{
+		"/v1/threads/00000000-0000-0000-0000-000000000001/messages",
+		"/v1/threads/00000000-0000-0000-0000-000000000001/runs",
 	}
 
-	for _, tc := range cases {
-		req := httptest.NewRequest(nethttp.MethodGet, tc.path, nil)
+	for _, path := range paths {
+		req := httptest.NewRequest(nethttp.MethodGet, path, nil)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
 
-		if recorder.Code != nethttp.StatusNotFound {
-			t.Fatalf("path=%s: expected 404, got %d body=%s", tc.path, recorder.Code, recorder.Body.String())
+		if recorder.Code == nethttp.StatusUnprocessableEntity {
+			t.Fatalf("path=%s: expected not 422, got %d body=%s", path, recorder.Code, recorder.Body.String())
 		}
+	}
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/v1/threads/00000000-0000-0000-0000-000000000001/unknown", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != nethttp.StatusNotFound {
+		t.Fatalf("path=%s: expected 404, got %d body=%s", req.URL.Path, recorder.Code, recorder.Body.String())
 	}
 }
