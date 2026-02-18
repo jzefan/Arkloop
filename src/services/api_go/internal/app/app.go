@@ -76,6 +76,7 @@ func (a *Application) Run(ctx context.Context) error {
 		userRepo       *data.UserRepository
 		credentialRepo *data.UserCredentialRepository
 		membershipRepo *data.OrgMembershipRepository
+		threadRepo     *data.ThreadRepository
 		auditRepo      *data.AuditLogRepository
 
 		authService         *auth.Service
@@ -94,6 +95,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		membershipRepo, err = data.NewOrgMembershipRepository(pool)
+		if err != nil {
+			return err
+		}
+		threadRepo, err = data.NewThreadRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -139,6 +144,8 @@ func (a *Application) Run(ctx context.Context) error {
 			SchemaRepository:     schemaRepo,
 			AuthService:          authService,
 			RegistrationService:  registrationService,
+			OrgMembershipRepo:    membershipRepo,
+			ThreadRepo:           threadRepo,
 			AuditWriter:          auditWriter,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
