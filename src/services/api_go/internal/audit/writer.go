@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 
 	"arkloop/services/api_go/internal/data"
 	"arkloop/services/api_go/internal/observability"
@@ -155,6 +156,85 @@ func (w *Writer) WriteUserRegistered(ctx context.Context, traceID string, userID
 		},
 	}); err != nil {
 		w.logError(traceID, "写入 register 审计失败", err)
+	}
+}
+
+func (w *Writer) WriteAccessDenied(
+	ctx context.Context,
+	traceID string,
+	actorOrgID uuid.UUID,
+	actorUserID uuid.UUID,
+	action string,
+	targetType string,
+	targetID string,
+	resourceOrgID uuid.UUID,
+	resourceOwnerUserID *uuid.UUID,
+	denyReason string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	var owner any
+	if resourceOwnerUserID == nil {
+		owner = nil
+	} else {
+		owner = resourceOwnerUserID.String()
+	}
+
+	orgID := actorOrgID.String()
+	if w.logger != nil {
+		w.logger.Info(
+			"访问拒绝",
+			observability.LogFields{TraceID: &traceID, OrgID: &orgID},
+			map[string]any{
+				"action":                 action,
+				"target_type":            targetType,
+				"target_id":              targetID,
+				"deny_reason":            denyReason,
+				"actor_org_id":           actorOrgID.String(),
+				"actor_user_id":          actorUserID.String(),
+				"resource_org_id":        resourceOrgID.String(),
+				"resource_owner_user_id": owner,
+			},
+		)
+	}
+
+	cleanedAction := strings.TrimSpace(action)
+	if cleanedAction == "" {
+		return
+	}
+
+	cleanedTargetType := strings.TrimSpace(targetType)
+	cleanedTargetID := strings.TrimSpace(targetID)
+	var targetTypePtr *string
+	if cleanedTargetType != "" {
+		targetTypePtr = &cleanedTargetType
+	}
+	var targetIDPtr *string
+	if cleanedTargetID != "" {
+		targetIDPtr = &cleanedTargetID
+	}
+
+	meta := map[string]any{
+		"result":                 "denied",
+		"deny_reason":            denyReason,
+		"actor_org_id":           actorOrgID.String(),
+		"actor_user_id":          actorUserID.String(),
+		"resource_org_id":        resourceOrgID.String(),
+		"resource_owner_user_id": owner,
+	}
+
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &actorOrgID,
+		ActorUserID: &actorUserID,
+		Action:      cleanedAction,
+		TargetType:  targetTypePtr,
+		TargetID:    targetIDPtr,
+		TraceID:     traceID,
+		Metadata:    meta,
+	}); err != nil {
+		w.logError(traceID, "写入访问拒绝审计失败", err)
 	}
 }
 
