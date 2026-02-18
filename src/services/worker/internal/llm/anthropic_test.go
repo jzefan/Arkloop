@@ -338,38 +338,103 @@ func TestAnthropicGateway_Stream_AdvancedJSON_Merged(t *testing.T) {
 	}
 }
 
-func TestAnthropicGateway_Stream_AdvancedJSON_NoOverrideProtectedFields(t *testing.T) {
-	var capturedBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedBody, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
-	}))
-	t.Cleanup(server.Close)
-
+func TestAnthropicGateway_Stream_AdvancedJSON_CannotEnableStream(t *testing.T) {
 	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
-		APIKey:  "test",
-		BaseURL: server.URL,
-		// 尝试用 advanced_json 覆盖关键字段
-		AdvancedJSON: map[string]any{
-			"model":      "attacker-model",
-			"max_tokens": 1,
-		},
+		APIKey:       "test",
+		BaseURL:      "http://127.0.0.1:0", // 不需要真实连接
+		AdvancedJSON: map[string]any{"stream": true},
 	})
 
-	_ = gateway.Stream(context.Background(), Request{
-		Model:    "claude-real",
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
 		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
-	}, func(ev StreamEvent) error { return nil })
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected StreamRunFailed event, got none")
+	}
+	failed, ok := events[0].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[0])
+	}
+	if failed.Error.ErrorClass != ErrorClassInternalError {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Details["denied_key"] != "stream" {
+		t.Fatalf("expected denied_key=stream, got: %v", failed.Error.Details)
+	}
+}
 
-	var body map[string]any
-	if err := json.Unmarshal(capturedBody, &body); err != nil {
-		t.Fatalf("request body not valid json: %v", err)
+func TestAnthropicGateway_Stream_AdvancedJSON_CannotInjectToolsWhenRequestHasNone(t *testing.T) {
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:       "test",
+		BaseURL:      "http://127.0.0.1:0",
+		AdvancedJSON: map[string]any{"tools": []any{map[string]any{"name": "evil"}}},
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		// Tools 为空，期望 advanced_json 不能注入
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
 	}
-	if body["model"] != "claude-real" {
-		t.Fatalf("model was overridden by advanced_json, got: %v", body["model"])
+	if len(events) == 0 {
+		t.Fatal("expected StreamRunFailed event, got none")
 	}
-	if body["max_tokens"].(float64) == 1 {
-		t.Fatalf("max_tokens was overridden by advanced_json")
+	failed, ok := events[0].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[0])
+	}
+	if failed.Error.Details["denied_key"] != "tools" {
+		t.Fatalf("expected denied_key=tools, got: %v", failed.Error.Details)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_DeniedKeyReturnsError(t *testing.T) {
+	// denylist 中的 key（model/max_tokens/stream/tools/system 等）都应立即报错
+	deniedKeys := []string{"model", "max_tokens", "system"}
+	for _, key := range deniedKeys {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+				APIKey:       "test",
+				BaseURL:      "http://127.0.0.1:0",
+				AdvancedJSON: map[string]any{key: "anything"},
+			})
+
+			var events []StreamEvent
+			err := gateway.Stream(context.Background(), Request{
+				Model:    "claude-real",
+				Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+			}, func(ev StreamEvent) error {
+				events = append(events, ev)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("expected nil error, got: %v", err)
+			}
+			if len(events) == 0 {
+				t.Fatal("expected StreamRunFailed, got no events")
+			}
+			failed, ok := events[0].(StreamRunFailed)
+			if !ok {
+				t.Fatalf("expected StreamRunFailed, got %T", events[0])
+			}
+			if failed.Error.Details["denied_key"] != key {
+				t.Fatalf("expected denied_key=%s, got: %v", key, failed.Error.Details)
+			}
+		})
 	}
 }
