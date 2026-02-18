@@ -12,6 +12,18 @@ import (
 	"arkloop/services/api_go/internal/observability"
 )
 
+// flusherRecorder 是一个同时实现 http.Flusher 的测试 recorder，
+// 用于验证中间件包装后 http.Flusher 断言不会丢失。
+type flusherRecorder struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (f *flusherRecorder) Flush() {
+	f.flushed = true
+	f.ResponseRecorder.Flush()
+}
+
 func TestHealthz(t *testing.T) {
 	logger := observability.NewJSONLogger("test", io.Discard)
 	handler := NewHandler(HandlerConfig{Logger: logger})
@@ -99,5 +111,30 @@ func TestReadyzRequiresDatabase(t *testing.T) {
 	}
 	if payload.TraceID != traceID {
 		t.Fatalf("trace_id mismatch: header=%q payload=%q", traceID, payload.TraceID)
+	}
+}
+
+// TestTraceMiddlewarePreservesHttpFlusher 验证经过 TraceMiddleware 包装后底层 http.Flusher 能力不丢失。
+// SSE/流式输出依赖此能力，一旦断言失败会导致连接建立但数据被缓冲不发送。
+func TestTraceMiddlewarePreservesHttpFlusher(t *testing.T) {
+	logger := observability.NewJSONLogger("test", io.Discard)
+
+	var capturedWriter nethttp.ResponseWriter
+	inner := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		capturedWriter = w
+		w.WriteHeader(nethttp.StatusOK)
+	})
+
+	handler := TraceMiddleware(inner, logger, false)
+
+	underlying := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+	req := httptest.NewRequest(nethttp.MethodGet, "/healthz", nil)
+	handler.ServeHTTP(underlying, req)
+
+	if capturedWriter == nil {
+		t.Fatal("capturedWriter is nil")
+	}
+	if _, ok := capturedWriter.(nethttp.Flusher); !ok {
+		t.Fatal("TraceMiddleware 包装后 ResponseWriter 丢失了 http.Flusher 接口")
 	}
 }
