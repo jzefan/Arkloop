@@ -10,12 +10,15 @@ import (
 
 const (
 	apiGoAddrEnv            = "ARKLOOP_API_GO_ADDR"
+	databaseURLPrimaryEnv   = "ARKLOOP_DATABASE_URL"
+	databaseURLFallbackEnv  = "DATABASE_URL"
 	trustIncomingTraceIDEnv = "ARKLOOP_TRUST_INCOMING_TRACE_ID"
 	defaultAddr             = "127.0.0.1:8001"
 )
 
 type Config struct {
 	Addr                 string
+	DatabaseDSN          string
 	TrustIncomingTraceID bool
 }
 
@@ -44,6 +47,12 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", trustIncomingTraceIDEnv, err)
 		}
 		cfg.TrustIncomingTraceID = enabled
+	}
+
+	if raw, ok := lookupEnv(databaseURLPrimaryEnv); ok {
+		cfg.DatabaseDSN = raw
+	} else if raw, ok := lookupEnv(databaseURLFallbackEnv); ok {
+		cfg.DatabaseDSN = raw
 	}
 
 	if err := cfg.Validate(); err != nil {

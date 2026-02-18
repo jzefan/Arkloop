@@ -72,3 +72,32 @@ func TestNotFoundReturnsEnvelope(t *testing.T) {
 		t.Fatalf("missing message")
 	}
 }
+
+func TestReadyzRequiresDatabase(t *testing.T) {
+	logger := observability.NewJSONLogger("test", io.Discard)
+	handler := NewHandler(HandlerConfig{Logger: logger})
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != nethttp.StatusServiceUnavailable {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+
+	traceID := recorder.Header().Get(observability.TraceIDHeader)
+	if traceID == "" {
+		t.Fatalf("missing %s header", observability.TraceIDHeader)
+	}
+
+	var payload ErrorEnvelope
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != "not_ready" {
+		t.Fatalf("unexpected code: %q", payload.Code)
+	}
+	if payload.TraceID != traceID {
+		t.Fatalf("trace_id mismatch: header=%q payload=%q", traceID, payload.TraceID)
+	}
+}

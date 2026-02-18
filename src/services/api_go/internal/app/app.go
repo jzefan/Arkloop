@@ -7,9 +7,11 @@ import (
 	"net"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"arkloop/services/api_go/internal/data"
 	apihttp "arkloop/services/api_go/internal/http"
 	"arkloop/services/api_go/internal/observability"
 )
@@ -40,6 +42,28 @@ func (a *Application) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	var schemaRepo *data.SchemaRepository
+	var poolCloser func()
+
+	dsn := strings.TrimSpace(a.config.DatabaseDSN)
+	if dsn != "" {
+		pool, err := data.NewPool(ctx, dsn)
+		if err != nil {
+			return err
+		}
+		poolCloser = pool.Close
+
+		repo, err := data.NewSchemaRepository(pool)
+		if err != nil {
+			pool.Close()
+			return err
+		}
+		schemaRepo = repo
+	}
+	if poolCloser != nil {
+		defer poolCloser()
+	}
+
 	listener, err := net.Listen("tcp", a.config.Addr)
 	if err != nil {
 		return err
@@ -47,7 +71,11 @@ func (a *Application) Run(ctx context.Context) error {
 	defer func() { _ = listener.Close() }()
 
 	server := &http.Server{
-		Handler:           apihttp.NewHandler(apihttp.HandlerConfig{Logger: a.logger, TrustIncomingTraceID: a.config.TrustIncomingTraceID}),
+		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
+			Logger:               a.logger,
+			TrustIncomingTraceID: a.config.TrustIncomingTraceID,
+			SchemaRepository:     schemaRepo,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
