@@ -18,6 +18,7 @@ type HandlerConfig struct {
 	RegistrationService *auth.RegistrationService
 	OrgMembershipRepo   *data.OrgMembershipRepository
 	ThreadRepo          *data.ThreadRepository
+	MessageRepo         *data.MessageRepository
 	AuditWriter         *audit.Writer
 }
 
@@ -32,7 +33,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/me", me(cfg.AuthService))
 	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo))
-	mux.HandleFunc("/v1/threads/", threadEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.AuditWriter))
+	mux.HandleFunc(
+		"/v1/threads/",
+		threadEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.MessageRepo, cfg.AuditWriter),
+	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())

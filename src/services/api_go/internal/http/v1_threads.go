@@ -284,10 +284,13 @@ func threadEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getThread(authService, membershipRepo, threadRepo, auditWriter)
 	patch := patchThread(authService, membershipRepo, threadRepo, auditWriter)
+	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
+	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
 			threadsEntry(authService, membershipRepo, threadRepo)(w, r)
@@ -327,7 +330,14 @@ func threadEntry(
 		switch parts[1] {
 		case "messages":
 			// P06: thread messages
-			writeNotFound(w, r)
+			switch r.Method {
+			case nethttp.MethodPost:
+				createMessage(w, r, threadID)
+			case nethttp.MethodGet:
+				listMessages(w, r, threadID)
+			default:
+				writeMethodNotAllowed(w, r)
+			}
 		case "runs":
 			// P07: thread runs
 			writeNotFound(w, r)
