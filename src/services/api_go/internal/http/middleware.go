@@ -32,6 +32,13 @@ func (r *statusRecorder) Write(payload []byte) (int, error) {
 	return r.ResponseWriter.Write(payload)
 }
 
+// Flush 转发给底层 ResponseWriter，SSE/流式输出需要此能力。
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(nethttp.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, trustIncomingTraceID bool) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
