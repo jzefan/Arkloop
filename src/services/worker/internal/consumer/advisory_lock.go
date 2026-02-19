@@ -20,7 +20,7 @@ type PgAdvisoryLocker struct {
 
 func NewPgAdvisoryLocker(pool *pgxpool.Pool) (*PgAdvisoryLocker, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("pool 不能为空")
+		return nil, fmt.Errorf("pool must not be nil")
 	}
 	return &PgAdvisoryLocker{pool: pool}, nil
 }

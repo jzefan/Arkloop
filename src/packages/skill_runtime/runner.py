@@ -49,7 +49,7 @@ class SkillRunner(AgentRunner):
             yield _emit_run_failed(
                 context=context,
                 error_class=_ERROR_CLASS_SKILL_INVALID_ID,
-                message="skill_id 非法",
+                message="skill_id is invalid",
             )
             return
 
@@ -59,7 +59,7 @@ class SkillRunner(AgentRunner):
             yield _emit_run_failed(
                 context=context,
                 error_class=_ERROR_CLASS_SKILL_INVALID_ID,
-                message="skill_id 非法",
+                message="skill_id is invalid",
             )
             return
         definition = self._registry.get(skill_id)
@@ -67,7 +67,7 @@ class SkillRunner(AgentRunner):
             yield _emit_run_failed(
                 context=context,
                 error_class=_ERROR_CLASS_SKILL_NOT_FOUND,
-                message="skill 不存在",
+                message="skill not found",
                 details={"skill_id": skill_id},
             )
             return
@@ -76,7 +76,7 @@ class SkillRunner(AgentRunner):
             yield _emit_run_failed(
                 context=context,
                 error_class=_ERROR_CLASS_SKILL_VERSION_MISMATCH,
-                message="skill 版本不匹配",
+                message="skill version mismatch",
                 details={
                     "skill_id": skill_id,
                     "requested_version": requested_version,
@@ -139,7 +139,7 @@ def _parse_skill_ref(value: str) -> tuple[str, str | None]:
     if not sep:
         return skill_id, None
     if not version:
-        raise ValueError("skill_id@version 形式缺少 version")
+        raise ValueError("skill_id@version format missing version")
     return skill_id, version
 
 

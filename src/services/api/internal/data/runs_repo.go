@@ -36,7 +36,7 @@ type RunNotFoundError struct {
 }
 
 func (e RunNotFoundError) Error() string {
-	return "Run 不存在"
+	return "run not found"
 }
 
 type RunEventRepository struct {
@@ -45,7 +45,7 @@ type RunEventRepository struct {
 
 func NewRunEventRepository(db Querier) (*RunEventRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &RunEventRepository{db: db}, nil
 }
@@ -62,10 +62,10 @@ func (r *RunEventRepository) CreateRunWithStartedEvent(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return Run{}, RunEvent{}, fmt.Errorf("org_id 不能为空")
+		return Run{}, RunEvent{}, fmt.Errorf("org_id must not be empty")
 	}
 	if threadID == uuid.Nil {
-		return Run{}, RunEvent{}, fmt.Errorf("thread_id 不能为空")
+		return Run{}, RunEvent{}, fmt.Errorf("thread_id must not be empty")
 	}
 
 	chosenType := startedType
@@ -100,7 +100,7 @@ func (r *RunEventRepository) GetRun(ctx context.Context, runID uuid.UUID) (*Run,
 		ctx = context.Background()
 	}
 	if runID == uuid.Nil {
-		return nil, fmt.Errorf("run_id 不能为空")
+		return nil, fmt.Errorf("run_id must not be empty")
 	}
 
 	var run Run
@@ -131,13 +131,13 @@ func (r *RunEventRepository) ListRunsByThread(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return nil, fmt.Errorf("org_id 不能为空")
+		return nil, fmt.Errorf("org_id must not be empty")
 	}
 	if threadID == uuid.Nil {
-		return nil, fmt.Errorf("thread_id 不能为空")
+		return nil, fmt.Errorf("thread_id must not be empty")
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("limit 必须为正数")
+		return nil, fmt.Errorf("limit must be positive")
 	}
 
 	rows, err := r.db.Query(
@@ -187,7 +187,7 @@ func (r *RunEventRepository) GetLatestEventType(
 		ctx = context.Background()
 	}
 	if runID == uuid.Nil {
-		return "", fmt.Errorf("run_id 不能为空")
+		return "", fmt.Errorf("run_id must not be empty")
 	}
 	if len(types) == 0 {
 		return "", nil
@@ -224,7 +224,7 @@ func (r *RunEventRepository) RequestCancel(
 		ctx = context.Background()
 	}
 	if runID == uuid.Nil {
-		return nil, fmt.Errorf("run_id 不能为空")
+		return nil, fmt.Errorf("run_id must not be empty")
 	}
 
 	if err := r.lockRunRow(ctx, runID); err != nil {
@@ -269,13 +269,13 @@ func (r *RunEventRepository) ListEvents(
 		ctx = context.Background()
 	}
 	if runID == uuid.Nil {
-		return nil, fmt.Errorf("run_id 不能为空")
+		return nil, fmt.Errorf("run_id must not be empty")
 	}
 	if afterSeq < 0 {
-		return nil, fmt.Errorf("after_seq 不能为负数")
+		return nil, fmt.Errorf("after_seq must be non-negative")
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("limit 必须为正数")
+		return nil, fmt.Errorf("limit must be positive")
 	}
 
 	rows, err := r.db.Query(

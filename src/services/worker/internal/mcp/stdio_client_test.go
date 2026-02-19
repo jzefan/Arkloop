@@ -17,7 +17,7 @@ const testMcpServerEnv = "ARKLOOP_TEST_MCP_SERVER"
 
 func TestMcpServerProcess(t *testing.T) {
 	if os.Getenv(testMcpServerEnv) != "1" {
-		t.Skip("仅用于子进程 MCP server")
+		t.Skip("only used for subprocess MCP server")
 	}
 	runTestMcpServer()
 }

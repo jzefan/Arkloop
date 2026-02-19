@@ -17,7 +17,7 @@ def _parse_positive_int(value: str) -> int:
     cleaned = value.strip()
     parsed = int(cleaned)
     if parsed <= 0:
-        raise ValueError("必须为正整数")
+        raise ValueError("must be a positive integer")
     return parsed
 
 
@@ -33,10 +33,10 @@ class AuthConfig:
         secret = (os.getenv(_JWT_SECRET_ENV) or "").strip()
         if not secret:
             if required:
-                raise ValueError(f"缺少环境变量 {_JWT_SECRET_ENV}")
+                raise ValueError(f"missing environment variable {_JWT_SECRET_ENV}")
             return None
         if len(secret) < _MIN_SECRET_LENGTH:
-            raise ValueError(f"{_JWT_SECRET_ENV} 太短，至少 {_MIN_SECRET_LENGTH} 字符")
+            raise ValueError(f"{_JWT_SECRET_ENV} too short, minimum {_MIN_SECRET_LENGTH} characters")
 
         ttl_seconds = _DEFAULT_ACCESS_TOKEN_TTL_SECONDS
         raw_ttl = os.getenv(_ACCESS_TOKEN_TTL_SECONDS_ENV)

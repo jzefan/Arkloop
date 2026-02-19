@@ -32,14 +32,14 @@ _MAX_LENGTH_LIMIT = 200_000
 WEB_FETCH_AGENT_TOOL_SPEC = AgentToolSpec(
     name="web_fetch",
     version="1",
-    description="抓取网页内容并提取正文",
+    description="Fetch web page content and extract body text",
     risk_level="medium",
     side_effects=False,
 )
 
 WEB_FETCH_LLM_TOOL_SPEC = LlmToolSpec(
     name="web_fetch",
-    description="抓取网页内容，返回 title/content（纯文本）",
+    description="Fetch web page content, return title/content (plain text)",
     json_schema={
         "type": "object",
         "properties": {
@@ -70,10 +70,10 @@ def _provider_from_env() -> WebFetchProvider | None:
 
     if config.provider_kind == "jina":
         if not config.jina_api_key:
-            raise ValueError("Jina api_key 未配置")
+            raise ValueError("Jina api_key not configured")
         return JinaWebFetchProvider(api_key=config.jina_api_key)
 
-    raise ValueError(f"web_fetch provider 未实现：{config.provider_kind}")
+    raise ValueError(f"web_fetch provider not implemented: {config.provider_kind}")
 
 
 class WebFetchToolExecutor:
@@ -112,7 +112,7 @@ class WebFetchToolExecutor:
                 return ToolExecutionResult(
                     error=ToolExecutionError(
                         error_class=_ERROR_CLASS_NOT_CONFIGURED,
-                        message="web_fetch 配置无效",
+                        message="web_fetch configuration invalid",
                         details={"reason": str(exc)},
                     ),
                     duration_ms=_duration_ms(started),
@@ -129,7 +129,7 @@ class WebFetchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_URL_DENIED,
-                    message="web_fetch URL 被安全策略拒绝",
+                    message="web_fetch URL denied by security policy",
                     details=details,
                 ),
                 duration_ms=_duration_ms(started),
@@ -142,7 +142,7 @@ class WebFetchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_TIMEOUT,
-                    message="web_fetch 超时",
+                    message="web_fetch timed out",
                     details={"timeout_seconds": self._timeout_seconds},
                 ),
                 duration_ms=_duration_ms(started),
@@ -151,7 +151,7 @@ class WebFetchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_FETCH_FAILED,
-                    message="web_fetch 请求失败",
+                    message="web_fetch request failed",
                     details={"status_code": exc.status_code},
                 ),
                 duration_ms=_duration_ms(started),
@@ -160,7 +160,7 @@ class WebFetchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_FETCH_FAILED,
-                    message="web_fetch 执行失败",
+                    message="web_fetch execution failed",
                     details={"exception_type": type(exc).__name__},
                 ),
                 duration_ms=_duration_ms(started),
@@ -170,7 +170,7 @@ class WebFetchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_FETCH_FAILED,
-                    message="web_fetch 返回结果类型不正确",
+                    message="web_fetch returned incorrect result type",
                 ),
                 duration_ms=_duration_ms(started),
             )
@@ -185,7 +185,7 @@ def _parse_web_fetch_args(
     if unknown:
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="工具参数不支持额外字段",
+            message="tool arguments do not support extra fields",
             details={"unknown_fields": sorted(unknown)},
         )
 
@@ -193,7 +193,7 @@ def _parse_web_fetch_args(
     if not isinstance(url, str) or not url.strip():
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="参数 url 必须为非空字符串",
+            message="parameter url must be a non-empty string",
             details={"field": "url"},
         )
 
@@ -201,13 +201,13 @@ def _parse_web_fetch_args(
     if not isinstance(max_length, int):
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="参数 max_length 必须为整数",
+            message="parameter max_length must be an integer",
             details={"field": "max_length"},
         )
     if max_length <= 0 or max_length > _MAX_LENGTH_LIMIT:
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message=f"参数 max_length 必须在 1..{_MAX_LENGTH_LIMIT} 之间",
+            message=f"parameter max_length must be in 1..{_MAX_LENGTH_LIMIT}",
             details={"field": "max_length", "max": _MAX_LENGTH_LIMIT},
         )
 

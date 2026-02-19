@@ -52,7 +52,7 @@ def _parse_non_negative_float(value: str) -> float:
     cleaned = value.strip()
     parsed = float(cleaned)
     if parsed < 0:
-        raise ValueError("必须为非负数")
+        raise ValueError("must be a non-negative number")
     return parsed
 
 
@@ -62,20 +62,20 @@ def _parse_bool(value: str) -> bool:
         return True
     if cleaned in _FALSY:
         return False
-    raise ValueError("必须为布尔值（0/1、true/false）")
+    raise ValueError("must be a boolean (0/1, true/false)")
 
 
 def _parse_openai_api_mode(value: str) -> str:
     cleaned = value.strip().casefold()
     if cleaned in _SUPPORTED_OPENAI_API_MODES:
         return cleaned
-    raise ValueError(f"openai_api_mode 必须为 {', '.join(_SUPPORTED_OPENAI_API_MODES)}")
+    raise ValueError(f"openai_api_mode must be {', '.join(_SUPPORTED_OPENAI_API_MODES)}")
 
 
 def _normalize_base_url(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError("base_url 不能为空")
+        raise ValueError("base_url must not be empty")
     return cleaned.rstrip("/")
 
 
@@ -249,10 +249,10 @@ def _to_openai_responses_input(request: LlmGatewayRequest) -> list[dict[str, Any
         if message.role == "tool":
             parsed = _try_parse_json(text)
             if not isinstance(parsed, Mapping):
-                raise ValueError("tool message 不是合法 JSON")
+                raise ValueError("tool message is not valid JSON")
             tool_call_id = parsed.get("tool_call_id")
             if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-                raise ValueError("tool message 缺少 tool_call_id")
+                raise ValueError("tool message missing tool_call_id")
             items.append(
                 {
                     "type": "function_call_output",
@@ -366,7 +366,7 @@ class OpenAiGatewayConfig:
         api_key = (os.getenv(_OPENAI_API_KEY_ENV) or "").strip()
         if not api_key:
             if required:
-                raise ValueError(f"缺少环境变量 {_OPENAI_API_KEY_ENV}")
+                raise ValueError(f"missing environment variable {_OPENAI_API_KEY_ENV}")
             return None
 
         base_url = _DEFAULT_OPENAI_BASE_URL
@@ -429,14 +429,14 @@ class OpenAiLlmGateway(LlmGateway):
                     status_code=exc.status_code,
                 )
                 self._logger.info(
-                    "OpenAI responses 不可用，回退到 chat_completions",
+                    "OpenAI responses endpoint not available, falling back to chat_completions",
                     extra={"status_code": exc.status_code, "base_url": self._config.base_url},
                 )
                 yield fallback
                 if index == len(mode_sequence) - 1:
                     error = LlmGatewayError(
                         error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                        message="OpenAI responses 不可用，且没有可回退的 API 模式",
+                        message="OpenAI responses endpoint not available and no fallback API mode",
                         details={"status_code": exc.status_code},
                     )
                     yield LlmStreamRunFailed(error=error)
@@ -445,15 +445,15 @@ class OpenAiLlmGateway(LlmGateway):
             except TimeoutError:
                 error = LlmGatewayError(
                     error_class=ERROR_CLASS_PROVIDER_RETRYABLE,
-                    message="OpenAI 请求超时",
+                    message="OpenAI request timed out",
                 )
                 yield LlmStreamRunFailed(error=error)
                 return
             except Exception:
-                self._logger.exception("OpenAI 流式请求异常")
+                self._logger.exception("OpenAI streaming request failed")
                 error = LlmGatewayError(
                     error_class=ERROR_CLASS_INTERNAL_ERROR,
-                    message="OpenAI 流式请求异常",
+                    message="OpenAI streaming request failed",
                 )
                 yield LlmStreamRunFailed(error=error)
                 return
@@ -597,13 +597,13 @@ class OpenAiLlmGateway(LlmGateway):
                         ):
                             raise _ResponsesNotSupportedError(
                                 status_code=resp.status_code,
-                                message="OpenAI responses 端点不可用",
+                                message="OpenAI responses endpoint not available",
                             )
 
                     error_class = _provider_error_class_from_status(int(resp.status_code))
                     message = _openai_error_message(
                         error_json,
-                        fallback=f"OpenAI 返回 {resp.status_code}",
+                        fallback=f"OpenAI returned {resp.status_code}",
                     )
                     details = _openai_error_details(error_json, status_code=int(resp.status_code))
                     yield LlmStreamRunFailed(
@@ -639,7 +639,7 @@ class OpenAiLlmGateway(LlmGateway):
                                 yield LlmStreamRunFailed(
                                     error=LlmGatewayError(
                                         error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                                        message="OpenAI tool_call 参数解析失败",
+                                        message="OpenAI tool_call arguments parse failed",
                                         details={"reason": str(exc)},
                                     )
                                 )
@@ -675,7 +675,7 @@ class OpenAiLlmGateway(LlmGateway):
                             yield LlmStreamRunFailed(
                                 error=LlmGatewayError(
                                     error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                                    message="OpenAI tool_call 参数解析失败",
+                                    message="OpenAI tool_call arguments parse failed",
                                     details={"reason": str(exc)},
                                 )
                             )
@@ -688,7 +688,7 @@ class OpenAiLlmGateway(LlmGateway):
             if isinstance(exc, getattr(httpx, "NetworkError", ())):
                 error = LlmGatewayError(
                     error_class=ERROR_CLASS_PROVIDER_RETRYABLE,
-                    message="OpenAI 网络错误",
+                    message="OpenAI network error",
                 )
                 yield LlmStreamRunFailed(error=error)
                 return
@@ -778,10 +778,10 @@ class _OpenAiChatToolCallBuffer:
 
         if invalid:
             rendered = ", ".join(
-                f"tool_calls[{index}] 缺少 {', '.join(missing)}" for index, missing in invalid[:3]
+                f"tool_calls[{index}] missing {', '.join(missing)}" for index, missing in invalid[:3]
             )
             if len(invalid) > 3:
-                rendered = f"{rendered} 等"
+                rendered = f"{rendered} etc."
             raise ValueError(rendered)
         return emitted
 
@@ -792,7 +792,7 @@ def _parse_json_object(value: str) -> Mapping[str, Any]:
         return {}
     parsed = json.loads(cleaned)
     if not isinstance(parsed, Mapping):
-        raise ValueError("arguments 必须是 JSON object")
+        raise ValueError("arguments must be a JSON object")
     return dict(parsed)
 
 
@@ -866,7 +866,7 @@ async def _events_from_openai_responses_stream_event(
                     yield LlmStreamRunFailed(
                         error=LlmGatewayError(
                             error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                            message="OpenAI responses tool_call 参数解析失败",
+                            message="OpenAI responses tool_call arguments parse failed",
                             details={"reason": str(exc)},
                         )
                     )
@@ -876,7 +876,7 @@ async def _events_from_openai_responses_stream_event(
 
     if typ in {"response.failed", "response.error"}:
         error = event.get("error")
-        message = "OpenAI responses 失败"
+        message = "OpenAI responses failed"
         if isinstance(error, Mapping):
             msg = error.get("message")
             if isinstance(msg, str) and msg.strip():
@@ -892,7 +892,7 @@ async def _events_from_openai_responses_stream_event(
     embedded_error = event.get("error")
     if isinstance(embedded_error, Mapping):
         msg = embedded_error.get("message")
-        message = msg.strip() if isinstance(msg, str) and msg.strip() else "OpenAI responses 返回错误"
+        message = msg.strip() if isinstance(msg, str) and msg.strip() else "OpenAI responses returned error"
         yield LlmStreamRunFailed(
             error=LlmGatewayError(
                 error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
@@ -912,9 +912,9 @@ def _tool_calls_from_openai_responses_output(output: list[Any]) -> list[LlmStrea
         tool_call_id = raw.get("id") or raw.get("call_id")
         tool_name = raw.get("name") or raw.get("tool_name")
         if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-            raise ValueError("缺少 function_call.id")
+            raise ValueError("missing function_call.id")
         if not isinstance(tool_name, str) or not tool_name.strip():
-            raise ValueError("缺少 function_call.name")
+            raise ValueError("missing function_call.name")
 
         arguments = raw.get("arguments")
         if arguments is None:
@@ -924,7 +924,7 @@ def _tool_calls_from_openai_responses_output(output: list[Any]) -> list[LlmStrea
         elif isinstance(arguments, str):
             arguments_json = _parse_json_object(arguments)
         else:
-            raise ValueError("function_call.arguments 类型不支持")
+            raise ValueError("function_call.arguments type not supported")
 
         tool_calls.append(
             LlmStreamToolCall(
@@ -940,7 +940,7 @@ def _import_httpx() -> Any:
     try:
         import httpx  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError("缺少 httpx 依赖，请安装 requirements-dev.txt 或补齐 requirements.txt") from exc
+        raise RuntimeError("httpx dependency missing, install requirements-dev.txt or update requirements.txt") from exc
     return httpx
 
 

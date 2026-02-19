@@ -91,7 +91,7 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 			} else if tool.Title != nil && strings.TrimSpace(*tool.Title) != "" {
 				description = strings.TrimSpace(*tool.Title)
 			} else {
-				description = "MCP 工具：" + tool.Name
+				description = "MCP tool: " + tool.Name
 			}
 
 			agentSpecs = append(agentSpecs, tools.AgentToolSpec{

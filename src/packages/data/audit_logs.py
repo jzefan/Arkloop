@@ -128,7 +128,7 @@ class SqlAlchemyAuditLogRepository(AuditLogRepository):
 
     async def list_by_trace_id(self, *, trace_id: str, limit: int = 200) -> list[AuditLog]:
         if limit <= 0:
-            raise ValueError("limit 必须为正数")
+            raise ValueError("limit must be a positive number")
         stmt = (
             sa.select(
                 _audit_logs.c.id,

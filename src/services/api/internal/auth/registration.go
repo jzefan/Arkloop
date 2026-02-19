@@ -39,13 +39,13 @@ func NewRegistrationService(
 	tokenService *JwtAccessTokenService,
 ) (*RegistrationService, error) {
 	if pool == nil {
-		return nil, errors.New("pool 不能为空")
+		return nil, errors.New("pool must not be nil")
 	}
 	if passwordHasher == nil {
-		return nil, errors.New("passwordHasher 不能为空")
+		return nil, errors.New("passwordHasher must not be nil")
 	}
 	if tokenService == nil {
-		return nil, errors.New("tokenService 不能为空")
+		return nil, errors.New("tokenService must not be nil")
 	}
 	return &RegistrationService{
 		pool:           pool,
@@ -115,7 +115,7 @@ func (s *RegistrationService) Register(
 	}
 
 	slugSuffix := uuidHexPrefix(user.ID, 8)
-	org, err := orgRepo.Create(ctx, fmt.Sprintf("user-%s", slugSuffix), fmt.Sprintf("%s 的空间", displayName))
+	org, err := orgRepo.Create(ctx, fmt.Sprintf("user-%s", slugSuffix), fmt.Sprintf("%s's workspace", displayName))
 	if err != nil {
 		return RegisterResult{}, err
 	}

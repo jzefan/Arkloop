@@ -49,7 +49,7 @@ func createThreadMessage(
 			return
 		}
 		if threadRepo == nil || messageRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -60,21 +60,21 @@ func createThreadMessage(
 
 		var body createMessageRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Content == "" || len(body.Content) > 20000 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -86,10 +86,10 @@ func createThreadMessage(
 		if err != nil {
 			var threadNotFound data.ThreadNotFoundError
 			if errors.As(err, &threadNotFound) {
-				WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+				WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -116,7 +116,7 @@ func listThreadMessages(
 			return
 		}
 		if threadRepo == nil || messageRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -132,11 +132,11 @@ func listThreadMessages(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -146,7 +146,7 @@ func listThreadMessages(
 
 		messages, err := messageRepo.ListByThread(r.Context(), actor.OrgID, threadID, limit)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -165,7 +165,7 @@ func parseMessageLimit(w nethttp.ResponseWriter, traceID string, raw string) (in
 
 	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || parsed < 1 || parsed > 500 {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 		return 0, false
 	}
 	return parsed, true

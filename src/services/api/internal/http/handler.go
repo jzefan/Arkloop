@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SSEConfig 控制 SSE 流的轮询与心跳行为，对标 Python 端的 SseConfig。
+// SSEConfig controls SSE stream polling and heartbeat behavior.
 type SSEConfig struct {
 	PollSeconds      float64
 	HeartbeatSeconds float64

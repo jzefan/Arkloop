@@ -83,7 +83,7 @@ func run() error {
 		return err
 	}
 
-	logger.Info("worker_go 进入消费模式", app.LogFields{}, nil)
+	logger.Info("worker_go entering consume mode", app.LogFields{}, nil)
 	return loop.Run(ctx)
 }
 
@@ -119,13 +119,12 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, queueJobTypes []s
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
 	if pool == nil {
-		return nil, fmt.Errorf("pool 不能为空")
-	}
+		return nil, fmt.Errorf("pool must not be nil")	}
 
 	native, err := executor.NewNativeRunEngineV1Handler(pool, logger)
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("worker_go 已启用 native handler", app.LogFields{}, map[string]any{"job_type": queue.RunExecuteJobType})
+	logger.Info("worker_go native handler enabled", app.LogFields{}, map[string]any{"job_type": queue.RunExecuteJobType})
 	return native, nil
 }

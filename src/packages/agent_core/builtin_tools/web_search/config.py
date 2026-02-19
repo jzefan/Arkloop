@@ -16,18 +16,18 @@ _TAVILY_API_KEY_ENV = "ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"
 def _normalize_base_url(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError("base_url 不能为空")
+        raise ValueError("base_url must not be empty")
     return cleaned.rstrip("/")
 
 
 def _parse_provider_kind(value: str) -> WebSearchProviderKind:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"环境变量 {_WEB_SEARCH_PROVIDER_ENV} 不能为空")
+        raise ValueError(f"environment variable {_WEB_SEARCH_PROVIDER_ENV} must not be empty")
     normalized = cleaned.casefold().replace("-", "_")
     if normalized in {"searxng", "tavily", "serper"}:
         return normalized  # type: ignore[return-value]
-    raise ValueError(f"{_WEB_SEARCH_PROVIDER_ENV} 必须为 searxng/tavily/serper")
+    raise ValueError(f"{_WEB_SEARCH_PROVIDER_ENV} must be searxng/tavily/serper")
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,20 +43,20 @@ class WebSearchConfig:
         raw = os.getenv(_WEB_SEARCH_PROVIDER_ENV)
         if not raw:
             if required:
-                raise ValueError(f"缺少环境变量 {_WEB_SEARCH_PROVIDER_ENV}")
+                raise ValueError(f"missing environment variable {_WEB_SEARCH_PROVIDER_ENV}")
             return None
 
         provider_kind = _parse_provider_kind(raw)
         if provider_kind == "searxng":
             raw_base_url = os.getenv(_SEARXNG_BASE_URL_ENV)
             if not raw_base_url:
-                raise ValueError(f"缺少环境变量 {_SEARXNG_BASE_URL_ENV}")
+                raise ValueError(f"missing environment variable {_SEARXNG_BASE_URL_ENV}")
             return cls(provider_kind=provider_kind, searxng_base_url=_normalize_base_url(raw_base_url))
 
         if provider_kind == "tavily":
             api_key = (os.getenv(_TAVILY_API_KEY_ENV) or "").strip()
             if not api_key:
-                raise ValueError(f"缺少环境变量 {_TAVILY_API_KEY_ENV}")
+                raise ValueError(f"missing environment variable {_TAVILY_API_KEY_ENV}")
             return cls(provider_kind=provider_kind, tavily_api_key=api_key)
 
         return cls(provider_kind=provider_kind)

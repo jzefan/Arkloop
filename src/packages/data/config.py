@@ -27,9 +27,9 @@ def normalize_postgres_async_url(database_url: str) -> str:
         return cleaned
 
     if scheme.startswith("postgresql"):
-        raise ValueError("当前仅支持 postgresql+asyncpg 作为异步驱动")
+        raise ValueError("currently only postgresql+asyncpg is supported as async driver")
 
-    raise ValueError("仅支持 PostgreSQL 连接串（postgresql:// 或 postgresql+asyncpg://）")
+    raise ValueError("only PostgreSQL connection strings supported (postgresql:// or postgresql+asyncpg://)")
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,6 @@ class DatabaseConfig:
             raw = os.getenv(_FALLBACK_DATABASE_URL_ENV)
         if not raw:
             if required:
-                raise ValueError(f"缺少环境变量 {_PRIMARY_DATABASE_URL_ENV}")
+                raise ValueError(f"missing environment variable {_PRIMARY_DATABASE_URL_ENV}")
             return None
         return cls(url=normalize_postgres_async_url(raw))

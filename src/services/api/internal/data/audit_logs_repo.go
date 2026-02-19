@@ -26,7 +26,7 @@ type AuditLogRepository struct {
 
 func NewAuditLogRepository(db Querier) (*AuditLogRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &AuditLogRepository{db: db}, nil
 }
@@ -38,11 +38,11 @@ func (r *AuditLogRepository) Create(ctx context.Context, params AuditLogCreatePa
 
 	action := strings.TrimSpace(params.Action)
 	if action == "" {
-		return fmt.Errorf("action 不能为空")
+		return fmt.Errorf("action must not be empty")
 	}
 	traceID := strings.TrimSpace(params.TraceID)
 	if traceID == "" {
-		return fmt.Errorf("trace_id 不能为空")
+		return fmt.Errorf("trace_id must not be empty")
 	}
 
 	metadata := params.Metadata

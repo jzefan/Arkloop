@@ -26,14 +26,14 @@ const (
 var AgentSpec = tools.AgentToolSpec{
 	Name:        "web_fetch",
 	Version:     "1",
-	Description: "抓取网页内容并提取正文",
+	Description: "fetch web page content and extract body text",
 	RiskLevel:   tools.RiskLevelMedium,
 	SideEffects: false,
 }
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "web_fetch",
-	Description: stringPtr("抓取网页内容，返回 title/content（纯文本）"),
+	Description: stringPtr("fetch web page content, return title/content (plain text)"),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -81,7 +81,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorNotConfigured,
-					Message:    "web_fetch 配置无效",
+					Message:    "web_fetch configuration invalid",
 					Details:    map[string]any{"reason": err.Error()},
 				},
 				DurationMs: durationMs(started),
@@ -106,7 +106,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: errorURLDenied,
-				Message:    "web_fetch URL 被安全策略拒绝",
+				Message:    "web_fetch URL denied by security policy",
 				Details:    details,
 			},
 			DurationMs: durationMs(started),
@@ -126,7 +126,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorTimeout,
-					Message:    "web_fetch 超时",
+					Message:    "web_fetch timed out",
 					Details:    map[string]any{"timeout_seconds": timeout.Seconds()},
 				},
 				DurationMs: durationMs(started),
@@ -136,7 +136,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorFetchFailed,
-					Message:    "web_fetch 请求失败",
+					Message:    "web_fetch request failed",
 					Details:    map[string]any{"status_code": httpErr.StatusCode},
 				},
 				DurationMs: durationMs(started),
@@ -145,7 +145,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: errorFetchFailed,
-				Message:    "web_fetch 执行失败",
+				Message:    "web_fetch execution failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 			DurationMs: durationMs(started),
@@ -175,7 +175,7 @@ func providerFromEnv() (Provider, error) {
 	case ProviderKindJina:
 		return NewJinaProvider(cfg.JinaAPIKey)
 	default:
-		return nil, fmt.Errorf("web_fetch provider 未实现")
+		return nil, fmt.Errorf("web_fetch provider not implemented")
 	}
 }
 
@@ -190,7 +190,7 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 		sort.Strings(unknown)
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "工具参数不支持额外字段",
+			Message:    "tool arguments do not allow extra fields",
 			Details:    map[string]any{"unknown_fields": unknown},
 		}
 	}
@@ -199,7 +199,7 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 	if !ok || strings.TrimSpace(rawURL) == "" {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "参数 url 必须为非空字符串",
+			Message:    "parameter url must be a non-empty string",
 			Details:    map[string]any{"field": "url"},
 		}
 	}
@@ -215,14 +215,14 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 	if !okInt {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "参数 max_length 必须为整数",
+			Message:    "parameter max_length must be an integer",
 			Details:    map[string]any{"field": "max_length"},
 		}
 	}
 	if maxLength <= 0 || maxLength > maxLengthLimit {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    fmt.Sprintf("参数 max_length 必须在 1..%d 之间", maxLengthLimit),
+			Message:    fmt.Sprintf("parameter max_length must be in range 1..%d", maxLengthLimit),
 			Details:    map[string]any{"field": "max_length", "max": maxLengthLimit},
 		}
 	}

@@ -17,7 +17,7 @@ const (
 	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
 )
 
-// Config 与 worker loop 行为对齐。
+// Config aligns with worker loop behavior.
 type Config struct {
 	Concurrency      int
 	PollSeconds      float64
@@ -74,7 +74,7 @@ func LoadConfigFromEnv() (Config, error) {
 	if raw, ok := lookupEnv(workerQueueJobTypesEnv); ok {
 		parsed := parseCSVList(raw)
 		if len(parsed) == 0 {
-			return Config{}, fmt.Errorf("%s: 不能为空", workerQueueJobTypesEnv)
+			return Config{}, fmt.Errorf("%s: must not be empty", workerQueueJobTypesEnv)
 		}
 		cfg.QueueJobTypes = parsed
 	}
@@ -88,23 +88,23 @@ func LoadConfigFromEnv() (Config, error) {
 
 func (c Config) Validate() error {
 	if c.Concurrency <= 0 {
-		return fmt.Errorf("concurrency 必须为正整数")
+		return fmt.Errorf("concurrency must be a positive integer")
 	}
 	if c.PollSeconds < 0 {
-		return fmt.Errorf("poll_seconds 必须为非负数")
+		return fmt.Errorf("poll_seconds must be non-negative")
 	}
 	if c.LeaseSeconds <= 0 {
-		return fmt.Errorf("lease_seconds 必须为正整数")
+		return fmt.Errorf("lease_seconds must be a positive integer")
 	}
 	if c.HeartbeatSeconds < 0 {
-		return fmt.Errorf("heartbeat_seconds 必须为非负数")
+		return fmt.Errorf("heartbeat_seconds must be non-negative")
 	}
 	if len(c.QueueJobTypes) == 0 {
-		return fmt.Errorf("queue_job_types 不能为空")
+		return fmt.Errorf("queue_job_types must not be empty")
 	}
 	for _, jobType := range c.QueueJobTypes {
 		if jobType != queue.RunExecuteJobType {
-			return fmt.Errorf("queue_job_types 仅支持 %s", queue.RunExecuteJobType)
+			return fmt.Errorf("queue_job_types only supports %s", queue.RunExecuteJobType)
 		}
 	}
 	return nil
@@ -125,10 +125,10 @@ func lookupEnv(key string) (string, bool) {
 func parsePositiveInt(raw string) (int, error) {
 	value, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, fmt.Errorf("必须为整数")
+		return 0, fmt.Errorf("must be an integer")
 	}
 	if value <= 0 {
-		return 0, fmt.Errorf("必须大于 0")
+		return 0, fmt.Errorf("must be greater than 0")
 	}
 	return value, nil
 }
@@ -136,10 +136,10 @@ func parsePositiveInt(raw string) (int, error) {
 func parseNonNegativeFloat(raw string) (float64, error) {
 	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
-		return 0, fmt.Errorf("必须为浮点数")
+		return 0, fmt.Errorf("must be a float")
 	}
 	if value < 0 {
-		return 0, fmt.Errorf("必须大于等于 0")
+		return 0, fmt.Errorf("must be greater than or equal to 0")
 	}
 	return value, nil
 }

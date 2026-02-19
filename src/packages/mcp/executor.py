@@ -56,7 +56,7 @@ class McpToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_PROTOCOL_ERROR,
-                    message="MCP 工具未注册",
+                    message="MCP tool not registered",
                     details={"tool_name": tool_name, "server_id": self._server.server_id},
                 ),
                 duration_ms=_duration_ms(started),
@@ -135,7 +135,7 @@ class McpToolExecutor:
             error_result = ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_PROTOCOL_ERROR,
-                    message="MCP 工具调用失败",
+                    message="MCP tool call failed",
                     details={
                         "tool_name": tool_name,
                         "server_id": self._server.server_id,
@@ -159,7 +159,7 @@ class McpToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_PROTOCOL_ERROR,
-                    message="MCP 工具返回空结果",
+                    message="MCP tool returned empty result",
                     details={"tool_name": tool_name, "server_id": self._server.server_id},
                 ),
                 duration_ms=_duration_ms(started),
@@ -169,7 +169,7 @@ class McpToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_TOOL_ERROR,
-                    message="MCP 工具返回错误",
+                    message="MCP tool returned error",
                     details={
                         "tool_name": tool_name,
                         "server_id": self._server.server_id,
@@ -246,7 +246,7 @@ class McpToolExecutor:
             error_result = ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_PROTOCOL_ERROR,
-                    message="MCP 工具调用失败",
+                    message="MCP tool call failed",
                     details={
                         "tool_name": tool_name,
                         "server_id": self._server.server_id,
@@ -263,7 +263,7 @@ class McpToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_PROTOCOL_ERROR,
-                    message="MCP 工具返回空结果",
+                    message="MCP tool returned empty result",
                     details={"tool_name": tool_name, "server_id": self._server.server_id},
                 ),
                 duration_ms=_duration_ms(started),
@@ -273,7 +273,7 @@ class McpToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_MCP_TOOL_ERROR,
-                    message="MCP 工具返回错误",
+                    message="MCP tool returned error",
                     details={
                         "tool_name": tool_name,
                         "server_id": self._server.server_id,

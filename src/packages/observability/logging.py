@@ -114,7 +114,7 @@ def _apply_redaction(value: Any, *, rules: Sequence[RedactionRule]) -> Any:
             if matched_rule.action == "mask":
                 redacted[key_str] = matched_rule.replacement
                 continue
-            raise ValueError(f"未知脱敏动作: {matched_rule.action}")
+            raise ValueError(f"unknown redaction action: {matched_rule.action}")
         return redacted
     if isinstance(value, list):
         return [_apply_redaction(v, rules=rules) for v in value]
@@ -174,7 +174,7 @@ def install_trace_log_record_factory(*, component: Optional[str] = None) -> None
     global _INSTALLED_COMPONENT
     if _INSTALLED:
         if component is not None and _INSTALLED_COMPONENT not in (None, component):
-            raise ValueError("LogRecordFactory 已安装且 component 不一致")
+            raise ValueError("LogRecordFactory already installed with different component")
         return
 
     _ORIGINAL_FACTORY = logging.getLogRecordFactory()
@@ -182,7 +182,7 @@ def install_trace_log_record_factory(*, component: Optional[str] = None) -> None
 
     def _record_factory(*args, **kwargs) -> logging.LogRecord:
         if _ORIGINAL_FACTORY is None:
-            raise RuntimeError("LogRecordFactory 未初始化")
+            raise RuntimeError("LogRecordFactory not initialized")
         record = _ORIGINAL_FACTORY(*args, **kwargs)
         record.trace_id = get_trace_id()
         record._ctx_org_id = get_org_id()

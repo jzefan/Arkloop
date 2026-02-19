@@ -16,13 +16,13 @@ _ERROR_CLASS_ARGS_INVALID = "tool.args_invalid"
 NOOP_AGENT_TOOL_SPEC = AgentToolSpec(
     name="noop",
     version="1",
-    description="无副作用的空操作",
+    description="No-op with no side effects",
     risk_level="low",
 )
 
 NOOP_LLM_TOOL_SPEC = LlmToolSpec(
     name="noop",
-    description="无副作用的空操作",
+    description="No-op with no side effects",
     json_schema={
         "type": "object",
         "properties": {},
@@ -46,7 +46,7 @@ class NoopToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_ARGS_INVALID,
-                    message="noop 不接受参数",
+                    message="noop does not accept arguments",
                     details={"unexpected_fields": sorted(args.keys())},
                 ),
                 duration_ms=_duration_ms(started),

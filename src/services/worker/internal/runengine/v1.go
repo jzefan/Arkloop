@@ -76,13 +76,13 @@ type EngineV1Deps struct {
 
 func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	if deps.Router == nil {
-		return nil, fmt.Errorf("router 不能为空")
+		return nil, fmt.Errorf("router must not be nil")
 	}
 	if deps.StubGateway == nil {
-		return nil, fmt.Errorf("stub gateway 不能为空")
+		return nil, fmt.Errorf("stub gateway must not be nil")
 	}
 	if deps.ToolRegistry == nil {
-		return nil, fmt.Errorf("tool registry 不能为空")
+		return nil, fmt.Errorf("tool registry must not be nil")
 	}
 	if deps.ToolExecutors == nil {
 		deps.ToolExecutors = map[string]tools.Executor{}
@@ -122,7 +122,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 
 func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run, input ExecuteInput) error {
 	if pool == nil {
-		return fmt.Errorf("pool 不能为空")
+		return fmt.Errorf("pool must not be nil")
 	}
 
 	traceID := strings.TrimSpace(input.TraceID)
@@ -188,7 +188,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			map[string]any{
 				"error_class": llm.ErrorClassInternalError,
 				"code":        "internal.route_missing",
-				"message":     "路由决策为空",
+				"message":     "route decision is empty",
 			},
 			nil,
 			stringPtr(llm.ErrorClassInternalError),
@@ -203,7 +203,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			map[string]any{
 				"error_class": llm.ErrorClassInternalError,
 				"code":        "internal.gateway_init_failed",
-				"message":     "路由初始化失败",
+				"message":     "gateway initialization failed",
 			},
 			nil,
 			stringPtr(llm.ErrorClassInternalError),
@@ -430,18 +430,18 @@ func (e *EngineV1) gatewayFromCredential(credential routing.ProviderCredential) 
 			EmitDebugEvents: e.emitDebugEvents,
 		}), nil
 	default:
-		return nil, fmt.Errorf("未知 provider_kind: %s", credential.ProviderKind)
+		return nil, fmt.Errorf("unknown provider_kind: %s", credential.ProviderKind)
 	}
 }
 
 func lookupAPIKey(envName *string) (string, error) {
 	if envName == nil || strings.TrimSpace(*envName) == "" {
-		return "", fmt.Errorf("缺少 api_key_env")
+		return "", fmt.Errorf("missing api_key_env")
 	}
 	name := strings.TrimSpace(*envName)
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return "", fmt.Errorf("缺少环境变量 %s", name)
+		return "", fmt.Errorf("missing environment variable %s", name)
 	}
 	return value, nil
 }

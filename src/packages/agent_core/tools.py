@@ -56,7 +56,7 @@ class ToolRegistry:
     def register(self, spec: ToolSpec) -> None:
         existing = self._spec_by_name.get(spec.name)
         if existing is not None:
-            raise ValueError(f"Tool 已注册：{spec.name}")
+            raise ValueError(f"Tool already registered: {spec.name}")
         self._spec_by_name[spec.name] = spec
 
     def get(self, tool_name: str) -> ToolSpec | None:
@@ -125,7 +125,7 @@ class ToolPolicyEnforcer:
                 error_class=POLICY_DENIED_CODE,
                 data_json={
                     "code": POLICY_DENIED_CODE,
-                    "message": "工具参数非法",
+                    "message": "tool arguments invalid",
                     "deny_reason": DENY_REASON_TOOL_ARGS_INVALID,
                     "tool_call_id": resolved_tool_call_id,
                     "tool_name": tool_name,
@@ -145,7 +145,7 @@ class ToolPolicyEnforcer:
                 error_class=POLICY_DENIED_CODE,
                 data_json={
                     "code": POLICY_DENIED_CODE,
-                    "message": "工具未注册",
+                    "message": "tool not registered",
                     "deny_reason": DENY_REASON_TOOL_UNKNOWN,
                     "tool_call_id": resolved_tool_call_id,
                     "tool_name": tool_name,
@@ -162,7 +162,7 @@ class ToolPolicyEnforcer:
         if not self._allowlist.allows(tool_name):
             denied_payload: dict[str, Any] = {
                 "code": POLICY_DENIED_CODE,
-                "message": "工具不在 allowlist 内",
+                "message": "tool not in allowlist",
                 "deny_reason": DENY_REASON_TOOL_NOT_IN_ALLOWLIST,
                 "tool_call_id": resolved_tool_call_id,
                 "tool_name": tool_name,

@@ -12,7 +12,7 @@ from .config import McpServerConfig
 try:
     import httpx
 except Exception as exc:  # pragma: no cover
-    raise RuntimeError("缺少 httpx 依赖，请安装 requirements-dev.txt 或补齐 requirements.txt") from exc
+    raise RuntimeError("missing httpx dependency, install requirements-dev.txt or add to requirements.txt") from exc
 
 _SUPPORTED_PROTOCOL_VERSIONS: tuple[str, ...] = (
     "2025-06-18",
@@ -77,11 +77,11 @@ class McpStdioClient:
         stderr_tail_lines: int = _DEFAULT_STDERROUT_TAIL_LINES,
     ) -> None:
         if server.transport != "stdio":
-            raise ValueError(f"McpStdioClient 仅支持 transport=stdio，当前为 {server.transport!r}")
+            raise ValueError(f"McpStdioClient only supports transport=stdio, got {server.transport!r}")
         if not isinstance(server.command, str) or not server.command.strip():
-            raise ValueError("McpStdioClient 缺少 command 配置")
+            raise ValueError("McpStdioClient missing command configuration")
         if protocol_version not in _SUPPORTED_PROTOCOL_VERSIONS:
-            raise ValueError(f"不支持的 MCP protocol_version: {protocol_version}")
+            raise ValueError(f"unsupported MCP protocol_version: {protocol_version}")
         self._server = server
         self._requested_protocol_version = protocol_version
         self._client_name = client_name
@@ -178,7 +178,7 @@ class McpStdioClient:
         for fut in pending:
             if fut.done():
                 continue
-            fut.set_exception(McpDisconnectedError("MCP client 已关闭"))
+            fut.set_exception(McpDisconnectedError("MCP client closed"))
 
     async def initialize(self, *, timeout_ms: int | None = None) -> None:
         if self._initialized:
@@ -197,10 +197,10 @@ class McpStdioClient:
         )
         protocol_version = result.get("protocolVersion")
         if not isinstance(protocol_version, str) or not protocol_version.strip():
-            raise McpClientError("initialize 返回缺少 protocolVersion")
+            raise McpClientError("initialize response missing protocolVersion")
         cleaned_protocol_version = protocol_version.strip()
         if cleaned_protocol_version not in _SUPPORTED_PROTOCOL_VERSIONS:
-            raise McpClientError(f"不支持的 MCP 协议版本: {cleaned_protocol_version}")
+            raise McpClientError(f"unsupported MCP protocol version: {cleaned_protocol_version}")
         self._negotiated_protocol_version = cleaned_protocol_version
 
         await self._notify(method="notifications/initialized", params=None)
@@ -214,7 +214,7 @@ class McpStdioClient:
         if raw_tools is None:
             return ()
         if not isinstance(raw_tools, list):
-            raise McpClientError("tools/list 返回 tools 不是数组")
+            raise McpClientError("tools/list returned tools is not an array")
 
         tools: list[McpTool] = []
         for raw in raw_tools:
@@ -255,7 +255,7 @@ class McpStdioClient:
         )
         raw_content = result.get("content") or []
         if not isinstance(raw_content, list):
-            raise McpClientError("tools/call 返回 content 不是数组")
+            raise McpClientError("tools/call returned content is not an array")
         content: list[Mapping[str, Any]] = []
         for item in raw_content:
             if not isinstance(item, Mapping):
@@ -302,7 +302,7 @@ class McpStdioClient:
         except asyncio.TimeoutError as exc:
             async with self._pending_lock:
                 self._pending.pop(request_id, None)
-            raise McpTimeoutError(f"MCP 请求超时: {method}") from exc
+            raise McpTimeoutError(f"MCP request timed out: {method}") from exc
 
     def _allocate_request_id(self) -> int:
         request_id = self._next_id
@@ -312,7 +312,7 @@ class McpStdioClient:
     async def _write_json(self, payload: Mapping[str, Any]) -> None:
         process = self._process
         if process is None or process.stdin is None:
-            raise McpDisconnectedError("MCP 进程未启动")
+            raise McpDisconnectedError("MCP process not started")
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
         data = line.encode(_STDIO_ENCODING)
         async with self._write_lock:
@@ -320,7 +320,7 @@ class McpStdioClient:
                 process.stdin.write(data)
                 await process.stdin.drain()
             except (BrokenPipeError, ConnectionResetError) as exc:
-                raise McpDisconnectedError("MCP stdin 已断开") from exc
+                raise McpDisconnectedError("MCP stdin disconnected") from exc
 
     async def _stdout_loop(self) -> None:
         process = self._process
@@ -341,7 +341,7 @@ class McpStdioClient:
         except Exception:
             pass
         finally:
-            await self._fail_pending(McpDisconnectedError("MCP stdout 已结束"))
+            await self._fail_pending(McpDisconnectedError("MCP stdout ended"))
 
     async def _stderr_loop(self) -> None:
         process = self._process
@@ -383,7 +383,7 @@ class McpStdioClient:
             fut.set_result(dict(result))
             return
 
-        fut.set_exception(McpClientError("MCP 响应缺少 result/error"))
+        fut.set_exception(McpClientError("MCP response missing result/error"))
 
     async def _fail_pending(self, error: Exception) -> None:
         async with self._pending_lock:
@@ -391,7 +391,7 @@ class McpStdioClient:
             self._pending.clear()
         details = _stderr_tail_to_string(self._stderr_tail)
         if details:
-            error = McpDisconnectedError(f"{error}，stderr 尾部：{details}")
+            error = McpDisconnectedError(f"{error}, stderr tail: {details}")
         for fut in pending:
             if fut.done():
                 continue
@@ -410,11 +410,11 @@ class McpSseClient:
         reconnect_delay_seconds: float = _DEFAULT_SSE_RECONNECT_DELAY_SECONDS,
     ) -> None:
         if server.transport != "sse":
-            raise ValueError(f"McpSseClient 仅支持 transport=sse，当前为 {server.transport!r}")
+            raise ValueError(f"McpSseClient only supports transport=sse, got {server.transport!r}")
         if not server.sse_url:
-            raise ValueError("McpSseClient 缺少 sse_url 配置")
+            raise ValueError("McpSseClient missing sse_url configuration")
         if protocol_version not in _SUPPORTED_PROTOCOL_VERSIONS:
-            raise ValueError(f"不支持的 MCP protocol_version: {protocol_version}")
+            raise ValueError(f"unsupported MCP protocol_version: {protocol_version}")
 
         self._server = server
         self._sse_url = server.sse_url
@@ -479,7 +479,7 @@ class McpSseClient:
                 pass
         self._sse_task = None
 
-        await self._fail_pending(McpDisconnectedError("MCP SSE client 已关闭"))
+        await self._fail_pending(McpDisconnectedError("MCP SSE client closed"))
 
         if self._owns_http and self._http is not None:
             try:
@@ -505,10 +505,10 @@ class McpSseClient:
         )
         protocol_version = result.get("protocolVersion")
         if not isinstance(protocol_version, str) or not protocol_version.strip():
-            raise McpClientError("initialize 返回缺少 protocolVersion")
+            raise McpClientError("initialize response missing protocolVersion")
         cleaned_protocol_version = protocol_version.strip()
         if cleaned_protocol_version not in _SUPPORTED_PROTOCOL_VERSIONS:
-            raise McpClientError(f"不支持的 MCP 协议版本: {cleaned_protocol_version}")
+            raise McpClientError(f"unsupported MCP protocol version: {cleaned_protocol_version}")
         self._negotiated_protocol_version = cleaned_protocol_version
 
         await self._notify(method="notifications/initialized", params=None)
@@ -522,7 +522,7 @@ class McpSseClient:
         if raw_tools is None:
             return ()
         if not isinstance(raw_tools, list):
-            raise McpClientError("tools/list 返回 tools 不是数组")
+            raise McpClientError("tools/list returned tools is not an array")
 
         tools: list[McpTool] = []
         for raw in raw_tools:
@@ -563,7 +563,7 @@ class McpSseClient:
         )
         raw_content = result.get("content") or []
         if not isinstance(raw_content, list):
-            raise McpClientError("tools/call 返回 content 不是数组")
+            raise McpClientError("tools/call returned content is not an array")
         content: list[Mapping[str, Any]] = []
         for item in raw_content:
             if not isinstance(item, Mapping):
@@ -611,7 +611,7 @@ class McpSseClient:
         except asyncio.TimeoutError as exc:
             async with self._pending_lock:
                 self._pending.pop(request_id, None)
-            raise McpTimeoutError(f"MCP 请求超时: {method}") from exc
+            raise McpTimeoutError(f"MCP request timed out: {method}") from exc
 
     def _allocate_request_id(self) -> int:
         request_id = self._next_id
@@ -621,7 +621,7 @@ class McpSseClient:
     async def _post_json(self, payload: Mapping[str, Any], *, timeout_ms: int) -> None:
         client = self._http
         if client is None:
-            raise McpDisconnectedError("MCP HTTP client 未初始化")
+            raise McpDisconnectedError("MCP HTTP client not initialized")
         headers = _build_sse_headers(self._server)
 
         async with self._write_lock:
@@ -631,18 +631,18 @@ class McpSseClient:
                     timeout=timeout_ms / 1000.0,
                 )
             except asyncio.TimeoutError as exc:
-                raise McpTimeoutError("MCP SSE POST 超时") from exc
+                raise McpTimeoutError("MCP SSE POST timed out") from exc
             except httpx.TimeoutException as exc:
-                raise McpTimeoutError("MCP SSE POST 超时") from exc
+                raise McpTimeoutError("MCP SSE POST timed out") from exc
             except Exception as exc:
-                raise McpDisconnectedError("MCP SSE POST 失败") from exc
+                raise McpDisconnectedError("MCP SSE POST failed") from exc
 
         if not (200 <= resp.status_code < 300):
-            raise McpDisconnectedError(f"MCP SSE POST 返回 HTTP {resp.status_code}")
+            raise McpDisconnectedError(f"MCP SSE POST returned HTTP {resp.status_code}")
 
     async def _ensure_connected(self, *, timeout_ms: int) -> None:
         if self._closing:
-            raise McpDisconnectedError("MCP SSE client 已关闭")
+            raise McpDisconnectedError("MCP SSE client closed")
 
         await self.start()
         if self._connected.is_set():
@@ -651,7 +651,7 @@ class McpSseClient:
         try:
             await asyncio.wait_for(self._connected.wait(), timeout=timeout_ms / 1000.0)
         except asyncio.TimeoutError as exc:
-            raise McpTimeoutError("MCP SSE 连接超时") from exc
+            raise McpTimeoutError("MCP SSE connection timed out") from exc
 
     async def _sse_loop(self) -> None:
         while not self._closing:
@@ -661,7 +661,7 @@ class McpSseClient:
                 raise
             except Exception as exc:
                 self._connected.clear()
-                await self._fail_pending(McpDisconnectedError(f"MCP SSE 连接中断: {type(exc).__name__}"))
+                await self._fail_pending(McpDisconnectedError(f"MCP SSE connection interrupted: {type(exc).__name__}"))
                 if self._closing:
                     return
                 await asyncio.sleep(self._reconnect_delay_seconds)
@@ -673,7 +673,7 @@ class McpSseClient:
     async def _run_single_sse_connection(self) -> None:
         client = self._http
         if client is None:
-            raise McpDisconnectedError("MCP HTTP client 未初始化")
+            raise McpDisconnectedError("MCP HTTP client not initialized")
 
         headers = _build_sse_headers(self._server)
         async with client.stream(
@@ -682,7 +682,7 @@ class McpSseClient:
             headers={**headers, "Accept": "text/event-stream"},
         ) as resp:
             if not (200 <= resp.status_code < 300):
-                raise McpDisconnectedError(f"MCP SSE 连接失败: HTTP {resp.status_code}")
+                raise McpDisconnectedError(f"MCP SSE connection failed: HTTP {resp.status_code}")
 
             self._connected.set()
             try:
@@ -694,7 +694,7 @@ class McpSseClient:
             finally:
                 self._connected.clear()
 
-        await self._fail_pending(McpDisconnectedError("MCP SSE 已断开"))
+        await self._fail_pending(McpDisconnectedError("MCP SSE disconnected"))
 
     async def _handle_message(self, message: Mapping[str, Any]) -> None:
         raw_id = message.get("id")
@@ -718,7 +718,7 @@ class McpSseClient:
             fut.set_result(dict(result))
             return
 
-        fut.set_exception(McpClientError("MCP 响应缺少 result/error"))
+        fut.set_exception(McpClientError("MCP response missing result/error"))
 
     async def _fail_pending(self, error: Exception) -> None:
         async with self._pending_lock:
@@ -756,7 +756,7 @@ def _rpc_error_from_mapping(error: Mapping[str, Any]) -> McpRpcError:
     code = error.get("code")
     code_value = int(code) if isinstance(code, int) else None
     message = error.get("message")
-    message_value = message.strip() if isinstance(message, str) and message.strip() else "MCP RPC 错误"
+    message_value = message.strip() if isinstance(message, str) and message.strip() else "MCP RPC error"
     data = error.get("data")
     return McpRpcError(code=code_value, message=message_value, data=data)
 

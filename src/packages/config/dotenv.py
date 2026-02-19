@@ -22,7 +22,7 @@ def _parse_bool(value: str) -> bool:
         return True
     if normalized in _FALSY:
         return False
-    raise ValueError(f"无法解析布尔值: {value!r}")
+    raise ValueError(f"cannot parse boolean value: {value!r}")
 
 
 def _find_repo_root(start: Path) -> Path:

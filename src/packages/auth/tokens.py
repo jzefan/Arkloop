@@ -31,9 +31,9 @@ class VerifiedAccessToken:
 class JwtAccessTokenService:
     def __init__(self, *, secret: str, ttl_seconds: int) -> None:
         if not secret:
-            raise ValueError("secret 不能为空")
+            raise ValueError("secret must not be empty")
         if ttl_seconds <= 0:
-            raise ValueError("ttl_seconds 必须为正数")
+            raise ValueError("ttl_seconds must be a positive number")
         self._secret = secret
         self._ttl_seconds = ttl_seconds
 
@@ -43,7 +43,8 @@ class JwtAccessTokenService:
         payload = {
             "sub": str(user_id),
             "typ": _ACCESS_TOKEN_TYPE,
-            # 用浮点秒保留子秒精度，避免 logout 与新签发 token 落在同一秒时误判失效
+            # use float seconds to preserve sub-second precision, avoiding false invalidation
+            # when logout and new token issuance fall within the same second
             "iat": issued_at.timestamp(),
             "exp": int(expires_at.timestamp()),
         }
@@ -61,24 +62,24 @@ class JwtAccessTokenService:
                 options={"require": ["sub", "exp", "iat", "typ"]},
             )
         except jwt.ExpiredSignatureError as exc:
-            raise TokenExpiredError("token 已过期") from exc
+            raise TokenExpiredError("token expired") from exc
         except jwt.PyJWTError as exc:
-            raise TokenInvalidError("token 无效") from exc
+            raise TokenInvalidError("token invalid") from exc
 
         if payload.get("typ") != _ACCESS_TOKEN_TYPE:
-            raise TokenInvalidError("token 类型不正确")
+            raise TokenInvalidError("token type incorrect")
 
         sub = payload.get("sub")
         try:
             user_id = uuid.UUID(str(sub))
         except (ValueError, TypeError) as exc:
-            raise TokenInvalidError("token subject 无效") from exc
+            raise TokenInvalidError("token subject invalid") from exc
 
         iat = payload.get("iat")
         try:
             issued_at = datetime.fromtimestamp(float(iat), tz=timezone.utc)
         except (TypeError, ValueError, OSError) as exc:
-            raise TokenInvalidError("token iat 无效") from exc
+            raise TokenInvalidError("token iat invalid") from exc
 
         return VerifiedAccessToken(user_id=user_id, issued_at=issued_at)
 

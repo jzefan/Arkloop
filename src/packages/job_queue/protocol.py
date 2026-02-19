@@ -40,7 +40,7 @@ class JobLease:
 
 class JobLeaseLostError(RuntimeError):
     def __init__(self, *, job_id: uuid.UUID) -> None:
-        super().__init__("job lease 已丢失")
+        super().__init__("job lease lost")
         self.job_id = job_id
 
 

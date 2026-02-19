@@ -51,7 +51,7 @@ func (l *Loop) Run(
 	if runCtx.MaxIterations <= 0 {
 		errPayload := llm.GatewayError{
 			ErrorClass: ErrorClassAgentMaxIterationsExceeded,
-			Message:    "Agent 循环达到最大轮次",
+			Message:    "agent loop reached max iterations",
 			Details:    map[string]any{"max_iterations": runCtx.MaxIterations},
 		}
 		event := emitter.Emit("run.failed", errPayload.ToJSON(), nil, stringPtr(errPayload.ErrorClass))
@@ -112,7 +112,7 @@ func (l *Loop) Run(
 
 		for _, call := range pending {
 			if runCtx.ToolExecutor == nil {
-				return fmt.Errorf("tool executor 未初始化")
+				return fmt.Errorf("tool executor not initialized")
 			}
 
 			execCtx := tools.ExecutionContext{
@@ -155,7 +155,7 @@ func (l *Loop) Run(
 
 	errPayload := llm.GatewayError{
 		ErrorClass: ErrorClassAgentMaxIterationsExceeded,
-		Message:    "Agent 循环达到最大轮次",
+		Message:    "agent loop reached max iterations",
 		Details:    map[string]any{"max_iterations": runCtx.MaxIterations},
 	}
 	return yield(emitter.Emit("run.failed", errPayload.ToJSON(), nil, stringPtr(errPayload.ErrorClass)))
@@ -228,7 +228,7 @@ func (l *Loop) runSingleTurn(
 			completed = &typed
 			return stopErr
 		default:
-			return fmt.Errorf("未知的 LLM Gateway 事件类型: %T", item)
+			return fmt.Errorf("unknown LLM gateway event type: %T", item)
 		}
 	})
 	if err != nil && err != stopErr {

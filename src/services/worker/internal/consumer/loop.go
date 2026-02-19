@@ -33,10 +33,10 @@ func NewLoop(
 	logger *app.JSONLogger,
 ) (*Loop, error) {
 	if queueClient == nil {
-		return nil, fmt.Errorf("queue 不能为空")
+		return nil, fmt.Errorf("queue must not be nil")
 	}
 	if handler == nil {
-		return nil, fmt.Errorf("handler 不能为空")
+		return nil, fmt.Errorf("handler must not be nil")
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (l *Loop) Run(ctx context.Context) error {
 func (l *Loop) RunOnce(ctx context.Context) (bool, error) {
 	lease, err := l.queue.Lease(ctx, l.config.LeaseSeconds, l.config.QueueJobTypes)
 	if err != nil {
-		l.logger.Error("lease job 失败", app.LogFields{}, map[string]any{"error": err.Error()})
+		l.logger.Error("lease job failed", app.LogFields{}, map[string]any{"error": err.Error()})
 		return false, err
 	}
 	if lease == nil {
@@ -133,12 +133,12 @@ func (l *Loop) processLease(ctx context.Context, lease queue.JobLease) {
 		if ok {
 			unlock, acquired, err := l.locker.TryAcquire(ctx, runID)
 			if err != nil {
-				l.logger.Error("acquire advisory lock 失败", fields, map[string]any{"error": err.Error()})
+				l.logger.Error("acquire advisory lock failed", fields, map[string]any{"error": err.Error()})
 				l.safeNack(ctx, lease, nil)
 				return
 			}
 			if !acquired {
-				l.logger.Info("run 正在执行，延后重试", fields, nil)
+				l.logger.Info("run already executing, deferring retry", fields, nil)
 				l.safeNack(ctx, lease, nil)
 				return
 			}
@@ -147,7 +147,7 @@ func (l *Loop) processLease(ctx context.Context, lease queue.JobLease) {
 					return
 				}
 				if err := unlock(context.Background()); err != nil {
-					l.logger.Error("release advisory lock 失败", fields, map[string]any{"error": err.Error()})
+					l.logger.Error("release advisory lock failed", fields, map[string]any{"error": err.Error()})
 				}
 			}()
 		}
@@ -184,7 +184,7 @@ func (l *Loop) processLease(ctx context.Context, lease queue.JobLease) {
 		if reason == "lease_lost" {
 			return
 		}
-		l.logger.Error("heartbeat 连续失败，已停止当前 job", fields, map[string]any{"reason": reason})
+		l.logger.Error("heartbeat consecutive failures, stopped current job", fields, map[string]any{"reason": reason})
 		l.safeNack(ctx, lease, nil)
 	}
 }
@@ -196,10 +196,10 @@ func (l *Loop) settleJob(ctx context.Context, lease queue.JobLease, runErr error
 		return
 	}
 	if errors.Is(runErr, context.Canceled) {
-		l.logger.Info("job 被取消", fields, nil)
+		l.logger.Info("job cancelled", fields, nil)
 		return
 	}
-	l.logger.Error("job 执行失败，将 nack 重试", fields, map[string]any{"error": runErr.Error()})
+	l.logger.Error("job execution failed, will nack for retry", fields, map[string]any{"error": runErr.Error()})
 	l.safeNack(ctx, lease, nil)
 }
 
@@ -208,7 +208,7 @@ func (l *Loop) heartbeatEnabled() bool {
 		return false
 	}
 	if l.config.HeartbeatSeconds >= float64(l.config.LeaseSeconds) {
-		l.logger.Info("heartbeat_seconds 不应大于等于 lease_seconds，已自动禁用", app.LogFields{}, map[string]any{
+		l.logger.Info("heartbeat_seconds must be less than lease_seconds, auto-disabled", app.LogFields{}, map[string]any{
 			"heartbeat_seconds": l.config.HeartbeatSeconds,
 			"lease_seconds":     l.config.LeaseSeconds,
 		})
@@ -249,7 +249,7 @@ func (l *Loop) heartbeatLoop(
 			}
 
 			consecutiveErrors++
-			l.logger.Error("job heartbeat 失败", fields, map[string]any{"error": err.Error()})
+			l.logger.Error("job heartbeat failed", fields, map[string]any{"error": err.Error()})
 			if consecutiveErrors >= heartbeatMaxConsecutiveErrors {
 				sendReason(reason, "too_many_errors")
 				return
@@ -272,10 +272,10 @@ func (l *Loop) safeAck(ctx context.Context, lease queue.JobLease) {
 	}
 	var leaseLost *queue.LeaseLostError
 	if errors.As(err, &leaseLost) {
-		l.logger.Info("ack 失败：lease 已丢失", fieldsFromLease(lease), nil)
+		l.logger.Info("ack failed: lease lost", fieldsFromLease(lease), nil)
 		return
 	}
-	l.logger.Error("ack 失败", fieldsFromLease(lease), map[string]any{"error": err.Error()})
+	l.logger.Error("ack failed", fieldsFromLease(lease), map[string]any{"error": err.Error()})
 }
 
 func (l *Loop) safeNack(ctx context.Context, lease queue.JobLease, delay *int) {
@@ -285,10 +285,10 @@ func (l *Loop) safeNack(ctx context.Context, lease queue.JobLease, delay *int) {
 	}
 	var leaseLost *queue.LeaseLostError
 	if errors.As(err, &leaseLost) {
-		l.logger.Info("nack 失败：lease 已丢失", fieldsFromLease(lease), nil)
+		l.logger.Info("nack failed: lease lost", fieldsFromLease(lease), nil)
 		return
 	}
-	l.logger.Error("nack 失败", fieldsFromLease(lease), map[string]any{"error": err.Error()})
+	l.logger.Error("nack failed", fieldsFromLease(lease), map[string]any{"error": err.Error()})
 }
 
 func extractRunID(payload map[string]any) (uuid.UUID, bool) {

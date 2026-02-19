@@ -32,10 +32,10 @@ func NewRegistry() *Registry {
 
 func (r *Registry) Register(def Definition) error {
 	if def.ID == "" {
-		return fmt.Errorf("skill.id 不能为空")
+		return fmt.Errorf("skill.id must not be empty")
 	}
 	if _, exists := r.byID[def.ID]; exists {
-		return fmt.Errorf("skill.id 重复: %s", def.ID)
+		return fmt.Errorf("skill.id duplicate: %s", def.ID)
 	}
 	r.byID[def.ID] = def
 	return nil

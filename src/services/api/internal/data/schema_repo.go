@@ -14,7 +14,7 @@ type SchemaRepository struct {
 
 func NewSchemaRepository(pool *pgxpool.Pool) (*SchemaRepository, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("pool 不能为空")
+		return nil, fmt.Errorf("pool must not be nil")
 	}
 	return &SchemaRepository{pool: pool}, nil
 }
@@ -31,7 +31,7 @@ func (r *SchemaRepository) CurrentAlembicVersion(ctx context.Context) (string, e
 
 	version = strings.TrimSpace(version)
 	if version == "" {
-		return "", fmt.Errorf("alembic_version 为空")
+		return "", fmt.Errorf("alembic_version is empty")
 	}
 	return version, nil
 }

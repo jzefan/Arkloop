@@ -37,7 +37,7 @@ class RunEventEmitter:
         clock: Clock = utc_now,
     ) -> None:
         if start_seq <= 0:
-            raise ValueError("start_seq 必须为正整数")
+            raise ValueError("start_seq must be a positive integer")
         self._run_id = run_id
         self._trace_id = trace_id
         self._next_seq = start_seq

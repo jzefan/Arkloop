@@ -36,16 +36,16 @@ func LoadConfigFromEnv() (*Config, error) {
 	path := expandUser(raw)
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%s 指向的文件不存在: %s", mcpConfigFileEnv, raw)
+		return nil, fmt.Errorf("%s file not found: %s", mcpConfigFileEnv, raw)
 	}
 
 	var parsed any
 	if err := json.Unmarshal(content, &parsed); err != nil {
-		return nil, fmt.Errorf("MCP 配置文件不是合法 JSON: %s", raw)
+		return nil, fmt.Errorf("MCP config file is not valid JSON: %s", raw)
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("MCP 配置文件必须为 JSON 对象")
+		return nil, fmt.Errorf("MCP config file must be a JSON object")
 	}
 
 	rawServers, ok := root["mcpServers"]
@@ -57,7 +57,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		if rawServers == nil {
 			return &Config{}, nil
 		}
-		return nil, fmt.Errorf("mcpServers 必须为对象")
+		return nil, fmt.Errorf("mcpServers must be an object")
 	}
 
 	serverIDs := make([]string, 0, len(serverMap))
@@ -70,7 +70,7 @@ func LoadConfigFromEnv() (*Config, error) {
 	for _, serverID := range serverIDs {
 		rawCfg, ok := serverMap[serverID].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("mcpServers[%q] 必须为对象", serverID)
+			return nil, fmt.Errorf("mcpServers[%q] must be an object", serverID)
 		}
 		server, err := parseServerConfig(serverID, rawCfg)
 		if err != nil {
@@ -84,7 +84,7 @@ func LoadConfigFromEnv() (*Config, error) {
 func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, error) {
 	cleanedID := strings.TrimSpace(serverID)
 	if cleanedID == "" {
-		return ServerConfig{}, fmt.Errorf("MCP server_id 不能为空")
+		return ServerConfig{}, fmt.Errorf("MCP server_id must not be empty")
 	}
 
 	transport := strings.TrimSpace(asString(payload["transport"]))
@@ -104,16 +104,16 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 		}
 	}
 	if timeout <= 0 {
-		return ServerConfig{}, fmt.Errorf("MCP server %q callTimeoutMs 必须为正整数", cleanedID)
+		return ServerConfig{}, fmt.Errorf("MCP server %q callTimeoutMs must be a positive integer", cleanedID)
 	}
 
 	if transport != "stdio" {
-		return ServerConfig{}, fmt.Errorf("MCP server %q transport 暂不支持: %s", cleanedID, transport)
+		return ServerConfig{}, fmt.Errorf("MCP server %q transport not supported: %s", cleanedID, transport)
 	}
 
 	command := strings.TrimSpace(asString(payload["command"]))
 	if command == "" {
-		return ServerConfig{}, fmt.Errorf("MCP server %q 缺少 command", cleanedID)
+		return ServerConfig{}, fmt.Errorf("MCP server %q missing command", cleanedID)
 	}
 
 	args := []string{}
@@ -121,7 +121,7 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 		for _, item := range rawArgs {
 			text, ok := item.(string)
 			if !ok {
-				return ServerConfig{}, fmt.Errorf("MCP server %q args 必须为字符串数组", cleanedID)
+				return ServerConfig{}, fmt.Errorf("MCP server %q args must be a string array", cleanedID)
 			}
 			cleaned := strings.TrimSpace(text)
 			if cleaned == "" {
@@ -130,14 +130,14 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 			args = append(args, cleaned)
 		}
 	} else if payload["args"] != nil {
-		return ServerConfig{}, fmt.Errorf("MCP server %q args 必须为字符串数组", cleanedID)
+		return ServerConfig{}, fmt.Errorf("MCP server %q args must be a string array", cleanedID)
 	}
 
 	var cwd *string
 	if rawCwd, ok := payload["cwd"]; ok && rawCwd != nil {
 		value, ok := rawCwd.(string)
 		if !ok || strings.TrimSpace(value) == "" {
-			return ServerConfig{}, fmt.Errorf("MCP server %q cwd 必须为字符串", cleanedID)
+			return ServerConfig{}, fmt.Errorf("MCP server %q cwd must be a string", cleanedID)
 		}
 		cleaned := strings.TrimSpace(value)
 		cwd = &cleaned
@@ -147,15 +147,15 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 	if rawEnv, ok := payload["env"]; ok && rawEnv != nil {
 		mapped, ok := rawEnv.(map[string]any)
 		if !ok {
-			return ServerConfig{}, fmt.Errorf("MCP server %q env 必须为对象", cleanedID)
+			return ServerConfig{}, fmt.Errorf("MCP server %q env must be an object", cleanedID)
 		}
 		for key, value := range mapped {
 			if strings.TrimSpace(key) == "" {
-				return ServerConfig{}, fmt.Errorf("MCP server %q env key 非法", cleanedID)
+				return ServerConfig{}, fmt.Errorf("MCP server %q env key invalid", cleanedID)
 			}
 			text, ok := value.(string)
 			if !ok {
-				return ServerConfig{}, fmt.Errorf("MCP server %q env[%q] 必须为字符串", cleanedID, key)
+				return ServerConfig{}, fmt.Errorf("MCP server %q env[%q] must be a string", cleanedID, key)
 			}
 			env[strings.TrimSpace(key)] = text
 		}

@@ -29,14 +29,14 @@ _MAX_RESULTS_LIMIT = 20
 WEB_SEARCH_AGENT_TOOL_SPEC = AgentToolSpec(
     name="web_search",
     version="1",
-    description="搜索互联网并返回摘要结果",
+    description="Search the internet and return summary results",
     risk_level="low",
     side_effects=False,
 )
 
 WEB_SEARCH_LLM_TOOL_SPEC = LlmToolSpec(
     name="web_search",
-    description="搜索互联网并返回标题/链接/摘要",
+    description="Search the internet and return title/link/snippet",
     json_schema={
         "type": "object",
         "properties": {
@@ -56,15 +56,15 @@ def _provider_from_env() -> WebSearchProvider | None:
 
     if config.provider_kind == "searxng":
         if not config.searxng_base_url:
-            raise ValueError("SearXNG base_url 未配置")
+            raise ValueError("SearXNG base_url not configured")
         return SearxngWebSearchProvider(base_url=config.searxng_base_url)
 
     if config.provider_kind == "tavily":
         if not config.tavily_api_key:
-            raise ValueError("Tavily api_key 未配置")
+            raise ValueError("Tavily api_key not configured")
         return TavilyWebSearchProvider(api_key=config.tavily_api_key)
 
-    raise ValueError(f"web_search provider 未实现：{config.provider_kind}")
+    raise ValueError(f"web_search provider not implemented: {config.provider_kind}")
 
 
 class WebSearchToolExecutor:
@@ -101,7 +101,7 @@ class WebSearchToolExecutor:
                 return ToolExecutionResult(
                     error=ToolExecutionError(
                         error_class=_ERROR_CLASS_NOT_CONFIGURED,
-                        message="web_search 配置无效",
+                        message="web_search configuration invalid",
                         details={"reason": str(exc)},
                     ),
                     duration_ms=_duration_ms(started),
@@ -110,7 +110,7 @@ class WebSearchToolExecutor:
                 return ToolExecutionResult(
                     error=ToolExecutionError(
                         error_class=_ERROR_CLASS_NOT_CONFIGURED,
-                        message="web_search 未配置 backend",
+                        message="web_search backend not configured",
                     ),
                     duration_ms=_duration_ms(started),
                 )
@@ -122,7 +122,7 @@ class WebSearchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_TIMEOUT,
-                    message="web_search 超时",
+                    message="web_search timed out",
                     details={"timeout_seconds": self._timeout_seconds},
                 ),
                 duration_ms=_duration_ms(started),
@@ -131,7 +131,7 @@ class WebSearchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_SEARCH_FAILED,
-                    message="web_search 请求失败",
+                    message="web_search request failed",
                     details={"status_code": exc.status_code},
                 ),
                 duration_ms=_duration_ms(started),
@@ -140,7 +140,7 @@ class WebSearchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_SEARCH_FAILED,
-                    message="web_search 执行失败",
+                    message="web_search execution failed",
                     details={"exception_type": type(exc).__name__},
                 ),
                 duration_ms=_duration_ms(started),
@@ -150,7 +150,7 @@ class WebSearchToolExecutor:
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=_ERROR_CLASS_SEARCH_FAILED,
-                    message="web_search 返回结果类型不正确",
+                    message="web_search returned incorrect result type",
                 ),
                 duration_ms=_duration_ms(started),
             )
@@ -166,7 +166,7 @@ def _parse_web_search_args(
     if unknown:
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="工具参数不支持额外字段",
+            message="tool arguments do not support extra fields",
             details={"unknown_fields": sorted(unknown)},
         )
 
@@ -174,7 +174,7 @@ def _parse_web_search_args(
     if not isinstance(query, str) or not query.strip():
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="参数 query 必须为非空字符串",
+            message="parameter query must be a non-empty string",
             details={"field": "query"},
         )
 
@@ -182,13 +182,13 @@ def _parse_web_search_args(
     if not isinstance(max_results, int):
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="参数 max_results 必须为整数",
+            message="parameter max_results must be an integer",
             details={"field": "max_results"},
         )
     if max_results <= 0 or max_results > _MAX_RESULTS_LIMIT:
         return None, None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message=f"参数 max_results 必须在 1..{_MAX_RESULTS_LIMIT} 之间",
+            message=f"parameter max_results must be in 1..{_MAX_RESULTS_LIMIT}",
             details={"field": "max_results", "max": _MAX_RESULTS_LIMIT},
         )
 

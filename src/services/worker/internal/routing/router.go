@@ -63,7 +63,7 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 				Denied: &ProviderRouteDenied{
 					ErrorClass: tools.PolicyDeniedCode,
 					Code:       "policy.invalid_route_id",
-					Message:    "route_id 必须为字符串",
+					Message:    "route_id must be a string",
 				},
 			}
 		}
@@ -75,7 +75,7 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 					Denied: &ProviderRouteDenied{
 						ErrorClass: tools.PolicyDeniedCode,
 						Code:       "policy.route_not_found",
-						Message:    "路由不存在",
+						Message:    "route not found",
 						Details:    map[string]any{"route_id": routeID},
 					},
 				}
@@ -86,7 +86,7 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 					Denied: &ProviderRouteDenied{
 						ErrorClass: tools.PolicyDeniedCode,
 						Code:       "policy.byok_disabled",
-						Message:    "该组织未启用 BYOK",
+						Message:    "BYOK not enabled for this organization",
 						Details: map[string]any{
 							"route_id":      route.ID,
 							"credential_id": credential.ID,
@@ -107,7 +107,7 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 			Denied: &ProviderRouteDenied{
 				ErrorClass: tools.PolicyDeniedCode,
 				Code:       "policy.byok_disabled",
-				Message:    "该组织未启用 BYOK",
+				Message:    "BYOK not enabled for this organization",
 				Details: map[string]any{
 					"route_id":      selectedRoute.ID,
 					"credential_id": credential.ID,

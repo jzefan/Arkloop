@@ -119,10 +119,10 @@ func LoadConfigFromEnv() (Config, error) {
 func (c Config) Validate() error {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
-		return fmt.Errorf("addr 不能为空")
+		return fmt.Errorf("addr must not be empty")
 	}
 	if _, err := net.ResolveTCPAddr("tcp", addr); err != nil {
-		return fmt.Errorf("addr 无效: %w", err)
+		return fmt.Errorf("addr invalid: %w", err)
 	}
 
 	if c.Auth != nil {
@@ -148,10 +148,10 @@ func lookupEnv(key string) (string, bool) {
 func parsePort(raw string) (int, error) {
 	value, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, fmt.Errorf("必须为整数")
+		return 0, fmt.Errorf("must be an integer")
 	}
 	if value <= 0 || value > 65535 {
-		return 0, fmt.Errorf("必须在 1-65535 之间")
+		return 0, fmt.Errorf("must be in range 1-65535")
 	}
 	return value, nil
 }
@@ -159,10 +159,10 @@ func parsePort(raw string) (int, error) {
 func parseNonNegativeFloat(raw string) (float64, error) {
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
-		return 0, fmt.Errorf("必须为数字")
+		return 0, fmt.Errorf("must be a number")
 	}
 	if v < 0 {
-		return 0, fmt.Errorf("必须为非负数")
+		return 0, fmt.Errorf("must be non-negative")
 	}
 	return v, nil
 }
@@ -170,10 +170,10 @@ func parseNonNegativeFloat(raw string) (float64, error) {
 func parsePositiveInt(raw string) (int, error) {
 	v, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, fmt.Errorf("必须为整数")
+		return 0, fmt.Errorf("must be an integer")
 	}
 	if v <= 0 {
-		return 0, fmt.Errorf("必须为正整数")
+		return 0, fmt.Errorf("must be a positive integer")
 	}
 	return v, nil
 }

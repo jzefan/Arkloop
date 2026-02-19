@@ -109,13 +109,13 @@ class RunEvent:
 
 class RunNotFoundError(LookupError):
     def __init__(self, *, run_id: uuid.UUID) -> None:
-        super().__init__("Run 不存在")
+        super().__init__("run not found")
         self.run_id = run_id
 
 
 class RunEventSeqConflictError(Exception):
     def __init__(self, *, run_id: uuid.UUID, seq: int) -> None:
-        super().__init__("RunEvent seq 冲突")
+        super().__init__("run event seq conflict")
         self.run_id = run_id
         self.seq = seq
 
@@ -332,7 +332,7 @@ class SqlAlchemyRunEventRepository(RunEventRepository):
         limit: int = 50,
     ) -> list[Run]:
         if limit <= 0:
-            raise ValueError("limit 必须为正数")
+            raise ValueError("limit must be positive")
 
         stmt = (
             sa.select(
@@ -359,7 +359,7 @@ class SqlAlchemyRunEventRepository(RunEventRepository):
         limit: int = 500,
     ) -> list[RunEvent]:
         if after_seq < 0:
-            raise ValueError("after_seq 不能为负数")
+            raise ValueError("after_seq must not be negative")
 
         stmt = (
             sa.select(

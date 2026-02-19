@@ -139,10 +139,12 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	}
 }
 
-// TestAuthLogoutThenReLoginNewTokenStillValid 验证 logout 后立刻重新登录/刷新拿到的新 token 仍然可用。
-// 防范点：iat 以 float64 秒写入 JWT，tokens_invalid_before 以 Postgres TIMESTAMPTZ（微秒）存储，
-// 比较用 iat.Before(tokens_invalid_before)（严格小于），float64 往返可能丢失纳秒精度；
-// 若精度丢失导致新 iat 被截断到 logout 时刻之前，新 token 会被误判为无效。
+// TestAuthLogoutThenReLoginNewTokenStillValid verifies that a new token obtained
+// by re-login/refresh right after logout is still valid.
+// Guard: iat is stored as float64 seconds in JWT, tokens_invalid_before is stored
+// as Postgres TIMESTAMPTZ (microsecond precision), comparison uses iat.Before(tokens_invalid_before)
+// (strict less-than). Float64 round-trip may lose nanosecond precision; if the new iat
+// is truncated to before the logout timestamp, the new token would be incorrectly rejected.
 func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "api_go_auth_relogin")
 
@@ -203,14 +205,14 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		AuditWriter:         auditWriter,
 	})
 
-	// 注册
+	// register
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
 		map[string]any{"login": "carol", "password": "pwdpwdpwd", "display_name": "Carol"}, nil)
 	if registerResp.Code != nethttp.StatusCreated {
 		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
 	}
 
-	// 初次登录拿 tokenA
+	// first login to get tokenA
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
 		map[string]any{"login": "carol", "password": "pwdpwdpwd"}, nil)
 	if loginResp.Code != nethttp.StatusOK {
@@ -218,17 +220,17 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	}
 	tokenA := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes()).AccessToken
 
-	// logout（触发 tokens_invalid_before = now()）
+	// logout (triggers tokens_invalid_before = now())
 	logoutResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/logout", nil, authHeader(tokenA))
 	if logoutResp.Code != nethttp.StatusOK {
 		t.Fatalf("logout: %d %s", logoutResp.Code, logoutResp.Body.String())
 	}
 
-	// 旧 tokenA 必须已无效
+	// old tokenA must be invalid
 	assertErrorEnvelope(t, doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(tokenA)),
 		nethttp.StatusUnauthorized, "auth.invalid_token")
 
-	// 紧接着重新登录拿 tokenB（iat 紧随 logout 时刻，精度边界核心场景）
+	// immediately re-login to get tokenB (iat right after logout, precision boundary scenario)
 	reLoginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
 		map[string]any{"login": "carol", "password": "pwdpwdpwd"}, nil)
 	if reLoginResp.Code != nethttp.StatusOK {
@@ -236,20 +238,20 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	}
 	tokenB := decodeJSONBody[loginResponse](t, reLoginResp.Body.Bytes()).AccessToken
 
-	// tokenB 必须可用
+	// tokenB must be valid
 	meB := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(tokenB))
 	if meB.Code != nethttp.StatusOK {
 		t.Fatalf("me with tokenB after re-login: %d %s", meB.Code, meB.Body.String())
 	}
 
-	// 对 tokenB 执行 refresh 拿 tokenC（refresh 内部同样走 AuthenticateUser 验证）
+	// refresh tokenB to get tokenC (refresh also goes through AuthenticateUser)
 	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, authHeader(tokenB))
 	if refreshResp.Code != nethttp.StatusOK {
 		t.Fatalf("refresh tokenB: %d %s", refreshResp.Code, refreshResp.Body.String())
 	}
 	tokenC := decodeJSONBody[loginResponse](t, refreshResp.Body.Bytes()).AccessToken
 
-	// tokenC 必须可用
+	// tokenC must be valid
 	meC := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(tokenC))
 	if meC.Code != nethttp.StatusOK {
 		t.Fatalf("me with tokenC after refresh: %d %s", meC.Code, meC.Body.String())

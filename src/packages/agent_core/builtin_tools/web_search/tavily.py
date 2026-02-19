@@ -55,14 +55,14 @@ class TavilyWebSearchProvider:
             },
         )
         if resp.status_code != 200:
-            raise TavilySearchHttpError(status_code=int(resp.status_code), message=f"Tavily 返回 {resp.status_code}")
+            raise TavilySearchHttpError(status_code=int(resp.status_code), message=f"Tavily returned {resp.status_code}")
 
         payload = _parse_json_bytes(resp.content)
         if not isinstance(payload, Mapping):
-            raise ValueError("Tavily JSON 响应必须为对象")
+            raise ValueError("Tavily JSON response must be an object")
         raw_results = payload.get("results")
         if not isinstance(raw_results, list):
-            raise ValueError("Tavily JSON 响应 results 必须为数组")
+            raise ValueError("Tavily JSON response results must be an array")
 
         results: list[WebSearchResult] = []
         for item in raw_results:

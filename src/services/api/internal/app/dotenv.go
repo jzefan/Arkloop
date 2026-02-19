@@ -87,7 +87,7 @@ func resolveDotenvPath() (string, error) {
 			if fileExists(expanded) {
 				return expanded, nil
 			}
-			return "", fmt.Errorf("%s 指向的文件不存在: %s", dotenvFileEnv, raw)
+			return "", fmt.Errorf("%s: file does not exist: %s", dotenvFileEnv, raw)
 		}
 
 		if fileExists(expanded) {
@@ -99,7 +99,7 @@ func resolveDotenvPath() (string, error) {
 				return candidate, nil
 			}
 		}
-		return "", fmt.Errorf("%s 指向的文件不存在: %s", dotenvFileEnv, raw)
+		return "", fmt.Errorf("%s: file does not exist: %s", dotenvFileEnv, raw)
 	}
 
 	if repoRoot == "" {
@@ -258,6 +258,6 @@ func parseBool(raw string) (bool, error) {
 	case "0", "false", "no", "n", "off":
 		return false, nil
 	default:
-		return false, fmt.Errorf("必须为布尔值（0/1、true/false）")
+		return false, fmt.Errorf("must be a boolean (0/1, true/false)")
 	}
 }

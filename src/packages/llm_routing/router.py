@@ -19,28 +19,28 @@ _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 def _as_mapping(value: object, *, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError(f"{label} 必须为 JSON 对象")
+        raise ValueError(f"{label} must be a JSON object")
     return value
 
 
 def _as_str(value: object, *, label: str) -> str:
     if not isinstance(value, str):
-        raise ValueError(f"{label} 必须为字符串")
+        raise ValueError(f"{label} must be a string")
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"{label} 不能为空")
+        raise ValueError(f"{label} must not be empty")
     return cleaned
 
 
 def _validate_id(value: str, *, label: str) -> str:
     if not _ID_RE.fullmatch(value):
-        raise ValueError(f"{label} 不合法: {value}")
+        raise ValueError(f"{label} invalid: {value}")
     return value
 
 
 def _validate_env_name(value: str, *, label: str) -> str:
     if not _ENV_NAME_RE.fullmatch(value):
-        raise ValueError(f"{label} 必须为合法环境变量名: {value}")
+        raise ValueError(f"{label} must be a valid environment variable name: {value}")
     return value
 
 
@@ -48,26 +48,26 @@ def _parse_provider_kind(value: str, *, label: str) -> ProviderKind:
     candidate = value.strip().casefold()
     if candidate in {"stub", "openai", "anthropic"}:
         return candidate  # type: ignore[return-value]
-    raise ValueError(f"{label} 必须为 stub/openai/anthropic")
+    raise ValueError(f"{label} must be stub/openai/anthropic")
 
 
 def _parse_credential_scope(value: str, *, label: str) -> CredentialScope:
     candidate = value.strip().casefold()
     if candidate in {"platform", "org"}:
         return candidate  # type: ignore[return-value]
-    raise ValueError(f"{label} 必须为 platform/org")
+    raise ValueError(f"{label} must be platform/org")
 
 
 def _parse_openai_api_mode(value: object) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError("openai_api_mode 必须为字符串")
+        raise ValueError("openai_api_mode must be a string")
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError("openai_api_mode 不能为空")
+        raise ValueError("openai_api_mode must not be empty")
     if cleaned not in {"auto", "responses", "chat_completions"}:
-        raise ValueError("openai_api_mode 必须为 auto/responses/chat_completions")
+        raise ValueError("openai_api_mode must be auto/responses/chat_completions")
     return cleaned
 
 
@@ -88,16 +88,16 @@ class ProviderCredential:
 
         if self.provider_kind == "openai":
             if self.openai_api_mode is None:
-                raise ValueError("OpenAI credential 必须指定 openai_api_mode")
+                raise ValueError("OpenAI credential must specify openai_api_mode")
         else:
             if self.openai_api_mode is not None:
-                raise ValueError("仅 OpenAI credential 允许设置 openai_api_mode")
+                raise ValueError("only OpenAI credential may set openai_api_mode")
 
         if self.provider_kind != "stub" and not self.api_key_env:
-            raise ValueError("非 stub credential 必须提供 api_key_env（仅保存 env 名，不保存明文）")
+            raise ValueError("non-stub credential must provide api_key_env (store env name only, not plaintext)")
 
         if not isinstance(self.advanced_json, Mapping):
-            raise ValueError("credential.advanced_json 必须为 JSON 对象")
+            raise ValueError("credential.advanced_json must be a JSON object")
 
     def to_public_json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -125,7 +125,7 @@ class ProviderRouteRule:
         _validate_id(self.id, label="route.id")
         _validate_id(self.credential_id, label="route.credential_id")
         if not isinstance(self.when, Mapping):
-            raise ValueError("route.when 必须为 JSON 对象")
+            raise ValueError("route.when must be a JSON object")
 
     def matches(self, input_json: Mapping[str, Any]) -> bool:
         if not self.when:
@@ -158,7 +158,7 @@ class ProviderRoutingConfig:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"环境变量 {_ROUTING_JSON_ENV} 不是合法 JSON") from exc
+            raise ValueError(f"environment variable {_ROUTING_JSON_ENV} is not valid JSON") from exc
 
         root = _as_mapping(parsed, label=_ROUTING_JSON_ENV)
         default_route_id = _validate_id(
@@ -168,7 +168,7 @@ class ProviderRoutingConfig:
 
         credentials_raw = root.get("credentials")
         if not isinstance(credentials_raw, list) or not credentials_raw:
-            raise ValueError("credentials 必须为非空数组")
+            raise ValueError("credentials must be a non-empty array")
 
         credentials: list[ProviderCredential] = []
         seen_credential_ids: set[str] = set()
@@ -176,7 +176,7 @@ class ProviderRoutingConfig:
             obj = _as_mapping(item, label=f"credentials[{index}]")
             cred_id = _validate_id(_as_str(obj.get("id"), label="credentials[].id"), label="credentials[].id")
             if cred_id in seen_credential_ids:
-                raise ValueError(f"credential.id 重复: {cred_id}")
+                raise ValueError(f"credential.id duplicated: {cred_id}")
             seen_credential_ids.add(cred_id)
 
             scope = _parse_credential_scope(_as_str(obj.get("scope"), label="credentials[].scope"), label="scope")
@@ -211,7 +211,7 @@ class ProviderRoutingConfig:
 
         routes_raw = root.get("routes")
         if not isinstance(routes_raw, list) or not routes_raw:
-            raise ValueError("routes 必须为非空数组")
+            raise ValueError("routes must be a non-empty array")
 
         routes: list[ProviderRouteRule] = []
         seen_route_ids: set[str] = set()
@@ -219,7 +219,7 @@ class ProviderRoutingConfig:
             obj = _as_mapping(item, label=f"routes[{index}]")
             route_id = _validate_id(_as_str(obj.get("id"), label="routes[].id"), label="routes[].id")
             if route_id in seen_route_ids:
-                raise ValueError(f"route.id 重复: {route_id}")
+                raise ValueError(f"route.id duplicated: {route_id}")
             seen_route_ids.add(route_id)
             model = _as_str(obj.get("model"), label="routes[].model")
             credential_id = _validate_id(
@@ -241,10 +241,10 @@ class ProviderRoutingConfig:
         credentials_by_id = {cred.id: cred for cred in credentials}
         for route in routes:
             if route.credential_id not in credentials_by_id:
-                raise ValueError(f"route.credential_id 不存在: {route.credential_id}")
+                raise ValueError(f"route.credential_id not found: {route.credential_id}")
 
         if default_route_id not in seen_route_ids:
-            raise ValueError(f"default_route_id 不存在: {default_route_id}")
+            raise ValueError(f"default_route_id not found: {default_route_id}")
 
         return cls(
             default_route_id=default_route_id,
@@ -315,7 +315,7 @@ class ProviderRouter:
             return ProviderRouteDenied(
                 error_class=POLICY_DENIED_CODE,
                 code="policy.invalid_route_id",
-                message="route_id 必须为字符串",
+                message="route_id must be a string",
             )
 
         if isinstance(requested_route_id, str) and requested_route_id.strip():
@@ -326,7 +326,7 @@ class ProviderRouter:
                 return ProviderRouteDenied(
                     error_class=POLICY_DENIED_CODE,
                     code="policy.route_not_found",
-                    message="路由不存在",
+                    message="route not found",
                     details={"route_id": route_id},
                 )
         else:
@@ -338,7 +338,7 @@ class ProviderRouter:
             return ProviderRouteDenied(
                 error_class=POLICY_DENIED_CODE,
                 code="policy.byok_disabled",
-                message="该组织未启用 BYOK",
+                message="BYOK not enabled for this organization",
                 details={"route_id": route.id, "credential_id": credential.id},
             )
 

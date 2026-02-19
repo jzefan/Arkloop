@@ -21,7 +21,7 @@ type UserNotFoundError struct {
 }
 
 func (e UserNotFoundError) Error() string {
-	return "用户不存在"
+	return "user not found"
 }
 
 type IssuedAccessToken struct {
@@ -43,16 +43,16 @@ func NewService(
 	tokenService *JwtAccessTokenService,
 ) (*Service, error) {
 	if userRepo == nil {
-		return nil, errors.New("userRepo 不能为空")
+		return nil, errors.New("userRepo must not be nil")
 	}
 	if credentialRepo == nil {
-		return nil, errors.New("credentialRepo 不能为空")
+		return nil, errors.New("credentialRepo must not be nil")
 	}
 	if passwordHasher == nil {
-		return nil, errors.New("passwordHasher 不能为空")
+		return nil, errors.New("passwordHasher must not be nil")
 	}
 	if tokenService == nil {
-		return nil, errors.New("tokenService 不能为空")
+		return nil, errors.New("tokenService must not be nil")
 	}
 	return &Service{
 		userRepo:       userRepo,
@@ -114,14 +114,14 @@ func (s *Service) AuthenticateUser(ctx context.Context, token string) (*data.Use
 	}
 
 	if verified.IssuedAt.Before(user.TokensInvalidBefore) {
-		return nil, TokenInvalidError{message: "token 已失效"}
+		return nil, TokenInvalidError{message: "token revoked"}
 	}
 	return user, nil
 }
 
 func (s *Service) Logout(ctx context.Context, userID uuid.UUID, now time.Time) error {
 	if userID == uuid.Nil {
-		return errors.New("user_id 不能为空")
+		return errors.New("user_id must not be nil")
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()

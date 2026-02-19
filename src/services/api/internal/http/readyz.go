@@ -23,12 +23,12 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 		if schemaRepo == nil {
 			if logger != nil {
 				logger.Error(
-					"readyz 失败",
+					"readyz failed",
 					observability.LogFields{TraceID: &traceID},
-					map[string]any{"reason": "schemaRepo 为空"},
+					map[string]any{"reason": "schemaRepo is nil"},
 				)
 			}
-			WriteError(w, nethttp.StatusServiceUnavailable, "not_ready", "服务未就绪", traceID, map[string]any{"dependency": "database"})
+			WriteError(w, nethttp.StatusServiceUnavailable, "not_ready", "service not ready", traceID, map[string]any{"dependency": "database"})
 			return
 		}
 
@@ -39,7 +39,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 		if err != nil {
 			if logger != nil {
 				logger.Error(
-					"readyz 失败",
+					"readyz failed",
 					observability.LogFields{TraceID: &traceID},
 					map[string]any{"dependency": "database", "error": err.Error()},
 				)
@@ -48,7 +48,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 				w,
 				nethttp.StatusServiceUnavailable,
 				"not_ready",
-				"服务未就绪",
+				"service not ready",
 				traceID,
 				map[string]any{"dependency": "database"},
 			)
@@ -60,7 +60,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 			"alembic_revision": revision,
 		})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 

@@ -29,7 +29,7 @@ func WriteError(w nethttp.ResponseWriter, statusCode int, code string, message s
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		payload = []byte(fmt.Sprintf(`{"code":"internal_error","message":"marshal 失败","trace_id":"%s"}`, traceID))
+		payload = []byte(fmt.Sprintf(`{"code":"internal_error","message":"marshal failed","trace_id":"%s"}`, traceID))
 		statusCode = nethttp.StatusInternalServerError
 	}
 

@@ -18,7 +18,7 @@ func (r *Registry) Register(spec AgentToolSpec) error {
 		return err
 	}
 	if _, exists := r.specByName[spec.Name]; exists {
-		return fmt.Errorf("Tool 已注册：%s", spec.Name)
+		return fmt.Errorf("tool already registered: %s", spec.Name)
 	}
 	r.specByName[spec.Name] = spec
 	return nil

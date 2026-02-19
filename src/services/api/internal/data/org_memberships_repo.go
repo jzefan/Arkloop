@@ -24,7 +24,7 @@ type OrgMembershipRepository struct {
 
 func NewOrgMembershipRepository(db Querier) (*OrgMembershipRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &OrgMembershipRepository{db: db}, nil
 }
