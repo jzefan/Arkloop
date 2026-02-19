@@ -23,7 +23,7 @@ class IssuedAccessToken:
 
 class UserNotFoundError(LookupError):
     def __init__(self, *, user_id: uuid.UUID) -> None:
-        super().__init__("用户不存在")
+        super().__init__("user not found")
         self.user_id = user_id
 
 
@@ -68,7 +68,7 @@ class AuthService:
         verified = self.verify_access_token(token=token)
         user = await self.get_user(user_id=verified.user_id)
         if verified.issued_at < user.tokens_invalid_before:
-            raise TokenInvalidError("token 已失效")
+            raise TokenInvalidError("token has been invalidated")
         return user
 
     async def logout(self, *, user_id: uuid.UUID, now: datetime | None = None) -> None:

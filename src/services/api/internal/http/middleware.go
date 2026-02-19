@@ -32,7 +32,7 @@ func (r *statusRecorder) Write(payload []byte) (int, error) {
 	return r.ResponseWriter.Write(payload)
 }
 
-// Flush 转发给底层 ResponseWriter，SSE/流式输出需要此能力。
+// Flush forwards to the underlying ResponseWriter; required for SSE/streaming.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(nethttp.Flusher); ok {
 		f.Flush()
@@ -42,7 +42,7 @@ func (r *statusRecorder) Flush() {
 func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, trustIncomingTraceID bool) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", "", nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", "", nil)
 		})
 	}
 
@@ -85,7 +85,7 @@ func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, tru
 func RecoverMiddleware(next nethttp.Handler, logger *observability.JSONLogger) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", "", nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", "", nil)
 		})
 	}
 
@@ -108,7 +108,7 @@ func RecoverMiddleware(next nethttp.Handler, logger *observability.JSONLogger) n
 					)
 				}
 
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			}
 		}()
 

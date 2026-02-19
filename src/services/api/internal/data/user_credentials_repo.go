@@ -24,7 +24,7 @@ type UserCredentialRepository struct {
 
 func NewUserCredentialRepository(db Querier) (*UserCredentialRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &UserCredentialRepository{db: db}, nil
 }
@@ -40,10 +40,10 @@ func (r *UserCredentialRepository) Create(
 	}
 
 	if login == "" {
-		return UserCredential{}, fmt.Errorf("login 不能为空")
+		return UserCredential{}, fmt.Errorf("login must not be empty")
 	}
 	if passwordHash == "" {
-		return UserCredential{}, fmt.Errorf("password_hash 不能为空")
+		return UserCredential{}, fmt.Errorf("password_hash must not be empty")
 	}
 
 	var credential UserCredential

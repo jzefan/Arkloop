@@ -15,7 +15,7 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 
 	cleaned := strings.TrimSpace(dsn)
 	if cleaned == "" {
-		return nil, fmt.Errorf("database dsn 不能为空")
+		return nil, fmt.Errorf("database dsn must not be empty")
 	}
 
 	pool, err := pgxpool.New(ctx, NormalizePostgresDSN(cleaned))

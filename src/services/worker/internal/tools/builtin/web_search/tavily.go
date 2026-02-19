@@ -25,13 +25,13 @@ func NewTavilyProvider(apiKey string) *TavilyProvider {
 
 func (p *TavilyProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
 	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("query 不能为空")
+		return nil, fmt.Errorf("query must not be empty")
 	}
 	if maxResults <= 0 {
-		return nil, fmt.Errorf("maxResults 必须为正整数")
+		return nil, fmt.Errorf("maxResults must be a positive integer")
 	}
 	if p.apiKey == "" {
-		return nil, fmt.Errorf("缺少 Tavily api_key")
+		return nil, fmt.Errorf("missing Tavily api_key")
 	}
 
 	payload := map[string]any{
@@ -67,11 +67,11 @@ func (p *TavilyProvider) Search(ctx context.Context, query string, maxResults in
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("tavily response 类型错误")
+		return nil, fmt.Errorf("tavily response type error")
 	}
 	rawResults, ok := root["results"].([]any)
 	if !ok {
-		return nil, fmt.Errorf("tavily response 缺少 results")
+		return nil, fmt.Errorf("tavily response missing results")
 	}
 
 	out := make([]Result, 0, maxResults)

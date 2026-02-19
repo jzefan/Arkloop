@@ -50,7 +50,7 @@ class LlmGatewayError:
     def to_json(self) -> JsonObject:
         payload: JsonObject = {"error_class": self.error_class, "message": self.message}
         if self.details:
-            payload["details"] = dict(self.details)  # details 需要上游做脱敏
+            payload["details"] = dict(self.details)  # details need upstream sanitization
         return payload
 
 
@@ -274,7 +274,7 @@ LlmGatewayStreamEvent = (
 def _internal_stream_ended_error() -> LlmGatewayError:
     return LlmGatewayError(
         error_class=ERROR_CLASS_INTERNAL_STREAM_ENDED,
-        message="上游流在未结束状态时提前结束",
+        message="upstream stream ended prematurely before completion",
     )
 
 
@@ -333,7 +333,7 @@ async def run_events_from_llm_stream(
                 )
                 return
 
-            raise TypeError(f"未知的 LLM Gateway 事件类型: {type(item)!r}")
+            raise TypeError(f"unknown LLM Gateway event type: {type(item)!r}")
     finally:
         if close is not None:
             try:

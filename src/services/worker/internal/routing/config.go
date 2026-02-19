@@ -113,11 +113,11 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 
 	var parsed any
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return ProviderRoutingConfig{}, fmt.Errorf("%s 不是合法 JSON", providerRoutingEnv)
+		return ProviderRoutingConfig{}, fmt.Errorf("%s is not valid JSON", providerRoutingEnv)
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return ProviderRoutingConfig{}, fmt.Errorf("%s 必须为 JSON 对象", providerRoutingEnv)
+		return ProviderRoutingConfig{}, fmt.Errorf("%s must be a JSON object", providerRoutingEnv)
 	}
 
 	defaultRouteID, err := validateID(requiredString(root, "default_route_id"), "default_route_id")
@@ -127,7 +127,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 
 	credentialsRaw, ok := root["credentials"].([]any)
 	if !ok || len(credentialsRaw) == 0 {
-		return ProviderRoutingConfig{}, fmt.Errorf("credentials 必须为非空数组")
+		return ProviderRoutingConfig{}, fmt.Errorf("credentials must be a non-empty array")
 	}
 
 	credentials := make([]ProviderCredential, 0, len(credentialsRaw))
@@ -135,7 +135,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 	for idx, item := range credentialsRaw {
 		obj, ok := item.(map[string]any)
 		if !ok {
-			return ProviderRoutingConfig{}, fmt.Errorf("credentials[%d] 必须为 JSON 对象", idx)
+			return ProviderRoutingConfig{}, fmt.Errorf("credentials[%d] must be a JSON object", idx)
 		}
 
 		credID, err := validateID(requiredString(obj, "id"), "credential.id")
@@ -143,7 +143,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			return ProviderRoutingConfig{}, err
 		}
 		if _, exists := seenCredIDs[credID]; exists {
-			return ProviderRoutingConfig{}, fmt.Errorf("credential.id 重复: %s", credID)
+			return ProviderRoutingConfig{}, fmt.Errorf("credential.id duplicate: %s", credID)
 		}
 		seenCredIDs[credID] = struct{}{}
 
@@ -160,14 +160,14 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 		if rawEnv, ok := obj["api_key_env"]; ok && rawEnv != nil {
 			value, ok := rawEnv.(string)
 			if !ok {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env 必须为字符串")
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env must be a string")
 			}
 			cleaned := strings.TrimSpace(value)
 			if cleaned == "" {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env 不能为空")
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env must not be empty")
 			}
 			if !envNameRegex.MatchString(cleaned) {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env 必须为合法环境变量名: %s", cleaned)
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.api_key_env must be a valid env var name: %s", cleaned)
 			}
 			apiKeyEnv = &cleaned
 		}
@@ -176,11 +176,11 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 		if rawBase, ok := obj["base_url"]; ok && rawBase != nil {
 			value, ok := rawBase.(string)
 			if !ok {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.base_url 必须为字符串")
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.base_url must be a string")
 			}
 			cleaned := strings.TrimSpace(value)
 			if cleaned == "" {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.base_url 不能为空")
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.base_url must not be empty")
 			}
 			trimmed := strings.TrimRight(cleaned, "/")
 			baseURL = &trimmed
@@ -190,14 +190,14 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 		if rawMode, ok := obj["openai_api_mode"]; ok && rawMode != nil {
 			value, ok := rawMode.(string)
 			if !ok {
-				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode 必须为字符串")
+				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode must be a string")
 			}
 			cleaned := strings.TrimSpace(value)
 			if cleaned == "" {
-				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode 不能为空")
+				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode must not be empty")
 			}
 			if cleaned != "auto" && cleaned != "responses" && cleaned != "chat_completions" {
-				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode 必须为 auto/responses/chat_completions")
+				return ProviderRoutingConfig{}, fmt.Errorf("openai_api_mode must be auto/responses/chat_completions")
 			}
 			openaiMode = &cleaned
 		}
@@ -206,23 +206,23 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 		if rawAdvanced, ok := obj["advanced_json"]; ok && rawAdvanced != nil {
 			mapped, ok := rawAdvanced.(map[string]any)
 			if !ok {
-				return ProviderRoutingConfig{}, fmt.Errorf("credential.advanced_json 必须为 JSON 对象")
+				return ProviderRoutingConfig{}, fmt.Errorf("credential.advanced_json must be a JSON object")
 			}
 			advancedJSON = mapped
 		}
 
 		if kind == ProviderKindOpenAI {
 			if openaiMode == nil {
-				return ProviderRoutingConfig{}, fmt.Errorf("OpenAI credential 必须指定 openai_api_mode")
+				return ProviderRoutingConfig{}, fmt.Errorf("OpenAI credential must specify openai_api_mode")
 			}
 		} else {
 			if openaiMode != nil {
-				return ProviderRoutingConfig{}, fmt.Errorf("仅 OpenAI credential 允许设置 openai_api_mode")
+				return ProviderRoutingConfig{}, fmt.Errorf("only OpenAI credential may set openai_api_mode")
 			}
 		}
 
 		if kind != ProviderKindStub && apiKeyEnv == nil {
-			return ProviderRoutingConfig{}, fmt.Errorf("非 stub credential 必须提供 api_key_env（仅保存 env 名，不保存明文）")
+			return ProviderRoutingConfig{}, fmt.Errorf("non-stub credential must provide api_key_env (stores env name only, not plaintext)")
 		}
 
 		credentials = append(credentials, ProviderCredential{
@@ -238,7 +238,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 
 	routesRaw, ok := root["routes"].([]any)
 	if !ok || len(routesRaw) == 0 {
-		return ProviderRoutingConfig{}, fmt.Errorf("routes 必须为非空数组")
+		return ProviderRoutingConfig{}, fmt.Errorf("routes must be a non-empty array")
 	}
 
 	routes := make([]ProviderRouteRule, 0, len(routesRaw))
@@ -246,7 +246,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 	for idx, item := range routesRaw {
 		obj, ok := item.(map[string]any)
 		if !ok {
-			return ProviderRoutingConfig{}, fmt.Errorf("routes[%d] 必须为 JSON 对象", idx)
+			return ProviderRoutingConfig{}, fmt.Errorf("routes[%d] must be a JSON object", idx)
 		}
 
 		routeID, err := validateID(requiredString(obj, "id"), "route.id")
@@ -254,13 +254,13 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			return ProviderRoutingConfig{}, err
 		}
 		if _, exists := seenRouteIDs[routeID]; exists {
-			return ProviderRoutingConfig{}, fmt.Errorf("route.id 重复: %s", routeID)
+			return ProviderRoutingConfig{}, fmt.Errorf("route.id duplicate: %s", routeID)
 		}
 		seenRouteIDs[routeID] = struct{}{}
 
 		model := strings.TrimSpace(requiredString(obj, "model"))
 		if model == "" {
-			return ProviderRoutingConfig{}, fmt.Errorf("routes[].model 不能为空")
+			return ProviderRoutingConfig{}, fmt.Errorf("routes[].model must not be empty")
 		}
 		credID, err := validateID(requiredString(obj, "credential_id"), "route.credential_id")
 		if err != nil {
@@ -271,7 +271,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 		if rawWhen, ok := obj["when"]; ok && rawWhen != nil {
 			mapped, ok := rawWhen.(map[string]any)
 			if !ok {
-				return ProviderRoutingConfig{}, fmt.Errorf("route.when 必须为 JSON 对象")
+				return ProviderRoutingConfig{}, fmt.Errorf("route.when must be a JSON object")
 			}
 			when = mapped
 		}
@@ -291,11 +291,11 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 
 	for _, route := range routes {
 		if _, exists := credentialsByID[route.CredentialID]; !exists {
-			return ProviderRoutingConfig{}, fmt.Errorf("route.credential_id 不存在: %s", route.CredentialID)
+			return ProviderRoutingConfig{}, fmt.Errorf("route.credential_id not found: %s", route.CredentialID)
 		}
 	}
 	if _, exists := seenRouteIDs[defaultRouteID]; !exists {
-		return ProviderRoutingConfig{}, fmt.Errorf("default_route_id 不存在: %s", defaultRouteID)
+		return ProviderRoutingConfig{}, fmt.Errorf("default_route_id not found: %s", defaultRouteID)
 	}
 
 	return ProviderRoutingConfig{
@@ -338,10 +338,10 @@ func requiredString(values map[string]any, key string) string {
 func validateID(value string, label string) (string, error) {
 	cleaned := strings.TrimSpace(value)
 	if cleaned == "" {
-		return "", fmt.Errorf("%s 不能为空", label)
+		return "", fmt.Errorf("%s must not be empty", label)
 	}
 	if !idRegex.MatchString(cleaned) {
-		return "", fmt.Errorf("%s 不合法: %s", label, cleaned)
+		return "", fmt.Errorf("%s invalid: %s", label, cleaned)
 	}
 	return cleaned, nil
 }
@@ -356,7 +356,7 @@ func parseProviderKind(value string) (ProviderKind, error) {
 	case "anthropic":
 		return ProviderKindAnthropic, nil
 	default:
-		return "", fmt.Errorf("必须为 stub/openai/anthropic")
+		return "", fmt.Errorf("must be stub/openai/anthropic")
 	}
 }
 
@@ -368,7 +368,7 @@ func parseScope(value string) (CredentialScope, error) {
 	case "org":
 		return CredentialScopeOrg, nil
 	default:
-		return "", fmt.Errorf("必须为 platform/org")
+		return "", fmt.Errorf("must be platform/org")
 	}
 }
 

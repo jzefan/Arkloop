@@ -1,1 +1,1 @@
-"""服务层入口包。"""
+"""Service layer entry package."""

@@ -29,17 +29,17 @@ func authenticateActor(
 	}
 
 	if membershipRepo == nil {
-		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return nil, false
 	}
 
 	membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if membership == nil {
-		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "用户未加入任何组织", traceID, nil)
+		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
 		return nil, false
 	}
 

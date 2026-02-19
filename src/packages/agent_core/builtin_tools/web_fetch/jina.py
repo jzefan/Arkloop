@@ -23,7 +23,7 @@ class JinaWebFetchProvider:
     ) -> None:
         cleaned = api_key.strip()
         if not cleaned:
-            raise ValueError("Jina api_key 不能为空")
+            raise ValueError("Jina api_key must not be empty")
         self._api_key = cleaned
         self._base_url = base_url.rstrip("/")
         self._client = client
@@ -52,7 +52,7 @@ class JinaWebFetchProvider:
         if resp.status_code < 200 or resp.status_code >= 300:
             raise JinaWebFetchHttpError(
                 status_code=int(resp.status_code),
-                message=f"Jina Reader 返回 {resp.status_code}",
+                message=f"Jina Reader returned {resp.status_code}",
             )
 
         content = (resp.text or "").strip()

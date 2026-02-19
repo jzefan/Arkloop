@@ -73,7 +73,7 @@ def _parse_non_negative_float(value: str) -> float:
     cleaned = value.strip()
     parsed = float(cleaned)
     if parsed < 0:
-        raise ValueError("必须为非负数")
+        raise ValueError("must be a non-negative number")
     return parsed
 
 
@@ -83,13 +83,13 @@ def _parse_bool(value: str) -> bool:
         return True
     if cleaned in _FALSY:
         return False
-    raise ValueError("必须为布尔值（0/1、true/false）")
+    raise ValueError("must be a boolean (0/1, true/false)")
 
 
 def _normalize_base_url(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError("base_url 不能为空")
+        raise ValueError("base_url must not be empty")
     return cleaned.rstrip("/")
 
 
@@ -168,7 +168,7 @@ def _parse_json_object(value: str) -> Mapping[str, Any]:
         return {}
     parsed = json.loads(cleaned)
     if not isinstance(parsed, Mapping):
-        raise ValueError("tool_use.input 必须是 JSON object")
+        raise ValueError("tool_use.input must be a JSON object")
     return dict(parsed)
 
 
@@ -215,7 +215,7 @@ def _validated_advanced_json(raw: Mapping[str, Any] | None) -> tuple[dict[str, s
     unknown = set(raw.keys()) - _ALLOWED_ADVANCED_KEYS
     if unknown:
         joined = ", ".join(sorted(str(key) for key in unknown))
-        raise ValueError(f"高级 JSON 配置包含未允许的键: {joined}")
+        raise ValueError(f"advanced JSON config contains disallowed keys: {joined}")
 
     extra_headers: dict[str, str] = {}
     extra_query: dict[str, str] = {}
@@ -224,38 +224,38 @@ def _validated_advanced_json(raw: Mapping[str, Any] | None) -> tuple[dict[str, s
     raw_headers = raw.get("extra_headers")
     if raw_headers is not None:
         if not isinstance(raw_headers, Mapping):
-            raise ValueError("extra_headers 必须为 JSON 对象")
+            raise ValueError("extra_headers must be a JSON object")
         if len(raw_headers) > _MAX_ADVANCED_FIELDS:
-            raise ValueError("extra_headers 字段数过多")
+            raise ValueError("extra_headers has too many fields")
         for key, value in raw_headers.items():
             if not isinstance(key, str) or not key.strip():
-                raise ValueError("extra_headers 的键必须为非空字符串")
+                raise ValueError("extra_headers keys must be non-empty strings")
             if not _ADVANCED_KEY_RE.match(key):
-                raise ValueError(f"extra_headers 键不合法: {key}")
+                raise ValueError(f"extra_headers key invalid: {key}")
             if _looks_sensitive_key(key):
-                raise ValueError(f"extra_headers 不允许包含敏感键: {key}")
+                raise ValueError(f"extra_headers must not contain sensitive key: {key}")
             if not isinstance(value, str):
-                raise ValueError(f"extra_headers[{key}] 必须为字符串")
+                raise ValueError(f"extra_headers[{key}] must be a string")
             cleaned_value = value.strip()
             if not cleaned_value:
-                raise ValueError(f"extra_headers[{key}] 不能为空")
+                raise ValueError(f"extra_headers[{key}] must not be empty")
             if len(cleaned_value) > _MAX_ADVANCED_VALUE_LENGTH:
-                raise ValueError(f"extra_headers[{key}] 过长")
+                raise ValueError(f"extra_headers[{key}] too long")
             extra_headers[key] = cleaned_value
 
     raw_query = raw.get("extra_query")
     if raw_query is not None:
         if not isinstance(raw_query, Mapping):
-            raise ValueError("extra_query 必须为 JSON 对象")
+            raise ValueError("extra_query must be a JSON object")
         if len(raw_query) > _MAX_ADVANCED_FIELDS:
-            raise ValueError("extra_query 字段数过多")
+            raise ValueError("extra_query has too many fields")
         for key, value in raw_query.items():
             if not isinstance(key, str) or not key.strip():
-                raise ValueError("extra_query 的键必须为非空字符串")
+                raise ValueError("extra_query keys must be non-empty strings")
             if not _ADVANCED_KEY_RE.match(key):
-                raise ValueError(f"extra_query 键不合法: {key}")
+                raise ValueError(f"extra_query key invalid: {key}")
             if _looks_sensitive_key(key):
-                raise ValueError(f"extra_query 不允许包含敏感键: {key}")
+                raise ValueError(f"extra_query must not contain sensitive key: {key}")
 
             if isinstance(value, bool):
                 rendered = "true" if value else "false"
@@ -264,24 +264,24 @@ def _validated_advanced_json(raw: Mapping[str, Any] | None) -> tuple[dict[str, s
             elif isinstance(value, str):
                 rendered = value.strip()
             else:
-                raise ValueError(f"extra_query[{key}] 必须为字符串/数字/布尔值")
+                raise ValueError(f"extra_query[{key}] must be a string/number/boolean")
 
             if not rendered:
-                raise ValueError(f"extra_query[{key}] 不能为空")
+                raise ValueError(f"extra_query[{key}] must not be empty")
             if len(rendered) > _MAX_ADVANCED_VALUE_LENGTH:
-                raise ValueError(f"extra_query[{key}] 过长")
+                raise ValueError(f"extra_query[{key}] too long")
             extra_query[key] = rendered
 
     raw_timeout_ms = raw.get("timeout_ms")
     if raw_timeout_ms is not None:
         if isinstance(raw_timeout_ms, bool):
-            raise ValueError("timeout_ms 必须为整数")
+            raise ValueError("timeout_ms must be an integer")
         try:
             parsed_timeout_ms = int(raw_timeout_ms)
         except (TypeError, ValueError) as exc:
-            raise ValueError("timeout_ms 必须为整数") from exc
+            raise ValueError("timeout_ms must be an integer") from exc
         if parsed_timeout_ms <= 0:
-            raise ValueError("timeout_ms 必须为正整数")
+            raise ValueError("timeout_ms must be a positive integer")
         timeout_seconds_override = parsed_timeout_ms / 1000.0
 
     return extra_headers, extra_query, timeout_seconds_override
@@ -364,10 +364,10 @@ def _to_anthropic_messages(request: LlmGatewayRequest) -> tuple[str | None, list
 def _tool_result_block_from_tool_message(text: str) -> dict[str, Any]:
     parsed = _try_parse_json(text)
     if not isinstance(parsed, Mapping):
-        raise ValueError("tool message 不是合法 JSON")
+        raise ValueError("tool message is not valid JSON")
     tool_call_id = parsed.get("tool_call_id")
     if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-        raise ValueError("tool message 缺少 tool_call_id")
+        raise ValueError("tool message missing tool_call_id")
 
     result = parsed.get("result")
     error = parsed.get("error")
@@ -450,7 +450,7 @@ class AnthropicGatewayConfig:
         api_key = (os.getenv(_ANTHROPIC_API_KEY_ENV) or "").strip()
         if not api_key:
             if required:
-                raise ValueError(f"缺少环境变量 {_ANTHROPIC_API_KEY_ENV}")
+                raise ValueError(f"missing environment variable {_ANTHROPIC_API_KEY_ENV}")
             return None
 
         base_url = _DEFAULT_ANTHROPIC_BASE_URL
@@ -463,7 +463,7 @@ class AnthropicGatewayConfig:
         if raw_version:
             cleaned = raw_version.strip()
             if not cleaned:
-                raise ValueError(f"环境变量 {_ANTHROPIC_VERSION_ENV} 不能为空")
+                raise ValueError(f"environment variable {_ANTHROPIC_VERSION_ENV} must not be empty")
             anthropic_version = cleaned
 
         total_timeout_seconds = _DEFAULT_ANTHROPIC_TOTAL_TIMEOUT_SECONDS
@@ -476,9 +476,9 @@ class AnthropicGatewayConfig:
         if raw_advanced_json:
             parsed = _try_parse_json(raw_advanced_json)
             if parsed is None:
-                raise ValueError(f"环境变量 {_ANTHROPIC_ADVANCED_JSON_ENV} 不是合法 JSON")
+                raise ValueError(f"environment variable {_ANTHROPIC_ADVANCED_JSON_ENV} is not valid JSON")
             if not isinstance(parsed, Mapping):
-                raise ValueError(f"环境变量 {_ANTHROPIC_ADVANCED_JSON_ENV} 必须为 JSON 对象")
+                raise ValueError(f"environment variable {_ANTHROPIC_ADVANCED_JSON_ENV} must be a JSON object")
             advanced_json = parsed
 
         emit_llm_debug_events = False
@@ -506,7 +506,7 @@ class AnthropicLlmGateway(LlmGateway):
         reserved_headers = {"x-api-key", "anthropic-version", "accept", "content-type"}
         for key in extra_headers:
             if key.casefold() in reserved_headers:
-                raise ValueError(f"extra_headers 不允许覆盖内置头: {key}")
+                raise ValueError(f"extra_headers must not override built-in header: {key}")
         self._extra_headers = extra_headers
         self._extra_query = extra_query
         self._timeout_seconds_override = timeout_override
@@ -518,14 +518,14 @@ class AnthropicLlmGateway(LlmGateway):
         except TimeoutError:
             error = LlmGatewayError(
                 error_class=ERROR_CLASS_PROVIDER_RETRYABLE,
-                message="Anthropic 请求超时",
+                message="Anthropic request timed out",
             )
             yield LlmStreamRunFailed(error=error)
         except Exception:
-            self._logger.exception("Anthropic 流式请求异常")
+            self._logger.exception("Anthropic streaming request failed")
             error = LlmGatewayError(
                 error_class=ERROR_CLASS_INTERNAL_ERROR,
-                message="Anthropic 流式请求异常",
+                message="Anthropic streaming request failed",
             )
             yield LlmStreamRunFailed(error=error)
 
@@ -554,7 +554,7 @@ class AnthropicLlmGateway(LlmGateway):
             else _DEFAULT_MAX_OUTPUT_TOKENS
         )
         if max_tokens <= 0:
-            raise ValueError("max_output_tokens 必须为正整数")
+            raise ValueError("max_output_tokens must be a positive integer")
 
         payload: dict[str, Any] = {
             "model": request.model,
@@ -655,7 +655,7 @@ class AnthropicLlmGateway(LlmGateway):
                     error_class = _provider_error_class_from_status(int(resp.status_code))
                     message = _anthropic_error_message(
                         error_json,
-                        fallback=f"Anthropic 返回 {resp.status_code}",
+                        fallback=f"Anthropic returned {resp.status_code}",
                     )
                     details = _anthropic_error_details(error_json, status_code=int(resp.status_code))
                     yield LlmStreamRunFailed(
@@ -689,7 +689,7 @@ class AnthropicLlmGateway(LlmGateway):
                             yield LlmStreamRunFailed(
                                 error=LlmGatewayError(
                                     error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                                    message="Anthropic tool_use 输入解析失败",
+                                    message="Anthropic tool_use input parse failed",
                                     details={"reason": str(exc)},
                                 )
                             )
@@ -772,7 +772,7 @@ class AnthropicLlmGateway(LlmGateway):
                             yield LlmStreamRunFailed(
                                 error=LlmGatewayError(
                                     error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                                    message="Anthropic tool_use 输入解析失败",
+                                    message="Anthropic tool_use input parse failed",
                                     details={"reason": str(exc)},
                                 )
                             )
@@ -806,7 +806,7 @@ class AnthropicLlmGateway(LlmGateway):
                             yield LlmStreamRunFailed(
                                 error=LlmGatewayError(
                                     error_class=ERROR_CLASS_PROVIDER_NON_RETRYABLE,
-                                    message="Anthropic tool_use 输入解析失败",
+                                    message="Anthropic tool_use input parse failed",
                                     details={"reason": str(exc)},
                                 )
                             )
@@ -816,7 +816,7 @@ class AnthropicLlmGateway(LlmGateway):
 
                     if typ == "error":
                         error = item.get("error")
-                        message = "Anthropic 返回错误"
+                        message = "Anthropic returned error"
                         details: dict[str, Any] = {}
                         if isinstance(error, Mapping):
                             msg = error.get("message")
@@ -839,7 +839,7 @@ class AnthropicLlmGateway(LlmGateway):
             if isinstance(exc, getattr(httpx, "NetworkError", ())):
                 error = LlmGatewayError(
                     error_class=ERROR_CLASS_PROVIDER_RETRYABLE,
-                    message="Anthropic 网络错误",
+                    message="Anthropic network error",
                 )
                 yield LlmStreamRunFailed(error=error)
                 return
@@ -850,7 +850,7 @@ def _import_httpx() -> Any:
     try:
         import httpx  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError("缺少 httpx 依赖，请安装 requirements-dev.txt 或补齐 requirements.txt") from exc
+        raise RuntimeError("httpx dependency missing, install requirements-dev.txt or update requirements.txt") from exc
     return httpx
 
 

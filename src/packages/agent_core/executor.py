@@ -75,7 +75,7 @@ class DispatchingToolExecutor(ToolExecutor):
 
     def bind(self, *, tool_name: str, executor: ToolExecutor) -> None:
         if self._registry.get(tool_name) is None:
-            raise ValueError(f"工具未注册：{tool_name}")
+            raise ValueError(f"tool not registered: {tool_name}")
         self._executor_by_tool_name[tool_name] = executor
 
     async def execute(
@@ -104,7 +104,7 @@ class DispatchingToolExecutor(ToolExecutor):
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=POLICY_DENIED_CODE,
-                    message="工具调用被策略拒绝",
+                    message="tool call denied by policy",
                     details={
                         "tool_name": tool_name,
                         "tool_call_id": decision.tool_call_id,
@@ -120,7 +120,7 @@ class DispatchingToolExecutor(ToolExecutor):
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_TOOL_NOT_REGISTERED,
-                    message="工具未绑定执行器",
+                    message="tool has no bound executor",
                     details={
                         "tool_name": tool_name,
                         "tool_call_id": decision.tool_call_id,
@@ -141,7 +141,7 @@ class DispatchingToolExecutor(ToolExecutor):
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     error_class=ERROR_CLASS_TOOL_EXECUTION_FAILED,
-                    message="工具执行失败",
+                    message="tool execution failed",
                     details={
                         "tool_name": tool_name,
                         "tool_call_id": decision.tool_call_id,

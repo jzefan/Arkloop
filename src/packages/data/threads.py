@@ -109,7 +109,7 @@ class Message:
 
 class ThreadNotFoundError(LookupError):
     def __init__(self, *, thread_id: uuid.UUID) -> None:
-        super().__init__("Thread 不存在")
+        super().__init__("thread not found")
         self.thread_id = thread_id
 
 
@@ -218,10 +218,10 @@ class SqlAlchemyThreadRepository(ThreadRepository):
         before_id: uuid.UUID | None = None,
     ) -> list[Thread]:
         if limit <= 0:
-            raise ValueError("limit 必须为正数")
+            raise ValueError("limit must be positive")
 
         if (before_created_at is None) != (before_id is None):
-            raise ValueError("before_created_at 与 before_id 需要同时提供")
+            raise ValueError("before_created_at and before_id must be provided together")
 
         stmt = (
             sa.select(
@@ -323,7 +323,7 @@ class SqlAlchemyMessageRepository(MessageRepository):
         limit: int = 200,
     ) -> list[Message]:
         if limit <= 0:
-            raise ValueError("limit 必须为正数")
+            raise ValueError("limit must be positive")
 
         stmt = (
             sa.select(

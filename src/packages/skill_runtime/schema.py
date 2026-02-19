@@ -29,7 +29,7 @@ class SkillRegistry:
 
     def register(self, definition: SkillDefinition) -> None:
         if definition.id in self._by_id:
-            raise ValueError(f"skill.id 重复: {definition.id}")
+            raise ValueError(f"skill.id duplicated: {definition.id}")
         self._by_id[definition.id] = definition
 
     def get(self, skill_id: str) -> SkillDefinition | None:

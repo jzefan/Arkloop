@@ -40,7 +40,7 @@ async def discover_mcp_tools(*, config: McpConfig, pool: McpStdioClientPool | No
             discovered = await _discover_server_tools(server)
         except Exception as exc:
             _LOGGER.warning(
-                "MCP server 工具发现失败，已跳过",
+                "MCP server tool discovery failed, skipped",
                 extra={"server_id": server.server_id, "reason": str(exc)},
             )
             continue
@@ -66,7 +66,7 @@ async def discover_mcp_tools(*, config: McpConfig, pool: McpStdioClientPool | No
             internal_name = _ensure_unique_tool_name(internal_name, used_names)
 
             tool_map[internal_name] = tool.name
-            description = tool.description or tool.title or f"MCP 工具：{tool.name}"
+            description = tool.description or tool.title or f"MCP tool: {tool.name}"
 
             agent_specs.append(
                 AgentToolSpec(
@@ -105,14 +105,14 @@ def load_mcp_tool_registration_from_env(*, pool: McpStdioClientPool | None = Non
         pass
     else:
         raise RuntimeError(
-            "检测到运行中的事件循环：禁止调用同步 MCP 工具发现。"
-            "请改用 load_mcp_tool_registration_from_env_async(...)"
+            "Running event loop detected: synchronous MCP tool discovery is not allowed. "
+            "Use load_mcp_tool_registration_from_env_async(...) instead."
         )
 
     try:
         cfg = McpConfig.from_env()
     except Exception as exc:
-        _LOGGER.warning("读取 MCP 配置失败，已禁用", extra={"reason": str(exc)})
+        _LOGGER.warning("Failed to read MCP config, disabled", extra={"reason": str(exc)})
         return empty
 
     if cfg is None or not cfg.servers:
@@ -121,7 +121,7 @@ def load_mcp_tool_registration_from_env(*, pool: McpStdioClientPool | None = Non
     try:
         return asyncio.run(discover_mcp_tools(config=cfg, pool=pool))
     except Exception as exc:
-        _LOGGER.warning("MCP 工具发现失败，已禁用", extra={"reason": str(exc)})
+        _LOGGER.warning("MCP tool discovery failed, disabled", extra={"reason": str(exc)})
         return empty
 
 
@@ -130,7 +130,7 @@ async def load_mcp_tool_registration_from_env_async(*, pool: McpStdioClientPool 
     try:
         cfg = McpConfig.from_env()
     except Exception as exc:
-        _LOGGER.warning("读取 MCP 配置失败，已禁用", extra={"reason": str(exc)})
+        _LOGGER.warning("Failed to read MCP config, disabled", extra={"reason": str(exc)})
         return empty
 
     if cfg is None or not cfg.servers:
@@ -139,7 +139,7 @@ async def load_mcp_tool_registration_from_env_async(*, pool: McpStdioClientPool 
     try:
         return await discover_mcp_tools(config=cfg, pool=pool)
     except Exception as exc:
-        _LOGGER.warning("MCP 工具发现失败，已禁用", extra={"reason": str(exc)})
+        _LOGGER.warning("MCP tool discovery failed, disabled", extra={"reason": str(exc)})
         return empty
 
 

@@ -26,10 +26,10 @@ func NewSearxngProvider(baseURL string) *SearxngProvider {
 
 func (p *SearxngProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
 	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("query 不能为空")
+		return nil, fmt.Errorf("query must not be empty")
 	}
 	if maxResults <= 0 {
-		return nil, fmt.Errorf("maxResults 必须为正整数")
+		return nil, fmt.Errorf("maxResults must be a positive integer")
 	}
 
 	parsed, err := url.Parse(p.baseURL + "/search")
@@ -62,12 +62,12 @@ func (p *SearxngProvider) Search(ctx context.Context, query string, maxResults i
 	}
 	root, ok := parsedJSON.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("searxng response 类型错误")
+		return nil, fmt.Errorf("searxng response type error")
 	}
 
 	rawResults, ok := root["results"].([]any)
 	if !ok {
-		return nil, fmt.Errorf("searxng response 缺少 results")
+		return nil, fmt.Errorf("searxng response missing results")
 	}
 
 	out := make([]Result, 0, maxResults)

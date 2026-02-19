@@ -213,14 +213,14 @@ func TestAnthropicGateway_Stream_DebugChunk_NotTruncated(t *testing.T) {
 	if len(chunks) == 0 {
 		t.Fatal("expected at least one debug chunk")
 	}
-	// body 远小于 maxAnthropicResponseBytes，不应标记为截断
+	// body is well under maxAnthropicResponseBytes, should not be marked as truncated
 	if chunks[0].Truncated {
 		t.Fatalf("expected truncated=false for small body, got true")
 	}
 }
 
 func TestAnthropicGateway_Stream_DebugChunk_Truncated(t *testing.T) {
-	// 构造一个超过 maxAnthropicResponseBytes 的响应体（不是合法 JSON，但足以触发截断路径）
+	// build a response body exceeding maxAnthropicResponseBytes (not valid JSON, but enough to trigger truncation path)
 	bigPayload := make([]byte, maxAnthropicResponseBytes+100)
 	for i := range bigPayload {
 		bigPayload[i] = 'x'
@@ -341,7 +341,7 @@ func TestAnthropicGateway_Stream_AdvancedJSON_Merged(t *testing.T) {
 func TestAnthropicGateway_Stream_AdvancedJSON_CannotEnableStream(t *testing.T) {
 	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
 		APIKey:       "test",
-		BaseURL:      "http://127.0.0.1:0", // 不需要真实连接
+		BaseURL:      "http://127.0.0.1:0", // no real connection needed
 		AdvancedJSON: map[string]any{"stream": true},
 	})
 
@@ -382,7 +382,7 @@ func TestAnthropicGateway_Stream_AdvancedJSON_CannotInjectToolsWhenRequestHasNon
 	err := gateway.Stream(context.Background(), Request{
 		Model:    "claude-test",
 		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
-		// Tools 为空，期望 advanced_json 不能注入
+		// Tools is empty, expect advanced_json cannot inject
 	}, func(ev StreamEvent) error {
 		events = append(events, ev)
 		return nil
@@ -403,7 +403,7 @@ func TestAnthropicGateway_Stream_AdvancedJSON_CannotInjectToolsWhenRequestHasNon
 }
 
 func TestAnthropicGateway_Stream_AdvancedJSON_DeniedKeyReturnsError(t *testing.T) {
-	// denylist 中的 key（model/max_tokens/stream/tools/system 等）都应立即报错
+	// denylist keys (model/max_tokens/stream/tools/system etc.) should all fail immediately
 	deniedKeys := []string{"model", "max_tokens", "system"}
 	for _, key := range deniedKeys {
 		key := key

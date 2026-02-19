@@ -134,7 +134,7 @@ func (RunEventsRepository) allocateSeq(ctx context.Context, tx pgx.Tx, runID uui
 	).Scan(&nextSeq)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, fmt.Errorf("run 不存在: %s", runID)
+			return 0, fmt.Errorf("run not found: %s", runID)
 		}
 		return 0, err
 	}

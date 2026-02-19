@@ -33,11 +33,11 @@ def _read_json_file(path: Path) -> str:
     try:
         content = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
-        raise click.ClickException(f"读取 routing 文件失败: {path}") from exc
+        raise click.ClickException(f"failed to read routing file: {path}") from exc
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise click.ClickException(f"routing 文件不是合法 JSON: {path}") from exc
+        raise click.ClickException(f"routing file is not valid JSON: {path}") from exc
     return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -66,7 +66,7 @@ def _resolve_dotenv_path(
         return None
     resolved = locator.resolve(profile)
     if resolved is None:
-        raise click.ClickException(f"未找到 profile: {profile}")
+        raise click.ClickException(f"profile not found: {profile}")
     return resolved.path
 
 
@@ -89,7 +89,7 @@ def _resolve_api_base_url(explicit: str | None) -> str:
     candidate = _clean_optional(explicit) or _clean_optional(os.getenv(_API_BASE_URL_ENV))
     candidate = candidate or _DEFAULT_API_BASE_URL
     if not candidate.strip():
-        raise click.ClickException("API Base URL 不能为空")
+        raise click.ClickException("API Base URL must not be empty")
     return candidate.rstrip("/")
 
 
@@ -117,9 +117,9 @@ def _build_context(
 
 def _need_login_password(ctx: CliContext) -> tuple[str, str]:
     if ctx.login is None or not ctx.login.strip():
-        raise click.ClickException("缺少登录名：请使用 --login 或设置 ARKLOOP_LOGIN")
+        raise click.ClickException("missing login: use --login or set ARKLOOP_LOGIN")
     if ctx.password is None or not ctx.password.strip():
-        raise click.ClickException("缺少密码：请使用 --password 或设置 ARKLOOP_PASSWORD")
+        raise click.ClickException("missing password: use --password or set ARKLOOP_PASSWORD")
     return ctx.login.strip(), ctx.password
 
 
@@ -172,7 +172,7 @@ async def _follow_events_with_reconnect(
 
             reconnect_attempts += 1
             if reconnect_attempts > max_reconnects:
-                raise ArkloopClientTransportError(message="SSE 连接断开且重连次数已用尽")
+                raise ArkloopClientTransportError(message="SSE connection lost and max reconnects exhausted")
 
             _json_line(
                 {
@@ -228,12 +228,12 @@ def profile_list() -> None:
 
 @profile_group.command("show")
 @click.argument("name", required=True)
-@click.option("--reveal-values", is_flag=True, help="显示明文值（默认只输出 key 列表）")
+@click.option("--reveal-values", is_flag=True, help="reveal plaintext values (default: key list only)")
 def profile_show(name: str, *, reveal_values: bool) -> None:
     locator = ProfileLocator()
     profile = locator.resolve(name)
     if profile is None:
-        raise click.ClickException(f"未找到 profile: {name}")
+        raise click.ClickException(f"profile not found: {name}")
 
     values = read_dotenv(profile.path)
     payload: dict[str, Any] = {
@@ -249,35 +249,35 @@ def profile_show(name: str, *, reveal_values: bool) -> None:
 
 
 @cli.command("chat")
-@click.option("--profile", default=None, help="使用指定 profile（例如 llm_test/dev/staging）")
+@click.option("--profile", default=None, help="use specified profile (e.g. llm_test/dev/staging)")
 @click.option(
     "--dotenv-file",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
     default=None,
-    help="指定 dotenv 文件路径（优先级高于 profile）",
+    help="dotenv file path (takes priority over profile)",
 )
 @click.option(
     "--routing-file",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
     default=None,
-    help="指定 provider routing JSON 文件路径（仅影响当前进程的环境变量）",
+    help="provider routing JSON file path (affects current process env only)",
 )
 @click.option(
     "--api-base-url",
     default=None,
     show_default=_DEFAULT_API_BASE_URL,
-    help="API Base URL（例如 http://127.0.0.1:8001）",
+    help="API Base URL (e.g. http://127.0.0.1:8001)",
 )
 @click.option(
-    "--token", default=None, help="复用已有 access token（也可在 env 里设置 ARKLOOP_ACCESS_TOKEN）"
+    "--token", default=None, help="reuse existing access token (or set ARKLOOP_ACCESS_TOKEN)"
 )
-@click.option("--login", default=None, help="登录名（当未提供 --token 时用于登录）")
-@click.option("--password", default=None, help="密码（当未提供 --token 时用于登录）")
-@click.option("--message", required=True, help="用户消息内容")
-@click.option("--thread-title", default=None, help="Thread 标题（可选）")
-@click.option("--route-id", default=None, help="可选：强制使用指定 route_id")
+@click.option("--login", default=None, help="login name (used when --token is not provided)")
+@click.option("--password", default=None, help="password (used when --token is not provided)")
+@click.option("--message", required=True, help="user message content")
+@click.option("--thread-title", default=None, help="thread title (optional)")
+@click.option("--route-id", default=None, help="optional: force specific route_id")
 @click.option(
-    "--max-reconnects", default=30, show_default=True, type=int, help="SSE 断线最大重连次数"
+    "--max-reconnects", default=30, show_default=True, type=int, help="max SSE reconnect attempts"
 )
 def chat_command(
     *,
@@ -400,40 +400,40 @@ def events_group() -> None:
 
 
 @events_group.command("follow")
-@click.option("--profile", default=None, help="使用指定 profile（例如 llm_test/dev/staging）")
+@click.option("--profile", default=None, help="use specified profile (e.g. llm_test/dev/staging)")
 @click.option(
     "--dotenv-file",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
     default=None,
-    help="指定 dotenv 文件路径（优先级高于 profile）",
+    help="dotenv file path (takes priority over profile)",
 )
 @click.option(
     "--routing-file",
     type=click.Path(path_type=Path, exists=True, dir_okay=False),
     default=None,
-    help="指定 provider routing JSON 文件路径（仅影响当前进程的环境变量）",
+    help="provider routing JSON file path (affects current process env only)",
 )
 @click.option(
     "--api-base-url",
     default=None,
     show_default=_DEFAULT_API_BASE_URL,
-    help="API Base URL（例如 http://127.0.0.1:8001）",
+    help="API Base URL (e.g. http://127.0.0.1:8001)",
 )
 @click.option(
-    "--token", default=None, help="复用已有 access token（也可在 env 里设置 ARKLOOP_ACCESS_TOKEN）"
+    "--token", default=None, help="reuse existing access token (or set ARKLOOP_ACCESS_TOKEN)"
 )
-@click.option("--login", default=None, help="登录名（当未提供 --token 时用于登录）")
-@click.option("--password", default=None, help="密码（当未提供 --token 时用于登录）")
+@click.option("--login", default=None, help="login name (used when --token is not provided)")
+@click.option("--password", default=None, help="password (used when --token is not provided)")
 @click.option("--run-id", required=True, help="Run ID")
-@click.option("--after-seq", default=0, show_default=True, type=int, help="从该 seq 之后开始续传")
+@click.option("--after-seq", default=0, show_default=True, type=int, help="resume from after this seq")
 @click.option(
-    "--follow/--no-follow", default=True, show_default=True, help="是否持续跟随（SSE follow）"
+    "--follow/--no-follow", default=True, show_default=True, help="keep following (SSE follow)"
 )
 @click.option(
-    "--until-terminal/--no-until-terminal", default=True, show_default=True, help="遇到终态事件退出"
+    "--until-terminal/--no-until-terminal", default=True, show_default=True, help="exit on terminal event"
 )
 @click.option(
-    "--max-reconnects", default=60, show_default=True, type=int, help="SSE 断线最大重连次数"
+    "--max-reconnects", default=60, show_default=True, type=int, help="max SSE reconnect attempts"
 )
 def events_follow_command(
     *,

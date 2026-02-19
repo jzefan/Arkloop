@@ -72,7 +72,7 @@ _LEASE_ATTEMPTS_REAP_LIMIT = 10
 class SqlAlchemyPgJobQueue(JobQueue):
     def __init__(self, session: AsyncSession, *, max_attempts: int = 25) -> None:
         if max_attempts <= 0:
-            raise ValueError("max_attempts 必须为正数")
+            raise ValueError("max_attempts must be positive")
         self._session = session
         self._max_attempts = max_attempts
 
@@ -90,8 +90,8 @@ class SqlAlchemyPgJobQueue(JobQueue):
         chosen_trace_id = normalize_trace_id(trace_id) or new_trace_id()
         chosen_job_type = (queue_job_type or "").strip() or RUN_EXECUTE_JOB_TYPE
         if not chosen_job_type:
-            raise ValueError("queue_job_type 不能为空")
-        # 约定：jobs.id 与 payload_json.job_id 必须一致，便于 worker 只看 payload 即可回放/审计。
+            raise ValueError("queue_job_type must not be empty")
+        # convention: jobs.id must match payload_json.job_id so workers can replay/audit from payload alone.
         payload_json: dict[str, Any] = {
             "v": JOB_PAYLOAD_VERSION_V1,
             "job_id": str(job_id),
@@ -123,7 +123,7 @@ class SqlAlchemyPgJobQueue(JobQueue):
         job_types: Sequence[str] | None = None,
     ) -> JobLease | None:
         if lease_seconds <= 0:
-            raise ValueError("lease_seconds 必须为正数")
+            raise ValueError("lease_seconds must be positive")
 
         chosen_job_types: tuple[str, ...] | None = None
         if job_types is not None:
@@ -149,7 +149,7 @@ class SqlAlchemyPgJobQueue(JobQueue):
 
     async def heartbeat(self, *, lease: JobLease, lease_seconds: int = 30) -> None:
         if lease_seconds <= 0:
-            raise ValueError("lease_seconds 必须为正数")
+            raise ValueError("lease_seconds must be positive")
 
         now = sa.func.now()
         lease_until = now + sa.func.make_interval(0, 0, 0, 0, 0, 0, lease_seconds)
@@ -190,7 +190,7 @@ class SqlAlchemyPgJobQueue(JobQueue):
         if chosen_delay is None:
             chosen_delay = default_retry_delay_seconds(attempts=lease.attempts)
         if chosen_delay < 0:
-            raise ValueError("delay_seconds 不能为负数")
+            raise ValueError("delay_seconds must not be negative")
 
         now = sa.func.now()
         retry_at = now + sa.func.make_interval(0, 0, 0, 0, 0, 0, chosen_delay)
@@ -293,7 +293,7 @@ class SqlAlchemyPgJobQueue(JobQueue):
         job_types: tuple[str, ...] | None = None,
     ) -> sa.CTE:
         if attempts_lt is not None and attempts_gte is not None:
-            raise ValueError("attempts_lt 与 attempts_gte 不能同时设置")
+            raise ValueError("attempts_lt and attempts_gte must not be set simultaneously")
 
         conditions: list[sa.ColumnElement[bool]] = [
             sa.or_(

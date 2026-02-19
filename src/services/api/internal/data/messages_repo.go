@@ -25,7 +25,7 @@ type ThreadNotFoundError struct {
 }
 
 func (e ThreadNotFoundError) Error() string {
-	return "Thread 不存在"
+	return "thread not found"
 }
 
 type MessageRepository struct {
@@ -34,7 +34,7 @@ type MessageRepository struct {
 
 func NewMessageRepository(db Querier) (*MessageRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &MessageRepository{db: db}, nil
 }
@@ -51,16 +51,16 @@ func (r *MessageRepository) Create(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return Message{}, fmt.Errorf("org_id 不能为空")
+		return Message{}, fmt.Errorf("org_id must not be empty")
 	}
 	if threadID == uuid.Nil {
-		return Message{}, fmt.Errorf("thread_id 不能为空")
+		return Message{}, fmt.Errorf("thread_id must not be empty")
 	}
 	if role == "" {
-		return Message{}, fmt.Errorf("role 不能为空")
+		return Message{}, fmt.Errorf("role must not be empty")
 	}
 	if content == "" {
-		return Message{}, fmt.Errorf("content 不能为空")
+		return Message{}, fmt.Errorf("content must not be empty")
 	}
 
 	var message Message
@@ -111,13 +111,13 @@ func (r *MessageRepository) ListByThread(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return nil, fmt.Errorf("org_id 不能为空")
+		return nil, fmt.Errorf("org_id must not be empty")
 	}
 	if threadID == uuid.Nil {
-		return nil, fmt.Errorf("thread_id 不能为空")
+		return nil, fmt.Errorf("thread_id must not be empty")
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("limit 必须为正数")
+		return nil, fmt.Errorf("limit must be positive")
 	}
 
 	rows, err := r.db.Query(

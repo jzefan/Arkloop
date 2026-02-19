@@ -43,7 +43,7 @@ class BasicWebFetchProvider:
             if resp.status_code < 200 or resp.status_code >= 300:
                 raise BasicWebFetchHttpError(
                     status_code=int(resp.status_code),
-                    message=f"web_fetch 返回 {resp.status_code}",
+                    message=f"web_fetch returned {resp.status_code}",
                 )
 
             content_type = (resp.headers.get("content-type") or "").casefold()

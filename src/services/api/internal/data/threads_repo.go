@@ -24,7 +24,7 @@ type ThreadRepository struct {
 
 func NewThreadRepository(db Querier) (*ThreadRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &ThreadRepository{db: db}, nil
 }
@@ -39,7 +39,7 @@ func (r *ThreadRepository) Create(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return Thread{}, fmt.Errorf("org_id 不能为空")
+		return Thread{}, fmt.Errorf("org_id must not be empty")
 	}
 
 	var thread Thread
@@ -93,16 +93,16 @@ func (r *ThreadRepository) ListByOwner(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return nil, fmt.Errorf("org_id 不能为空")
+		return nil, fmt.Errorf("org_id must not be empty")
 	}
 	if ownerUserID == uuid.Nil {
-		return nil, fmt.Errorf("owner_user_id 不能为空")
+		return nil, fmt.Errorf("owner_user_id must not be empty")
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("limit 必须为正数")
+		return nil, fmt.Errorf("limit must be positive")
 	}
 	if (beforeCreatedAt == nil) != (beforeID == nil) {
-		return nil, fmt.Errorf("before_created_at 与 before_id 需要同时提供")
+		return nil, fmt.Errorf("before_created_at and before_id must be provided together")
 	}
 
 	sql := `SELECT id, org_id, created_by_user_id, title, created_at
@@ -149,7 +149,7 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		ctx = context.Background()
 	}
 	if threadID == uuid.Nil {
-		return nil, fmt.Errorf("thread_id 不能为空")
+		return nil, fmt.Errorf("thread_id must not be empty")
 	}
 
 	var thread Thread

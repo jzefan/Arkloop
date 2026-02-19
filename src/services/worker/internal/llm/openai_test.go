@@ -731,7 +731,7 @@ func TestOpenAIGateway_Stream_ErrorMessageAndDetails(t *testing.T) {
 }
 
 func TestOpenAIGateway_StreamChatCompletionsSSE_ReadError_YieldsRunFailed(t *testing.T) {
-	// 模拟网络错误：发送一个 delta 后连接中断，未发送 [DONE]
+	// simulate network error: send one delta then disconnect, no [DONE] sent
 	partial := "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}\n\n"
 	reader := &sseErrorReader{data: []byte(partial), err: fmt.Errorf("connection reset by peer")}
 
@@ -805,7 +805,7 @@ func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T
 	}
 }
 
-// sseErrorReader 在发完 data 后返回指定错误，模拟网络读取中断
+// sseErrorReader returns the specified error after sending data, simulating a network read interruption
 type sseErrorReader struct {
 	data []byte
 	pos  int

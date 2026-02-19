@@ -76,14 +76,14 @@ func (p *FirecrawlProvider) Fetch(ctx context.Context, targetURL string, maxLeng
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return Result{}, fmt.Errorf("firecrawl 响应必须为 JSON 对象")
+		return Result{}, fmt.Errorf("firecrawl response must be a JSON object")
 	}
 	if success, ok := root["success"].(bool); ok && !success {
-		return Result{}, fmt.Errorf("firecrawl 响应 success=false")
+		return Result{}, fmt.Errorf("firecrawl response success=false")
 	}
 	rawData, ok := root["data"].(map[string]any)
 	if !ok {
-		return Result{}, fmt.Errorf("firecrawl 响应 data 必须为 JSON 对象")
+		return Result{}, fmt.Errorf("firecrawl response data must be a JSON object")
 	}
 
 	content := ""

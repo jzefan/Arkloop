@@ -41,14 +41,14 @@ class SearxngWebSearchProvider:
             },
         )
         if resp.status_code != 200:
-            raise SearxngSearchHttpError(status_code=int(resp.status_code), message=f"SearXNG 返回 {resp.status_code}")
+            raise SearxngSearchHttpError(status_code=int(resp.status_code), message=f"SearXNG returned {resp.status_code}")
 
         payload = resp.json()
         if not isinstance(payload, Mapping):
-            raise ValueError("SearXNG JSON 响应必须为对象")
+            raise ValueError("SearXNG JSON response must be an object")
         raw_results = payload.get("results")
         if not isinstance(raw_results, list):
-            raise ValueError("SearXNG JSON 响应 results 必须为数组")
+            raise ValueError("SearXNG JSON response results must be an array")
 
         results: list[WebSearchResult] = []
         for item in raw_results:

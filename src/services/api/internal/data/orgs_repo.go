@@ -22,7 +22,7 @@ type OrgRepository struct {
 
 func NewOrgRepository(db Querier) (*OrgRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &OrgRepository{db: db}, nil
 }
@@ -33,10 +33,10 @@ func (r *OrgRepository) Create(ctx context.Context, slug string, name string) (O
 	}
 
 	if slug == "" {
-		return Org{}, fmt.Errorf("slug 不能为空")
+		return Org{}, fmt.Errorf("slug must not be empty")
 	}
 	if name == "" {
-		return Org{}, fmt.Errorf("name 不能为空")
+		return Org{}, fmt.Errorf("name must not be empty")
 	}
 
 	var org Org

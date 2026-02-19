@@ -16,13 +16,13 @@ _ERROR_CLASS_ARGS_INVALID = "tool.args_invalid"
 ECHO_AGENT_TOOL_SPEC = AgentToolSpec(
     name="echo",
     version="1",
-    description="回显输入文本",
+    description="Echo input text",
     risk_level="low",
 )
 
 ECHO_LLM_TOOL_SPEC = LlmToolSpec(
     name="echo",
-    description="回显输入文本",
+    description="Echo input text",
     json_schema={
         "type": "object",
         "properties": {"text": {"type": "string", "minLength": 1}},
@@ -54,7 +54,7 @@ def _parse_echo_args(args: dict[str, Any]) -> tuple[str | None, ToolExecutionErr
     if unknown:
         return None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="工具参数不支持额外字段",
+            message="tool arguments do not support extra fields",
             details={"unknown_fields": sorted(unknown)},
         )
 
@@ -62,7 +62,7 @@ def _parse_echo_args(args: dict[str, Any]) -> tuple[str | None, ToolExecutionErr
     if not isinstance(text, str) or not text.strip():
         return None, ToolExecutionError(
             error_class=_ERROR_CLASS_ARGS_INVALID,
-            message="参数 text 必须为非空字符串",
+            message="parameter text must be a non-empty string",
             details={"field": "text"},
         )
     return text, None

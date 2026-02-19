@@ -23,7 +23,7 @@ type UserRepository struct {
 
 func NewUserRepository(db Querier) (*UserRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &UserRepository{db: db}, nil
 }
@@ -34,7 +34,7 @@ func (r *UserRepository) Create(ctx context.Context, displayName string) (User, 
 	}
 
 	if displayName == "" {
-		return User{}, fmt.Errorf("display_name 不能为空")
+		return User{}, fmt.Errorf("display_name must not be empty")
 	}
 
 	var user User

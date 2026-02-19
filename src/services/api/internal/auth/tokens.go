@@ -21,7 +21,7 @@ type TokenExpiredError struct {
 
 func (e TokenExpiredError) Error() string {
 	if e.message == "" {
-		return "token 已过期"
+		return "token expired"
 	}
 	return e.message
 }
@@ -32,7 +32,7 @@ type TokenInvalidError struct {
 
 func (e TokenInvalidError) Error() string {
 	if e.message == "" {
-		return "token 无效"
+		return "token invalid"
 	}
 	return e.message
 }
@@ -49,10 +49,10 @@ type JwtAccessTokenService struct {
 
 func NewJwtAccessTokenService(secret string, ttlSeconds int) (*JwtAccessTokenService, error) {
 	if secret == "" {
-		return nil, errors.New("secret 不能为空")
+		return nil, errors.New("secret must not be empty")
 	}
 	if ttlSeconds <= 0 {
-		return nil, errors.New("ttlSeconds 必须为正数")
+		return nil, errors.New("ttlSeconds must be positive")
 	}
 	return &JwtAccessTokenService{
 		secret:     []byte(secret),
@@ -62,7 +62,7 @@ func NewJwtAccessTokenService(secret string, ttlSeconds int) (*JwtAccessTokenSer
 
 func (s *JwtAccessTokenService) Issue(userID uuid.UUID, now time.Time) (string, error) {
 	if userID == uuid.Nil {
-		return "", errors.New("user_id 不能为空")
+		return "", errors.New("user_id must not be nil")
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -92,51 +92,51 @@ func (s *JwtAccessTokenService) Verify(token string) (VerifiedAccessToken, error
 	})
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return VerifiedAccessToken{}, TokenExpiredError{message: "token 已过期"}
+			return VerifiedAccessToken{}, TokenExpiredError{message: "token expired"}
 		}
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 	if parsed == nil || !parsed.Valid {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 
 	claims, ok := parsed.Claims.(jwt.MapClaims)
 	if !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 
 	if _, ok := claims["exp"]; !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 
 	typ, ok := claims["typ"]
 	if !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 	if typStr, ok := typ.(string); !ok || typStr != accessTokenType {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 类型不正确"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token type incorrect"}
 	}
 
 	sub, ok := claims["sub"]
 	if !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 	subStr, ok := sub.(string)
 	if !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token subject 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token subject invalid"}
 	}
 	userID, err := uuid.Parse(subStr)
 	if err != nil {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token subject 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token subject invalid"}
 	}
 
 	iat, ok := claims["iat"]
 	if !ok {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token invalid"}
 	}
 	issuedAt, err := parseIAT(iat)
 	if err != nil {
-		return VerifiedAccessToken{}, TokenInvalidError{message: "token iat 无效"}
+		return VerifiedAccessToken{}, TokenInvalidError{message: "token iat invalid"}
 	}
 
 	return VerifiedAccessToken{
@@ -152,14 +152,14 @@ func timestampFloatSeconds(value time.Time) float64 {
 func parseIAT(value any) (time.Time, error) {
 	iat, ok := numericToFloat64(value)
 	if !ok {
-		return time.Time{}, errors.New("iat 不是数字")
+		return time.Time{}, errors.New("iat is not a number")
 	}
 	if math.IsNaN(iat) || math.IsInf(iat, 0) {
-		return time.Time{}, errors.New("iat 无效")
+		return time.Time{}, errors.New("iat invalid")
 	}
 	sec, frac := math.Modf(iat)
 	if sec < 0 {
-		return time.Time{}, errors.New("iat 无效")
+		return time.Time{}, errors.New("iat invalid")
 	}
 
 	nsec := int64(frac * 1e9)

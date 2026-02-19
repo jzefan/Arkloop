@@ -61,17 +61,17 @@ class FirecrawlWebFetchProvider:
         if resp.status_code != 200:
             raise FirecrawlWebFetchHttpError(
                 status_code=int(resp.status_code),
-                message=f"Firecrawl 返回 {resp.status_code}",
+                message=f"Firecrawl returned {resp.status_code}",
             )
 
         payload = _parse_json_bytes(resp.content)
         if not isinstance(payload, Mapping):
-            raise ValueError("Firecrawl JSON 响应必须为对象")
+            raise ValueError("Firecrawl JSON response must be an object")
         if payload.get("success") is False:
-            raise ValueError("Firecrawl 响应 success=false")
+            raise ValueError("Firecrawl response success=false")
         raw_data = payload.get("data")
         if not isinstance(raw_data, Mapping):
-            raise ValueError("Firecrawl JSON 响应 data 必须为对象")
+            raise ValueError("Firecrawl JSON response data must be an object")
 
         content = _as_str(raw_data.get("markdown")) or _as_str(raw_data.get("content")) or ""
         title = ""

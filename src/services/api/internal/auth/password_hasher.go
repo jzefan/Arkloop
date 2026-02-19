@@ -18,7 +18,7 @@ func NewBcryptPasswordHasher(rounds int) (*BcryptPasswordHasher, error) {
 		rounds = defaultBcryptRounds
 	}
 	if rounds < 4 || rounds > 31 {
-		return nil, fmt.Errorf("bcrypt rounds 必须在 [4, 31] 范围内")
+		return nil, fmt.Errorf("bcrypt rounds must be in range [4, 31]")
 	}
 	return &BcryptPasswordHasher{rounds: rounds}, nil
 }

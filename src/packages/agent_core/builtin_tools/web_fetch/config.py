@@ -17,25 +17,25 @@ _JINA_API_KEY_ENV = "ARKLOOP_WEB_FETCH_JINA_API_KEY"
 def _normalize_api_key(value: str, *, env: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"缺少环境变量 {env}")
+        raise ValueError(f"missing environment variable {env}")
     return cleaned
 
 
 def _normalize_base_url(value: str, *, env: str) -> str:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"环境变量 {env} 不能为空")
+        raise ValueError(f"environment variable {env} must not be empty")
     return cleaned.rstrip("/")
 
 
 def _parse_provider_kind(value: str) -> WebFetchProviderKind:
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"环境变量 {_WEB_FETCH_PROVIDER_ENV} 不能为空")
+        raise ValueError(f"environment variable {_WEB_FETCH_PROVIDER_ENV} must not be empty")
     normalized = cleaned.casefold().replace("-", "_")
     if normalized in {"basic", "firecrawl", "jina"}:
         return normalized  # type: ignore[return-value]
-    raise ValueError(f"{_WEB_FETCH_PROVIDER_ENV} 必须为 basic/firecrawl/jina")
+    raise ValueError(f"{_WEB_FETCH_PROVIDER_ENV} must be basic/firecrawl/jina")
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +52,7 @@ class WebFetchConfig:
         raw = os.getenv(_WEB_FETCH_PROVIDER_ENV)
         if not raw:
             if required:
-                raise ValueError(f"缺少环境变量 {_WEB_FETCH_PROVIDER_ENV}")
+                raise ValueError(f"missing environment variable {_WEB_FETCH_PROVIDER_ENV}")
             return None
 
         provider_kind = _parse_provider_kind(raw)

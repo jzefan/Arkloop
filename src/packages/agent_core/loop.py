@@ -219,7 +219,7 @@ class AgentLoop:
                     completed = item
                     break
 
-                raise TypeError(f"未知的 LLM Gateway 事件类型: {type(item)!r}")
+                raise TypeError(f"unknown LLM gateway event type: {type(item)!r}")
         finally:
             if close is not None:
                 try:
@@ -263,7 +263,7 @@ class AgentLoop:
                 result = ToolExecutionResult(
                     error=ToolExecutionError(
                         error_class=ERROR_CLASS_TOOL_EXECUTION_FAILED,
-                        message="工具执行失败",
+                        message="tool execution failed",
                         details={
                             "tool_name": tool_call.tool_name,
                             "tool_call_id": tool_call.tool_call_id,
@@ -275,7 +275,7 @@ class AgentLoop:
                 result = ToolExecutionResult(
                     error=ToolExecutionError(
                         error_class=ERROR_CLASS_TOOL_EXECUTION_FAILED,
-                        message="工具执行返回了未知结果",
+                        message="tool execution returned unknown result",
                         details={
                             "tool_name": tool_call.tool_name,
                             "tool_call_id": tool_call.tool_call_id,
@@ -398,14 +398,14 @@ def _cancelled(context: AgentRunContext) -> bool:
 def _internal_stream_ended_error() -> LlmGatewayError:
     return LlmGatewayError(
         error_class=ERROR_CLASS_INTERNAL_STREAM_ENDED,
-        message="上游流在未结束状态时提前结束",
+        message="upstream stream ended prematurely without terminal state",
     )
 
 
 def _emit_max_iterations_failed(*, emitter: RunEventEmitter, max_iterations: int) -> RunEvent:
     error = LlmGatewayError(
         error_class=ERROR_CLASS_AGENT_MAX_ITERATIONS_EXCEEDED,
-        message="Agent 循环达到最大轮次",
+        message="agent loop reached max iterations",
         details={"max_iterations": max_iterations},
     )
     return emitter.emit(type="run.failed", data_json=error.to_json(), error_class=error.error_class)

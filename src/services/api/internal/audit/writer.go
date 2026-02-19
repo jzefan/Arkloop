@@ -49,7 +49,7 @@ func (w *Writer) WriteLoginFailed(ctx context.Context, traceID string, login str
 			"login_hash": loginHash,
 		},
 	}); err != nil {
-		w.logError(traceID, "写入登录失败审计失败", err)
+		w.logError(traceID, "failed to write login-failed audit log", err)
 	}
 }
 
@@ -62,7 +62,7 @@ func (w *Writer) WriteLoginSucceeded(ctx context.Context, traceID string, userID
 	if w.membershipRepo != nil {
 		membership, err := w.membershipRepo.GetDefaultForUser(ctx, userID)
 		if err != nil {
-			w.logError(traceID, "读取默认组织失败", err)
+			w.logError(traceID, "failed to read default org", err)
 		} else if membership != nil {
 			orgID = &membership.OrgID
 		}
@@ -84,7 +84,7 @@ func (w *Writer) WriteLoginSucceeded(ctx context.Context, traceID string, userID
 			"login_hash": loginHash,
 		},
 	}); err != nil {
-		w.logError(traceID, "写入登录成功审计失败", err)
+		w.logError(traceID, "failed to write login-succeeded audit log", err)
 	}
 }
 
@@ -103,7 +103,7 @@ func (w *Writer) WriteTokenRefreshed(ctx context.Context, traceID string, userID
 		TraceID:     traceID,
 		Metadata:    map[string]any{},
 	}); err != nil {
-		w.logError(traceID, "写入 refresh 审计失败", err)
+		w.logError(traceID, "failed to write refresh audit log", err)
 	}
 }
 
@@ -116,7 +116,7 @@ func (w *Writer) WriteLogout(ctx context.Context, traceID string, userID uuid.UU
 	if w.membershipRepo != nil {
 		membership, err := w.membershipRepo.GetDefaultForUser(ctx, userID)
 		if err != nil {
-			w.logError(traceID, "读取默认组织失败", err)
+			w.logError(traceID, "failed to read default org", err)
 		} else if membership != nil {
 			orgID = &membership.OrgID
 		}
@@ -133,7 +133,7 @@ func (w *Writer) WriteLogout(ctx context.Context, traceID string, userID uuid.UU
 		TraceID:     traceID,
 		Metadata:    map[string]any{},
 	}); err != nil {
-		w.logError(traceID, "写入 logout 审计失败", err)
+		w.logError(traceID, "failed to write logout audit log", err)
 	}
 }
 
@@ -155,7 +155,7 @@ func (w *Writer) WriteUserRegistered(ctx context.Context, traceID string, userID
 			"login_hash": loginHash,
 		},
 	}); err != nil {
-		w.logError(traceID, "写入 register 审计失败", err)
+		w.logError(traceID, "failed to write register audit log", err)
 	}
 }
 
@@ -183,7 +183,7 @@ func (w *Writer) WriteRunCancelRequested(
 			"result": "requested",
 		},
 	}); err != nil {
-		w.logError(traceID, "写入 cancel 审计失败", err)
+		w.logError(traceID, "failed to write cancel audit log", err)
 	}
 }
 
@@ -213,7 +213,7 @@ func (w *Writer) WriteAccessDenied(
 	orgID := actorOrgID.String()
 	if w.logger != nil {
 		w.logger.Info(
-			"访问拒绝",
+			"access denied",
 			observability.LogFields{TraceID: &traceID, OrgID: &orgID},
 			map[string]any{
 				"action":                 action,
@@ -262,7 +262,7 @@ func (w *Writer) WriteAccessDenied(
 		TraceID:     traceID,
 		Metadata:    meta,
 	}); err != nil {
-		w.logError(traceID, "写入访问拒绝审计失败", err)
+		w.logError(traceID, "failed to write access-denied audit log", err)
 	}
 }
 

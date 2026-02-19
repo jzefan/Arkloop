@@ -46,7 +46,7 @@ class McpStdioClientPool:
         max_clients_per_server: int = _DEFAULT_MAX_CLIENTS_PER_SERVER,
     ) -> None:
         if max_clients_per_server <= 0:
-            raise ValueError("max_clients_per_server 必须为正整数")
+            raise ValueError("max_clients_per_server must be a positive integer")
 
         self._ttl_seconds = float(ttl_seconds) if ttl_seconds is not None and ttl_seconds > 0 else None
         self._max_clients_per_server = int(max_clients_per_server)
@@ -67,7 +67,7 @@ class McpStdioClientPool:
         async with bucket.condition:
             while True:
                 if self._closed:
-                    raise RuntimeError("MCP stdio 会话池已关闭")
+                    raise RuntimeError("MCP stdio client pool is closed")
 
                 if bucket.available:
                     client = bucket.available.pop()
@@ -153,7 +153,7 @@ class McpStdioClientPool:
     async def _get_bucket(self, *, key: McpStdioPoolKey, server: McpServerConfig) -> _Bucket:
         async with self._state_lock:
             if self._closed:
-                raise RuntimeError("MCP stdio 会话池已关闭")
+                raise RuntimeError("MCP stdio client pool is closed")
             bucket = self._bucket_by_key.get(key)
             if bucket is None:
                 bucket = _Bucket(server=server)
@@ -190,7 +190,7 @@ def _parse_optional_non_negative_int(name: str) -> int | None:
         return None
     value = int(raw)
     if value < 0:
-        raise ValueError(f"{name} 必须为非负整数")
+        raise ValueError(f"{name} must be a non-negative integer")
     return value
 
 
@@ -200,7 +200,7 @@ def _parse_optional_positive_int(name: str) -> int | None:
         return None
     value = int(raw)
     if value <= 0:
-        raise ValueError(f"{name} 必须为正整数")
+        raise ValueError(f"{name} must be a positive integer")
     return value
 
 

@@ -18,7 +18,7 @@ class PasswordHasher(ABC):
 class BcryptPasswordHasher(PasswordHasher):
     def __init__(self, *, rounds: int = _DEFAULT_BCRYPT_ROUNDS) -> None:
         if rounds < 4 or rounds > 31:
-            raise ValueError("bcrypt rounds 必须在 [4, 31] 范围内")
+            raise ValueError("bcrypt rounds must be in range [4, 31]")
         self._rounds = rounds
 
     def hash_password(self, password: str) -> str:

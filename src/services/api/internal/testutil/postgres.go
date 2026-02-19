@@ -70,7 +70,7 @@ func lookupDatabaseDSN(t *testing.T) string {
 		}
 	}
 
-	t.Skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+	t.Skip("ARKLOOP_DATABASE_URL (or compatible DATABASE_URL) not set")
 	return ""
 }
 

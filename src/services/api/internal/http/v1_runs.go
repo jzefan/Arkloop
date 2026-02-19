@@ -77,7 +77,7 @@ func createThreadRun(
 			return
 		}
 		if threadRepo == nil || pool == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -91,7 +91,7 @@ func createThreadRun(
 			if errors.Is(err, io.EOF) {
 				body = nil
 			} else {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 				return
 			}
 		}
@@ -99,14 +99,14 @@ func createThreadRun(
 		startedData := map[string]any{}
 		if body != nil && body.RouteID != nil {
 			if !routeIDRegex.MatchString(*body.RouteID) {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 				return
 			}
 			startedData["route_id"] = *body.RouteID
 		}
 		if body != nil && body.SkillID != nil {
 			if !skillIDRegex.MatchString(*body.SkillID) {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 				return
 			}
 			startedData["skill_id"] = strings.TrimSpace(*body.SkillID)
@@ -114,11 +114,11 @@ func createThreadRun(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -128,19 +128,19 @@ func createThreadRun(
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		defer tx.Rollback(r.Context())
 
 		runRepo, err := data.NewRunEventRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		jobRepo, err := data.NewJobRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -153,7 +153,7 @@ func createThreadRun(
 			startedData,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -167,12 +167,12 @@ func createThreadRun(
 			nil,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -202,7 +202,7 @@ func listThreadRuns(
 			return
 		}
 		if threadRepo == nil || runRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -218,11 +218,11 @@ func listThreadRuns(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -232,7 +232,7 @@ func listThreadRuns(
 
 		runs, err := runRepo.ListRunsByThread(r.Context(), actor.OrgID, threadID, limit)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -240,7 +240,7 @@ func listThreadRuns(
 		for _, run := range runs {
 			terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
 			if err != nil {
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 				return
 			}
 			resp = append(resp, threadRunResponse{
@@ -267,7 +267,7 @@ func getRun(
 			return
 		}
 		if runRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -278,11 +278,11 @@ func getRun(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
-			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "Run 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
 			return
 		}
 
@@ -292,7 +292,7 @@ func getRun(
 
 		terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -328,7 +328,7 @@ func cancelRun(
 			return
 		}
 		if runRepo == nil || pool == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -339,11 +339,11 @@ func cancelRun(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
-			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "Run 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
 			return
 		}
 
@@ -353,14 +353,14 @@ func cancelRun(
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		defer tx.Rollback(r.Context())
 
 		txRepo, err := data.NewRunEventRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -368,15 +368,15 @@ func cancelRun(
 		if err != nil {
 			var notFound data.RunNotFoundError
 			if errors.As(err, &notFound) {
-				WriteError(w, nethttp.StatusNotFound, "runs.not_found", "Run 不存在", traceID, nil)
+				WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -402,7 +402,7 @@ func streamRunEvents(
 			return
 		}
 		if runRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -413,11 +413,11 @@ func streamRunEvents(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
-			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "Run 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
 			return
 		}
 
@@ -502,7 +502,7 @@ func streamRunEvents(
 	}
 }
 
-// writeSseEvent 将单条 RunEvent 按 SSE 格式写入响应流。
+// writeSseEvent writes a single RunEvent to the response stream in SSE format.
 func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
 	ts := item.TS.UTC()
 	millis := ts.Format("2006-01-02T15:04:05.999Z07:00")
@@ -539,7 +539,7 @@ func parseSSEQueryParams(
 	if raw := strings.TrimSpace(r.URL.Query().Get("after_seq")); raw != "" {
 		parsed, err := parseInt64NonNegative(raw)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return 0, false, false
 		}
 		afterSeq = parsed
@@ -552,7 +552,7 @@ func parseSSEQueryParams(
 		case "false", "0":
 			follow = false
 		default:
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return 0, false, false
 		}
 	}
@@ -566,7 +566,7 @@ func parseInt64NonNegative(raw string) (int64, error) {
 		return 0, err
 	}
 	if v < 0 {
-		return 0, fmt.Errorf("不能为负数")
+		return 0, fmt.Errorf("must not be negative")
 	}
 	return v, nil
 }
@@ -575,7 +575,7 @@ func parseInt64(raw string) (int64, error) {
 	var v int64
 	_, err := fmt.Sscanf(strings.TrimSpace(raw), "%d", &v)
 	if err != nil {
-		return 0, fmt.Errorf("必须为整数")
+		return 0, fmt.Errorf("must be an integer")
 	}
 	return v, nil
 }
@@ -607,7 +607,7 @@ func runEntry(
 
 		runID, err := uuid.Parse(idPart)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -669,7 +669,7 @@ func authorizeRunOrAudit(
 	auditWriter *audit.Writer,
 ) bool {
 	if actor == nil || run == nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		return false
 	}
 
@@ -701,7 +701,7 @@ func authorizeRunOrAudit(
 		w,
 		nethttp.StatusForbidden,
 		"policy.denied",
-		"无权限",
+		"access denied",
 		traceID,
 		map[string]any{"action": action},
 	)

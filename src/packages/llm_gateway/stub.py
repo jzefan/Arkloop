@@ -35,14 +35,14 @@ def _parse_bool(value: str) -> bool:
         return True
     if cleaned in {"0", "false", "no", "n", "off"}:
         return False
-    raise ValueError("必须为布尔值（0/1、true/false）")
+    raise ValueError("must be a boolean (0/1, true/false)")
 
 
 def _parse_positive_int(value: str) -> int:
     cleaned = value.strip()
     parsed = int(cleaned)
     if parsed <= 0:
-        raise ValueError("必须为正整数")
+        raise ValueError("must be a positive integer")
     return parsed
 
 
@@ -50,7 +50,7 @@ def _parse_non_negative_float(value: str) -> float:
     cleaned = value.strip()
     parsed = float(cleaned)
     if parsed < 0:
-        raise ValueError("必须为非负数")
+        raise ValueError("must be a non-negative number")
     return parsed
 
 

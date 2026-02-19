@@ -62,17 +62,17 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 
 		var body loginRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		body.Login = strings.TrimSpace(body.Login)
 		if body.Login == "" || len(body.Login) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Password == "" || len(body.Password) > 1024 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -83,10 +83,10 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 				if auditWriter != nil {
 					auditWriter.WriteLoginFailed(r.Context(), traceID, body.Login)
 				}
-				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_credentials", "账号或密码错误", traceID, nil)
+				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_credentials", "invalid credentials", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -123,10 +123,10 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 		if err != nil {
 			switch err.(type) {
 			case auth.TokenExpiredError, auth.TokenInvalidError, auth.UserNotFoundError:
-				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token 无效或已过期", traceID, nil)
+				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
 				return
 			default:
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 				return
 			}
 		}
@@ -161,7 +161,7 @@ func logout(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.R
 		}
 
 		if err := authService.Logout(r.Context(), user.ID, time.Now().UTC()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -188,22 +188,22 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 
 		var body registerRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		body.Login = strings.TrimSpace(body.Login)
 		body.DisplayName = strings.TrimSpace(body.DisplayName)
 		if body.Login == "" || len(body.Login) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Password == "" || len(body.Password) < 8 || len(body.Password) > 1024 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.DisplayName == "" || len(body.DisplayName) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -211,10 +211,10 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 		if err != nil {
 			var loginExists auth.LoginExistsError
 			if errors.As(err, &loginExists) {
-				WriteError(w, nethttp.StatusConflict, "auth.login_exists", "该登录名已被使用", traceID, nil)
+				WriteError(w, nethttp.StatusConflict, "auth.login_exists", "login already taken", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -265,7 +265,7 @@ func decodeJSON(r *nethttp.Request, dst any) error {
 func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		return
 	}
 
@@ -277,13 +277,13 @@ func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload
 func parseBearerToken(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (string, bool) {
 	authorization := r.Header.Get("Authorization")
 	if strings.TrimSpace(authorization) == "" {
-		WriteError(w, nethttp.StatusUnauthorized, "auth.missing_token", "缺少 Authorization Bearer Token", traceID, nil)
+		WriteError(w, nethttp.StatusUnauthorized, "auth.missing_token", "missing Authorization Bearer token", traceID, nil)
 		return "", false
 	}
 
 	scheme, rest, ok := strings.Cut(authorization, " ")
 	if !ok || strings.TrimSpace(rest) == "" || strings.ToLower(scheme) != "bearer" {
-		WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_authorization", "Authorization 格式应为 Bearer <token>", traceID, nil)
+		WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_authorization", "Authorization header must be: Bearer <token>", traceID, nil)
 		return "", false
 	}
 
@@ -309,9 +309,9 @@ func authenticateUser(
 		case auth.TokenInvalidError:
 			WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", typed.Error(), traceID, nil)
 		case auth.UserNotFoundError:
-			WriteError(w, nethttp.StatusUnauthorized, "auth.user_not_found", "用户不存在", traceID, nil)
+			WriteError(w, nethttp.StatusUnauthorized, "auth.user_not_found", "user not found", traceID, nil)
 		default:
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		}
 		return nil, false
 	}
@@ -335,5 +335,5 @@ func writeMethodNotAllowed(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func writeAuthNotConfigured(w nethttp.ResponseWriter, traceID string) {
-	WriteError(w, nethttp.StatusServiceUnavailable, "auth.not_configured", "鉴权未配置", traceID, nil)
+	WriteError(w, nethttp.StatusServiceUnavailable, "auth.not_configured", "auth not configured", traceID, nil)
 }

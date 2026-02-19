@@ -27,7 +27,7 @@ type JobRepository struct {
 
 func NewJobRepository(db Querier) (*JobRepository, error) {
 	if db == nil {
-		return nil, errors.New("db 不能为空")
+		return nil, errors.New("db must not be nil")
 	}
 	return &JobRepository{db: db}, nil
 }
@@ -45,10 +45,10 @@ func (r *JobRepository) EnqueueRun(
 		ctx = context.Background()
 	}
 	if orgID == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("org_id 不能为空")
+		return uuid.Nil, fmt.Errorf("org_id must not be empty")
 	}
 	if runID == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("run_id 不能为空")
+		return uuid.Nil, fmt.Errorf("run_id must not be empty")
 	}
 
 	jobID := uuid.New()

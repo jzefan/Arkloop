@@ -12,8 +12,8 @@ import (
 	"arkloop/services/api/internal/observability"
 )
 
-// flusherRecorder 是一个同时实现 http.Flusher 的测试 recorder，
-// 用于验证中间件包装后 http.Flusher 断言不会丢失。
+// flusherRecorder is a test recorder that also implements http.Flusher,
+// used to verify that the Flusher assertion is preserved after middleware wrapping.
 type flusherRecorder struct {
 	*httptest.ResponseRecorder
 	flushed bool
@@ -114,8 +114,10 @@ func TestReadyzRequiresDatabase(t *testing.T) {
 	}
 }
 
-// TestTraceMiddlewarePreservesHttpFlusher 验证经过 TraceMiddleware 包装后底层 http.Flusher 能力不丢失。
-// SSE/流式输出依赖此能力，一旦断言失败会导致连接建立但数据被缓冲不发送。
+// TestTraceMiddlewarePreservesHttpFlusher verifies that the http.Flusher capability
+// is preserved after wrapping with TraceMiddleware.
+// SSE/streaming depends on this; if the assertion fails, connections are established
+// but data gets buffered and never sent.
 func TestTraceMiddlewarePreservesHttpFlusher(t *testing.T) {
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -135,12 +137,13 @@ func TestTraceMiddlewarePreservesHttpFlusher(t *testing.T) {
 		t.Fatal("capturedWriter is nil")
 	}
 	if _, ok := capturedWriter.(nethttp.Flusher); !ok {
-		t.Fatal("TraceMiddleware 包装后 ResponseWriter 丢失了 http.Flusher 接口")
+		t.Fatal("TraceMiddleware wrapping lost the http.Flusher interface on ResponseWriter")
 	}
 }
 
-// TestThreadSubResourceRouting 验证 /v1/threads/{uuid}/messages 等 sub-resource 路径
-// 不会因为 uuid parse 错误而返回 422，证明路由拆分逻辑正确识别 segment。
+// TestThreadSubResourceRouting verifies that /v1/threads/{uuid}/messages and similar
+// sub-resource paths don't return 422 due to uuid parse errors, proving the routing
+// split logic correctly identifies segments.
 func TestThreadSubResourceRouting(t *testing.T) {
 	logger := observability.NewJSONLogger("test", io.Discard)
 	handler := NewHandler(HandlerConfig{Logger: logger})

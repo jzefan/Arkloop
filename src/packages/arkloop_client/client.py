@@ -11,22 +11,22 @@ try:
     import httpx
 except Exception as exc:  # pragma: no cover
     raise RuntimeError(
-        "缺少 httpx 依赖，请安装 requirements-dev.txt 或补齐 requirements.txt"
+        "httpx dependency missing, install requirements-dev.txt or update requirements.txt"
     ) from exc
 
 
 def _as_str(value: object, *, label: str) -> str:
     if not isinstance(value, str):
-        raise TypeError(f"{label} 必须为字符串")
+        raise TypeError(f"{label} must be a string")
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"{label} 不能为空")
+        raise ValueError(f"{label} must not be empty")
     return cleaned
 
 
 def _as_mapping(value: object, *, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise TypeError(f"{label} 必须为对象")
+        raise TypeError(f"{label} must be an object")
     return value
 
 
@@ -141,14 +141,14 @@ class ArkloopClient:
         except ArkloopApiError:
             raise
         except Exception as exc:
-            raise ArkloopClientTransportError(message="SSE 连接失败", detail=str(exc)) from exc
+            raise ArkloopClientTransportError(message="SSE connection failed", detail=str(exc)) from exc
 
     def _parse_event_data(self, raw: str) -> Mapping[str, Any]:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ArkloopClientTransportError(
-                message="SSE data 不是合法 JSON", detail=str(exc)
+                message="SSE data is not valid JSON", detail=str(exc)
             ) from exc
         return _as_mapping(parsed, label="run_event")
 
@@ -168,14 +168,14 @@ class ArkloopClient:
         try:
             resp = await client.request(method, path, headers=headers, json=json_body)
         except Exception as exc:
-            raise ArkloopClientTransportError(message="HTTP 请求失败", detail=str(exc)) from exc
+            raise ArkloopClientTransportError(message="HTTP request failed", detail=str(exc)) from exc
 
         await self._raise_for_status(resp)
         try:
             payload = resp.json()
         except Exception as exc:
             raise ArkloopClientTransportError(
-                message="HTTP 响应不是合法 JSON", detail=str(exc)
+                message="HTTP response is not valid JSON", detail=str(exc)
             ) from exc
         return _as_mapping(payload, label="response")
 
@@ -226,7 +226,7 @@ class ArkloopClient:
 
     def _require_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            raise RuntimeError("ArkloopClient 未初始化：请使用 async with ArkloopClient(...)")
+            raise RuntimeError("ArkloopClient not initialized: use async with ArkloopClient(...)")
         return self._client
 
 

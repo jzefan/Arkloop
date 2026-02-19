@@ -20,7 +20,7 @@ type JinaProvider struct {
 func NewJinaProvider(apiKey string) (*JinaProvider, error) {
 	cleaned := strings.TrimSpace(apiKey)
 	if cleaned == "" {
-		return nil, fmt.Errorf("jina api_key 不能为空")
+		return nil, fmt.Errorf("jina api_key must not be empty")
 	}
 	return &JinaProvider{
 		apiKey:  cleaned,

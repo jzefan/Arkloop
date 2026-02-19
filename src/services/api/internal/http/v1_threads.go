@@ -71,7 +71,7 @@ func createThread(
 			return
 		}
 		if threadRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -82,18 +82,18 @@ func createThread(
 
 		var body createThreadRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		if body.Title != nil && len(*body.Title) > 200 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		thread, err := threadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, body.Title)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -118,7 +118,7 @@ func listThreads(
 			return
 		}
 		if threadRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -146,7 +146,7 @@ func listThreads(
 			beforeID,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 
@@ -171,7 +171,7 @@ func getThread(
 			return
 		}
 		if threadRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -182,11 +182,11 @@ func getThread(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -211,7 +211,7 @@ func patchThread(
 			return
 		}
 		if threadRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "数据库未配置", traceID, nil)
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -222,25 +222,25 @@ func patchThread(
 
 		var body updateThreadRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if !body.Title.Present {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Title.Value != nil && len(*body.Title.Value) > 200 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -250,11 +250,11 @@ func patchThread(
 
 		updated, err := threadRepo.UpdateTitle(r.Context(), threadID, body.Title.Value)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 			return
 		}
 		if updated == nil {
-			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "Thread 不存在", traceID, nil)
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 			return
 		}
 
@@ -311,11 +311,11 @@ func threadEntry(
 			return
 		}
 
-		// 最多分两段：{uuid} 和可选的 sub-resource
+		// split into at most two segments: {uuid} and optional sub-resource
 		parts := strings.SplitN(tail, "/", 2)
 		threadID, err := uuid.Parse(parts[0])
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -331,7 +331,7 @@ func threadEntry(
 			return
 		}
 
-		// sub-resource 分发，P06/P07 在此接入各自 handler
+		// sub-resource dispatch
 		switch parts[1] {
 		case "messages":
 			// P06: thread messages
@@ -366,7 +366,7 @@ func parseLimit(w nethttp.ResponseWriter, traceID string, raw string) (int, bool
 
 	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || parsed < 1 || parsed > 200 {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 		return 0, false
 	}
 	return parsed, true
@@ -385,7 +385,7 @@ func parseThreadCursor(
 			w,
 			nethttp.StatusUnprocessableEntity,
 			"validation_error",
-			"请求参数校验失败",
+			"request validation failed",
 			traceID,
 			map[string]any{"reason": "cursor_incomplete", "required": []string{"before_created_at", "before_id"}},
 		)
@@ -397,12 +397,12 @@ func parseThreadCursor(
 
 	parsedTime, err := time.Parse(time.RFC3339Nano, beforeCreatedAtRaw)
 	if err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 		return nil, nil, false
 	}
 	parsedID, err := uuid.Parse(beforeIDRaw)
 	if err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "请求参数校验失败", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
 		return nil, nil, false
 	}
 
@@ -427,7 +427,7 @@ func authorizeThreadOrAudit(
 	auditWriter *audit.Writer,
 ) bool {
 	if actor == nil || thread == nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		return false
 	}
 
@@ -459,7 +459,7 @@ func authorizeThreadOrAudit(
 		w,
 		nethttp.StatusForbidden,
 		"policy.denied",
-		"无权限",
+		"access denied",
 		traceID,
 		map[string]any{"action": action},
 	)

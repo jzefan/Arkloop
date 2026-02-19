@@ -30,7 +30,7 @@ func NewApplication(config Config, logger *observability.JSONLogger) (*Applicati
 		return nil, err
 	}
 	if logger == nil {
-		return nil, fmt.Errorf("logger 不能为空")
+		return nil, fmt.Errorf("logger must not be nil")
 	}
 	return &Application{
 		config: config,
@@ -174,11 +174,8 @@ func (a *Application) Run(ctx context.Context) error {
 		errCh <- server.Serve(listener)
 	}()
 
-	a.logger.Info("api 已启动", observability.LogFields{}, map[string]any{"addr": listener.Addr().String()})
-
 	select {
 	case <-ctx.Done():
-		a.logger.Info("api 收到停止信号", observability.LogFields{}, map[string]any{"reason": ctx.Err().Error()})
 	case err := <-errCh:
 		if err == nil || errors.Is(err, http.ErrServerClosed) {
 			return nil

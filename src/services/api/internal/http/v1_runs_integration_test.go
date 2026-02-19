@@ -454,23 +454,23 @@ func TestStreamRunEvents(t *testing.T) {
 	}
 	runPayload := decodeJSONBody[createRunResponse](t, runResp.Body.Bytes())
 
-	t.Run("未认证返回401", func(t *testing.T) {
+	t.Run("unauthenticated returns 401", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false", nil, nil)
 		assertErrorEnvelope(t, resp, nethttp.StatusUnauthorized, "auth.missing_token")
 	})
 
-	t.Run("run不存在返回404", func(t *testing.T) {
+	t.Run("run not found returns 404", func(t *testing.T) {
 		fakeID := "00000000-0000-0000-0000-000000000099"
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+fakeID+"/events?follow=false", nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusNotFound, "runs.not_found")
 	})
 
-	t.Run("after_seq负数返回422", func(t *testing.T) {
+	t.Run("negative after_seq returns 422", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false&after_seq=-1", nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation_error")
 	})
 
-	t.Run("follow=false拉取已有事件并校验SSE格式", func(t *testing.T) {
+	t.Run("follow=false fetches existing events and validates SSE format", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false", nil, aliceHeaders)
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("unexpected status: %d body=%s", resp.Code, resp.Body.String())
@@ -499,7 +499,7 @@ func TestStreamRunEvents(t *testing.T) {
 		}
 	})
 
-	t.Run("after_seq=1跳过已有事件返回空", func(t *testing.T) {
+	t.Run("after_seq=1 skips existing events returns empty", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false&after_seq=1", nil, aliceHeaders)
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("unexpected status: %d body=%s", resp.Code, resp.Body.String())
@@ -510,7 +510,7 @@ func TestStreamRunEvents(t *testing.T) {
 		}
 	})
 
-	t.Run("其他用户访问返回403", func(t *testing.T) {
+	t.Run("other user access returns 403", func(t *testing.T) {
 		bobRegister := doJSON(
 			handler,
 			nethttp.MethodPost,
@@ -526,7 +526,7 @@ func TestStreamRunEvents(t *testing.T) {
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
 	})
 
-	t.Run("非GET方法返回405", func(t *testing.T) {
+	t.Run("non-GET method returns 405", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/runs/"+runPayload.RunID+"/events", nil, aliceHeaders)
 		if resp.Code != nethttp.StatusMethodNotAllowed {
 			t.Fatalf("expected 405, got %d body=%s", resp.Code, resp.Body.String())
@@ -534,7 +534,7 @@ func TestStreamRunEvents(t *testing.T) {
 	})
 }
 
-// parseSseEvents 解析 SSE 流文本，提取所有 data 行并反序列化为 map。
+// parseSseEvents parses SSE stream text, extracting all data lines and deserializing into maps.
 func parseSseEvents(t *testing.T, body string) []map[string]any {
 	t.Helper()
 	var events []map[string]any

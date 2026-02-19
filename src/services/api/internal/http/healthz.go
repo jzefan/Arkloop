@@ -18,7 +18,7 @@ func healthz(w nethttp.ResponseWriter, r *nethttp.Request) {
 	payload, err := json.Marshal(map[string]string{"status": "ok"})
 	if err != nil {
 		traceID := observability.TraceIDFromContext(r.Context())
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "内部错误", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
 		return
 	}
 

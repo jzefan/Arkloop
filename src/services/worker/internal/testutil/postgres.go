@@ -77,7 +77,7 @@ func lookupDatabaseDSN(t *testing.T) string {
 	if value, ok := lookupEnv("DATABASE_URL"); ok {
 		return value
 	}
-	t.Skip("未设置 ARKLOOP_DATABASE_URL（或兼容的 DATABASE_URL）")
+	t.Skip("ARKLOOP_DATABASE_URL (or compatible DATABASE_URL) not set")
 	return ""
 }
 
@@ -293,7 +293,7 @@ func parseDotenvLine(raw string) (string, string, bool) {
 }
 
 func stripInlineComment(value string) string {
-	// 仅处理 "value  # comment" 的场景，保留无空格的 "#".
+	// only handles "value  # comment" pattern, preserves "#" without preceding space.
 	for i := 1; i < len(value); i++ {
 		if value[i] != '#' {
 			continue

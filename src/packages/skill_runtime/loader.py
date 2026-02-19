@@ -17,7 +17,7 @@ def builtin_skills_root() -> Path:
     for parent in current.parents:
         if parent.name == "src":
             return parent / "skills"
-    raise RuntimeError("未找到 src 目录，无法定位 skills 根目录")
+    raise RuntimeError("src directory not found, cannot locate skills root")
 
 
 def load_skill_registry(root: Path) -> SkillRegistry:
@@ -25,7 +25,7 @@ def load_skill_registry(root: Path) -> SkillRegistry:
     if not root.exists():
         return registry
     if not root.is_dir():
-        raise ValueError("skills 根目录必须为目录")
+        raise ValueError("skills root must be a directory")
 
     for entry in sorted(root.iterdir(), key=lambda item: item.name):
         if not entry.is_dir():
@@ -45,7 +45,7 @@ def _load_single_skill(*, yaml_path: Path, prompt_path: Path) -> SkillDefinition
     try:
         raw_yaml = _parse_skill_yaml(yaml_path.read_text(encoding="utf-8"), path=yaml_path)
     except Exception as exc:
-        raise ValueError(f"解析 skill.yaml 失败: {yaml_path}") from exc
+        raise ValueError(f"failed to parse skill.yaml: {yaml_path}") from exc
 
     obj = _as_mapping(raw_yaml, label="skill.yaml")
 
@@ -58,7 +58,7 @@ def _load_single_skill(*, yaml_path: Path, prompt_path: Path) -> SkillDefinition
 
     prompt_md = prompt_path.read_text(encoding="utf-8").strip()
     if not prompt_md:
-        raise ValueError(f"prompt.md 不能为空: {prompt_path}")
+        raise ValueError(f"prompt.md must not be empty: {prompt_path}")
 
     return SkillDefinition(
         id=skill_id,
@@ -74,7 +74,7 @@ def _load_single_skill(*, yaml_path: Path, prompt_path: Path) -> SkillDefinition
 def _parse_skill_yaml(text: str, *, path: Path) -> object:
     stripped = text.strip()
     if not stripped:
-        raise ValueError(f"skill.yaml 不能为空: {path}")
+        raise ValueError(f"skill.yaml must not be empty: {path}")
     if stripped.startswith("{") or stripped.startswith("["):
         return json.loads(stripped)
     try:
@@ -87,10 +87,10 @@ def _parse_skill_yaml(text: str, *, path: Path) -> object:
 def _parse_simple_yaml(text: str, *, path: Path) -> object:
     lines = _tokenize_yaml_lines(text, path=path)
     if not lines:
-        raise ValueError(f"skill.yaml 为空: {path}")
+        raise ValueError(f"skill.yaml is empty: {path}")
     value, index = _parse_yaml_block(lines, 0, indent=lines[0][0], path=path)
     if index != len(lines):
-        raise ValueError(f"skill.yaml 解析不完整: {path}")
+        raise ValueError(f"skill.yaml incomplete parse: {path}")
     return value
 
 
@@ -98,7 +98,7 @@ def _tokenize_yaml_lines(text: str, *, path: Path) -> list[tuple[int, str, int]]
     tokens: list[tuple[int, str, int]] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):
         if "\t" in raw:
-            raise ValueError(f"不支持 tab 缩进: {path}:{lineno}")
+            raise ValueError(f"tab indentation not supported: {path}:{lineno}")
         stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -139,12 +139,12 @@ def _parse_yaml_list(
         if current_indent < indent:
             break
         if current_indent != indent:
-            raise ValueError(f"缩进不一致: {path}:{lineno}")
+            raise ValueError(f"inconsistent indentation: {path}:{lineno}")
         if not content.startswith("-"):
-            raise ValueError(f"预期 list item: {path}:{lineno}")
+            raise ValueError(f"expected list item: {path}:{lineno}")
         item = content[1:].strip()
         if not item:
-            raise ValueError(f"不支持空 list item: {path}:{lineno}")
+            raise ValueError(f"empty list item not supported: {path}:{lineno}")
         values.append(_parse_scalar(item))
         index += 1
     return values, index
@@ -163,14 +163,14 @@ def _parse_yaml_mapping(
         if current_indent < indent:
             break
         if current_indent != indent:
-            raise ValueError(f"缩进不一致: {path}:{lineno}")
+            raise ValueError(f"inconsistent indentation: {path}:{lineno}")
 
         key, sep, rest = content.partition(":")
         if not sep:
-            raise ValueError(f"预期 key: value: {path}:{lineno}")
+            raise ValueError(f"expected key: value: {path}:{lineno}")
         key = key.strip()
         if not key:
-            raise ValueError(f"空 key: {path}:{lineno}")
+            raise ValueError(f"empty key: {path}:{lineno}")
 
         tail = rest.strip()
         if tail:
@@ -180,10 +180,10 @@ def _parse_yaml_mapping(
 
         index += 1
         if index >= len(lines):
-            raise ValueError(f"缺少嵌套内容: {path}:{lineno}")
+            raise ValueError(f"missing nested content: {path}:{lineno}")
         child_indent, _child_content, child_lineno = lines[index]
         if child_indent <= indent:
-            raise ValueError(f"缺少嵌套内容: {path}:{child_lineno}")
+            raise ValueError(f"missing nested content: {path}:{child_lineno}")
         child, index = _parse_yaml_block(lines, index, indent=child_indent, path=path)
         values[key] = child
     return values, index
@@ -224,16 +224,16 @@ def _parse_scalar(value: str) -> object:
 
 def _as_mapping(value: object, *, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError(f"{label} 必须为对象")
+        raise ValueError(f"{label} must be an object")
     return value
 
 
 def _as_non_empty_str(value: object, *, label: str) -> str:
     if not isinstance(value, str):
-        raise ValueError(f"{label} 必须为字符串")
+        raise ValueError(f"{label} must be a string")
     cleaned = value.strip()
     if not cleaned:
-        raise ValueError(f"{label} 不能为空")
+        raise ValueError(f"{label} must not be empty")
     return cleaned
 
 
@@ -246,7 +246,7 @@ def _optional_str(value: object, *, label: str) -> str | None:
 def _as_id(value: object, *, label: str) -> str:
     cleaned = _as_non_empty_str(value, label=label)
     if not _ID_RE.fullmatch(cleaned):
-        raise ValueError(f"{label} 不合法: {cleaned}")
+        raise ValueError(f"{label} invalid: {cleaned}")
     return cleaned
 
 
@@ -254,17 +254,17 @@ def _as_tool_allowlist(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
-        raise ValueError("tool_allowlist 必须为数组")
+        raise ValueError("tool_allowlist must be an array")
     items: list[str] = []
     seen: set[str] = set()
     for index, raw in enumerate(value):
         if not isinstance(raw, str):
-            raise ValueError(f"tool_allowlist[{index}] 必须为字符串")
+            raise ValueError(f"tool_allowlist[{index}] must be a string")
         cleaned = raw.strip()
         if not cleaned:
-            raise ValueError(f"tool_allowlist[{index}] 不能为空")
+            raise ValueError(f"tool_allowlist[{index}] must not be empty")
         if not _ID_RE.fullmatch(cleaned):
-            raise ValueError(f"tool_allowlist[{index}] 不合法: {cleaned}")
+            raise ValueError(f"tool_allowlist[{index}] invalid: {cleaned}")
         if cleaned in seen:
             continue
         seen.add(cleaned)
@@ -274,9 +274,9 @@ def _as_tool_allowlist(value: object) -> tuple[str, ...]:
 
 def _as_positive_int(value: object, *, label: str) -> int:
     if not isinstance(value, int):
-        raise ValueError(f"{label} 必须为整数")
+        raise ValueError(f"{label} must be an integer")
     if value <= 0:
-        raise ValueError(f"{label} 必须为正整数")
+        raise ValueError(f"{label} must be a positive integer")
     return int(value)
 
 
@@ -284,11 +284,11 @@ def _as_budgets(value: object) -> SkillBudgets:
     if value is None:
         return SkillBudgets()
     if not isinstance(value, Mapping):
-        raise ValueError("budgets 必须为对象")
+        raise ValueError("budgets must be an object")
 
     unknown = sorted(set(value.keys()).difference(_BUDGET_KEYS))
     if unknown:
-        raise ValueError(f"budgets 包含不支持字段: {unknown}")
+        raise ValueError(f"budgets contains unsupported fields: {unknown}")
 
     max_iterations = value.get("max_iterations")
     if max_iterations is not None:
@@ -304,7 +304,7 @@ def _as_budgets(value: object) -> SkillBudgets:
 
     tool_budget = value.get("tool_budget") or {}
     if not isinstance(tool_budget, Mapping):
-        raise ValueError("budgets.tool_budget 必须为对象")
+        raise ValueError("budgets.tool_budget must be an object")
 
     return SkillBudgets(
         max_iterations=max_iterations,  # type: ignore[arg-type]

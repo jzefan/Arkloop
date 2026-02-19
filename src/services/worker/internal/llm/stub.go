@@ -92,7 +92,7 @@ func (g *StubGateway) Stream(ctx context.Context, request Request, yield func(St
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderNonRetryable,
-				Message:    "stub gateway 已禁用",
+				Message:    "stub gateway is disabled",
 			},
 		}
 		return yield(failed)
@@ -169,16 +169,16 @@ func parseBool(raw string) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("必须为布尔值（0/1、true/false）")
+	return false, fmt.Errorf("must be a boolean (0/1, true/false)")
 }
 
 func parsePositiveInt(raw string) (int, error) {
 	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, fmt.Errorf("必须为正整数")
+		return 0, fmt.Errorf("must be a positive integer")
 	}
 	if parsed <= 0 {
-		return 0, fmt.Errorf("必须为正整数")
+		return 0, fmt.Errorf("must be a positive integer")
 	}
 	return parsed, nil
 }
@@ -186,10 +186,10 @@ func parsePositiveInt(raw string) (int, error) {
 func parseNonNegativeFloat(raw string) (float64, error) {
 	parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
-		return 0, fmt.Errorf("必须为非负数")
+		return 0, fmt.Errorf("must be non-negative")
 	}
 	if parsed < 0 {
-		return 0, fmt.Errorf("必须为非负数")
+		return 0, fmt.Errorf("must be non-negative")
 	}
 	return parsed, nil
 }
