@@ -32,7 +32,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	raw := strings.TrimSpace(os.Getenv(webFetchProviderEnv))
 	if raw == "" {
 		if required {
-			return nil, fmt.Errorf("缺少环境变量 %s", webFetchProviderEnv)
+			return nil, fmt.Errorf("missing environment variable %s", webFetchProviderEnv)
 		}
 		return nil, nil
 	}
@@ -57,14 +57,14 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	case ProviderKindJina:
 		apiKey := strings.TrimSpace(os.Getenv(jinaAPIKeyEnv))
 		if apiKey == "" {
-			return nil, fmt.Errorf("缺少环境变量 %s", jinaAPIKeyEnv)
+			return nil, fmt.Errorf("missing environment variable %s", jinaAPIKeyEnv)
 		}
 		return &Config{
 			ProviderKind: kind,
 			JinaAPIKey:   apiKey,
 		}, nil
 	default:
-		return nil, fmt.Errorf("%s 必须为 basic/firecrawl/jina", webFetchProviderEnv)
+		return nil, fmt.Errorf("%s must be basic/firecrawl/jina", webFetchProviderEnv)
 	}
 }
 
@@ -78,7 +78,7 @@ func parseProviderKind(raw string) (ProviderKind, error) {
 	case "jina":
 		return ProviderKindJina, nil
 	default:
-		return "", fmt.Errorf("%s 必须为 basic/firecrawl/jina", webFetchProviderEnv)
+		return "", fmt.Errorf("%s must be basic/firecrawl/jina", webFetchProviderEnv)
 	}
 }
 

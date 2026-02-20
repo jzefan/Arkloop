@@ -47,7 +47,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: ErrorClassMcpProtocolError,
-				Message:    "MCP 工具未注册",
+				Message:    "MCP tool not registered",
 				Details:    map[string]any{"tool_name": toolName, "server_id": e.server.ServerID},
 			},
 			DurationMs: durationMs(started),
@@ -69,7 +69,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: ErrorClassMcpProtocolError,
-				Message:    "MCP client 获取失败",
+				Message:    "MCP client borrow failed",
 				Details:    map[string]any{"tool_name": toolName, "server_id": e.server.ServerID},
 			},
 			DurationMs: durationMs(started),
@@ -96,7 +96,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: ErrorClassMcpToolError,
-				Message:    "MCP 工具返回错误",
+				Message:    "MCP tool returned error",
 				Details: map[string]any{
 					"tool_name": toolName,
 					"server_id": e.server.ServerID,
@@ -149,7 +149,7 @@ func toExecutionError(err error, toolName string, serverID string) *tools.Execut
 	default:
 		return &tools.ExecutionError{
 			ErrorClass: ErrorClassMcpProtocolError,
-			Message:    "MCP 工具调用失败",
+			Message:    "MCP tool call failed",
 			Details:    map[string]any{"tool_name": toolName, "server_id": serverID},
 		}
 	}

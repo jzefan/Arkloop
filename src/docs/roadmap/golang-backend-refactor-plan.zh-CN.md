@@ -9,12 +9,14 @@
 
 本文仅讨论 **Backend / 控制面（API + 数据访问 + 鉴权 + SSE 回放 + 审计）** 的 Go 化；Agent 执行面由 Go Worker 负责（已完成 Go 重写）。
 
+> 状态：本仓库已完成 P.10 收口（Go API 位于 `src/services/api/`；Python API 与 `in_process` 已删除）。本文保留为迁移过程记录，部分章节会引用迁移前的 Python 文件路径与规模统计。
+
 ## 0. 可行性结论
 
 结论：**可行，并且适合薄片迁移，不需要 Big Bang**。
 
 基于仓库现状的判断依据：
-- 运行面已经稳定外置：API 默认走 `ARKLOOP_RUN_EXECUTOR=worker`（或不设置时默认 worker），执行链路在 Go Worker 内闭环，API 只负责 enqueue + SSE 回放。
+- 运行面已经稳定外置：API 只负责 enqueue + SSE 回放；执行链路在 Go Worker 内闭环。
 - 核心不变量语言无关：
   - `jobs.payload_json` 是跨语言协议（API 写，Worker 读）。
   - `run_events` 是唯一真相（Worker 写，API 读；前端/CLI 回放）。
@@ -30,9 +32,9 @@
 
 ## 1. 当前基线（与可迁移边界）
 
-### 1.1 现有控制面职责（Python API）
+### 1.1 迁移前控制面职责（Python API）
 
-当前 `src/services/api/` 实际承担：
+迁移前 Python API（已下线并删除）实际承担：
 - 认证：`/v1/auth/*` + `/v1/me`
 - 资源：threads/messages/runs（创建、列表、patch、取消）
 - SSE：`/v1/runs/{run_id}/events` 从 DB 回放 `run_events`
@@ -146,14 +148,17 @@ flowchart LR
 
 ### 3.2 目录设计与命名策略
 
-迁移期建议双栈并行（避免 Big Bang）：
-- Python API 保持不动：`src/services/api/`
-- 新增 Go API：`src/services/api_go/`
+当前（P.10 之后）目录已收口为：
+- Go API：`src/services/api/`
+- Go Worker：`src/services/worker/`
+- Python API：已下线并从仓库移除
+
+历史迁移期（P.01 ~ P.09）曾使用 `api_go` 目录与 Python 并行运行；最终在 P.10 重命名为 `api` 并删除 Python 控制面代码。
 
 建议最小结构：
 
 ```text
-src/services/api_go/
+src/services/api/
   go.mod
   cmd/
     api/
@@ -169,8 +174,8 @@ src/services/api_go/
 ```
 
 命名收口策略：
-- P.01 ~ P.08 使用 `api_go`，确保 Python/Go 可并行运行与切流。
-- P.10（或稳定观察窗口后）再重命名为 `api`，并把 Python 版本挪到 `api_py` 或直接删除（按你对回滚的容忍度决定）。
+- P.01 ~ P.08：使用 `api_go`，确保 Python/Go 可并行运行与切流。
+- P.10：重命名为 `api`，并删除 Python 控制面（本分支已完成）。
 
 ### 3.3 共享契约包（建议尽早做，但保持极简）
 
@@ -180,7 +185,7 @@ src/services/api_go/
 - `trace header` 名称常量
 
 形式上可以是：
-- `src/services/shared_go/`（单独 go.mod，供 api_go 与 worker require + replace）
+- `src/services/shared_go/`（单独 go.mod，供 api 与 worker require + replace）
 或
 - 统一迁移成单一 go.work（把多个模块纳入同一 workspace）
 
@@ -369,13 +374,13 @@ src/services/api_go/
 - 回滚：
   - 迁移工具切换本质是“运维收口动作”，应单独发布并提供一次性回滚窗口（例如保留 Alembic 升级脚本一段时间）。
 
-### P.12 Python 清理与仓库收敛（Everyone to Go 收尾）
+### P.12 Python 清理与仓库收敛（Everyone to Go 收尾）✅ 已完成
 
 - 目标：仓库内不再依赖 Python 作为运行时（可保留少量一次性迁移脚本，但不作为主路径）。
 - 改动：
   - 移除 Python packages（data/auth/job_queue/config/observability 等）与依赖文件（requirements/pyproject），或迁到 tools/ 作为非生产资产
   - 测试体系迁移到 Go（或 Node），替换 pytest 作为主回归入口
-  - CLI 是否迁 Go：视团队优先级；若不迁，也至少把“生产后端”彻底 Go 化
+  - CLI 是否迁 Go：视团队优先级；若不迁，也至少把”生产后端”彻底 Go 化
 - 验收：
   - `go test ./...` 覆盖核心契约（auth、threads/messages/runs、SSE、jobs payload）
   - 本地与 CI 不再要求 Python 才能跑通主流程
@@ -421,4 +426,3 @@ src/services/api_go/
 ---
 
 这份计划的核心是：**先用 Go API 复刻控制面契约，再按路由逐段切流，最后删除 Python 兜底**。这样每一步都可测、可回滚、可交付，风险最小。
-

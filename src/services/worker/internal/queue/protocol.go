@@ -33,7 +33,7 @@ type LeaseLostError struct {
 }
 
 func (e *LeaseLostError) Error() string {
-	return fmt.Sprintf("job lease 已丢失: %s", e.JobID.String())
+	return fmt.Sprintf("job lease lost: %s", e.JobID.String())
 }
 
 type JobQueue interface {

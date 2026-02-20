@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -182,5 +183,258 @@ func TestAnthropicGateway_Stream_ToolUse(t *testing.T) {
 
 	if _, ok := events[len(events)-1].(StreamRunCompleted); !ok {
 		t.Fatalf("expected StreamRunCompleted as last event, got %T", events[len(events)-1])
+	}
+}
+
+func TestAnthropicGateway_Stream_DebugChunk_NotTruncated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:          "test",
+		BaseURL:         server.URL,
+		EmitDebugEvents: true,
+	})
+
+	var chunks []StreamLlmResponseChunk
+	_ = gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		if c, ok := ev.(StreamLlmResponseChunk); ok {
+			chunks = append(chunks, c)
+		}
+		return nil
+	})
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one debug chunk")
+	}
+	// body is well under maxAnthropicResponseBytes, should not be marked as truncated
+	if chunks[0].Truncated {
+		t.Fatalf("expected truncated=false for small body, got true")
+	}
+}
+
+func TestAnthropicGateway_Stream_DebugChunk_Truncated(t *testing.T) {
+	// build a response body exceeding maxAnthropicResponseBytes (not valid JSON, but enough to trigger truncation path)
+	bigPayload := make([]byte, maxAnthropicResponseBytes+100)
+	for i := range bigPayload {
+		bigPayload[i] = 'x'
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(bigPayload)
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:          "test",
+		BaseURL:         server.URL,
+		EmitDebugEvents: true,
+	})
+
+	var chunks []StreamLlmResponseChunk
+	_ = gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		if c, ok := ev.(StreamLlmResponseChunk); ok {
+			chunks = append(chunks, c)
+		}
+		return nil
+	})
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one debug chunk")
+	}
+	if !chunks[0].Truncated {
+		t.Fatalf("expected truncated=true for oversized body, got false")
+	}
+}
+
+func TestAnthropicGateway_Stream_ErrorMessageExtracted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var gotFailed *StreamRunFailed
+	for _, ev := range events {
+		if f, ok := ev.(StreamRunFailed); ok {
+			copied := f
+			gotFailed = &copied
+			break
+		}
+	}
+	if gotFailed == nil {
+		t.Fatal("expected StreamRunFailed")
+	}
+	if gotFailed.Error.Message != "invalid x-api-key" {
+		t.Fatalf("unexpected error message: %q", gotFailed.Error.Message)
+	}
+	if gotFailed.Error.Details["anthropic_error_type"] != "authentication_error" {
+		t.Fatalf("unexpected anthropic_error_type: %v", gotFailed.Error.Details)
+	}
+	if gotFailed.Error.Details["status_code"] != http.StatusUnauthorized {
+		t.Fatalf("unexpected status_code: %v", gotFailed.Error.Details)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_Merged(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		AdvancedJSON: map[string]any{
+			"stop_sequences": []any{"STOP"},
+			"metadata":       map[string]any{"user_id": "u1"},
+		},
+	})
+
+	_ = gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error { return nil })
+
+	var body map[string]any
+	if err := json.Unmarshal(capturedBody, &body); err != nil {
+		t.Fatalf("request body not valid json: %v", err)
+	}
+	if body["stop_sequences"] == nil {
+		t.Fatalf("expected stop_sequences in request, got: %v", body)
+	}
+	if body["metadata"] == nil {
+		t.Fatalf("expected metadata in request, got: %v", body)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_CannotEnableStream(t *testing.T) {
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:       "test",
+		BaseURL:      "http://127.0.0.1:0", // no real connection needed
+		AdvancedJSON: map[string]any{"stream": true},
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected StreamRunFailed event, got none")
+	}
+	failed, ok := events[0].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[0])
+	}
+	if failed.Error.ErrorClass != ErrorClassInternalError {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Details["denied_key"] != "stream" {
+		t.Fatalf("expected denied_key=stream, got: %v", failed.Error.Details)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_CannotInjectToolsWhenRequestHasNone(t *testing.T) {
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:       "test",
+		BaseURL:      "http://127.0.0.1:0",
+		AdvancedJSON: map[string]any{"tools": []any{map[string]any{"name": "evil"}}},
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		// Tools is empty, expect advanced_json cannot inject
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected StreamRunFailed event, got none")
+	}
+	failed, ok := events[0].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[0])
+	}
+	if failed.Error.Details["denied_key"] != "tools" {
+		t.Fatalf("expected denied_key=tools, got: %v", failed.Error.Details)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_DeniedKeyReturnsError(t *testing.T) {
+	// denylist keys (model/max_tokens/stream/tools/system etc.) should all fail immediately
+	deniedKeys := []string{"model", "max_tokens", "system"}
+	for _, key := range deniedKeys {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+				APIKey:       "test",
+				BaseURL:      "http://127.0.0.1:0",
+				AdvancedJSON: map[string]any{key: "anything"},
+			})
+
+			var events []StreamEvent
+			err := gateway.Stream(context.Background(), Request{
+				Model:    "claude-real",
+				Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+			}, func(ev StreamEvent) error {
+				events = append(events, ev)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("expected nil error, got: %v", err)
+			}
+			if len(events) == 0 {
+				t.Fatal("expected StreamRunFailed, got no events")
+			}
+			failed, ok := events[0].(StreamRunFailed)
+			if !ok {
+				t.Fatalf("expected StreamRunFailed, got %T", events[0])
+			}
+			if failed.Error.Details["denied_key"] != key {
+				t.Fatalf("expected denied_key=%s, got: %v", key, failed.Error.Details)
+			}
+		})
 	}
 }

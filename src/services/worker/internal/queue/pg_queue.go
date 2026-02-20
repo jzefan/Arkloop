@@ -24,10 +24,10 @@ type PgQueue struct {
 
 func NewPgQueue(pool *pgxpool.Pool, maxAttempts int) (*PgQueue, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("pool 不能为空")
+		return nil, fmt.Errorf("pool must not be nil")
 	}
 	if maxAttempts <= 0 {
-		return nil, fmt.Errorf("max_attempts 必须为正数")
+		return nil, fmt.Errorf("max_attempts must be positive")
 	}
 	return &PgQueue{pool: pool, maxAttempts: maxAttempts}, nil
 }
@@ -97,7 +97,7 @@ func (q *PgQueue) EnqueueRun(
 
 func (q *PgQueue) Lease(ctx context.Context, leaseSeconds int, jobTypes []string) (*JobLease, error) {
 	if leaseSeconds <= 0 {
-		return nil, fmt.Errorf("lease_seconds 必须为正数")
+		return nil, fmt.Errorf("lease_seconds must be positive")
 	}
 
 	chosenJobTypes := normalizeJobTypes(jobTypes)
@@ -128,7 +128,7 @@ func (q *PgQueue) Lease(ctx context.Context, leaseSeconds int, jobTypes []string
 
 func (q *PgQueue) Heartbeat(ctx context.Context, lease JobLease, leaseSeconds int) error {
 	if leaseSeconds <= 0 {
-		return fmt.Errorf("lease_seconds 必须为正数")
+		return fmt.Errorf("lease_seconds must be positive")
 	}
 
 	result, err := q.pool.Exec(
@@ -188,7 +188,7 @@ func (q *PgQueue) Nack(ctx context.Context, lease JobLease, delaySeconds *int) e
 		chosenDelay = *delaySeconds
 	}
 	if chosenDelay < 0 {
-		return fmt.Errorf("delay_seconds 不能为负数")
+		return fmt.Errorf("delay_seconds must not be negative")
 	}
 
 	result, err := q.pool.Exec(

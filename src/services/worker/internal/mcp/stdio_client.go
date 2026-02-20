@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,6 +96,7 @@ func (c *StdioClient) Close() error {
 	c.closed = true
 	cmd := c.cmd
 	stdin := c.stdin
+	stdout := c.stdout
 	pending := c.pending
 	c.pending = map[int64]chan map[string]any{}
 	c.mu.Unlock()
@@ -107,6 +107,9 @@ func (c *StdioClient) Close() error {
 
 	if stdin != nil {
 		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
 	}
 
 	if cmd != nil && cmd.Process != nil {
@@ -120,7 +123,7 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return DisconnectedError{Message: "MCP client 已关闭"}
+		return DisconnectedError{Message: "MCP client closed"}
 	}
 	if c.cmd != nil {
 		c.mu.Unlock()
@@ -129,7 +132,11 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 	server := c.server
 	c.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	if ctx != nil && ctx.Err() != nil {
+		return TimeoutError{Message: "MCP call cancelled"}
+	}
+
+	cmd := exec.Command(server.Command, server.Args...)
 	if server.Cwd != nil {
 		cmd.Dir = *server.Cwd
 	}
@@ -156,7 +163,7 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 	if c.closed {
 		c.mu.Unlock()
 		_ = cmd.Process.Kill()
-		return DisconnectedError{Message: "MCP client 已关闭"}
+		return DisconnectedError{Message: "MCP client closed"}
 	}
 	c.cmd = cmd
 	c.stdin = stdin
@@ -183,11 +190,7 @@ func (c *StdioClient) readLoop(stdout io.Reader) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				c.failPending(DisconnectedError{Message: "MCP stdout 读取失败"})
-			} else {
-				c.failPending(DisconnectedError{Message: "MCP stdout 已关闭"})
-			}
+			c.handleDisconnect()
 			return
 		}
 		trimmed := strings.TrimSpace(line)
@@ -221,20 +224,37 @@ func (c *StdioClient) readLoop(stdout io.Reader) {
 	}
 }
 
-func (c *StdioClient) failPending(err error) {
+func (c *StdioClient) handleDisconnect() {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
+	cmd := c.cmd
+	stdin := c.stdin
+	stdout := c.stdout
 	pending := c.pending
 	c.pending = map[int64]chan map[string]any{}
+	c.cmd = nil
+	c.stdin = nil
+	c.stdout = nil
+	c.initialized = false
 	c.mu.Unlock()
 
 	for _, ch := range pending {
 		close(ch)
 	}
-	_ = err
+
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
+	}
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}
 }
 
 func parseID(value any) (int64, bool) {
@@ -294,13 +314,13 @@ func (c *StdioClient) ListTools(ctx context.Context, timeoutMs int) ([]Tool, err
 		return nil, err
 	}
 
-	rawTools, ok := result["tools"]
+	rawTools := result["tools"]
 	if rawTools == nil {
 		return nil, nil
 	}
 	list, ok := rawTools.([]any)
 	if !ok {
-		return nil, ProtocolError{Message: "tools/list 返回 tools 不是数组"}
+		return nil, ProtocolError{Message: "tools/list returned tools is not an array"}
 	}
 
 	out := []Tool{}
@@ -346,7 +366,7 @@ func (c *StdioClient) CallTool(ctx context.Context, name string, arguments map[s
 	rawContent := result["content"]
 	contentList, ok := rawContent.([]any)
 	if rawContent != nil && !ok {
-		return ToolCallResult{}, ProtocolError{Message: "tools/call 返回 content 不是数组"}
+		return ToolCallResult{}, ProtocolError{Message: "tools/call returned content is not an array"}
 	}
 
 	content := []map[string]any{}
@@ -380,7 +400,7 @@ func (c *StdioClient) request(ctx context.Context, method string, params map[str
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil, DisconnectedError{Message: "MCP client 已关闭"}
+		return nil, DisconnectedError{Message: "MCP client closed"}
 	}
 	c.pending[id] = ch
 	stdin := c.stdin
@@ -404,7 +424,8 @@ func (c *StdioClient) request(ctx context.Context, method string, params map[str
 	_, writeErr := stdin.Write(append(encoded, '\n'))
 	c.writeMu.Unlock()
 	if writeErr != nil {
-		return nil, DisconnectedError{Message: "MCP stdin 写入失败"}
+		c.handleDisconnect()
+		return nil, DisconnectedError{Message: "MCP stdin write failed"}
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
@@ -414,15 +435,18 @@ func (c *StdioClient) request(ctx context.Context, method string, params map[str
 
 	select {
 	case <-ctx.Done():
-		return nil, TimeoutError{Message: "MCP 调用已取消"}
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return nil, TimeoutError{Message: "MCP call cancelled"}
 	case <-time.After(timeout):
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return nil, TimeoutError{Message: "MCP 调用超时"}
+		return nil, TimeoutError{Message: "MCP call timed out"}
 	case resp, ok := <-ch:
 		if !ok {
-			return nil, DisconnectedError{Message: "MCP client 已断开"}
+			return nil, DisconnectedError{Message: "MCP client disconnected"}
 		}
 		return parseResponse(resp)
 	}
@@ -447,7 +471,7 @@ func parseResponse(obj map[string]any) (map[string]any, error) {
 	}
 	result, ok := obj["result"].(map[string]any)
 	if !ok {
-		return nil, ProtocolError{Message: "MCP 响应缺少 result"}
+		return nil, ProtocolError{Message: "MCP response missing result"}
 	}
 	return result, nil
 }
@@ -477,7 +501,8 @@ func (c *StdioClient) notify(ctx context.Context, method string, params map[stri
 	_, writeErr := stdin.Write(append(encoded, '\n'))
 	c.writeMu.Unlock()
 	if writeErr != nil {
-		return DisconnectedError{Message: "MCP stdin 写入失败"}
+		c.handleDisconnect()
+		return DisconnectedError{Message: "MCP stdin write failed"}
 	}
 	return nil
 }

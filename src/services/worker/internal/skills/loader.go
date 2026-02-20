@@ -20,7 +20,7 @@ var (
 func BuiltinSkillsRoot() (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
-		return "", fmt.Errorf("无法定位 skills 根目录")
+		return "", fmt.Errorf("cannot locate skills root directory")
 	}
 	dir := filepath.Dir(filename)
 	for {
@@ -33,7 +33,7 @@ func BuiltinSkillsRoot() (string, error) {
 		}
 		dir = next
 	}
-	return "", fmt.Errorf("未找到 src 目录，无法定位 skills 根目录")
+	return "", fmt.Errorf("src directory not found, cannot locate skills root directory")
 }
 
 func LoadRegistry(root string) (*Registry, error) {
@@ -50,7 +50,7 @@ func LoadRegistry(root string) (*Registry, error) {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("skills 根目录必须为目录")
+		return nil, fmt.Errorf("skills root must be a directory")
 	}
 
 	entries, err := os.ReadDir(root)
@@ -96,12 +96,12 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 	}
 	trimmed := strings.TrimSpace(string(rawYAML))
 	if trimmed == "" {
-		return Definition{}, fmt.Errorf("skill.yaml 不能为空: %s", yamlPath)
+		return Definition{}, fmt.Errorf("skill.yaml must not be empty: %s", yamlPath)
 	}
 
 	var obj map[string]any
 	if err := yaml.Unmarshal([]byte(trimmed), &obj); err != nil {
-		return Definition{}, fmt.Errorf("解析 skill.yaml 失败: %s", yamlPath)
+		return Definition{}, fmt.Errorf("failed to parse skill.yaml: %s", yamlPath)
 	}
 
 	skillID, err := asID(obj["id"], "id")
@@ -133,7 +133,7 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 	}
 	prompt := strings.TrimSpace(string(rawPrompt))
 	if prompt == "" {
-		return Definition{}, fmt.Errorf("prompt.md 不能为空: %s", promptPath)
+		return Definition{}, fmt.Errorf("prompt.md must not be empty: %s", promptPath)
 	}
 
 	return Definition{
@@ -150,11 +150,11 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 func asNonEmptyString(value any, label string) (string, error) {
 	text, ok := value.(string)
 	if !ok {
-		return "", fmt.Errorf("%s 必须为字符串", label)
+		return "", fmt.Errorf("%s must be a string", label)
 	}
 	cleaned := strings.TrimSpace(text)
 	if cleaned == "" {
-		return "", fmt.Errorf("%s 不能为空", label)
+		return "", fmt.Errorf("%s must not be empty", label)
 	}
 	return cleaned, nil
 }
@@ -177,7 +177,7 @@ func asID(value any, label string) (string, error) {
 		return "", err
 	}
 	if !idRegex.MatchString(cleaned) {
-		return "", fmt.Errorf("%s 不合法: %s", label, cleaned)
+		return "", fmt.Errorf("%s is invalid: %s", label, cleaned)
 	}
 	return cleaned, nil
 }
@@ -188,21 +188,21 @@ func asToolAllowlist(value any) ([]string, error) {
 	}
 	rawList, ok := value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("tool_allowlist 必须为数组")
+		return nil, fmt.Errorf("tool_allowlist must be an array")
 	}
 	seen := map[string]struct{}{}
 	out := []string{}
 	for idx, item := range rawList {
 		text, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("tool_allowlist[%d] 必须为字符串", idx)
+			return nil, fmt.Errorf("tool_allowlist[%d] must be a string", idx)
 		}
 		cleaned := strings.TrimSpace(text)
 		if cleaned == "" {
-			return nil, fmt.Errorf("tool_allowlist[%d] 不能为空", idx)
+			return nil, fmt.Errorf("tool_allowlist[%d] must not be empty", idx)
 		}
 		if !idRegex.MatchString(cleaned) {
-			return nil, fmt.Errorf("tool_allowlist[%d] 不合法: %s", idx, cleaned)
+			return nil, fmt.Errorf("tool_allowlist[%d] is invalid: %s", idx, cleaned)
 		}
 		if _, exists := seen[cleaned]; exists {
 			continue
@@ -219,14 +219,14 @@ func asBudgets(value any) (Budgets, error) {
 	}
 	raw, ok := value.(map[string]any)
 	if !ok {
-		return Budgets{}, fmt.Errorf("budgets 必须为对象")
+		return Budgets{}, fmt.Errorf("budgets must be an object")
 	}
 
 	for key := range raw {
 		if _, allowed := budgetKeys[key]; allowed {
 			continue
 		}
-		return Budgets{}, fmt.Errorf("budgets 包含不支持字段: %s", key)
+		return Budgets{}, fmt.Errorf("budgets contains unsupported field: %s", key)
 	}
 
 	maxIterations, err := asOptionalPositiveInt(raw["max_iterations"], "budgets.max_iterations")
@@ -246,7 +246,7 @@ func asBudgets(value any) (Budgets, error) {
 	if rawBudget, ok := raw["tool_budget"]; ok && rawBudget != nil {
 		mapped, ok := rawBudget.(map[string]any)
 		if !ok {
-			return Budgets{}, fmt.Errorf("budgets.tool_budget 必须为对象")
+			return Budgets{}, fmt.Errorf("budgets.tool_budget must be an object")
 		}
 		for key, value := range mapped {
 			toolBudget[key] = value
@@ -267,10 +267,10 @@ func asOptionalPositiveInt(value any, label string) (*int, error) {
 	}
 	number, ok := value.(int)
 	if !ok {
-		return nil, fmt.Errorf("%s 必须为整数", label)
+		return nil, fmt.Errorf("%s must be an integer", label)
 	}
 	if number <= 0 {
-		return nil, fmt.Errorf("%s 必须为正整数", label)
+		return nil, fmt.Errorf("%s must be a positive integer", label)
 	}
 	out := int(number)
 	return &out, nil

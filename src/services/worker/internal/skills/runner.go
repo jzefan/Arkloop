@@ -36,7 +36,7 @@ func ResolveSkill(inputJSON map[string]any, registry *Registry) Resolution {
 		return Resolution{
 			Error: &ResolutionError{
 				ErrorClass: ErrorClassSkillInvalidID,
-				Message:    "skill_id 非法",
+				Message:    "skill_id invalid",
 			},
 		}
 	}
@@ -46,7 +46,7 @@ func ResolveSkill(inputJSON map[string]any, registry *Registry) Resolution {
 		return Resolution{
 			Error: &ResolutionError{
 				ErrorClass: ErrorClassSkillInvalidID,
-				Message:    "skill_id 非法",
+				Message:    "skill_id invalid",
 			},
 		}
 	}
@@ -56,7 +56,7 @@ func ResolveSkill(inputJSON map[string]any, registry *Registry) Resolution {
 		return Resolution{
 			Error: &ResolutionError{
 				ErrorClass: ErrorClassSkillNotFound,
-				Message:    "skill 不存在",
+				Message:    "skill not found",
 				Details:    map[string]any{"skill_id": skillID},
 			},
 		}
@@ -66,7 +66,7 @@ func ResolveSkill(inputJSON map[string]any, registry *Registry) Resolution {
 		return Resolution{
 			Error: &ResolutionError{
 				ErrorClass: ErrorClassSkillVersionMismatch,
-				Message:    "skill 版本不匹配",
+				Message:    "skill version mismatch",
 				Details: map[string]any{
 					"skill_id":          skillID,
 					"requested_version": requestedVersion,
@@ -89,10 +89,10 @@ func parseSkillRef(value string) (string, string, error) {
 	skillID = strings.TrimSpace(skillID)
 	version = strings.TrimSpace(version)
 	if skillID == "" {
-		return "", "", fmt.Errorf("skill_id 为空")
+		return "", "", fmt.Errorf("skill_id is empty")
 	}
 	if version == "" {
-		return "", "", fmt.Errorf("skill_id@version 形式缺少 version")
+		return "", "", fmt.Errorf("skill_id@version format missing version")
 	}
 	return skillID, version, nil
 }

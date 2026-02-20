@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// LogFields 对齐 Python worker 日志上下文键。
+// LogFields aligns with Python worker log context keys.
 type LogFields struct {
 	TraceID *string
 	OrgID   *string

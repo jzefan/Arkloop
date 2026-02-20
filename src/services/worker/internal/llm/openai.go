@@ -133,7 +133,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI 请求序列化失败",
+				Message:    "OpenAI request serialization failed",
 			},
 		}
 		return yield(failed)
@@ -144,7 +144,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI 请求构造失败",
+				Message:    "OpenAI request construction failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -158,7 +158,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
-				Message:    "OpenAI 网络错误",
+				Message:    "OpenAI network error",
 			},
 		}
 		return yield(failed)
@@ -168,7 +168,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	status := resp.StatusCode
 	if status < 200 || status >= 300 {
 		body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxErrorBodyBytes)
-		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI 请求失败")
+		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
 
 		errClass := errorClassFromStatus(status)
 		failed := StreamRunFailed{
@@ -215,7 +215,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 
 	content, toolCalls, err := parseOpenAIChatCompletion(body)
 	if err != nil {
-		return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
+		return yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed"))
 	}
 
 	if content != "" {
@@ -249,7 +249,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI responses 输入构造失败",
+				Message:    "OpenAI responses input construction failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -291,7 +291,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI 请求序列化失败",
+				Message:    "OpenAI request serialization failed",
 			},
 		})
 	}
@@ -301,7 +301,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "OpenAI 请求构造失败",
+				Message:    "OpenAI request construction failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -315,7 +315,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
-				Message:    "OpenAI 网络错误",
+				Message:    "OpenAI network error",
 			},
 		})
 	}
@@ -342,7 +342,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		}
 
 		errClass := errorClassFromStatus(status)
-		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI 请求失败")
+		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: errClass,
@@ -372,7 +372,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 
 	content, toolCalls, err := parseOpenAIResponses(body)
 	if err != nil {
-		return yield(openAIParseFailure(err, "OpenAI responses 响应解析失败", "OpenAI responses tool_call 参数解析失败"))
+		return yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed"))
 	}
 
 	if content != "" {
@@ -476,10 +476,10 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 			continue
 		}
 		if strings.TrimSpace(item.ID) == "" {
-			return nil, fmt.Errorf("tool_calls[%d] 缺少 id", idx)
+			return nil, fmt.Errorf("tool_calls[%d] missing id", idx)
 		}
 		if strings.TrimSpace(item.Name) == "" {
-			return nil, fmt.Errorf("tool_calls[%d] 缺少 function.name", idx)
+			return nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -487,11 +487,11 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 		if joinedArgs != "" {
 			var parsedArgs any
 			if err := json.Unmarshal([]byte(joinedArgs), &parsedArgs); err != nil {
-				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 			}
 			obj, ok := parsedArgs.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 			}
 			argumentsJSON = obj
 		}
@@ -516,8 +516,14 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 ) error {
 	toolBuffer := newOpenAIChatToolCallBuffer()
 	terminalEmitted := false
+	var handlerFailed bool
 
-	err := forEachSSEData(ctx, body, func(data string) error {
+	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
+		defer func() {
+			if retErr != nil {
+				handlerFailed = true
+			}
+		}()
 		raw, rawTruncated := truncateUTF8(data, openAIMaxDebugChunkBytes)
 		var chunkJSON any
 		if strings.TrimSpace(data) != "" && data != "[DONE]" {
@@ -542,7 +548,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		if strings.TrimSpace(data) == "[DONE]" {
 			calls, err := toolBuffer.Drain()
 			if err != nil {
-				return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
+				return yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed"))
 			}
 			for _, call := range calls {
 				if err := yield(call); err != nil {
@@ -577,7 +583,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		if choice.FinishReason != nil && strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "tool_calls") {
 			calls, err := toolBuffer.Drain()
 			if err != nil {
-				return yield(openAIParseFailure(err, "OpenAI 响应解析失败", "OpenAI tool_call 参数解析失败"))
+				return yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed"))
 			}
 			for _, call := range calls {
 				if err := yield(call); err != nil {
@@ -588,7 +594,19 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		return nil
 	})
 	if err != nil {
-		return err
+		if handlerFailed {
+			return err
+		}
+		if terminalEmitted {
+			return nil
+		}
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassProviderRetryable,
+				Message:    "SSE stream read interrupted",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
 	}
 	if terminalEmitted {
 		return nil
@@ -604,8 +622,14 @@ func (g *OpenAIGateway) streamResponsesSSE(
 	yield func(StreamEvent) error,
 ) error {
 	terminalEmitted := false
+	var handlerFailed bool
 
-	err := forEachSSEData(ctx, body, func(data string) error {
+	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
+		defer func() {
+			if retErr != nil {
+				handlerFailed = true
+			}
+		}()
 		raw, rawTruncated := truncateUTF8(data, openAIMaxDebugChunkBytes)
 		var chunkJSON any
 		if strings.TrimSpace(data) != "" && data != "[DONE]" {
@@ -656,7 +680,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 			outputRaw, _ := respObj["output"].([]any)
 			toolCalls, err := openAIResponsesToolCalls(outputRaw)
 			if err != nil {
-				return yield(openAIParseFailure(err, "OpenAI responses 响应解析失败", "OpenAI responses tool_call 参数解析失败"))
+				return yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed"))
 			}
 			for _, call := range toolCalls {
 				if err := yield(call); err != nil {
@@ -668,7 +692,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 		}
 
 		if typ == "response.failed" || typ == "response.error" {
-			message := "OpenAI responses 失败"
+			message := "OpenAI responses failed"
 			if errObj, ok := root["error"].(map[string]any); ok {
 				if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
 					message = strings.TrimSpace(msg)
@@ -684,7 +708,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 		}
 
 		if errObj, ok := root["error"].(map[string]any); ok && errObj != nil {
-			message := "OpenAI responses 返回错误"
+			message := "OpenAI responses returned error"
 			if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
 				message = strings.TrimSpace(msg)
 			}
@@ -700,7 +724,19 @@ func (g *OpenAIGateway) streamResponsesSSE(
 		return nil
 	})
 	if err != nil {
-		return err
+		if handlerFailed {
+			return err
+		}
+		if terminalEmitted {
+			return nil
+		}
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassProviderRetryable,
+				Message:    "SSE stream read interrupted",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
 	}
 	if terminalEmitted {
 		return nil
@@ -798,7 +834,7 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 		return "", nil, err
 	}
 	if len(parsed.Choices) == 0 {
-		return "", nil, fmt.Errorf("response 缺少 choices")
+		return "", nil, fmt.Errorf("response missing choices")
 	}
 
 	message := parsed.Choices[0].Message
@@ -811,12 +847,12 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 	for idx, raw := range message.ToolCalls {
 		toolCallID := strings.TrimSpace(raw.ID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("tool_calls[%d] 缺少 id", idx)
+			return "", nil, fmt.Errorf("tool_calls[%d] missing id", idx)
 		}
 
 		toolName := strings.TrimSpace(raw.Function.Name)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("tool_calls[%d] 缺少 function.name", idx)
+			return "", nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -824,11 +860,11 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 		if arguments != "" {
 			var parsedArgs any
 			if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 			}
 			obj, ok := parsedArgs.(map[string]any)
 			if !ok {
-				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 			}
 			argumentsJSON = obj
 		}
@@ -880,12 +916,12 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 		if message.Role == "tool" {
 			parsed := map[string]any{}
 			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-				return nil, fmt.Errorf("tool message 不是合法 JSON")
+				return nil, fmt.Errorf("tool message is not valid JSON")
 			}
 			toolCallID, _ := parsed["tool_call_id"].(string)
 			toolCallID = strings.TrimSpace(toolCallID)
 			if toolCallID == "" {
-				return nil, fmt.Errorf("tool message 缺少 tool_call_id")
+				return nil, fmt.Errorf("tool message missing tool_call_id")
 			}
 			items = append(items, map[string]any{
 				"type":    "function_call_output",
@@ -1012,7 +1048,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", nil, fmt.Errorf("response 根不是对象")
+		return "", nil, fmt.Errorf("response root is not an object")
 	}
 
 	var contentBuilder strings.Builder
@@ -1029,7 +1065,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		if contentBuilder.Len() > 0 {
 			return contentBuilder.String(), nil, nil
 		}
-		return "", nil, fmt.Errorf("response 缺少 output")
+		return "", nil, fmt.Errorf("response missing output")
 	}
 
 	toolCalls := []ToolCall{}
@@ -1073,7 +1109,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		}
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("output[%d] 缺少 function_call.id", idx)
+			return "", nil, fmt.Errorf("output[%d] missing function_call.id", idx)
 		}
 
 		toolName, _ := item["name"].(string)
@@ -1082,7 +1118,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		}
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("output[%d] 缺少 function_call.name", idx)
+			return "", nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -1095,16 +1131,16 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 				if arguments != "" {
 					var parsedArgs any
 					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-						return "", nil, fmt.Errorf("%w: output[%d].arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+						return "", nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 					}
 					obj, ok := parsedArgs.(map[string]any)
 					if !ok {
-						return "", nil, fmt.Errorf("%w: output[%d].arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+						return "", nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 					}
 					argumentsJSON = obj
 				}
 			default:
-				return "", nil, fmt.Errorf("%w: output[%d].arguments 类型不支持", errOpenAIToolCallArguments, idx)
+				return "", nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
 			}
 		}
 
@@ -1135,7 +1171,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		}
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return nil, fmt.Errorf("output[%d] 缺少 function_call.id", idx)
+			return nil, fmt.Errorf("output[%d] missing function_call.id", idx)
 		}
 
 		toolName, _ := item["name"].(string)
@@ -1144,7 +1180,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		}
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" {
-			return nil, fmt.Errorf("output[%d] 缺少 function_call.name", idx)
+			return nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -1157,16 +1193,16 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 				if arguments != "" {
 					var parsedArgs any
 					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-						return nil, fmt.Errorf("%w: output[%d].arguments 不是合法 JSON", errOpenAIToolCallArguments, idx)
+						return nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 					}
 					obj, ok := parsedArgs.(map[string]any)
 					if !ok {
-						return nil, fmt.Errorf("%w: output[%d].arguments 必须是 JSON object", errOpenAIToolCallArguments, idx)
+						return nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 					}
 					argumentsJSON = obj
 				}
 			default:
-				return nil, fmt.Errorf("%w: output[%d].arguments 类型不支持", errOpenAIToolCallArguments, idx)
+				return nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
 			}
 		}
 
