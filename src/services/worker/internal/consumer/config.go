@@ -22,19 +22,19 @@ func DefaultConfig() Config {
 
 func (c Config) Validate() error {
 	if c.Concurrency <= 0 {
-		return fmt.Errorf("concurrency 必须为正整数")
+		return fmt.Errorf("concurrency must be a positive integer")
 	}
 	if c.PollSeconds < 0 {
-		return fmt.Errorf("poll_seconds 必须为非负数")
+		return fmt.Errorf("poll_seconds must be non-negative")
 	}
 	if c.LeaseSeconds <= 0 {
-		return fmt.Errorf("lease_seconds 必须为正整数")
+		return fmt.Errorf("lease_seconds must be a positive integer")
 	}
 	if c.HeartbeatSeconds < 0 {
-		return fmt.Errorf("heartbeat_seconds 必须为非负数")
+		return fmt.Errorf("heartbeat_seconds must be non-negative")
 	}
 	if len(c.QueueJobTypes) == 0 {
-		return fmt.Errorf("queue_job_types 不能为空")
+		return fmt.Errorf("queue_job_types must not be empty")
 	}
 	return nil
 }

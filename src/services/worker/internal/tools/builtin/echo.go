@@ -17,13 +17,13 @@ const (
 var EchoAgentSpec = tools.AgentToolSpec{
 	Name:        "echo",
 	Version:     "1",
-	Description: "回显输入文本",
+	Description: "echo back input text",
 	RiskLevel:   tools.RiskLevelLow,
 }
 
 var EchoLlmSpec = llm.ToolSpec{
 	Name:        "echo",
-	Description: stringPtr("回显输入文本"),
+	Description: stringPtr("echo back input text"),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -58,7 +58,7 @@ func (EchoExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: echoErrorArgsInvalid,
-				Message:    "工具参数不支持额外字段",
+				Message:    "tool args do not accept extra fields",
 				Details:    map[string]any{"unknown_fields": unknown},
 			},
 			DurationMs: durationMs(started),
@@ -70,7 +70,7 @@ func (EchoExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: echoErrorArgsInvalid,
-				Message:    "参数 text 必须为非空字符串",
+				Message:    "parameter text must be a non-empty string",
 				Details:    map[string]any{"field": "text"},
 			},
 			DurationMs: durationMs(started),

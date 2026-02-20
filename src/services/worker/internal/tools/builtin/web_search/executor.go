@@ -18,25 +18,25 @@ const (
 	errorTimeout       = "tool.timeout"
 	errorSearchFailed  = "tool.search_failed"
 
-	defaultTimeout = 10 * time.Second
+	defaultTimeout  = 10 * time.Second
 	maxResultsLimit = 20
 )
 
 var AgentSpec = tools.AgentToolSpec{
 	Name:        "web_search",
 	Version:     "1",
-	Description: "搜索互联网并返回摘要结果",
+	Description: "search the internet and return summary results",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: false,
 }
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "web_search",
-	Description: stringPtr("搜索互联网并返回标题/链接/摘要"),
+	Description: stringPtr("search the internet and return title/link/summary"),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query":      map[string]any{"type": "string", "minLength": 1},
+			"query":       map[string]any{"type": "string", "minLength": 1},
 			"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": maxResultsLimit},
 		},
 		"required":             []string{"query", "max_results"},
@@ -78,7 +78,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorNotConfigured,
-					Message:    "web_search 配置无效",
+					Message:    "web_search configuration invalid",
 					Details:    map[string]any{"reason": err.Error()},
 				},
 				DurationMs: durationMs(started),
@@ -88,7 +88,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorNotConfigured,
-					Message:    "web_search 未配置 backend",
+					Message:    "web_search backend not configured",
 				},
 				DurationMs: durationMs(started),
 			}
@@ -110,7 +110,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorTimeout,
-					Message:    "web_search 超时",
+					Message:    "web_search timed out",
 					Details:    map[string]any{"timeout_seconds": timeout.Seconds()},
 				},
 				DurationMs: durationMs(started),
@@ -120,7 +120,7 @@ func (e *ToolExecutor) Execute(
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorSearchFailed,
-					Message:    "web_search 请求失败",
+					Message:    "web_search request failed",
 					Details:    map[string]any{"status_code": httpErr.StatusCode},
 				},
 				DurationMs: durationMs(started),
@@ -129,7 +129,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: errorSearchFailed,
-				Message:    "web_search 执行失败",
+				Message:    "web_search execution failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 			DurationMs: durationMs(started),
@@ -157,18 +157,18 @@ func providerFromEnv() (Provider, error) {
 	switch cfg.ProviderKind {
 	case ProviderKindSearxng:
 		if strings.TrimSpace(cfg.SearxngBaseURL) == "" {
-			return nil, fmt.Errorf("SearXNG base_url 未配置")
+			return nil, fmt.Errorf("searxng base_url not configured")
 		}
 		return NewSearxngProvider(cfg.SearxngBaseURL), nil
 	case ProviderKindTavily:
 		if strings.TrimSpace(cfg.TavilyAPIKey) == "" {
-			return nil, fmt.Errorf("Tavily api_key 未配置")
+			return nil, fmt.Errorf("tavily api_key not configured")
 		}
 		return NewTavilyProvider(cfg.TavilyAPIKey), nil
 	case ProviderKindSerper:
-		return nil, fmt.Errorf("web_search provider 未实现：serper")
+		return nil, fmt.Errorf("web_search provider not implemented: serper")
 	default:
-		return nil, fmt.Errorf("web_search provider 未实现")
+		return nil, fmt.Errorf("web_search provider not implemented")
 	}
 }
 
@@ -191,7 +191,7 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 		sort.Strings(unknown)
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "工具参数不支持额外字段",
+			Message:    "tool arguments do not allow extra fields",
 			Details:    map[string]any{"unknown_fields": unknown},
 		}
 	}
@@ -200,7 +200,7 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 	if !ok || strings.TrimSpace(rawQuery) == "" {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "参数 query 必须为非空字符串",
+			Message:    "parameter query must be a non-empty string",
 			Details:    map[string]any{"field": "query"},
 		}
 	}
@@ -216,14 +216,14 @@ func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {
 	if !okInt {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    "参数 max_results 必须为整数",
+			Message:    "parameter max_results must be an integer",
 			Details:    map[string]any{"field": "max_results"},
 		}
 	}
 	if maxResults <= 0 || maxResults > maxResultsLimit {
 		return "", 0, &tools.ExecutionError{
 			ErrorClass: errorArgsInvalid,
-			Message:    fmt.Sprintf("参数 max_results 必须在 1..%d 之间", maxResultsLimit),
+			Message:    fmt.Sprintf("parameter max_results must be in range 1..%d", maxResultsLimit),
 			Details:    map[string]any{"field": "max_results", "max": maxResultsLimit},
 		}
 	}

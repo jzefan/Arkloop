@@ -48,7 +48,7 @@ func (RunsRepository) LockRunRow(ctx context.Context, tx pgx.Tx, runID uuid.UUID
 	).Scan(&ignored)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("run 不存在: %s", runID)
+			return fmt.Errorf("run not found: %s", runID)
 		}
 		return err
 	}

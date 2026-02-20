@@ -87,7 +87,7 @@ func resolveDotenvPath() (string, error) {
 			if fileExists(expanded) {
 				return expanded, nil
 			}
-			return "", fmt.Errorf("%s 指向的文件不存在: %s", dotenvFileEnv, raw)
+			return "", fmt.Errorf("%s file not found: %s", dotenvFileEnv, raw)
 		}
 
 		if fileExists(expanded) {
@@ -99,7 +99,7 @@ func resolveDotenvPath() (string, error) {
 				return candidate, nil
 			}
 		}
-		return "", fmt.Errorf("%s 指向的文件不存在: %s", dotenvFileEnv, raw)
+		return "", fmt.Errorf("%s file not found: %s", dotenvFileEnv, raw)
 	}
 
 	if repoRoot == "" {
@@ -125,7 +125,7 @@ func findRepoRoot() string {
 		}
 		next := filepath.Dir(dir)
 		if next == dir {
-			return dir
+			return ""
 		}
 		dir = next
 	}
@@ -229,7 +229,7 @@ func parseDotenvLine(raw string) (string, string, bool) {
 }
 
 func stripInlineComment(value string) string {
-	// 仅处理形如 "value  # comment" 的场景，保留无空格的 "#".
+	// only handles "value  # comment" pattern, preserves "#" without preceding space.
 	for i := 1; i < len(value); i++ {
 		if value[i] != '#' {
 			continue
@@ -259,7 +259,6 @@ func parseBool(raw string) (bool, error) {
 	case "0", "false", "no", "n", "off":
 		return false, nil
 	default:
-		return false, fmt.Errorf("必须为布尔值（0/1、true/false）")
+		return false, fmt.Errorf("must be a boolean (0/1, true/false)")
 	}
 }
-

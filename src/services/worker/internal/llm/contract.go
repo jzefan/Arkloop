@@ -309,7 +309,7 @@ func (f StreamRunFailed) ToDataJSON() map[string]any {
 func InternalStreamEndedError() GatewayError {
 	return GatewayError{
 		ErrorClass: ErrorClassInternalStreamEnded,
-		Message:    "上游流在未结束状态时提前结束",
+		Message:    "upstream stream ended prematurely without completion",
 	}
 }
 

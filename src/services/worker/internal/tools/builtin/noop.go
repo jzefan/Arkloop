@@ -14,13 +14,13 @@ const noopErrorArgsInvalid = "tool.args_invalid"
 var NoopAgentSpec = tools.AgentToolSpec{
 	Name:        "noop",
 	Version:     "1",
-	Description: "无副作用的空操作",
+	Description: "no-op with no side effects",
 	RiskLevel:   tools.RiskLevelLow,
 }
 
 var NoopLlmSpec = llm.ToolSpec{
 	Name:        "noop",
-	Description: stringPtr("无副作用的空操作"),
+	Description: stringPtr("no-op with no side effects"),
 	JSONSchema: map[string]any{
 		"type":                 "object",
 		"properties":           map[string]any{},
@@ -50,7 +50,7 @@ func (NoopExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: noopErrorArgsInvalid,
-				Message:    "noop 不接受参数",
+				Message:    "noop does not accept arguments",
 				Details:    map[string]any{"unexpected_fields": fields},
 			},
 			DurationMs: durationMs(started),

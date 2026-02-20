@@ -36,16 +36,16 @@ func (s AgentToolSpec) ToToolCallJSON() map[string]any {
 
 func (s AgentToolSpec) Validate() error {
 	if s.Name == "" {
-		return fmt.Errorf("tool name 不能为空")
+		return fmt.Errorf("tool name must not be empty")
 	}
 	if s.Version == "" {
-		return fmt.Errorf("tool version 不能为空")
+		return fmt.Errorf("tool version must not be empty")
 	}
 	if s.Description == "" {
-		return fmt.Errorf("tool description 不能为空")
+		return fmt.Errorf("tool description must not be empty")
 	}
 	if s.RiskLevel == "" {
-		return fmt.Errorf("tool risk_level 不能为空")
+		return fmt.Errorf("tool risk_level must not be empty")
 	}
 	return nil
 }

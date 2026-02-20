@@ -68,7 +68,7 @@ func (p *PolicyEnforcer) RequestToolCall(
 			"policy.denied",
 			map[string]any{
 				"code":        PolicyDeniedCode,
-				"message":     "工具参数非法",
+				"message":     "tool arguments invalid",
 				"deny_reason": DenyReasonToolArgsInvalid,
 				"tool_call_id": resolvedID,
 				"tool_name":    toolName,
@@ -89,7 +89,7 @@ func (p *PolicyEnforcer) RequestToolCall(
 			"policy.denied",
 			map[string]any{
 				"code":        PolicyDeniedCode,
-				"message":     "工具未注册",
+				"message":     "tool not registered",
 				"deny_reason": DenyReasonToolUnknown,
 				"tool_call_id": resolvedID,
 				"tool_name":    toolName,
@@ -109,7 +109,7 @@ func (p *PolicyEnforcer) RequestToolCall(
 	if !p.allowlist.Allows(toolName) {
 		deniedPayload := map[string]any{
 			"code":        PolicyDeniedCode,
-			"message":     "工具不在 allowlist 内",
+			"message":     "tool not in allowlist",
 			"deny_reason": DenyReasonToolNotInAllowlist,
 			"tool_call_id": resolvedID,
 			"tool_name":    toolName,

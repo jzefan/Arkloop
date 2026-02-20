@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -17,8 +16,20 @@ import (
 
 const defaultAnthropicVersion = "2023-06-01"
 const maxAnthropicResponseBytes = 4096 * 4
+const anthropicMaxDebugChunkBytes = 8192
 
 var errAnthropicToolUseInput = errors.New("anthropic_tool_use_input")
+
+// critical fields denied in advanced_json; always reject regardless of existing payload keys
+var anthropicAdvancedJSONDenylist = map[string]struct{}{
+	"model":       {},
+	"messages":    {},
+	"max_tokens":  {},
+	"stream":      {},
+	"tools":       {},
+	"tool_choice": {},
+	"system":      {},
+}
 
 type AnthropicGatewayConfig struct {
 	APIKey           string
@@ -67,7 +78,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "Anthropic messages 构造失败",
+				Message:    "Anthropic messages construction failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -91,6 +102,24 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	if len(request.Tools) > 0 {
 		payload["tools"] = toAnthropicTools(request.Tools)
 	}
+	// reject advanced_json if it contains denied critical fields
+	for k := range g.cfg.AdvancedJSON {
+		if _, denied := anthropicAdvancedJSONDenylist[k]; denied {
+			return yield(StreamRunFailed{
+				Error: GatewayError{
+					ErrorClass: ErrorClassInternalError,
+					Message:    fmt.Sprintf("advanced_json must not set critical field: %s", k),
+					Details:    map[string]any{"denied_key": k},
+				},
+			})
+		}
+	}
+	// merge keys not already present in payload
+	for k, v := range g.cfg.AdvancedJSON {
+		if _, exists := payload[k]; !exists {
+			payload[k] = v
+		}
+	}
 
 	if g.cfg.EmitDebugEvents {
 		baseURL := g.cfg.BaseURL
@@ -112,7 +141,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "Anthropic 请求序列化失败",
+				Message:    "Anthropic request serialization failed",
 			},
 		})
 	}
@@ -122,7 +151,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "Anthropic 请求构造失败",
+				Message:    "Anthropic request construction failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -137,34 +166,35 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
-				Message:    "Anthropic 网络错误",
+				Message:    "Anthropic network error",
 			},
 		})
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxAnthropicResponseBytes))
+	body, bodyTruncated, _ := readAllWithLimit(resp.Body, maxAnthropicResponseBytes)
 	status := resp.StatusCode
 
 	if g.cfg.EmitDebugEvents {
-		raw := string(body)
+		raw, rawTruncated := truncateUTF8(string(body), anthropicMaxDebugChunkBytes)
 		chunk := StreamLlmResponseChunk{
 			LlmCallID:    llmCallID,
 			ProviderKind: "anthropic",
 			APIMode:      "messages",
 			Raw:          raw,
 			StatusCode:   &status,
-			Truncated:    true,
+			Truncated:    bodyTruncated || rawTruncated,
 		}
 		_ = yield(chunk)
 	}
 
 	if status < 200 || status >= 300 {
+		message, details := anthropicErrorMessageAndDetails(body, status)
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: errorClassFromStatus(status),
-				Message:    "Anthropic 请求失败",
-				Details:    map[string]any{"status_code": status},
+				Message:    message,
+				Details:    details,
 			},
 		})
 	}
@@ -175,7 +205,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 			return yield(StreamRunFailed{
 				Error: GatewayError{
 					ErrorClass: ErrorClassProviderNonRetryable,
-					Message:    "Anthropic tool_use 输入解析失败",
+					Message:    "Anthropic tool_use input parse failed",
 					Details:    map[string]any{"reason": err.Error()},
 				},
 			})
@@ -183,7 +213,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
-				Message:    "Anthropic 响应解析失败",
+				Message:    "Anthropic response parse failed",
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
@@ -275,17 +305,17 @@ func toAnthropicMessages(messages []Message) (string, []map[string]any, error) {
 func anthropicToolResultBlock(text string) (map[string]any, error) {
 	var parsed any
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return nil, fmt.Errorf("tool message 不是合法 JSON")
+		return nil, fmt.Errorf("tool message is not valid JSON")
 	}
 	envelope, ok := parsed.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("tool message 不是合法 JSON")
+		return nil, fmt.Errorf("tool message is not valid JSON")
 	}
 
 	toolCallID, _ := envelope["tool_call_id"].(string)
 	toolCallID = strings.TrimSpace(toolCallID)
 	if toolCallID == "" {
-		return nil, fmt.Errorf("tool message 缺少 tool_call_id")
+		return nil, fmt.Errorf("tool message missing tool_call_id")
 	}
 
 	isError := false
@@ -335,11 +365,11 @@ func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", nil, fmt.Errorf("response 根不是对象")
+		return "", nil, fmt.Errorf("response root is not an object")
 	}
 	content, ok := root["content"].([]any)
 	if !ok || len(content) == 0 {
-		return "", nil, fmt.Errorf("response 缺少 content")
+		return "", nil, fmt.Errorf("response missing content")
 	}
 
 	var b strings.Builder
@@ -363,19 +393,19 @@ func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 		toolCallID, _ := item["id"].(string)
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("content[%d] 缺少 tool_use.id", idx)
+			return "", nil, fmt.Errorf("content[%d] missing tool_use.id", idx)
 		}
 		toolName, _ := item["name"].(string)
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("content[%d] 缺少 tool_use.name", idx)
+			return "", nil, fmt.Errorf("content[%d] missing tool_use.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
 		if rawInput, ok := item["input"]; ok && rawInput != nil {
 			obj, ok := rawInput.(map[string]any)
 			if !ok {
-				return "", nil, fmt.Errorf("%w: content[%d].input 必须是 JSON object", errAnthropicToolUseInput, idx)
+				return "", nil, fmt.Errorf("%w: content[%d].input must be a JSON object", errAnthropicToolUseInput, idx)
 			}
 			argumentsJSON = obj
 		}
@@ -388,4 +418,28 @@ func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 	}
 
 	return b.String(), toolCalls, nil
+}
+
+func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[string]any) {
+	details := map[string]any{"status_code": status}
+
+	var parsed any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "Anthropic request failed", details
+	}
+	root, ok := parsed.(map[string]any)
+	if !ok {
+		return "Anthropic request failed", details
+	}
+	errObj, ok := root["error"].(map[string]any)
+	if !ok {
+		return "Anthropic request failed", details
+	}
+	if errType, ok := errObj["type"].(string); ok && strings.TrimSpace(errType) != "" {
+		details["anthropic_error_type"] = strings.TrimSpace(errType)
+	}
+	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+		return strings.TrimSpace(msg), details
+	}
+	return "Anthropic request failed", details
 }

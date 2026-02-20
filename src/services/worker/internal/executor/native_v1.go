@@ -22,7 +22,7 @@ type NativeRunEngineV1Handler struct {
 
 func NewNativeRunEngineV1Handler(pool *pgxpool.Pool, logger *app.JSONLogger) (*NativeRunEngineV1Handler, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("pool 不能为空")
+		return nil, fmt.Errorf("pool must not be nil")
 	}
 	if logger == nil {
 		logger = app.NewJSONLogger("worker_go", nil)
@@ -44,7 +44,7 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 		return err
 	}
 
-	h.logger.Info("worker 收到 job", payload.LogFields(lease), map[string]any{"job_type": payload.JobType})
+	h.logger.Info("worker received job", payload.LogFields(lease), map[string]any{"job_type": payload.JobType})
 
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -60,12 +60,12 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 		return err
 	}
 	if run == nil {
-		h.logger.Info("run 不存在，已跳过", payload.LogFields(lease), nil)
+		h.logger.Info("run not found, skipped", payload.LogFields(lease), nil)
 		return nil
 	}
 	if run.OrgID != payload.OrgID {
 		h.logger.Info(
-			"job.org_id 与 run.org_id 不一致，已跳过",
+			"job.org_id does not match run.org_id, skipped",
 			payload.LogFields(lease),
 			map[string]any{"run_org_id": run.OrgID.String()},
 		)
@@ -81,7 +81,7 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 		return err
 	}
 	if terminal != "" {
-		h.logger.Info("run 已终态，已跳过", payload.LogFields(lease), map[string]any{"terminal_type": terminal})
+		h.logger.Info("run already terminal, skipped", payload.LogFields(lease), map[string]any{"terminal_type": terminal})
 		return nil
 	}
 
@@ -170,15 +170,15 @@ func (p workerPayload) LogFields(lease queue.JobLease) app.LogFields {
 func requiredString(values map[string]any, key string) (string, error) {
 	raw, ok := values[key]
 	if !ok {
-		return "", fmt.Errorf("缺少 %s", key)
+		return "", fmt.Errorf("missing %s", key)
 	}
 	text, ok := raw.(string)
 	if !ok {
-		return "", fmt.Errorf("%s 必须为字符串", key)
+		return "", fmt.Errorf("%s must be a string", key)
 	}
 	cleaned := strings.TrimSpace(text)
 	if cleaned == "" {
-		return "", fmt.Errorf("%s 不能为空", key)
+		return "", fmt.Errorf("%s must not be empty", key)
 	}
 	return cleaned, nil
 }
@@ -190,7 +190,7 @@ func requiredUUID(values map[string]any, key string) (uuid.UUID, error) {
 	}
 	id, err := uuid.Parse(text)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%s 不是合法 UUID", key)
+		return uuid.Nil, fmt.Errorf("%s is not a valid UUID", key)
 	}
 	return id, nil
 }

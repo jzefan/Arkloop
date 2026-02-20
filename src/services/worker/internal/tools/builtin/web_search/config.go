@@ -30,7 +30,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	raw := strings.TrimSpace(os.Getenv(webSearchProviderEnv))
 	if raw == "" {
 		if required {
-			return nil, fmt.Errorf("缺少环境变量 %s", webSearchProviderEnv)
+			return nil, fmt.Errorf("missing environment variable %s", webSearchProviderEnv)
 		}
 		return nil, nil
 	}
@@ -44,7 +44,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	case ProviderKindSearxng:
 		baseURL := strings.TrimSpace(os.Getenv(searxngBaseURLEnv))
 		if baseURL == "" {
-			return nil, fmt.Errorf("缺少环境变量 %s", searxngBaseURLEnv)
+			return nil, fmt.Errorf("missing environment variable %s", searxngBaseURLEnv)
 		}
 		baseURL = strings.TrimRight(baseURL, "/")
 		return &Config{
@@ -54,7 +54,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	case ProviderKindTavily:
 		apiKey := strings.TrimSpace(os.Getenv(tavilyAPIKeyEnv))
 		if apiKey == "" {
-			return nil, fmt.Errorf("缺少环境变量 %s", tavilyAPIKeyEnv)
+			return nil, fmt.Errorf("missing environment variable %s", tavilyAPIKeyEnv)
 		}
 		return &Config{
 			ProviderKind: kind,
@@ -63,7 +63,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 	case ProviderKindSerper:
 		return &Config{ProviderKind: kind}, nil
 	default:
-		return nil, fmt.Errorf("%s 必须为 searxng/tavily/serper", webSearchProviderEnv)
+		return nil, fmt.Errorf("%s must be searxng/tavily/serper", webSearchProviderEnv)
 	}
 }
 
@@ -77,7 +77,7 @@ func parseProviderKind(raw string) (ProviderKind, error) {
 	case "serper":
 		return ProviderKindSerper, nil
 	default:
-		return "", fmt.Errorf("%s 必须为 searxng/tavily/serper", webSearchProviderEnv)
+		return "", fmt.Errorf("%s must be searxng/tavily/serper", webSearchProviderEnv)
 	}
 }
 

@@ -74,7 +74,7 @@ func NewDispatchingExecutor(registry *Registry, policyEnforcer *PolicyEnforcer) 
 
 func (e *DispatchingExecutor) Bind(toolName string, executor Executor) error {
 	if _, ok := e.registry.Get(toolName); !ok {
-		return fmt.Errorf("工具未注册：%s", toolName)
+		return fmt.Errorf("tool not registered: %s", toolName)
 	}
 	e.executors[toolName] = executor
 	return nil
@@ -103,7 +103,7 @@ func (e *DispatchingExecutor) Execute(
 		return ExecutionResult{
 			Error: &ExecutionError{
 				ErrorClass: PolicyDeniedCode,
-				Message:    "工具调用被策略拒绝",
+				Message:    "tool call denied by policy",
 				Details: map[string]any{
 					"tool_name":    toolName,
 					"tool_call_id": decision.ToolCallID,
@@ -120,7 +120,7 @@ func (e *DispatchingExecutor) Execute(
 		return ExecutionResult{
 			Error: &ExecutionError{
 				ErrorClass: ErrorClassToolNotRegistered,
-				Message:    "工具未绑定执行器",
+				Message:    "tool executor not bound",
 				Details: map[string]any{
 					"tool_name":    toolName,
 					"tool_call_id": decision.ToolCallID,
@@ -138,7 +138,7 @@ func (e *DispatchingExecutor) Execute(
 				result = ExecutionResult{
 					Error: &ExecutionError{
 						ErrorClass: ErrorClassToolExecutionFailed,
-						Message:    "工具执行失败",
+						Message:    "tool execution failed",
 						Details: map[string]any{
 							"tool_name":    toolName,
 							"tool_call_id": decision.ToolCallID,
