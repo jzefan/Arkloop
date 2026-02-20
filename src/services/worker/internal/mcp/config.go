@@ -94,13 +94,23 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 	transport = strings.ToLower(transport)
 
 	timeout := defaultCallTimeoutMs
-	if raw := payload["callTimeoutMs"]; raw == nil {
-		raw = payload["call_timeout_ms"]
-	} else {
-		if value, ok := raw.(float64); ok {
-			timeout = int(value)
-		} else if value, ok := raw.(int); ok {
-			timeout = value
+	rawTimeout := payload["callTimeoutMs"]
+	if rawTimeout == nil {
+		rawTimeout = payload["call_timeout_ms"]
+	}
+	if rawTimeout != nil {
+		switch typed := rawTimeout.(type) {
+		case float64:
+			timeout = int(typed)
+			if typed != float64(timeout) {
+				return ServerConfig{}, fmt.Errorf("MCP server %q callTimeoutMs must be an integer", cleanedID)
+			}
+		case int:
+			timeout = typed
+		case int64:
+			timeout = int(typed)
+		default:
+			return ServerConfig{}, fmt.Errorf("MCP server %q callTimeoutMs must be an integer", cleanedID)
 		}
 	}
 	if timeout <= 0 {
@@ -162,13 +172,16 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 	}
 
 	inherit := false
-	if rawInherit, ok := payload["inheritParentEnv"]; ok {
-		if rawInherit == nil {
-			rawInherit = payload["inherit_parent_env"]
+	rawInherit := payload["inheritParentEnv"]
+	if rawInherit == nil {
+		rawInherit = payload["inherit_parent_env"]
+	}
+	if rawInherit != nil {
+		value, ok := rawInherit.(bool)
+		if !ok {
+			return ServerConfig{}, fmt.Errorf("MCP server %q inheritParentEnv must be a bool", cleanedID)
 		}
-		if value, ok := rawInherit.(bool); ok {
-			inherit = value
-		}
+		inherit = value
 	}
 
 	return ServerConfig{
@@ -210,4 +223,3 @@ func expandUser(path string) string {
 	}
 	return path
 }
-
