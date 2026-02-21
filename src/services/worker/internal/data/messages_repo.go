@@ -57,6 +57,7 @@ func (MessagesRepository) ListByThread(
 		 WHERE org_id = $1
 		   AND thread_id = $2
 		   AND hidden = FALSE
+		   AND deleted_at IS NULL
 		 ORDER BY created_at ASC
 		 LIMIT $3`,
 		orgID,

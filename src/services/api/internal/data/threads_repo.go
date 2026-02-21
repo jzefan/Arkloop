@@ -16,6 +16,9 @@ type Thread struct {
 	CreatedByUserID *uuid.UUID
 	Title           *string
 	CreatedAt       time.Time
+	// R15: 软删除 + Phase 5 project 预留
+	DeletedAt *time.Time
+	ProjectID *uuid.UUID
 }
 
 type ThreadWithActiveRun struct {
@@ -52,11 +55,12 @@ func (r *ThreadRepository) Create(
 		ctx,
 		`INSERT INTO threads (org_id, created_by_user_id, title)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, org_id, created_by_user_id, title, created_at`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id`,
 		orgID,
 		createdByUserID,
 		title,
-	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt)
+	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+		&thread.DeletedAt, &thread.ProjectID)
 	if err != nil {
 		return Thread{}, err
 	}
@@ -71,12 +75,14 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, created_by_user_id, title, created_at
+		`SELECT id, org_id, created_by_user_id, title, created_at, deleted_at, project_id
 		 FROM threads
 		 WHERE id = $1
+		   AND deleted_at IS NULL
 		 LIMIT 1`,
 		threadID,
-	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt)
+	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+		&thread.DeletedAt, &thread.ProjectID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -110,7 +116,8 @@ func (r *ThreadRepository) ListByOwner(
 		return nil, fmt.Errorf("before_created_at and before_id must be provided together")
 	}
 
-	sql := `SELECT t.id, t.org_id, t.created_by_user_id, t.title, t.created_at, r.id AS active_run_id
+	sql := `SELECT t.id, t.org_id, t.created_by_user_id, t.title, t.created_at,
+		       t.deleted_at, t.project_id, r.id AS active_run_id
 		FROM threads t
 		LEFT JOIN LATERAL (
 			SELECT id FROM runs
@@ -119,7 +126,8 @@ func (r *ThreadRepository) ListByOwner(
 			LIMIT 1
 		) r ON true
 		WHERE t.org_id = $1
-		  AND t.created_by_user_id = $2`
+		  AND t.created_by_user_id = $2
+		  AND t.deleted_at IS NULL`
 	args := []any{orgID, ownerUserID}
 
 	if beforeCreatedAt != nil && beforeID != nil {
@@ -146,7 +154,7 @@ func (r *ThreadRepository) ListByOwner(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.OrgID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
-			&item.ActiveRunID,
+			&item.DeletedAt, &item.ProjectID, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -172,10 +180,12 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		`UPDATE threads
 		 SET title = $1
 		 WHERE id = $2
-		 RETURNING id, org_id, created_by_user_id, title, created_at`,
+		   AND deleted_at IS NULL
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id`,
 		title,
 		threadID,
-	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt)
+	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+		&thread.DeletedAt, &thread.ProjectID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -183,4 +193,24 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		return nil, err
 	}
 	return &thread, nil
+}
+
+// Delete 软删除 thread，返回 false 表示 thread 不存在或已删除。
+func (r *ThreadRepository) Delete(ctx context.Context, threadID uuid.UUID) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if threadID == uuid.Nil {
+		return false, fmt.Errorf("thread_id must not be empty")
+	}
+
+	tag, err := r.db.Exec(
+		ctx,
+		`UPDATE threads SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		threadID,
+	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }

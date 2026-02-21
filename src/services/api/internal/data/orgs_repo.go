@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -10,10 +11,17 @@ import (
 )
 
 type Org struct {
-	ID        uuid.UUID
-	Slug      string
-	Name      string
-	CreatedAt time.Time
+	ID           uuid.UUID
+	Slug         string
+	Name         string
+	OwnerUserID  *uuid.UUID
+	Status       string
+	Country      *string
+	Timezone     *string
+	LogoURL      *string
+	SettingsJSON json.RawMessage
+	DeletedAt    *time.Time
+	CreatedAt    time.Time
 }
 
 type OrgRepository struct {
@@ -44,10 +52,15 @@ func (r *OrgRepository) Create(ctx context.Context, slug string, name string) (O
 		ctx,
 		`INSERT INTO orgs (slug, name)
 		 VALUES ($1, $2)
-		 RETURNING id, slug, name, created_at`,
+		 RETURNING id, slug, name, owner_user_id, status, country, timezone,
+		           logo_url, settings_json, deleted_at, created_at`,
 		slug,
 		name,
-	).Scan(&org.ID, &org.Slug, &org.Name, &org.CreatedAt)
+	).Scan(
+		&org.ID, &org.Slug, &org.Name,
+		&org.OwnerUserID, &org.Status, &org.Country, &org.Timezone,
+		&org.LogoURL, &org.SettingsJSON, &org.DeletedAt, &org.CreatedAt,
+	)
 	if err != nil {
 		return Org{}, err
 	}

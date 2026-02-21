@@ -35,14 +35,17 @@ func (w *Writer) WriteLoginFailed(ctx context.Context, traceID string, login str
 		return
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	loginHash := sha256Hex(login)
 	targetType := "user_login"
 	targetID := loginHash
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
-		Action:     "auth.login",
+		Action:    "auth.login",
 		TargetType: &targetType,
-		TargetID:   &targetID,
-		TraceID:    traceID,
+		TargetID:  &targetID,
+		TraceID:   traceID,
+		IPAddress: ip,
+		UserAgent: ua,
 		Metadata: map[string]any{
 			"result":     "failed",
 			"method":     "password",
@@ -68,6 +71,7 @@ func (w *Writer) WriteLoginSucceeded(ctx context.Context, traceID string, userID
 		}
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	loginHash := sha256Hex(login)
 	targetType := "user"
 	targetID := userID.String()
@@ -78,6 +82,8 @@ func (w *Writer) WriteLoginSucceeded(ctx context.Context, traceID string, userID
 		TargetType:  &targetType,
 		TargetID:    &targetID,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata: map[string]any{
 			"result":     "succeeded",
 			"method":     "password",
@@ -93,6 +99,7 @@ func (w *Writer) WriteTokenRefreshed(ctx context.Context, traceID string, userID
 		return
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	targetType := "user"
 	targetID := userID.String()
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
@@ -101,6 +108,8 @@ func (w *Writer) WriteTokenRefreshed(ctx context.Context, traceID string, userID
 		TargetType:  &targetType,
 		TargetID:    &targetID,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata:    map[string]any{},
 	}); err != nil {
 		w.logError(traceID, "failed to write refresh audit log", err)
@@ -122,6 +131,7 @@ func (w *Writer) WriteLogout(ctx context.Context, traceID string, userID uuid.UU
 		}
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	targetType := "user"
 	targetID := userID.String()
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
@@ -131,6 +141,8 @@ func (w *Writer) WriteLogout(ctx context.Context, traceID string, userID uuid.UU
 		TargetType:  &targetType,
 		TargetID:    &targetID,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata:    map[string]any{},
 	}); err != nil {
 		w.logError(traceID, "failed to write logout audit log", err)
@@ -142,6 +154,7 @@ func (w *Writer) WriteUserRegistered(ctx context.Context, traceID string, userID
 		return
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	loginHash := sha256Hex(login)
 	targetType := "user"
 	targetID := userID.String()
@@ -151,6 +164,8 @@ func (w *Writer) WriteUserRegistered(ctx context.Context, traceID string, userID
 		TargetType:  &targetType,
 		TargetID:    &targetID,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata: map[string]any{
 			"login_hash": loginHash,
 		},
@@ -170,6 +185,7 @@ func (w *Writer) WriteRunCancelRequested(
 		return
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	targetType := "run"
 	targetID := runID.String()
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
@@ -179,11 +195,42 @@ func (w *Writer) WriteRunCancelRequested(
 		TargetType:  &targetType,
 		TargetID:    &targetID,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata: map[string]any{
 			"result": "requested",
 		},
 	}); err != nil {
 		w.logError(traceID, "failed to write cancel audit log", err)
+	}
+}
+
+func (w *Writer) WriteThreadDeleted(
+	ctx context.Context,
+	traceID string,
+	actorOrgID uuid.UUID,
+	actorUserID uuid.UUID,
+	threadID uuid.UUID,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "thread"
+	targetID := threadID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &actorOrgID,
+		ActorUserID: &actorUserID,
+		Action:      "threads.delete",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{"result": "deleted"},
+	}); err != nil {
+		w.logError(traceID, "failed to write thread-deleted audit log", err)
 	}
 }
 
@@ -253,6 +300,7 @@ func (w *Writer) WriteAccessDenied(
 		"resource_owner_user_id": owner,
 	}
 
+	ip, ua := requestMetaFromContext(ctx)
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
 		OrgID:       &actorOrgID,
 		ActorUserID: &actorUserID,
@@ -260,6 +308,8 @@ func (w *Writer) WriteAccessDenied(
 		TargetType:  targetTypePtr,
 		TargetID:    targetIDPtr,
 		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
 		Metadata:    meta,
 	}); err != nil {
 		w.logError(traceID, "failed to write access-denied audit log", err)
@@ -271,6 +321,17 @@ func (w *Writer) logError(traceID string, msg string, err error) {
 		return
 	}
 	w.logger.Error(msg, observability.LogFields{TraceID: &traceID}, map[string]any{"error": err.Error()})
+}
+
+// requestMetaFromContext 从 context 提取 IP 和 User-Agent 供审计写入。
+func requestMetaFromContext(ctx context.Context) (ip *string, ua *string) {
+	if raw := observability.ClientIPFromContext(ctx); raw != "" {
+		ip = &raw
+	}
+	if raw := observability.UserAgentFromContext(ctx); raw != "" {
+		ua = &raw
+	}
+	return ip, ua
 }
 
 func sha256Hex(value string) string {

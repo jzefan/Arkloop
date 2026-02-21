@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -17,8 +18,13 @@ type Message struct {
 	CreatedByUserID *uuid.UUID
 	Role            string
 	Content         string
-	CreatedAt       time.Time
-	Hidden          bool
+	// R14: 多模态预留字段，NULL 表示纯文本消息（读取 content）
+	ContentJSON  json.RawMessage
+	MetadataJSON json.RawMessage
+	TokenCount   *int32
+	DeletedAt    *time.Time
+	CreatedAt    time.Time
+	Hidden       bool
 }
 
 type NoAssistantMessageError struct{}
@@ -83,7 +89,8 @@ func (r *MessageRepository) Create(
 		 INSERT INTO messages (org_id, thread_id, created_by_user_id, role, content)
 		 SELECT $1, $2, $3, $4, $5
 		 FROM thread
-		 RETURNING id, org_id, thread_id, created_by_user_id, role, content, created_at, hidden`,
+		 RETURNING id, org_id, thread_id, created_by_user_id, role, content,
+		           content_json, metadata_json, token_count, deleted_at, created_at, hidden`,
 		orgID,
 		threadID,
 		createdByUserID,
@@ -96,6 +103,10 @@ func (r *MessageRepository) Create(
 		&message.CreatedByUserID,
 		&message.Role,
 		&message.Content,
+		&message.ContentJSON,
+		&message.MetadataJSON,
+		&message.TokenCount,
+		&message.DeletedAt,
 		&message.CreatedAt,
 		&message.Hidden,
 	)
@@ -130,11 +141,13 @@ func (r *MessageRepository) ListByThread(
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, thread_id, created_by_user_id, role, content, created_at, hidden
+		`SELECT id, org_id, thread_id, created_by_user_id, role, content,
+		        content_json, metadata_json, token_count, deleted_at, created_at, hidden
 		 FROM messages
 		 WHERE org_id = $1
 		   AND thread_id = $2
 		   AND hidden = FALSE
+		   AND deleted_at IS NULL
 		 ORDER BY created_at ASC, id ASC
 		 LIMIT $3`,
 		orgID,
@@ -156,6 +169,10 @@ func (r *MessageRepository) ListByThread(
 			&message.CreatedByUserID,
 			&message.Role,
 			&message.Content,
+			&message.ContentJSON,
+			&message.MetadataJSON,
+			&message.TokenCount,
+			&message.DeletedAt,
 			&message.CreatedAt,
 			&message.Hidden,
 		); err != nil {
@@ -198,6 +215,7 @@ func (r *MessageRepository) HideLastAssistantMessage(
 		     AND thread_id = $2
 		     AND role = 'assistant'
 		     AND hidden = FALSE
+		     AND deleted_at IS NULL
 		   ORDER BY created_at DESC, id DESC
 		   LIMIT 1
 		 )

@@ -26,9 +26,13 @@ func (e UserNotFoundError) Error() string {
 
 type SuspendedUserError struct {
 	UserID uuid.UUID
+	Status string // "suspended" | "deleted" | other non-active
 }
 
 func (e SuspendedUserError) Error() string {
+	if e.Status == "deleted" {
+		return "user deleted"
+	}
 	return "user suspended"
 }
 
@@ -89,8 +93,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, login string, password s
 	if user == nil {
 		return IssuedAccessToken{}, UserNotFoundError{UserID: credential.UserID}
 	}
-	if user.Status == "suspended" {
-		return IssuedAccessToken{}, SuspendedUserError{UserID: credential.UserID}
+	if user.Status != "active" {
+		return IssuedAccessToken{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
 	}
 
 	token, err := s.tokenService.Issue(credential.UserID, time.Now().UTC())
@@ -132,8 +136,8 @@ func (s *Service) AuthenticateUser(ctx context.Context, token string) (*data.Use
 		return nil, UserNotFoundError{UserID: verified.UserID}
 	}
 
-	if user.Status == "suspended" {
-		return nil, SuspendedUserError{UserID: user.ID}
+	if user.Status != "active" {
+		return nil, SuspendedUserError{UserID: user.ID, Status: user.Status}
 	}
 	if verified.IssuedAt.Before(user.TokensInvalidBefore) {
 		return nil, TokenInvalidError{message: "token revoked"}
