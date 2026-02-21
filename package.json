@@ -1,0 +1,5 @@
+{
+	"dependencies": {
+		"web": "link:src/apps/web"
+	}
+}
