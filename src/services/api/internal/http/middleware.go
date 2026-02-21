@@ -57,6 +57,10 @@ func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, tru
 		}
 
 		ctx := observability.WithTraceID(r.Context(), traceID)
+		ctx = observability.WithClientIP(ctx, resolveClientIP(r))
+		if ua := r.Header.Get("User-Agent"); ua != "" {
+			ctx = observability.WithUserAgent(ctx, ua)
+		}
 		r = r.WithContext(ctx)
 
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: nethttp.StatusOK}

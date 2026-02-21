@@ -386,7 +386,7 @@ func (r *RunEventRepository) insertEvent(
 	toolName *string,
 	errorClass *string,
 ) (RunEvent, error) {
-	seq, err := r.allocateSeq(ctx, runID)
+	seq, err := r.allocateSeq(ctx)
 	if err != nil {
 		return RunEvent{}, err
 	}
@@ -428,23 +428,13 @@ func (r *RunEventRepository) insertEvent(
 	return event, nil
 }
 
-func (r *RunEventRepository) allocateSeq(ctx context.Context, runID uuid.UUID) (int64, error) {
-	var nextSeq int64
-	err := r.db.QueryRow(
-		ctx,
-		`UPDATE runs
-		 SET next_event_seq = next_event_seq + 1
-		 WHERE id = $1
-		 RETURNING next_event_seq`,
-		runID,
-	).Scan(&nextSeq)
+func (r *RunEventRepository) allocateSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := r.db.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, RunNotFoundError{RunID: runID}
-		}
 		return 0, err
 	}
-	return nextSeq - 1, nil
+	return seq, nil
 }
 
 func mapOrEmpty(value map[string]any) map[string]any {

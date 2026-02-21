@@ -72,7 +72,7 @@ func (RunsRepository) UpdateRunTerminalStatus(
 	runID uuid.UUID,
 	u TerminalStatusUpdate,
 ) error {
-	_, err := tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`UPDATE runs
 		 SET status              = $2,
 		     status_updated_at   = now(),
@@ -90,10 +90,10 @@ func (RunsRepository) UpdateRunTerminalStatus(
 		u.TotalCostUSD,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("run not found: %s", runID)
-		}
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run not found: %s", runID)
 	}
 	return nil
 }

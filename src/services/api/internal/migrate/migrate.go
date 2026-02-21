@@ -14,7 +14,7 @@ import (
 //go:embed migrations/*.sql
 var embedFS embed.FS
 
-const ExpectedVersion int64 = 13
+const ExpectedVersion int64 = 18
 
 func migrationsFS() fs.FS {
 	sub, err := fs.Sub(embedFS, "migrations")

@@ -263,6 +263,60 @@ func patchThread(
 	}
 }
 
+func deleteThread(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	threadRepo *data.ThreadRepository,
+	auditWriter *audit.Writer,
+) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
+		traceID := observability.TraceIDFromContext(r.Context())
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		if threadRepo == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+
+		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		if !ok {
+			return
+		}
+
+		thread, err := threadRepo.GetByID(r.Context(), threadID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			return
+		}
+		if thread == nil {
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
+			return
+		}
+
+		if !authorizeThreadOrAudit(w, r, traceID, actor, "threads.delete", thread, auditWriter) {
+			return
+		}
+
+		deleted, err := threadRepo.Delete(r.Context(), threadID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			return
+		}
+		if !deleted {
+			WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
+			return
+		}
+
+		if auditWriter != nil {
+			auditWriter.WriteThreadDeleted(r.Context(), traceID, actor.OrgID, actor.UserID, threadID)
+		}
+
+		w.WriteHeader(nethttp.StatusNoContent)
+	}
+}
+
 func threadsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
@@ -293,6 +347,7 @@ func threadEntry(
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getThread(authService, membershipRepo, threadRepo, auditWriter)
 	patch := patchThread(authService, membershipRepo, threadRepo, auditWriter)
+	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
 	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool)
@@ -342,6 +397,8 @@ func threadEntry(
 				get(w, r, threadID)
 			case nethttp.MethodPatch:
 				patch(w, r, threadID)
+			case nethttp.MethodDelete:
+				del(w, r, threadID)
 			default:
 				writeMethodNotAllowed(w, r)
 			}

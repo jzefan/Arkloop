@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -59,7 +58,7 @@ func (r RunEventsRepository) AppendEvent(
 	toolName *string,
 	errorClass *string,
 ) (int64, error) {
-	seq, err := r.allocateSeq(ctx, tx, runID)
+	seq, err := r.allocateSeq(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -139,23 +138,13 @@ func (RunEventsRepository) FirstEventData(
 	return eventType, obj, nil
 }
 
-func (RunEventsRepository) allocateSeq(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (int64, error) {
-	var nextSeq int64
-	err := tx.QueryRow(
-		ctx,
-		`UPDATE runs
-		 SET next_event_seq = next_event_seq + 1
-		 WHERE id = $1
-		 RETURNING next_event_seq`,
-		runID,
-	).Scan(&nextSeq)
+func (RunEventsRepository) allocateSeq(ctx context.Context, tx pgx.Tx) (int64, error) {
+	var seq int64
+	err := tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, fmt.Errorf("run not found: %s", runID)
-		}
 		return 0, err
 	}
-	return nextSeq - 1, nil
+	return seq, nil
 }
 
 func mapOrEmpty(value map[string]any) map[string]any {

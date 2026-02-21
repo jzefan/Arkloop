@@ -18,6 +18,13 @@ type AuditLogCreateParams struct {
 	TargetID    *string
 	TraceID     string
 	Metadata    any
+
+	// 请求来源信息，全部 nullable
+	IPAddress      *string
+	UserAgent      *string
+	APIKeyID       *uuid.UUID
+	BeforeStateJSON any
+	AfterStateJSON  any
 }
 
 type AuditLogRepository struct {
@@ -54,6 +61,24 @@ func (r *AuditLogRepository) Create(ctx context.Context, params AuditLogCreatePa
 		return err
 	}
 
+	var beforeJSON, afterJSON *string
+	if params.BeforeStateJSON != nil {
+		b, err := json.Marshal(params.BeforeStateJSON)
+		if err != nil {
+			return fmt.Errorf("marshal before_state_json: %w", err)
+		}
+		s := string(b)
+		beforeJSON = &s
+	}
+	if params.AfterStateJSON != nil {
+		b, err := json.Marshal(params.AfterStateJSON)
+		if err != nil {
+			return fmt.Errorf("marshal after_state_json: %w", err)
+		}
+		s := string(b)
+		afterJSON = &s
+	}
+
 	_, err = r.db.Exec(
 		ctx,
 		`INSERT INTO audit_logs (
@@ -63,8 +88,13 @@ func (r *AuditLogRepository) Create(ctx context.Context, params AuditLogCreatePa
 		   target_type,
 		   target_id,
 		   trace_id,
-		   metadata_json
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+		   metadata_json,
+		   ip_address,
+		   user_agent,
+		   api_key_id,
+		   before_state_json,
+		   after_state_json
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::inet, $9, $10, $11::jsonb, $12::jsonb)`,
 		params.OrgID,
 		params.ActorUserID,
 		action,
@@ -72,6 +102,11 @@ func (r *AuditLogRepository) Create(ctx context.Context, params AuditLogCreatePa
 		params.TargetID,
 		traceID,
 		string(rawJSON),
+		params.IPAddress,
+		params.UserAgent,
+		params.APIKeyID,
+		beforeJSON,
+		afterJSON,
 	)
 	return err
 }
