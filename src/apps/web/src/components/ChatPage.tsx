@@ -279,16 +279,20 @@ export function ChatPage() {
     }
   }
 
-  const handleCancel = async () => {
+  const handleCancel = () => {
     if (!activeRunId || cancelSubmitting) return
+    const runId = activeRunId
+
+    sse.disconnect()
+    setActiveRunId(null)
+    setAssistantDraft('')
     setCancelSubmitting(true)
     setError(null)
-    try {
-      await cancelRun(accessToken, activeRunId)
-    } catch (err) {
+    if (threadId) onRunEnded(threadId)
+
+    void cancelRun(accessToken, runId).catch((err: unknown) => {
       setError(normalizeError(err))
-      setCancelSubmitting(false)
-    }
+    })
   }
 
   const terminalSseError = useMemo(() => {
