@@ -147,7 +147,33 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		return nil
 	}
 
-	inputJSON, threadMessages, err := e.loadRunInputs(ctx, pool, run)
+	// 用 LISTEN/NOTIFY 桥接数据库取消信号到 Go context
+	listenConn, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	channel := fmt.Sprintf(`"run_cancel_%s"`, run.ID.String())
+	if _, err := listenConn.Exec(ctx, "LISTEN "+channel); err != nil {
+		listenConn.Release()
+		return err
+	}
+	execCtx, cancelExec := context.WithCancel(ctx)
+	listenDone := make(chan struct{})
+	go func() {
+		defer func() {
+			listenConn.Release()
+			close(listenDone)
+		}()
+		if err := listenConn.Conn().PgConn().WaitForNotification(execCtx); err == nil {
+			cancelExec()
+		}
+	}()
+	defer func() {
+		cancelExec()
+		<-listenDone
+	}()
+
+	inputJSON, threadMessages, err := e.loadRunInputs(execCtx, pool, run)
 	if err != nil {
 		return err
 	}
@@ -167,7 +193,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			nil,
 			stringPtr(skillResolution.Error.ErrorClass),
 		)
-		return e.appendAndCommit(ctx, pool, run.ID, failed)
+		return e.appendAndCommit(execCtx, pool, run.ID, failed)
 	}
 
 	decision := e.router.Decide(inputJSON, false)
@@ -178,7 +204,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			nil,
 			stringPtr(decision.Denied.ErrorClass),
 		)
-		return e.appendAndCommit(ctx, pool, run.ID, failed)
+		return e.appendAndCommit(execCtx, pool, run.ID, failed)
 	}
 
 	selected := decision.Selected
@@ -193,7 +219,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			nil,
 			stringPtr(llm.ErrorClassInternalError),
 		)
-		return e.appendAndCommit(ctx, pool, run.ID, failed)
+		return e.appendAndCommit(execCtx, pool, run.ID, failed)
 	}
 
 	gateway, err := e.gatewayFromCredential(selected.Credential)
@@ -208,17 +234,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			nil,
 			stringPtr(llm.ErrorClassInternalError),
 		)
-		if err := e.appendAndCommit(ctx, pool, run.ID, failed); err != nil {
+		if err := e.appendAndCommit(execCtx, pool, run.ID, failed); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	writer := newEventWriter(pool, run, traceID)
-	defer writer.Close(ctx)
+	defer writer.Close(execCtx)
 
 	routeSelected := emitter.Emit("run.route.selected", selected.ToRunEventDataJSON(), nil, nil)
-	if err := writer.Append(ctx, e.runsRepo, e.eventsRepo, run.ID, routeSelected); err != nil {
+	if err := writer.Append(execCtx, e.runsRepo, e.eventsRepo, run.ID, routeSelected); err != nil {
 		if errors.Is(err, errStopProcessing) {
 			return nil
 		}
@@ -302,12 +328,12 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		ToolTimeoutMs: toolTimeoutMs,
 		ToolBudget:    toolBudget,
 		CancelSignal: func() bool {
-			return ctx.Err() != nil
+			return execCtx.Err() != nil
 		},
 	}
 
-	err = loop.Run(ctx, runCtx, agentRequest, emitter, func(ev events.RunEvent) error {
-		if err := writer.Append(ctx, e.runsRepo, e.eventsRepo, run.ID, ev); err != nil {
+	err = loop.Run(execCtx, runCtx, agentRequest, emitter, func(ev events.RunEvent) error {
+		if err := writer.Append(execCtx, e.runsRepo, e.eventsRepo, run.ID, ev); err != nil {
 			if errors.Is(err, errStopProcessing) {
 				return errStopProcessing
 			}
@@ -320,11 +346,11 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 
 	if writer.Completed() {
-		if err := writer.InsertAssistantMessage(ctx, e.messagesRepo, run.OrgID, run.ThreadID); err != nil {
+		if err := writer.InsertAssistantMessage(execCtx, e.messagesRepo, run.OrgID, run.ThreadID); err != nil {
 			return err
 		}
 	}
-	return writer.Flush(ctx)
+	return writer.Flush(execCtx)
 }
 
 func (e *EngineV1) loadRunInputs(

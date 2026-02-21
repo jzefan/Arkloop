@@ -49,8 +49,11 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const plusBtnRef = useRef<HTMLButtonElement>(null)
+  const tierMenuRef = useRef<HTMLDivElement>(null)
+  const chevronBtnRef = useRef<HTMLButtonElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [proExpanded, setProExpanded] = useState(false)
+  const [tierMenuOpen, setTierMenuOpen] = useState(false)
+  const [selectedTier, setSelectedTier] = useState<'Lite' | 'Pro' | 'Ultra'>('Lite')
   const [proHovered, setProHovered] = useState(false)
 
   const adjustHeight = useCallback(() => {
@@ -77,6 +80,19 @@ export function ChatInput({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [menuOpen])
 
+  useEffect(() => {
+    if (!tierMenuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (
+        tierMenuRef.current?.contains(e.target as Node) ||
+        chevronBtnRef.current?.contains(e.target as Node)
+      ) return
+      setTierMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [tierMenuOpen])
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -91,6 +107,15 @@ export function ChatInput({
     if (files.length > 0) onAttachFiles?.(files)
     e.target.value = ''
     setMenuOpen(false)
+  }
+
+  const handleProClick = () => {
+    setSelectedTier((prev) => (prev === 'Lite' ? 'Pro' : 'Lite'))
+  }
+
+  const handleTierSelect = (tier: 'Lite' | 'Pro' | 'Ultra') => {
+    setSelectedTier(tier)
+    setTierMenuOpen(false)
   }
 
   const borderColor = variant === 'welcome' ? 'var(--c-border)' : 'var(--c-border-mid)'
@@ -142,7 +167,9 @@ export function ChatInput({
                 ref={menuRef}
                 className="absolute left-0 z-50 overflow-hidden rounded-xl"
                 style={{
-                  top: 'calc(100% + 8px)',
+                  ...(variant === 'welcome'
+                    ? { top: 'calc(100% + 8px)' }
+                    : { bottom: 'calc(100% + 8px)' }),
                   background: 'var(--c-bg-menu)',
                   border: '0.5px solid var(--c-border-subtle)',
                   boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
@@ -164,7 +191,7 @@ export function ChatInput({
 
           <button
             type="button"
-            onClick={() => setProExpanded((v) => !v)}
+            onClick={handleProClick}
             onMouseEnter={() => setProHovered(true)}
             onMouseLeave={() => setProHovered(false)}
             className="relative top-px -ml-1 h-8 rounded-lg font-semibold"
@@ -173,36 +200,77 @@ export function ChatInput({
               alignItems: 'center',
               justifyContent: 'flex-start',
               paddingLeft: '12px',
-              background: proExpanded ? 'var(--c-pro-bg)' : proHovered ? 'var(--c-bg-deep)' : 'transparent',
-              color: proExpanded ? '#4691F6' : 'var(--c-text-secondary)',
-              opacity: proExpanded ? 1 : proHovered ? 1 : 0.7,
+              background: selectedTier !== 'Lite' ? 'var(--c-pro-bg)' : proHovered ? 'var(--c-bg-deep)' : 'transparent',
+              color: selectedTier !== 'Lite' ? '#4691F6' : 'var(--c-text-secondary)',
+              opacity: selectedTier !== 'Lite' ? 1 : proHovered ? 1 : 0.7,
               fontSize: '15px',
-              width: proExpanded ? '48px' : '32px',
+              width: selectedTier === 'Lite' ? '32px' : selectedTier === 'Pro' ? '48px' : '60px',
               overflow: 'hidden',
               flexShrink: 0,
               whiteSpace: 'nowrap',
               transition: 'width 0.22s ease, background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
             }}
           >
-            P<span
-              style={{
-                display: 'inline-block',
-                overflow: 'hidden',
-                maxWidth: proExpanded ? '20px' : '0px',
-                opacity: proExpanded ? 1 : 0,
-                transition: proExpanded
-                  ? 'max-width 0.22s ease, opacity 0.15s ease 0.07s'
-                  : 'opacity 0.07s ease, max-width 0.18s ease 0.04s',
-              }}
-            >ro</span>
+            {selectedTier === 'Ultra' ? (
+              <span style={{ display: 'inline-block' }}>Ultra</span>
+            ) : (
+              <>
+                P<span
+                  style={{
+                    display: 'inline-block',
+                    overflow: 'hidden',
+                    maxWidth: selectedTier === 'Pro' ? '20px' : '0px',
+                    opacity: selectedTier === 'Pro' ? 1 : 0,
+                    transition: selectedTier === 'Pro'
+                      ? 'max-width 0.22s ease, opacity 0.15s ease 0.07s'
+                      : 'opacity 0.07s ease, max-width 0.18s ease 0.04s',
+                  }}
+                >ro</span>
+              </>
+            )}
           </button>
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: 'var(--c-text-secondary)', fontSize: '14px', padding: '4px 8px', borderRadius: '6px' }}
-            >
-              <span>Sonnet 4.5</span>
-              <ChevronDown size={14} />
+            <div className="relative">
+              <button
+                ref={chevronBtnRef}
+                type="button"
+                onClick={() => setTierMenuOpen((v) => !v)}
+                className="relative top-px flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100"
+              >
+                <ChevronDown size={16} />
+              </button>
+
+              {tierMenuOpen && (
+                <div
+                  ref={tierMenuRef}
+                  className="absolute right-0 z-50 overflow-hidden rounded-xl"
+                  style={{
+                    ...(variant === 'welcome'
+                      ? { top: 'calc(100% + 8px)' }
+                      : { bottom: 'calc(100% + 8px)' }),
+                    background: 'var(--c-bg-menu)',
+                    border: '0.5px solid var(--c-border-subtle)',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                    minWidth: '120px',
+                  }}
+                >
+                  {(['Lite', 'Pro', 'Ultra'] as const).map((tier) => (
+                    <button
+                      key={tier}
+                      type="button"
+                      onClick={() => handleTierSelect(tier)}
+                      className="flex w-full items-center px-4 py-3 text-sm transition-colors duration-100 hover:bg-[var(--c-bg-deep)]"
+                      style={{
+                        color: selectedTier === tier ? '#4691F6' : 'var(--c-text-secondary)',
+                        fontWeight: selectedTier === tier ? 600 : 400,
+                      }}
+                    >
+                      {tier}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {isStreaming && canCancel ? (
