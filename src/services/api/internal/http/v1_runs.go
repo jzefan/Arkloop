@@ -380,6 +380,9 @@ func cancelRun(
 			return
 		}
 
+		// 通知 worker 立即中断，失败可忽略（worker 有 DB 兜底检查）
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, '')", "run_cancel_"+run.ID.String())
+
 		if auditWriter != nil {
 			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.OrgID, actor.UserID, run.ID)
 		}
