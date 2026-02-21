@@ -400,7 +400,94 @@ CREATE TABLE llm_routes (
 );
 ```
 
-### 6.11 Skills 入库
+### 6.11 Agent 行为配置（System Prompt、模型参数、策略）
+
+当前系统最大的结构性缺失不在数据存储，而在**行为配置**：Agent 怎么说话、用什么模型、温度多少、哪些工具可以用、system prompt 是什么——这些全部硬编码在 Go 代码里或者不存在。
+
+一个 Agent 平台需要以下几层行为配置，每一层可以继承上层并覆盖：
+
+```
+平台默认 → org 级覆盖 → project 级覆盖 → thread 级覆盖
+```
+
+#### 6.11.1 System Prompt 模板
+
+用户在 Console 里创建、编辑、版本管理 prompt 模板，复用于多个 project/thread。
+
+```sql
+CREATE TABLE prompt_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    content TEXT NOT NULL,             -- prompt 正文（支持变量插值如 {{user_name}}）
+    variables JSONB NOT NULL DEFAULT '{}',  -- 可用变量声明
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    version INT NOT NULL DEFAULT 1,
+    published_at TIMESTAMPTZ,          -- NULL 表示草稿
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ix_prompt_templates_org_id ON prompt_templates(org_id);
+```
+
+#### 6.11.2 Agent 配置（模型 + 参数 + Prompt + 工具策略）
+
+这是核心表，把 system prompt、模型选择、参数、工具策略绑定在一起，形成一个完整的"Agent Profile"。
+
+```sql
+CREATE TABLE agent_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+
+    -- System Prompt
+    system_prompt_template_id UUID REFERENCES prompt_templates(id),
+    system_prompt_override TEXT,      -- 直接写 prompt（优先级高于 template）
+
+    -- 模型参数
+    model TEXT,                        -- 指定模型（NULL 表示使用 org 默认路由）
+    temperature NUMERIC(3, 2),         -- 0.00 ~ 2.00
+    max_output_tokens INT,
+    top_p NUMERIC(3, 2),
+    context_window_limit INT,          -- 替代硬编码的 threadMessageLimit=200
+
+    -- 工具策略
+    tool_policy TEXT NOT NULL DEFAULT 'auto'
+        CHECK (tool_policy IN ('auto', 'required', 'none')),
+    tool_allowlist TEXT[],             -- NULL 表示使用全部可用工具
+    tool_denylist TEXT[],              -- 显式禁止的工具
+
+    -- 安全策略
+    content_filter_level TEXT NOT NULL DEFAULT 'standard'
+        CHECK (content_filter_level IN ('off', 'standard', 'strict')),
+    safety_rules_json JSONB NOT NULL DEFAULT '{}',
+
+    -- 适用范围（多个可同时为 NULL，表示 org 级默认）
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    skill_id UUID,
+
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ix_agent_configs_org_id ON agent_configs(org_id);
+CREATE INDEX ix_agent_configs_project_id ON agent_configs(project_id);
+```
+
+**继承与覆盖规则：**
+- Worker 执行 Run 时，按 `thread.project_id → org_id` 向上查找适用的 `agent_config`。
+- 更具体的配置覆盖更通用的配置（project 级 > org 级 > 平台默认）。
+- `system_prompt_override` 覆盖 `system_prompt_template_id`，两者都覆盖平台默认。
+- `temperature`、`max_output_tokens` 等字段为 NULL 时表示不覆盖、继承上层。
+
+#### 6.11.3 Skills 入库
+
+Skills 是一种**预定义的 Agent 行为快捷方式**，本质上是 `agent_config` 的一个打包形态，面向终端用户暴露。
 
 ```sql
 CREATE TABLE skills (
@@ -409,7 +496,9 @@ CREATE TABLE skills (
     skill_key TEXT NOT NULL,
     version TEXT NOT NULL,
     display_name TEXT NOT NULL,
-    prompt_md TEXT NOT NULL,
+    description TEXT,
+    agent_config_id UUID REFERENCES agent_configs(id),  -- 关联的行为配置
+    prompt_md TEXT NOT NULL,           -- skill 专属 system prompt（向后兼容）
     tool_allowlist TEXT[] NOT NULL DEFAULT '{}',
     budgets_json JSONB NOT NULL DEFAULT '{}',
     is_active BOOLEAN NOT NULL DEFAULT true,
@@ -417,6 +506,50 @@ CREATE TABLE skills (
     CONSTRAINT uq_skills_org_key_version UNIQUE (org_id, skill_key, version)
 );
 ```
+
+#### 6.11.4 Thread 级行为覆盖
+
+用户在某个 thread 上覆盖模型、温度等参数（类似 ChatGPT 的"对话设置"）。
+
+```sql
+ALTER TABLE threads
+    ADD COLUMN agent_config_id UUID REFERENCES agent_configs(id);
+```
+
+Thread 如果设置了 `agent_config_id`，则该 thread 下所有 Run 使用该配置，覆盖 project 和 org 级配置。
+
+#### 6.11.5 运行时配置解析流程
+
+```
+Worker 收到 Run 任务
+    ↓
+从 runs → threads → projects → org 逐级查找 agent_config
+    ↓
+合并配置（thread 级 > project 级 > org 级 > 平台默认）
+    ↓
+如果指定了 skill_id，skill 的 prompt/工具/budgets 覆盖 agent_config 的对应字段
+    ↓
+最终得到：system_prompt + model + temperature + tool_allowlist + content_filter + context_window_limit
+    ↓
+注入 LLM 请求
+```
+
+#### 6.11.6 平台默认配置
+
+平台级默认值不存数据库（避免所有 org 都 reference 同一行），而是写在代码的 const 里作为 fallback：
+
+```go
+const (
+    defaultModel              = ""        // 由 llm_routes 决定
+    defaultTemperature        = 0.7
+    defaultMaxOutputTokens    = 4096
+    defaultContextWindowLimit = 200
+    defaultToolPolicy         = "auto"
+    defaultContentFilterLevel = "standard"
+)
+```
+
+只有当 org/project/thread 级别都没有配置时，才使用这些值。
 
 ### 6.12 API Keys
 
