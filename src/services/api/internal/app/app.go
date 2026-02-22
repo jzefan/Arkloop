@@ -18,8 +18,8 @@ import (
 	apihttp "arkloop/services/api/internal/http"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
-	sharedredis "arkloop/services/shared/redis"
 	"arkloop/services/shared/objectstore"
+	sharedredis "arkloop/services/shared/redis"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -140,19 +140,19 @@ func (a *Application) Run(ctx context.Context) error {
 		runEventRepo   *data.RunEventRepository
 		auditRepo      *data.AuditLogRepository
 
-		secretsRepo    *data.SecretsRepository
-		llmCredRepo    *data.LlmCredentialsRepository
-		llmRoutesRepo  *data.LlmRoutesRepository
-		mcpConfigsRepo *data.MCPConfigsRepository
-		skillsRepo     *data.SkillsRepository
-		ipRulesRepo        *data.IPRulesRepository
-		apiKeysRepo        *data.APIKeysRepository
-		orgInvitationsRepo *data.OrgInvitationsRepository
-		teamRepo               *data.TeamRepository
-		projectRepo            *data.ProjectRepository
-		webhookRepo            *data.WebhookEndpointRepository
-		promptTemplatesRepo    *data.PromptTemplateRepository
-		agentConfigsRepo       *data.AgentConfigRepository
+		secretsRepo         *data.SecretsRepository
+		llmCredRepo         *data.LlmCredentialsRepository
+		llmRoutesRepo       *data.LlmRoutesRepository
+		mcpConfigsRepo      *data.MCPConfigsRepository
+		skillsRepo          *data.SkillsRepository
+		ipRulesRepo         *data.IPRulesRepository
+		apiKeysRepo         *data.APIKeysRepository
+		orgInvitationsRepo  *data.OrgInvitationsRepository
+		teamRepo            *data.TeamRepository
+		projectRepo         *data.ProjectRepository
+		webhookRepo         *data.WebhookEndpointRepository
+		promptTemplatesRepo *data.PromptTemplateRepository
+		agentConfigsRepo    *data.AgentConfigRepository
 
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
