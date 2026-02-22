@@ -407,6 +407,96 @@ func (w *Writer) WriteAPIKeyUsed(
 	}
 }
 
+func (w *Writer) WriteOrgInvitationCreated(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	actorUserID uuid.UUID,
+	invitationID uuid.UUID,
+	email string,
+	role string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "org_invitation"
+	targetID := invitationID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &actorUserID,
+		Action:      "org_invitations.create",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{"email": email, "role": role},
+	}); err != nil {
+		w.logError(traceID, "failed to write org_invitation-created audit log", err)
+	}
+}
+
+func (w *Writer) WriteOrgInvitationAccepted(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	actorUserID uuid.UUID,
+	invitationID uuid.UUID,
+	email string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "org_invitation"
+	targetID := invitationID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &actorUserID,
+		Action:      "org_invitations.accept",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{"email": email},
+	}); err != nil {
+		w.logError(traceID, "failed to write org_invitation-accepted audit log", err)
+	}
+}
+
+func (w *Writer) WriteOrgInvitationRevoked(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	actorUserID uuid.UUID,
+	invitationID uuid.UUID,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "org_invitation"
+	targetID := invitationID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &actorUserID,
+		Action:      "org_invitations.revoke",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{},
+	}); err != nil {
+		w.logError(traceID, "failed to write org_invitation-revoked audit log", err)
+	}
+}
+
 func (w *Writer) logError(traceID string, msg string, err error) {
 	if w == nil || w.logger == nil || err == nil {
 		return

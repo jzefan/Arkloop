@@ -47,6 +47,7 @@ type HandlerConfig struct {
 	SkillsRepo         *data.SkillsRepository
 	IPRulesRepo        *data.IPRulesRepository
 	APIKeysRepo        *data.APIKeysRepository
+	OrgInvitationsRepo *data.OrgInvitationsRepository
 
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
@@ -132,6 +133,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/api-keys/",
 		apiKeyEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.RedisClient),
+	)
+
+	mux.HandleFunc(
+		"/v1/orgs/",
+		orgsInvitationsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter),
+	)
+	mux.HandleFunc(
+		"/v1/org-invitations/",
+		orgInvitationEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter, cfg.Pool),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
