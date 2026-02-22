@@ -82,7 +82,7 @@ func skillEntry(
 
 		skillID, err := uuid.Parse(tail)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -119,7 +119,7 @@ func createSkill(
 
 	var req createSkillRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -129,7 +129,7 @@ func createSkill(
 	req.PromptMD = strings.TrimSpace(req.PromptMD)
 
 	if req.SkillKey == "" || req.Version == "" || req.DisplayName == "" || req.PromptMD == "" {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "skill_key, version, display_name, and prompt_md are required", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "skill_key, version, display_name, and prompt_md are required", traceID, nil)
 		return
 	}
 
@@ -150,7 +150,7 @@ func createSkill(
 			WriteError(w, nethttp.StatusConflict, "skills.conflict", "skill with this key and version already exists", traceID, nil)
 			return
 		}
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -181,7 +181,7 @@ func listSkills(
 
 	skills, err := skillsRepo.ListByOrg(r.Context(), actor.OrgID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -218,7 +218,7 @@ func patchSkill(
 
 	existing, err := skillsRepo.GetByID(r.Context(), actor.OrgID, skillID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if existing == nil {
@@ -228,7 +228,7 @@ func patchSkill(
 
 	var req patchSkillRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -243,7 +243,7 @@ func patchSkill(
 
 	updated, err := skillsRepo.Patch(r.Context(), actor.OrgID, skillID, patch)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if updated == nil {

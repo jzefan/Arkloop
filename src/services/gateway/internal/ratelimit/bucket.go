@@ -17,8 +17,10 @@ type Limiter interface {
 // ConsumeResult 是单次消费的结果。
 type ConsumeResult struct {
 	Allowed        bool
+	Limit          int64
 	Remaining      int64
 	RetryAfterSecs int64
+	ResetSecs      int64 // 桶完全恢复所需秒数
 }
 
 // tokenBucketScript 是原子 token bucket 的 Lua 实现。
@@ -26,7 +28,7 @@ type ConsumeResult struct {
 // ARGV[1] = capacity（float）
 // ARGV[2] = rate（tokens/second，float）
 // ARGV[3] = now（Unix timestamp，float）
-// 返回：{allowed(0/1), remaining_floor, retry_after_secs}
+// 返回：{allowed(0/1), remaining_floor, retry_after_secs, capacity, reset_secs}
 var tokenBucketScript = redis.NewScript(`
 local key      = KEYS[1]
 local capacity = tonumber(ARGV[1])
@@ -55,7 +57,9 @@ if not allowed then
     retry_after = math.ceil((1.0 - tokens) / rate)
 end
 
-return {allowed and 1 or 0, math.floor(tokens), retry_after}
+local reset_secs = math.ceil((capacity - tokens) / rate)
+
+return {allowed and 1 or 0, math.floor(tokens), retry_after, math.floor(capacity), reset_secs}
 `)
 
 // TokenBucket 是基于 Redis 的 token bucket 限流器。
@@ -97,18 +101,22 @@ func (b *TokenBucket) Consume(ctx context.Context, key string) (ConsumeResult, e
 	if err != nil {
 		return ConsumeResult{}, fmt.Errorf("token bucket script: %w", err)
 	}
-	if len(result) < 3 {
+	if len(result) < 5 {
 		return ConsumeResult{}, fmt.Errorf("unexpected script result length: %d", len(result))
 	}
 
 	allowedInt, _ := toInt64(result[0])
 	remaining, _ := toInt64(result[1])
 	retryAfter, _ := toInt64(result[2])
+	limit, _ := toInt64(result[3])
+	resetSecs, _ := toInt64(result[4])
 
 	return ConsumeResult{
 		Allowed:        allowedInt == 1,
-		Remaining:      remaining,
+		Limit:          limit,
+		Remaining:      max64(remaining, 0),
 		RetryAfterSecs: max64(retryAfter, 0),
+		ResetSecs:      max64(resetSecs, 0),
 	}, nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/runlimit"
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -499,16 +500,10 @@ func (e *EngineV1) appendAndCommit(ctx context.Context, pool *pgxpool.Pool, run 
 	return nil
 }
 
-// releaseRunSlot 将 org 的并发 run 计数减 1，计数不低于 0。
+// releaseRunSlot 原子地将 org 的并发 run 计数减 1，计数不低于 0。
 func (e *EngineV1) releaseRunSlot(ctx context.Context, orgID uuid.UUID) {
-	if e.runLimiterRDB == nil {
-		return
-	}
-	key := "arkloop:org:active_runs:" + orgID.String()
-	result := e.runLimiterRDB.Decr(ctx, key)
-	if result.Err() == nil && result.Val() < 0 {
-		_ = e.runLimiterRDB.Set(ctx, key, 0, 0)
-	}
+	key := runlimit.Key(orgID.String())
+	runlimit.Release(ctx, e.runLimiterRDB, key)
 }
 
 func (e *EngineV1) gatewayFromCredential(credential routing.ProviderCredential) (llm.Gateway, error) {
@@ -803,13 +798,8 @@ func (w *eventWriter) commit(ctx context.Context) error {
 
 	if w.hasTerminal {
 		w.hasTerminal = false
-		if w.runLimiterRDB != nil {
-			key := "arkloop:org:active_runs:" + w.run.OrgID.String()
-			result := w.runLimiterRDB.Decr(ctx, key)
-			if result.Err() == nil && result.Val() < 0 {
-				_ = w.runLimiterRDB.Set(ctx, key, 0, 0)
-			}
-		}
+		key := runlimit.Key(w.run.OrgID.String())
+		runlimit.Release(ctx, w.runLimiterRDB, key)
 	}
 
 	return nil

@@ -77,7 +77,7 @@ func TestNotFoundReturnsEnvelope(t *testing.T) {
 	if payload.TraceID != traceID {
 		t.Fatalf("trace_id mismatch: header=%q payload=%q", traceID, payload.TraceID)
 	}
-	if payload.Code != "http_error" {
+	if payload.Code != "http.method_not_allowed" {
 		t.Fatalf("unexpected code: %q", payload.Code)
 	}
 	if payload.Message == "" {
@@ -106,7 +106,7 @@ func TestReadyzRequiresDatabase(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if payload.Code != "not_ready" {
+	if payload.Code != "health.not_ready" {
 		t.Fatalf("unexpected code: %q", payload.Code)
 	}
 	if payload.TraceID != traceID {

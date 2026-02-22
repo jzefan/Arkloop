@@ -53,8 +53,10 @@
 | Phase 2 | 基础设施引入 | 引入 Redis + 对象存储，消除单点依赖 | P0: 没有 Redis |
 | Phase 3 | Worker 执行路径重构 | MCP 远端化 + Skills 入库 + 凭证入库 + 事件写入优化 | P0: MCP stdio 绑定; P0: Worker 调度盲目; P1: Skills 绑定文件系统; P1: LLM 凭证锁死 env var; P1: SSE 双重延迟 |
 | Phase 4 | Gateway + 安全基础 | 独立 Gateway 层 + secrets 统一管理 + API Keys | P0: 没有 Gateway 层; P1: 没有 secrets 表; P2: 没有 API Key 管理 |
+| Phase 4.5 | Worker 执行 Pipeline | 将 EngineV1.Execute 重构为 Middleware Pipeline，建立可插拔的执行阶段架构 | 无直接审计对应；解决 Execute 可扩展性瓶颈 |
 | Phase 5 | 组织模型与权限 | org 邀请 + RBAC + teams/projects 层级 | P1: 没有 org 邀请; P2: RBAC 过于简陋; P2: 没有 projects/teams 层级 |
 | Phase 6 | 企业级能力 | Webhooks + 审计补全 + 通知 + Feature Flags | P1: 没有 Webhooks; P1: 审计日志缺 IP; P2: 没有通知系统; P2: 没有 Feature Flags |
+| Phase 7 | 性能与可扩展性 | PgBouncer + run_events 分区 + SSE 多实例广播 + 并发计数器修复 | 九.9.1: PgBouncer 盲点; 九.9.2: run_events 无分区; 九.9.3: SSE 多实例缺失; 九.9.5: 计数器泄漏 |
 
 ---
 
@@ -522,6 +524,80 @@
 
 ---
 
+## 6.5 Phase 4.5 -- Worker 执行 Pipeline 重构
+
+目标：将 `EngineV1.Execute` 的过程式代码重构为 Pipeline/Middleware 架构。不新增功能，保持行为完全不变，但为后续 Phase 5-7 的每个新能力（Agent Config 继承链、Memory、Content Filter、Usage Tracking）提供可插拔的扩展点。
+
+**为什么在 Phase 5 之前做：**
+
+当前 `runengine/v1.go` 的 `Execute` 是一个约 300 行的过程式函数。Phase 1-4 的每次新增能力（MCP 动态加载、per-run 路由、Skills DB 加载）都是往这个函数里追加代码。如果不在此时引入 Pipeline 抽象，Phase 5 的 Agent Config 继承链、Phase 6 的 Content Filter 和 Usage Tracking、以及未来的 Memory System 都将继续膨胀这个函数，最终导致不可维护。
+
+Pipeline 机制的核心思想：把 Execute 方法拆成一串独立的处理环节（Middleware），每个环节只做一件事，环节之间通过统一接口串联。新能力只需编写新的 Middleware 并注册到 Pipeline，不修改现有代码。
+
+### R45 -- Pipeline 框架定义（RunContext + RunMiddleware + RunHandler）
+
+- **关联**：无直接审计对应。解决 `runengine/v1.go` Execute 方法的可扩展性瓶颈。
+- **目标**：定义 `RunContext`、`RunMiddleware`、`RunHandler` 接口和 Pipeline 组装器。
+- **关键点**：
+  - `RunContext` 是贯穿整条 Pipeline 的上下文结构体，携带 Run 执行所需的全部可变状态。每个 Middleware 可以读写 RunContext 的字段来影响后续环节。
+  - `RunMiddleware` 签名：`func(ctx context.Context, rc *RunContext, next RunHandler) error`。做完自己的工作后调用 `next` 传递控制权。也可以在 `next` 返回后执行清理逻辑（如 Memory 写回）。不调用 `next` 即短路（如取消检查命中时）。
+  - `RunHandler` 签名：`func(ctx context.Context, rc *RunContext) error`。Pipeline 的终端处理器。
+  - `Build(middlewares []RunMiddleware, terminal RunHandler) RunHandler`：组装函数，将 Middleware 列表和终端 Handler 构建为一个可调用的 RunHandler。组装顺序即执行顺序。
+  - `RunContext` 字段从现有 Execute 方法中提取，包括但不限于：
+    - `Run data.Run`、`Pool *pgxpool.Pool`
+    - `InputJSON map[string]any`
+    - `Messages []llm.Message`（线程历史消息，Middleware 可追加/修改）
+    - `SystemPrompt string`（Skill 或 Agent Config 设置）
+    - `ToolSpecs []llm.ToolSpec`、`ToolExecutors map[string]tools.Executor`、`AllowlistSet map[string]struct{}`
+    - `Router *routing.ProviderRouter`、`Gateway llm.Gateway`
+    - `MaxIterations int`、`MaxOutputTokens *int`、`ToolTimeoutMs *int`、`ToolBudget map[string]any`
+    - `SkillDefinition *skills.Definition`
+    - `Emitter events.Emitter`、`TraceID string`
+  - Pipeline 框架本身不依赖业务逻辑（不引入 pgxpool、redis），是纯组合工具。
+- **具体改动范围**：
+  - 新建 `src/services/worker/internal/pipeline/context.go`：`RunContext` 定义。
+  - 新建 `src/services/worker/internal/pipeline/middleware.go`：`RunMiddleware`、`RunHandler` 类型定义 + `Build` 组装函数。
+  - 新建 `src/services/worker/internal/pipeline/pipeline_test.go`：验证 Middleware 串联顺序、RunContext 字段传递、短路行为、`next` 后清理逻辑。
+- **验收**：
+  - `go test ./internal/pipeline/...`：组装器单测全绿。
+  - 框架代码无外部依赖（不引入 pgxpool、redis 等）。
+
+### R46 -- Execute 重构为 Pipeline 调度
+
+- **依赖**：R45
+- **目标**：将 `EngineV1.Execute` 中的各步骤拆为独立 Middleware，用 Pipeline 组装替代过程式调用。外部行为（事件写入、SSE 推送、runs.status 更新、并发计数 DECR）完全不变。
+- **关键点**：
+  - 从现有 Execute 中提取以下 Middleware（按执行顺序）：
+    1. **CancelGuardMiddleware**：检查 run 是否已取消/已终态，设置 LISTEN/NOTIFY 取消信号桥接到 context。对应 Execute 开头的 `readLatestEventType` + LISTEN 逻辑。
+    2. **InputLoaderMiddleware**：加载 `inputJSON` + 线程历史消息到 `RunContext.Messages`。对应 `loadRunInputs`。
+    3. **MCPDiscoveryMiddleware**：按 org 从 DB 加载 MCP 工具，合并到 `RunContext.ToolSpecs` 和 `RunContext.ToolExecutors`。对应 `mcp.DiscoverFromDB` 段落。
+    4. **SkillResolutionMiddleware**：加载 org skills 并解析 skill_id，设置 `RunContext.SystemPrompt`、`RunContext.MaxIterations`、`RunContext.ToolBudget` 等。对应 `skills.ResolveSkill` 段落。
+    5. **RoutingMiddleware**：per-run 从 DB 加载路由配置，执行路由决策，构建 LLM Gateway 写入 `RunContext.Gateway`。对应 `routing.LoadRoutingConfigFromDB` + `router.Decide` + `gatewayFromCredential` 段落。
+    6. **ToolBuildMiddleware**：根据最终的 allowlist 构建 `DispatchingExecutor` 和过滤后的 `ToolSpecs`。对应 `buildDispatchExecutor` + `filterToolSpecs`。
+  - 终端 Handler 是 **AgentLoopHandler**：构建 `agent.RunContext` + `llm.Request`，调用 `agent.Loop.Run`，通过 `eventWriter` 写入事件和 assistant message。即现有 Execute 的后半段。
+  - **eventWriter 不拆**：事件批提交和终态写入逻辑与 Agent Loop 深度耦合（cancel 检测、行锁、usage 累加），保留在 AgentLoopHandler 内部。
+  - `EngineV1.Execute` 方法体缩减为：初始化 `RunContext` → 组装 Pipeline → 调用 Pipeline。
+  - 每个 Middleware 放在 `src/services/worker/internal/pipeline/` 下独立文件。
+  - `EngineV1` 在构造时（`NewEngineV1`）预组装 Middleware 列表，Execute 时按 run 参数实例化 RunContext 并执行。
+  - **铁律：重构后所有现有 integration test 必须不修改地通过。**
+- **具体改动范围**：
+  - 新建 `src/services/worker/internal/pipeline/mw_cancel_guard.go`
+  - 新建 `src/services/worker/internal/pipeline/mw_input_loader.go`
+  - 新建 `src/services/worker/internal/pipeline/mw_mcp_discovery.go`
+  - 新建 `src/services/worker/internal/pipeline/mw_skill_resolution.go`
+  - 新建 `src/services/worker/internal/pipeline/mw_routing.go`
+  - 新建 `src/services/worker/internal/pipeline/mw_tool_build.go`
+  - 新建 `src/services/worker/internal/pipeline/handler_agent_loop.go`
+  - 修改 `src/services/worker/internal/runengine/v1.go`：`Execute` 方法改为组装 Pipeline 并调用，原有私有方法（`loadRunInputs`、`gatewayFromCredential` 等）迁移到对应 Middleware。
+  - 修改 `src/services/worker/internal/app/composition.go`：适配 Middleware 列表注入。
+- **验收**：
+  - `go test -tags integration ./...`（worker 全量）：全绿，无任何测试修改。
+  - `go test ./internal/pipeline/...`：每个 Middleware 的单测覆盖正常路径和错误路径。
+  - 手工：创建 run → SSE 流式输出 → run 完成 → runs.status 更新 → 并发计数 DECR，行为与重构前完全一致。
+  - 代码审查：`v1.go` 的 `Execute` 方法不超过 30 行。
+
+---
+
 ## 7. Phase 5 -- 组织模型与权限
 
 目标：完善组织模型，建立邀请机制、RBAC 权限体系、teams/projects 层级结构。
@@ -623,13 +699,14 @@
 
 - **关联审计**：三.3.5「整个 Agent 行为配置层不存在」
 - **关联目标架构**：六.6.11 `agent_configs` + `prompt_templates`
-- **依赖**：R52（projects 层级，用于配置继承链）
-- **目标**：创建 `prompt_templates`、`agent_configs` 表，实现 `平台默认 -> org 级 -> project 级 -> thread 级` 的配置继承链。
+- **依赖**：R52（projects 层级，用于配置继承链）；R46（Pipeline 架构，Agent Config 作为 Middleware 接入）
+- **目标**：创建 `prompt_templates`、`agent_configs` 表，实现 `平台默认 -> org 级 -> project 级 -> thread 级` 的配置继承链。通过 Pipeline Middleware 注入 Worker 执行路径，不修改 `runengine/v1.go` 主函数。
 - **关键点**：
   - `prompt_templates`：`id`、`org_id`、`name`、`content`（支持 `{{variable}}` 插值）、`variables JSONB`、`is_default`、`version`、`published_at`。
   - `agent_configs`：`id`、`org_id`、`name`、`system_prompt_template_id`、`system_prompt_override`、`model`、`temperature`、`max_output_tokens`、`top_p`、`context_window_limit`、`tool_policy`、`tool_allowlist`、`tool_denylist`、`content_filter_level`、`safety_rules_json`、`project_id`、`skill_id`、`is_default`。
   - `threads` 增加 `agent_config_id`。
-  - Worker 执行 Run 时按继承链解析最终配置（替代硬编码的 `defaultAgentMaxIterations = 10` 和 `threadMessageLimit = 200`）。
+  - **Middleware 接入**：新建 `AgentConfigMiddleware` 插入 R46 的 Pipeline（位于 SkillResolutionMiddleware 之前）。Middleware 按 `run -> thread -> project -> org` 逐级查找 `agent_config`，合并为最终配置写入 `RunContext`（`SystemPrompt`、`MaxIterations`、`MaxOutputTokens`、`ToolPolicy` 等字段）。SkillResolutionMiddleware 读取 RunContext 中已解析的配置作为基础，skill 的字段覆盖 agent_config 的对应字段。
+  - 平台默认值保留在代码 const 中作为 fallback（`defaultAgentMaxIterations`、`threadMessageLimit` 等），仅当所有层级都无配置时使用。
   - API 端点：
     - `POST/GET/PATCH /v1/prompt-templates`
     - `POST/GET/PATCH /v1/agent-configs`
@@ -638,26 +715,63 @@
   - 新建 `src/services/api/internal/data/agent_configs_repo.go`
   - 新建 `src/services/api/internal/data/prompt_templates_repo.go`
   - 新建 `src/services/api/internal/http/v1_agent_configs.go`
-  - 修改 `src/services/worker/internal/runengine/v1.go`：从 DB 加载配置替代硬编码
+  - 新建 `src/services/worker/internal/pipeline/mw_agent_config.go`：`AgentConfigMiddleware`，按继承链解析配置并写入 `RunContext`。
+  - 修改 `src/services/worker/internal/app/composition.go`：将 `AgentConfigMiddleware` 注册到 Pipeline。
 - **验收**：
   - `go test -tags integration ./...`
+  - `go test ./internal/pipeline/...`：AgentConfigMiddleware 单测覆盖继承链优先级（thread > project > org > 平台默认）。
   - 手工：创建 org 级 agent_config（temperature=0.5）-> 创建 run -> 确认使用了自定义 temperature。
+  - 确认 `runengine/v1.go` 无改动。
 
-### R62 -- 订阅与用量 Schema
+### R62 -- 订阅、权益与用量
 
 - **关联审计**：六「订阅与计费不存在」
 - **关联目标架构**：六.6.14 `CREATE TABLE plans/subscriptions/usage_records`
-- **目标**：创建 `plans`、`subscriptions`、`usage_records` 表。Worker 在 Run 完成时自动写入 `usage_records`。
+- **依赖**：R46（Pipeline 架构，Enforcement 作为 Middleware 接入）；R63（Feature Flags，权益检查可复用 flag 缓存模式）
+- **目标**：建立四层计费架构——计量（Metering）、权益（Entitlements）、执行（Enforcement）、账单（Billing）。四层互不耦合，业务规则变化时只改一层。
+
 - **关键点**：
-  - `usage_records`：每次 LLM 调用的 token 用量 + 成本，关联 `run_id` + `org_id`。
-  - `plans` + `subscriptions`：schema 先建，计费逻辑后做。
-  - Worker 终态写入时同时写 `usage_records`（从 R30 的 usage 累加数据中取）。
+
+  **计量层（Metering）：**
+  - `usage_records`：每次 LLM 调用的 token 用量 + 成本，关联 `run_id` + `org_id`。不可变事件流，只记录事实，不关心 Plan 和限额。
+  - Worker 终态写入时同事务写 `usage_records`（从 R30 的 usage 累加数据中取）。
+
+  **权益层（Entitlements）：**
+  - `plans`：`id`、`name`、`display_name`、`created_at`。Plan 本身只是一个标识符，不直接存储限额。
+  - `plan_entitlements`：`plan_id`、`key TEXT`、`value TEXT`、`value_type TEXT CHECK ('int', 'bool', 'string')`。每个 Plan 的限额/特性用 key-value 表达。key 命名空间：`quota.*`（数量限额）、`feature.*`（功能开关）、`limit.*`（并发/速率限制）。
+  - 内置 key 示例：`quota.runs_per_month`、`quota.tokens_per_month`、`limit.concurrent_runs`、`feature.byok_enabled`、`feature.mcp_remote_enabled`、`limit.team_members`。
+  - `org_entitlement_overrides`：`org_id`、`key TEXT`、`value TEXT`、`value_type TEXT`、`reason TEXT`、`expires_at TIMESTAMPTZ`、`created_by_user_id`、`created_at`。后台管理员给单个 org 调整限额，支持过期时间（临时加额度）和操作原因记录。
+  - 权益解析优先级：`org_entitlement_overrides`（未过期）> `plan_entitlements` > 平台硬编码默认值。
+  - `subscriptions`：`id`、`org_id`、`plan_id`、`status`、`current_period_start`、`current_period_end`、`cancelled_at`、`created_at`。关联 org 与 plan。
+  - Go 侧提供 `EntitlementService.Resolve(ctx, orgID, key) -> EntitlementValue`，统一查询接口。结果缓存到 Redis `arkloop:entitlement:{org_id}:{key}` TTL 5min。
+
+  **执行层（Enforcement）：**
+  - **Run 级检查（Pipeline Middleware）**：新建 `EntitlementMiddleware` 插入 R46 的 Pipeline（位于 InputLoaderMiddleware 之后、MCPDiscoveryMiddleware 之前）。Run 开始前检查 `quota.runs_per_month`、`limit.concurrent_runs`、`feature.byok_enabled`（如果 run 使用 BYOK 凭证）等。超限时写入 `run.failed` 事件（error_class: `entitlement.quota_exceeded`）并短路 Pipeline。
+  - **API 级检查（HTTP Middleware）**：在 API 的 HTTP middleware 中检查请求级限额（如 `limit.team_members` 在创建 team member 时校验）。复用 `EntitlementService.Resolve`。
+  - 执行层不知道用户是什么 Plan，不知道价格。它只做一件事：比较当前用量和允许上限。
+  - R44 的并发 Run 限制（Redis counter `arkloop:org:active_runs`）纳入权益体系：默认值从环境变量改为读取 `limit.concurrent_runs` 权益值，保留 Redis counter 机制不变。
+
+  **账单层（Billing）：**
+  - 本步只建 schema 预留，不实现计费逻辑。
+  - `usage_records` 按 `(org_id, recorded_at)` 索引支撑月度汇总查询。
+  - 实际收费逻辑（Stripe 集成、Pay-as-you-go 超额计费）留给后续独立 R 号，不在 R62 范围内。账单层只从计量层读取用量、从权益层读取定价规则，不干涉其他层。
+
 - **具体改动范围**：
-  - 新建 migration `00032_create_billing_schema.sql`
+  - 新建 migration `00032_create_billing_and_entitlements.sql`：`plans`、`plan_entitlements`、`subscriptions`、`usage_records`、`org_entitlement_overrides` 五张表。
+  - 新建 `src/services/api/internal/data/plans_repo.go`
+  - 新建 `src/services/api/internal/data/entitlements_repo.go`：`plan_entitlements` + `org_entitlement_overrides` CRUD。
+  - 新建 `src/services/api/internal/data/subscriptions_repo.go`
   - 新建 `src/services/api/internal/data/usage_repo.go`
-  - 修改 Worker 终态逻辑：写 `usage_records`
+  - 新建 `src/services/api/internal/entitlement/service.go`：`EntitlementService.Resolve`，合并 plan + override + 默认值。
+  - 新建 `src/services/api/internal/http/v1_entitlements.go`：后台管理 override 的端点（`POST/GET/DELETE /v1/orgs/{id}/entitlement-overrides`）。
+  - 新建 `src/services/worker/internal/pipeline/mw_entitlement.go`：`EntitlementMiddleware`，Run 级额度检查。
+  - 修改 `src/services/worker/internal/app/composition.go`：将 `EntitlementMiddleware` 注册到 Pipeline。
+  - 修改 Worker 终态逻辑：写 `usage_records`。
 - **验收**：
   - `go test -tags integration ./...`
+  - `go test ./internal/pipeline/...`：EntitlementMiddleware 单测覆盖超限拒绝、override 优先级、过期 override 回退。
+  - `go test ./internal/entitlement/...`：Resolve 方法覆盖三级合并逻辑。
+  - 手工：创建 Plan（`quota.runs_per_month=10`）-> org 订阅该 Plan -> 创建第 11 个 run 被拒绝 -> 后台加 override（`quota.runs_per_month=20`）-> 第 11 个 run 成功。
   - 手工：run 完成后 `SELECT * FROM usage_records WHERE run_id = $1` 有记录。
 
 ### R63 -- Feature Flags
@@ -701,21 +815,141 @@
 
 ---
 
+## 8.5 Phase 7 -- 性能与可扩展性
+
+目标：解决 Phase 1-6 功能完成后暴露的扩展性瓶颈，使系统能支撑 50+ Worker 实例、1000+ 并发 Run、多 API 实例部署。
+
+关联文档：`src/docs/architecture/architecture-problems.zh-CN.md` 第九节「新发现的扩展性盲点」
+
+### R70 -- PgBouncer 连接池代理
+
+- **关联审计**：九.9.1「没有数据库连接池代理」
+- **目标**：在 PostgreSQL 和应用层之间引入 PgBouncer（transaction mode），将数千应用连接复用为几百个实际数据库连接。
+- **关键点**：
+  - PgBouncer 以 transaction mode 运行：每个事务结束后连接立即归还到池中，不绑定到特定客户端。
+  - API、Worker、Gateway（如果后续直连 DB）的 DSN 全部改为指向 PgBouncer，不再直连 PostgreSQL。
+  - PgBouncer `default_pool_size` 建议 200（可根据 PostgreSQL 实际 `max_connections` 调整）。
+  - `pgxpool` 的应用层连接池保留，但 `MaxConns` 可以调高（因为实际连接由 PgBouncer 控制）。
+  - **已知限制**：transaction mode 下 `LISTEN/NOTIFY` 不可用（因为 LISTEN 需要持有连接）。API 的 SSE handler 当前使用 `pool.Acquire()` + `LISTEN`，需要为此保留一条直连通道（PgBouncer 之外单独配一个 direct DSN 或用 `session` mode 的小池子专供 LISTEN）。
+  - 健康检查：PgBouncer 自带 `SHOW STATS` 和 `SHOW POOLS` 管理命令。
+- **具体改动范围**：
+  - 修改 `compose.yaml`：新增 `pgbouncer` service（`edoburu/pgbouncer` 或 `bitnami/pgbouncer` 镜像）。
+  - 新增 `src/services/pgbouncer/pgbouncer.ini`（或通过环境变量配置）。
+  - 修改 `.env.example`：新增 `ARKLOOP_PGBOUNCER_URL`，调整 `DATABASE_URL` 指向 PgBouncer。
+  - 修改 API SSE handler：对 LISTEN 连接使用直连 DSN（不经过 PgBouncer）。
+  - Worker 的 `DATABASE_URL` 指向 PgBouncer。
+- **验收**：
+  - `docker compose up -d` 后 API + Worker 通过 PgBouncer 正常工作。
+  - `go test -tags integration ./...` 全绿。
+  - 手工：启动 20 个 Worker 实例（`docker compose scale worker=20`），观察 PgBouncer `SHOW POOLS` 实际连接数远小于应用连接数。
+  - 手工：SSE 推送仍然通过 LISTEN/NOTIFY 实时到达（直连通道生效）。
+
+### R71 -- run_events 月分区
+
+- **关联审计**：九.9.2「run_events 无月分区」；原始审计二.2.5
+- **目标**：将 `run_events` 表改为按 `ts` 的 RANGE 月分区，支持旧分区归档和 DROP。
+- **关键点**：
+  - 创建新的分区表 `run_events_partitioned`，结构与现有 `run_events` 一致。
+  - 预创建当前月 + 下月的分区。
+  - 数据迁移策略：
+    1. 创建分区表和索引
+    2. 后台批量搬迁旧数据（按 `ts` 范围，每批 10,000 行，避免锁表）
+    3. 双写期：新事件同时写入旧表和分区表
+    4. 切换：应用层读写全部切到分区表
+    5. 旧表在确认无残留读取后 DROP
+  - 分区管理 cron：每月 25 日自动创建下下月分区（预留缓冲）。
+  - 归档：超过 3 个月的分区导出到对象存储（JSONL.gz），DETACH + DROP。
+  - `run_events_seq_global` sequence 保留（分区表继续使用）。
+  - 索引策略：每个分区独立创建 `(run_id, seq)` 索引（分区本地索引），不用全局索引。
+- **具体改动范围**：
+  - 新建 migration：创建分区表 + 当前月/下月分区。
+  - 新建 `src/services/api/internal/data/partition_manager.go`：分区自动创建逻辑。
+  - 修改 `run_events_repo.go`（API 和 Worker 两侧）：写入目标改为分区表。
+  - 新建归档脚本（可做成后台 job 或独立 CLI 命令）。
+- **验收**：
+  - `go test -tags integration ./...`
+  - 手工：`\d+ run_events_partitioned` 确认分区存在。
+  - 手工：创建 run，事件写入正确分区。
+  - 手工：SSE 读取跨月事件不报错。
+
+### R72 -- SSE 多实例 Redis Pub/Sub 广播
+
+- **关联审计**：九.9.3「SSE 多实例广播缺失」
+- **关联目标架构**：五.5.2 多实例同步
+- **依赖**：R20（Redis 已引入）
+- **目标**：Worker commit 事件后同时发 `pg_notify` 和 Redis Pub/Sub。API 的 SSE handler 订阅 Redis channel 作为跨实例信号源。
+- **关键点**：
+  - Worker 写入事件 commit 后：
+    1. `pg_notify('run_events:{run_id}', seq)` -- 保留，快速路径
+    2. `redis.Publish(ctx, 'arkloop:sse:run_events:{run_id}', seq)` -- 新增，跨实例广播
+  - API SSE handler 同时监听两个信号源：
+    - pg_notify（同实例快速路径，延迟最低）
+    - Redis Pub/Sub（跨实例广播，保证所有 API 实例都能收到）
+  - 任一信号触发后查库推送，去重靠 `cursor`（seq 游标），不会重复推送。
+  - Redis Pub/Sub 不持久化消息（fire-and-forget），SSE handler 的兜底仍是心跳周期内查库。
+- **具体改动范围**：
+  - 修改 `src/services/worker/internal/runengine/v1.go`：commit 后新增 Redis Publish。
+  - 修改 `src/services/api/internal/http/v1_runs.go`：SSE handler 新增 Redis Subscribe，与 pg_notify 合并为 select 多路复用。
+  - Worker 和 API 的 Redis client 已在 R20 引入，复用即可。
+- **验收**：
+  - `go test -tags integration ./...`
+  - 手工：启动 2 个 API 实例，用户 SSE 连接到 API-A，Worker 事件推送通过 API-B 也能到达（Redis Pub/Sub 路径）。
+
+### R73 -- 并发 Run 计数器泄漏修复
+
+- **关联审计**：九.9.5「Worker 崩溃时 Redis 并发计数器泄漏」
+- **依赖**：R44（并发 Run 限制已实现）
+- **目标**：实现定时同步机制，防止 Worker 崩溃导致计数器永久偏高。
+- **关键点**：
+  - 后台 goroutine（在 API 服务中运行，每 60 秒一次）：
+    1. 扫描 `runs` 表中 `status='running' AND updated_at < now() - interval '5 minutes'` 的 run
+    2. 将这些 run 标记为 `status='failed'`，`failed_at=now()`，写入 `run_events`（`run.failed`，error_class: `worker.timeout`）
+    3. 按 org_id 分组，将 Redis counter `arkloop:org:active_runs:{org_id}` 重置为 `SELECT COUNT(*) FROM runs WHERE org_id=$1 AND status='running'`
+  - 重置操作用 Redis WATCH + MULTI（乐观锁），避免与正常 INCR/DECR 冲突。
+  - 审计：每次强制失败都写审计日志（actor: `system`）。
+  - 5 分钟阈值可通过环境变量配置（`ARKLOOP_RUN_TIMEOUT_MINUTES`）。
+- **具体改动范围**：
+  - 新建 `src/services/api/internal/jobs/stale_run_reaper.go`：定时扫描 + 强制失败 + 计数器重置。
+  - 修改 `src/services/api/cmd/api/main.go`：启动时 go routine 运行 reaper。
+  - 修改 `src/services/api/internal/data/runs_repo.go`：新增 `ListStaleRunning` 和 `ForceFailRun` 方法。
+- **验收**：
+  - `go test -tags integration ./...`
+  - 手工：创建 run，手动 kill Worker 进程，等待 5 分钟 + 60 秒后确认 run 被标记为 failed，Redis counter 已重置。
+
+### R74 -- PostgreSQL 只读副本配置
+
+- **关联审计**：九.9.4「没有 PostgreSQL 只读副本」
+- **目标**：为读密集查询（审计列表、run_events 历史回放、threads/messages 列表）配置只读副本分流。
+- **关键点**：
+  - 生产环境使用 PostgreSQL streaming replication 创建只读副本。
+  - 开发环境不配置副本（compose.yaml 不改动）。
+  - 应用层新增 `ARKLOOP_DATABASE_READ_URL` 环境变量，指向只读副本。
+  - API 服务持有两个连接池：`writePool`（主库）和 `readPool`（只读副本，可选）。
+  - Repository 层对只读查询（List、Get）使用 `readPool`；写操作（Create、Update、Delete）使用 `writePool`。
+  - `readPool` 未配置时 fallback 到 `writePool`（开发环境零影响）。
+  - 注意事项：只读副本有复制延迟（通常 < 100ms），写后立即读的场景（如创建 run 后立即查询状态）必须走主库。
+- **具体改动范围**：
+  - 修改 `src/services/api/internal/data/`：Repository 方法区分读写连接池。
+  - 修改 `src/services/api/cmd/api/main.go`：初始化双连接池。
+  - `.env.example` 新增 `ARKLOOP_DATABASE_READ_URL`。
+  - 文档：说明生产环境如何配置 streaming replication（不在代码仓库中实现，只写运维指引）。
+- **验收**：
+  - `go test -tags integration ./...`（不配置 READ_URL 时 fallback 正常）。
+  - 手工（生产环境）：配置只读副本后，Console 审计查询走只读副本（通过 pg_stat_activity 确认）。
+
+---
+
 ## 9. run_events 分区策略（跨 Phase 长期任务）
 
 - **关联审计**：二.2.5「无分区无归档」；P0
 - **关联目标架构**：六.6.7 `run_events_v2` 按月分区
 
-run_events 的分区改造是一个破坏性变更，不宜在早期做。推荐策略：
+run_events 的分区改造在 Phase 7 的 R71 中正式落地。原始策略保留供参考：
 
-1. **Phase 1（R13）**：先消除行锁热点（sequence），降低最紧急的性能风险。
-2. **Phase 3 之后**：观察 run_events 表的增长速度。当行数超过 5000 万时启动分区改造。
-3. **分区方案**：
-   - 新建 `run_events_v2` 按 `ts` 分区（RANGE，每月一个分区）。
-   - 数据迁移：后台 worker 逐批搬迁旧数据。
-   - 应用层切换：双写一段时间后切读到 v2。
-   - 旧表归档到对象存储后 DROP。
-4. **成本字段抽列**：在 Phase 6（R62）的 `usage_records` 表中已独立存储 token 用量和费用，不再依赖从 `data_json` 聚合。
+1. **Phase 1（R13）**：已完成，消除行锁热点（sequence）。
+2. **Phase 7（R71）**：执行月分区改造。详见 8.5 节 R71。
+3. **分区方案**：见 R71。
+4. **成本字段抽列**：在 Phase 6（R62）的 `usage_records` 表中独立存储 token 用量和费用。
 
 ---
 
@@ -738,6 +972,10 @@ Phase 4（Gateway + 安全）
   R40 → R41 → R42 → R43 → R44
   （R40 先行，R41/R42 可并行，R43 在 R40 之后）
 
+Phase 4.5（Worker 执行 Pipeline）
+  R45 → R46
+  （R45 定义框架，R46 依赖 R45 做实际重构；必须在 Phase 5 之前完成）
+
 Phase 5（组织与权限）
   R50 → R51 → R52
   （R50/R51 可并行，R52 在 R15 之后）
@@ -747,7 +985,12 @@ Phase 6（企业级能力）
   （R61 依赖 R52；其余可并行）
 ```
 
-Phase 1-3 是核心路径，Phase 4-6 可根据产品优先级调整顺序。同一 Phase 内无强依赖的薄片可并行执行。
+Phase 7（性能与可扩展性）
+  R70 → R71 → R72 → R73 → R74
+  （R70 先行解锁扩展上限，R71/R72 可并行，R73 依赖 R72，R74 运维层面独立）
+```
+
+Phase 1-4 是核心路径，Phase 4.5 是 Phase 5 的前置条件（Pipeline 架构就绪后再加新能力）。Phase 5-6 可根据产品优先级调整顺序。Phase 7 在 Phase 5/6 功能验收完成后执行。同一 Phase 内无强依赖的薄片可并行执行。
 
 ---
 
@@ -759,8 +1002,10 @@ Phase 1-3 是核心路径，Phase 4-6 可根据产品优先级调整顺序。同
 | Phase 2 | `docker compose up -d` 三个服务（postgres/redis/minio）全部 healthy；连通性测试全绿 |
 | Phase 3 | Worker 使用 DB 凭证/MCP 配置/Skills 执行 run；SSE 延迟 < 100ms；runs.status 可信 |
 | Phase 4 | 所有流量经过 Gateway；限流生效；API Key 可创建/使用/吊销；IP 过滤生效 |
+| Phase 4.5 | `go test -tags integration ./...`（worker）全绿且无测试修改；`v1.go` Execute 方法不超过 30 行；Pipeline 框架单测全绿 |
 | Phase 5 | org 邀请流程完整；RBAC 权限点校验生效；projects 层级可用 |
 | Phase 6 | Webhooks 投递可用；agent_configs 继承链生效；usage_records 自动写入 |
+| Phase 7 | PgBouncer 部署；run_events 月分区；SSE 多实例广播；50 Worker + 1000 并发 Run 可稳定运行 |
 
 ---
 
@@ -774,3 +1019,9 @@ Phase 1-3 是核心路径，Phase 4-6 可根据产品优先级调整顺序。同
 | Gateway 引入后 SSE 长连接透传 | Gateway 用 `httputil.ReverseProxy` 自带的 Flush 支持；专门测试 SSE 透传场景 |
 | MCP 远端化后延迟增加 | stdio fallback 保留；Remote MCP 走 HTTP keep-alive + 工具列表缓存到 Redis |
 | 多个 migration 版本管理 | goose 的版本号严格递增；每个 Phase 完成后做一次 `ExpectedVersion` 对齐 |
+| PgBouncer transaction mode 下 LISTEN 不可用 | SSE handler 的 LISTEN 连接走直连 DSN，不经过 PgBouncer |
+| run_events 分区迁移期间数据不一致 | 双写 + 游标去重，切换前充分验证 |
+| Worker 崩溃计数器泄漏在修复窗口内（5min）阻塞 org | 阈值可配置；紧急情况可手动 `redis-cli SET arkloop:org:active_runs:{org_id} 0` |
+| 只读副本复制延迟导致写后读不一致 | 写后立即读的场景（如创建 run 后查状态）强制走主库 |
+| Pipeline 重构引入行为回归 | 全量 integration test 不修改地通过作为铁律；重构期间不加新功能，纯结构变更 |
+| RunContext 字段膨胀导致 God Object | RunContext 只承载 per-run 可变状态，不持有服务依赖；Middleware 的服务依赖通过闭包注入 |

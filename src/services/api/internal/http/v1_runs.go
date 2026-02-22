@@ -93,7 +93,7 @@ func createThreadRun(
 			if errors.Is(err, io.EOF) {
 				body = nil
 			} else {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 				return
 			}
 		}
@@ -101,14 +101,14 @@ func createThreadRun(
 		startedData := map[string]any{}
 		if body != nil && body.RouteID != nil {
 			if !routeIDRegex.MatchString(*body.RouteID) {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 				return
 			}
 			startedData["route_id"] = *body.RouteID
 		}
 		if body != nil && body.SkillID != nil {
 			if !skillIDRegex.MatchString(*body.SkillID) {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 				return
 			}
 			startedData["skill_id"] = strings.TrimSpace(*body.SkillID)
@@ -116,7 +116,7 @@ func createThreadRun(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -131,7 +131,7 @@ func createThreadRun(
 		var acquired bool
 		if limiter != nil {
 			if !limiter.TryAcquire(r.Context(), thread.OrgID) {
-				WriteError(w, nethttp.StatusTooManyRequests, "runs.concurrent_limit_exceeded", "concurrent run limit exceeded", traceID, nil)
+				WriteError(w, nethttp.StatusTooManyRequests, "runs.limit_exceeded", "concurrent run limit exceeded", traceID, nil)
 				return
 			}
 			acquired = true
@@ -144,19 +144,19 @@ func createThreadRun(
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		defer tx.Rollback(r.Context())
 
 		runRepo, err := data.NewRunEventRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		jobRepo, err := data.NewJobRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -169,7 +169,7 @@ func createThreadRun(
 			startedData,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -183,12 +183,12 @@ func createThreadRun(
 			nil,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -238,7 +238,7 @@ func listThreadRuns(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -252,7 +252,7 @@ func listThreadRuns(
 
 		runs, err := runRepo.ListRunsByThread(r.Context(), actor.OrgID, threadID, limit)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -262,7 +262,7 @@ func listThreadRuns(
 			if status == "running" {
 				terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
 				if err != nil {
-					WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+					WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 					return
 				}
 				status = deriveRunStatus(terminal)
@@ -303,7 +303,7 @@ func getRun(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
@@ -319,7 +319,7 @@ func getRun(
 		if status == "running" {
 			terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
 			if err != nil {
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 			status = deriveRunStatus(terminal)
@@ -369,7 +369,7 @@ func cancelRun(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
@@ -383,14 +383,14 @@ func cancelRun(
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		defer tx.Rollback(r.Context())
 
 		txRepo, err := data.NewRunEventRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -401,12 +401,12 @@ func cancelRun(
 				WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -448,7 +448,7 @@ func streamRunEvents(
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if run == nil {
@@ -610,7 +610,7 @@ func parseSSEQueryParams(
 	if raw := strings.TrimSpace(r.URL.Query().Get("after_seq")); raw != "" {
 		parsed, err := parseInt64NonNegative(raw)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return 0, false, false
 		}
 		afterSeq = parsed
@@ -623,7 +623,7 @@ func parseSSEQueryParams(
 		case "false", "0":
 			follow = false
 		default:
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return 0, false, false
 		}
 	}
@@ -679,7 +679,7 @@ func runEntry(
 
 		runID, err := uuid.Parse(idPart)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -741,7 +741,7 @@ func authorizeRunOrAudit(
 	auditWriter *audit.Writer,
 ) bool {
 	if actor == nil || run == nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return false
 	}
 

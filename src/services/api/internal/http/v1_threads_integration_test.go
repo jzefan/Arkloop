@@ -100,7 +100,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	}
 
 	cursorIncomplete := doJSON(handler, nethttp.MethodGet, "/v1/threads?before_id="+threadPayload.ID, nil, headers)
-	env := assertErrorEnvelopePayload(t, cursorIncomplete, nethttp.StatusUnprocessableEntity, "validation_error")
+	env := assertErrorEnvelopePayload(t, cursorIncomplete, nethttp.StatusUnprocessableEntity, "validation.error")
 	details, ok := env.Details.(map[string]any)
 	if !ok || details["reason"] != "cursor_incomplete" {
 		t.Fatalf("unexpected cursor details: %#v", env.Details)

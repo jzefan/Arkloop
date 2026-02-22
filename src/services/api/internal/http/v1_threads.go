@@ -85,18 +85,18 @@ func createThread(
 
 		var body createThreadRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
 		if body.Title != nil && len(*body.Title) > 200 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
 		thread, err := threadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, body.Title)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -151,7 +151,7 @@ func listThreads(
 			beforeID,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -188,7 +188,7 @@ func getThread(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -229,21 +229,21 @@ func patchThread(
 
 		var body updateThreadRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 		if !body.Title.Present {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Title.Value != nil && len(*body.Title.Value) > 200 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -257,7 +257,7 @@ func patchThread(
 
 		updated, err := threadRepo.UpdateTitle(r.Context(), threadID, body.Title.Value)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if updated == nil {
@@ -294,7 +294,7 @@ func deleteThread(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -308,7 +308,7 @@ func deleteThread(
 
 		deleted, err := threadRepo.Delete(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if !deleted {
@@ -385,7 +385,7 @@ func threadEntry(
 
 		threadID, err := uuid.Parse(idPart)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -449,7 +449,7 @@ func parseLimit(w nethttp.ResponseWriter, traceID string, raw string) (int, bool
 
 	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || parsed < 1 || parsed > 200 {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return 0, false
 	}
 	return parsed, true
@@ -467,7 +467,7 @@ func parseThreadCursor(
 		WriteError(
 			w,
 			nethttp.StatusUnprocessableEntity,
-			"validation_error",
+			"validation.error",
 			"request validation failed",
 			traceID,
 			map[string]any{"reason": "cursor_incomplete", "required": []string{"before_created_at", "before_id"}},
@@ -480,12 +480,12 @@ func parseThreadCursor(
 
 	parsedTime, err := time.Parse(time.RFC3339Nano, beforeCreatedAtRaw)
 	if err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return nil, nil, false
 	}
 	parsedID, err := uuid.Parse(beforeIDRaw)
 	if err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return nil, nil, false
 	}
 
@@ -510,7 +510,7 @@ func authorizeThreadOrAudit(
 	auditWriter *audit.Writer,
 ) bool {
 	if actor == nil || thread == nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return false
 	}
 

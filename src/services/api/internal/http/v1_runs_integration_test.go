@@ -371,7 +371,7 @@ func TestStreamRunEvents(t *testing.T) {
 
 	t.Run("negative after_seq returns 422", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false&after_seq=-1", nil, aliceHeaders)
-		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation_error")
+		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 
 	t.Run("follow=false fetches existing events and validates SSE format", func(t *testing.T) {

@@ -62,17 +62,17 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 
 		var body loginRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
 		body.Login = strings.TrimSpace(body.Login)
 		if body.Login == "" || len(body.Login) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Password == "" || len(body.Password) > 1024 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -94,7 +94,7 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 				WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -134,7 +134,7 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
 				return
 			default:
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 		}
@@ -169,7 +169,7 @@ func logout(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.R
 		}
 
 		if err := authService.Logout(r.Context(), user.ID, time.Now().UTC()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -196,22 +196,22 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 
 		var body registerRequest
 		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
 		body.Login = strings.TrimSpace(body.Login)
 		body.DisplayName = strings.TrimSpace(body.DisplayName)
 		if body.Login == "" || len(body.Login) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.Password == "" || len(body.Password) < 8 || len(body.Password) > 1024 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 		if body.DisplayName == "" || len(body.DisplayName) > 256 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -222,7 +222,7 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 				WriteError(w, nethttp.StatusConflict, "auth.login_exists", "login already taken", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -273,7 +273,7 @@ func decodeJSON(r *nethttp.Request, dst any) error {
 func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -321,7 +321,7 @@ func authenticateUser(
 		case auth.SuspendedUserError:
 			WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
 		default:
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		}
 		return nil, false
 	}
@@ -341,7 +341,7 @@ type authUser struct {
 
 func writeMethodNotAllowed(w nethttp.ResponseWriter, r *nethttp.Request) {
 	traceID := observability.TraceIDFromContext(r.Context())
-	WriteError(w, nethttp.StatusMethodNotAllowed, "http_error", "Method Not Allowed", traceID, nil)
+	WriteError(w, nethttp.StatusMethodNotAllowed, "http.method_not_allowed", "Method Not Allowed", traceID, nil)
 }
 
 func writeAuthNotConfigured(w nethttp.ResponseWriter, traceID string) {

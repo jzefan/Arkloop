@@ -145,22 +145,28 @@ func (r *APIKeysRepository) GetByHash(ctx context.Context, keyHash string) (*API
 	return &k, nil
 }
 
-// Revoke 软删除（设置 revoked_at），返回是否命中。
-func (r *APIKeysRepository) Revoke(ctx context.Context, orgID, keyID uuid.UUID) (bool, error) {
+// Revoke 软删除（设置 revoked_at），返回 key_hash 用于清理缓存。
+// key_hash 为空字符串表示未命中。
+func (r *APIKeysRepository) Revoke(ctx context.Context, orgID, keyID uuid.UUID) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	tag, err := r.db.Exec(
+	var keyHash string
+	err := r.db.QueryRow(
 		ctx,
 		`UPDATE api_keys SET revoked_at = now()
-		 WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+		 WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
+		 RETURNING key_hash`,
 		keyID, orgID,
-	)
+	).Scan(&keyHash)
 	if err != nil {
-		return false, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
 	}
-	return tag.RowsAffected() > 0, nil
+	return keyHash, nil
 }
 
 // UpdateLastUsed 异步友好：更新 last_used_at，失败不影响主流程。

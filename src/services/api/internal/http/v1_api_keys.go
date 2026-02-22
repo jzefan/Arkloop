@@ -87,7 +87,7 @@ func apiKeyEntry(
 
 		keyID, err := uuid.Parse(tail)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "invalid api key id", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid api key id", traceID, nil)
 			return
 		}
 
@@ -126,17 +126,17 @@ func createAPIKey(
 
 	var req createAPIKeyRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "name is required", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name is required", traceID, nil)
 		return
 	}
 	if len(req.Name) > 200 {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "name too long", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name too long", traceID, nil)
 		return
 	}
 	if req.Scopes == nil {
@@ -145,7 +145,7 @@ func createAPIKey(
 
 	apiKey, rawKey, err := apiKeysRepo.Create(r.Context(), actor.OrgID, actor.UserID, req.Name, req.Scopes)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -186,7 +186,7 @@ func listAPIKeys(
 
 	keys, err := apiKeysRepo.ListByOrg(r.Context(), actor.OrgID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -222,18 +222,17 @@ func revokeAPIKey(
 		return
 	}
 
-	revoked, err := apiKeysRepo.Revoke(r.Context(), actor.OrgID, keyID)
+	keyHash, err := apiKeysRepo.Revoke(r.Context(), actor.OrgID, keyID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-	if !revoked {
+	if keyHash == "" {
 		WriteError(w, nethttp.StatusNotFound, "api_keys.not_found", "api key not found", traceID, nil)
 		return
 	}
 
-	// 吊销时清理 Redis 缓存，防止 Gateway 继续使用旧缓存
-	invalidateAPIKeyCache(r.Context(), redisClient, actor.OrgID, keyID)
+	invalidateAPIKeyCache(r.Context(), redisClient, keyHash)
 
 	if auditWriter != nil {
 		auditWriter.WriteAPIKeyRevoked(r.Context(), traceID, actor.OrgID, actor.UserID, keyID)
@@ -261,19 +260,13 @@ func syncAPIKeyCache(ctx context.Context, client *redis.Client, apiKey data.APIK
 	_ = client.Set(ctx, key, raw, apiKeysCacheTTL).Err()
 }
 
-// invalidateAPIKeyCache 吊销时无法直接删除（不持有 rawKey），改为标记 revoked=true。
-// 由于 TTL 5min，Gateway 最多延迟 5min 感知吊销（可接受）。
-// API 服务侧 DB 查询始终权威，吊销立即生效。
-func invalidateAPIKeyCache(ctx context.Context, client *redis.Client, orgID, keyID uuid.UUID) {
+// invalidateAPIKeyCache 吊销时删除 Redis 缓存，使 Gateway 立即感知。
+func invalidateAPIKeyCache(ctx context.Context, client *redis.Client, keyHash string) {
 	if client == nil {
 		return
 	}
-	// 吊销时无法从 keyID 直接推算 keyHash，无法精确删缓存。
-	// API 服务侧以 DB 为准，Gateway 侧的缓存条目最多存活到 TTL 过期。
-	// 如需即时失效，可在 api_keys 表上额外存储 key_hash 用于反查，
-	// 但当前架构中 DB 查询已足够（revoked_at 非 nil 时直接拒绝）。
-	_ = orgID
-	_ = keyID
+	key := fmt.Sprintf("arkloop:api_keys:%s", keyHash)
+	_ = client.Del(ctx, key).Err()
 }
 
 func toAPIKeyResponse(k data.APIKey) apiKeyResponse {

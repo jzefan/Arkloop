@@ -109,7 +109,7 @@ func llmCredentialEntry(
 
 		credID, err := uuid.Parse(tail)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -149,7 +149,7 @@ func createLlmCredential(
 
 	var req createLlmCredentialRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -158,27 +158,27 @@ func createLlmCredential(
 	req.APIKey = strings.TrimSpace(req.APIKey)
 
 	if req.Name == "" || req.Provider == "" || req.APIKey == "" {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "name, provider and api_key are required", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name, provider and api_key are required", traceID, nil)
 		return
 	}
 	if !validProviders[req.Provider] {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "invalid provider", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider", traceID, nil)
 		return
 	}
 	if req.OpenAIAPIMode != nil {
 		if req.Provider != "openai" {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "openai_api_mode only applies to openai provider", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "openai_api_mode only applies to openai provider", traceID, nil)
 			return
 		}
 		if !validOpenAIAPIModes[*req.OpenAIAPIMode] {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "invalid openai_api_mode", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid openai_api_mode", traceID, nil)
 			return
 		}
 	}
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -189,7 +189,7 @@ func createLlmCredential(
 	credID := uuid.New()
 	secret, err := txSecrets.Create(r.Context(), actor.OrgID, "llm_cred:"+credID.String(), req.APIKey)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -211,7 +211,7 @@ func createLlmCredential(
 			WriteError(w, nethttp.StatusConflict, "llm_credentials.name_conflict", "credential name already exists", traceID, nil)
 			return
 		}
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -237,7 +237,7 @@ func createLlmCredential(
 				whenJSON,
 			)
 			if err != nil {
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 			routes = append(routes, toLlmRouteResponse(route))
@@ -245,7 +245,7 @@ func createLlmCredential(
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -280,7 +280,7 @@ func listLlmCredentials(
 
 	creds, err := credRepo.ListByOrg(r.Context(), actor.OrgID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -289,7 +289,7 @@ func listLlmCredentials(
 	if routeRepo != nil {
 		allRoutes, err := routeRepo.ListByOrg(r.Context(), actor.OrgID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		for _, route := range allRoutes {
@@ -337,7 +337,7 @@ func deleteLlmCredential(
 
 	existing, err := credRepo.GetByID(r.Context(), actor.OrgID, credID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if existing == nil {
@@ -346,7 +346,7 @@ func deleteLlmCredential(
 	}
 
 	if err := credRepo.Delete(r.Context(), actor.OrgID, credID); err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 

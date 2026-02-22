@@ -47,7 +47,7 @@ func retryThread(
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if thread == nil {
@@ -61,14 +61,14 @@ func retryThread(
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		defer tx.Rollback(r.Context())
 
 		txMessageRepo, err := data.NewMessageRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -79,18 +79,18 @@ func retryThread(
 				WriteError(w, nethttp.StatusBadRequest, "runs.invalid_state", "no assistant message to retry", traceID, nil)
 				return
 			}
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
 		runRepo, err := data.NewRunEventRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		jobRepo, err := data.NewJobRepository(tx)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -103,7 +103,7 @@ func retryThread(
 			map[string]any{"source": "retry"},
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -117,12 +117,12 @@ func retryThread(
 			nil,
 		)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 

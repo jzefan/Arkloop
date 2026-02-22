@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"arkloop/services/shared/runlimit"
+
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
-
-const activeRunsKeyPrefix = "arkloop:org:active_runs:"
 
 type RunLimiter struct {
 	rdb     *redis.Client
@@ -25,32 +25,20 @@ func NewRunLimiter(rdb *redis.Client, maxRuns int64) (*RunLimiter, error) {
 	return &RunLimiter{rdb: rdb, maxRuns: maxRuns}, nil
 }
 
-// TryAcquire 为 org 获取一个并发 run 槽。
-// INCR 后超限则 DECR 回滚并返回 false；Redis 不可用时 fail-open 返回 true。
+// TryAcquire 为 org 原子地获取一个并发 run 槽。
+// Redis 不可用时 fail-open 返回 true。
 func (l *RunLimiter) TryAcquire(ctx context.Context, orgID uuid.UUID) bool {
-	key := activeRunsKeyPrefix + orgID.String()
-	count, err := l.rdb.Incr(ctx, key).Result()
-	if err != nil {
-		return true
-	}
-	if count > l.maxRuns {
-		_ = l.rdb.Decr(ctx, key)
-		return false
-	}
-	return true
+	key := runlimit.Key(orgID.String())
+	return runlimit.TryAcquire(ctx, l.rdb, key, l.maxRuns)
 }
 
-// Release 释放 org 的一个并发 run 槽，计数不低于 0。
+// Release 原子地释放 org 的一个并发 run 槽，计数不低于 0。
 func (l *RunLimiter) Release(ctx context.Context, orgID uuid.UUID) {
-	key := activeRunsKeyPrefix + orgID.String()
-	result := l.rdb.Decr(ctx, key)
-	if result.Err() == nil && result.Val() < 0 {
-		_ = l.rdb.Set(ctx, key, 0, 0)
-	}
+	key := runlimit.Key(orgID.String())
+	runlimit.Release(ctx, l.rdb, key)
 }
 
 // SyncFromDB 从数据库查询 org 实际活跃 run 数量并重置 Redis 计数器。
-// 在 Worker 崩溃后手动调用以修正计数漂移。
 func (l *RunLimiter) SyncFromDB(ctx context.Context, q Querier, orgID uuid.UUID) error {
 	var count int64
 	err := q.QueryRow(
@@ -61,6 +49,6 @@ func (l *RunLimiter) SyncFromDB(ctx context.Context, q Querier, orgID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	key := activeRunsKeyPrefix + orgID.String()
-	return l.rdb.Set(ctx, key, count, 0).Err()
+	key := runlimit.Key(orgID.String())
+	return runlimit.Set(ctx, l.rdb, key, count)
 }

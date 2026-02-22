@@ -42,7 +42,7 @@ func (r *statusRecorder) Flush() {
 func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, trustIncomingTraceID bool, trustXFF bool) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", "", nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", "", nil)
 		})
 	}
 
@@ -89,7 +89,7 @@ func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, tru
 func RecoverMiddleware(next nethttp.Handler, logger *observability.JSONLogger) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", "", nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", "", nil)
 		})
 	}
 
@@ -112,7 +112,7 @@ func RecoverMiddleware(next nethttp.Handler, logger *observability.JSONLogger) n
 					)
 				}
 
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			}
 		}()
 
