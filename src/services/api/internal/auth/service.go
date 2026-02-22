@@ -44,6 +44,7 @@ type IssuedAccessToken struct {
 type Service struct {
 	userRepo       *data.UserRepository
 	credentialRepo *data.UserCredentialRepository
+	membershipRepo *data.OrgMembershipRepository
 	passwordHasher *BcryptPasswordHasher
 	tokenService   *JwtAccessTokenService
 }
@@ -51,6 +52,7 @@ type Service struct {
 func NewService(
 	userRepo *data.UserRepository,
 	credentialRepo *data.UserCredentialRepository,
+	membershipRepo *data.OrgMembershipRepository,
 	passwordHasher *BcryptPasswordHasher,
 	tokenService *JwtAccessTokenService,
 ) (*Service, error) {
@@ -59,6 +61,9 @@ func NewService(
 	}
 	if credentialRepo == nil {
 		return nil, errors.New("credentialRepo must not be nil")
+	}
+	if membershipRepo == nil {
+		return nil, errors.New("membershipRepo must not be nil")
 	}
 	if passwordHasher == nil {
 		return nil, errors.New("passwordHasher must not be nil")
@@ -69,6 +74,7 @@ func NewService(
 	return &Service{
 		userRepo:       userRepo,
 		credentialRepo: credentialRepo,
+		membershipRepo: membershipRepo,
 		passwordHasher: passwordHasher,
 		tokenService:   tokenService,
 	}, nil
@@ -97,7 +103,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, login string, password s
 		return IssuedAccessToken{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
 	}
 
-	token, err := s.tokenService.Issue(credential.UserID, time.Now().UTC())
+	orgID := s.resolveDefaultOrgID(ctx, credential.UserID)
+	token, err := s.tokenService.Issue(credential.UserID, orgID, time.Now().UTC())
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
@@ -112,7 +119,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, token string) (IssuedA
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
-	refreshed, err := s.tokenService.Issue(user.ID, time.Now().UTC())
+	orgID := s.resolveDefaultOrgID(ctx, user.ID)
+	refreshed, err := s.tokenService.Issue(user.ID, orgID, time.Now().UTC())
 	if err != nil {
 		return IssuedAccessToken{}, err
 	}
@@ -120,6 +128,15 @@ func (s *Service) RefreshAccessToken(ctx context.Context, token string) (IssuedA
 		Token:  refreshed,
 		UserID: user.ID,
 	}, nil
+}
+
+// resolveDefaultOrgID 查用户的默认 org；失败时静默返回 uuid.Nil，不阻断认证流程。
+func (s *Service) resolveDefaultOrgID(ctx context.Context, userID uuid.UUID) uuid.UUID {
+	membership, err := s.membershipRepo.GetDefaultForUser(ctx, userID)
+	if err != nil || membership == nil {
+		return uuid.Nil
+	}
+	return membership.OrgID
 }
 
 func (s *Service) AuthenticateUser(ctx context.Context, token string) (*data.User, error) {

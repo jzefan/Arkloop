@@ -22,6 +22,7 @@ import (
 	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type Application struct {
@@ -92,12 +93,14 @@ func (a *Application) Run(ctx context.Context) error {
 		defer poolCloser()
 	}
 
+	var redisClient *redis.Client
 	if strings.TrimSpace(a.config.RedisURL) != "" {
-		redisClient, err := sharedredis.NewClient(ctx, a.config.RedisURL)
+		rc, err := sharedredis.NewClient(ctx, a.config.RedisURL)
 		if err != nil {
 			return fmt.Errorf("redis: %w", err)
 		}
-		defer redisClient.Close()
+		defer rc.Close()
+		redisClient = rc
 		a.logger.Info("redis connected", observability.LogFields{}, nil)
 	}
 
@@ -130,6 +133,8 @@ func (a *Application) Run(ctx context.Context) error {
 		llmRoutesRepo  *data.LlmRoutesRepository
 		mcpConfigsRepo *data.MCPConfigsRepository
 		skillsRepo     *data.SkillsRepository
+		ipRulesRepo    *data.IPRulesRepository
+		apiKeysRepo    *data.APIKeysRepository
 
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
@@ -183,6 +188,14 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		ipRulesRepo, err = data.NewIPRulesRepository(pool)
+		if err != nil {
+			return err
+		}
+		apiKeysRepo, err = data.NewAPIKeysRepository(pool)
+		if err != nil {
+			return err
+		}
 
 		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
 		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
@@ -208,7 +221,7 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		authService, err = auth.NewService(userRepo, credentialRepo, passwordHasher, tokenService)
+		authService, err = auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
 		if err != nil {
 			return err
 		}
@@ -233,6 +246,7 @@ func (a *Application) Run(ctx context.Context) error {
 			Pool:                 pool,
 			Logger:               a.logger,
 			TrustIncomingTraceID: a.config.TrustIncomingTraceID,
+			TrustXForwardedFor:   a.config.TrustXForwardedFor,
 			SchemaRepository:     schemaRepo,
 			AuthService:          authService,
 			RegistrationService:  registrationService,
@@ -246,6 +260,9 @@ func (a *Application) Run(ctx context.Context) error {
 			SecretsRepo:          secretsRepo,
 			MCPConfigsRepo:       mcpConfigsRepo,
 			SkillsRepo:           skillsRepo,
+			IPRulesRepo:          ipRulesRepo,
+			APIKeysRepo:          apiKeysRepo,
+			RedisClient:          redisClient,
 			SSEConfig: apihttp.SSEConfig{
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,

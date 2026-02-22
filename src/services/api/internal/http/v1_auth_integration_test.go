@@ -56,7 +56,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, passwordHasher, tokenService)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, passwordHasher, tokenService)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}

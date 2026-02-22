@@ -127,7 +127,7 @@ func TestTraceMiddlewarePreservesHttpFlusher(t *testing.T) {
 		w.WriteHeader(nethttp.StatusOK)
 	})
 
-	handler := TraceMiddleware(inner, logger, false)
+	handler := TraceMiddleware(inner, logger, false, false)
 
 	underlying := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequest(nethttp.MethodGet, "/healthz", nil)

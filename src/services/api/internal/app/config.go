@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	apiGoAddrEnv            = "ARKLOOP_API_GO_ADDR"
-	databaseURLPrimaryEnv   = "ARKLOOP_DATABASE_URL"
-	databaseURLFallbackEnv  = "DATABASE_URL"
-	trustIncomingTraceIDEnv = "ARKLOOP_TRUST_INCOMING_TRACE_ID"
-	defaultAddr             = "127.0.0.1:8001"
+	apiGoAddrEnv              = "ARKLOOP_API_GO_ADDR"
+	databaseURLPrimaryEnv     = "ARKLOOP_DATABASE_URL"
+	databaseURLFallbackEnv    = "DATABASE_URL"
+	trustIncomingTraceIDEnv   = "ARKLOOP_TRUST_INCOMING_TRACE_ID"
+	trustXForwardedForEnv     = "ARKLOOP_TRUST_X_FORWARDED_FOR"
+	defaultAddr               = "127.0.0.1:8001"
 
 	redisURLEnv = "ARKLOOP_REDIS_URL"
 
@@ -48,6 +49,7 @@ type Config struct {
 	Addr                 string
 	DatabaseDSN          string
 	TrustIncomingTraceID bool
+	TrustXForwardedFor   bool
 	Auth                 *auth.Config
 	SSE                  SSEConfig
 
@@ -86,6 +88,14 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", trustIncomingTraceIDEnv, err)
 		}
 		cfg.TrustIncomingTraceID = enabled
+	}
+
+	if raw, ok := lookupEnv(trustXForwardedForEnv); ok {
+		enabled, err := parseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", trustXForwardedForEnv, err)
+		}
+		cfg.TrustXForwardedFor = enabled
 	}
 
 	if raw, ok := lookupEnv(databaseURLPrimaryEnv); ok {
