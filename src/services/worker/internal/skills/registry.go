@@ -46,6 +46,11 @@ func (r *Registry) Get(skillID string) (Definition, bool) {
 	return def, ok
 }
 
+// Set 覆盖写入，用于 DB skill 覆盖同 ID 的文件系统 skill。
+func (r *Registry) Set(def Definition) {
+	r.byID[def.ID] = def
+}
+
 func (r *Registry) ListIDs() []string {
 	out := make([]string, 0, len(r.byID))
 	for id := range r.byID {

@@ -15,6 +15,8 @@ const (
 	workerLeaseSecondsEnv     = "ARKLOOP_WORKER_LEASE_SECONDS"
 	workerHeartbeatSecondsEnv = "ARKLOOP_WORKER_HEARTBEAT_SECONDS"
 	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
+	workerCapabilitiesEnv     = "ARKLOOP_WORKER_CAPABILITIES"
+	workerVersionEnv          = "ARKLOOP_WORKER_VERSION"
 )
 
 // Config aligns with worker loop behavior.
@@ -24,6 +26,8 @@ type Config struct {
 	LeaseSeconds     int
 	HeartbeatSeconds float64
 	QueueJobTypes    []string
+	Capabilities     []string
+	Version          string
 }
 
 func DefaultConfig() Config {
@@ -33,6 +37,8 @@ func DefaultConfig() Config {
 		LeaseSeconds:     30,
 		HeartbeatSeconds: 10,
 		QueueJobTypes:    []string{queue.RunExecuteJobType},
+		Capabilities:     []string{queue.RunExecuteJobType},
+		Version:          "unknown",
 	}
 }
 
@@ -77,6 +83,14 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: must not be empty", workerQueueJobTypesEnv)
 		}
 		cfg.QueueJobTypes = parsed
+	}
+
+	if raw, ok := lookupEnv(workerCapabilitiesEnv); ok {
+		cfg.Capabilities = parseCSVList(raw)
+	}
+
+	if raw, ok := lookupEnv(workerVersionEnv); ok {
+		cfg.Version = raw
 	}
 
 	if err := cfg.Validate(); err != nil {

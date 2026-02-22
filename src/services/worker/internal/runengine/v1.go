@@ -214,7 +214,18 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 	runBaseLlmSpecs := filterToolSpecs(runAllLlmSpecs, runBaseAllowlistSet)
 
-	skillResolution := skills.ResolveSkill(inputJSON, e.skillRegistry)
+	// per-run 动态加载 org skill，DB skill 覆盖同 ID 的文件系统 skill
+	runSkillRegistry := e.skillRegistry
+	if e.dbPool != nil {
+		dbDefs, dbErr := skills.LoadFromDB(execCtx, e.dbPool, run.OrgID)
+		if dbErr != nil {
+			slog.WarnContext(execCtx, "skills: db load failed, using static registry", "err", dbErr.Error())
+		} else if len(dbDefs) > 0 {
+			runSkillRegistry = skills.MergeRegistry(e.skillRegistry, dbDefs)
+		}
+	}
+
+	skillResolution := skills.ResolveSkill(inputJSON, runSkillRegistry)
 	if skillResolution.Error != nil {
 		payload := map[string]any{
 			"error_class": skillResolution.Error.ErrorClass,

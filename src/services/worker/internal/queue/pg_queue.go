@@ -18,18 +18,23 @@ const leaseAttemptsReapLimit = 10
 var traceIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 
 type PgQueue struct {
-	pool        *pgxpool.Pool
-	maxAttempts int
+	pool         *pgxpool.Pool
+	maxAttempts  int
+	capabilities []string
 }
 
-func NewPgQueue(pool *pgxpool.Pool, maxAttempts int) (*PgQueue, error) {
+func NewPgQueue(pool *pgxpool.Pool, maxAttempts int, capabilities []string) (*PgQueue, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
 	}
 	if maxAttempts <= 0 {
 		return nil, fmt.Errorf("max_attempts must be positive")
 	}
-	return &PgQueue{pool: pool, maxAttempts: maxAttempts}, nil
+	caps := capabilities
+	if caps == nil {
+		caps = []string{}
+	}
+	return &PgQueue{pool: pool, maxAttempts: maxAttempts, capabilities: caps}, nil
 }
 
 func (q *PgQueue) EnqueueRun(
@@ -241,6 +246,7 @@ func (q *PgQueue) tryLeaseOne(ctx context.Context, leaseSeconds int, jobTypes []
 		 )
 		 AND attempts < $3
 		 AND job_type = ANY($4)
+		 AND worker_tags <@ $5
 		 ORDER BY available_at ASC, created_at ASC, id ASC
 		 FOR UPDATE SKIP LOCKED
 		 LIMIT 1`,
@@ -248,6 +254,7 @@ func (q *PgQueue) tryLeaseOne(ctx context.Context, leaseSeconds int, jobTypes []
 		JobStatusLeased,
 		q.maxAttempts,
 		jobTypes,
+		q.capabilities,
 	).Scan(&jobID, &jobType, &payloadRaw, &currentTrys)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -319,6 +326,7 @@ func (q *PgQueue) tryMarkDeadOne(ctx context.Context, jobTypes []string) (bool, 
 		 )
 		 AND attempts >= $3
 		 AND job_type = ANY($4)
+		 AND worker_tags <@ $5
 		 ORDER BY available_at ASC, created_at ASC, id ASC
 		 FOR UPDATE SKIP LOCKED
 		 LIMIT 1`,
@@ -326,6 +334,7 @@ func (q *PgQueue) tryMarkDeadOne(ctx context.Context, jobTypes []string) (bool, 
 		JobStatusLeased,
 		q.maxAttempts,
 		jobTypes,
+		q.capabilities,
 	).Scan(&jobID)
 	if err != nil {
 		if err == pgx.ErrNoRows {

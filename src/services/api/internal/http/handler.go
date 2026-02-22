@@ -42,6 +42,7 @@ type HandlerConfig struct {
 	LlmRoutesRepo      *data.LlmRoutesRepository
 	SecretsRepo        *data.SecretsRepository
 	MCPConfigsRepo     *data.MCPConfigsRepository
+	SkillsRepo         *data.SkillsRepository
 
 	SSEConfig SSEConfig
 }
@@ -95,6 +96,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/mcp-configs/",
 		mcpConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
+	)
+
+	mux.HandleFunc(
+		"/v1/skills",
+		skillsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.SkillsRepo),
+	)
+	mux.HandleFunc(
+		"/v1/skills/",
+		skillEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.SkillsRepo),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

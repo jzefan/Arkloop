@@ -130,6 +130,7 @@ func initJobsSchema(t *testing.T, dsn string) error {
 			leased_until TIMESTAMPTZ NULL,
 			lease_token UUID NULL,
 			attempts INTEGER NOT NULL DEFAULT 0,
+			worker_tags TEXT[] NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
