@@ -329,6 +329,7 @@ func authenticateUser(
 	return &authUser{
 		ID:          user.ID,
 		DisplayName: user.DisplayName,
+		Email:       user.Email,
 		CreatedAt:   user.CreatedAt,
 	}, true
 }
@@ -336,6 +337,7 @@ func authenticateUser(
 type authUser struct {
 	ID          uuid.UUID
 	DisplayName string
+	Email       *string
 	CreatedAt   time.Time
 }
 

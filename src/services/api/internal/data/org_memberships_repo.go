@@ -83,3 +83,21 @@ func (r *OrgMembershipRepository) GetDefaultForUser(ctx context.Context, userID 
 	}
 	return &membership, nil
 }
+
+// ExistsForOrgAndUser 检查用户是否已是 org 成员，用于邀请接受前去重。
+func (r *OrgMembershipRepository) ExistsForOrgAndUser(ctx context.Context, orgID, userID uuid.UUID) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var exists bool
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM org_memberships WHERE org_id = $1 AND user_id = $2)`,
+		orgID, userID,
+	).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
