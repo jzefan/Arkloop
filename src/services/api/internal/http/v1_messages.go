@@ -36,6 +36,7 @@ func createThreadMessage(
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -53,7 +54,7 @@ func createThreadMessage(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -103,6 +104,7 @@ func listThreadMessages(
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodGet {
@@ -120,7 +122,7 @@ func listThreadMessages(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}

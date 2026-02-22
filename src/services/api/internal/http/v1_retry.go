@@ -22,6 +22,7 @@ func retryThread(
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -39,7 +40,7 @@ func retryThread(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}

@@ -39,7 +39,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, trustIncomingTraceID bool) nethttp.Handler {
+func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, trustIncomingTraceID bool, trustXFF bool) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", "", nil)
@@ -57,7 +57,7 @@ func TraceMiddleware(next nethttp.Handler, logger *observability.JSONLogger, tru
 		}
 
 		ctx := observability.WithTraceID(r.Context(), traceID)
-		ctx = observability.WithClientIP(ctx, resolveClientIP(r))
+		ctx = observability.WithClientIP(ctx, resolveClientIP(r, trustXFF))
 		if ua := r.Header.Get("User-Agent"); ua != "" {
 			ctx = observability.WithUserAgent(ctx, ua)
 		}

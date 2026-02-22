@@ -316,6 +316,97 @@ func (w *Writer) WriteAccessDenied(
 	}
 }
 
+func (w *Writer) WriteAPIKeyCreated(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	userID uuid.UUID,
+	keyID uuid.UUID,
+	name string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "api_key"
+	targetID := keyID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &userID,
+		Action:      "api_keys.create",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{"name": name},
+	}); err != nil {
+		w.logError(traceID, "failed to write api_key-created audit log", err)
+	}
+}
+
+func (w *Writer) WriteAPIKeyRevoked(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	userID uuid.UUID,
+	keyID uuid.UUID,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "api_key"
+	targetID := keyID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &userID,
+		Action:      "api_keys.revoke",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    map[string]any{},
+	}); err != nil {
+		w.logError(traceID, "failed to write api_key-revoked audit log", err)
+	}
+}
+
+func (w *Writer) WriteAPIKeyUsed(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	userID uuid.UUID,
+	keyID uuid.UUID,
+	action string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	apiKeyIDPtr := keyID
+	targetType := "api_key"
+	targetID := keyID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &userID,
+		Action:      action,
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		APIKeyID:    &apiKeyIDPtr,
+		Metadata:    map[string]any{},
+	}); err != nil {
+		w.logError(traceID, "failed to write api_key-used audit log", err)
+	}
+}
+
 func (w *Writer) logError(traceID string, msg string, err error) {
 	if w == nil || w.logger == nil || err == nil {
 		return

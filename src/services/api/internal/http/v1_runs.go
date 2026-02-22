@@ -64,6 +64,7 @@ func createThreadRun(
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -81,7 +82,7 @@ func createThreadRun(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -189,6 +190,7 @@ func listThreadRuns(
 	threadRepo *data.ThreadRepository,
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodGet {
@@ -206,7 +208,7 @@ func listThreadRuns(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -263,6 +265,7 @@ func getRun(
 	membershipRepo *data.OrgMembershipRepository,
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -275,7 +278,7 @@ func getRun(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -328,6 +331,7 @@ func cancelRun(
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -340,7 +344,7 @@ func cancelRun(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -406,6 +410,7 @@ func streamRunEvents(
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
 	sseConfig SSEConfig,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -418,7 +423,7 @@ func streamRunEvents(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -635,10 +640,11 @@ func runEntry(
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
 	sseConfig SSEConfig,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	get := getRun(authService, membershipRepo, runRepo, auditWriter)
-	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool)
-	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, pool, sseConfig)
+	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
+	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
+	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, pool, sseConfig, apiKeysRepo)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())

@@ -128,7 +128,7 @@ func (s *RegistrationService) Register(
 		return RegisterResult{}, err
 	}
 
-	token, err := s.tokenService.Issue(user.ID, s.now())
+	token, err := s.tokenService.Issue(user.ID, org.ID, s.now())
 	if err != nil {
 		return RegisterResult{}, err
 	}

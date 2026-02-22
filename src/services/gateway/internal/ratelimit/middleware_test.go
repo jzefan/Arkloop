@@ -1,0 +1,181 @@
+package ratelimit
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
+
+const testJWTSecret = "this-is-a-test-secret-that-is-at-least-32-chars"
+
+// mockLimiter 可控的限流器 mock。
+type mockLimiter struct {
+	result ConsumeResult
+	err    error
+	lastKey string
+}
+
+func (m *mockLimiter) Consume(_ context.Context, key string) (ConsumeResult, error) {
+	m.lastKey = key
+	return m.result, m.err
+}
+
+func makeJWT(t *testing.T, orgID uuid.UUID) string {
+	t.Helper()
+	claims := jwt.MapClaims{
+		"sub": uuid.New().String(),
+		"typ": "access",
+		"iat": float64(time.Now().Unix()),
+		"exp": float64(time.Now().Add(time.Hour).Unix()),
+	}
+	if orgID != uuid.Nil {
+		claims["org"] = orgID.String()
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatalf("sign JWT: %v", err)
+	}
+	return signed
+}
+
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func TestMiddleware_AllowedRequest(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: true, Remaining: 59}}
+	orgID := uuid.New()
+	token := makeJWT(t, orgID)
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if ml.lastKey != rateLimitOrgKeyPrefix+orgID.String() {
+		t.Fatalf("unexpected rate limit key: %s", ml.lastKey)
+	}
+}
+
+func TestMiddleware_BlockedRequest(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false, RetryAfterSecs: 5}}
+	orgID := uuid.New()
+	token := makeJWT(t, orgID)
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("expected Retry-After: 5, got %q", rec.Header().Get("Retry-After"))
+	}
+}
+
+func TestMiddleware_NoJWT_FallsBackToIP(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: true}}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.RemoteAddr = "203.0.113.7:8080"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if ml.lastKey != rateLimitIPKeyPrefix+"203.0.113.7" {
+		t.Fatalf("unexpected rate limit key: %s", ml.lastKey)
+	}
+}
+
+func TestMiddleware_SSEByAcceptHeader_Skipped(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false}} // 即使超限也应放行
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/abc/events", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SSE request should bypass ratelimit, got %d", rec.Code)
+	}
+	if ml.lastKey != "" {
+		t.Fatal("Consume should not be called for SSE requests")
+	}
+}
+
+func TestMiddleware_SSEByPathSuffix_Skipped(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false}}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/abc/events", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SSE path should bypass ratelimit, got %d", rec.Code)
+	}
+}
+
+func TestMiddleware_LimiterError_FailOpen(t *testing.T) {
+	ml := &mockLimiter{err: io.ErrUnexpectedEOF}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Redis 不可用时应放行（fail-open）
+	if rec.Code != http.StatusOK {
+		t.Fatalf("limiter error should fail open, got %d", rec.Code)
+	}
+}
+
+func TestMiddleware_InvalidJWT_FallsBackToIP(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: true}}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Authorization", "Bearer not.a.valid.jwt")
+	req.RemoteAddr = "10.0.0.2:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if ml.lastKey != rateLimitIPKeyPrefix+"10.0.0.2" {
+		t.Fatalf("unexpected key: %s", ml.lastKey)
+	}
+}

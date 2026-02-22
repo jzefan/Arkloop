@@ -39,6 +39,7 @@ func (e TokenInvalidError) Error() string {
 
 type VerifiedAccessToken struct {
 	UserID   uuid.UUID
+	OrgID    uuid.UUID // uuid.Nil 表示旧 token 无 org claim
 	IssuedAt time.Time
 }
 
@@ -60,7 +61,7 @@ func NewJwtAccessTokenService(secret string, ttlSeconds int) (*JwtAccessTokenSer
 	}, nil
 }
 
-func (s *JwtAccessTokenService) Issue(userID uuid.UUID, now time.Time) (string, error) {
+func (s *JwtAccessTokenService) Issue(userID uuid.UUID, orgID uuid.UUID, now time.Time) (string, error) {
 	if userID == uuid.Nil {
 		return "", errors.New("user_id must not be nil")
 	}
@@ -75,6 +76,9 @@ func (s *JwtAccessTokenService) Issue(userID uuid.UUID, now time.Time) (string, 
 		"typ": accessTokenType,
 		"iat": timestampFloatSeconds(issuedAt),
 		"exp": expiresAt.Unix(),
+	}
+	if orgID != uuid.Nil {
+		claims["org"] = orgID.String()
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -139,8 +143,18 @@ func (s *JwtAccessTokenService) Verify(token string) (VerifiedAccessToken, error
 		return VerifiedAccessToken{}, TokenInvalidError{message: "token iat invalid"}
 	}
 
+	var orgID uuid.UUID
+	if orgRaw, exists := claims["org"]; exists {
+		if orgStr, ok := orgRaw.(string); ok {
+			if parsed, err := uuid.Parse(orgStr); err == nil {
+				orgID = parsed
+			}
+		}
+	}
+
 	return VerifiedAccessToken{
 		UserID:   userID,
+		OrgID:    orgID,
 		IssuedAt: issuedAt,
 	}, nil
 }

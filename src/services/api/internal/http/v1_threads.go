@@ -59,6 +59,8 @@ func createThread(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
@@ -76,7 +78,7 @@ func createThread(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -106,6 +108,8 @@ func listThreads(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -123,7 +127,7 @@ func listThreads(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -164,6 +168,7 @@ func getThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -176,7 +181,7 @@ func getThread(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -204,6 +209,7 @@ func patchThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -216,7 +222,7 @@ func patchThread(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -268,6 +274,7 @@ func deleteThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -280,7 +287,7 @@ func deleteThread(
 			return
 		}
 
-		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
 			return
 		}
@@ -321,9 +328,11 @@ func threadsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	create := createThread(authService, membershipRepo, threadRepo)
-	list := listThreads(authService, membershipRepo, threadRepo)
+	create := createThread(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)
+	list := listThreads(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
@@ -344,18 +353,19 @@ func threadEntry(
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
+	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	get := getThread(authService, membershipRepo, threadRepo, auditWriter)
-	patch := patchThread(authService, membershipRepo, threadRepo, auditWriter)
-	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter)
-	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
-	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter)
-	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool)
-	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter)
-	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool)
+	get := getThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo)
+	patch := patchThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo)
+	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo)
+	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)
+	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)
+	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo)
+	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo)
+	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
-			threadsEntry(authService, membershipRepo, threadRepo)(w, r)
+			threadsEntry(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)(w, r)
 			return
 		}
 

@@ -9,6 +9,7 @@ import (
 	"arkloop/services/api/internal/observability"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // SSEConfig controls SSE stream heartbeat behavior.
@@ -29,6 +30,7 @@ type HandlerConfig struct {
 	Logger               *observability.JSONLogger
 	SchemaRepository     *data.SchemaRepository
 	TrustIncomingTraceID bool
+	TrustXForwardedFor   bool
 
 	AuthService         *auth.Service
 	RegistrationService *auth.RegistrationService
@@ -43,6 +45,10 @@ type HandlerConfig struct {
 	SecretsRepo        *data.SecretsRepository
 	MCPConfigsRepo     *data.MCPConfigsRepository
 	SkillsRepo         *data.SkillsRepository
+	IPRulesRepo        *data.IPRulesRepository
+	APIKeysRepo        *data.APIKeysRepository
+
+	RedisClient *redis.Client
 
 	SSEConfig SSEConfig
 }
@@ -57,7 +63,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/me", me(cfg.AuthService))
-	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo))
+	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
 	mux.HandleFunc(
 		"/v1/threads/",
 		threadEntry(
@@ -68,6 +74,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			cfg.RunEventRepo,
 			cfg.AuditWriter,
 			cfg.Pool,
+			cfg.APIKeysRepo,
 		),
 	)
 	sseConfig := cfg.SSEConfig
@@ -77,7 +84,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/runs/",
-		runEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, sseConfig),
+		runEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, sseConfig, cfg.APIKeysRepo),
 	)
 
 	mux.HandleFunc(
@@ -107,6 +114,24 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		skillEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.SkillsRepo),
 	)
 
+	mux.HandleFunc(
+		"/v1/ip-rules",
+		ipRulesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.IPRulesRepo, cfg.RedisClient),
+	)
+	mux.HandleFunc(
+		"/v1/ip-rules/",
+		ipRuleEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.IPRulesRepo, cfg.RedisClient),
+	)
+
+	mux.HandleFunc(
+		"/v1/api-keys",
+		apiKeysEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.RedisClient),
+	)
+	mux.HandleFunc(
+		"/v1/api-keys/",
+		apiKeyEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.RedisClient),
+	)
+
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		WriteError(w, nethttp.StatusNotFound, "http_error", "Not Found", traceID, nil)
@@ -122,6 +147,6 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	handler := RecoverMiddleware(base, cfg.Logger)
-	handler = TraceMiddleware(handler, cfg.Logger, cfg.TrustIncomingTraceID)
+	handler = TraceMiddleware(handler, cfg.Logger, cfg.TrustIncomingTraceID, cfg.TrustXForwardedFor)
 	return handler
 }

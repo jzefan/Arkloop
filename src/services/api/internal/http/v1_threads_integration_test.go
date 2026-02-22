@@ -57,7 +57,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("new thread repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, passwordHasher, tokenService)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	threadRepo, _ := data.NewThreadRepository(pool)
 	runRepo, _ := data.NewRunEventRepository(pool)
 
-	authService, _ := auth.NewService(userRepo, credentialRepo, passwordHasher, tokenService)
+	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
 	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
