@@ -16,7 +16,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
 			traceID := observability.TraceIDFromContext(r.Context())
-			WriteError(w, nethttp.StatusMethodNotAllowed, "http_error", "Method Not Allowed", traceID, nil)
+			WriteError(w, nethttp.StatusMethodNotAllowed, "http.method_not_allowed", "Method Not Allowed", traceID, nil)
 			return
 		}
 
@@ -29,7 +29,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 					map[string]any{"reason": "schemaRepo is nil"},
 				)
 			}
-			WriteError(w, nethttp.StatusServiceUnavailable, "not_ready", "service not ready", traceID, map[string]any{"dependency": "database"})
+			WriteError(w, nethttp.StatusServiceUnavailable, "health.not_ready", "service not ready", traceID, map[string]any{"dependency": "database"})
 			return
 		}
 
@@ -48,7 +48,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 			WriteError(
 				w,
 				nethttp.StatusServiceUnavailable,
-				"not_ready",
+				"health.not_ready",
 				"service not ready",
 				traceID,
 				map[string]any{"dependency": "database"},
@@ -70,7 +70,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 			WriteError(
 				w,
 				nethttp.StatusServiceUnavailable,
-				"not_ready",
+				"health.not_ready",
 				"schema version mismatch",
 				traceID,
 				map[string]any{
@@ -89,7 +89,7 @@ func readyz(schemaRepo *data.SchemaRepository, logger *observability.JSONLogger)
 			"match":                   true,
 		})
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 

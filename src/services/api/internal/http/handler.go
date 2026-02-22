@@ -136,7 +136,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
-		WriteError(w, nethttp.StatusNotFound, "http_error", "Not Found", traceID, nil)
+		WriteError(w, nethttp.StatusNotFound, "http.method_not_allowed", "Not Found", traceID, nil)
 	})
 
 	base := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

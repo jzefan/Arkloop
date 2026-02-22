@@ -76,7 +76,7 @@ func ipRuleEntry(
 
 		ruleID, err := uuid.Parse(tail)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "invalid rule id", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid rule id", traceID, nil)
 			return
 		}
 
@@ -114,7 +114,7 @@ func createIPRule(
 
 	var req createIPRuleRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -122,17 +122,17 @@ func createIPRule(
 	req.CIDR = strings.TrimSpace(req.CIDR)
 
 	if req.Type == "" || req.CIDR == "" {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "type and cidr are required", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "type and cidr are required", traceID, nil)
 		return
 	}
 	if req.Type != string(data.IPRuleAllowlist) && req.Type != string(data.IPRuleBlocklist) {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "type must be allowlist or blocklist", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "type must be allowlist or blocklist", traceID, nil)
 		return
 	}
 
 	rule, err := ipRulesRepo.Create(r.Context(), actor.OrgID, data.IPRuleType(req.Type), req.CIDR, req.Note)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -164,7 +164,7 @@ func listIPRules(
 
 	rules, err := ipRulesRepo.ListByOrg(r.Context(), actor.OrgID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -202,7 +202,7 @@ func deleteIPRule(
 
 	deleted, err := ipRulesRepo.Delete(r.Context(), actor.OrgID, ruleID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if !deleted {

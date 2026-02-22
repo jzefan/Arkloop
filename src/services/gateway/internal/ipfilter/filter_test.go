@@ -1,6 +1,7 @@
 package ipfilter
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net"
@@ -26,7 +27,7 @@ func TestExtractOrgID(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := extractOrgID(tc.header)
+		got := extractOrgIDWithRedis(tc.header, nil, context.Background())
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}

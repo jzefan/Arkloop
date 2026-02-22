@@ -99,7 +99,7 @@ func mcpConfigEntry(
 
 		configID, err := uuid.Parse(tail)
 		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
 
@@ -140,7 +140,7 @@ func createMCPConfig(
 
 	var req createMCPConfigRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -148,19 +148,19 @@ func createMCPConfig(
 	req.Transport = strings.ToLower(strings.TrimSpace(req.Transport))
 
 	if req.Name == "" || req.Transport == "" {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "name and transport are required", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name and transport are required", traceID, nil)
 		return
 	}
 	if !validMCPTransports[req.Transport] {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "transport must be stdio, http_sse, or streamable_http", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "transport must be stdio, http_sse, or streamable_http", traceID, nil)
 		return
 	}
 	if req.Transport == "stdio" && (req.Command == nil || strings.TrimSpace(*req.Command) == "") {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "command is required for stdio transport", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "command is required for stdio transport", traceID, nil)
 		return
 	}
 	if req.Transport != "stdio" && (req.URL == nil || strings.TrimSpace(*req.URL) == "") {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "url is required for HTTP transport", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "url is required for HTTP transport", traceID, nil)
 		return
 	}
 	if req.BearerToken != nil && strings.TrimSpace(*req.BearerToken) != "" && secretsRepo == nil {
@@ -171,7 +171,7 @@ func createMCPConfig(
 	timeoutMs := 10000
 	if req.CallTimeoutMs != nil {
 		if *req.CallTimeoutMs <= 0 {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "call_timeout_ms must be positive", traceID, nil)
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "call_timeout_ms must be positive", traceID, nil)
 			return
 		}
 		timeoutMs = *req.CallTimeoutMs
@@ -182,7 +182,7 @@ func createMCPConfig(
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -209,7 +209,7 @@ func createMCPConfig(
 			WriteError(w, nethttp.StatusConflict, "mcp_configs.name_conflict", "config name already exists", traceID, nil)
 			return
 		}
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -217,18 +217,18 @@ func createMCPConfig(
 		txSecrets := secretsRepo.WithTx(tx)
 		secret, err := txSecrets.Create(r.Context(), actor.OrgID, "mcp_cred:"+cfg.ID.String(), *req.BearerToken)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if err := txMCP.UpdateAuthSecret(r.Context(), actor.OrgID, cfg.ID, secret.ID); err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		cfg.AuthSecretID = &secret.ID
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -259,7 +259,7 @@ func listMCPConfigs(
 
 	configs, err := mcpRepo.ListByOrg(r.Context(), actor.OrgID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -298,7 +298,7 @@ func patchMCPConfig(
 
 	existing, err := mcpRepo.GetByID(r.Context(), actor.OrgID, configID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if existing == nil {
@@ -308,7 +308,7 @@ func patchMCPConfig(
 
 	var req patchMCPConfigRequest
 	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, nethttp.StatusUnprocessableEntity, "validation_error", "request validation failed", traceID, nil)
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
 
@@ -319,7 +319,7 @@ func patchMCPConfig(
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -331,12 +331,12 @@ func patchMCPConfig(
 		secretName := "mcp_cred:" + configID.String()
 		secret, err := txSecrets.Upsert(r.Context(), actor.OrgID, secretName, *req.BearerToken)
 		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if existing.AuthSecretID == nil || *existing.AuthSecretID != secret.ID {
 			if err := txMCP.UpdateAuthSecret(r.Context(), actor.OrgID, configID, secret.ID); err != nil {
-				WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 		}
@@ -356,7 +356,7 @@ func patchMCPConfig(
 			WriteError(w, nethttp.StatusConflict, "mcp_configs.name_conflict", "config name already exists", traceID, nil)
 			return
 		}
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if updated == nil {
@@ -365,7 +365,7 @@ func patchMCPConfig(
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -397,7 +397,7 @@ func deleteMCPConfig(
 
 	existing, err := mcpRepo.GetByID(r.Context(), actor.OrgID, configID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	if existing == nil {
@@ -406,7 +406,7 @@ func deleteMCPConfig(
 	}
 
 	if err := mcpRepo.Delete(r.Context(), actor.OrgID, configID); err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 

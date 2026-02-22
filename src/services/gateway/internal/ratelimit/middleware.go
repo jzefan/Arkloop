@@ -1,15 +1,15 @@
 package ratelimit
 
 import (
-	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
+
+	"arkloop/services/gateway/internal/identity"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -24,7 +24,7 @@ const (
 )
 
 // NewRateLimitMiddleware 返回限流中间件。
-// SSE 请求（Accept: text/event-stream 或路径后缀 /events）跳过限流。
+// SSE 请求（Accept: text/event-stream 且路径匹配已知 SSE 端点）跳过限流。
 // 有效 JWT 或 API Key 按 org_id 限流；否则按客户端 IP 限流。
 // Redis 不可用时 fail-open：放行请求，不阻断流量。
 func NewRateLimitMiddleware(next http.Handler, limiter Limiter, jwtSecret string, rdb ...*redis.Client) http.Handler {
@@ -52,10 +52,11 @@ func NewRateLimitMiddleware(next http.Handler, limiter Limiter, jwtSecret string
 		}
 
 		if !result.Allowed {
-			writeRateLimitExceeded(w, result.RetryAfterSecs)
+			writeRateLimitExceeded(w, result)
 			return
 		}
 
+		writeRateLimitHeaders(w, result)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -65,53 +66,20 @@ func NewRateLimitMiddleware(next http.Handler, limiter Limiter, jwtSecret string
 func rateLimitKeyFromRequest(r *http.Request, parser *jwt.Parser, secret []byte, rdb *redis.Client) string {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	bearer, ok := strings.CutPrefix(auth, "Bearer ")
+
+	// API Key 路径：通过 identity 包查缓存
 	if ok && strings.HasPrefix(bearer, "ak-") {
-		if orgID := extractOrgIDFromAPIKey(r.Context(), bearer, rdb); orgID != uuid.Nil {
-			return rateLimitOrgKeyPrefix + orgID.String()
+		if orgStr := identity.ExtractOrgID(r.Context(), auth, rdb); orgStr != "" {
+			return rateLimitOrgKeyPrefix + orgStr
 		}
 		return rateLimitIPKeyPrefix + clientIP(r)
 	}
 
+	// JWT 路径：带签名验证
 	if orgID := extractOrgIDFromBearer(r, parser, secret); orgID != uuid.Nil {
 		return rateLimitOrgKeyPrefix + orgID.String()
 	}
 	return rateLimitIPKeyPrefix + clientIP(r)
-}
-
-type apiKeyCacheEntry struct {
-	OrgID   string `json:"org_id"`
-	Revoked bool   `json:"revoked"`
-}
-
-// extractOrgIDFromAPIKey 从 Redis 缓存中取 API Key 对应的 org_id。
-// 缓存 miss 或 Redis 不可用时返回 uuid.Nil（降级为 IP 限流）。
-func extractOrgIDFromAPIKey(ctx context.Context, rawKey string, rdb *redis.Client) uuid.UUID {
-	if rdb == nil {
-		return uuid.Nil
-	}
-
-	digest := sha256.Sum256([]byte(rawKey))
-	keyHash := hex.EncodeToString(digest[:])
-	redisKey := fmt.Sprintf("arkloop:api_keys:%s", keyHash)
-
-	raw, err := rdb.Get(ctx, redisKey).Bytes()
-	if err != nil {
-		return uuid.Nil
-	}
-
-	var entry apiKeyCacheEntry
-	if err := json.Unmarshal(raw, &entry); err != nil {
-		return uuid.Nil
-	}
-	if entry.Revoked {
-		return uuid.Nil
-	}
-
-	parsed, err := uuid.Parse(entry.OrgID)
-	if err != nil {
-		return uuid.Nil
-	}
-	return parsed
 }
 
 // extractOrgIDFromBearer 验证 Bearer JWT 并提取 org claim。
@@ -185,26 +153,20 @@ func extractOrgClaimUnsafe(raw string) uuid.UUID {
 	return parsed
 }
 
+// ssePathPattern 匹配 /v1/threads/{id}/runs/{id}/events 和 /v1/runs/{id}/events。
+var ssePathPattern = regexp.MustCompile(`^/v1/(threads/[^/]+/)?runs/[^/]+/events$`)
+
 // isSSE 判断请求是否为 SSE 长连接。
+// 同时要求 Accept header 和路径匹配，防止任一条件被单独伪造绕过限流。
 func isSSE(r *http.Request) bool {
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
-		return true
-	}
-	return strings.HasSuffix(r.URL.Path, "/events")
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream") &&
+		ssePathPattern.MatchString(r.URL.Path)
 }
 
-// clientIP 从 X-Forwarded-For 或 RemoteAddr 提取客户端 IP。
+// clientIP 只从 RemoteAddr 提取客户端 IP。
+// 不信任 X-Forwarded-For，因为 Gateway 作为最外层入口时 XFF 由客户端控制。
+// 与 ipfilter 的 extractClientIP 保持一致的安全策略。
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first, _, ok := strings.Cut(xff, ","); ok {
-			if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {
-				return ip.String()
-			}
-		}
-		if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
-			return ip.String()
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -212,9 +174,16 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func writeRateLimitExceeded(w http.ResponseWriter, retryAfterSecs int64) {
-	if retryAfterSecs > 0 {
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSecs))
+func writeRateLimitHeaders(w http.ResponseWriter, result ConsumeResult) {
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetSecs))
+}
+
+func writeRateLimitExceeded(w http.ResponseWriter, result ConsumeResult) {
+	writeRateLimitHeaders(w, result)
+	if result.RetryAfterSecs > 0 {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", result.RetryAfterSecs))
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusTooManyRequests)

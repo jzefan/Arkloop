@@ -36,7 +36,7 @@ func (f *Filter) Middleware(next http.Handler) http.Handler {
 				if blocked := f.check(r.Context(), orgID, clientIP); blocked {
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
 					w.WriteHeader(http.StatusForbidden)
-					_, _ = w.Write([]byte(`{"code":"ip_blocked","message":"Forbidden"}`))
+					_, _ = w.Write([]byte(`{"code":"ip.blocked","message":"Forbidden"}`))
 					return
 				}
 			}

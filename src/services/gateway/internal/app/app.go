@@ -58,10 +58,10 @@ func (a *Application) Run(ctx context.Context) error {
 		rdb        *goredis.Client
 	)
 	if strings.TrimSpace(a.config.RedisURL) != "" {
-		var err error
-		rdb, err = sharedredis.NewClient(ctx, a.config.RedisURL)
-		if err != nil {
-			return fmt.Errorf("redis: %w", err)
+		var redisErr error
+		rdb, redisErr = sharedredis.NewClient(ctx, a.config.RedisURL)
+		if redisErr != nil {
+			return fmt.Errorf("redis: %w", redisErr)
 		}
 		defer rdb.Close()
 
@@ -135,7 +135,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 func healthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, `{"code":"http_error","message":"Method Not Allowed"}`, http.StatusMethodNotAllowed)
+		http.Error(w, `{"code":"http.method_not_allowed","message":"Method Not Allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 	payload, _ := json.Marshal(map[string]string{"status": "ok"})

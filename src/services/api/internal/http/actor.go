@@ -39,7 +39,7 @@ func authenticateActor(
 
 	membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if membership == nil {
@@ -90,7 +90,7 @@ func resolveActorFromAPIKey(
 
 	apiKey, err := apiKeysRepo.GetByHash(r.Context(), keyHash)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if apiKey == nil || apiKey.RevokedAt != nil {
@@ -105,7 +105,7 @@ func resolveActorFromAPIKey(
 
 	membership, err := membershipRepo.GetDefaultForUser(r.Context(), apiKey.UserID)
 	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if membership == nil {
@@ -141,5 +141,5 @@ func resolveActorFromAPIKey(
 
 func writeNotFound(w nethttp.ResponseWriter, r *nethttp.Request) {
 	traceID := observability.TraceIDFromContext(r.Context())
-	WriteError(w, nethttp.StatusNotFound, "http_error", "Not Found", traceID, nil)
+	WriteError(w, nethttp.StatusNotFound, "http.method_not_allowed", "Not Found", traceID, nil)
 }

@@ -130,18 +130,53 @@ func TestMiddleware_SSEByAcceptHeader_Skipped(t *testing.T) {
 	}
 }
 
-func TestMiddleware_SSEByPathSuffix_Skipped(t *testing.T) {
-	ml := &mockLimiter{result: ConsumeResult{Allowed: false}}
+func TestMiddleware_SSEPathOnly_NotSkipped(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false, RetryAfterSecs: 5}}
 
 	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
 
+	// 只有路径匹配但缺少 Accept header 时不应跳过限流
 	req := httptest.NewRequest(http.MethodGet, "/v1/runs/abc/events", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("SSE path without Accept header should NOT bypass ratelimit, got %d", rec.Code)
+	}
+}
+
+func TestMiddleware_SSEAcceptOnly_NotSkipped(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false, RetryAfterSecs: 5}}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	// 只有 Accept header 但路径不匹配时不应跳过限流
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("non-SSE path with Accept header should NOT bypass ratelimit, got %d", rec.Code)
+	}
+}
+
+func TestMiddleware_SSEThreadsPath_Skipped(t *testing.T) {
+	ml := &mockLimiter{result: ConsumeResult{Allowed: false}}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret)
+
+	// /v1/threads/{id}/runs/{id}/events 也是合法 SSE 端点
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads/t1/runs/r1/events", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusOK {
-		t.Fatalf("SSE path should bypass ratelimit, got %d", rec.Code)
+		t.Fatalf("SSE threads path should bypass ratelimit, got %d", rec.Code)
 	}
 }
 

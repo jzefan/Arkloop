@@ -11,14 +11,14 @@ import (
 func healthz(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		traceID := observability.TraceIDFromContext(r.Context())
-		WriteError(w, nethttp.StatusMethodNotAllowed, "http_error", "Method Not Allowed", traceID, nil)
+		WriteError(w, nethttp.StatusMethodNotAllowed, "http.method_not_allowed", "Method Not Allowed", traceID, nil)
 		return
 	}
 
 	payload, err := json.Marshal(map[string]string{"status": "ok"})
 	if err != nil {
 		traceID := observability.TraceIDFromContext(r.Context())
-		WriteError(w, nethttp.StatusInternalServerError, "internal_error", "internal error", traceID, nil)
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 

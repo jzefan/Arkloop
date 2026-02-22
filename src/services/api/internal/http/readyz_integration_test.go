@@ -90,7 +90,7 @@ func TestReadyz503WhenSchemaMismatch(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if payload.Code != "not_ready" {
+	if payload.Code != "health.not_ready" {
 		t.Fatalf("expected code not_ready, got %q", payload.Code)
 	}
 }

@@ -73,14 +73,18 @@ func recoverMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if value := recover(); value != nil {
-				traceID := newTraceID()
+				// 复用 traceMiddleware 已设置在 response header 上的 traceID
+				traceID := w.Header().Get(traceIDHeader)
+				if traceID == "" {
+					traceID = newTraceID()
+				}
 				if logger != nil {
 					logger.Error("panic", LogFields{TraceID: &traceID}, map[string]any{
 						"panic": fmt.Sprint(value),
 						"stack": string(debug.Stack()),
 					})
 				}
-				http.Error(w, `{"code":"internal_error","message":"internal error"}`, http.StatusInternalServerError)
+				http.Error(w, `{"code":"internal.error","message":"internal error"}`, http.StatusInternalServerError)
 			}
 		}()
 		next.ServeHTTP(w, r)
