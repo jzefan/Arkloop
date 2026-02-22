@@ -238,6 +238,7 @@ func patchThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	projectRepo *data.ProjectRepository,
+	agentConfigRepo *data.AgentConfigRepository,
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -298,6 +299,23 @@ func patchThread(
 			}
 			if project == nil || project.OrgID != actor.OrgID {
 				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "project not found in org", traceID, nil)
+				return
+			}
+		}
+
+		// 验证新的 agent_config_id 归属于同一 org，防止跨 org 配置泄露
+		if body.AgentConfigID.Present && body.AgentConfigID.Value != nil {
+			if agentConfigRepo == nil {
+				WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+				return
+			}
+			ac, err := agentConfigRepo.GetByID(r.Context(), *body.AgentConfigID.Value)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if ac == nil || ac.OrgID != actor.OrgID {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "agent config not found in org", traceID, nil)
 				return
 			}
 		}
@@ -408,13 +426,14 @@ func threadEntry(
 	runRepo *data.RunEventRepository,
 	projectRepo *data.ProjectRepository,
 	teamRepo *data.TeamRepository,
+	agentConfigRepo *data.AgentConfigRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
 	runLimiter *data.RunLimiter,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getThread(authService, membershipRepo, threadRepo, projectRepo, teamRepo, auditWriter, apiKeysRepo)
-	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, auditWriter, apiKeysRepo)
+	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, agentConfigRepo, auditWriter, apiKeysRepo)
 	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)

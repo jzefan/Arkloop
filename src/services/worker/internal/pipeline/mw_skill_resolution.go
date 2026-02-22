@@ -68,6 +68,24 @@ func NewSkillResolutionMiddleware(
 			if rc.AgentConfig.MaxOutputTokens != nil {
 				rc.MaxOutputTokens = rc.AgentConfig.MaxOutputTokens
 			}
+			// 将 agent_config 的工具策略应用到 allowlist
+			switch rc.AgentConfig.ToolPolicy {
+			case "allowlist":
+				if len(rc.AgentConfig.ToolAllowlist) > 0 {
+					narrowed := make(map[string]struct{}, len(rc.AgentConfig.ToolAllowlist))
+					for _, name := range rc.AgentConfig.ToolAllowlist {
+						if _, ok := rc.AllowlistSet[name]; ok {
+							narrowed[name] = struct{}{}
+						}
+					}
+					rc.AllowlistSet = narrowed
+				}
+			case "denylist":
+				for _, name := range rc.AgentConfig.ToolDenylist {
+					delete(rc.AllowlistSet, name)
+				}
+			}
+			// "none" 不限制，rc.AllowlistSet 保持不变
 		}
 
 		// skill 定义覆盖 agent_config 的对应字段

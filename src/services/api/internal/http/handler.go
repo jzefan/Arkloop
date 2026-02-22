@@ -40,19 +40,19 @@ type HandlerConfig struct {
 	RunEventRepo        *data.RunEventRepository
 	AuditWriter         *audit.Writer
 
-	LlmCredentialsRepo *data.LlmCredentialsRepository
-	LlmRoutesRepo      *data.LlmRoutesRepository
-	SecretsRepo        *data.SecretsRepository
-	MCPConfigsRepo     *data.MCPConfigsRepository
-	SkillsRepo         *data.SkillsRepository
-	IPRulesRepo        *data.IPRulesRepository
-	APIKeysRepo        *data.APIKeysRepository
-	OrgInvitationsRepo *data.OrgInvitationsRepository
-	TeamRepo               *data.TeamRepository
-	ProjectRepo            *data.ProjectRepository
-	WebhookRepo            *data.WebhookEndpointRepository
-	PromptTemplatesRepo    *data.PromptTemplateRepository
-	AgentConfigsRepo       *data.AgentConfigRepository
+	LlmCredentialsRepo  *data.LlmCredentialsRepository
+	LlmRoutesRepo       *data.LlmRoutesRepository
+	SecretsRepo         *data.SecretsRepository
+	MCPConfigsRepo      *data.MCPConfigsRepository
+	SkillsRepo          *data.SkillsRepository
+	IPRulesRepo         *data.IPRulesRepository
+	APIKeysRepo         *data.APIKeysRepository
+	OrgInvitationsRepo  *data.OrgInvitationsRepository
+	TeamRepo            *data.TeamRepository
+	ProjectRepo         *data.ProjectRepository
+	WebhookRepo         *data.WebhookEndpointRepository
+	PromptTemplatesRepo *data.PromptTemplateRepository
+	AgentConfigsRepo    *data.AgentConfigRepository
 
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
@@ -81,6 +81,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			cfg.RunEventRepo,
 			cfg.ProjectRepo,
 			cfg.TeamRepo,
+			cfg.AgentConfigsRepo,
 			cfg.AuditWriter,
 			cfg.Pool,
 			cfg.APIKeysRepo,
