@@ -11,6 +11,9 @@ import (
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var toolNameSafeRegex = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
@@ -19,6 +22,19 @@ type Registration struct {
 	AgentSpecs []tools.AgentToolSpec
 	LlmSpecs   []llm.ToolSpec
 	Executors  map[string]tools.Executor
+}
+
+// DiscoverFromDB 按 org_id 从数据库加载 MCP 配置并发现工具。
+// 若该 org 无活跃配置，返回空 Registration（不报错）。
+func DiscoverFromDB(ctx context.Context, dbPool *pgxpool.Pool, orgID uuid.UUID, mcpPool *Pool) (Registration, error) {
+	cfg, err := LoadConfigFromDB(ctx, dbPool, orgID)
+	if err != nil {
+		return Registration{Executors: map[string]tools.Executor{}}, err
+	}
+	if cfg == nil || len(cfg.Servers) == 0 {
+		return Registration{Executors: map[string]tools.Executor{}}, nil
+	}
+	return Discover(ctx, *cfg, mcpPool)
 }
 
 func DiscoverFromEnv(ctx context.Context, pool *Pool) (Registration, error) {

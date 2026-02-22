@@ -77,7 +77,7 @@ func (RunsRepository) UpdateRunTerminalStatus(
 		 SET status              = $2,
 		     status_updated_at   = now(),
 		     completed_at        = CASE WHEN $2 = 'completed' THEN now() ELSE completed_at END,
-		     failed_at           = CASE WHEN $2 IN ('failed', 'cancelled') THEN now() ELSE failed_at END,
+		     failed_at           = CASE WHEN $2 = 'failed'    THEN now() ELSE failed_at    END,
 		     duration_ms         = EXTRACT(EPOCH FROM (now() - created_at)) * 1000,
 		     total_input_tokens  = $3,
 		     total_output_tokens = $4,

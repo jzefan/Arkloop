@@ -16,9 +16,9 @@ const (
 )
 
 type ToolExecutor struct {
-	server                    ServerConfig
-	remoteToolNameByToolName  map[string]string
-	pool                      *Pool
+	server                   ServerConfig
+	remoteToolNameByToolName map[string]string
+	pool                     *Pool
 }
 
 func NewToolExecutor(server ServerConfig, remote map[string]string, pool *Pool) *ToolExecutor {
@@ -69,7 +69,7 @@ func (e *ToolExecutor) Execute(
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: ErrorClassMcpProtocolError,
-				Message:    "MCP client borrow failed",
+				Message:    "MCP client borrow failed: " + err.Error(),
 				Details:    map[string]any{"tool_name": toolName, "server_id": e.server.ServerID},
 			},
 			DurationMs: durationMs(started),

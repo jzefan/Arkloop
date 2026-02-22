@@ -328,7 +328,6 @@ func TestStreamRunEvents(t *testing.T) {
 		RunEventRepo:        runRepo,
 		AuditWriter:         auditWriter,
 		SSEConfig: SSEConfig{
-			PollSeconds:      0.01,
 			HeartbeatSeconds: 60.0,
 			BatchLimit:       100,
 		},

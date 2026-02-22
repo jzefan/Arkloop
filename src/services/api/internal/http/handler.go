@@ -11,16 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SSEConfig controls SSE stream polling and heartbeat behavior.
+// SSEConfig controls SSE stream heartbeat behavior.
 type SSEConfig struct {
-	PollSeconds      float64
 	HeartbeatSeconds float64
 	BatchLimit       int
 }
 
 func defaultSSEConfig() SSEConfig {
 	return SSEConfig{
-		PollSeconds:      0.25,
 		HeartbeatSeconds: 15.0,
 		BatchLimit:       500,
 	}
@@ -39,6 +37,11 @@ type HandlerConfig struct {
 	MessageRepo         *data.MessageRepository
 	RunEventRepo        *data.RunEventRepository
 	AuditWriter         *audit.Writer
+
+	LlmCredentialsRepo *data.LlmCredentialsRepository
+	LlmRoutesRepo      *data.LlmRoutesRepository
+	SecretsRepo        *data.SecretsRepository
+	MCPConfigsRepo     *data.MCPConfigsRepository
 
 	SSEConfig SSEConfig
 }
@@ -74,6 +77,24 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/runs/",
 		runEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, sseConfig),
+	)
+
+	mux.HandleFunc(
+		"/v1/llm-credentials",
+		llmCredentialsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.LlmCredentialsRepo, cfg.LlmRoutesRepo, cfg.SecretsRepo, cfg.Pool),
+	)
+	mux.HandleFunc(
+		"/v1/llm-credentials/",
+		llmCredentialEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.LlmCredentialsRepo),
+	)
+
+	mux.HandleFunc(
+		"/v1/mcp-configs",
+		mcpConfigsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
+	)
+	mux.HandleFunc(
+		"/v1/mcp-configs/",
+		mcpConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

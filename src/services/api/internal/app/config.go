@@ -17,24 +17,28 @@ const (
 	trustIncomingTraceIDEnv = "ARKLOOP_TRUST_INCOMING_TRACE_ID"
 	defaultAddr             = "127.0.0.1:8001"
 
-	ssePollSecondsEnv      = "ARKLOOP_SSE_POLL_SECONDS"
+	redisURLEnv = "ARKLOOP_REDIS_URL"
+
+	s3EndpointEnv  = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv = "ARKLOOP_S3_SECRET_KEY"
+	s3BucketEnv    = "ARKLOOP_S3_BUCKET"
+	s3RegionEnv    = "ARKLOOP_S3_REGION"
+
 	sseHeartbeatSecondsEnv = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
 	sseBatchLimitEnv       = "ARKLOOP_SSE_BATCH_LIMIT"
 
-	defaultSSEPollSeconds      = 0.25
 	defaultSSEHeartbeatSeconds = 15.0
 	defaultSSEBatchLimit       = 500
 )
 
 type SSEConfig struct {
-	PollSeconds      float64
 	HeartbeatSeconds float64
 	BatchLimit       int
 }
 
 func defaultSSEConfig() SSEConfig {
 	return SSEConfig{
-		PollSeconds:      defaultSSEPollSeconds,
 		HeartbeatSeconds: defaultSSEHeartbeatSeconds,
 		BatchLimit:       defaultSSEBatchLimit,
 	}
@@ -46,6 +50,14 @@ type Config struct {
 	TrustIncomingTraceID bool
 	Auth                 *auth.Config
 	SSE                  SSEConfig
+
+	RedisURL string
+
+	S3Endpoint  string
+	S3AccessKey string
+	S3SecretKey string
+	S3Bucket    string
+	S3Region    string
 }
 
 func DefaultConfig() Config {
@@ -88,13 +100,25 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	cfg.Auth = authConfig
 
-	if raw, ok := lookupEnv(ssePollSecondsEnv); ok {
-		v, err := parseNonNegativeFloat(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s: %w", ssePollSecondsEnv, err)
-		}
-		cfg.SSE.PollSeconds = v
+	if raw, ok := lookupEnv(redisURLEnv); ok {
+		cfg.RedisURL = raw
 	}
+	if raw, ok := lookupEnv(s3EndpointEnv); ok {
+		cfg.S3Endpoint = raw
+	}
+	if raw, ok := lookupEnv(s3AccessKeyEnv); ok {
+		cfg.S3AccessKey = raw
+	}
+	if raw, ok := lookupEnv(s3SecretKeyEnv); ok {
+		cfg.S3SecretKey = raw
+	}
+	if raw, ok := lookupEnv(s3BucketEnv); ok {
+		cfg.S3Bucket = raw
+	}
+	if raw, ok := lookupEnv(s3RegionEnv); ok {
+		cfg.S3Region = raw
+	}
+
 	if raw, ok := lookupEnv(sseHeartbeatSecondsEnv); ok {
 		v, err := parseNonNegativeFloat(raw)
 		if err != nil {

@@ -16,9 +16,9 @@ func TestUpFromScratch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	// 19 migrations (00001..00019)
-	if len(results) != 19 {
-		t.Fatalf("expected 19 migrations, got %d", len(results))
+	// 21 migrations (00001..00021)
+	if len(results) != 21 {
+		t.Fatalf("expected 21 migrations, got %d", len(results))
 	}
 
 	version, err := CurrentVersion(ctx, db.DSN)
@@ -67,8 +67,8 @@ func TestDownOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("current version: %v", err)
 	}
-	// DownOne 从 19 回退到 18
-	const prevVersion int64 = 18
+	// DownOne 从 21 回退到 20
+	const prevVersion int64 = 20
 	if version != prevVersion {
 		t.Fatalf("expected version %d, got %d", prevVersion, version)
 	}
@@ -137,6 +137,9 @@ func TestTablesExist(t *testing.T) {
 		"audit_logs",
 		"jobs",
 		"secrets",
+		"llm_credentials",
+		"llm_routes",
+		"mcp_configs",
 	}
 
 	for _, table := range expectedTables {

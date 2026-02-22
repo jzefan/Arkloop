@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/skills"
 	"arkloop/services/worker/internal/tools"
@@ -45,6 +47,7 @@ type EngineV1 struct {
 	messagesRepo data.MessagesRepository
 
 	router          *routing.ProviderRouter
+	dbPool          *pgxpool.Pool // 非 nil 时每个 run 独立从 DB 加载路由配置
 	stubGateway     llm.Gateway
 	emitDebugEvents bool
 
@@ -56,6 +59,7 @@ type EngineV1 struct {
 	baseLlmToolSpecs []llm.ToolSpec
 
 	skillRegistry *skills.Registry
+	mcpPool       *mcp.Pool
 }
 
 type ExecuteInput struct {
@@ -64,6 +68,7 @@ type ExecuteInput struct {
 
 type EngineV1Deps struct {
 	Router          *routing.ProviderRouter
+	DBPool          *pgxpool.Pool // nil 时跳过 per-run DB 路由加载，回退到静态 Router
 	StubGateway     llm.Gateway
 	EmitDebugEvents bool
 
@@ -73,6 +78,7 @@ type EngineV1Deps struct {
 	BaseToolAllowlistNames []string
 
 	SkillRegistry *skills.Registry
+	MCPPool       *mcp.Pool // 为 nil 时跳过 per-run org MCP 加载
 }
 
 func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
@@ -109,6 +115,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		eventsRepo:       data.RunEventsRepository{},
 		messagesRepo:     data.MessagesRepository{},
 		router:           deps.Router,
+		dbPool:           deps.DBPool,
 		stubGateway:      deps.StubGateway,
 		emitDebugEvents:  deps.EmitDebugEvents,
 		toolRegistry:     deps.ToolRegistry,
@@ -118,6 +125,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		baseToolExecutor: baseToolExecutor,
 		baseLlmToolSpecs: baseLlmSpecs,
 		skillRegistry:    deps.SkillRegistry,
+		mcpPool:          deps.MCPPool,
 	}, nil
 }
 
@@ -179,6 +187,33 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		return err
 	}
 
+	// 按 org 加载 MCP 工具，合并到本次 run 的工具集。加载失败不中断 run。
+	runToolExecutors := copyToolExecutors(e.toolExecutors)
+	runAllLlmSpecs := append([]llm.ToolSpec{}, e.allLlmToolSpecs...)
+	runBaseAllowlistSet := copyStringSet(e.baseAllowlistSet)
+	runRegistry := e.toolRegistry
+
+	if e.mcpPool != nil {
+		orgReg, orgErr := mcp.DiscoverFromDB(execCtx, pool, run.OrgID, e.mcpPool)
+		if orgErr == nil && len(orgReg.Executors) > 0 {
+			runRegistry = forkRegistry(e.toolRegistry, orgReg.AgentSpecs)
+			for name, exec := range orgReg.Executors {
+				runToolExecutors[name] = exec
+			}
+			runAllLlmSpecs = append(runAllLlmSpecs, orgReg.LlmSpecs...)
+			// org admin 主动配置的 MCP 工具自动加入本次 run 的 allowlist
+			for _, spec := range orgReg.AgentSpecs {
+				runBaseAllowlistSet[spec.Name] = struct{}{}
+			}
+		}
+	}
+
+	runBaseExecutor, err := buildDispatchExecutor(runRegistry, runToolExecutors, runBaseAllowlistSet)
+	if err != nil {
+		return err
+	}
+	runBaseLlmSpecs := filterToolSpecs(runAllLlmSpecs, runBaseAllowlistSet)
+
 	skillResolution := skills.ResolveSkill(inputJSON, e.skillRegistry)
 	if skillResolution.Error != nil {
 		payload := map[string]any{
@@ -197,7 +232,18 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		return e.appendAndCommit(execCtx, pool, run.ID, failed)
 	}
 
-	decision := e.router.Decide(inputJSON, false)
+	// per-run 动态路由：每次 run 独立从 DB 加载，与 MCP 动态加载对齐
+	activeRouter := e.router
+	if e.dbPool != nil {
+		dbCfg, dbErr := routing.LoadRoutingConfigFromDB(execCtx, e.dbPool)
+		if dbErr != nil {
+			slog.WarnContext(execCtx, "routing: per-run db load failed, using static", "err", dbErr.Error())
+		} else if len(dbCfg.Routes) > 0 {
+			activeRouter = routing.NewProviderRouter(dbCfg)
+		}
+	}
+
+	decision := activeRouter.Decide(inputJSON, false)
 	if decision.Denied != nil {
 		failed := emitter.Emit(
 			"run.failed",
@@ -268,8 +314,8 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		})
 	}
 
-	toolExecutor := e.baseToolExecutor
-	toolSpecs := e.baseLlmToolSpecs
+	toolExecutor := runBaseExecutor
+	toolSpecs := runBaseLlmSpecs
 	maxIterations := defaultAgentMaxIterations
 	var maxOutputTokens *int
 	var toolTimeoutMs *int
@@ -290,17 +336,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 
 		effectiveAllowlist := map[string]struct{}{}
 		for _, name := range def.ToolAllowlist {
-			if _, ok := e.baseAllowlistSet[name]; !ok {
+			if _, ok := runBaseAllowlistSet[name]; !ok {
 				continue
 			}
 			effectiveAllowlist[name] = struct{}{}
 		}
-		exec, err := buildDispatchExecutor(e.toolRegistry, e.toolExecutors, effectiveAllowlist)
+		exec, err := buildDispatchExecutor(runRegistry, runToolExecutors, effectiveAllowlist)
 		if err != nil {
 			return err
 		}
 		toolExecutor = exec
-		toolSpecs = filterToolSpecs(e.allLlmToolSpecs, effectiveAllowlist)
+		toolSpecs = filterToolSpecs(runAllLlmSpecs, effectiveAllowlist)
 	}
 
 	if strings.TrimSpace(systemPrompt) != "" {
@@ -439,7 +485,7 @@ func (e *EngineV1) gatewayFromCredential(credential routing.ProviderCredential) 
 	case routing.ProviderKindStub:
 		return e.stubGateway, nil
 	case routing.ProviderKindOpenAI:
-		apiKey, err := lookupAPIKey(credential.APIKeyEnv)
+		apiKey, err := resolveAPIKey(credential)
 		if err != nil {
 			return nil, err
 		}
@@ -458,7 +504,7 @@ func (e *EngineV1) gatewayFromCredential(credential routing.ProviderCredential) 
 			EmitDebugEvents: e.emitDebugEvents,
 		}), nil
 	case routing.ProviderKindAnthropic:
-		apiKey, err := lookupAPIKey(credential.APIKeyEnv)
+		apiKey, err := resolveAPIKey(credential)
 		if err != nil {
 			return nil, err
 		}
@@ -475,6 +521,14 @@ func (e *EngineV1) gatewayFromCredential(credential routing.ProviderCredential) 
 	default:
 		return nil, fmt.Errorf("unknown provider_kind: %s", credential.ProviderKind)
 	}
+}
+
+// resolveAPIKey 优先使用 APIKeyValue（来自数据库），回退到 APIKeyEnv（环境变量名）。
+func resolveAPIKey(credential routing.ProviderCredential) (string, error) {
+	if credential.APIKeyValue != nil && strings.TrimSpace(*credential.APIKeyValue) != "" {
+		return *credential.APIKeyValue, nil
+	}
+	return lookupAPIKey(credential.APIKeyEnv)
 }
 
 func lookupAPIKey(envName *string) (string, error) {
@@ -503,6 +557,32 @@ func copyToolExecutors(values map[string]tools.Executor) map[string]tools.Execut
 		out[key] = executor
 	}
 	return out
+}
+
+func copyStringSet(src map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(src))
+	for k := range src {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// forkRegistry 创建一个包含 base 所有 spec + 额外 spec 的新 Registry。
+// base 是只读的，不会被修改。
+func forkRegistry(base *tools.Registry, extras []tools.AgentToolSpec) *tools.Registry {
+	r := tools.NewRegistry()
+	for _, name := range base.ListNames() {
+		spec, ok := base.Get(name)
+		if ok {
+			_ = r.Register(spec) // 从已有 registry 复制，不会出错
+		}
+	}
+	for _, spec := range extras {
+		if err := r.Register(spec); err != nil {
+			slog.Warn("mcp tool name conflict, skipped", "name", spec.Name)
+		}
+	}
+	return r
 }
 
 func buildDispatchExecutor(
