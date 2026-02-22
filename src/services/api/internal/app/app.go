@@ -129,6 +129,7 @@ func (a *Application) Run(ctx context.Context) error {
 		llmCredRepo    *data.LlmCredentialsRepository
 		llmRoutesRepo  *data.LlmRoutesRepository
 		mcpConfigsRepo *data.MCPConfigsRepository
+		skillsRepo     *data.SkillsRepository
 
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
@@ -175,6 +176,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		mcpConfigsRepo, err = data.NewMCPConfigsRepository(pool)
+		if err != nil {
+			return err
+		}
+		skillsRepo, err = data.NewSkillsRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -240,6 +245,7 @@ func (a *Application) Run(ctx context.Context) error {
 			LlmRoutesRepo:        llmRoutesRepo,
 			SecretsRepo:          secretsRepo,
 			MCPConfigsRepo:       mcpConfigsRepo,
+			SkillsRepo:           skillsRepo,
 			SSEConfig: apihttp.SSEConfig{
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,

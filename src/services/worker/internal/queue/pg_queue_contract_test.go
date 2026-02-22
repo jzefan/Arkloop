@@ -319,7 +319,7 @@ func newQueueFixture(t *testing.T, maxAttempts int) *queueFixture {
 	}
 	t.Cleanup(pool.Close)
 
-	queue, err := NewPgQueue(pool, maxAttempts)
+	queue, err := NewPgQueue(pool, maxAttempts, []string{})
 	if err != nil {
 		t.Fatalf("NewPgQueue failed: %v", err)
 	}

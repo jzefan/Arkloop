@@ -8,12 +8,16 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/consumer"
 	"arkloop/services/worker/internal/executor"
 	"arkloop/services/worker/internal/queue"
+	"arkloop/services/worker/internal/registration"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -52,7 +56,7 @@ func run() error {
 	}
 	defer pool.Close()
 
-	queueClient, err := queue.NewPgQueue(pool, 25)
+	queueClient, err := queue.NewPgQueue(pool, 25, cfg.Capabilities)
 	if err != nil {
 		return err
 	}
@@ -83,8 +87,46 @@ func run() error {
 		return err
 	}
 
+	var reg *registration.Manager
+	if redisURL := lookupRedisURL(); redisURL != "" {
+		rdb, err := newRedisClient(ctx, redisURL)
+		if err != nil {
+			logger.Error("redis connect failed, skipping registration", app.LogFields{}, map[string]any{"error": err.Error()})
+		} else {
+			defer rdb.Close()
+			reg, err = registration.NewManager(pool, rdb, registration.Config{
+				Version:        cfg.Version,
+				Capabilities:   cfg.Capabilities,
+				MaxConcurrency: cfg.Concurrency,
+			}, logger)
+			if err != nil {
+				return fmt.Errorf("registration: %w", err)
+			}
+			if err := reg.Register(ctx); err != nil {
+				return fmt.Errorf("register worker: %w", err)
+			}
+			reg.StartHeartbeat(ctx)
+			handler = &loadAwareHandler{inner: handler, reg: reg}
+		}
+	} else {
+		logger.Info("ARKLOOP_REDIS_URL not set, worker registration disabled", app.LogFields{}, nil)
+	}
+
 	logger.Info("worker_go entering consume mode", app.LogFields{}, nil)
-	return loop.Run(ctx)
+	runErr := loop.Run(ctx)
+
+	if reg != nil {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := reg.Drain(shutCtx); err != nil {
+			logger.Error("drain failed", app.LogFields{}, map[string]any{"error": err.Error()})
+		}
+		if err := reg.MarkDead(shutCtx); err != nil {
+			logger.Error("mark dead failed", app.LogFields{}, map[string]any{"error": err.Error()})
+		}
+	}
+
+	return runErr
 }
 
 func lookupDatabaseDSN() string {
@@ -95,6 +137,23 @@ func lookupDatabaseDSN() string {
 		}
 	}
 	return ""
+}
+
+func lookupRedisURL() string {
+	return strings.TrimSpace(os.Getenv("ARKLOOP_REDIS_URL"))
+}
+
+func newRedisClient(ctx context.Context, redisURL string) (*redis.Client, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	client := redis.NewClient(opts)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis ping: %w", err)
+	}
+	return client, nil
 }
 
 func normalizePostgresDSN(raw string) string {
@@ -119,7 +178,8 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, queueJobTypes []s
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
 	if pool == nil {
-		return nil, fmt.Errorf("pool must not be nil")	}
+		return nil, fmt.Errorf("pool must not be nil")
+	}
 
 	native, err := executor.NewNativeRunEngineV1Handler(pool, logger)
 	if err != nil {
@@ -127,4 +187,16 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, queueJobTypes []s
 	}
 	logger.Info("worker_go native handler enabled", app.LogFields{}, map[string]any{"job_type": queue.RunExecuteJobType})
 	return native, nil
+}
+
+// loadAwareHandler 在 job 处理前后更新注册管理器的负载计数。
+type loadAwareHandler struct {
+	inner consumer.Handler
+	reg   *registration.Manager
+}
+
+func (h *loadAwareHandler) Handle(ctx context.Context, lease queue.JobLease) error {
+	h.reg.IncrLoad()
+	defer h.reg.DecrLoad()
+	return h.inner.Handle(ctx, lease)
 }

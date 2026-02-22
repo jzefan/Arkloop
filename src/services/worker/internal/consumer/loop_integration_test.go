@@ -184,7 +184,7 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	}
 	t.Cleanup(pool.Close)
 
-	queueClient, err := queue.NewPgQueue(pool, 25)
+	queueClient, err := queue.NewPgQueue(pool, 25, []string{})
 	if err != nil {
 		t.Fatalf("NewPgQueue failed: %v", err)
 	}

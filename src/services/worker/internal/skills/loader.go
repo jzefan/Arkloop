@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
 )
 
@@ -261,18 +265,109 @@ func asBudgets(value any) (Budgets, error) {
 	}, nil
 }
 
+// LoadFromDB 从数据库加载 orgID 对应的活跃 skill，用于 per-run 动态覆盖。
+func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Definition, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("pool must not be nil")
+	}
+
+	rows, err := pool.Query(
+		ctx,
+		`SELECT skill_key, version, display_name, description,
+		        prompt_md, tool_allowlist, budgets_json
+		 FROM skills
+		 WHERE org_id = $1 AND is_active = TRUE
+		 ORDER BY created_at ASC`,
+		orgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var defs []Definition
+	for rows.Next() {
+		var (
+			skillKey      string
+			version       string
+			displayName   string
+			description   *string
+			promptMD      string
+			toolAllowlist []string
+			budgetsRaw    []byte
+		)
+		if err := rows.Scan(&skillKey, &version, &displayName, &description,
+			&promptMD, &toolAllowlist, &budgetsRaw); err != nil {
+			return nil, err
+		}
+
+		budgets, err := parseBudgetsJSON(budgetsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("skill %q: %w", skillKey, err)
+		}
+
+		def := Definition{
+			ID:            skillKey,
+			Version:       version,
+			Title:         displayName,
+			ToolAllowlist: toolAllowlist,
+			Budgets:       budgets,
+			PromptMD:      promptMD,
+		}
+		if description != nil && strings.TrimSpace(*description) != "" {
+			s := strings.TrimSpace(*description)
+			def.Description = &s
+		}
+
+		defs = append(defs, def)
+	}
+	return defs, rows.Err()
+}
+
+// MergeRegistry 以 base 为底，DB skill 按 ID 覆盖同名文件系统 skill。
+func MergeRegistry(base *Registry, overrides []Definition) *Registry {
+	merged := NewRegistry()
+	for _, id := range base.ListIDs() {
+		def, _ := base.Get(id)
+		merged.Set(def)
+	}
+	for _, def := range overrides {
+		merged.Set(def)
+	}
+	return merged
+}
+
+func parseBudgetsJSON(raw []byte) (Budgets, error) {
+	if len(raw) == 0 {
+		return Budgets{ToolBudget: map[string]any{}}, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return Budgets{}, fmt.Errorf("invalid budgets_json: %w", err)
+	}
+	return asBudgets(obj)
+}
+
 func asOptionalPositiveInt(value any, label string) (*int, error) {
 	if value == nil {
 		return nil, nil
 	}
-	number, ok := value.(int)
-	if !ok {
+	var number int
+	switch v := value.(type) {
+	case int:
+		number = v
+	case float64:
+		// json.Unmarshal 将 map[string]any 中的数字统一解为 float64
+		if v != float64(int(v)) {
+			return nil, fmt.Errorf("%s must be an integer", label)
+		}
+		number = int(v)
+	default:
 		return nil, fmt.Errorf("%s must be an integer", label)
 	}
 	if number <= 0 {
 		return nil, fmt.Errorf("%s must be a positive integer", label)
 	}
-	out := int(number)
-	return &out, nil
+	return &number, nil
 }
 
