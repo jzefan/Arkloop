@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"context"
+
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -20,6 +22,10 @@ type RunContext struct {
 	Emitter events.Emitter
 	Router  *routing.ProviderRouter
 
+	// -- CancelGuardMiddleware 写入 --
+	CancelFunc context.CancelFunc // 释放 LISTEN 连接
+	ListenDone <-chan struct{}    // LISTEN goroutine 完成信号
+
 	// -- InputLoaderMiddleware 写入 --
 	InputJSON map[string]any
 	Messages  []llm.Message
@@ -32,12 +38,18 @@ type RunContext struct {
 	ToolBudget      map[string]any
 
 	// -- 初始化时写入 base 值，MCPDiscovery/ToolBuild 覆盖 --
-	ToolSpecs      []llm.ToolSpec
-	ToolExecutors  map[string]tools.Executor
-	AllowlistSet   map[string]struct{}
+	ToolSpecs     []llm.ToolSpec
+	ToolExecutors map[string]tools.Executor
+	AllowlistSet  map[string]struct{}
+	ToolRegistry  *tools.Registry
 
 	// -- RoutingMiddleware 写入 --
-	Gateway llm.Gateway
+	Gateway       llm.Gateway
+	SelectedRoute *routing.SelectedProviderRoute
+
+	// -- ToolBuildMiddleware 写入 --
+	ToolExecutor *tools.DispatchingExecutor
+	FinalSpecs   []llm.ToolSpec
 
 	// -- 默认 10，SkillResolution 可覆盖 --
 	MaxIterations int
