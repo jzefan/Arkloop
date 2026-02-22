@@ -206,17 +206,21 @@ func TestSecretsDelete(t *testing.T) {
 	}
 }
 
-func TestSecretsDeleteIdempotent(t *testing.T) {
+func TestSecretsDeleteNotFound(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-del-idem", "Test Org Del Idem")
+	org, err := orgRepo.Create(ctx, "test-org-del-notfound", "Test Org Del NotFound")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
 
-	// 删除不存在的 secret 不应返回错误
-	if err := repo.Delete(ctx, org.ID, "nonexistent"); err != nil {
-		t.Fatalf("delete nonexistent: %v", err)
+	err = repo.Delete(ctx, org.ID, "nonexistent")
+	if err == nil {
+		t.Fatal("expected SecretNotFoundError, got nil")
+	}
+	var notFoundErr SecretNotFoundError
+	if !errors.As(err, &notFoundErr) {
+		t.Fatalf("expected SecretNotFoundError, got: %T %v", err, err)
 	}
 }
 
@@ -248,10 +252,5 @@ func TestSecretsList(t *testing.T) {
 		t.Fatalf("unexpected order: %v", []string{list[0].Name, list[1].Name, list[2].Name})
 	}
 
-	// 确认 encrypted_value 不等于明文
-	for _, s := range list {
-		if s.EncryptedValue == "value-"+s.Name {
-			t.Fatalf("secret %q: encrypted_value must not equal plaintext", s.Name)
-		}
-	}
+	// SecretMeta 不含 EncryptedValue，无法直接比较密文
 }

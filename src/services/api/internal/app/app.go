@@ -13,10 +13,13 @@ import (
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/api/internal/crypto"
 	"arkloop/services/api/internal/data"
 	apihttp "arkloop/services/api/internal/http"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
+	sharedredis "arkloop/services/shared/redis"
+	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -89,6 +92,30 @@ func (a *Application) Run(ctx context.Context) error {
 		defer poolCloser()
 	}
 
+	if strings.TrimSpace(a.config.RedisURL) != "" {
+		redisClient, err := sharedredis.NewClient(ctx, a.config.RedisURL)
+		if err != nil {
+			return fmt.Errorf("redis: %w", err)
+		}
+		defer redisClient.Close()
+		a.logger.Info("redis connected", observability.LogFields{}, nil)
+	}
+
+	if strings.TrimSpace(a.config.S3Endpoint) != "" {
+		_, err := objectstore.New(
+			ctx,
+			a.config.S3Endpoint,
+			a.config.S3AccessKey,
+			a.config.S3SecretKey,
+			a.config.S3Bucket,
+			a.config.S3Region,
+		)
+		if err != nil {
+			return fmt.Errorf("objectstore: %w", err)
+		}
+		a.logger.Info("objectstore connected", observability.LogFields{}, map[string]any{"bucket": a.config.S3Bucket})
+	}
+
 	var (
 		userRepo       *data.UserRepository
 		credentialRepo *data.UserCredentialRepository
@@ -97,6 +124,11 @@ func (a *Application) Run(ctx context.Context) error {
 		messageRepo    *data.MessageRepository
 		runEventRepo   *data.RunEventRepository
 		auditRepo      *data.AuditLogRepository
+
+		secretsRepo    *data.SecretsRepository
+		llmCredRepo    *data.LlmCredentialsRepository
+		llmRoutesRepo  *data.LlmRoutesRepository
+		mcpConfigsRepo *data.MCPConfigsRepository
 
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
@@ -132,6 +164,33 @@ func (a *Application) Run(ctx context.Context) error {
 		auditRepo, err = data.NewAuditLogRepository(pool)
 		if err != nil {
 			return err
+		}
+
+		llmCredRepo, err = data.NewLlmCredentialsRepository(pool)
+		if err != nil {
+			return err
+		}
+		llmRoutesRepo, err = data.NewLlmRoutesRepository(pool)
+		if err != nil {
+			return err
+		}
+		mcpConfigsRepo, err = data.NewMCPConfigsRepository(pool)
+		if err != nil {
+			return err
+		}
+
+		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
+		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
+		if keyRingErr == nil {
+			secretsRepo, err = data.NewSecretsRepository(pool, keyRing)
+			if err != nil {
+				return err
+			}
+		} else {
+			a.logger.Error("encryption key not configured, secrets disabled",
+				observability.LogFields{},
+				map[string]any{"reason": keyRingErr.Error()},
+			)
 		}
 	}
 
@@ -177,8 +236,11 @@ func (a *Application) Run(ctx context.Context) error {
 			MessageRepo:          messageRepo,
 			RunEventRepo:         runEventRepo,
 			AuditWriter:          auditWriter,
+			LlmCredentialsRepo:   llmCredRepo,
+			LlmRoutesRepo:        llmRoutesRepo,
+			SecretsRepo:          secretsRepo,
+			MCPConfigsRepo:       mcpConfigsRepo,
 			SSEConfig: apihttp.SSEConfig{
-				PollSeconds:      a.config.SSE.PollSeconds,
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,
 			},

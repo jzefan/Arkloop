@@ -171,8 +171,8 @@ func seedRunStarted(
 
 	_, err = pool.Exec(
 		context.Background(),
-		`INSERT INTO runs (id, org_id, thread_id, created_by_user_id, status, next_event_seq)
-		 VALUES ($1, $2, $3, NULL, 'running', 2)`,
+		`INSERT INTO runs (id, org_id, thread_id, created_by_user_id, status)
+		 VALUES ($1, $2, $3, NULL, 'running')`,
 		runID,
 		orgID,
 		threadID,
@@ -183,8 +183,8 @@ func seedRunStarted(
 
 	_, err = pool.Exec(
 		context.Background(),
-		`INSERT INTO run_events (run_id, seq, type, data_json)
-		 VALUES ($1, 1, 'run.started', $2::jsonb)`,
+		`INSERT INTO run_events (run_id, type, data_json)
+		 VALUES ($1, 'run.started', $2::jsonb)`,
 		runID,
 		string(encoded),
 	)
@@ -195,14 +195,10 @@ func seedRunCancelRequested(t *testing.T, pool *pgxpool.Pool, runID uuid.UUID) e
 	t.Helper()
 	_, err := pool.Exec(
 		context.Background(),
-		`INSERT INTO run_events (run_id, seq, type, data_json)
-		 VALUES ($1, 2, 'run.cancel_requested', '{}'::jsonb)`,
+		`INSERT INTO run_events (run_id, type, data_json)
+		 VALUES ($1, 'run.cancel_requested', '{}'::jsonb)`,
 		runID,
 	)
-	if err != nil {
-		return err
-	}
-	_, err = pool.Exec(context.Background(), `UPDATE runs SET next_event_seq = 3 WHERE id = $1`, runID)
 	return err
 }
 

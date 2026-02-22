@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/mcp"
@@ -10,14 +11,18 @@ import (
 	"arkloop/services/worker/internal/skills"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func ComposeNativeEngine(ctx context.Context) (*runengine.EngineV1, error) {
+// ComposeNativeEngine 组装原生运行引擎。
+// pool 不为 nil 时优先从数据库加载路由配置，若数据库无配置则回退到环境变量。
+func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool) (*runengine.EngineV1, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	routingCfg, err := routing.LoadRoutingConfigFromEnv()
+	routingCfg, err := loadRoutingConfig(ctx, pool)
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +44,7 @@ func ComposeNativeEngine(ctx context.Context) (*runengine.EngineV1, error) {
 	executors := builtin.Executors()
 	allLlmSpecs := builtin.LlmSpecs()
 
+	// 全局 MCP pool，用于 env-loaded 工具及 per-run org 工具的连接复用
 	mcpPool := mcp.NewPool()
 	mcpRegistration, err := mcp.DiscoverFromEnv(ctx, mcpPool)
 	if err != nil {
@@ -66,13 +72,28 @@ func ComposeNativeEngine(ctx context.Context) (*runengine.EngineV1, error) {
 	}
 
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
-		Router:                router,
-		StubGateway:           stubGateway,
-		EmitDebugEvents:       stubCfg.EmitDebugEvents,
-		ToolRegistry:          toolRegistry,
-		ToolExecutors:         executors,
-		AllLlmToolSpecs:       allLlmSpecs,
+		Router:                 router,
+		DBPool:                 pool,
+		StubGateway:            stubGateway,
+		EmitDebugEvents:        stubCfg.EmitDebugEvents,
+		ToolRegistry:           toolRegistry,
+		ToolExecutors:          executors,
+		AllLlmToolSpecs:        allLlmSpecs,
 		BaseToolAllowlistNames: baseAllowlistNames,
-		SkillRegistry:         skillRegistry,
+		SkillRegistry:          skillRegistry,
+		MCPPool:                mcpPool,
 	})
+}
+
+// loadRoutingConfig 优先从 DB 加载路由配置，无数据时回退到环境变量。
+func loadRoutingConfig(ctx context.Context, pool *pgxpool.Pool) (routing.ProviderRoutingConfig, error) {
+	if pool != nil {
+		dbCfg, err := routing.LoadRoutingConfigFromDB(ctx, pool)
+		if err != nil {
+			slog.WarnContext(ctx, "routing: db load failed, falling back to env", "err", err.Error())
+		} else if len(dbCfg.Routes) > 0 {
+			return dbCfg, nil
+		}
+	}
+	return routing.LoadRoutingConfigFromEnv()
 }

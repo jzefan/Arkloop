@@ -1,12 +1,18 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	workerCrypto "arkloop/services/worker/internal/crypto"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const mcpConfigFileEnv = "ARKLOOP_MCP_CONFIG_FILE"
@@ -15,13 +21,19 @@ const defaultCallTimeoutMs = 10000
 
 type ServerConfig struct {
 	ServerID         string
+	OrgID            string   // 用于 pool 隔离；全局（env 加载）工具为空字符串
+	Transport        string   // stdio / http_sse / streamable_http
+	// HTTP 传输字段
+	URL              string
+	BearerToken      *string
+	// stdio 传输字段
 	Command          string
 	Args             []string
 	Cwd              *string
 	Env              map[string]string
 	InheritParentEnv bool
+	// 通用
 	CallTimeoutMs    int
-	Transport        string
 }
 
 type Config struct {
@@ -117,7 +129,33 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 		return ServerConfig{}, fmt.Errorf("MCP server %q callTimeoutMs must be a positive integer", cleanedID)
 	}
 
-	if transport != "stdio" {
+	switch transport {
+	case "stdio":
+		// 下方继续解析 command/args 等字段
+	case "http_sse", "streamable_http":
+		url := strings.TrimSpace(asString(payload["url"]))
+		if url == "" {
+			return ServerConfig{}, fmt.Errorf("MCP server %q missing url for %s transport", cleanedID, transport)
+		}
+		var bearerToken *string
+		if raw, ok := payload["bearer_token"]; ok && raw != nil {
+			token, ok := raw.(string)
+			if !ok {
+				return ServerConfig{}, fmt.Errorf("MCP server %q bearer_token must be a string", cleanedID)
+			}
+			cleaned := strings.TrimSpace(token)
+			if cleaned != "" {
+				bearerToken = &cleaned
+			}
+		}
+		return ServerConfig{
+			ServerID:      cleanedID,
+			Transport:     transport,
+			URL:           url,
+			BearerToken:   bearerToken,
+			CallTimeoutMs: timeout,
+		}, nil
+	default:
 		return ServerConfig{}, fmt.Errorf("MCP server %q transport not supported: %s", cleanedID, transport)
 	}
 
@@ -194,6 +232,125 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 		CallTimeoutMs:    timeout,
 		Transport:        transport,
 	}, nil
+}
+
+// LoadConfigFromDB 按 org_id 从数据库加载 MCP 配置，JOIN secrets 解密 bearer token。
+// 返回 nil 表示该 org 没有活跃配置。
+func LoadConfigFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) (*Config, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("mcp: pool must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT m.id, m.name, m.transport, m.url, m.command,
+		       m.args_json, m.cwd, m.env_json, m.inherit_parent_env, m.call_timeout_ms,
+		       s.encrypted_value, s.key_version
+		FROM mcp_configs m
+		LEFT JOIN secrets s ON s.id = m.auth_secret_id
+		WHERE m.org_id = $1 AND m.is_active = TRUE
+		ORDER BY m.created_at ASC
+	`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: query db: %w", err)
+	}
+	defer rows.Close()
+
+	type rowData struct {
+		id               uuid.UUID
+		name             string
+		transport        string
+		url              *string
+		command          *string
+		argsJSON         []byte
+		cwd              *string
+		envJSON          []byte
+		inheritParentEnv bool
+		callTimeoutMs    int
+		encryptedValue   *string
+		keyVersion       *int
+	}
+
+	var allRows []rowData
+	for rows.Next() {
+		var rd rowData
+		if err := rows.Scan(
+			&rd.id, &rd.name, &rd.transport, &rd.url, &rd.command,
+			&rd.argsJSON, &rd.cwd, &rd.envJSON, &rd.inheritParentEnv, &rd.callTimeoutMs,
+			&rd.encryptedValue, &rd.keyVersion,
+		); err != nil {
+			return nil, fmt.Errorf("mcp: scan: %w", err)
+		}
+		allRows = append(allRows, rd)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mcp: rows: %w", err)
+	}
+	if len(allRows) == 0 {
+		return nil, nil
+	}
+
+	servers := make([]ServerConfig, 0, len(allRows))
+	for _, rd := range allRows {
+		server := ServerConfig{
+			ServerID:      rd.id.String(),
+			OrgID:         orgID.String(),
+			Transport:     rd.transport,
+			CallTimeoutMs: rd.callTimeoutMs,
+		}
+
+		if rd.encryptedValue != nil && rd.keyVersion != nil {
+			plainBytes, err := workerCrypto.DecryptGCM(*rd.encryptedValue)
+			if err != nil {
+				// 解密失败时跳过此配置，避免单个错误影响所有工具
+				continue
+			}
+			plaintext := string(plainBytes)
+			server.BearerToken = &plaintext
+		}
+
+		switch rd.transport {
+		case "http_sse", "streamable_http":
+			if rd.url == nil {
+				continue
+			}
+			server.URL = *rd.url
+		case "stdio":
+			if rd.command == nil {
+				continue
+			}
+			server.Command = *rd.command
+
+			var args []string
+			if len(rd.argsJSON) > 0 {
+				_ = json.Unmarshal(rd.argsJSON, &args)
+			}
+			server.Args = args
+
+			server.Cwd = rd.cwd
+			server.InheritParentEnv = rd.inheritParentEnv
+
+			env := map[string]string{}
+			if len(rd.envJSON) > 0 {
+				var rawEnv map[string]string
+				if err := json.Unmarshal(rd.envJSON, &rawEnv); err == nil {
+					env = rawEnv
+				}
+			}
+			server.Env = env
+		default:
+			continue
+		}
+
+		servers = append(servers, server)
+	}
+
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	return &Config{Servers: servers}, nil
 }
 
 func asString(value any) string {

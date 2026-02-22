@@ -156,34 +156,46 @@ func initRunsSchema(t *testing.T, dsn string) error {
 	defer conn.Close(context.Background())
 
 	statements := []string{
+		`CREATE SEQUENCE run_events_seq_global START 1`,
 		`CREATE TABLE runs (
-			id UUID PRIMARY KEY,
-			org_id UUID NOT NULL,
-			thread_id UUID NOT NULL,
-			created_by_user_id UUID NULL,
-			status TEXT NOT NULL DEFAULT 'running',
-			next_event_seq BIGINT NOT NULL DEFAULT 1,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+			id                 UUID        PRIMARY KEY,
+			org_id             UUID        NOT NULL,
+			thread_id          UUID        NOT NULL,
+			created_by_user_id UUID        NULL,
+			status             TEXT        NOT NULL DEFAULT 'running',
+			status_updated_at  TIMESTAMPTZ NULL,
+			completed_at       TIMESTAMPTZ NULL,
+			failed_at          TIMESTAMPTZ NULL,
+			duration_ms        BIGINT      NULL,
+			total_input_tokens BIGINT      NULL,
+			total_output_tokens BIGINT     NULL,
+			total_cost_usd     NUMERIC     NULL,
+			model              TEXT        NULL,
+			skill_id           TEXT        NULL,
+			deleted_at         TIMESTAMPTZ NULL,
+			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE TABLE run_events (
-			event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			run_id UUID NOT NULL,
-			seq BIGINT NOT NULL,
-			ts TIMESTAMPTZ NOT NULL DEFAULT now(),
-			type TEXT NOT NULL,
-			data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-			tool_name TEXT NULL,
-			error_class TEXT NULL,
+			event_id    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			run_id      UUID        NOT NULL,
+			seq         BIGINT      NOT NULL DEFAULT nextval('run_events_seq_global'),
+			ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+			type        TEXT        NOT NULL,
+			data_json   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			tool_name   TEXT        NULL,
+			error_class TEXT        NULL,
 			CONSTRAINT uq_run_events_run_id_seq UNIQUE (run_id, seq)
 		)`,
 		`CREATE TABLE messages (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			org_id UUID NOT NULL,
-			thread_id UUID NOT NULL,
-			created_by_user_id UUID NULL,
-			role TEXT NOT NULL,
-			content TEXT NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+			id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id             UUID        NOT NULL,
+			thread_id          UUID        NOT NULL,
+			created_by_user_id UUID        NULL,
+			role               TEXT        NOT NULL,
+			content            TEXT        NOT NULL,
+			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
+			deleted_at         TIMESTAMPTZ NULL,
+			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 	}
 
