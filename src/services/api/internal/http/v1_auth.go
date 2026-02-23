@@ -10,6 +10,7 @@ import (
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
@@ -42,9 +43,10 @@ type registerResponse struct {
 }
 
 type meResponse struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	CreatedAt   string `json:"created_at"`
+	ID          string   `json:"id"`
+	DisplayName string   `json:"display_name"`
+	CreatedAt   string   `json:"created_at"`
+	Permissions []string `json:"permissions"`
 }
 
 func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -238,7 +240,7 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 	}
 }
 
-func me(authService *auth.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
 			writeMethodNotAllowed(w, r)
@@ -256,10 +258,21 @@ func me(authService *auth.Service) func(nethttp.ResponseWriter, *nethttp.Request
 			return
 		}
 
+		var permissions []string
+		if membershipRepo != nil {
+			if membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID); err == nil && membership != nil {
+				permissions = auth.PermissionsForRole(membership.Role)
+			}
+		}
+		if permissions == nil {
+			permissions = []string{}
+		}
+
 		writeJSON(w, traceID, nethttp.StatusOK, meResponse{
 			ID:          user.ID.String(),
 			DisplayName: user.DisplayName,
 			CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
+			Permissions: permissions,
 		})
 	}
 }

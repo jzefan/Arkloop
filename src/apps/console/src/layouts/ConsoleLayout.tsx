@@ -1,6 +1,15 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { ClipboardList, Play, Cpu, Building2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import {
+  Play, Bell, ClipboardList,
+  KeyRound, Bot, FileText, Plug, Sparkles,
+  Key, Webhook,
+  ShieldCheck,
+  Users, UsersRound, FolderOpen,
+  Package, Receipt, BadgeCheck, BarChart3,
+  Flag,
+  PanelLeftClose, PanelLeftOpen, ChevronDown,
+} from 'lucide-react'
 import { getMe, logout, isApiError, type MeResponse } from '../api'
 
 type Props = {
@@ -11,14 +20,77 @@ type Props = {
 type NavItem = {
   label: string
   path: string
-  icon: React.ReactNode
+  icon: ReactNode
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Audit', path: '/audit', icon: <ClipboardList size={17} /> },
-  { label: 'Runs', path: '/runs', icon: <Play size={17} /> },
-  { label: 'Providers', path: '/providers', icon: <Cpu size={17} /> },
-  { label: 'Orgs', path: '/orgs', icon: <Building2 size={17} /> },
+type NavGroup = {
+  id: string
+  label: string
+  items: NavItem[]
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'operations',
+    label: 'Operations',
+    items: [
+      { label: 'Runs', path: '/runs', icon: <Play size={17} /> },
+      { label: 'Notifications', path: '/notifications', icon: <Bell size={17} /> },
+      { label: 'Audit Logs', path: '/audit', icon: <ClipboardList size={17} /> },
+    ],
+  },
+  {
+    id: 'configuration',
+    label: 'Configuration',
+    items: [
+      { label: 'LLM Credentials', path: '/credentials', icon: <KeyRound size={17} /> },
+      { label: 'Agent Configs', path: '/agent-configs', icon: <Bot size={17} /> },
+      { label: 'Prompt Templates', path: '/prompt-templates', icon: <FileText size={17} /> },
+      { label: 'MCP Configs', path: '/mcp-configs', icon: <Plug size={17} /> },
+      { label: 'Skills', path: '/skills', icon: <Sparkles size={17} /> },
+    ],
+  },
+  {
+    id: 'integration',
+    label: 'Integration',
+    items: [
+      { label: 'API Keys', path: '/api-keys', icon: <Key size={17} /> },
+      { label: 'Webhooks', path: '/webhooks', icon: <Webhook size={17} /> },
+    ],
+  },
+  {
+    id: 'security',
+    label: 'Security',
+    items: [
+      { label: 'IP Rules', path: '/ip-rules', icon: <ShieldCheck size={17} /> },
+    ],
+  },
+  {
+    id: 'organization',
+    label: 'Organization',
+    items: [
+      { label: 'Members', path: '/members', icon: <Users size={17} /> },
+      { label: 'Teams', path: '/teams', icon: <UsersRound size={17} /> },
+      { label: 'Projects', path: '/projects', icon: <FolderOpen size={17} /> },
+    ],
+  },
+  {
+    id: 'billing',
+    label: 'Billing',
+    items: [
+      { label: 'Plans', path: '/plans', icon: <Package size={17} /> },
+      { label: 'Subscriptions', path: '/subscriptions', icon: <Receipt size={17} /> },
+      { label: 'Entitlements', path: '/entitlements', icon: <BadgeCheck size={17} /> },
+      { label: 'Usage', path: '/usage', icon: <BarChart3 size={17} /> },
+    ],
+  },
+  {
+    id: 'platform',
+    label: 'Platform',
+    items: [
+      { label: 'Feature Flags', path: '/feature-flags', icon: <Flag size={17} /> },
+    ],
+  },
 ]
 
 export type ConsoleOutletContext = {
@@ -31,7 +103,9 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
   const [me, setMe] = useState<MeResponse | null>(null)
+  const [meLoaded, setMeLoaded] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -50,6 +124,8 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
         if (isApiError(err) && err.status === 401) {
           onLoggedOut()
         }
+      } finally {
+        if (mountedRef.current) setMeLoaded(true)
       }
     })()
   }, [accessToken, onLoggedOut])
@@ -63,9 +139,45 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
     onLoggedOut()
   }, [accessToken, onLoggedOut])
 
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) {
+        next.delete(groupId)
+      } else {
+        next.add(groupId)
+      }
+      return next
+    })
+  }, [])
+
   const userInitial = me?.display_name?.charAt(0).toUpperCase() ?? '?'
 
   const context: ConsoleOutletContext = { accessToken, onLoggedOut, me }
+
+  if (!meLoaded) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--c-bg-page)]">
+        <span className="text-sm text-[var(--c-text-muted)]">Loading...</span>
+      </div>
+    )
+  }
+
+  if (!me?.permissions?.includes('platform.admin')) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[var(--c-bg-page)]">
+        <ShieldCheck size={32} className="text-[var(--c-text-muted)]" />
+        <p className="text-sm font-medium text-[var(--c-text-secondary)]">Access denied</p>
+        <p className="text-xs text-[var(--c-text-muted)]">Your account does not have platform admin access.</p>
+        <button
+          onClick={onLoggedOut}
+          className="mt-2 text-xs text-[var(--c-text-muted)] underline hover:opacity-70"
+        >
+          Sign out
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--c-bg-page)]">
@@ -100,26 +212,54 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
           </button>
         </div>
 
-        {/* 导航 */}
-        <nav className="flex flex-col gap-[3px] p-2">
-          {NAV_ITEMS.map((item) => {
-            const active = location.pathname.startsWith(item.path)
+        <nav className="flex-1 overflow-y-auto p-2">
+          {NAV_GROUPS.map((group, groupIdx) => {
+            const collapsed = collapsedGroups.has(group.id)
             return (
-              <button
-                key={item.path}
-                onClick={() => navigate(item.path)}
-                className={[
-                  'flex h-[30px] items-center gap-[11px] rounded-[5px] px-2 py-[7px] text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-[var(--c-bg-sub)] text-[var(--c-text-primary)]'
-                    : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]',
-                ].join(' ')}
-              >
-                <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
-              </button>
+              <div key={group.id}>
+                {groupIdx > 0 && (
+                  <div className="mx-2 my-2 border-t border-[var(--c-border-console)]" />
+                )}
+                <button
+                  onClick={() => toggleGroup(group.id)}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5"
+                >
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
+                    {group.label}
+                  </span>
+                  <ChevronDown
+                    size={12}
+                    className={[
+                      'text-[var(--c-text-muted)] transition-transform',
+                      collapsed ? '-rotate-90' : '',
+                    ].join(' ')}
+                  />
+                </button>
+                {!collapsed && (
+                  <div className="flex flex-col gap-[3px]">
+                    {group.items.map((item) => {
+                      const active = location.pathname.startsWith(item.path)
+                      return (
+                        <button
+                          key={item.path}
+                          onClick={() => navigate(item.path)}
+                          className={[
+                            'flex h-[30px] items-center gap-[11px] rounded-[5px] px-2 py-[7px] text-sm font-medium transition-colors',
+                            active
+                              ? 'bg-[var(--c-bg-sub)] text-[var(--c-text-primary)]'
+                              : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]',
+                          ].join(' ')}
+                        >
+                          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
+                            {item.icon}
+                          </span>
+                          <span>{item.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             )
           })}
         </nav>

@@ -319,6 +319,12 @@ func (a *Application) Run(ctx context.Context) error {
 		if auditRepo != nil {
 			auditWriter = audit.NewWriter(auditRepo, membershipRepo, a.logger)
 		}
+
+		if login := strings.TrimSpace(a.config.BootstrapPlatformAdmin); login != "" {
+			if err := bootstrapPlatformAdmin(ctx, credentialRepo, membershipRepo, login, a.logger); err != nil {
+				a.logger.Error("bootstrap platform admin failed", observability.LogFields{}, map[string]any{"login": login, "error": err.Error()})
+			}
+		}
 	}
 
 	listener, err := net.Listen("tcp", a.config.Addr)
@@ -400,4 +406,27 @@ func (a *Application) Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// bootstrapPlatformAdmin 将指定 login 的用户提升为 platform_admin。
+// 幂等：每次启动都会确认，若已是 platform_admin 则 SQL UPDATE 无实际变化。
+func bootstrapPlatformAdmin(
+	ctx context.Context,
+	credRepo *data.UserCredentialRepository,
+	membershipRepo *data.OrgMembershipRepository,
+	login string,
+	logger *observability.JSONLogger,
+) error {
+	cred, err := credRepo.GetByLogin(ctx, login)
+	if err != nil {
+		return fmt.Errorf("lookup credential: %w", err)
+	}
+	if cred == nil {
+		return fmt.Errorf("login %q not found", login)
+	}
+	if err := membershipRepo.SetRoleForUser(ctx, cred.UserID, "platform_admin"); err != nil {
+		return fmt.Errorf("set role: %w", err)
+	}
+	logger.Info("platform_admin promoted", observability.LogFields{}, map[string]any{"login": login})
+	return nil
 }
