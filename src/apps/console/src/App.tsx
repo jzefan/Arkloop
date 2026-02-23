@@ -5,7 +5,7 @@ import { PageHeader } from './components/PageHeader'
 import { AuthPage } from './pages/AuthPage'
 import { AuditPage } from './pages/AuditPage'
 import { RunsPage } from './pages/RunsPage'
-import { ProvidersPage } from './pages/ProvidersPage'
+import { CredentialsPage } from './pages/credentials/CredentialsPage'
 import { OrgsPage } from './pages/OrgsPage'
 import {
   readAccessTokenFromStorage,
@@ -51,7 +51,7 @@ function App() {
         <Route path="runs" element={<RunsPage />} />
         <Route path="audit" element={<AuditPage />} />
         {/* Configuration */}
-        <Route path="credentials" element={<ProvidersPage />} />
+        <Route path="credentials" element={<CredentialsPage />} />
         <Route path="agent-configs" element={<PlaceholderPage title="Agent Configs" />} />
         <Route path="prompt-templates" element={<PlaceholderPage title="Prompt Templates" />} />
         <Route path="mcp-configs" element={<PlaceholderPage title="MCP Configs" />} />
