@@ -356,16 +356,19 @@ type createAgentConfigRequest struct {
 }
 
 type updateAgentConfigRequest struct {
-	Name                   *string  `json:"name"`
-	SystemPromptTemplateID *string  `json:"system_prompt_template_id"`
-	SystemPromptOverride   *string  `json:"system_prompt_override"`
-	Model                  *string  `json:"model"`
-	Temperature            *float64 `json:"temperature"`
-	MaxOutputTokens        *int     `json:"max_output_tokens"`
-	TopP                   *float64 `json:"top_p"`
-	ContextWindowLimit     *int     `json:"context_window_limit"`
-	ToolPolicy             *string  `json:"tool_policy"`
-	IsDefault              *bool    `json:"is_default"`
+	Name                   *string   `json:"name"`
+	SystemPromptTemplateID *string   `json:"system_prompt_template_id"`
+	SystemPromptOverride   *string   `json:"system_prompt_override"`
+	Model                  *string   `json:"model"`
+	Temperature            *float64  `json:"temperature"`
+	MaxOutputTokens        *int      `json:"max_output_tokens"`
+	TopP                   *float64  `json:"top_p"`
+	ContextWindowLimit     *int      `json:"context_window_limit"`
+	ToolPolicy             *string   `json:"tool_policy"`
+	ToolAllowlist          *[]string `json:"tool_allowlist"`
+	ToolDenylist           *[]string `json:"tool_denylist"`
+	ContentFilterLevel     *string   `json:"content_filter_level"`
+	IsDefault              *bool     `json:"is_default"`
 }
 
 func agentConfigsEntry(
@@ -413,6 +416,8 @@ func agentConfigEntry(
 			getAgentConfig(w, r, traceID, id, authService, membershipRepo, agentConfigRepo, apiKeysRepo)
 		case nethttp.MethodPatch:
 			updateAgentConfig(w, r, traceID, id, authService, membershipRepo, agentConfigRepo, apiKeysRepo)
+		case nethttp.MethodDelete:
+			deleteAgentConfig(w, r, traceID, id, authService, membershipRepo, agentConfigRepo, apiKeysRepo)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -590,7 +595,9 @@ func updateAgentConfig(
 	}
 	if req.Name == nil && req.SystemPromptTemplateID == nil && req.SystemPromptOverride == nil &&
 		req.Model == nil && req.Temperature == nil && req.MaxOutputTokens == nil &&
-		req.TopP == nil && req.ContextWindowLimit == nil && req.ToolPolicy == nil && req.IsDefault == nil {
+		req.TopP == nil && req.ContextWindowLimit == nil && req.ToolPolicy == nil &&
+		req.ToolAllowlist == nil && req.ToolDenylist == nil && req.ContentFilterLevel == nil &&
+		req.IsDefault == nil {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "no fields to update", traceID, nil)
 		return
 	}
@@ -649,6 +656,18 @@ func updateAgentConfig(
 		fields.SetToolPolicy = true
 		fields.ToolPolicy = *req.ToolPolicy
 	}
+	if req.ToolAllowlist != nil {
+		fields.SetToolAllowlist = true
+		fields.ToolAllowlist = *req.ToolAllowlist
+	}
+	if req.ToolDenylist != nil {
+		fields.SetToolDenylist = true
+		fields.ToolDenylist = *req.ToolDenylist
+	}
+	if req.ContentFilterLevel != nil {
+		fields.SetContentFilterLevel = true
+		fields.ContentFilterLevel = *req.ContentFilterLevel
+	}
 	if req.IsDefault != nil {
 		fields.SetIsDefault = true
 		fields.IsDefault = *req.IsDefault
@@ -666,6 +685,51 @@ func updateAgentConfig(
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, toAgentConfigResponse(*updated))
+}
+
+func deleteAgentConfig(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	id uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	agentConfigRepo *data.AgentConfigRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) {
+	if authService == nil {
+		writeAuthNotConfigured(w, traceID)
+		return
+	}
+	if agentConfigRepo == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+	if !ok {
+		return
+	}
+	if !requirePerm(actor, auth.PermDataAgentConfigsManage, w, traceID) {
+		return
+	}
+
+	existing, err := agentConfigRepo.GetByID(r.Context(), id)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if existing == nil || existing.OrgID != actor.OrgID {
+		WriteError(w, nethttp.StatusNotFound, "agent_configs.not_found", "agent config not found", traceID, nil)
+		return
+	}
+
+	if err := agentConfigRepo.Delete(r.Context(), id, actor.OrgID); err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
 }
 
 func toCreateAgentConfigRequest(req createAgentConfigRequest) (data.CreateAgentConfigRequest, error) {
