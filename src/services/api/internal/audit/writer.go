@@ -644,6 +644,72 @@ func (w *Writer) WriteReferralCreated(
 	}
 }
 
+func (w *Writer) WriteRedemptionCodeBatchCreated(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	batchID string,
+	count int,
+	codeType string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "redemption_code_batch"
+	targetID := batchID
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		ActorUserID: &actorUserID,
+		Action:      "redemption_codes.batch_create",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata: map[string]any{
+			"count": count,
+			"type":  codeType,
+		},
+	}); err != nil {
+		w.logError(traceID, "failed to write redemption_code-batch-created audit log", err)
+	}
+}
+
+func (w *Writer) WriteRedemptionCodeRedeemed(
+	ctx context.Context,
+	traceID string,
+	orgID uuid.UUID,
+	userID uuid.UUID,
+	codeID uuid.UUID,
+	codeType string,
+	value string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "redemption_code"
+	targetID := codeID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       &orgID,
+		ActorUserID: &userID,
+		Action:      "redemption_codes.redeem",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata: map[string]any{
+			"type":  codeType,
+			"value": value,
+		},
+	}); err != nil {
+		w.logError(traceID, "failed to write redemption_code-redeemed audit log", err)
+	}
+}
+
 func (w *Writer) logError(traceID string, msg string, err error) {
 	if w == nil || w.logger == nil || err == nil {
 		return
