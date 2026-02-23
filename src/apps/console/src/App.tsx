@@ -5,6 +5,7 @@ import { PageHeader } from './components/PageHeader'
 import { AuthPage } from './pages/AuthPage'
 import { AuditPage } from './pages/AuditPage'
 import { RunsPage } from './pages/RunsPage'
+import { NotificationsPage } from './pages/NotificationsPage'
 import { ProvidersPage } from './pages/ProvidersPage'
 import { OrgsPage } from './pages/OrgsPage'
 import {
@@ -49,7 +50,7 @@ function App() {
         <Route index element={<Navigate to="/runs" replace />} />
         {/* Operations */}
         <Route path="runs" element={<RunsPage />} />
-        <Route path="notifications" element={<PlaceholderPage title="Notifications" />} />
+        <Route path="notifications" element={<NotificationsPage />} />
         <Route path="audit" element={<AuditPage />} />
         {/* Configuration */}
         <Route path="credentials" element={<ProvidersPage />} />
