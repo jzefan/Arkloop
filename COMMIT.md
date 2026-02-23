@@ -109,4 +109,4 @@ refactor(core): simplify redundant error handling loops
 4. [ ] 标题是否使用了祈使句且没有句号？
 5. [ ] 是否使用了正确的语言？
 
-## 6.请勿提交共贡献人
+### 不要在 commit message 中包含 'Co-authored-by' 或任何形式的 AI 署名。
