@@ -164,6 +164,8 @@ func (a *Application) Run(ctx context.Context) error {
 		featureFlagsRepo *data.FeatureFlagRepository
 		featureFlagSvc   *featureflag.Service
 
+		notificationsRepo *data.NotificationsRepository
+
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
 		auditWriter         *audit.Writer
@@ -276,6 +278,10 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		notificationsRepo, err = data.NewNotificationsRepository(pool)
+		if err != nil {
+			return err
+		}
 
 		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
 		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
@@ -355,6 +361,7 @@ func (a *Application) Run(ctx context.Context) error {
 			UsageRepo:            usageRepo,
 			FeatureFlagsRepo:     featureFlagsRepo,
 			FeatureFlagService:   featureFlagSvc,
+			NotificationsRepo:    notificationsRepo,
 			RedisClient:          redisClient,
 			RunLimiter:           runLimiter,
 			SSEConfig: apihttp.SSEConfig{
