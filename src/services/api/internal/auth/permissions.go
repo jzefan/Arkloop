@@ -24,6 +24,7 @@ const (
 	PermDataAgentConfigsManage = "data.agent_configs.manage"
 	PermDataSubscriptionsRead  = "data.subscriptions.read"
 	PermDataUsageRead          = "data.usage.read"
+	PermOrgAuditRead           = "org.audit_read"
 
 	PermPlatformPlansManage         = "platform.plans.manage"
 	PermPlatformSubscriptionsManage = "platform.subscriptions.manage"
