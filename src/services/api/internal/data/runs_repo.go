@@ -533,3 +533,33 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 	}
 	return runs, total, nil
 }
+
+func (r *RunEventRepository) CountAll(ctx context.Context) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var count int64
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM runs WHERE deleted_at IS NULL`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("runs.CountAll: %w", err)
+	}
+	return count, nil
+}
+
+func (r *RunEventRepository) CountSince(ctx context.Context, since time.Time) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var count int64
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM runs WHERE deleted_at IS NULL AND created_at >= $1`,
+		since.UTC(),
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("runs.CountSince: %w", err)
+	}
+	return count, nil
+}

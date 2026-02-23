@@ -112,3 +112,34 @@ func (r *UsageRepository) GetMonthlyUsage(
 	}
 	return summary, nil
 }
+
+// GlobalUsageSummary 全局用量聚合（跨所有 org）。
+type GlobalUsageSummary struct {
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCostUSD      float64
+}
+
+func (r *UsageRepository) GetGlobalSummary(ctx context.Context) (*GlobalUsageSummary, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	summary := &GlobalUsageSummary{}
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0)
+		 FROM usage_records`,
+	).Scan(
+		&summary.TotalInputTokens,
+		&summary.TotalOutputTokens,
+		&summary.TotalCostUSD,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetGlobalSummary: %w", err)
+	}
+	return summary, nil
+}
