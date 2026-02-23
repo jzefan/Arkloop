@@ -497,6 +497,38 @@ func (w *Writer) WriteOrgInvitationRevoked(
 	}
 }
 
+func (w *Writer) WriteUserStatusChanged(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetUserID uuid.UUID,
+	oldStatus string,
+	newStatus string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	targetType := "user"
+	targetID := targetUserID.String()
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		ActorUserID: &actorUserID,
+		Action:      "users.status_changed",
+		TargetType:  &targetType,
+		TargetID:    &targetID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata: map[string]any{
+			"old_status": oldStatus,
+			"new_status": newStatus,
+		},
+	}); err != nil {
+		w.logError(traceID, "failed to write user-status-changed audit log", err)
+	}
+}
+
 func (w *Writer) logError(traceID string, msg string, err error) {
 	if w == nil || w.logger == nil || err == nil {
 		return

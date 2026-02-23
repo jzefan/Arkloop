@@ -280,6 +280,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		adminDashboard(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.RunEventRepo, cfg.UsageRepo, cfg.OrgRepo, cfg.APIKeysRepo),
 	)
 
+	mux.HandleFunc(
+		"/v1/admin/users",
+		adminUsersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/users/",
+		adminUserEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.AuditWriter),
+	)
+
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		WriteError(w, nethttp.StatusNotFound, "http.method_not_allowed", "Not Found", traceID, nil)
