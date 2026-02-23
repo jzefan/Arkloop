@@ -70,7 +70,8 @@ type HandlerConfig struct {
 	InviteCodesRepo *data.InviteCodeRepository
 	ReferralsRepo   *data.ReferralRepository
 
-	CreditsRepo *data.CreditsRepository
+	CreditsRepo         *data.CreditsRepository
+	RedemptionCodesRepo *data.RedemptionCodesRepository
 
 	UsersRepo *data.UserRepository
 	OrgRepo   *data.OrgRepository
@@ -330,6 +331,23 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/admin/credits",
 		adminCreditsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+	)
+
+	mux.HandleFunc(
+		"/v1/admin/redemption-codes/batch",
+		adminRedemptionCodesBatch(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool),
+	)
+	mux.HandleFunc(
+		"/v1/admin/redemption-codes/",
+		adminRedemptionCodeEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/redemption-codes",
+		adminRedemptionCodesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/me/redeem",
+		meRedeem(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
