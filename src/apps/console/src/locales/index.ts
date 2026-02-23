@@ -148,6 +148,42 @@ export interface LocaleStrings {
       toastSaveFailed: string
       toastDeleteFailed: string
     }
+    promptTemplates: {
+      title: string
+      addTemplate: string
+      // table columns
+      colName: string
+      colIsDefault: string
+      colVersion: string
+      colVariablesCount: string
+      colCreatedAt: string
+      // empty state
+      empty: string
+      // create/edit modal
+      modalTitleCreate: string
+      modalTitleEdit: string
+      fieldName: string
+      fieldContent: string
+      fieldVariables: string
+      fieldIsDefault: string
+      // buttons
+      cancel: string
+      create: string
+      save: string
+      // delete dialog
+      deleteTitle: string
+      deleteMessage: (name: string) => string
+      deleteConfirm: string
+      // errors
+      errRequired: string
+      // toasts
+      toastCreated: string
+      toastUpdated: string
+      toastDeleted: string
+      toastLoadFailed: string
+      toastSaveFailed: string
+      toastDeleteFailed: string
+    }
   }
 }
 

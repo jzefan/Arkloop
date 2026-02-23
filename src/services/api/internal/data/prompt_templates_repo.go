@@ -160,6 +160,18 @@ func (r *PromptTemplateRepository) Update(ctx context.Context, id uuid.UUID, org
 	return &pt, nil
 }
 
+func (r *PromptTemplateRepository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+	_, err := r.db.Exec(
+		ctx,
+		`DELETE FROM prompt_templates WHERE id = $1 AND org_id = $2`,
+		id, orgID,
+	)
+	if err != nil {
+		return fmt.Errorf("prompt_templates.Delete: %w", err)
+	}
+	return nil
+}
+
 // variablesToJSON 将字符串切片序列化为 JSON 数组字符串，供 JSONB 列使用。
 func variablesToJSON(vars []string) string {
 	if len(vars) == 0 {
