@@ -8,6 +8,7 @@ import {
   ShieldBan,
   ShieldCheck,
   Pencil,
+  Trash2,
 } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
@@ -24,6 +25,8 @@ import {
   getAdminUser,
   updateAdminUserStatus,
   updateAdminUser,
+  adjustAdminCredits,
+  deleteAdminUser,
   type AdminUser,
   type AdminUserDetail,
 } from '../../api/admin-users'
@@ -68,6 +71,10 @@ export function UsersPage() {
   const [statusTarget, setStatusTarget] = useState<AdminUser | null>(null)
   const [statusChanging, setStatusChanging] = useState(false)
 
+  // delete
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   // edit modal
   const [editTarget, setEditTarget] = useState<AdminUserDetail | null>(null)
   const [editForm, setEditForm] = useState({
@@ -79,6 +86,12 @@ export function UsersPage() {
   })
   const [editError, setEditError] = useState('')
   const [editing, setEditing] = useState(false)
+
+  // credit adjust modal
+  const [creditTarget, setCreditTarget] = useState<{ orgID: string; displayName: string } | null>(null)
+  const [creditForm, setCreditForm] = useState({ amount: '', note: '' })
+  const [creditError, setCreditError] = useState('')
+  const [creditAdjusting, setCreditAdjusting] = useState(false)
 
   const fetchUsers = useCallback(
     async (q: string, status: string) => {
@@ -186,6 +199,25 @@ export function UsersPage() {
     }
   }, [statusTarget, accessToken, addToast, tc])
 
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteAdminUser(deleteTarget.id, accessToken)
+      addToast(tc.toastDeleted, 'success')
+      setDeleteTarget(null)
+      setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id))
+      if (expandedId === deleteTarget.id) {
+        setExpandedId(null)
+        setDetail(null)
+      }
+    } catch (err) {
+      addToast(isApiError(err) ? err.message : tc.toastDeleteFailed, 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }, [deleteTarget, accessToken, addToast, expandedId, tc])
+
   const handleOpenEdit = useCallback((d: AdminUserDetail) => {
     setEditTarget(d)
     setEditForm({
@@ -197,6 +229,44 @@ export function UsersPage() {
     })
     setEditError('')
   }, [])
+
+  const handleOpenCredit = useCallback((d: AdminUserDetail) => {
+    const orgID = d.orgs[0]?.org_id
+    if (!orgID) return
+    setCreditTarget({ orgID, displayName: d.display_name })
+    setCreditForm({ amount: '', note: '' })
+    setCreditError('')
+  }, [])
+
+  const handleCloseCredit = useCallback(() => {
+    if (creditAdjusting) return
+    setCreditTarget(null)
+  }, [creditAdjusting])
+
+  const handleSaveCredit = useCallback(async () => {
+    if (!creditTarget) return
+    const amount = parseInt(creditForm.amount, 10)
+    if (!creditForm.amount || isNaN(amount) || amount === 0) {
+      setCreditError(tc.creditAdjustErrAmount)
+      return
+    }
+    const note = creditForm.note.trim()
+    if (!note) {
+      setCreditError(tc.creditAdjustErrNote)
+      return
+    }
+    setCreditAdjusting(true)
+    setCreditError('')
+    try {
+      await adjustAdminCredits({ org_id: creditTarget.orgID, amount, note }, accessToken)
+      addToast(tc.toastCreditAdjusted, 'success')
+      setCreditTarget(null)
+    } catch (err) {
+      setCreditError(isApiError(err) ? err.message : tc.toastCreditAdjustFailed)
+    } finally {
+      setCreditAdjusting(false)
+    }
+  }, [creditTarget, creditForm, accessToken, addToast, tc])
 
   const handleCloseEdit = useCallback(() => {
     if (editing) return
@@ -296,6 +366,7 @@ export function UsersPage() {
                 <tr className="border-b border-[var(--c-border-console)]">
                   <th className={thCls} />
                   <th className={thCls}>{tc.colId}</th>
+                  <th className={thCls}>{tc.colLogin}</th>
                   <th className={thCls}>{tc.colDisplayName}</th>
                   <th className={thCls}>{tc.colEmail}</th>
                   <th className={thCls}>{tc.colStatus}</th>
@@ -318,7 +389,9 @@ export function UsersPage() {
                       tc={tc}
                       onToggleExpand={() => void handleToggleExpand(user.id)}
                       onStatusAction={() => setStatusTarget(user)}
+                      onDelete={() => setDeleteTarget(user)}
                       onEdit={handleOpenEdit}
+                      onCredit={handleOpenCredit}
                     />
                   )
                 })}
@@ -354,6 +427,16 @@ export function UsersPage() {
         }
         confirmLabel={isSuspendAction ? tc.suspendConfirm : tc.activateConfirm}
         loading={statusChanging}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => { if (!deleting) setDeleteTarget(null) }}
+        onConfirm={handleDelete}
+        title={tc.deleteTitle}
+        message={tc.deleteMessage(deleteTarget?.display_name ?? '')}
+        confirmLabel={tc.deleteConfirm}
+        loading={deleting}
       />
 
       {/* Edit User Modal */}
@@ -439,6 +522,61 @@ export function UsersPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Credit Adjust Modal */}
+      <Modal
+        open={creditTarget !== null}
+        onClose={handleCloseCredit}
+        title={tc.creditAdjustTitle}
+        width="360px"
+      >
+        <div className="flex flex-col gap-4">
+          <FormField label={tc.creditAdjustAmount}>
+            <input
+              type="number"
+              value={creditForm.amount}
+              onChange={(e) => {
+                setCreditForm((f) => ({ ...f, amount: e.target.value }))
+                setCreditError('')
+              }}
+              className={inputCls}
+              placeholder="+100 或 -50"
+              autoFocus
+            />
+          </FormField>
+          <FormField label={tc.creditAdjustNote}>
+            <input
+              type="text"
+              value={creditForm.note}
+              onChange={(e) => {
+                setCreditForm((f) => ({ ...f, note: e.target.value }))
+                setCreditError('')
+              }}
+              className={inputCls}
+              placeholder={tc.creditAdjustNotePlaceholder}
+            />
+          </FormField>
+          {creditError && (
+            <p className="text-xs text-[var(--c-status-error-text)]">{creditError}</p>
+          )}
+          <div className="flex justify-end gap-2 border-t border-[var(--c-border)] pt-3">
+            <button
+              onClick={handleCloseCredit}
+              disabled={creditAdjusting}
+              className="rounded-lg border border-[var(--c-border)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
+            >
+              {tc.creditAdjustCancel}
+            </button>
+            <button
+              onClick={() => void handleSaveCredit()}
+              disabled={creditAdjusting}
+              className="rounded-lg bg-[var(--c-bg-tag)] px-3.5 py-1.5 text-sm font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
+            >
+              {creditAdjusting ? '...' : tc.creditAdjustConfirm}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -452,7 +590,9 @@ type UserRowProps = {
   tc: ReturnType<typeof import('../../contexts/LocaleContext').useLocale>['t']['pages']['users']
   onToggleExpand: () => void
   onStatusAction: () => void
+  onDelete: () => void
   onEdit: (detail: AdminUserDetail) => void
+  onCredit: (detail: AdminUserDetail) => void
 }
 
 function UserRow({
@@ -464,7 +604,9 @@ function UserRow({
   tc,
   onToggleExpand,
   onStatusAction,
+  onDelete,
   onEdit,
+  onCredit,
 }: UserRowProps) {
   const shortId = user.id.split('-')[0]
   const detailRef = useRef<HTMLDivElement>(null)
@@ -519,6 +661,9 @@ function UserRow({
           </span>
         </td>
         <td className={tdCls}>
+          <span className="font-mono text-xs text-[var(--c-text-secondary)]">{user.login ?? '--'}</span>
+        </td>
+        <td className={tdCls}>
           <span className="font-medium text-[var(--c-text-primary)]">{user.display_name}</span>
         </td>
         <td className={tdCls}>
@@ -553,11 +698,18 @@ function UserRow({
             >
               {user.status === 'active' ? <ShieldBan size={14} /> : <ShieldCheck size={14} />}
             </button>
+            <button
+              onClick={onDelete}
+              className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-red-500"
+              title={tc.deleteTitle}
+            >
+              <Trash2 size={14} />
+            </button>
           </div>
         </td>
       </tr>
       <tr>
-        <td colSpan={8} className="p-0">
+        <td colSpan={9} className="p-0">
           <div
             ref={detailRef}
             className="overflow-hidden transition-[max-height] duration-200 ease-in-out"
@@ -570,6 +722,7 @@ function UserRow({
                   <div className="flex items-start justify-between">
                     <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
                       <DetailField label={tc.detailId} value={renderDetail.id} />
+                      <DetailField label={tc.detailLogin} value={renderDetail.login ?? '--'} />
                       <DetailField label={tc.detailEmail} value={renderDetail.email ?? '--'} />
                       <DetailField
                         label={tc.detailEmailVerified}
@@ -582,13 +735,23 @@ function UserRow({
                       <DetailField label={tc.detailLocale} value={renderDetail.locale ?? '--'} />
                       <DetailField label={tc.detailTimezone} value={renderDetail.timezone ?? '--'} />
                     </div>
-                    <button
-                      onClick={() => onEdit(renderDetail)}
-                      className="ml-4 flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep2)]"
-                    >
-                      <Pencil size={11} />
-                      {tc.editButton}
-                    </button>
+                    <div className="ml-4 flex shrink-0 gap-2">
+                      {renderDetail.orgs.length > 0 && (
+                        <button
+                          onClick={() => onCredit(renderDetail)}
+                          className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep2)]"
+                        >
+                          {tc.creditAdjustButton}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onEdit(renderDetail)}
+                        className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep2)]"
+                      >
+                        <Pencil size={11} />
+                        {tc.editButton}
+                      </button>
+                    </div>
                   </div>
 
                   <div>

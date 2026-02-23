@@ -2,6 +2,7 @@ import { apiFetch } from './client'
 
 export type AdminUser = {
   id: string
+  login?: string
   display_name: string
   email: string | null
   email_verified_at?: string
@@ -79,6 +80,58 @@ export async function updateAdminUser(
   return apiFetch<AdminUser>(`/v1/admin/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
+    accessToken,
+  })
+}
+
+export type AdminCreditsAdjustRequest = {
+  org_id: string
+  amount: number
+  note: string
+}
+
+export type AdminCreditsResponse = {
+  org_id: string
+  balance: number
+}
+
+export async function adjustAdminCredits(
+  req: AdminCreditsAdjustRequest,
+  accessToken: string,
+): Promise<AdminCreditsResponse> {
+  return apiFetch<AdminCreditsResponse>('/v1/admin/credits/adjust', {
+    method: 'POST',
+    body: JSON.stringify(req),
+    accessToken,
+  })
+}
+
+export async function deleteAdminUser(userId: string, accessToken: string): Promise<void> {
+  await apiFetch<void>(`/v1/admin/users/${userId}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+export async function bulkAdjustCredits(
+  amount: number,
+  note: string,
+  accessToken: string,
+): Promise<{ affected: number }> {
+  return apiFetch<{ affected: number }>('/v1/admin/credits/bulk-adjust', {
+    method: 'POST',
+    body: JSON.stringify({ amount, note }),
+    accessToken,
+  })
+}
+
+export async function resetAllCredits(
+  note: string,
+  accessToken: string,
+): Promise<{ affected: number }> {
+  return apiFetch<{ affected: number }>('/v1/admin/credits/reset-all', {
+    method: 'POST',
+    body: JSON.stringify({ note }),
     accessToken,
   })
 }

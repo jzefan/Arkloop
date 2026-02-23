@@ -15,6 +15,7 @@ import (
 
 type adminUserResponse struct {
 	ID              string  `json:"id"`
+	Login           *string `json:"login,omitempty"`
 	DisplayName     string  `json:"display_name"`
 	Email           *string `json:"email"`
 	EmailVerifiedAt *string `json:"email_verified_at,omitempty"`
@@ -63,8 +64,9 @@ func adminUsersEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	credentialRepo *data.UserCredentialRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	list := listAdminUsers(authService, membershipRepo, usersRepo, apiKeysRepo)
+	list := listAdminUsers(authService, membershipRepo, usersRepo, apiKeysRepo, credentialRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodGet:
@@ -82,8 +84,9 @@ func adminUserEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 	inviteCodesRepo *data.InviteCodeRepository,
+	credentialRepo *data.UserCredentialRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	get := getAdminUser(authService, membershipRepo, usersRepo, apiKeysRepo)
+	get := getAdminUser(authService, membershipRepo, usersRepo, apiKeysRepo, credentialRepo)
 	patch := patchAdminUser(authService, membershipRepo, usersRepo, apiKeysRepo, auditWriter, inviteCodesRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -105,6 +108,8 @@ func adminUserEntry(
 			get(w, r, userID)
 		case nethttp.MethodPatch:
 			patch(w, r, userID)
+		case nethttp.MethodDelete:
+			deleteUser(authService, membershipRepo, usersRepo, apiKeysRepo, auditWriter)(w, r, userID)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -116,6 +121,7 @@ func listAdminUsers(
 	membershipRepo *data.OrgMembershipRepository,
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	credentialRepo *data.UserCredentialRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -160,6 +166,24 @@ func listAdminUsers(
 		for _, u := range users {
 			resp = append(resp, toAdminUserResponse(u))
 		}
+
+		// 批量获取 login（用户名）并填充到响应
+		if credentialRepo != nil && len(users) > 0 {
+			ids := make([]uuid.UUID, len(users))
+			for i, u := range users {
+				ids[i] = u.ID
+			}
+			logins, err := credentialRepo.ListLoginsByUserIDs(r.Context(), ids)
+			if err == nil {
+				for i := range resp {
+					userID, _ := uuid.Parse(resp[i].ID)
+					if login, ok := logins[userID]; ok {
+						resp[i].Login = &login
+					}
+				}
+			}
+		}
+
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
 	}
 }
@@ -169,6 +193,7 @@ func getAdminUser(
 	membershipRepo *data.OrgMembershipRepository,
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	credentialRepo *data.UserCredentialRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, userID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -201,6 +226,12 @@ func getAdminUser(
 			Orgs:              []adminUserOrgResponse{},
 		}
 
+		if credentialRepo != nil {
+			if cred, err := credentialRepo.GetByUserID(r.Context(), userID); err == nil && cred != nil {
+				detail.Login = &cred.Login
+			}
+		}
+
 		if membershipRepo != nil {
 			membership, err := membershipRepo.GetDefaultForUser(r.Context(), userID)
 			if err == nil && membership != nil {
@@ -212,6 +243,46 @@ func getAdminUser(
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, detail)
+	}
+}
+
+func deleteUser(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	usersRepo *data.UserRepository,
+	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
+) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request, userID uuid.UUID) {
+		traceID := observability.TraceIDFromContext(r.Context())
+
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+
+		if err := usersRepo.SoftDelete(r.Context(), userID); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				WriteError(w, nethttp.StatusNotFound, "users.not_found", "user not found", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		if auditWriter != nil {
+			auditWriter.WriteUserStatusChanged(r.Context(), traceID, actor.UserID, userID, "active", "deleted")
+		}
+
+		w.WriteHeader(nethttp.StatusNoContent)
 	}
 }
 

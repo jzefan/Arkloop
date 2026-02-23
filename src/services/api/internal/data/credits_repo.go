@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Credit struct {
@@ -196,4 +197,60 @@ func (r *CreditsRepository) ListTransactions(ctx context.Context, orgID uuid.UUI
 		txns = append(txns, t)
 	}
 	return txns, rows.Err()
+}
+
+// BulkAdjust 对所有 org 统一调整积分，正数为增加，负数为扣减（余额不低于 0）。
+// 返回实际影响的行数。
+func (r *CreditsRepository) BulkAdjust(ctx context.Context, amount int64, note string) (int64, error) {
+if amount == 0 {
+return 0, fmt.Errorf("credits.BulkAdjust: amount must not be zero")
+}
+var tag pgconn.CommandTag
+var err error
+if amount > 0 {
+tag, err = r.db.Exec(ctx,
+`UPDATE credits SET balance = balance + $1, updated_at = now()`,
+amount,
+)
+} else {
+tag, err = r.db.Exec(ctx,
+`UPDATE credits SET balance = GREATEST(0, balance + $1), updated_at = now()`,
+amount,
+)
+}
+if err != nil {
+return 0, fmt.Errorf("credits.BulkAdjust update: %w", err)
+}
+affected := tag.RowsAffected()
+if affected == 0 {
+return 0, nil
+}
+_, err = r.db.Exec(ctx,
+`INSERT INTO credit_transactions (org_id, amount, type, note)
+ SELECT org_id, $1, 'admin_bulk_adjustment', $2 FROM credits`,
+amount, note,
+)
+if err != nil {
+return affected, fmt.Errorf("credits.BulkAdjust tx: %w", err)
+}
+return affected, nil
+}
+
+// ResetAll 将所有 org 的积分余额归零，并记录交易流水。
+func (r *CreditsRepository) ResetAll(ctx context.Context, note string) (int64, error) {
+_, err := r.db.Exec(ctx,
+`INSERT INTO credit_transactions (org_id, amount, type, note)
+ SELECT org_id, -balance, 'admin_reset', $1 FROM credits WHERE balance != 0`,
+note,
+)
+if err != nil {
+return 0, fmt.Errorf("credits.ResetAll tx: %w", err)
+}
+tag, err := r.db.Exec(ctx,
+`UPDATE credits SET balance = 0, updated_at = now() WHERE balance != 0`,
+)
+if err != nil {
+return 0, fmt.Errorf("credits.ResetAll update: %w", err)
+}
+return tag.RowsAffected(), nil
 }

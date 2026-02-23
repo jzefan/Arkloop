@@ -7,8 +7,8 @@ import {
   Key, Webhook,
   ShieldCheck,
   Users, UsersRound, FolderOpen,
-  Package, Receipt, BadgeCheck, BarChart3, Activity,
-  Flag, Ticket, Gift,
+  Package, Receipt, BadgeCheck, BarChart3,
+  Flag, Ticket, Gift, Coins,
   PanelLeftClose, PanelLeftOpen, ChevronDown,
   Settings,
 } from 'lucide-react'
@@ -46,6 +46,17 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       ],
     },
     {
+      id: 'platform',
+      label: t.groups.platform,
+      items: [
+        { label: t.nav.featureFlags, path: '/feature-flags', icon: <Flag size={17} /> },
+        { label: t.nav.users,        path: '/users',         icon: <Users size={17} /> },
+        { label: t.nav.inviteCodes,   path: '/invite-codes',  icon: <Ticket size={17} /> },
+        { label: t.nav.redemptionCodes, path: '/redemption-codes', icon: <Gift size={17} /> },
+        { label: t.nav.creditsAdmin, path: '/credits-admin', icon: <Coins size={17} /> },
+      ],
+    },
+    {
       id: 'configuration',
       label: t.groups.configuration,
       items: [
@@ -57,11 +68,13 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       ],
     },
     {
-      id: 'integration',
-      label: t.groups.integration,
+      id: 'billing',
+      label: t.groups.billing,
       items: [
-        { label: t.nav.apiKeys,   path: '/api-keys',  icon: <Key size={17} /> },
-        { label: t.nav.webhooks,  path: '/webhooks',  icon: <Webhook size={17} /> },
+        { label: t.nav.plans,         path: '/plans',         icon: <Package size={17} /> },
+        { label: t.nav.subscriptions, path: '/subscriptions', icon: <Receipt size={17} /> },
+        { label: t.nav.entitlements,  path: '/entitlements',  icon: <BadgeCheck size={17} /> },
+        { label: t.nav.usage,         path: '/usage',         icon: <BarChart3 size={17} /> },
       ],
     },
     {
@@ -72,33 +85,20 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       ],
     },
     {
+      id: 'integration',
+      label: t.groups.integration,
+      items: [
+        { label: t.nav.apiKeys,   path: '/api-keys',  icon: <Key size={17} /> },
+        { label: t.nav.webhooks,  path: '/webhooks',  icon: <Webhook size={17} /> },
+      ],
+    },
+    {
       id: 'organization',
       label: t.groups.organization,
       items: [
         { label: t.nav.members,  path: '/members',  icon: <Users size={17} /> },
         { label: t.nav.teams,    path: '/teams',    icon: <UsersRound size={17} /> },
         { label: t.nav.projects, path: '/projects', icon: <FolderOpen size={17} /> },
-      ],
-    },
-    {
-      id: 'billing',
-      label: t.groups.billing,
-      items: [
-        { label: t.nav.plans,         path: '/plans',         icon: <Package size={17} /> },
-        { label: t.nav.subscriptions, path: '/subscriptions', icon: <Receipt size={17} /> },
-        { label: t.nav.entitlements,  path: '/entitlements',  icon: <BadgeCheck size={17} /> },
-        { label: t.nav.usage,         path: '/usage',         icon: <BarChart3 size={17} /> },
-        { label: t.nav.myUsage,       path: '/my-usage',      icon: <Activity size={17} /> },
-      ],
-    },
-    {
-      id: 'platform',
-      label: t.groups.platform,
-      items: [
-        { label: t.nav.featureFlags, path: '/feature-flags', icon: <Flag size={17} /> },
-        { label: t.nav.users,        path: '/users',         icon: <Users size={17} /> },
-        { label: t.nav.inviteCodes,   path: '/invite-codes',  icon: <Ticket size={17} /> },
-        { label: t.nav.redemptionCodes, path: '/redemption-codes', icon: <Gift size={17} /> },
       ],
     },
   ]

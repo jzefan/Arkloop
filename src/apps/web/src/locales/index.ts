@@ -18,6 +18,7 @@ export interface LocaleStrings {
   nav: {
     account: string
     settings: string
+    credits: string
   }
   // settings
   getHelp: string
@@ -37,6 +38,20 @@ export interface LocaleStrings {
   inviteCodeResetting: string
   inviteCodeUses: (used: number, max: number) => string
   inviteCodeResetCooldown: string
+  // credits
+  creditsBalance: string
+  creditsBalanceUnit: string
+  creditsRedeem: string
+  creditsRedeemPlaceholder: string
+  creditsRedeemBtn: string
+  creditsRedeemSuccess: (value: string) => string
+  creditsRedeemError: (code: string) => string
+  creditsUsage: string
+  creditsUsageQuery: string
+  creditsUsageInputTokens: string
+  creditsUsageOutputTokens: string
+  creditsUsageRuns: string
+  creditsUsageEmpty: string
   // auth
   loginMode: string
   registerMode: string
