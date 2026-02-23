@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
-  Play, Bell, ClipboardList,
+  Play, ClipboardList,
   KeyRound, Bot, FileText, Plug, Sparkles,
   Key, Webhook,
   ShieldCheck,
@@ -11,7 +11,6 @@ import {
   PanelLeftClose, PanelLeftOpen, ChevronDown,
 } from 'lucide-react'
 import { getMe, logout, isApiError, type MeResponse } from '../api'
-import { listNotifications } from '../api/notifications'
 
 type Props = {
   accessToken: string
@@ -22,7 +21,6 @@ type NavItem = {
   label: string
   path: string
   icon: ReactNode
-  badgeKey?: string
 }
 
 type NavGroup = {
@@ -37,7 +35,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Operations',
     items: [
       { label: 'Runs', path: '/runs', icon: <Play size={17} /> },
-      { label: 'Notifications', path: '/notifications', icon: <Bell size={17} />, badgeKey: 'notifications' },
       { label: 'Audit Logs', path: '/audit', icon: <ClipboardList size={17} /> },
     ],
   },
@@ -99,7 +96,6 @@ export type ConsoleOutletContext = {
   accessToken: string
   onLoggedOut: () => void
   me: MeResponse | null
-  refreshUnreadCount: () => void
 }
 
 export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
@@ -109,7 +105,6 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
   const [meLoaded, setMeLoaded] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [unreadCount, setUnreadCount] = useState(0)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -155,22 +150,9 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
     })
   }, [])
 
-  const refreshUnreadCount = useCallback(() => {
-    void (async () => {
-      try {
-        const resp = await listNotifications(accessToken)
-        if (mountedRef.current) setUnreadCount(resp.data.length)
-      } catch { /* silent */ }
-    })()
-  }, [accessToken])
-
-  useEffect(() => {
-    refreshUnreadCount()
-  }, [refreshUnreadCount])
-
   const userInitial = me?.display_name?.charAt(0).toUpperCase() ?? '?'
 
-  const context: ConsoleOutletContext = { accessToken, onLoggedOut, me, refreshUnreadCount }
+  const context: ConsoleOutletContext = { accessToken, onLoggedOut, me }
 
   if (!meLoaded) {
     return (
@@ -256,7 +238,6 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
                   <div className="flex flex-col gap-[3px]">
                     {group.items.map((item) => {
                       const active = location.pathname.startsWith(item.path)
-                      const badgeCount = item.badgeKey === 'notifications' ? unreadCount : 0
                       return (
                         <button
                           key={item.path}
@@ -271,12 +252,7 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
                           <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
                             {item.icon}
                           </span>
-                          <span className="flex-1 text-left">{item.label}</span>
-                          {badgeCount > 0 && (
-                            <span className="ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--c-status-error-bg)] px-1 text-[10px] font-semibold leading-none text-[var(--c-status-error-text)]">
-                              {badgeCount > 99 ? '99+' : badgeCount}
-                            </span>
-                          )}
+                          <span>{item.label}</span>
                         </button>
                       )
                     })}
