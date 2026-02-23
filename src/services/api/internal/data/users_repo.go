@@ -121,6 +121,110 @@ func (r *UserRepository) CountAll(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+func (r *UserRepository) List(
+	ctx context.Context,
+	limit int,
+	beforeCreatedAt *time.Time,
+	beforeID *uuid.UUID,
+	query string,
+	status string,
+) ([]User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be positive")
+	}
+	if (beforeCreatedAt == nil) != (beforeID == nil) {
+		return nil, fmt.Errorf("before_created_at and before_id must be provided together")
+	}
+
+	sql := `SELECT id, display_name, email, email_verified_at, status, deleted_at,
+	               avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at
+	        FROM users
+	        WHERE deleted_at IS NULL`
+	args := []any{}
+	argIdx := 1
+
+	if status != "" {
+		sql += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
+	if query != "" {
+		pattern := "%" + query + "%"
+		sql += fmt.Sprintf(" AND (display_name ILIKE $%d OR email ILIKE $%d)", argIdx, argIdx)
+		args = append(args, pattern)
+		argIdx++
+	}
+
+	if beforeCreatedAt != nil && beforeID != nil {
+		sql += fmt.Sprintf(" AND (created_at < $%d OR (created_at = $%d AND id < $%d))", argIdx, argIdx, argIdx+1)
+		args = append(args, beforeCreatedAt.UTC(), *beforeID)
+		argIdx += 2
+	}
+
+	sql += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("users.List: %w", err)
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(
+			&u.ID, &u.DisplayName, &u.Email, &u.EmailVerifiedAt,
+			&u.Status, &u.DeletedAt, &u.AvatarURL, &u.Locale,
+			&u.Timezone, &u.LastLoginAt, &u.TokensInvalidBefore, &u.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("users.List scan: %w", err)
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("users.List rows: %w", err)
+	}
+	return users, nil
+}
+
+func (r *UserRepository) UpdateStatus(ctx context.Context, userID uuid.UUID, status string) (*User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("user_id must not be empty")
+	}
+	if status != "active" && status != "suspended" {
+		return nil, fmt.Errorf("status must be 'active' or 'suspended'")
+	}
+
+	var user User
+	err := r.db.QueryRow(
+		ctx,
+		`UPDATE users SET status = $1
+		 WHERE id = $2 AND deleted_at IS NULL
+		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
+		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
+		status, userID,
+	).Scan(
+		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
+		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("users.UpdateStatus: %w", err)
+	}
+	return &user, nil
+}
+
 func (r *UserRepository) CountActiveSince(ctx context.Context, since time.Time) (int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
