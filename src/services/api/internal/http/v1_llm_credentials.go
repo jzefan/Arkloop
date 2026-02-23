@@ -60,8 +60,6 @@ type llmRouteResponse struct {
 var validProviders = map[string]bool{
 	"openai":    true,
 	"anthropic": true,
-	"gemini":    true,
-	"deepseek":  true,
 }
 
 var validOpenAIAPIModes = map[string]bool{

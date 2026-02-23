@@ -19,15 +19,11 @@ import {
   type CreateLlmRouteRequest,
 } from '../../api/llm-credentials'
 
-const PROVIDERS = ['openai', 'anthropic', 'gemini', 'deepseek'] as const
+const PROVIDERS = ['openai', 'anthropic'] as const
 const OPENAI_API_MODES = ['auto', 'responses', 'chat_completions'] as const
 
 function providerVariant(provider: string): BadgeVariant {
-  switch (provider) {
-    case 'anthropic': return 'warning'
-    case 'gemini': return 'success'
-    default: return 'neutral'
-  }
+  return provider === 'anthropic' ? 'warning' : 'neutral'
 }
 
 type RouteRow = {
