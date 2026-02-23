@@ -17,6 +17,7 @@ import { TeamsPage } from './pages/teams/TeamsPage'
 import { UsagePage } from './pages/usage/UsagePage'
 import { MyUsagePage } from './pages/my-usage/MyUsagePage'
 import { OrgsPage } from './pages/OrgsPage'
+import { UsersPage } from './pages/users/UsersPage'
 import {
   readAccessTokenFromStorage,
   writeAccessTokenToStorage,
@@ -84,6 +85,7 @@ function App() {
         <Route path="my-usage" element={<MyUsagePage />} />
         {/* Platform */}
         <Route path="feature-flags" element={<PlaceholderPage title="Feature Flags" />} />
+        <Route path="users" element={<UsersPage />} />
         {/* Redirects */}
         <Route path="providers" element={<Navigate to="/credentials" replace />} />
         <Route path="orgs" element={<Navigate to="/members" replace />} />

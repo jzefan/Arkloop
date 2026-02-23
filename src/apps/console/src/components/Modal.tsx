@@ -41,7 +41,7 @@ export function Modal({ open, onClose, title, children, width = '480px' }: Props
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
     >
       <div
-        className="flex max-h-[85vh] flex-col rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-deep2)]"
+        className="modal-enter flex max-h-[85vh] flex-col rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-deep2)]"
         style={{ width: `min(${width}, calc(100vw - 40px))` }}
       >
         {title && (

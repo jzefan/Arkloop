@@ -3,6 +3,7 @@ package http
 import (
 	nethttp "net/http"
 	"strings"
+	"time"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
@@ -221,7 +222,12 @@ func patchAdminUser(
 	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	type patchBody struct {
-		Status *string `json:"status"`
+		Status        *string `json:"status"`
+		DisplayName   *string `json:"display_name"`
+		Email         *string `json:"email"`
+		EmailVerified *bool   `json:"email_verified"`
+		Locale        *string `json:"locale"`
+		Timezone      *string `json:"timezone"`
 	}
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, userID uuid.UUID) {
@@ -246,18 +252,60 @@ func patchAdminUser(
 			return
 		}
 
-		if body.Status == nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "status is required", traceID, nil)
+		// status 变更走独立分支
+		if body.Status != nil {
+			newStatus := *body.Status
+			if newStatus != "active" && newStatus != "suspended" {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "status must be 'active' or 'suspended'", traceID, nil)
+				return
+			}
+
+			existing, err := usersRepo.GetByID(r.Context(), userID)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if existing == nil {
+				WriteError(w, nethttp.StatusNotFound, "users.not_found", "user not found", traceID, nil)
+				return
+			}
+
+			oldStatus := existing.Status
+			if oldStatus == newStatus {
+				writeJSON(w, traceID, nethttp.StatusOK, toAdminUserResponse(*existing))
+				return
+			}
+
+			updated, err := usersRepo.UpdateStatus(r.Context(), userID, newStatus)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if updated == nil {
+				WriteError(w, nethttp.StatusNotFound, "users.not_found", "user not found", traceID, nil)
+				return
+			}
+
+			if auditWriter != nil {
+				auditWriter.WriteUserStatusChanged(r.Context(), traceID, actor.UserID, userID, oldStatus, newStatus)
+			}
+
+			writeJSON(w, traceID, nethttp.StatusOK, toAdminUserResponse(*updated))
 			return
 		}
 
-		newStatus := *body.Status
-		if newStatus != "active" && newStatus != "suspended" {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "status must be 'active' or 'suspended'", traceID, nil)
+		// profile 编辑
+		if body.DisplayName == nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "display_name is required", traceID, nil)
 			return
 		}
 
-		// 获取更新前的状态用于审计
+		displayName := strings.TrimSpace(*body.DisplayName)
+		if displayName == "" {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "display_name must not be empty", traceID, nil)
+			return
+		}
+
 		existing, err := usersRepo.GetByID(r.Context(), userID)
 		if err != nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -268,13 +316,51 @@ func patchAdminUser(
 			return
 		}
 
-		oldStatus := existing.Status
-		if oldStatus == newStatus {
-			writeJSON(w, traceID, nethttp.StatusOK, toAdminUserResponse(*existing))
-			return
+		params := data.UpdateProfileParams{
+			DisplayName: displayName,
+			Locale:      existing.Locale,
+			Timezone:    existing.Timezone,
+			Email:       existing.Email,
+			EmailVerifiedAt: existing.EmailVerifiedAt,
 		}
 
-		updated, err := usersRepo.UpdateStatus(r.Context(), userID, newStatus)
+		if body.Email != nil {
+			email := strings.TrimSpace(*body.Email)
+			if email == "" {
+				params.Email = nil
+			} else {
+				params.Email = &email
+			}
+		}
+
+		if body.Locale != nil {
+			locale := strings.TrimSpace(*body.Locale)
+			if locale == "" {
+				params.Locale = nil
+			} else {
+				params.Locale = &locale
+			}
+		}
+
+		if body.Timezone != nil {
+			tz := strings.TrimSpace(*body.Timezone)
+			if tz == "" {
+				params.Timezone = nil
+			} else {
+				params.Timezone = &tz
+			}
+		}
+
+		if body.EmailVerified != nil {
+			if *body.EmailVerified {
+				now := time.Now().UTC()
+				params.EmailVerifiedAt = &now
+			} else {
+				params.EmailVerifiedAt = nil
+			}
+		}
+
+		updated, err := usersRepo.UpdateProfile(r.Context(), userID, params)
 		if err != nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -282,10 +368,6 @@ func patchAdminUser(
 		if updated == nil {
 			WriteError(w, nethttp.StatusNotFound, "users.not_found", "user not found", traceID, nil)
 			return
-		}
-
-		if auditWriter != nil {
-			auditWriter.WriteUserStatusChanged(r.Context(), traceID, actor.UserID, userID, oldStatus, newStatus)
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, toAdminUserResponse(*updated))

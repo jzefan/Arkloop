@@ -96,6 +96,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       label: t.groups.platform,
       items: [
         { label: t.nav.featureFlags, path: '/feature-flags', icon: <Flag size={17} /> },
+        { label: t.nav.users,        path: '/users',         icon: <Users size={17} /> },
       ],
     },
   ]
