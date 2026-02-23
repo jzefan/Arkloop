@@ -1,20 +1,5 @@
 export const TRACE_ID_HEADER = 'X-Trace-Id'
 
-export type LoginRequest = {
-  login: string
-  password: string
-}
-
-export type LoginResponse = {
-  token_type: string
-  access_token: string
-}
-
-export type MeResponse = {
-  id: string
-  display_name: string
-}
-
 type ErrorEnvelope = {
   code?: unknown
   message?: unknown
@@ -115,30 +100,5 @@ export async function apiFetch<T>(
     status: response.status,
     message: `请求失败（HTTP ${response.status}）`,
     traceId: headerTraceId,
-  })
-}
-
-export async function login(req: LoginRequest): Promise<LoginResponse> {
-  return await apiFetch<LoginResponse>('/v1/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(req),
-  })
-}
-
-export async function getMe(accessToken: string): Promise<MeResponse> {
-  return await apiFetch<MeResponse>('/v1/me', {
-    method: 'GET',
-    accessToken,
-  })
-}
-
-export type LogoutResponse = {
-  ok: boolean
-}
-
-export async function logout(accessToken: string): Promise<LogoutResponse> {
-  return await apiFetch<LogoutResponse>('/v1/auth/logout', {
-    method: 'POST',
-    accessToken,
   })
 }

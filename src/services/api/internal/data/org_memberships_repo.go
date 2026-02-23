@@ -85,6 +85,26 @@ func (r *OrgMembershipRepository) GetDefaultForUser(ctx context.Context, userID 
 	return &membership, nil
 }
 
+// SetRoleForUser 将用户的默认 membership（最早创建）的角色更新为 role。
+func (r *OrgMembershipRepository) SetRoleForUser(ctx context.Context, userID uuid.UUID, role string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := r.db.Exec(
+		ctx,
+		`UPDATE org_memberships
+		 SET role = $1
+		 WHERE id = (
+		     SELECT id FROM org_memberships
+		     WHERE user_id = $2
+		     ORDER BY created_at ASC
+		     LIMIT 1
+		 )`,
+		role, userID,
+	)
+	return err
+}
+
 // ExistsForOrgAndUser 检查用户是否已是 org 成员，用于邀请接受前去重。
 func (r *OrgMembershipRepository) ExistsForOrgAndUser(ctx context.Context, orgID, userID uuid.UUID) (bool, error) {
 	if ctx == nil {

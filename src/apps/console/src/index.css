@@ -21,6 +21,12 @@
   --c-avatar-console-bg: #3a3a38;
   --c-btn-bg: #FAF9F6;
   --c-btn-text: #141413;
+  --c-status-success-bg: rgba(16, 185, 129, 0.12);
+  --c-status-success-text: #34d399;
+  --c-status-warning-bg: rgba(245, 158, 11, 0.12);
+  --c-status-warning-text: #fbbf24;
+  --c-status-error-bg: rgba(239, 68, 68, 0.12);
+  --c-status-error-text: #f87171;
 }
 
 @media (prefers-color-scheme: light) {
@@ -45,6 +51,12 @@
     --c-avatar-console-bg: #E0E0DE;
     --c-btn-bg: #1A1A18;
     --c-btn-text: #FAFAFA;
+    --c-status-success-bg: rgba(16, 185, 129, 0.1);
+    --c-status-success-text: #059669;
+    --c-status-warning-bg: rgba(245, 158, 11, 0.1);
+    --c-status-warning-text: #d97706;
+    --c-status-error-bg: rgba(239, 68, 68, 0.1);
+    --c-status-error-text: #dc2626;
   }
 }
 

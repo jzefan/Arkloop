@@ -31,6 +31,8 @@ const (
 	sseHeartbeatSecondsEnv = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
 	sseBatchLimitEnv       = "ARKLOOP_SSE_BATCH_LIMIT"
 
+	bootstrapPlatformAdminEnv = "ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN"
+
 	defaultSSEHeartbeatSeconds = 15.0
 	defaultSSEBatchLimit       = 500
 )
@@ -55,14 +57,16 @@ type Config struct {
 	Auth                 *auth.Config
 	SSE                  SSEConfig
 
-	RedisURL                  string
-	MaxConcurrentRunsPerOrg   int64
+	RedisURL                string
+	MaxConcurrentRunsPerOrg int64
 
 	S3Endpoint  string
 	S3AccessKey string
 	S3SecretKey string
 	S3Bucket    string
 	S3Region    string
+
+	BootstrapPlatformAdmin string
 }
 
 func DefaultConfig() Config {
@@ -153,6 +157,10 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", sseBatchLimitEnv, err)
 		}
 		cfg.SSE.BatchLimit = v
+	}
+
+	if raw, ok := lookupEnv(bootstrapPlatformAdminEnv); ok {
+		cfg.BootstrapPlatformAdmin = raw
 	}
 
 	if err := cfg.Validate(); err != nil {
