@@ -65,6 +65,7 @@ type HandlerConfig struct {
 	FeatureFlagService *featureflag.Service
 
 	NotificationsRepo *data.NotificationsRepository
+	AuditLogRepo      *data.AuditLogRepository
 
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
@@ -259,6 +260,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/notifications/",
 		notificationEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo),
+	)
+
+	mux.HandleFunc(
+		"/v1/audit-logs",
+		auditLogsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AuditLogRepo, cfg.APIKeysRepo),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

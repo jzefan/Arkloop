@@ -362,6 +362,7 @@ func (a *Application) Run(ctx context.Context) error {
 			FeatureFlagsRepo:     featureFlagsRepo,
 			FeatureFlagService:   featureFlagSvc,
 			NotificationsRepo:    notificationsRepo,
+			AuditLogRepo:         auditRepo,
 			RedisClient:          redisClient,
 			RunLimiter:           runLimiter,
 			SSEConfig: apihttp.SSEConfig{
