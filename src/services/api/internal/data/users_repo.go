@@ -241,3 +241,45 @@ func (r *UserRepository) CountActiveSince(ctx context.Context, since time.Time) 
 	}
 	return count, nil
 }
+
+type UpdateProfileParams struct {
+	DisplayName     string
+	Email           *string
+	EmailVerifiedAt *time.Time
+	Locale          *string
+	Timezone        *string
+}
+
+func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, params UpdateProfileParams) (*User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("user_id must not be empty")
+	}
+	if params.DisplayName == "" {
+		return nil, fmt.Errorf("display_name must not be empty")
+	}
+
+	var user User
+	err := r.db.QueryRow(
+		ctx,
+		`UPDATE users
+		 SET display_name = $1, email = $2, email_verified_at = $3, locale = $4, timezone = $5
+		 WHERE id = $6 AND deleted_at IS NULL
+		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
+		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
+		params.DisplayName, params.Email, params.EmailVerifiedAt, params.Locale, params.Timezone, userID,
+	).Scan(
+		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
+		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("users.UpdateProfile: %w", err)
+	}
+	return &user, nil
+}

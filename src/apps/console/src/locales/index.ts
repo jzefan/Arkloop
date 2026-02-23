@@ -36,6 +36,7 @@ export interface LocaleStrings {
     usage: string
     myUsage: string
     featureFlags: string
+    users: string
   }
   // settings
   account: string
@@ -433,6 +434,57 @@ export interface LocaleStrings {
       cardRecordCount: string
       emptyHint: string
       toastLoadFailed: string
+    }
+    users: {
+      title: string
+      colId: string
+      colDisplayName: string
+      colEmail: string
+      colStatus: string
+      colLastLogin: string
+      colCreatedAt: string
+      statusActive: string
+      statusSuspended: string
+      searchPlaceholder: string
+      filterAll: string
+      filterActive: string
+      filterSuspended: string
+      empty: string
+      loadMore: string
+      detailTitle: string
+      detailId: string
+      detailEmail: string
+      detailEmailVerified: string
+      detailEmailNotVerified: string
+      detailLocale: string
+      detailTimezone: string
+      detailOrgs: string
+      detailOrgId: string
+      detailOrgRole: string
+      detailNoOrgs: string
+      suspendTitle: string
+      suspendMessage: (name: string) => string
+      suspendConfirm: string
+      activateTitle: string
+      activateMessage: (name: string) => string
+      activateConfirm: string
+      toastSuspended: string
+      toastActivated: string
+      toastLoadFailed: string
+      toastStatusFailed: string
+      toastDetailFailed: string
+      editButton: string
+      editTitle: string
+      editDisplayName: string
+      editEmail: string
+      editEmailVerified: string
+      editLocale: string
+      editTimezone: string
+      editCancel: string
+      editSave: string
+      editErrNameRequired: string
+      toastEditSaved: string
+      toastEditFailed: string
     }
   }
 }
