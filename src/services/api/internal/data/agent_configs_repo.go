@@ -70,6 +70,12 @@ type AgentConfigUpdateFields struct {
 	ContextWindowLimit        *int
 	SetToolPolicy             bool
 	ToolPolicy                string
+	SetToolAllowlist          bool
+	ToolAllowlist             []string
+	SetToolDenylist           bool
+	ToolDenylist              []string
+	SetContentFilterLevel     bool
+	ContentFilterLevel        string
 	SetIsDefault              bool
 	IsDefault                 bool
 }
@@ -233,8 +239,19 @@ func (r *AgentConfigRepository) GetDefaultForProject(ctx context.Context, orgID 
 func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID uuid.UUID, fields AgentConfigUpdateFields) (*AgentConfig, error) {
 	if !fields.SetName && !fields.SetSystemPromptTemplateID && !fields.SetSystemPromptOverride &&
 		!fields.SetModel && !fields.SetTemperature && !fields.SetMaxOutputTokens &&
-		!fields.SetTopP && !fields.SetContextWindowLimit && !fields.SetToolPolicy && !fields.SetIsDefault {
+		!fields.SetTopP && !fields.SetContextWindowLimit && !fields.SetToolPolicy &&
+		!fields.SetToolAllowlist && !fields.SetToolDenylist && !fields.SetContentFilterLevel &&
+		!fields.SetIsDefault {
 		return nil, fmt.Errorf("agent_configs.Update: no fields to update")
+	}
+
+	allowlist := fields.ToolAllowlist
+	if allowlist == nil {
+		allowlist = []string{}
+	}
+	denylist := fields.ToolDenylist
+	if denylist == nil {
+		denylist = []string{}
 	}
 
 	ac, err := scanAgentConfig(r.db.QueryRow(
@@ -249,6 +266,9 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 		     top_p                     = CASE WHEN $15 THEN $16 ELSE top_p END,
 		     context_window_limit      = CASE WHEN $17 THEN $18 ELSE context_window_limit END,
 		     tool_policy               = CASE WHEN $19 THEN $20 ELSE tool_policy END,
+		     tool_allowlist            = CASE WHEN $23 THEN $24 ELSE tool_allowlist END,
+		     tool_denylist             = CASE WHEN $25 THEN $26 ELSE tool_denylist END,
+		     content_filter_level      = CASE WHEN $27 THEN $28 ELSE content_filter_level END,
 		     is_default                = CASE WHEN $21 THEN $22 ELSE is_default END
 		 WHERE id = $1 AND org_id = $2
 		 RETURNING `+agentConfigColumns,
@@ -263,6 +283,9 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 		fields.SetContextWindowLimit, fields.ContextWindowLimit,
 		fields.SetToolPolicy, fields.ToolPolicy,
 		fields.SetIsDefault, fields.IsDefault,
+		fields.SetToolAllowlist, allowlist,
+		fields.SetToolDenylist, denylist,
+		fields.SetContentFilterLevel, fields.ContentFilterLevel,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -271,4 +294,19 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 		return nil, fmt.Errorf("agent_configs.Update: %w", err)
 	}
 	return &ac, nil
+}
+
+func (r *AgentConfigRepository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+	tag, err := r.db.Exec(
+		ctx,
+		`DELETE FROM agent_configs WHERE id = $1 AND org_id = $2`,
+		id, orgID,
+	)
+	if err != nil {
+		return fmt.Errorf("agent_configs.Delete: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("agent_configs.Delete: not found")
+	}
+	return nil
 }

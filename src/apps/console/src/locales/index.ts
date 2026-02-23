@@ -100,6 +100,54 @@ export interface LocaleStrings {
       toastLoadFailed: string
       toastDeleteFailed: string
     }
+    agentConfigs: {
+      title: string
+      addConfig: string
+      // table columns
+      colName: string
+      colModel: string
+      colTemperature: string
+      colMaxOutputTokens: string
+      colToolPolicy: string
+      colIsDefault: string
+      colProject: string
+      colCreatedAt: string
+      // empty state
+      empty: string
+      // create/edit modal
+      modalTitleCreate: string
+      modalTitleEdit: string
+      fieldName: string
+      fieldSystemPromptTemplate: string
+      fieldSystemPromptTemplateNone: string
+      fieldSystemPromptOverride: string
+      fieldModel: string
+      fieldTemperature: string
+      fieldMaxOutputTokens: string
+      fieldTopP: string
+      fieldToolPolicy: string
+      fieldToolAllowlist: string
+      fieldToolDenylist: string
+      fieldContentFilterLevel: string
+      fieldIsDefault: string
+      // buttons
+      cancel: string
+      create: string
+      save: string
+      // delete dialog
+      deleteTitle: string
+      deleteMessage: (name: string) => string
+      deleteConfirm: string
+      // errors
+      errRequired: string
+      // toasts
+      toastCreated: string
+      toastUpdated: string
+      toastDeleted: string
+      toastLoadFailed: string
+      toastSaveFailed: string
+      toastDeleteFailed: string
+    }
   }
 }
 
