@@ -67,6 +67,9 @@ type HandlerConfig struct {
 	NotificationsRepo *data.NotificationsRepository
 	AuditLogRepo      *data.AuditLogRepository
 
+	UsersRepo *data.UserRepository
+	OrgRepo   *data.OrgRepository
+
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
 
@@ -82,7 +85,8 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/refresh", refreshToken(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo))
+	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo))
+	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
 	mux.HandleFunc(
 		"/v1/threads/",
@@ -269,6 +273,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/audit-logs",
 		auditLogsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AuditLogRepo, cfg.APIKeysRepo),
+	)
+
+	mux.HandleFunc(
+		"/v1/admin/dashboard",
+		adminDashboard(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.RunEventRepo, cfg.UsageRepo, cfg.OrgRepo, cfg.APIKeysRepo),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type Org struct {
@@ -65,4 +66,48 @@ func (r *OrgRepository) Create(ctx context.Context, slug string, name string) (O
 		return Org{}, err
 	}
 	return org, nil
+}
+
+func (r *OrgRepository) GetByID(ctx context.Context, orgID uuid.UUID) (*Org, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("org_id must not be empty")
+	}
+
+	var org Org
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, slug, name, owner_user_id, status, country, timezone,
+		        logo_url, settings_json, deleted_at, created_at
+		 FROM orgs
+		 WHERE id = $1
+		 LIMIT 1`,
+		orgID,
+	).Scan(
+		&org.ID, &org.Slug, &org.Name,
+		&org.OwnerUserID, &org.Status, &org.Country, &org.Timezone,
+		&org.LogoURL, &org.SettingsJSON, &org.DeletedAt, &org.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &org, nil
+}
+
+func (r *OrgRepository) CountActive(ctx context.Context) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var count int64
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orgs WHERE deleted_at IS NULL`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("orgs.CountActive: %w", err)
+	}
+	return count, nil
 }

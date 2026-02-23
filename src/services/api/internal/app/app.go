@@ -137,6 +137,7 @@ func (a *Application) Run(ctx context.Context) error {
 		userRepo       *data.UserRepository
 		credentialRepo *data.UserCredentialRepository
 		membershipRepo *data.OrgMembershipRepository
+		orgRepo        *data.OrgRepository
 		threadRepo     *data.ThreadRepository
 		messageRepo    *data.MessageRepository
 		runEventRepo   *data.RunEventRepository
@@ -182,6 +183,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		membershipRepo, err = data.NewOrgMembershipRepository(pool)
+		if err != nil {
+			return err
+		}
+		orgRepo, err = data.NewOrgRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -369,6 +374,8 @@ func (a *Application) Run(ctx context.Context) error {
 			FeatureFlagService:   featureFlagSvc,
 			NotificationsRepo:    notificationsRepo,
 			AuditLogRepo:         auditRepo,
+			UsersRepo:            userRepo,
+			OrgRepo:              orgRepo,
 			RedisClient:          redisClient,
 			RunLimiter:           runLimiter,
 			SSEConfig: apihttp.SSEConfig{

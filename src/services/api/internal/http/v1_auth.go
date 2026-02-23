@@ -46,6 +46,9 @@ type meResponse struct {
 	ID          string   `json:"id"`
 	DisplayName string   `json:"display_name"`
 	CreatedAt   string   `json:"created_at"`
+	OrgID       string   `json:"org_id,omitempty"`
+	OrgName     string   `json:"org_name,omitempty"`
+	Role        string   `json:"role,omitempty"`
 	Permissions []string `json:"permissions"`
 }
 
@@ -240,7 +243,7 @@ func register(registrationService *auth.RegistrationService, auditWriter *audit.
 	}
 }
 
-func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
 			writeMethodNotAllowed(w, r)
@@ -259,21 +262,31 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository)
 		}
 
 		var permissions []string
+		resp := meResponse{
+			ID:          user.ID.String(),
+			DisplayName: user.DisplayName,
+			CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}
+
 		if membershipRepo != nil {
 			if membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID); err == nil && membership != nil {
 				permissions = auth.PermissionsForRole(membership.Role)
+				resp.OrgID = membership.OrgID.String()
+				resp.Role = membership.Role
+
+				if orgRepo != nil {
+					if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
+						resp.OrgName = org.Name
+					}
+				}
 			}
 		}
 		if permissions == nil {
 			permissions = []string{}
 		}
+		resp.Permissions = permissions
 
-		writeJSON(w, traceID, nethttp.StatusOK, meResponse{
-			ID:          user.ID.String(),
-			DisplayName: user.DisplayName,
-			CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
-			Permissions: permissions,
-		})
+		writeJSON(w, traceID, nethttp.StatusOK, resp)
 	}
 }
 
