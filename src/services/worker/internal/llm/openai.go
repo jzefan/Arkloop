@@ -98,9 +98,10 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	llmCallID := uuid.NewString()
 
 	payload := map[string]any{
-		"model":    request.Model,
-		"messages": toOpenAIChatMessages(request.Messages),
-		"stream":   true,
+		"model":          request.Model,
+		"messages":       toOpenAIChatMessages(request.Messages),
+		"stream":         true,
+		"stream_options": map[string]any{"include_usage": true},
 	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
@@ -213,7 +214,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		}
 	}
 
-	content, toolCalls, err := parseOpenAIChatCompletion(body)
+	content, toolCalls, usage, err := parseOpenAIChatCompletion(body)
 	if err != nil {
 		return yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed"))
 	}
@@ -230,7 +231,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		}
 	}
 
-	return yield(StreamRunCompleted{})
+	return yield(StreamRunCompleted{Usage: usage})
 }
 
 type openAIResponsesNotSupportedError struct {
@@ -370,7 +371,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		_ = yield(chunk)
 	}
 
-	content, toolCalls, err := parseOpenAIResponses(body)
+	content, toolCalls, usage, err := parseOpenAIResponses(body)
 	if err != nil {
 		return yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed"))
 	}
@@ -387,7 +388,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		}
 	}
 
-	return yield(StreamRunCompleted{})
+	return yield(StreamRunCompleted{Usage: usage})
 }
 
 func errorClassFromStatus(status int) string {
@@ -411,6 +412,10 @@ type openAIChatCompletionStreamChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 type openAIChatCompletionToolDelta struct {
@@ -517,6 +522,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 	toolBuffer := newOpenAIChatToolCallBuffer()
 	terminalEmitted := false
 	var handlerFailed bool
+	var streamedUsage *Usage
 
 	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
 		defer func() {
@@ -556,7 +562,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				}
 			}
 			terminalEmitted = true
-			return yield(StreamRunCompleted{})
+			return yield(StreamRunCompleted{Usage: streamedUsage})
 		}
 
 		var parsed openAIChatCompletionStreamChunk
@@ -564,6 +570,10 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			return nil
 		}
 		if len(parsed.Choices) == 0 {
+			// usage chunk sent when stream_options.include_usage is true
+			if parsed.Usage != nil {
+				streamedUsage = parseChatCompletionUsage(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens)
+			}
 			return nil
 		}
 		choice := parsed.Choices[0]
@@ -687,8 +697,12 @@ func (g *OpenAIGateway) streamResponsesSSE(
 					return err
 				}
 			}
+			var usage *Usage
+			if usageObj, ok := respObj["usage"].(map[string]any); ok {
+				usage = parseResponsesUsage(usageObj)
+			}
 			terminalEmitted = true
-			return yield(StreamRunCompleted{})
+			return yield(StreamRunCompleted{Usage: usage})
 		}
 
 		if typ == "response.failed" || typ == "response.error" {
@@ -826,15 +840,19 @@ type openAIChatCompletionResponse struct {
 			} `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
-func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
+func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, error) {
 	var parsed openAIChatCompletionResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if len(parsed.Choices) == 0 {
-		return "", nil, fmt.Errorf("response missing choices")
+		return "", nil, nil, fmt.Errorf("response missing choices")
 	}
 
 	message := parsed.Choices[0].Message
@@ -847,12 +865,12 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 	for idx, raw := range message.ToolCalls {
 		toolCallID := strings.TrimSpace(raw.ID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("tool_calls[%d] missing id", idx)
+			return "", nil, nil, fmt.Errorf("tool_calls[%d] missing id", idx)
 		}
 
 		toolName := strings.TrimSpace(raw.Function.Name)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
+			return "", nil, nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -860,11 +878,11 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 		if arguments != "" {
 			var parsedArgs any
 			if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+				return "", nil, nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 			}
 			obj, ok := parsedArgs.(map[string]any)
 			if !ok {
-				return "", nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+				return "", nil, nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 			}
 			argumentsJSON = obj
 		}
@@ -876,7 +894,12 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, error) {
 		})
 	}
 
-	return content, toolCalls, nil
+	var usage *Usage
+	if parsed.Usage != nil {
+		usage = parseChatCompletionUsage(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens)
+	}
+
+	return content, toolCalls, usage, nil
 }
 
 func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
@@ -1041,14 +1064,14 @@ func isOpenAIResponsesNotSupported(status int, body []byte) bool {
 	return strings.Contains(joined, "responses") && (strings.Contains(joined, "unknown") || strings.Contains(joined, "not found"))
 }
 
-func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
+func parseOpenAIResponses(body []byte) (string, []ToolCall, *Usage, error) {
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", nil, fmt.Errorf("response root is not an object")
+		return "", nil, nil, fmt.Errorf("response root is not an object")
 	}
 
 	var contentBuilder strings.Builder
@@ -1063,9 +1086,9 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 	rawOutput, ok := root["output"].([]any)
 	if !ok {
 		if contentBuilder.Len() > 0 {
-			return contentBuilder.String(), nil, nil
+			return contentBuilder.String(), nil, nil, nil
 		}
-		return "", nil, fmt.Errorf("response missing output")
+		return "", nil, nil, fmt.Errorf("response missing output")
 	}
 
 	toolCalls := []ToolCall{}
@@ -1109,7 +1132,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		}
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("output[%d] missing function_call.id", idx)
+			return "", nil, nil, fmt.Errorf("output[%d] missing function_call.id", idx)
 		}
 
 		toolName, _ := item["name"].(string)
@@ -1118,7 +1141,7 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		}
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("output[%d] missing function_call.name", idx)
+			return "", nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -1131,16 +1154,16 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 				if arguments != "" {
 					var parsedArgs any
 					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-						return "", nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+						return "", nil, nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
 					}
 					obj, ok := parsedArgs.(map[string]any)
 					if !ok {
-						return "", nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+						return "", nil, nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
 					}
 					argumentsJSON = obj
 				}
 			default:
-				return "", nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
+				return "", nil, nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
 			}
 		}
 
@@ -1151,7 +1174,12 @@ func parseOpenAIResponses(body []byte) (string, []ToolCall, error) {
 		})
 	}
 
-	return contentBuilder.String(), toolCalls, nil
+	var usage *Usage
+	if usageObj, ok := root["usage"].(map[string]any); ok {
+		usage = parseResponsesUsage(usageObj)
+	}
+
+	return contentBuilder.String(), toolCalls, usage, nil
 }
 
 func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
@@ -1349,6 +1377,38 @@ func readAllWithLimit(r io.Reader, maxBytes int) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	return body[:maxBytes], true, nil
+}
+
+func parseChatCompletionUsage(promptTokens, completionTokens int) *Usage {
+	if promptTokens == 0 && completionTokens == 0 {
+		return nil
+	}
+	u := &Usage{}
+	if promptTokens > 0 {
+		u.InputTokens = &promptTokens
+	}
+	if completionTokens > 0 {
+		u.OutputTokens = &completionTokens
+	}
+	return u
+}
+
+func parseResponsesUsage(usageObj map[string]any) *Usage {
+	input, hasInput := usageObj["input_tokens"].(float64)
+	output, hasOutput := usageObj["output_tokens"].(float64)
+	if !hasInput && !hasOutput {
+		return nil
+	}
+	u := &Usage{}
+	if hasInput {
+		iv := int(input)
+		u.InputTokens = &iv
+	}
+	if hasOutput {
+		ov := int(output)
+		u.OutputTokens = &ov
+	}
+	return u
 }
 
 func forEachSSEData(ctx context.Context, r io.Reader, handle func(string) error) error {

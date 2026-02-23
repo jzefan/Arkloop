@@ -39,6 +39,7 @@ export interface LocaleStrings {
     users: string
     inviteCodes: string
     redemptionCodes: string
+    creditsAdmin: string
   }
   // settings
   account: string
@@ -440,6 +441,7 @@ export interface LocaleStrings {
     users: {
       title: string
       colId: string
+      colLogin: string
       colDisplayName: string
       colEmail: string
       colStatus: string
@@ -455,6 +457,7 @@ export interface LocaleStrings {
       loadMore: string
       detailTitle: string
       detailId: string
+      detailLogin: string
       detailEmail: string
       detailEmailVerified: string
       detailEmailNotVerified: string
@@ -487,6 +490,23 @@ export interface LocaleStrings {
       editErrNameRequired: string
       toastEditSaved: string
       toastEditFailed: string
+      creditAdjustButton: string
+      creditAdjustTitle: string
+      creditAdjustAmount: string
+      creditAdjustNote: string
+      creditAdjustNotePlaceholder: string
+      creditAdjustConfirm: string
+      creditAdjustCancel: string
+      creditAdjustErrAmount: string
+      creditAdjustErrNote: string
+      toastCreditAdjusted: string
+      toastCreditAdjustFailed: string
+      deleteButton: string
+      deleteTitle: string
+      deleteMessage: (name: string) => string
+      deleteConfirm: string
+      toastDeleted: string
+      toastDeleteFailed: string
     }
     inviteCodes: {
       title: string
@@ -576,6 +596,27 @@ export interface LocaleStrings {
       toastCreateFailed: string
       toastDeactivated: string
       toastDeactivateFailed: string
+    }
+    creditsAdmin: {
+      title: string
+      addCard: string
+      addDesc: string
+      deductCard: string
+      deductDesc: string
+      resetCard: string
+      resetDesc: string
+      fieldAmount: string
+      fieldNote: string
+      fieldNotePlaceholder: string
+      submit: string
+      submitting: string
+      confirmAdd: (amount: number) => string
+      confirmDeduct: (amount: number) => string
+      confirmReset: string
+      toastAddOk: string
+      toastDeductOk: string
+      toastResetOk: string
+      toastFailed: string
     }
   }
 }

@@ -15,6 +15,7 @@ import {
   Check,
   RefreshCw,
   Ticket,
+  Coins,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -22,6 +23,9 @@ import {
   getMyInviteCode,
   resetMyInviteCode,
   isApiError,
+  getMyCredits,
+  getMyUsage,
+  redeemCode,
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -29,13 +33,14 @@ import type { Locale } from '../locales'
 import type { Theme } from '../storage'
 
 
-export type SettingsTab = 'account' | 'settings'
+export type SettingsTab = 'account' | 'settings' | 'credits'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'account',  icon: User     },
   { key: 'settings', icon: Settings },
+  { key: 'credits',  icon: Coins    },
 ]
 
 type Props = {
@@ -121,6 +126,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
                 <InviteCodeContent accessToken={accessToken} />
                 <HelpContent label={t.getHelp} />
               </div>
+            )}
+            {activeKey === 'credits' && (
+              <CreditsContent accessToken={accessToken} />
             )}
           </div>
         </div>
@@ -424,6 +432,187 @@ function HelpContent({ label }: { label: string }) {
         <span>{label}</span>
         <ArrowUpRight size={12} style={{ marginLeft: 'auto' }} />
       </a>
+    </div>
+  )
+}
+
+function CreditsContent({ accessToken }: { accessToken: string }) {
+  const { t } = useLocale()
+  const now = new Date()
+  const [balance, setBalance] = useState<number | null>(null)
+  const [balanceLoading, setBalanceLoading] = useState(true)
+  const [redeemInput, setRedeemInput] = useState('')
+  const [redeemLoading, setRedeemLoading] = useState(false)
+  const [redeemMsg, setRedeemMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [usageYear, setUsageYear] = useState(now.getFullYear())
+  const [usageMonth, setUsageMonth] = useState(now.getMonth() + 1)
+  const [usageData, setUsageData] = useState<{
+    total_input_tokens: number
+    total_output_tokens: number
+    record_count: number
+  } | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState('')
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await getMyCredits(accessToken)
+        setBalance(data.balance)
+      } catch {
+        setBalance(null)
+      } finally {
+        setBalanceLoading(false)
+      }
+    })()
+  }, [accessToken])
+
+  const handleRedeem = useCallback(async () => {
+    const code = redeemInput.trim()
+    if (!code) return
+    setRedeemLoading(true)
+    setRedeemMsg(null)
+    try {
+      const res = await redeemCode(accessToken, code)
+      setRedeemMsg({ ok: true, text: t.creditsRedeemSuccess(res.value) })
+      setRedeemInput('')
+      // 刷新余额
+      const updated = await getMyCredits(accessToken)
+      setBalance(updated.balance)
+    } catch {
+      setRedeemMsg({ ok: false, text: t.creditsRedeemError(code) })
+    } finally {
+      setRedeemLoading(false)
+    }
+  }, [accessToken, redeemInput, t])
+
+  const handleQueryUsage = useCallback(async () => {
+    setUsageLoading(true)
+    setUsageError('')
+    try {
+      const data = await getMyUsage(accessToken, usageYear, usageMonth)
+      setUsageData(data)
+    } catch {
+      setUsageError(t.requestFailed)
+      setUsageData(null)
+    } finally {
+      setUsageLoading(false)
+    }
+  }, [accessToken, usageYear, usageMonth, t])
+
+  const months = Array.from({ length: 12 }, (_, i) => i + 1)
+  const years = Array.from({ length: 3 }, (_, i) => now.getFullYear() - i)
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* 积分余额 */}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.creditsBalance}</span>
+        <div
+          className="flex h-12 w-[240px] items-center rounded-lg px-4"
+          style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+        >
+          {balanceLoading ? (
+            <span className="text-sm text-[var(--c-text-tertiary)]">...</span>
+          ) : (
+            <span className="text-xl font-semibold tabular-nums text-[var(--c-text-heading)]">
+              {balance ?? '-'}
+              <span className="ml-1.5 text-xs font-normal text-[var(--c-text-tertiary)]">
+                {t.creditsBalanceUnit}
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 兑换码 */}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.creditsRedeem}</span>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={redeemInput}
+            onChange={(e) => setRedeemInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleRedeem() }}
+            placeholder={t.creditsRedeemPlaceholder}
+            className="h-9 w-[240px] rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            disabled={redeemLoading}
+          />
+          <button
+            onClick={() => void handleRedeem()}
+            disabled={redeemLoading || !redeemInput.trim()}
+            className="flex h-9 items-center rounded-lg px-3 text-sm font-medium text-[var(--c-text-heading)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            {t.creditsRedeemBtn}
+          </button>
+        </div>
+        {redeemMsg && (
+          <p
+            className="text-xs"
+            style={{ color: redeemMsg.ok ? 'var(--c-status-success-text, #22c55e)' : 'var(--c-status-error-text, #ef4444)' }}
+          >
+            {redeemMsg.text}
+          </p>
+        )}
+      </div>
+
+      {/* 用量查询 */}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.creditsUsage}</span>
+        <div className="flex items-center gap-2">
+          <select
+            value={usageYear}
+            onChange={(e) => setUsageYear(Number(e.target.value))}
+            className="h-9 rounded-lg px-2 text-sm text-[var(--c-text-heading)] outline-none"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select
+            value={usageMonth}
+            onChange={(e) => setUsageMonth(Number(e.target.value))}
+            className="h-9 rounded-lg px-2 text-sm text-[var(--c-text-heading)] outline-none"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            {months.map(m => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
+          </select>
+          <button
+            onClick={() => void handleQueryUsage()}
+            disabled={usageLoading}
+            className="flex h-9 items-center rounded-lg px-3 text-sm font-medium text-[var(--c-text-heading)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            {t.creditsUsageQuery}
+          </button>
+        </div>
+        {usageError && (
+          <p className="text-xs text-[var(--c-status-error-text,#ef4444)]">{usageError}</p>
+        )}
+        {usageData && (
+          <div
+            className="mt-1 grid grid-cols-3 gap-3 rounded-xl p-4"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            <UsageStat label={t.creditsUsageInputTokens} value={usageData.total_input_tokens.toLocaleString()} />
+            <UsageStat label={t.creditsUsageOutputTokens} value={usageData.total_output_tokens.toLocaleString()} />
+            <UsageStat label={t.creditsUsageRuns} value={usageData.record_count.toLocaleString()} />
+          </div>
+        )}
+        {!usageLoading && !usageData && !usageError && (
+          <p className="text-xs text-[var(--c-text-tertiary)]">{t.creditsUsageEmpty}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function UsageStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-[var(--c-text-tertiary)]">{label}</span>
+      <span className="text-sm font-semibold tabular-nums text-[var(--c-text-heading)]">{value}</span>
     </div>
   )
 }

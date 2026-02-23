@@ -401,6 +401,7 @@ func (a *Application) Run(ctx context.Context) error {
 			AuditLogRepo:         auditRepo,
 			UsersRepo:            userRepo,
 			OrgRepo:              orgRepo,
+			UserCredentialRepo:   credentialRepo,
 			InviteCodesRepo:      inviteCodesRepo,
 			ReferralsRepo:        referralsRepo,
 			CreditsRepo:          creditsRepo,

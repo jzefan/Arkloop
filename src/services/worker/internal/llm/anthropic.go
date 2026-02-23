@@ -231,7 +231,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		}
 	}
 
-	return yield(StreamRunCompleted{})
+	return yield(StreamRunCompleted{Usage: parseAnthropicUsage(body)})
 }
 
 func toAnthropicMessages(messages []Message) (string, []map[string]any, error) {
@@ -442,4 +442,30 @@ func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[strin
 		return strings.TrimSpace(msg), details
 	}
 	return "Anthropic request failed", details
+}
+
+func parseAnthropicUsage(body []byte) *Usage {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil
+	}
+	usageObj, ok := root["usage"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	input, hasInput := usageObj["input_tokens"].(float64)
+	output, hasOutput := usageObj["output_tokens"].(float64)
+	if !hasInput && !hasOutput {
+		return nil
+	}
+	u := &Usage{}
+	if hasInput {
+		iv := int(input)
+		u.InputTokens = &iv
+	}
+	if hasOutput {
+		ov := int(output)
+		u.OutputTokens = &ov
+	}
+	return u
 }

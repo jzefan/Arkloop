@@ -20,6 +20,7 @@ import { OrgsPage } from './pages/OrgsPage'
 import { UsersPage } from './pages/users/UsersPage'
 import { InviteCodesPage } from './pages/invite-codes/InviteCodesPage'
 import { RedemptionCodesPage } from './pages/redemption-codes/RedemptionCodesPage'
+import { CreditsAdminPage } from './pages/credits-admin/CreditsAdminPage'
 import {
   readAccessTokenFromStorage,
   writeAccessTokenToStorage,
@@ -90,6 +91,7 @@ function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="invite-codes" element={<InviteCodesPage />} />
         <Route path="redemption-codes" element={<RedemptionCodesPage />} />
+        <Route path="credits-admin" element={<CreditsAdminPage />} />
         {/* Redirects */}
         <Route path="providers" element={<Navigate to="/credentials" replace />} />
         <Route path="orgs" element={<Navigate to="/members" replace />} />

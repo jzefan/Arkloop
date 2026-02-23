@@ -72,6 +72,9 @@ export async function apiFetch<T>(
 
   const response = await fetch(buildUrl(path), { ...init, headers })
   if (response.ok) {
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      return undefined as T
+    }
     return (await response.json()) as T
   }
 

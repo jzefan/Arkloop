@@ -76,6 +76,8 @@ type HandlerConfig struct {
 	UsersRepo *data.UserRepository
 	OrgRepo   *data.OrgRepository
 
+	UserCredentialRepo *data.UserCredentialRepository
+
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
 
@@ -288,11 +290,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/admin/users",
-		adminUsersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo),
+		adminUsersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.UserCredentialRepo),
 	)
 	mux.HandleFunc(
 		"/v1/admin/users/",
-		adminUserEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.InviteCodesRepo),
+		adminUserEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.InviteCodesRepo, cfg.UserCredentialRepo),
 	)
 
 	mux.HandleFunc(
@@ -327,6 +329,14 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/admin/credits/adjust",
 		adminCreditsAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/credits/bulk-adjust",
+		adminCreditsBulkAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/credits/reset-all",
+		adminCreditsResetAll(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
 	)
 	mux.HandleFunc(
 		"/v1/admin/credits",

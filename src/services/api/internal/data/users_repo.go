@@ -283,3 +283,20 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, pa
 	}
 	return &user, nil
 }
+
+func (r *UserRepository) SoftDelete(ctx context.Context, userID uuid.UUID) error {
+if ctx == nil {
+ctx = context.Background()
+}
+tag, err := r.db.Exec(ctx,
+`UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+userID,
+)
+if err != nil {
+return fmt.Errorf("users.SoftDelete: %w", err)
+}
+if tag.RowsAffected() == 0 {
+return fmt.Errorf("users.SoftDelete: not found")
+}
+return nil
+}

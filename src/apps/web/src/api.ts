@@ -99,6 +99,9 @@ export async function apiFetch<T>(
 
   const response = await fetch(buildUrl(path), { ...init, headers })
   if (response.ok) {
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      return undefined as T
+    }
     return (await response.json()) as T
   }
 
@@ -314,6 +317,69 @@ export async function retryThread(
   return await apiFetch<RetryThreadResponse>(`/v1/threads/${threadId}:retry`, {
     method: 'POST',
     accessToken,
+  })
+}
+
+// Credits API
+
+export type CreditTransaction = {
+  id: string
+  org_id: string
+  amount: number
+  type: string
+  reference_type?: string
+  reference_id?: string
+  note?: string
+  created_at: string
+}
+
+export type MeCreditsResponse = {
+  balance: number
+  transactions: CreditTransaction[]
+}
+
+export async function getMyCredits(accessToken: string): Promise<MeCreditsResponse> {
+  return await apiFetch<MeCreditsResponse>('/v1/me/credits', {
+    method: 'GET',
+    accessToken,
+  })
+}
+
+export type MeUsageSummary = {
+  org_id: string
+  year: number
+  month: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number
+  record_count: number
+}
+
+export async function getMyUsage(
+  accessToken: string,
+  year: number,
+  month: number,
+): Promise<MeUsageSummary> {
+  return await apiFetch<MeUsageSummary>(`/v1/me/usage?year=${year}&month=${month}`, {
+    method: 'GET',
+    accessToken,
+  })
+}
+
+export type RedeemCodeResponse = {
+  code: string
+  type: string
+  value: string
+}
+
+export async function redeemCode(
+  accessToken: string,
+  code: string,
+): Promise<RedeemCodeResponse> {
+  return await apiFetch<RedeemCodeResponse>('/v1/me/redeem', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({ code }),
   })
 }
 

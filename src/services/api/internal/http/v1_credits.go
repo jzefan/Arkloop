@@ -290,3 +290,122 @@ func toCreditTransactionResponses(txns []data.CreditTransaction) []creditTransac
 	}
 	return result
 }
+
+// adminCreditsBulkAdjust 处理 POST /v1/admin/credits/bulk-adjust
+// body: { amount: int64, note: string }  正数增加，负数扣减（余额不低于 0）
+func adminCreditsBulkAdjust(
+authService *auth.Service,
+membershipRepo *data.OrgMembershipRepository,
+creditsRepo *data.CreditsRepository,
+apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+type reqBody struct {
+Amount int64  `json:"amount"`
+Note   string `json:"note"`
+}
+type respBody struct {
+Affected int64 `json:"affected"`
+}
+
+return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+if r.Method != nethttp.MethodPost {
+writeMethodNotAllowed(w, r)
+return
+}
+traceID := observability.TraceIDFromContext(r.Context())
+if authService == nil {
+writeAuthNotConfigured(w, traceID)
+return
+}
+if creditsRepo == nil {
+WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+return
+}
+actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+if !ok {
+return
+}
+if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+return
+}
+
+var req reqBody
+if err := decodeJSON(r, &req); err != nil {
+WriteError(w, nethttp.StatusBadRequest, "validation.error", "invalid request body", traceID, nil)
+return
+}
+req.Note = strings.TrimSpace(req.Note)
+if req.Amount == 0 {
+WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "amount must not be zero", traceID, nil)
+return
+}
+if req.Note == "" {
+WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "note is required", traceID, nil)
+return
+}
+
+affected, err := creditsRepo.BulkAdjust(r.Context(), req.Amount, req.Note)
+if err != nil {
+WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+return
+}
+writeJSON(w, traceID, nethttp.StatusOK, respBody{Affected: affected})
+}
+}
+
+// adminCreditsResetAll 处理 POST /v1/admin/credits/reset-all
+// body: { note: string }  将所有 org 积分归零
+func adminCreditsResetAll(
+authService *auth.Service,
+membershipRepo *data.OrgMembershipRepository,
+creditsRepo *data.CreditsRepository,
+apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+type reqBody struct {
+Note string `json:"note"`
+}
+type respBody struct {
+Affected int64 `json:"affected"`
+}
+
+return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+if r.Method != nethttp.MethodPost {
+writeMethodNotAllowed(w, r)
+return
+}
+traceID := observability.TraceIDFromContext(r.Context())
+if authService == nil {
+writeAuthNotConfigured(w, traceID)
+return
+}
+if creditsRepo == nil {
+WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+return
+}
+actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+if !ok {
+return
+}
+if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+return
+}
+
+var req reqBody
+if err := decodeJSON(r, &req); err != nil {
+WriteError(w, nethttp.StatusBadRequest, "validation.error", "invalid request body", traceID, nil)
+return
+}
+req.Note = strings.TrimSpace(req.Note)
+if req.Note == "" {
+WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "note is required", traceID, nil)
+return
+}
+
+affected, err := creditsRepo.ResetAll(r.Context(), req.Note)
+if err != nil {
+WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+return
+}
+writeJSON(w, traceID, nethttp.StatusOK, respBody{Affected: affected})
+}
+}
