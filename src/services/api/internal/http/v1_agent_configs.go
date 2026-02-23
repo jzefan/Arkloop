@@ -85,6 +85,8 @@ func promptTemplateEntry(
 			getPromptTemplate(w, r, traceID, id, authService, membershipRepo, templateRepo, apiKeysRepo)
 		case nethttp.MethodPatch:
 			updatePromptTemplate(w, r, traceID, id, authService, membershipRepo, templateRepo, apiKeysRepo)
+		case nethttp.MethodDelete:
+			deletePromptTemplate(w, r, traceID, id, authService, membershipRepo, templateRepo, apiKeysRepo)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -288,6 +290,51 @@ func updatePromptTemplate(
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, toPromptTemplateResponse(*updated))
+}
+
+func deletePromptTemplate(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	id uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	templateRepo *data.PromptTemplateRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) {
+	if authService == nil {
+		writeAuthNotConfigured(w, traceID)
+		return
+	}
+	if templateRepo == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+	if !ok {
+		return
+	}
+	if !requirePerm(actor, auth.PermDataAgentConfigsManage, w, traceID) {
+		return
+	}
+
+	existing, err := templateRepo.GetByID(r.Context(), id)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if existing == nil || existing.OrgID != actor.OrgID {
+		WriteError(w, nethttp.StatusNotFound, "agent_configs.not_found", "prompt template not found", traceID, nil)
+		return
+	}
+
+	if err := templateRepo.Delete(r.Context(), id, actor.OrgID); err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
 }
 
 func toPromptTemplateResponse(pt data.PromptTemplate) promptTemplateResponse {

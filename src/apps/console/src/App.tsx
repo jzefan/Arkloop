@@ -7,6 +7,7 @@ import { AuditPage } from './pages/AuditPage'
 import { RunsPage } from './pages/RunsPage'
 import { CredentialsPage } from './pages/credentials/CredentialsPage'
 import { AgentConfigsPage } from './pages/agent-configs/AgentConfigsPage'
+import { PromptTemplatesPage } from './pages/prompt-templates/PromptTemplatesPage'
 import { OrgsPage } from './pages/OrgsPage'
 import {
   readAccessTokenFromStorage,
@@ -54,7 +55,7 @@ function App() {
         {/* Configuration */}
         <Route path="credentials" element={<CredentialsPage />} />
         <Route path="agent-configs" element={<AgentConfigsPage />} />
-        <Route path="prompt-templates" element={<PlaceholderPage title="Prompt Templates" />} />
+        <Route path="prompt-templates" element={<PromptTemplatesPage />} />
         <Route path="mcp-configs" element={<PlaceholderPage title="MCP Configs" />} />
         <Route path="skills" element={<PlaceholderPage title="Skills" />} />
         {/* Integration */}
