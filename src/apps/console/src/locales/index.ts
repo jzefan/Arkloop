@@ -226,6 +226,44 @@ export interface LocaleStrings {
       toastSaveFailed: string
       toastDeleteFailed: string
     }
+    skills: {
+      title: string
+      addSkill: string
+      // table columns
+      colSkillKey: string
+      colDisplayName: string
+      colVersion: string
+      colActive: string
+      colCreatedAt: string
+      // empty state
+      empty: string
+      // create/edit modal
+      modalTitleCreate: string
+      modalTitleEdit: string
+      fieldSkillKey: string
+      fieldVersion: string
+      fieldDisplayName: string
+      fieldDescription: string
+      fieldPrompt: string
+      fieldToolAllowlist: string
+      fieldToolAllowlistPlaceholder: string
+      fieldBudgetsJSON: string
+      fieldIsActive: string
+      // read-only label for global skills
+      labelGlobal: string
+      // buttons
+      cancel: string
+      create: string
+      save: string
+      // errors
+      errRequired: string
+      errInvalidJSON: string
+      // toasts
+      toastCreated: string
+      toastUpdated: string
+      toastLoadFailed: string
+      toastSaveFailed: string
+    }
   }
 }
 
