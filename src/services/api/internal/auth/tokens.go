@@ -1,6 +1,10 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -44,20 +48,25 @@ type VerifiedAccessToken struct {
 }
 
 type JwtAccessTokenService struct {
-	secret     []byte
-	ttlSeconds int
+	secret                 []byte
+	ttlSeconds             int
+	refreshTokenTTLSeconds int
 }
 
-func NewJwtAccessTokenService(secret string, ttlSeconds int) (*JwtAccessTokenService, error) {
+func NewJwtAccessTokenService(secret string, ttlSeconds int, refreshTokenTTLSeconds int) (*JwtAccessTokenService, error) {
 	if secret == "" {
 		return nil, errors.New("secret must not be empty")
 	}
 	if ttlSeconds <= 0 {
 		return nil, errors.New("ttlSeconds must be positive")
 	}
+	if refreshTokenTTLSeconds <= 0 {
+		return nil, errors.New("refreshTokenTTLSeconds must be positive")
+	}
 	return &JwtAccessTokenService{
-		secret:     []byte(secret),
-		ttlSeconds: ttlSeconds,
+		secret:                 []byte(secret),
+		ttlSeconds:             ttlSeconds,
+		refreshTokenTTLSeconds: refreshTokenTTLSeconds,
 	}, nil
 }
 
@@ -201,4 +210,20 @@ func numericToFloat64(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// IssueRefreshToken 生成随机 Refresh Token，返回 plaintext（存客户端）、hash（存 DB）和过期时间。
+func (s *JwtAccessTokenService) IssueRefreshToken(now time.Time) (plaintext string, hash string, expiresAt time.Time, err error) {
+	raw := make([]byte, 32)
+	if _, err = rand.Read(raw); err != nil {
+		return "", "", time.Time{}, errors.New("generate refresh token: " + err.Error())
+	}
+	plaintext = base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(plaintext))
+	hash = hex.EncodeToString(sum[:])
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	expiresAt = now.Add(time.Duration(s.refreshTokenTTLSeconds) * time.Second)
+	return plaintext, hash, expiresAt, nil
 }

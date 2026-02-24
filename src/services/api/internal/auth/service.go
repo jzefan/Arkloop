@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -36,17 +38,20 @@ func (e SuspendedUserError) Error() string {
 	return "user suspended"
 }
 
-type IssuedAccessToken struct {
-	Token  string
-	UserID uuid.UUID
+// IssuedTokenPair 包含一次认证/刷新操作签发的 Access + Refresh Token 对。
+type IssuedTokenPair struct {
+	AccessToken  string
+	RefreshToken string
+	UserID       uuid.UUID
 }
 
 type Service struct {
-	userRepo       *data.UserRepository
-	credentialRepo *data.UserCredentialRepository
-	membershipRepo *data.OrgMembershipRepository
-	passwordHasher *BcryptPasswordHasher
-	tokenService   *JwtAccessTokenService
+	userRepo         *data.UserRepository
+	credentialRepo   *data.UserCredentialRepository
+	membershipRepo   *data.OrgMembershipRepository
+	passwordHasher   *BcryptPasswordHasher
+	tokenService     *JwtAccessTokenService
+	refreshTokenRepo *data.RefreshTokenRepository
 }
 
 func NewService(
@@ -55,6 +60,7 @@ func NewService(
 	membershipRepo *data.OrgMembershipRepository,
 	passwordHasher *BcryptPasswordHasher,
 	tokenService *JwtAccessTokenService,
+	refreshTokenRepo *data.RefreshTokenRepository,
 ) (*Service, error) {
 	if userRepo == nil {
 		return nil, errors.New("userRepo must not be nil")
@@ -71,62 +77,99 @@ func NewService(
 	if tokenService == nil {
 		return nil, errors.New("tokenService must not be nil")
 	}
+	if refreshTokenRepo == nil {
+		return nil, errors.New("refreshTokenRepo must not be nil")
+	}
 	return &Service{
-		userRepo:       userRepo,
-		credentialRepo: credentialRepo,
-		membershipRepo: membershipRepo,
-		passwordHasher: passwordHasher,
-		tokenService:   tokenService,
+		userRepo:         userRepo,
+		credentialRepo:   credentialRepo,
+		membershipRepo:   membershipRepo,
+		passwordHasher:   passwordHasher,
+		tokenService:     tokenService,
+		refreshTokenRepo: refreshTokenRepo,
 	}, nil
 }
 
-func (s *Service) IssueAccessToken(ctx context.Context, login string, password string) (IssuedAccessToken, error) {
+func (s *Service) IssueAccessToken(ctx context.Context, login string, password string) (IssuedTokenPair, error) {
 	credential, err := s.credentialRepo.GetByLogin(ctx, login)
 	if err != nil {
-		return IssuedAccessToken{}, err
+		return IssuedTokenPair{}, err
 	}
 	if credential == nil {
-		return IssuedAccessToken{}, InvalidCredentialsError{}
+		return IssuedTokenPair{}, InvalidCredentialsError{}
 	}
 	if !s.passwordHasher.VerifyPassword(password, credential.PasswordHash) {
-		return IssuedAccessToken{}, InvalidCredentialsError{}
+		return IssuedTokenPair{}, InvalidCredentialsError{}
 	}
 
 	user, err := s.userRepo.GetByID(ctx, credential.UserID)
 	if err != nil {
-		return IssuedAccessToken{}, err
+		return IssuedTokenPair{}, err
 	}
 	if user == nil {
-		return IssuedAccessToken{}, UserNotFoundError{UserID: credential.UserID}
+		return IssuedTokenPair{}, UserNotFoundError{UserID: credential.UserID}
 	}
 	if user.Status != "active" {
-		return IssuedAccessToken{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
+		return IssuedTokenPair{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
 	}
 
-	orgID := s.resolveDefaultOrgID(ctx, credential.UserID)
-	token, err := s.tokenService.Issue(credential.UserID, orgID, time.Now().UTC())
-	if err != nil {
-		return IssuedAccessToken{}, err
-	}
-	return IssuedAccessToken{
-		Token:  token,
-		UserID: credential.UserID,
-	}, nil
+	return s.issueTokenPair(ctx, credential.UserID)
 }
 
-func (s *Service) RefreshAccessToken(ctx context.Context, token string) (IssuedAccessToken, error) {
-	user, err := s.AuthenticateUser(ctx, token)
-	if err != nil {
-		return IssuedAccessToken{}, err
+// ConsumeRefreshToken 验证并轮换 Refresh Token，返回新的 token 对。
+// 轮换是原子的：旧 token 在同一 UPDATE 中被吊销并返回 user_id；若 token 无效则返回 TokenInvalidError。
+func (s *Service) ConsumeRefreshToken(ctx context.Context, plaintext string) (IssuedTokenPair, error) {
+	if plaintext == "" {
+		return IssuedTokenPair{}, TokenInvalidError{message: "refresh token required"}
 	}
-	orgID := s.resolveDefaultOrgID(ctx, user.ID)
-	refreshed, err := s.tokenService.Issue(user.ID, orgID, time.Now().UTC())
+
+	tokenHash := sha256RefreshToken(plaintext)
+
+	userID, ok, err := s.refreshTokenRepo.ConsumeByHash(ctx, tokenHash)
 	if err != nil {
-		return IssuedAccessToken{}, err
+		return IssuedTokenPair{}, err
 	}
-	return IssuedAccessToken{
-		Token:  refreshed,
-		UserID: user.ID,
+	if !ok {
+		return IssuedTokenPair{}, TokenInvalidError{message: "refresh token invalid or expired"}
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return IssuedTokenPair{}, err
+	}
+	if user == nil {
+		return IssuedTokenPair{}, UserNotFoundError{UserID: userID}
+	}
+	if user.Status != "active" {
+		return IssuedTokenPair{}, SuspendedUserError{UserID: userID, Status: user.Status}
+	}
+
+	return s.issueTokenPair(ctx, userID)
+}
+
+// issueTokenPair 为指定用户签发 Access Token + Refresh Token，并将 Refresh Token 持久化到 DB。
+func (s *Service) issueTokenPair(ctx context.Context, userID uuid.UUID) (IssuedTokenPair, error) {
+	now := time.Now().UTC()
+	orgID := s.resolveDefaultOrgID(ctx, userID)
+
+	accessToken, err := s.tokenService.Issue(userID, orgID, now)
+	if err != nil {
+		return IssuedTokenPair{}, err
+	}
+
+	plaintext, hash, expiresAt, err := s.tokenService.IssueRefreshToken(now)
+	if err != nil {
+		return IssuedTokenPair{}, err
+	}
+
+	if _, err = s.refreshTokenRepo.Create(ctx, userID, hash, expiresAt); err != nil {
+		return IssuedTokenPair{}, err
+	}
+
+	return IssuedTokenPair{
+		AccessToken:  accessToken,
+		RefreshToken: plaintext,
+		UserID:       userID,
 	}, nil
 }
 
@@ -169,5 +212,13 @@ func (s *Service) Logout(ctx context.Context, userID uuid.UUID, now time.Time) e
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if err := s.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
+		return err
+	}
 	return s.userRepo.BumpTokensInvalidBefore(ctx, userID, now)
+}
+
+func sha256RefreshToken(plaintext string) string {
+	sum := sha256.Sum256([]byte(plaintext))
+	return hex.EncodeToString(sum[:])
 }

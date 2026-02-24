@@ -23,8 +23,9 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
 }
 
 type logoutResponse struct {
@@ -39,10 +40,11 @@ type registerRequest struct {
 }
 
 type registerResponse struct {
-	UserID      string  `json:"user_id"`
-	AccessToken string  `json:"access_token"`
-	TokenType   string  `json:"token_type"`
-	Warning     *string `json:"warning,omitempty"`
+	UserID       string  `json:"user_id"`
+	AccessToken  string  `json:"access_token"`
+	RefreshToken string  `json:"refresh_token"`
+	TokenType    string  `json:"token_type"`
+	Warning      *string `json:"warning,omitempty"`
 }
 
 type registrationModeResponse struct {
@@ -115,10 +117,15 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
-			AccessToken: issued.Token,
-			TokenType:   "bearer",
+			AccessToken:  issued.AccessToken,
+			RefreshToken: issued.RefreshToken,
+			TokenType:    "bearer",
 		})
 	}
+}
+
+type refreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
 }
 
 func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -134,16 +141,24 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 			return
 		}
 
-		token, ok := parseBearerToken(w, r, traceID)
-		if !ok {
+		var body refreshTokenRequest
+		if err := decodeJSON(r, &body); err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		if strings.TrimSpace(body.RefreshToken) == "" {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "refresh_token is required", traceID, nil)
 			return
 		}
 
-		issued, err := authService.RefreshAccessToken(r.Context(), token)
+		issued, err := authService.ConsumeRefreshToken(r.Context(), body.RefreshToken)
 		if err != nil {
 			switch err.(type) {
-			case auth.TokenExpiredError, auth.TokenInvalidError, auth.UserNotFoundError:
+			case auth.TokenInvalidError, auth.UserNotFoundError:
 				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
+				return
+			case auth.SuspendedUserError:
+				WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
 				return
 			default:
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -156,8 +171,9 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
-			AccessToken: issued.Token,
-			TokenType:   "bearer",
+			AccessToken:  issued.AccessToken,
+			RefreshToken: issued.RefreshToken,
+			TokenType:    "bearer",
 		})
 	}
 }
@@ -290,9 +306,10 @@ func register(
 		}
 
 		resp := registerResponse{
-			UserID:      created.UserID.String(),
-			AccessToken: created.AccessToken,
-			TokenType:   "bearer",
+			UserID:       created.UserID.String(),
+			AccessToken:  created.AccessToken,
+			RefreshToken: created.RefreshToken,
+			TokenType:    "bearer",
 		}
 		if created.Warning != "" {
 			resp.Warning = &created.Warning
