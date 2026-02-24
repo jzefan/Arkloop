@@ -128,7 +128,6 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 	if h.queue != nil {
 		h.dispatchWebhooks(bgCtx, payload, run)
 	}
-	h.createRunNotification(bgCtx, payload, run)
 	return nil
 }
 
@@ -166,72 +165,6 @@ func getRunStatus(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID) (str
 		return "", time.Time{}, err
 	}
 	return status, createdAt, nil
-}
-
-// getRunCreatedByUserID 查询 run 的发起用户 ID（API Key 发起的 run 该字段为 NULL）。
-func getRunCreatedByUserID(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID) (*uuid.UUID, error) {
-	var userID *uuid.UUID
-	err := pool.QueryRow(ctx,
-		`SELECT created_by_user_id FROM runs WHERE id = $1`,
-		runID,
-	).Scan(&userID)
-	if err != nil {
-		return nil, err
-	}
-	return userID, nil
-}
-
-var notificationTitles = map[string]string{
-	"completed": "Run completed",
-	"failed":    "Run failed",
-	"cancelled": "Run cancelled",
-}
-
-// createRunNotification 在 run 终态后为发起用户创建站内通知。
-// API Key 发起的 run（created_by_user_id 为 NULL）跳过。
-func (h *NativeRunEngineV1Handler) createRunNotification(ctx context.Context, payload workerPayload, run *data.Run) {
-	userID, err := getRunCreatedByUserID(ctx, h.pool, run.ID)
-	if err != nil || userID == nil {
-		return
-	}
-
-	status, _, err := getRunStatus(ctx, h.pool, run.ID)
-	if err != nil || status == "" {
-		return
-	}
-
-	title, ok := notificationTitles[status]
-	if !ok {
-		return
-	}
-
-	notifPayload := map[string]any{
-		"run_id":    run.ID.String(),
-		"thread_id": run.ThreadID.String(),
-		"org_id":    run.OrgID.String(),
-	}
-
-	if err := insertNotification(ctx, h.pool, *userID, run.OrgID, "run."+status, title, notifPayload); err != nil {
-		h.logger.Error("create run notification failed", payload.LogFields(queue.JobLease{}), map[string]any{"error": err.Error()})
-	}
-}
-
-// insertNotification 直接写入 notifications 表，fire-and-forget。
-func insertNotification(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	userID uuid.UUID,
-	orgID uuid.UUID,
-	notifType string,
-	title string,
-	payloadJSON map[string]any,
-) error {
-	_, err := pool.Exec(ctx,
-		`INSERT INTO notifications (user_id, org_id, type, title, payload_json)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		userID, orgID, notifType, title, payloadJSON,
-	)
-	return err
 }
 
 type workerPayload struct {
