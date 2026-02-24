@@ -49,9 +49,10 @@ type Props = {
   initialTab?: SettingsTab
   onClose: () => void
   onLogout: () => void
+  onCreditsChanged?: (balance: number) => void
 }
 
-export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout }: Props) {
+export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout, onCreditsChanged }: Props) {
   const { t, locale, setLocale } = useLocale()
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
@@ -128,7 +129,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
               </div>
             )}
             {activeKey === 'credits' && (
-              <CreditsContent accessToken={accessToken} />
+              <CreditsContent accessToken={accessToken} onCreditsChanged={onCreditsChanged} />
             )}
           </div>
         </div>
@@ -436,7 +437,7 @@ function HelpContent({ label }: { label: string }) {
   )
 }
 
-function CreditsContent({ accessToken }: { accessToken: string }) {
+function CreditsContent({ accessToken, onCreditsChanged }: { accessToken: string; onCreditsChanged?: (balance: number) => void }) {
   const { t } = useLocale()
   const now = new Date()
   const [balance, setBalance] = useState<number | null>(null)
@@ -459,6 +460,7 @@ function CreditsContent({ accessToken }: { accessToken: string }) {
       try {
         const data = await getMyCredits(accessToken)
         setBalance(data.balance)
+        onCreditsChanged?.(data.balance)
       } catch {
         setBalance(null)
       } finally {
@@ -479,6 +481,7 @@ function CreditsContent({ accessToken }: { accessToken: string }) {
       // 刷新余额
       const updated = await getMyCredits(accessToken)
       setBalance(updated.balance)
+      onCreditsChanged?.(updated.balance)
     } catch {
       setRedeemMsg({ ok: false, text: t.creditsRedeemError(code) })
     } finally {
