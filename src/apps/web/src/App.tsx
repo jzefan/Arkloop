@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
@@ -13,11 +13,14 @@ import {
 
 function App() {
   const [accessToken, setAccessToken] = useState<string | null>(() => readAccessTokenFromStorage())
+  const navigate = useNavigate()
 
   const handleLoggedIn = useCallback((token: string) => {
+    clearActiveThreadIdInStorage()
     writeAccessTokenToStorage(token)
     setAccessToken(token)
-  }, [])
+    navigate('/', { replace: true })
+  }, [navigate])
 
   const handleLoggedOut = useCallback(() => {
     clearAccessTokenFromStorage()
