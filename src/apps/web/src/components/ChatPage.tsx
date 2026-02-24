@@ -39,12 +39,13 @@ type OutletContext = {
   onRunStarted: (threadId: string) => void
   onRunEnded: (threadId: string) => void
   onOpenNotifications: () => void
+  notificationVersion: number
 }
 
 type LocationState = { initialRunId?: string } | null
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onOpenNotifications } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onOpenNotifications, notificationVersion } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -385,7 +386,7 @@ export function ChatPage() {
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
       <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} />
+        <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} />
         <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
           <Glasses size={18} />
         </button>

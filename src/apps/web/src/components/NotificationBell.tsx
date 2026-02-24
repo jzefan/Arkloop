@@ -7,9 +7,10 @@ const POLL_INTERVAL_MS = 30_000
 type Props = {
   accessToken: string
   onClick: () => void
+  refreshKey?: number
 }
 
-export function NotificationBell({ accessToken, onClick }: Props) {
+export function NotificationBell({ accessToken, onClick, refreshKey }: Props) {
   const [items, setItems] = useState<NotificationItem[]>([])
   const mountedRef = useRef(true)
 
@@ -33,7 +34,7 @@ export function NotificationBell({ accessToken, onClick }: Props) {
     void fetchNotifications()
     const timer = setInterval(() => void fetchNotifications(), POLL_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [fetchNotifications])
+  }, [fetchNotifications, refreshKey])
 
   const unreadCount = items.length
 
