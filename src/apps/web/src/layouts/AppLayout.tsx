@@ -4,6 +4,7 @@ import { PanelLeftOpen } from 'lucide-react'
 import { Sidebar } from '../components/Sidebar'
 import { SettingsModal } from '../components/SettingsModal'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
+import { NotificationsPanel } from '../components/NotificationsPanel'
 import type { SettingsTab } from '../components/SettingsModal'
 import {
   getMe,
@@ -37,6 +38,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('account')
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -138,8 +140,11 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         <ChatsSearchModal threads={threads} onClose={handleCloseSearch} />
       )}
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded }} />
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <Outlet context={{ accessToken, onLoggedOut, me, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onOpenNotifications: () => setNotificationsOpen(true) }} />
+        {notificationsOpen && (
+          <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} />
+        )}
       </main>
     </div>
   )
