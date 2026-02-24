@@ -21,7 +21,7 @@ export function NotificationBell({ accessToken, onClick, refreshKey }: Props) {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const resp = await listNotifications(accessToken, 'broadcast')
+      const resp = await listNotifications(accessToken)
       if (mountedRef.current) {
         setItems(resp.data ?? [])
       }
