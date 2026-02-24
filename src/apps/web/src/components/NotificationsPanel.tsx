@@ -6,6 +6,7 @@ import { useLocale } from '../contexts/LocaleContext'
 type Props = {
   accessToken: string
   onClose: () => void
+  onMarkedRead: () => void
 }
 
 function formatDate(iso: string): string {
@@ -16,7 +17,7 @@ function formatDate(iso: string): string {
   return `${y}年${m}月${day}日`
 }
 
-export function NotificationsPanel({ accessToken, onClose }: Props) {
+export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props) {
   const { t } = useLocale()
   const [items, setItems] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -48,10 +49,11 @@ export function NotificationsPanel({ accessToken, onClose }: Props) {
     try {
       await markNotificationRead(accessToken, id)
       setItems((prev) => prev.filter((n) => n.id !== id))
+      onMarkedRead()
     } catch {
       // 静默处理
     }
-  }, [accessToken])
+  }, [accessToken, onMarkedRead])
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col overflow-hidden bg-[var(--c-bg-page)]">
