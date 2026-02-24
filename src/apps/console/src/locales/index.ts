@@ -400,20 +400,16 @@ export interface LocaleStrings {
     }
     usage: {
       title: string
-      labelOrgId: string
-      placeholderOrgId: string
-      labelYear: string
-      labelMonth: string
       queryButton: string
       cardInputTokens: string
       cardOutputTokens: string
       cardCostUSD: string
       cardRecordCount: string
+      chartDailyTitle: string
+      chartModelTitle: string
+      chartNoData: string
       emptyHint: string
-      // toasts
       toastLoadFailed: string
-      // errors
-      errOrgIdRequired: string
     }
     dashboard: {
       title: string
@@ -435,6 +431,16 @@ export interface LocaleStrings {
       cardOutputTokens: string
       cardCostUSD: string
       cardRecordCount: string
+      cardCreditBalance: string
+      chartDailyTitle: string
+      chartModelTitle: string
+      chartNoData: string
+      transactionsTitle: string
+      transactionsEmpty: string
+      colDate: string
+      colType: string
+      colAmount: string
+      colNote: string
       emptyHint: string
       toastLoadFailed: string
     }

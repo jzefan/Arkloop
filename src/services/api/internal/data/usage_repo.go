@@ -113,6 +113,212 @@ func (r *UsageRepository) GetMonthlyUsage(
 	return summary, nil
 }
 
+type DailyUsage struct {
+	Date         time.Time
+	InputTokens  int64
+	OutputTokens int64
+	CostUSD      float64
+	RecordCount  int64
+}
+
+type ModelUsage struct {
+	Model        string
+	InputTokens  int64
+	OutputTokens int64
+	CostUSD      float64
+	RecordCount  int64
+}
+
+// GetDailyUsage 按日聚合指定 org 在 [startDate, endDate) 内的用量。
+func (r *UsageRepository) GetDailyUsage(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startDate, endDate time.Time,
+) ([]DailyUsage, error) {
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("usage_records: org_id must not be empty")
+	}
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT
+		     DATE_TRUNC('day', recorded_at) AS day,
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0),
+		     COUNT(*)
+		 FROM usage_records
+		 WHERE org_id = $1 AND recorded_at >= $2 AND recorded_at < $3
+		 GROUP BY day
+		 ORDER BY day`,
+		orgID, startDate, endDate,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetDailyUsage: %w", err)
+	}
+	defer rows.Close()
+
+	var result []DailyUsage
+	for rows.Next() {
+		var d DailyUsage
+		if err := rows.Scan(&d.Date, &d.InputTokens, &d.OutputTokens, &d.CostUSD, &d.RecordCount); err != nil {
+			return nil, fmt.Errorf("usage_records.GetDailyUsage scan: %w", err)
+		}
+		result = append(result, d)
+	}
+	return result, rows.Err()
+}
+
+// GetUsageByModel 按模型分组聚合指定 org 在某月的用量。
+func (r *UsageRepository) GetUsageByModel(
+	ctx context.Context,
+	orgID uuid.UUID,
+	year, month int,
+) ([]ModelUsage, error) {
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("usage_records: org_id must not be empty")
+	}
+
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT
+		     model,
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0),
+		     COUNT(*)
+		 FROM usage_records
+		 WHERE org_id = $1 AND recorded_at >= $2 AND recorded_at < $3
+		 GROUP BY model
+		 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`,
+		orgID, start, end,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetUsageByModel: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ModelUsage
+	for rows.Next() {
+		var m ModelUsage
+		if err := rows.Scan(&m.Model, &m.InputTokens, &m.OutputTokens, &m.CostUSD, &m.RecordCount); err != nil {
+			return nil, fmt.Errorf("usage_records.GetUsageByModel scan: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+// GetGlobalDailyUsage 按日聚合全平台在 [startDate, endDate) 内的用量（admin 用）。
+func (r *UsageRepository) GetGlobalDailyUsage(
+	ctx context.Context,
+	startDate, endDate time.Time,
+) ([]DailyUsage, error) {
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT
+		     DATE_TRUNC('day', recorded_at) AS day,
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0),
+		     COUNT(*)
+		 FROM usage_records
+		 WHERE recorded_at >= $1 AND recorded_at < $2
+		 GROUP BY day
+		 ORDER BY day`,
+		startDate, endDate,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetGlobalDailyUsage: %w", err)
+	}
+	defer rows.Close()
+
+	var result []DailyUsage
+	for rows.Next() {
+		var d DailyUsage
+		if err := rows.Scan(&d.Date, &d.InputTokens, &d.OutputTokens, &d.CostUSD, &d.RecordCount); err != nil {
+			return nil, fmt.Errorf("usage_records.GetGlobalDailyUsage scan: %w", err)
+		}
+		result = append(result, d)
+	}
+	return result, rows.Err()
+}
+
+// GetGlobalUsageByModel 按模型分组聚合全平台在某月的用量（admin 用）。
+func (r *UsageRepository) GetGlobalUsageByModel(
+	ctx context.Context,
+	year, month int,
+) ([]ModelUsage, error) {
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT
+		     model,
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0),
+		     COUNT(*)
+		 FROM usage_records
+		 WHERE recorded_at >= $1 AND recorded_at < $2
+		 GROUP BY model
+		 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`,
+		start, end,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetGlobalUsageByModel: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ModelUsage
+	for rows.Next() {
+		var m ModelUsage
+		if err := rows.Scan(&m.Model, &m.InputTokens, &m.OutputTokens, &m.CostUSD, &m.RecordCount); err != nil {
+			return nil, fmt.Errorf("usage_records.GetGlobalUsageByModel scan: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+// GetGlobalMonthlyUsage 汇总全平台在某月的 token 用量和成本。
+func (r *UsageRepository) GetGlobalMonthlyUsage(
+	ctx context.Context,
+	year, month int,
+) (*UsageSummary, error) {
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	summary := &UsageSummary{Year: year, Month: month}
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT
+		     COALESCE(SUM(input_tokens),  0),
+		     COALESCE(SUM(output_tokens), 0),
+		     COALESCE(SUM(cost_usd),      0),
+		     COUNT(*)
+		 FROM usage_records
+		 WHERE recorded_at >= $1 AND recorded_at < $2`,
+		start, end,
+	).Scan(
+		&summary.TotalInputTokens,
+		&summary.TotalOutputTokens,
+		&summary.TotalCostUSD,
+		&summary.RecordCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return summary, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("usage_records.GetGlobalMonthlyUsage: %w", err)
+	}
+	return summary, nil
+}
+
 // GlobalUsageSummary 全局用量聚合（跨所有 org）。
 type GlobalUsageSummary struct {
 	TotalInputTokens  int64
