@@ -57,4 +57,7 @@ export const zh: LocaleStrings = {
   requestFailed: '请求失败',
   newChatTitle: '新会话',
   chatPlaceholder: '今天有什么可以帮助你的？',
+  notificationsTitle: '通知',
+  notificationsEmpty: '暂无通知',
+  notificationsMarkRead: '标记已读',
 }

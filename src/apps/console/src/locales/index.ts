@@ -40,6 +40,7 @@ export interface LocaleStrings {
     inviteCodes: string
     redemptionCodes: string
     creditsAdmin: string
+    broadcasts: string
   }
   // settings
   account: string
@@ -623,6 +624,39 @@ export interface LocaleStrings {
       toastDeductOk: string
       toastResetOk: string
       toastFailed: string
+    }
+    broadcasts: {
+      title: string
+      addBroadcast: string
+      empty: string
+      loadMore: string
+      // table columns
+      colType: string
+      colTitle: string
+      colTarget: string
+      colSentCount: string
+      colStatus: string
+      colCreatedAt: string
+      // target labels
+      targetAll: string
+      // create modal
+      modalTitle: string
+      fieldType: string
+      fieldTitle: string
+      fieldBody: string
+      fieldTarget: string
+      fieldTargetPlaceholder: string
+      typeAnnouncement: string
+      typeMaintenance: string
+      typeUpdate: string
+      cancel: string
+      create: string
+      // errors
+      errTitleRequired: string
+      // toasts
+      toastLoadFailed: string
+      toastCreated: string
+      toastCreateFailed: string
     }
   }
 }

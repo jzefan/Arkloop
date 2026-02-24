@@ -710,6 +710,52 @@ func (w *Writer) WriteRedemptionCodeRedeemed(
 	}
 }
 
+func (w *Writer) WriteBroadcastCreated(
+	ctx context.Context,
+	traceID string,
+	userID uuid.UUID,
+	broadcastID uuid.UUID,
+	targetType string,
+	targetID *uuid.UUID,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	tType := "notification_broadcast"
+	tID := broadcastID.String()
+	meta := map[string]any{
+		"target_type": targetType,
+	}
+	if targetID != nil {
+		meta["target_id"] = targetID.String()
+	}
+
+	var orgID *uuid.UUID
+	if w.membershipRepo != nil {
+		membership, err := w.membershipRepo.GetDefaultForUser(ctx, userID)
+		if err != nil {
+			w.logError(traceID, "failed to read default org for broadcast audit", err)
+		} else if membership != nil {
+			orgID = &membership.OrgID
+		}
+	}
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:       orgID,
+		ActorUserID: &userID,
+		Action:      "notifications.broadcast_created",
+		TargetType:  &tType,
+		TargetID:    &tID,
+		TraceID:     traceID,
+		IPAddress:   ip,
+		UserAgent:   ua,
+		Metadata:    meta,
+	}); err != nil {
+		w.logError(traceID, "failed to write broadcast-created audit log", err)
+	}
+}
+
 func (w *Writer) logError(traceID string, msg string, err error) {
 	if w == nil || w.logger == nil || err == nil {
 		return
