@@ -29,27 +29,27 @@ type inviteCodeResponse struct {
 
 type adminInviteCodeResponse struct {
 	inviteCodeResponse
-	UserDisplayName string  `json:"user_display_name"`
-	UserEmail       *string `json:"user_email"`
+	UserLogin string  `json:"user_login"`
+	UserEmail *string `json:"user_email"`
 }
 
 type referralResponse struct {
-	ID                 string `json:"id"`
-	InviterUserID      string `json:"inviter_user_id"`
-	InviteeUserID      string `json:"invitee_user_id"`
-	InviteCodeID       string `json:"invite_code_id"`
-	Credited           bool   `json:"credited"`
-	CreatedAt          string `json:"created_at"`
-	InviterDisplayName string `json:"inviter_display_name"`
-	InviteeDisplayName string `json:"invitee_display_name"`
+	ID             string `json:"id"`
+	InviterUserID  string `json:"inviter_user_id"`
+	InviteeUserID  string `json:"invitee_user_id"`
+	InviteCodeID   string `json:"invite_code_id"`
+	Credited       bool   `json:"credited"`
+	CreatedAt      string `json:"created_at"`
+	InviterLogin   string `json:"inviter_login"`
+	InviteeLogin   string `json:"invitee_login"`
 }
 
 type referralTreeNodeResponse struct {
-	UserID      string  `json:"user_id"`
-	DisplayName string  `json:"display_name"`
-	InviterID   *string `json:"inviter_id"`
-	Depth       int     `json:"depth"`
-	CreatedAt   string  `json:"created_at"`
+	UserID    string  `json:"user_id"`
+	Login     string  `json:"login"`
+	InviterID *string `json:"inviter_id"`
+	Depth     int     `json:"depth"`
+	CreatedAt string  `json:"created_at"`
 }
 
 func toInviteCodeResponse(ic data.InviteCode) inviteCodeResponse {
@@ -289,7 +289,7 @@ func listAdminInviteCodes(
 		for _, item := range items {
 			resp = append(resp, adminInviteCodeResponse{
 				inviteCodeResponse: toInviteCodeResponse(item.InviteCode),
-				UserDisplayName:    item.UserDisplayName,
+				UserLogin:          item.UserLogin,
 				UserEmail:          item.UserEmail,
 			})
 		}
@@ -510,14 +510,14 @@ func adminReferralsEntry(
 		resp := make([]referralResponse, 0, len(items))
 		for _, item := range items {
 			resp = append(resp, referralResponse{
-				ID:                 item.ID.String(),
-				InviterUserID:      item.InviterUserID.String(),
-				InviteeUserID:      item.InviteeUserID.String(),
-				InviteCodeID:       item.InviteCodeID.String(),
-				Credited:           item.Credited,
-				CreatedAt:          item.CreatedAt.Format(time.RFC3339Nano),
-				InviterDisplayName: item.InviterDisplayName,
-				InviteeDisplayName: item.InviteeDisplayName,
+				ID:            item.ID.String(),
+				InviterUserID: item.InviterUserID.String(),
+				InviteeUserID: item.InviteeUserID.String(),
+				InviteCodeID:  item.InviteCodeID.String(),
+				Credited:      item.Credited,
+				CreatedAt:     item.CreatedAt.Format(time.RFC3339Nano),
+				InviterLogin:  item.InviterLogin,
+				InviteeLogin:  item.InviteeLogin,
 			})
 		}
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
@@ -578,11 +578,11 @@ func adminReferralTree(
 				inviterID = &s
 			}
 			resp = append(resp, referralTreeNodeResponse{
-				UserID:      n.UserID.String(),
-				DisplayName: n.DisplayName,
-				InviterID:   inviterID,
-				Depth:       n.Depth,
-				CreatedAt:   n.CreatedAt.Format(time.RFC3339Nano),
+				UserID:    n.UserID.String(),
+				Login:     n.Login,
+				InviterID: inviterID,
+				Depth:     n.Depth,
+				CreatedAt: n.CreatedAt.Format(time.RFC3339Nano),
 			})
 		}
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
