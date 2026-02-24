@@ -382,6 +382,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		meRedeem(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool),
 	)
 
+	mux.HandleFunc(
+		"/v1/admin/notifications/broadcasts/",
+		adminBroadcastEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/notifications/broadcasts",
+		adminBroadcastsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool, cfg.Logger),
+	)
+
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		WriteError(w, nethttp.StatusNotFound, "http.method_not_allowed", "Not Found", traceID, nil)

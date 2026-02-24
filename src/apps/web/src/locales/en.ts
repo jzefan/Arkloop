@@ -57,4 +57,7 @@ export const en: LocaleStrings = {
   requestFailed: 'Request failed',
   newChatTitle: 'New chat',
   chatPlaceholder: 'How can I help you today?',
+  notificationsTitle: 'Notifications',
+  notificationsEmpty: 'No notifications',
+  notificationsMarkRead: 'Mark as read',
 }

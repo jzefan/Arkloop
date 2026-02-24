@@ -67,6 +67,10 @@ export interface LocaleStrings {
   requestFailed: string
   newChatTitle: string
   chatPlaceholder: string
+  // notifications
+  notificationsTitle: string
+  notificationsEmpty: string
+  notificationsMarkRead: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

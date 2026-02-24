@@ -412,3 +412,36 @@ export async function resetMyInviteCode(
     accessToken,
   })
 }
+
+// Notifications API
+
+export type NotificationItem = {
+  id: string
+  user_id: string
+  org_id: string
+  type: string
+  title: string
+  body: string
+  payload: Record<string, unknown>
+  read_at?: string
+  created_at: string
+}
+
+export async function listNotifications(
+  accessToken: string,
+): Promise<{ data: NotificationItem[] }> {
+  return await apiFetch<{ data: NotificationItem[] }>('/v1/notifications', {
+    method: 'GET',
+    accessToken,
+  })
+}
+
+export async function markNotificationRead(
+  accessToken: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  return await apiFetch<{ ok: boolean }>(`/v1/notifications/${id}`, {
+    method: 'PATCH',
+    accessToken,
+  })
+}
