@@ -383,10 +383,10 @@ export function ChatPage() {
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
-      <div className="flex min-h-[51px] items-center justify-end gap-1 px-[15px] py-[15px]">
+      <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
         <NotificationBell accessToken={accessToken} />
-        <button className="flex h-5 w-5 items-center justify-center text-[var(--c-text-secondary)] opacity-80 transition-opacity hover:opacity-100">
-          <Glasses size={20} />
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
+          <Glasses size={18} />
         </button>
       </div>
 

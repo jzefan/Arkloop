@@ -116,10 +116,10 @@ export function WelcomePage() {
   return (
     <div className="flex h-full flex-col">
       {/* 顶部 header */}
-      <div className="flex min-h-[51px] items-center justify-end gap-1 px-[15px] py-[15px]">
+      <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
         <NotificationBell accessToken={accessToken} />
-        <button className="flex h-5 w-5 items-center justify-center text-[var(--c-text-secondary)] transition-opacity hover:opacity-70">
-          <Glasses size={20} />
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
+          <Glasses size={18} />
         </button>
       </div>
 

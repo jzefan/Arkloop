@@ -65,18 +65,18 @@ export function NotificationBell({ accessToken }: Props) {
     <div className="relative" ref={panelRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative flex h-5 w-5 items-center justify-center text-[var(--c-text-secondary)] opacity-80 transition-opacity hover:opacity-100"
+        className="relative flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
       >
-        <Bell size={20} />
+        <Bell size={18} />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--c-status-error-bg,#ef4444)] px-1 text-[10px] font-medium text-white">
+          <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-[var(--c-status-error-bg,#ef4444)] px-0.5 text-[9px] font-medium text-white">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 z-50 w-[320px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-page)] shadow-lg">
+        <div className="absolute right-0 top-9 z-50 w-[320px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-page)] shadow-lg">
           <div className="border-b border-[var(--c-border)] px-4 py-2.5">
             <span className="text-sm font-medium text-[var(--c-text-primary)]">
               {t.notificationsTitle}
