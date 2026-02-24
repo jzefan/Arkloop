@@ -31,7 +31,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new password hasher: %v", err)
 	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600)
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 7776000)
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
@@ -48,6 +48,10 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
 	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
@@ -57,11 +61,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("new thread repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -164,7 +168,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new password hasher: %v", err)
 	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600)
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 7776000)
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
@@ -172,12 +176,13 @@ func TestThreadListActiveRunID(t *testing.T) {
 	userRepo, _ := data.NewUserRepository(pool)
 	credentialRepo, _ := data.NewUserCredentialRepository(pool)
 	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	threadRepo, _ := data.NewThreadRepository(pool)
 	runRepo, _ := data.NewRunEventRepository(pool)
 
-	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService)
+	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo)
+	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{

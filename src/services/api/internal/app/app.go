@@ -177,6 +177,8 @@ func (a *Application) Run(ctx context.Context) error {
 
 		asrCredRepo *data.AsrCredentialsRepository
 
+		refreshTokenRepo *data.RefreshTokenRepository
+
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
 		auditWriter         *audit.Writer
@@ -326,6 +328,11 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 
+		refreshTokenRepo, err = data.NewRefreshTokenRepository(pool)
+		if err != nil {
+			return err
+		}
+
 		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
 		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
 		if keyRingErr == nil {
@@ -346,15 +353,15 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		tokenService, err := auth.NewJwtAccessTokenService(a.config.Auth.JWTSecret, a.config.Auth.AccessTokenTTLSeconds)
+		tokenService, err := auth.NewJwtAccessTokenService(a.config.Auth.JWTSecret, a.config.Auth.AccessTokenTTLSeconds, a.config.Auth.RefreshTokenTTLSeconds)
 		if err != nil {
 			return err
 		}
-		authService, err = auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
+		authService, err = auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo)
 		if err != nil {
 			return err
 		}
-		registrationService, err = auth.NewRegistrationService(pool, passwordHasher, tokenService)
+		registrationService, err = auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo)
 		if err != nil {
 			return err
 		}

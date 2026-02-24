@@ -8,15 +8,18 @@ import (
 )
 
 const (
-	jwtSecretEnv            = "ARKLOOP_AUTH_JWT_SECRET"
-	accessTokenTTLEnv       = "ARKLOOP_AUTH_ACCESS_TOKEN_TTL_SECONDS"
-	defaultAccessTokenTTL   = 2592000 // 30 days
-	minJWTSecretLengthBytes = 32
+	jwtSecretEnv              = "ARKLOOP_AUTH_JWT_SECRET"
+	accessTokenTTLEnv         = "ARKLOOP_AUTH_ACCESS_TOKEN_TTL_SECONDS"
+	refreshTokenTTLEnv        = "ARKLOOP_AUTH_REFRESH_TOKEN_TTL_SECONDS"
+	defaultAccessTokenTTL     = 900     // 15 分钟
+	defaultRefreshTokenTTL    = 7776000 // 90 天
+	minJWTSecretLengthBytes   = 32
 )
 
 type Config struct {
-	JWTSecret             string
-	AccessTokenTTLSeconds int
+	JWTSecret              string
+	AccessTokenTTLSeconds  int
+	RefreshTokenTTLSeconds int
 }
 
 func LoadConfigFromEnv(required bool) (*Config, error) {
@@ -40,9 +43,19 @@ func LoadConfigFromEnv(required bool) (*Config, error) {
 		ttlSeconds = parsed
 	}
 
+	refreshTTLSeconds := defaultRefreshTokenTTL
+	if raw := strings.TrimSpace(os.Getenv(refreshTokenTTLEnv)); raw != "" {
+		parsed, err := parsePositiveInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", refreshTokenTTLEnv, err)
+		}
+		refreshTTLSeconds = parsed
+	}
+
 	cfg := &Config{
-		JWTSecret:             secret,
-		AccessTokenTTLSeconds: ttlSeconds,
+		JWTSecret:              secret,
+		AccessTokenTTLSeconds:  ttlSeconds,
+		RefreshTokenTTLSeconds: refreshTTLSeconds,
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -62,6 +75,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AccessTokenTTLSeconds <= 0 {
 		return fmt.Errorf("access_token_ttl_seconds must be positive")
+	}
+	if c.RefreshTokenTTLSeconds <= 0 {
+		return fmt.Errorf("refresh_token_ttl_seconds must be positive")
 	}
 	return nil
 }

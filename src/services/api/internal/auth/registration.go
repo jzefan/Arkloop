@@ -31,20 +31,22 @@ func (e InviteCodeInvalidError) Error() string {
 }
 
 type RegisterResult struct {
-	UserID       uuid.UUID
-	AccessToken  string
-	Warning      string
-	ReferralID   *uuid.UUID
+	UserID        uuid.UUID
+	AccessToken   string
+	RefreshToken  string
+	Warning       string
+	ReferralID    *uuid.UUID
 	InviterUserID uuid.UUID
 	InviteCodeID  uuid.UUID
 }
 
 type RegistrationService struct {
-	pool           *pgxpool.Pool
-	passwordHasher *BcryptPasswordHasher
-	tokenService   *JwtAccessTokenService
-	entitlementSvc EntitlementResolver
-	now            func() time.Time
+	pool             *pgxpool.Pool
+	passwordHasher   *BcryptPasswordHasher
+	tokenService     *JwtAccessTokenService
+	refreshTokenRepo *data.RefreshTokenRepository
+	entitlementSvc   EntitlementResolver
+	now              func() time.Time
 }
 
 // EntitlementResolver 注册时读取 entitlement 默认值。
@@ -67,6 +69,7 @@ func NewRegistrationService(
 	pool *pgxpool.Pool,
 	passwordHasher *BcryptPasswordHasher,
 	tokenService *JwtAccessTokenService,
+	refreshTokenRepo *data.RefreshTokenRepository,
 ) (*RegistrationService, error) {
 	if pool == nil {
 		return nil, errors.New("pool must not be nil")
@@ -77,11 +80,15 @@ func NewRegistrationService(
 	if tokenService == nil {
 		return nil, errors.New("tokenService must not be nil")
 	}
+	if refreshTokenRepo == nil {
+		return nil, errors.New("refreshTokenRepo must not be nil")
+	}
 	return &RegistrationService{
-		pool:           pool,
-		passwordHasher: passwordHasher,
-		tokenService:   tokenService,
-		now:            func() time.Time { return time.Now().UTC() },
+		pool:             pool,
+		passwordHasher:   passwordHasher,
+		tokenService:     tokenService,
+		refreshTokenRepo: refreshTokenRepo,
+		now:              func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -286,12 +293,23 @@ func (s *RegistrationService) Register(
 		return RegisterResult{}, err
 	}
 
-	token, err := s.tokenService.Issue(user.ID, org.ID, s.now())
+	now := s.now()
+	token, err := s.tokenService.Issue(user.ID, org.ID, now)
 	if err != nil {
 		return RegisterResult{}, err
 	}
+
+	plaintext, hash, expiresAt, err := s.tokenService.IssueRefreshToken(now)
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	if _, err = s.refreshTokenRepo.Create(ctx, user.ID, hash, expiresAt); err != nil {
+		return RegisterResult{}, err
+	}
+
 	result.UserID = user.ID
 	result.AccessToken = token
+	result.RefreshToken = plaintext
 	return result, nil
 }
 

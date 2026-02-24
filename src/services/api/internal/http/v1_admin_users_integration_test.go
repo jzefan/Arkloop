@@ -28,7 +28,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new password hasher: %v", err)
 	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600)
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 7776000)
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
@@ -45,16 +45,20 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
 	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
