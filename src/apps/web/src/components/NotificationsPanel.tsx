@@ -22,31 +22,34 @@ export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props
   const [items, setItems] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
   const mountedRef = useRef(true)
-  const markedRef = useRef(false)
 
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
 
+  // 拉取全部通知用于展示
   useEffect(() => {
     void (async () => {
       try {
         const resp = await listNotifications(accessToken)
-        if (!mountedRef.current) return
-        setItems(resp.data ?? [])
-
-        // 存在未读通知时自动标记全部已读
-        const hasUnread = (resp.data ?? []).some((n) => !n.read_at)
-        if (hasUnread && !markedRef.current) {
-          markedRef.current = true
-          await markAllNotificationsRead(accessToken)
-          onMarkedRead()
-        }
+        if (mountedRef.current) setItems(resp.data ?? [])
       } catch {
         // 静默处理
       } finally {
         if (mountedRef.current) setLoading(false)
+      }
+    })()
+  }, [accessToken])
+
+  // 打开面板即标记全部已读，独立于拉取流程
+  useEffect(() => {
+    void (async () => {
+      try {
+        await markAllNotificationsRead(accessToken)
+        onMarkedRead()
+      } catch {
+        // 静默处理
       }
     })()
   }, [accessToken, onMarkedRead])

@@ -40,6 +40,10 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('account')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationVersion, setNotificationVersion] = useState(0)
+
+  const handleNotificationMarkedRead = useCallback(() => {
+    setNotificationVersion((v) => v + 1)
+  }, [])
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -144,7 +148,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <Outlet context={{ accessToken, onLoggedOut, me, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion }} />
         {notificationsOpen && (
-          <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={() => setNotificationVersion((v) => v + 1)} />
+          <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}
       </main>
     </div>
