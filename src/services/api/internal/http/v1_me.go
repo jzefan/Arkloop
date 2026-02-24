@@ -77,3 +77,123 @@ func meUsage(
 		})
 	}
 }
+
+func meDailyUsage(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	usageRepo *data.UsageRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodGet {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+		traceID := observability.TraceIDFromContext(r.Context())
+
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		if usageRepo == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+		if !ok {
+			return
+		}
+
+		startDate, endDate, ok := parseDateRange(w, r, traceID)
+		if !ok {
+			return
+		}
+
+		rows, err := usageRepo.GetDailyUsage(r.Context(), actor.OrgID, startDate, endDate)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		items := make([]dailyUsageItem, len(rows))
+		for i, row := range rows {
+			items[i] = dailyUsageItem{
+				Date:         row.Date.Format("2006-01-02"),
+				InputTokens:  row.InputTokens,
+				OutputTokens: row.OutputTokens,
+				CostUSD:      row.CostUSD,
+				RecordCount:  row.RecordCount,
+			}
+		}
+		writeJSON(w, traceID, nethttp.StatusOK, items)
+	}
+}
+
+func meUsageByModel(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	usageRepo *data.UsageRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodGet {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+		traceID := observability.TraceIDFromContext(r.Context())
+
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		if usageRepo == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+		if !ok {
+			return
+		}
+
+		now := time.Now().UTC()
+		year := now.Year()
+		month := int(now.Month())
+
+		if y := r.URL.Query().Get("year"); y != "" {
+			parsed, parseErr := strconv.Atoi(y)
+			if parseErr != nil || parsed < 2000 || parsed > 2100 {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid year", traceID, nil)
+				return
+			}
+			year = parsed
+		}
+		if m := r.URL.Query().Get("month"); m != "" {
+			parsed, parseErr := strconv.Atoi(m)
+			if parseErr != nil || parsed < 1 || parsed > 12 {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "month must be 1-12", traceID, nil)
+				return
+			}
+			month = parsed
+		}
+
+		rows, err := usageRepo.GetUsageByModel(r.Context(), actor.OrgID, year, month)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		items := make([]modelUsageItem, len(rows))
+		for i, row := range rows {
+			items[i] = modelUsageItem{
+				Model:        row.Model,
+				InputTokens:  row.InputTokens,
+				OutputTokens: row.OutputTokens,
+				CostUSD:      row.CostUSD,
+				RecordCount:  row.RecordCount,
+			}
+		}
+		writeJSON(w, traceID, nethttp.StatusOK, items)
+	}
+}

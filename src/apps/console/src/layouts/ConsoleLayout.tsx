@@ -71,10 +71,10 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       id: 'billing',
       label: t.groups.billing,
       items: [
+        { label: t.nav.usage,         path: '/usage',         icon: <BarChart3 size={17} /> },
         { label: t.nav.plans,         path: '/plans',         icon: <Package size={17} /> },
         { label: t.nav.subscriptions, path: '/subscriptions', icon: <Receipt size={17} /> },
         { label: t.nav.entitlements,  path: '/entitlements',  icon: <BadgeCheck size={17} /> },
-        { label: t.nav.usage,         path: '/usage',         icon: <BarChart3 size={17} /> },
       ],
     },
     {
