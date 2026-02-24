@@ -523,6 +523,14 @@ export function ChatInput({
               )}
             </div>
 
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={isRecording || isTranscribing || !accessToken}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              <Mic size={16} />
+            </button>
             {isStreaming && canCancel ? (
               <button
                 type="button"
@@ -533,23 +541,13 @@ export function ChatInput({
                 <Square size={14} fill="currentColor" />
               </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={startRecording}
-                  disabled={isRecording || isTranscribing || !accessToken}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  <Mic size={16} />
-                </button>
-                <button
-                  type="submit"
-                  disabled={disabled || isStreaming || (!value.trim() && attachments.length === 0)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] transition-colors duration-150 hover:bg-[var(--c-accent-send-hover)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ArrowUp size={16} />
-                </button>
-              </>
+              <button
+                type="submit"
+                disabled={disabled || isStreaming || (!value.trim() && attachments.length === 0)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] transition-colors duration-150 hover:bg-[var(--c-accent-send-hover)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ArrowUp size={16} />
+              </button>
             )}
           </div>
         </div>

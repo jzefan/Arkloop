@@ -112,6 +112,12 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
     })
   }, [])
 
+  const refreshCredits = useCallback(() => {
+    void getMyCredits(accessToken).then((resp) => {
+      if (mountedRef.current) setCreditsBalance(resp.balance)
+    }).catch(() => { /* 静默失败，不影响主流程 */ })
+  }, [accessToken])
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--c-bg-page)]">
       {/* 侧边栏折叠时的展开按钮 */}
@@ -142,6 +148,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           initialTab={settingsInitialTab}
           onClose={() => setSettingsOpen(false)}
           onLogout={handleLogout}
+          onCreditsChanged={(balance) => setCreditsBalance(balance)}
         />
       )}
 
@@ -150,7 +157,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}

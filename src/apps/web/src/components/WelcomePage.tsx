@@ -28,6 +28,7 @@ type OutletContext = {
   accessToken: string
   onLoggedOut: () => void
   onThreadCreated: (thread: ThreadResponse) => void
+  refreshCredits: () => void
   onOpenNotifications: () => void
   notificationVersion: number
   creditsBalance: number

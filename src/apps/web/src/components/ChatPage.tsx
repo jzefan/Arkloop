@@ -38,6 +38,7 @@ type OutletContext = {
   onLoggedOut: () => void
   onRunStarted: (threadId: string) => void
   onRunEnded: (threadId: string) => void
+  refreshCredits: () => void
   onOpenNotifications: () => void
   notificationVersion: number
   creditsBalance: number
@@ -46,7 +47,7 @@ type OutletContext = {
 type LocationState = { initialRunId?: string } | null
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onOpenNotifications, notificationVersion, creditsBalance } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -67,8 +68,17 @@ export function ChatPage() {
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const processedEventCountRef = useRef(0)
   const pendingMessageRef = useRef<string | null>(null)
+  // 用户是否停留在底部区域（距底部 80px 以内视为"在底部"）
+  const isAtBottomRef = useRef(true)
+
+  const handleScrollContainerScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
+  }, [])
 
   const sse = useSSE({ runId: activeRunId ?? '', accessToken, baseUrl })
 
@@ -201,6 +211,7 @@ export function ChatPage() {
         setAssistantDraft('')
         setQueuedDraft(null)
         if (threadId) onRunEnded(threadId)
+        refreshCredits()
         void refreshMessages().then(() => {
           const pending = pendingMessageRef.current
           if (pending) {
@@ -232,7 +243,7 @@ export function ChatPage() {
         })
       }
     }
-  }, [activeRunId, refreshMessages, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -241,10 +252,17 @@ export function ChatPage() {
     }
   }, [sse.error, onLoggedOut])
 
-  // 自动滚动到底部
+  // 新消息/流式内容时，仅在用户停留在底部时自动滚动
   useEffect(() => {
+    if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, assistantDraft])
+
+  // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
+  const scrollToBottom = useCallback(() => {
+    isAtBottomRef.current = true
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
 
   const handleAttachFiles = useCallback((files: File[]) => {
     const readers = files.map((file) => {
@@ -323,6 +341,7 @@ export function ChatPage() {
       const run = await createRun(accessToken, threadId)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
+      scrollToBottom()
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -349,6 +368,7 @@ export function ChatPage() {
       })
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
+      scrollToBottom()
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -358,7 +378,7 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut])
+  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom])
 
   const handleAsrError = useCallback((err: unknown) => {
     if (isApiError(err) && err.status === 401) {
@@ -407,7 +427,11 @@ export function ChatPage() {
       </div>
 
       {/* 消息列表 */}
-      <div className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScrollContainerScroll}
+        className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
+      >
         <div
           style={{ maxWidth: 800, margin: '0 auto', padding: '50px 60px' }}
           className="flex w-full flex-col gap-6"
