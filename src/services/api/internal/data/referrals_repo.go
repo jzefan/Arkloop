@@ -22,17 +22,17 @@ type Referral struct {
 // ReferralWithUsers 列表时附带邀请人/被邀请人信息。
 type ReferralWithUsers struct {
 	Referral
-	InviterDisplayName string
-	InviteeDisplayName string
+	InviterLogin string
+	InviteeLogin string
 }
 
 // ReferralTreeNode 递归推广树的节点。
 type ReferralTreeNode struct {
-	UserID      uuid.UUID
-	DisplayName string
-	InviterID   *uuid.UUID
-	Depth       int
-	CreatedAt   time.Time
+	UserID    uuid.UUID
+	Login     string
+	InviterID *uuid.UUID
+	Depth     int
+	CreatedAt time.Time
 }
 
 type ReferralRepository struct {
@@ -106,10 +106,10 @@ func (r *ReferralRepository) ListByInviterUserID(
 	}
 
 	sql := `SELECT r.id, r.inviter_user_id, r.invitee_user_id, r.invite_code_id, r.credited, r.created_at,
-	               u_inviter.display_name, u_invitee.display_name
+	               uc_inviter.login, uc_invitee.login
 	        FROM referrals r
-	        JOIN users u_inviter ON u_inviter.id = r.inviter_user_id
-	        JOIN users u_invitee ON u_invitee.id = r.invitee_user_id
+	        JOIN user_credentials uc_inviter ON uc_inviter.user_id = r.inviter_user_id
+	        JOIN user_credentials uc_invitee ON uc_invitee.user_id = r.invitee_user_id
 	        WHERE r.inviter_user_id = $1`
 	args := []any{inviterUserID}
 	argIdx := 2
@@ -135,7 +135,7 @@ func (r *ReferralRepository) ListByInviterUserID(
 		if err := rows.Scan(
 			&item.ID, &item.InviterUserID, &item.InviteeUserID, &item.InviteCodeID,
 			&item.Credited, &item.CreatedAt,
-			&item.InviterDisplayName, &item.InviteeDisplayName,
+			&item.InviterLogin, &item.InviteeLogin,
 		); err != nil {
 			return nil, fmt.Errorf("referrals.ListByInviterUserID scan: %w", err)
 		}
@@ -156,16 +156,19 @@ func (r *ReferralRepository) GetReferralTree(ctx context.Context, userID uuid.UU
 	rows, err := r.db.Query(
 		ctx,
 		`WITH RECURSIVE tree AS (
-		    SELECT u.id AS user_id, u.display_name, NULL::uuid AS inviter_id, 0 AS depth, u.created_at
-		    FROM users u WHERE u.id = $1
+		    SELECT u.id AS user_id, uc.login, NULL::uuid AS inviter_id, 0 AS depth, u.created_at
+		    FROM users u
+		    JOIN user_credentials uc ON uc.user_id = u.id
+		    WHERE u.id = $1
 		    UNION ALL
-		    SELECT u.id, u.display_name, r.inviter_user_id, tree.depth + 1, r.created_at
+		    SELECT u.id, uc.login, r.inviter_user_id, tree.depth + 1, r.created_at
 		    FROM referrals r
 		    JOIN users u ON u.id = r.invitee_user_id
+		    JOIN user_credentials uc ON uc.user_id = u.id
 		    JOIN tree ON tree.user_id = r.inviter_user_id
 		    WHERE tree.depth < $2
 		 )
-		 SELECT user_id, display_name, inviter_id, depth, created_at
+		 SELECT user_id, login, inviter_id, depth, created_at
 		 FROM tree
 		 ORDER BY depth ASC, created_at ASC`,
 		userID, maxDepth,
@@ -178,7 +181,7 @@ func (r *ReferralRepository) GetReferralTree(ctx context.Context, userID uuid.UU
 	var nodes []ReferralTreeNode
 	for rows.Next() {
 		var n ReferralTreeNode
-		if err := rows.Scan(&n.UserID, &n.DisplayName, &n.InviterID, &n.Depth, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.UserID, &n.Login, &n.InviterID, &n.Depth, &n.CreatedAt); err != nil {
 			return nil, fmt.Errorf("referrals.GetReferralTree scan: %w", err)
 		}
 		nodes = append(nodes, n)

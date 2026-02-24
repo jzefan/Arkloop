@@ -11,7 +11,7 @@ export type InviteCode = {
 }
 
 export type AdminInviteCode = InviteCode & {
-  user_display_name: string
+  user_login: string
   user_email: string | null
 }
 
@@ -22,13 +22,13 @@ export type Referral = {
   invite_code_id: string
   credited: boolean
   created_at: string
-  inviter_display_name: string
-  invitee_display_name: string
+  inviter_login: string
+  invitee_login: string
 }
 
 export type ReferralTreeNode = {
   user_id: string
-  display_name: string
+  login: string
   inviter_id: string | null
   depth: number
   created_at: string

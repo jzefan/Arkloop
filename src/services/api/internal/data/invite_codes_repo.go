@@ -29,8 +29,8 @@ type InviteCode struct {
 // InviteCodeWithUser 管理端列表时附带用户信息。
 type InviteCodeWithUser struct {
 	InviteCode
-	UserDisplayName string
-	UserEmail       *string
+	UserLogin string
+	UserEmail *string
 }
 
 type InviteCodeRepository struct {
@@ -294,16 +294,17 @@ func (r *InviteCodeRepository) List(
 	}
 
 	sql := `SELECT ic.id, ic.user_id, ic.code, ic.max_uses, ic.use_count, ic.is_active, ic.created_at,
-	               u.display_name, u.email
+	               uc.login, u.email
 	        FROM invite_codes ic
 	        JOIN users u ON u.id = ic.user_id
+	        JOIN user_credentials uc ON uc.user_id = ic.user_id
 	        WHERE 1=1`
 	args := []any{}
 	argIdx := 1
 
 	if query != "" {
 		pattern := "%" + query + "%"
-		sql += fmt.Sprintf(" AND (ic.code ILIKE $%d OR u.display_name ILIKE $%d OR u.email ILIKE $%d)", argIdx, argIdx, argIdx)
+		sql += fmt.Sprintf(" AND (ic.code ILIKE $%d OR uc.login ILIKE $%d OR u.email ILIKE $%d)", argIdx, argIdx, argIdx)
 		args = append(args, pattern)
 		argIdx++
 	}
@@ -328,7 +329,7 @@ func (r *InviteCodeRepository) List(
 		var item InviteCodeWithUser
 		if err := rows.Scan(
 			&item.ID, &item.UserID, &item.Code, &item.MaxUses, &item.UseCount, &item.IsActive, &item.CreatedAt,
-			&item.UserDisplayName, &item.UserEmail,
+			&item.UserLogin, &item.UserEmail,
 		); err != nil {
 			return nil, fmt.Errorf("invite_codes.List scan: %w", err)
 		}

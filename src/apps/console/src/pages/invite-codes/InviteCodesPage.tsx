@@ -433,7 +433,7 @@ function InviteCodeRow({
           </span>
         </td>
         <td className={tdCls}>
-          <span className="text-[var(--c-text-primary)]">{code.user_display_name}</span>
+          <span className="text-[var(--c-text-primary)]">{code.user_login}</span>
         </td>
         <td className={tdCls}>
           <span className="text-xs">{code.user_email ?? '--'}</span>
@@ -514,7 +514,7 @@ function InviteCodeRow({
                         className="border-b border-[var(--c-border)] last:border-0"
                       >
                         <td className="py-1.5 text-[var(--c-text-primary)]">
-                          {ref.invitee_display_name}
+                          {ref.invitee_login}
                         </td>
                         <td className="py-1.5 text-[var(--c-text-secondary)]">
                           {ref.credited ? tc.refCreditedYes : tc.refCreditedNo}
