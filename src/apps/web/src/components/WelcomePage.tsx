@@ -28,10 +28,11 @@ type OutletContext = {
   accessToken: string
   onLoggedOut: () => void
   onThreadCreated: (thread: ThreadResponse) => void
+  onOpenNotifications: () => void
 }
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, onOpenNotifications } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [sending, setSending] = useState(false)
@@ -117,7 +118,7 @@ export function WelcomePage() {
     <div className="flex h-full flex-col">
       {/* 顶部 header */}
       <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        <NotificationBell accessToken={accessToken} />
+        <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} />
         <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
           <Glasses size={18} />
         </button>
