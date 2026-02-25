@@ -70,29 +70,19 @@ func (pm *PartitionManager) createPartitionIfNotExists(
 	name string,
 	start, end time.Time,
 ) error {
-	var exists bool
-	err := pm.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = $1)`,
-		name,
-	).Scan(&exists)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-
-	sql := fmt.Sprintf(
-		`CREATE TABLE %s PARTITION OF run_events FOR VALUES FROM ('%s') TO ('%s')`,
+	ddl := fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS "%s" PARTITION OF run_events FOR VALUES FROM ('%s') TO ('%s')`,
 		name,
 		start.Format("2006-01-02"),
 		end.Format("2006-01-02"),
 	)
-	_, err = pm.pool.Exec(ctx, sql)
+	tag, err := pm.pool.Exec(ctx, ddl)
 	if err != nil {
 		return err
 	}
-
-	pm.logger.Info("partition created", observability.LogFields{}, map[string]any{"partition": name})
+	// CommandTag 为 "CREATE TABLE" 时表示实际创建了新分区
+	if tag.String() == "CREATE TABLE" {
+		pm.logger.Info("partition created", observability.LogFields{}, map[string]any{"partition": name})
+	}
 	return nil
 }

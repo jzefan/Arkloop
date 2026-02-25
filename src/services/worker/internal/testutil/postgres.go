@@ -177,7 +177,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE TABLE run_events (
-			event_id    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			event_id    UUID        NOT NULL DEFAULT gen_random_uuid(),
 			run_id      UUID        NOT NULL,
 			seq         BIGINT      NOT NULL DEFAULT nextval('run_events_seq_global'),
 			ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -185,7 +185,8 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			data_json   JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			tool_name   TEXT        NULL,
 			error_class TEXT        NULL,
-			CONSTRAINT uq_run_events_run_id_seq UNIQUE (run_id, seq)
+			CONSTRAINT pk_run_events PRIMARY KEY (event_id, ts),
+			CONSTRAINT uq_run_events_run_id_seq UNIQUE (run_id, seq, ts)
 		)`,
 		`CREATE TABLE messages (
 			id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
