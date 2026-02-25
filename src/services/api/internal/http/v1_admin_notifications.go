@@ -99,6 +99,8 @@ func adminBroadcastEntry(
 		switch r.Method {
 		case nethttp.MethodGet:
 			getBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo)(w, r, broadcastID)
+		case nethttp.MethodDelete:
+			deleteBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo)(w, r, broadcastID)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -306,5 +308,41 @@ func getBroadcast(
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, toBroadcastResponse(b))
+	}
+}
+
+func deleteBroadcast(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	notifRepo *data.NotificationsRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request, broadcastID uuid.UUID) {
+		traceID := observability.TraceIDFromContext(r.Context())
+
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+
+		err := notifRepo.DeleteBroadcast(r.Context(), broadcastID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				WriteError(w, nethttp.StatusNotFound, "not_found", "broadcast not found", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "failed to delete broadcast", traceID, nil)
+			return
+		}
+
+		w.WriteHeader(nethttp.StatusNoContent)
 	}
 }

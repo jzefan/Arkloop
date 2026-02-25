@@ -318,7 +318,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"/v1/admin/runs/",
-		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo),
+		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo, cfg.AgentConfigsRepo, cfg.ThreadRepo),
 	)
 	mux.HandleFunc(
 		"/v1/admin/usage/daily",

@@ -54,7 +54,14 @@ func NewAgentLoopHandler(
 		)
 		defer writer.Close(ctx)
 
-		routeSelected := rc.Emitter.Emit("run.route.selected", selected.ToRunEventDataJSON(), nil, nil)
+		routeData := selected.ToRunEventDataJSON()
+		if rc.AgentConfigName != "" {
+			routeData["agent_config_name"] = rc.AgentConfigName
+		}
+		if rc.AgentConfigID != nil {
+			routeData["agent_config_id"] = rc.AgentConfigID.String()
+		}
+		routeSelected := rc.Emitter.Emit("run.route.selected", routeData, nil, nil)
 		if err := writer.Append(ctx, runsRepo, eventsRepo, rc.Run.ID, routeSelected); err != nil {
 			if errors.Is(err, errStopProcessing) {
 				return nil

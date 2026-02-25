@@ -587,6 +587,11 @@ export const en: LocaleStrings = {
       toastLoadFailed: 'Failed to load broadcasts',
       toastCreated: 'Broadcast sent',
       toastCreateFailed: 'Failed to send broadcast',
+      deleteTitle: 'Delete Broadcast',
+      deleteMessage: (title: string) => `Delete "${title}"? This cannot be undone.`,
+      deleteConfirm: 'Delete',
+      toastDeleted: 'Broadcast deleted',
+      toastDeleteFailed: 'Failed to delete broadcast',
     },
     featureFlags: {
       title: 'Feature Flags',

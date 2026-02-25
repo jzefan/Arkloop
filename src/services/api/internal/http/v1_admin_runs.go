@@ -28,8 +28,8 @@ type adminRunDetailResponse struct {
 	Model             *string  `json:"model,omitempty"`
 	SkillID           *string  `json:"skill_id,omitempty"`
 	ProviderKind      *string  `json:"provider_kind,omitempty"`
-	APIMode           *string  `json:"api_mode,omitempty"`
 	CredentialName    *string  `json:"credential_name,omitempty"`
+	AgentConfigName   *string  `json:"agent_config_name,omitempty"`
 	DurationMs        *int64   `json:"duration_ms,omitempty"`
 	TotalInputTokens  *int64   `json:"total_input_tokens,omitempty"`
 	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
@@ -37,14 +37,11 @@ type adminRunDetailResponse struct {
 	CreatedAt         string   `json:"created_at"`
 	CompletedAt       *string  `json:"completed_at,omitempty"`
 	FailedAt          *string  `json:"failed_at,omitempty"`
-	// 创建者
-	CreatedByUserID   *string `json:"created_by_user_id,omitempty"`
-	CreatedByUserName *string `json:"created_by_user_name,omitempty"`
-	CreatedByEmail    *string `json:"created_by_email,omitempty"`
-	// 触发该 run 的用户 prompt（来自 messages 表）
-	UserPrompt *string `json:"user_prompt,omitempty"`
-	// 事件统计
-	EventsStats adminRunEventsStats `json:"events_stats"`
+	CreatedByUserID   *string  `json:"created_by_user_id,omitempty"`
+	CreatedByUserName *string  `json:"created_by_user_name,omitempty"`
+	CreatedByEmail    *string  `json:"created_by_email,omitempty"`
+	UserPrompt        *string  `json:"user_prompt,omitempty"`
+	EventsStats       adminRunEventsStats `json:"events_stats"`
 }
 
 func adminRunsEntry(
@@ -55,6 +52,8 @@ func adminRunsEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	messagesRepo *data.MessageRepository,
 	credentialsRepo *data.LlmCredentialsRepository,
+	agentConfigsRepo *data.AgentConfigRepository,
+	threadRepo *data.ThreadRepository,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -112,7 +111,7 @@ func adminRunsEntry(
 			return
 		}
 
-		stats, providerKind, apiMode, credentialID, credentialName := summarizeRunEvents(events)
+		stats, routeModel, providerKind, credentialID, credentialName, agentConfigName := summarizeRunEvents(events)
 
 		// 如果事件中没有 credential_name（旧 run），尝试从 DB 查询补全
 		if credentialName == nil && credentialID != nil && credentialsRepo != nil {
@@ -123,16 +122,31 @@ func adminRunsEntry(
 			}
 		}
 
+		// model 优先用路由表里的实际模型名（如 gpt-4o），否则 fallback 到 runs 表
+		model := routeModel
+		if model == nil {
+			model = run.Model
+		}
+
+		// 旧 run 事件中没有 agent_config_name 时，按 thread 的 agent_config_id 从 DB 补查
+		if agentConfigName == nil && threadRepo != nil && agentConfigsRepo != nil {
+			if thread, tErr := threadRepo.GetByID(r.Context(), run.ThreadID); tErr == nil && thread != nil && thread.AgentConfigID != nil {
+				if ac, acErr := agentConfigsRepo.GetByID(r.Context(), *thread.AgentConfigID); acErr == nil && ac != nil {
+					agentConfigName = &ac.Name
+				}
+			}
+		}
+
 		resp := adminRunDetailResponse{
 			RunID:             run.ID.String(),
 			OrgID:             run.OrgID.String(),
 			ThreadID:          run.ThreadID.String(),
 			Status:            run.Status,
-			Model:             run.Model,
+			Model:             model,
 			SkillID:           run.SkillID,
 			ProviderKind:      providerKind,
-			APIMode:           apiMode,
 			CredentialName:    credentialName,
+			AgentConfigName:   agentConfigName,
 			DurationMs:        run.DurationMs,
 			TotalInputTokens:  run.TotalInputTokens,
 			TotalOutputTokens: run.TotalOutputTokens,
@@ -178,12 +192,24 @@ func adminRunsEntry(
 	}
 }
 
-// summarizeRunEvents 遍历事件流，统计各类事件数量，并提取 provider/credential 信息。
-func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, providerKind *string, apiMode *string, credentialID *string, credentialName *string) {
+// summarizeRunEvents 遍历事件流，统计各类事件数量，并提取路由相关信息。
+func summarizeRunEvents(events []data.RunEvent) (
+	stats adminRunEventsStats,
+	routeModel *string,
+	providerKind *string,
+	credentialID *string,
+	credentialName *string,
+	agentConfigName *string,
+) {
 	stats.Total = len(events)
 	for _, ev := range events {
 		switch ev.Type {
 		case "run.route.selected":
+			if routeModel == nil {
+				if m, ok := stringFromData(ev.DataJSON, "model"); ok {
+					routeModel = &m
+				}
+			}
 			if credentialID == nil {
 				if c, ok := stringFromData(ev.DataJSON, "credential_id"); ok {
 					credentialID = &c
@@ -199,16 +225,13 @@ func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, prov
 					providerKind = &pk
 				}
 			}
-		case "llm.request":
-			stats.LlmTurns++
-			if providerKind == nil {
-				if pk, ok := stringFromData(ev.DataJSON, "provider_kind"); ok {
-					providerKind = &pk
-				}
-				if am, ok := stringFromData(ev.DataJSON, "api_mode"); ok {
-					apiMode = &am
+			if agentConfigName == nil {
+				if n, ok := stringFromData(ev.DataJSON, "agent_config_name"); ok {
+					agentConfigName = &n
 				}
 			}
+		case "llm.request":
+			stats.LlmTurns++
 		case "tool.call":
 			stats.ToolCalls++
 		case "run.provider_fallback":
@@ -241,7 +264,7 @@ func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, prov
 			}
 		}
 	}
-	return stats, providerKind, apiMode, credentialID, credentialName
+	return stats, routeModel, providerKind, credentialID, credentialName, agentConfigName
 }
 
 func stringFromData(dataJSON any, key string) (string, bool) {

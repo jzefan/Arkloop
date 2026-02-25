@@ -10,6 +10,7 @@ import (
 	"arkloop/services/worker/internal/skills"
 	"arkloop/services/worker/internal/tools"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -49,7 +50,9 @@ type RunContext struct {
 	Messages  []llm.Message
 
 	// -- AgentConfigMiddleware 写入 --
-	AgentConfig *ResolvedAgentConfig
+	AgentConfig     *ResolvedAgentConfig
+	AgentConfigID   *uuid.UUID
+	AgentConfigName string
 
 	// -- SkillResolutionMiddleware 写入 --
 	SystemPrompt    string

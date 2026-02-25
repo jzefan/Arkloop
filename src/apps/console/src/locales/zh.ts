@@ -587,6 +587,11 @@ export const zh: LocaleStrings = {
       toastLoadFailed: '加载广播失败',
       toastCreated: '广播已发送',
       toastCreateFailed: '发送广播失败',
+      deleteTitle: '删除广播',
+      deleteMessage: (title: string) => `删除 "${title}"？此操作不可撤销。`,
+      deleteConfirm: '删除',
+      toastDeleted: '广播已删除',
+      toastDeleteFailed: '删除广播失败',
     },
     featureFlags: {
       title: 'Feature Flags',

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Megaphone, Plus } from 'lucide-react'
+import { Megaphone, Plus, Trash2 } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { EmptyState } from '../../components/EmptyState'
@@ -13,6 +13,7 @@ import { useLocale } from '../../contexts/LocaleContext'
 import {
   listBroadcasts,
   createBroadcast,
+  deleteBroadcast,
   type Broadcast,
 } from '../../api/broadcasts'
 
@@ -40,6 +41,9 @@ export function BroadcastsPage() {
   const [form, setForm] = useState({ type: 'announcement', titleZh: '', titleEn: '', bodyZh: '', bodyEn: '', target: 'all' })
   const [formError, setFormError] = useState('')
   const [creating, setCreating] = useState(false)
+
+  const [deleteTarget, setDeleteTarget] = useState<Broadcast | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fetchList = useCallback(async () => {
     setLoading(true)
@@ -86,8 +90,7 @@ export function BroadcastsPage() {
     if (!creating) setCreateOpen(false)
   }, [creating])
 
-  const handleCreate = useCallback(async () => {
-    const titleFallback = form.titleZh.trim() || form.titleEn.trim()
+  const handleCreate = useCallback(async () => {    const titleFallback = form.titleZh.trim() || form.titleEn.trim()
     if (!titleFallback) {
       setFormError(tc.errTitleRequired)
       return
@@ -129,6 +132,21 @@ export function BroadcastsPage() {
     }
   }, [form, accessToken, addToast, tc, fetchList])
 
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteBroadcast(deleteTarget.id, accessToken)
+      setDeleteTarget(null)
+      addToast(tc.toastDeleted, 'success')
+      void fetchList()
+    } catch {
+      addToast(tc.toastDeleteFailed, 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }, [deleteTarget, accessToken, addToast, tc, fetchList])
+
   const inputCls =
     'w-full rounded-md border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]'
   const thCls = 'whitespace-nowrap px-4 py-2.5 text-xs font-medium text-[var(--c-text-muted)]'
@@ -167,6 +185,7 @@ export function BroadcastsPage() {
                   <th className={thCls}>{tc.colSentCount}</th>
                   <th className={thCls}>{tc.colStatus}</th>
                   <th className={thCls}>{tc.colCreatedAt}</th>
+                  <th className={thCls} />
                 </tr>
               </thead>
               <tbody>
@@ -198,6 +217,14 @@ export function BroadcastsPage() {
                       <span className="tabular-nums text-xs">
                         {new Date(b.created_at).toLocaleString()}
                       </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => setDeleteTarget(b)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-status-error-text)]"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -297,6 +324,35 @@ export function BroadcastsPage() {
               className="rounded-lg bg-[var(--c-bg-tag)] px-3.5 py-1.5 text-sm font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
             >
               {creating ? '...' : tc.create}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => { if (!deleting) setDeleteTarget(null) }}
+        title={tc.deleteTitle}
+        width="400px"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-[var(--c-text-secondary)]">
+            {deleteTarget ? tc.deleteMessage(deleteTarget.title) : ''}
+          </p>
+          <div className="flex justify-end gap-2 border-t border-[var(--c-border)] pt-3">
+            <button
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+              className="rounded-lg border border-[var(--c-border)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
+            >
+              {tc.cancel}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-lg bg-[var(--c-status-error-bg)] px-3.5 py-1.5 text-sm font-medium text-[var(--c-status-error-text)] transition-colors hover:opacity-80 disabled:opacity-50"
+            >
+              {deleting ? '...' : tc.deleteConfirm}
             </button>
           </div>
         </div>

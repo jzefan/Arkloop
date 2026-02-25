@@ -57,3 +57,13 @@ export async function getBroadcast(
 ): Promise<Broadcast> {
   return apiFetch<Broadcast>(`/v1/admin/notifications/broadcasts/${id}`, { accessToken })
 }
+
+export async function deleteBroadcast(
+  id: string,
+  accessToken: string,
+): Promise<void> {
+  await apiFetch<void>(`/v1/admin/notifications/broadcasts/${id}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}

@@ -203,16 +203,9 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
                 <MetaRow label="Skill" value={d?.skill_id ?? run.skill_id} />
               </div>
               <div className="pt-2">
+                <MetaRow label="Agent Config" value={d?.agent_config_name} />
+                <MetaRow label="LLM Credential" value={d?.credential_name} />
                 <MetaRow label="Model" value={d?.model ?? run.model} />
-                <MetaRow
-                  label="Provider"
-                  value={
-                    d?.provider_kind
-                      ? d.api_mode ? `${d.provider_kind} · ${d.api_mode}` : d.provider_kind
-                      : undefined
-                  }
-                />
-                <MetaRow label="Credential" value={d?.credential_name} />
                 <MetaRow
                   label="Tokens"
                   value={

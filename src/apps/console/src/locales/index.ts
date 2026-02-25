@@ -664,6 +664,12 @@ export interface LocaleStrings {
       toastLoadFailed: string
       toastCreated: string
       toastCreateFailed: string
+      // delete
+      deleteTitle: string
+      deleteMessage: (title: string) => string
+      deleteConfirm: string
+      toastDeleted: string
+      toastDeleteFailed: string
     }
     featureFlags: {
       title: string
