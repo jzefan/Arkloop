@@ -56,7 +56,7 @@ func NewEntitlementMiddleware(
 					nil,
 					StringPtr(errorClassQuotaExceeded),
 				)
-				return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+				return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 			}
 		}
 
@@ -81,7 +81,7 @@ func NewEntitlementMiddleware(
 					nil,
 					StringPtr(errorClassQuotaExceeded),
 				)
-				return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+				return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 			}
 		}
 
@@ -101,7 +101,7 @@ func NewEntitlementMiddleware(
 				nil,
 				StringPtr(errorClassQuotaExceeded),
 			)
-			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		return next(ctx, rc)

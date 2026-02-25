@@ -469,6 +469,7 @@ func streamRunEvents(
 	directPool *pgxpool.Pool,
 	sseConfig SSEConfig,
 	apiKeysRepo *data.APIKeysRepository,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -552,6 +553,33 @@ func streamRunEvents(
 			}
 		}
 
+		// Redis Pub/Sub 跨实例广播
+		var redisCh <-chan struct{}
+		if follow && rdb != nil {
+			redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
+			sub := rdb.Subscribe(r.Context(), redisChannel)
+			ch := make(chan struct{}, 1)
+			redisCh = ch
+			go func() {
+				defer sub.Close()
+				msgCh := sub.Channel()
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case _, ok := <-msgCh:
+						if !ok {
+							return
+						}
+						select {
+						case ch <- struct{}{}:
+						default:
+						}
+					}
+				}
+			}()
+		}
+
 		cursor := afterSeq
 		lastSend := time.Now()
 
@@ -594,11 +622,13 @@ func streamRunEvents(
 				lastSend = now
 			}
 
-			if notifyCh != nil {
+			if notifyCh != nil || redisCh != nil {
+				// 合并 pg_notify + Redis Pub/Sub 信号
+				sigCh := mergeSignals(notifyCh, redisCh)
 				select {
 				case <-r.Context().Done():
 					return
-				case <-notifyCh:
+				case <-sigCh:
 				case <-time.After(heartbeatDuration):
 				}
 			} else {
@@ -637,6 +667,28 @@ func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
 
 	_, err = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", item.Seq, item.Type, dataBytes)
 	return err
+}
+
+// mergeSignals 将两个可能为 nil 的信号 channel 合并为一个，任一触发即返回。
+func mergeSignals(a, b <-chan struct{}) <-chan struct{} {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	merged := make(chan struct{}, 1)
+	go func() {
+		select {
+		case <-a:
+		case <-b:
+		}
+		select {
+		case merged <- struct{}{}:
+		default:
+		}
+	}()
+	return merged
 }
 
 func parseSSEQueryParams(
@@ -700,10 +752,11 @@ func runEntry(
 	directPool *pgxpool.Pool,
 	sseConfig SSEConfig,
 	apiKeysRepo *data.APIKeysRepository,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
 	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
-	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, sseConfig, apiKeysRepo)
+	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, sseConfig, apiKeysRepo, rdb)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())

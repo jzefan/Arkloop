@@ -21,10 +21,11 @@ import (
 )
 
 type EngineV1 struct {
-	middlewares []pipeline.RunMiddleware
-	terminal    pipeline.RunHandler
-	router      *routing.ProviderRouter
-	directPool  *pgxpool.Pool
+	middlewares  []pipeline.RunMiddleware
+	terminal     pipeline.RunHandler
+	router       *routing.ProviderRouter
+	directPool   *pgxpool.Pool
+	broadcastRDB *redis.Client
 }
 
 type ExecuteInput struct {
@@ -110,10 +111,11 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, usageRepo, creditsRepo)
 
 	return &EngineV1{
-		middlewares: middlewares,
-		terminal:    terminal,
-		router:      deps.Router,
-		directPool:  deps.DirectDBPool,
+		middlewares:  middlewares,
+		terminal:     terminal,
+		router:       deps.Router,
+		directPool:   deps.DirectDBPool,
+		broadcastRDB: deps.RunLimiterRDB,
 	}, nil
 }
 
@@ -132,6 +134,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		Run:           run,
 		Pool:          pool,
 		DirectPool:    directPool,
+		BroadcastRDB:  e.broadcastRDB,
 		TraceID:       traceID,
 		Emitter:       events.NewEmitter(traceID),
 		Router:        e.router,
