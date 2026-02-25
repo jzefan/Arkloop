@@ -7,6 +7,9 @@ export type LlmRoute = {
   priority: number
   is_default: boolean
   when: Record<string, unknown>
+  multiplier: number
+  cost_per_1k_input?: number | null
+  cost_per_1k_output?: number | null
 }
 
 export type LlmCredential = {
@@ -26,6 +29,9 @@ export type CreateLlmRouteRequest = {
   priority: number
   is_default: boolean
   when: Record<string, unknown>
+  multiplier?: number
+  cost_per_1k_input?: number
+  cost_per_1k_output?: number
 }
 
 export type CreateLlmCredentialRequest = {
