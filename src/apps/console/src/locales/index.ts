@@ -774,6 +774,61 @@ export interface LocaleStrings {
       toastDeleteFailed: string
       toastDefaultFailed: string
     }
+    runs: {
+      title: string
+      // filters
+      filterAll: string
+      filterRunning: string
+      filterCompleted: string
+      filterFailed: string
+      filterCancelled: string
+      filterUserPlaceholder: string
+      refresh: string
+      // table columns
+      colId: string
+      colUser: string
+      colThread: string
+      colStatus: string
+      colModel: string
+      colDuration: string
+      colTokens: string
+      colCost: string
+      colCreatedAt: string
+      // empty state
+      empty: string
+      // actions
+      cancel: string
+      // cancel dialog
+      cancelTitle: string
+      cancelMessage: (id: string) => string
+      cancelConfirm: string
+      // toasts
+      toastLoadFailed: string
+      toastCancelFailed: string
+      // pagination
+      prev: string
+      next: string
+      // detail panel
+      sectionOverview: string
+      sectionConversation: string
+      sectionRawEvents: string
+      labelUser: string
+      labelThread: string
+      labelOrg: string
+      labelSkill: string
+      labelAgentConfig: string
+      labelCredential: string
+      labelModel: string
+      labelTokens: string
+      labelCost: string
+      labelCreated: string
+      labelCompleted: string
+      labelFailedAt: string
+      loading: string
+      noConversation: string
+      noEvents: string
+      userPrompt: string
+    }
   }
 }
 
