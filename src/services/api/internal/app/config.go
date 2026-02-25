@@ -37,6 +37,9 @@ const (
 	runTimeoutMinutesEnv        = "ARKLOOP_RUN_TIMEOUT_MINUTES"
 	defaultRunTimeoutMinutes    = 5
 
+	runEventsRetentionMonthsEnv     = "ARKLOOP_RUN_EVENTS_RETENTION_MONTHS"
+	defaultRunEventsRetentionMonths = 3
+
 	defaultSSEHeartbeatSeconds = 15.0
 	defaultSSEBatchLimit       = 500
 )
@@ -73,14 +76,16 @@ type Config struct {
 
 	BootstrapPlatformAdmin string
 	RunTimeoutMinutes      int
+	RunEventsRetentionMonths int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:                    defaultAddr,
-		SSE:                     defaultSSEConfig(),
-		MaxConcurrentRunsPerOrg: defaultMaxConcurrentRunsPerOrg,
-		RunTimeoutMinutes:       defaultRunTimeoutMinutes,
+		Addr:                     defaultAddr,
+		SSE:                      defaultSSEConfig(),
+		MaxConcurrentRunsPerOrg:  defaultMaxConcurrentRunsPerOrg,
+		RunTimeoutMinutes:        defaultRunTimeoutMinutes,
+		RunEventsRetentionMonths: defaultRunEventsRetentionMonths,
 	}
 }
 
@@ -180,6 +185,14 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", runTimeoutMinutesEnv, err)
 		}
 		cfg.RunTimeoutMinutes = v
+	}
+
+	if raw, ok := lookupEnv(runEventsRetentionMonthsEnv); ok {
+		v, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", runEventsRetentionMonthsEnv, err)
+		}
+		cfg.RunEventsRetentionMonths = v
 	}
 
 	if err := cfg.Validate(); err != nil {
