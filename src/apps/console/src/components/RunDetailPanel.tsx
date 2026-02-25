@@ -212,8 +212,7 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
                       : undefined
                   }
                 />
-                <MetaRow label="Route" value={d?.route_id} mono />
-                <MetaRow label="Credential" value={d?.credential_id} mono />
+                <MetaRow label="Credential" value={d?.credential_name} />
                 <MetaRow
                   label="Tokens"
                   value={

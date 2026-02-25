@@ -29,8 +29,7 @@ type adminRunDetailResponse struct {
 	SkillID           *string  `json:"skill_id,omitempty"`
 	ProviderKind      *string  `json:"provider_kind,omitempty"`
 	APIMode           *string  `json:"api_mode,omitempty"`
-	RouteID           *string  `json:"route_id,omitempty"`
-	CredentialID      *string  `json:"credential_id,omitempty"`
+	CredentialName    *string  `json:"credential_name,omitempty"`
 	DurationMs        *int64   `json:"duration_ms,omitempty"`
 	TotalInputTokens  *int64   `json:"total_input_tokens,omitempty"`
 	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
@@ -55,6 +54,7 @@ func adminRunsEntry(
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	messagesRepo *data.MessageRepository,
+	credentialsRepo *data.LlmCredentialsRepository,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -112,7 +112,16 @@ func adminRunsEntry(
 			return
 		}
 
-		stats, providerKind, apiMode, routeID, credentialID := summarizeRunEvents(events)
+		stats, providerKind, apiMode, credentialID, credentialName := summarizeRunEvents(events)
+
+		// 如果事件中没有 credential_name（旧 run），尝试从 DB 查询补全
+		if credentialName == nil && credentialID != nil && credentialsRepo != nil {
+			if credUUID, err := uuid.Parse(*credentialID); err == nil {
+				if cred, err := credentialsRepo.GetByID(r.Context(), run.OrgID, credUUID); err == nil && cred != nil {
+					credentialName = &cred.Name
+				}
+			}
+		}
 
 		resp := adminRunDetailResponse{
 			RunID:             run.ID.String(),
@@ -123,8 +132,7 @@ func adminRunsEntry(
 			SkillID:           run.SkillID,
 			ProviderKind:      providerKind,
 			APIMode:           apiMode,
-			RouteID:           routeID,
-			CredentialID:      credentialID,
+			CredentialName:    credentialName,
 			DurationMs:        run.DurationMs,
 			TotalInputTokens:  run.TotalInputTokens,
 			TotalOutputTokens: run.TotalOutputTokens,
@@ -170,21 +178,20 @@ func adminRunsEntry(
 	}
 }
 
-// summarizeRunEvents 遍历事件流，统计各类事件数量，并提取 provider/route/credential 信息。
-func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, providerKind *string, apiMode *string, routeID *string, credentialID *string) {
+// summarizeRunEvents 遍历事件流，统计各类事件数量，并提取 provider/credential 信息。
+func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, providerKind *string, apiMode *string, credentialID *string, credentialName *string) {
 	stats.Total = len(events)
 	for _, ev := range events {
 		switch ev.Type {
 		case "run.route.selected":
-			// 优先从路由事件提取，不依赖 llm.request（需开启 debug events）
-			if routeID == nil {
-				if r, ok := stringFromData(ev.DataJSON, "route_id"); ok {
-					routeID = &r
-				}
-			}
 			if credentialID == nil {
 				if c, ok := stringFromData(ev.DataJSON, "credential_id"); ok {
 					credentialID = &c
+				}
+			}
+			if credentialName == nil {
+				if n, ok := stringFromData(ev.DataJSON, "credential_name"); ok {
+					credentialName = &n
 				}
 			}
 			if providerKind == nil {
@@ -234,7 +241,7 @@ func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, prov
 			}
 		}
 	}
-	return stats, providerKind, apiMode, routeID, credentialID
+	return stats, providerKind, apiMode, credentialID, credentialName
 }
 
 func stringFromData(dataJSON any, key string) (string, bool) {

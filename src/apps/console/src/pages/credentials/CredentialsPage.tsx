@@ -34,10 +34,13 @@ type RouteRow = {
   priority: string
   is_default: boolean
   when: string
+  multiplier: string
+  cost_per_1k_input: string
+  cost_per_1k_output: string
 }
 
 function emptyRoute(): RouteRow {
-  return { model: '', priority: '0', is_default: false, when: '' }
+  return { model: '', priority: '0', is_default: false, when: '', multiplier: '1', cost_per_1k_input: '', cost_per_1k_output: '' }
 }
 
 type CreateFormState = {
@@ -68,6 +71,9 @@ type RouteEditRow = LlmRoute & {
   draftPriority: string
   draftIsDefault: boolean
   draftWhen: string
+  draftMultiplier: string
+  draftCostInput: string
+  draftCostOutput: string
   saving: boolean
   copied: boolean
 }
@@ -79,6 +85,9 @@ function routeToEditRow(route: LlmRoute): RouteEditRow {
     draftPriority: String(route.priority),
     draftIsDefault: route.is_default,
     draftWhen: route.when && Object.keys(route.when).length > 0 ? JSON.stringify(route.when) : '',
+    draftMultiplier: route.multiplier != null ? String(route.multiplier) : '1',
+    draftCostInput: route.cost_per_1k_input != null ? String(route.cost_per_1k_input) : '',
+    draftCostOutput: route.cost_per_1k_output != null ? String(route.cost_per_1k_output) : '',
     saving: false,
     copied: false,
   }
@@ -193,6 +202,9 @@ export function CredentialsPage() {
         priority: parseInt(r.priority, 10) || 0,
         is_default: r.is_default,
         when,
+        multiplier: parseFloat(r.multiplier) > 0 ? parseFloat(r.multiplier) : undefined,
+        cost_per_1k_input: r.cost_per_1k_input !== '' ? parseFloat(r.cost_per_1k_input) : undefined,
+        cost_per_1k_output: r.cost_per_1k_output !== '' ? parseFloat(r.cost_per_1k_output) : undefined,
       })
     }
 
@@ -290,6 +302,9 @@ export function CredentialsPage() {
             priority: parseInt(row.draftPriority, 10) || 0,
             is_default: row.draftIsDefault,
             when,
+            multiplier: parseFloat(row.draftMultiplier) > 0 ? parseFloat(row.draftMultiplier) : undefined,
+            cost_per_1k_input: row.draftCostInput !== '' ? parseFloat(row.draftCostInput) : undefined,
+            cost_per_1k_output: row.draftCostOutput !== '' ? parseFloat(row.draftCostOutput) : undefined,
           },
           accessToken,
         )
@@ -567,6 +582,44 @@ export function CredentialsPage() {
                       placeholder="{}"
                       className="rounded border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1 font-mono text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none"
                     />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex w-24 flex-col gap-1">
+                      <span className="text-[10px] text-[var(--c-text-muted)]">{tc.routeMultiplier}</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={route.multiplier}
+                        onChange={(e) => handleRouteField(idx, 'multiplier', e.target.value)}
+                        placeholder="1"
+                        className="rounded border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1 text-xs text-[var(--c-text-primary)] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <span className="text-[10px] text-[var(--c-text-muted)]">{tc.routeCostInput}</span>
+                      <input
+                        type="number"
+                        step="0.001"
+                        min="0"
+                        value={route.cost_per_1k_input}
+                        onChange={(e) => handleRouteField(idx, 'cost_per_1k_input', e.target.value)}
+                        placeholder="0.00"
+                        className="rounded border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1 text-xs text-[var(--c-text-primary)] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex flex-1 flex-col gap-1">
+                      <span className="text-[10px] text-[var(--c-text-muted)]">{tc.routeCostOutput}</span>
+                      <input
+                        type="number"
+                        step="0.001"
+                        min="0"
+                        value={route.cost_per_1k_output}
+                        onChange={(e) => handleRouteField(idx, 'cost_per_1k_output', e.target.value)}
+                        placeholder="0.00"
+                        className="rounded border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1 text-xs text-[var(--c-text-primary)] focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
                 <button

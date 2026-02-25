@@ -53,9 +53,10 @@ type ProviderCredential struct {
 
 func (c ProviderCredential) ToPublicJSON() map[string]any {
 	payload := map[string]any{
-		"credential_id": c.ID,
-		"scope":         string(c.Scope),
-		"provider_kind": string(c.ProviderKind),
+		"credential_id":   c.ID,
+		"credential_name": c.Name,
+		"scope":           string(c.Scope),
+		"provider_kind":   string(c.ProviderKind),
 	}
 	if c.BaseURL != nil {
 		payload["base_url"] = *c.BaseURL
