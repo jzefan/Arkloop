@@ -108,7 +108,7 @@ func run() error {
 		return err
 	}
 
-	handler, err := chooseHandler(logger, pool, directPool, rdb, queueClient, cfg.QueueJobTypes)
+	handler, err := chooseHandler(logger, pool, directPool, rdb, queueClient, cfg)
 	if err != nil {
 		return err
 	}
@@ -211,8 +211,7 @@ func normalizePostgresDSN(raw string) string {
 	return raw
 }
 
-func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, q queue.JobQueue, queueJobTypes []string) (consumer.Handler, error) {
-	_ = queueJobTypes
+func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, q queue.JobQueue, cfg app.Config) (consumer.Handler, error) {
 	if logger == nil {
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
@@ -220,7 +219,7 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpo
 		return nil, fmt.Errorf("pool must not be nil")
 	}
 
-	native, err := executor.NewNativeRunEngineV1Handler(pool, directPool, logger, rdb, q)
+	native, err := executor.NewNativeRunEngineV1Handler(pool, directPool, logger, rdb, q, cfg)
 	if err != nil {
 		return nil, err
 	}

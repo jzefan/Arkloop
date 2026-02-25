@@ -17,6 +17,9 @@ const (
 	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
 	workerCapabilitiesEnv     = "ARKLOOP_WORKER_CAPABILITIES"
 	workerVersionEnv          = "ARKLOOP_WORKER_VERSION"
+
+	llmRetryMaxAttemptsEnv = "ARKLOOP_LLM_RETRY_MAX_ATTEMPTS"
+	llmRetryBaseDelayMsEnv = "ARKLOOP_LLM_RETRY_BASE_DELAY_MS"
 )
 
 // Config aligns with worker loop behavior.
@@ -28,17 +31,23 @@ type Config struct {
 	QueueJobTypes    []string
 	Capabilities     []string
 	Version          string
+
+	// LLM 请求重试配置
+	LlmRetryMaxAttempts int
+	LlmRetryBaseDelayMs int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Concurrency:      4,
-		PollSeconds:      0.25,
-		LeaseSeconds:     30,
-		HeartbeatSeconds: 10,
-		QueueJobTypes:    []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType},
-		Capabilities:     []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType},
-		Version:          "unknown",
+		Concurrency:         4,
+		PollSeconds:         0.25,
+		LeaseSeconds:        30,
+		HeartbeatSeconds:    10,
+		QueueJobTypes:       []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType},
+		Capabilities:        []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType},
+		Version:             "unknown",
+		LlmRetryMaxAttempts: 3,
+		LlmRetryBaseDelayMs: 1000,
 	}
 }
 
@@ -91,6 +100,22 @@ func LoadConfigFromEnv() (Config, error) {
 
 	if raw, ok := lookupEnv(workerVersionEnv); ok {
 		cfg.Version = raw
+	}
+
+	if raw, ok := lookupEnv(llmRetryMaxAttemptsEnv); ok {
+		value, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", llmRetryMaxAttemptsEnv, err)
+		}
+		cfg.LlmRetryMaxAttempts = value
+	}
+
+	if raw, ok := lookupEnv(llmRetryBaseDelayMsEnv); ok {
+		value, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", llmRetryBaseDelayMsEnv, err)
+		}
+		cfg.LlmRetryBaseDelayMs = value
 	}
 
 	if err := cfg.Validate(); err != nil {

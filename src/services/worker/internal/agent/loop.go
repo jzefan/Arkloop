@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -27,6 +28,10 @@ type RunContext struct {
 	ToolExecutor    *tools.DispatchingExecutor
 	ToolSpecs       []llm.ToolSpec
 	CancelSignal    func() bool
+
+	// LLM 调用重试配置，0 值表示不重试
+	LlmRetryMaxAttempts int
+	LlmRetryBaseDelayMs int
 }
 
 type Loop struct {
@@ -65,7 +70,7 @@ func (l *Loop) Run(
 		}
 
 		turnRequest := copyRequest(request, messages)
-		turn, err := l.runSingleTurn(ctx, runCtx, turnRequest, emitter)
+		turn, err := l.runTurnWithRetry(ctx, runCtx, turnRequest, emitter, yield)
 		if err != nil {
 			return err
 		}
@@ -169,6 +174,79 @@ type turnResult struct {
 	ToolResults       []llm.StreamToolResult
 	AssistantText     string
 	CompletedDataJSON map[string]any
+}
+
+// runTurnWithRetry 在遇到 provider.retryable 失败时自动重试，并发出 run.llm.retry 事件。
+// 重试期间不向调用方透传失败 turn 的事件（避免污染事件流）。
+func (l *Loop) runTurnWithRetry(
+	ctx context.Context,
+	runCtx RunContext,
+	turnRequest llm.Request,
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+) (turnResult, error) {
+	maxAttempts := runCtx.LlmRetryMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	baseDelayMs := runCtx.LlmRetryBaseDelayMs
+	if baseDelayMs <= 0 {
+		baseDelayMs = 1000
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		turn, err := l.runSingleTurn(ctx, runCtx, turnRequest, emitter)
+		if err != nil {
+			return turnResult{}, err
+		}
+
+		// 非终态、或已用完重试次数，直接返回
+		if !turn.Terminal || attempt >= maxAttempts || !isRetryableTurn(turn) {
+			return turn, nil
+		}
+
+		last := turn.Events[len(turn.Events)-1]
+		delayMs := retryBackoffMs(baseDelayMs, attempt)
+		retryData := map[string]any{
+			"attempt":      attempt,
+			"max_attempts": maxAttempts,
+			"delay_ms":     delayMs,
+		}
+		if last.ErrorClass != nil {
+			retryData["error_class"] = *last.ErrorClass
+		}
+
+		if err := yield(emitter.Emit("run.llm.retry", retryData, nil, nil)); err != nil {
+			return turnResult{}, err
+		}
+
+		select {
+		case <-time.After(time.Duration(delayMs) * time.Millisecond):
+		case <-ctx.Done():
+			return turnResult{Cancelled: true}, nil
+		}
+	}
+
+	return turnResult{}, fmt.Errorf("retry loop exited unexpectedly")
+}
+
+func isRetryableTurn(turn turnResult) bool {
+	if len(turn.Events) == 0 {
+		return false
+	}
+	last := turn.Events[len(turn.Events)-1]
+	return last.Type == "run.failed" &&
+		last.ErrorClass != nil &&
+		*last.ErrorClass == llm.ErrorClassProviderRetryable
+}
+
+// retryBackoffMs 计算指数退避等待时长，最大 30s。
+func retryBackoffMs(baseMs, attempt int) int {
+	ms := baseMs * (1 << (attempt - 1))
+	if ms > 30_000 {
+		ms = 30_000
+	}
+	return ms
 }
 
 func (l *Loop) runSingleTurn(

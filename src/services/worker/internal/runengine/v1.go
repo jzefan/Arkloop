@@ -21,11 +21,13 @@ import (
 )
 
 type EngineV1 struct {
-	middlewares  []pipeline.RunMiddleware
-	terminal     pipeline.RunHandler
-	router       *routing.ProviderRouter
-	directPool   *pgxpool.Pool
-	broadcastRDB *redis.Client
+	middlewares         []pipeline.RunMiddleware
+	terminal            pipeline.RunHandler
+	router              *routing.ProviderRouter
+	directPool          *pgxpool.Pool
+	broadcastRDB        *redis.Client
+	llmRetryMaxAttempts int
+	llmRetryBaseDelayMs int
 }
 
 type ExecuteInput struct {
@@ -47,6 +49,10 @@ type EngineV1Deps struct {
 
 	SkillRegistry *skills.Registry
 	MCPPool       *mcp.Pool
+
+	// LLM 请求重试配置
+	LlmRetryMaxAttempts int
+	LlmRetryBaseDelayMs int
 }
 
 func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
@@ -111,11 +117,13 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, usageRepo, creditsRepo)
 
 	return &EngineV1{
-		middlewares:  middlewares,
-		terminal:     terminal,
-		router:       deps.Router,
-		directPool:   deps.DirectDBPool,
-		broadcastRDB: deps.RunLimiterRDB, // 复用 RunLimiterRDB；middleware 错误路径通过 RunContext.BroadcastRDB 发布，terminal handler 通过 eventWriter.runLimiterRDB 发布
+		middlewares:         middlewares,
+		terminal:            terminal,
+		router:              deps.Router,
+		directPool:          deps.DirectDBPool,
+		broadcastRDB:        deps.RunLimiterRDB,
+		llmRetryMaxAttempts: deps.LlmRetryMaxAttempts,
+		llmRetryBaseDelayMs: deps.LlmRetryBaseDelayMs,
 	}, nil
 }
 
@@ -131,15 +139,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		directPool = pool
 	}
 	rc := &pipeline.RunContext{
-		Run:           run,
-		Pool:          pool,
-		DirectPool:    directPool,
-		BroadcastRDB:  e.broadcastRDB,
-		TraceID:       traceID,
-		Emitter:       events.NewEmitter(traceID),
-		Router:        e.router,
-		MaxIterations: 10,
-		ToolBudget:    map[string]any{},
+		Run:                 run,
+		Pool:                pool,
+		DirectPool:          directPool,
+		BroadcastRDB:        e.broadcastRDB,
+		TraceID:             traceID,
+		Emitter:             events.NewEmitter(traceID),
+		Router:              e.router,
+		MaxIterations:       10,
+		ToolBudget:          map[string]any{},
+		LlmRetryMaxAttempts: e.llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs: e.llmRetryBaseDelayMs,
 	}
 
 	handler := pipeline.Build(e.middlewares, e.terminal)
