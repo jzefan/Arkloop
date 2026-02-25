@@ -30,7 +30,6 @@ export function AuthPage({ onLoggedIn }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [loginValue, setLoginValue] = useState('')
   const [password, setPassword] = useState('')
-  const [displayName, setDisplayName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
@@ -48,10 +47,10 @@ export function AuthPage({ onLoggedIn }: Props) {
   const canSubmit = useMemo(() => {
     if (submitting) return false
     if (!loginValue.trim() || !password) return false
-    if (mode === 'register' && (!displayName.trim() || password.length < 8)) return false
+    if (mode === 'register' && password.length < 8) return false
     if (mode === 'register' && inviteRequired && !inviteCode.trim()) return false
     return true
-  }, [loginValue, password, displayName, inviteCode, submitting, mode, inviteRequired])
+  }, [loginValue, password, inviteCode, submitting, mode, inviteRequired])
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -66,7 +65,6 @@ export function AuthPage({ onLoggedIn }: Props) {
         const resp = await register({
           login: loginValue,
           password,
-          display_name: displayName,
           ...(inviteCode.trim() ? { invite_code: inviteCode.trim() } : {}),
         })
         onLoggedIn(resp.access_token, resp.refresh_token)
@@ -109,18 +107,6 @@ export function AuthPage({ onLoggedIn }: Props) {
         }}
       >
         <form className="flex flex-col" style={{ gap: '12px' }} onSubmit={onSubmit}>
-          {mode === 'register' && (
-            <input
-              className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
-              style={inputStyle}
-              type="text"
-              placeholder={t.enterDisplayName}
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              autoComplete="name"
-            />
-          )}
-
           <input
             className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
             style={inputStyle}
@@ -148,7 +134,7 @@ export function AuthPage({ onLoggedIn }: Props) {
               className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
               style={inputStyle}
               type="text"
-              placeholder={t.enterInviteCode}
+              placeholder={inviteRequired ? t.enterInviteCode : t.enterInviteCodeOptional}
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}
               autoComplete="off"

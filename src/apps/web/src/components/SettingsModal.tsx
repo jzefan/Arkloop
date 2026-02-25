@@ -8,6 +8,7 @@ import {
   LogOut,
   ArrowUpRight,
   ChevronDown,
+  ChevronLeft,
   Monitor,
   Sun,
   Moon,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   Ticket,
   Coins,
+  Pencil,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -26,6 +28,7 @@ import {
   getMyCredits,
   getMyUsage,
   redeemCode,
+  updateMe,
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -50,14 +53,21 @@ type Props = {
   onClose: () => void
   onLogout: () => void
   onCreditsChanged?: (balance: number) => void
+  onMeUpdated?: (me: MeResponse) => void
 }
 
-export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout, onCreditsChanged }: Props) {
+export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout, onCreditsChanged, onMeUpdated }: Props) {
   const { t, locale, setLocale } = useLocale()
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
+  const [profileView, setProfileView] = useState(false)
   const userInitial = me?.display_name?.charAt(0).toUpperCase() ?? '?'
   const activeLabel = t.nav[activeKey as keyof typeof t.nav] ?? t.nav.account
+
+  const handleTabChange = (key: SettingsTab) => {
+    setActiveKey(key)
+    if (key !== 'account') setProfileView(false)
+  }
 
   return (
     <div
@@ -82,7 +92,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             {NAV_ITEMS.map(({ key, icon: Icon }) => (
               <button
                 key={key}
-                onClick={() => setActiveKey(key)}
+                onClick={() => handleTabChange(key)}
                 className={[
                   'flex h-8 items-center gap-2 rounded-md px-2 text-sm transition-colors',
                   activeKey === key
@@ -103,7 +113,19 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             className="flex items-center justify-between px-6 py-4"
             style={{ borderBottom: '0.5px solid var(--c-border-subtle)' }}
           >
-            <h2 className="text-base font-medium text-[var(--c-text-heading)]">{activeLabel}</h2>
+            {profileView ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setProfileView(false)}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <h2 className="text-base font-medium text-[var(--c-text-heading)]">{t.profileTitle}</h2>
+              </div>
+            ) : (
+              <h2 className="text-base font-medium text-[var(--c-text-heading)]">{activeLabel}</h2>
+            )}
             <button
               onClick={onClose}
               className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
@@ -113,11 +135,20 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
-            {activeKey === 'account' && (
+            {activeKey === 'account' && !profileView && (
               <AccountContent
                 me={me}
                 userInitial={userInitial}
                 onLogout={() => { onLogout(); onClose() }}
+                onEditProfile={() => setProfileView(true)}
+              />
+            )}
+            {activeKey === 'account' && profileView && (
+              <ProfileContent
+                me={me}
+                accessToken={accessToken}
+                userInitial={userInitial}
+                onMeUpdated={onMeUpdated}
               />
             )}
             {activeKey === 'settings' && (
@@ -142,10 +173,12 @@ function AccountContent({
   me,
   userInitial,
   onLogout,
+  onEditProfile,
 }: {
   me: MeResponse | null
   userInitial: string
   onLogout: () => void
+  onEditProfile: () => void
 }) {
   const { t } = useLocale()
 
@@ -161,18 +194,34 @@ function AccountContent({
         >
           {userInitial}
         </div>
+
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium text-[var(--c-text-heading)]">
+          <span className="truncate text-base font-semibold text-[var(--c-text-heading)]">
             {me?.display_name ?? t.loading}
           </span>
+          {me?.login && (
+            <span className="truncate text-xs text-[var(--c-text-tertiary)]">
+              {me.login}
+            </span>
+          )}
         </div>
-        <button
-          onClick={onLogout}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-          title={t.logout}
-        >
-          <LogOut size={15} />
-        </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEditProfile}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+            title={t.editProfile}
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            onClick={onLogout}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+            title={t.logout}
+          >
+            <LogOut size={15} />
+          </button>
+        </div>
       </div>
 
       <div
@@ -181,6 +230,119 @@ function AccountContent({
       >
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.enterprisePlan}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProfileContent({
+  me,
+  accessToken,
+  userInitial,
+  onMeUpdated,
+}: {
+  me: MeResponse | null
+  accessToken: string
+  userInitial: string
+  onMeUpdated?: (me: MeResponse) => void
+}) {
+  const { t } = useLocale()
+  const [displayName, setDisplayName] = useState(me?.display_name ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  const isDirty = displayName.trim() !== (me?.display_name ?? '')
+
+  const handleSave = useCallback(async () => {
+    const name = displayName.trim()
+    if (!name || !isDirty) return
+    setSaving(true)
+    setError('')
+    try {
+      const res = await updateMe(accessToken, name)
+      if (me && onMeUpdated) {
+        onMeUpdated({ ...me, display_name: res.display_name })
+      }
+    } catch {
+      setError(t.requestFailed)
+    } finally {
+      setSaving(false)
+    }
+  }, [accessToken, displayName, isDirty, me, onMeUpdated, t])
+
+  const handleCopyId = useCallback(async () => {
+    if (!me?.id) return
+    await navigator.clipboard.writeText(me.id)
+    setCopied(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000)
+  }, [me?.id])
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* 头像 + 名称编辑 */}
+      <div className="flex items-start gap-4">
+        <div
+          className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-2xl font-medium"
+          style={{ background: 'var(--c-avatar-bg)', color: 'var(--c-avatar-text)' }}
+        >
+          {userInitial}
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5">
+          <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.profileName}</span>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleSave() }}
+              className="h-9 flex-1 rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+              disabled={saving}
+              maxLength={256}
+            />
+            {isDirty && (
+              <button
+                onClick={() => void handleSave()}
+                disabled={saving || !displayName.trim()}
+                className="flex h-9 items-center rounded-lg px-3 text-sm font-medium text-[var(--c-text-heading)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50"
+                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+              >
+                {saving ? '...' : t.profileSave}
+              </button>
+            )}
+          </div>
+          {error && (
+            <p className="text-xs text-[var(--c-status-error-text,#ef4444)]">{error}</p>
+          )}
+        </div>
+      </div>
+
+      <div style={{ height: '0.5px', background: 'var(--c-border-subtle)' }} />
+
+      {/* 用户名 */}
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.profileUsername}</span>
+        <span className="text-sm text-[var(--c-text-tertiary)]">{me?.login ?? '—'}</span>
+      </div>
+
+      {/* 用户 ID */}
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.profileUserId}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-[var(--c-text-tertiary)] select-all">{me?.id ?? '—'}</span>
+          {me?.id && (
+            <button
+              onClick={() => void handleCopyId()}
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+              title={copied ? '已复制' : '复制'}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          )}
         </div>
       </div>
     </div>

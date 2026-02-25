@@ -98,7 +98,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/registration-mode", registrationMode(cfg.FeatureFlagService))
-	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo))
+	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo))
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/daily", meDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/by-model", meUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))

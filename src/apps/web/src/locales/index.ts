@@ -11,6 +11,7 @@ export interface LocaleStrings {
   retrieve: string
   legal: string
   recents: string
+  recentsEmpty: string
   untitled: string
   loading: string
   enterprisePlan: string
@@ -55,17 +56,22 @@ export interface LocaleStrings {
   // auth
   loginMode: string
   registerMode: string
-  enterDisplayName: string
   enterUsername: string
   enterPassword: string
   enterInviteCode: string
+  enterInviteCodeOptional: string
+  editProfile: string
   continueBtn: string
   orDivider: string
   githubLogin: string
   noAccount: string
   hasAccount: string
-  // common
-  requestFailed: string
+  // profile editing
+  profileTitle: string
+  profileName: string
+  profileUsername: string
+  profileUserId: string
+  profileSave: string
   newChatTitle: string
   chatPlaceholder: string
   // notifications

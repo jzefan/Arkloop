@@ -53,12 +53,21 @@ type registrationModeResponse struct {
 
 type meResponse struct {
 	ID          string   `json:"id"`
+	Login       string   `json:"login"`
 	DisplayName string   `json:"display_name"`
 	CreatedAt   string   `json:"created_at"`
 	OrgID       string   `json:"org_id,omitempty"`
 	OrgName     string   `json:"org_name,omitempty"`
 	Role        string   `json:"role,omitempty"`
 	Permissions []string `json:"permissions"`
+}
+
+type updateMeRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+type updateMeResponse struct {
+	DisplayName string `json:"display_name"`
 }
 
 func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -263,7 +272,10 @@ func register(
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if body.DisplayName == "" || len(body.DisplayName) > 256 {
+		if body.DisplayName == "" {
+			body.DisplayName = body.Login
+		}
+		if len(body.DisplayName) > 256 {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -318,50 +330,89 @@ func register(
 	}
 }
 
-func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		if r.Method != nethttp.MethodGet {
-			writeMethodNotAllowed(w, r)
-			return
-		}
-
 		traceID := observability.TraceIDFromContext(r.Context())
 		if authService == nil {
 			writeAuthNotConfigured(w, traceID)
 			return
 		}
 
-		user, ok := authenticateUser(w, r, traceID, authService)
-		if !ok {
-			return
-		}
+		switch r.Method {
+		case nethttp.MethodGet:
+			user, ok := authenticateUser(w, r, traceID, authService)
+			if !ok {
+				return
+			}
 
-		var permissions []string
-		resp := meResponse{
-			ID:          user.ID.String(),
-			DisplayName: user.DisplayName,
-			CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
-		}
+			var permissions []string
+			resp := meResponse{
+				ID:          user.ID.String(),
+				DisplayName: user.DisplayName,
+				CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
+			}
 
-		if membershipRepo != nil {
-			if membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID); err == nil && membership != nil {
-				permissions = auth.PermissionsForRole(membership.Role)
-				resp.OrgID = membership.OrgID.String()
-				resp.Role = membership.Role
+			if credentialRepo != nil {
+				if cred, err := credentialRepo.GetByUserID(r.Context(), user.ID); err == nil && cred != nil {
+					resp.Login = cred.Login
+				}
+			}
 
-				if orgRepo != nil {
-					if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
-						resp.OrgName = org.Name
+			if membershipRepo != nil {
+				if membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID); err == nil && membership != nil {
+					permissions = auth.PermissionsForRole(membership.Role)
+					resp.OrgID = membership.OrgID.String()
+					resp.Role = membership.Role
+
+					if orgRepo != nil {
+						if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
+							resp.OrgName = org.Name
+						}
 					}
 				}
 			}
-		}
-		if permissions == nil {
-			permissions = []string{}
-		}
-		resp.Permissions = permissions
+			if permissions == nil {
+				permissions = []string{}
+			}
+			resp.Permissions = permissions
 
-		writeJSON(w, traceID, nethttp.StatusOK, resp)
+			writeJSON(w, traceID, nethttp.StatusOK, resp)
+
+		case nethttp.MethodPatch:
+			if usersRepo == nil {
+				WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+				return
+			}
+
+			user, ok := authenticateUser(w, r, traceID, authService)
+			if !ok {
+				return
+			}
+
+			var body updateMeRequest
+			if err := decodeJSON(r, &body); err != nil {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			body.DisplayName = strings.TrimSpace(body.DisplayName)
+			if body.DisplayName == "" || len(body.DisplayName) > 256 {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "display_name is invalid", traceID, nil)
+				return
+			}
+
+			updated, err := usersRepo.UpdateProfile(r.Context(), user.ID, data.UpdateProfileParams{
+				DisplayName: body.DisplayName,
+			})
+			if err != nil || updated == nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+
+			writeJSON(w, traceID, nethttp.StatusOK, updateMeResponse{DisplayName: updated.DisplayName})
+
+		default:
+			writeMethodNotAllowed(w, r)
+		}
 	}
 }
 
