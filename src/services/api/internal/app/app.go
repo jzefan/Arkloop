@@ -398,6 +398,12 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 	}
 
+	// 启动分区管理器（自动创建 run_events 月分区）
+	if pool != nil {
+		partitionMgr := data.NewPartitionManager(pool, a.logger)
+		go partitionMgr.Run(ctx)
+	}
+
 	listener, err := net.Listen("tcp", a.config.Addr)
 	if err != nil {
 		return err
