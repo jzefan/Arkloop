@@ -399,9 +399,9 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 	}
 
-	// 启动分区管理器（自动创建 run_events 月分区）
+	// 启动分区管理器（自动创建/清理 run_events 月分区）
 	if pool != nil {
-		partitionMgr := data.NewPartitionManager(pool, a.logger)
+		partitionMgr := data.NewPartitionManagerWithRetention(pool, a.logger, a.config.RunEventsRetentionMonths)
 		go partitionMgr.Run(ctx)
 	}
 
