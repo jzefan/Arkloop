@@ -34,8 +34,8 @@ export type AdminRunDetail = {
   model?: string
   skill_id?: string
   provider_kind?: string
-  api_mode?: string
   credential_name?: string
+  agent_config_name?: string
   duration_ms?: number
   total_input_tokens?: number
   total_output_tokens?: number

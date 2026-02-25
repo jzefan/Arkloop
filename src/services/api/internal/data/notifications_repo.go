@@ -309,7 +309,7 @@ func (r *NotificationsRepository) GetBroadcast(ctx context.Context, id uuid.UUID
 		ctx,
 		`SELECT id, type, title, body, target_type, target_id, payload_json, status, sent_count, created_by, created_at
 		 FROM notification_broadcasts
-		 WHERE id = $1`,
+		 WHERE id = $1 AND deleted_at IS NULL`,
 		id,
 	).Scan(
 		&b.ID, &b.Type, &b.Title, &b.Body, &b.TargetType, &b.TargetID,
@@ -322,6 +322,24 @@ func (r *NotificationsRepository) GetBroadcast(ctx context.Context, id uuid.UUID
 		return NotificationBroadcast{}, fmt.Errorf("broadcasts.Get: %w", err)
 	}
 	return b, nil
+}
+
+func (r *NotificationsRepository) DeleteBroadcast(ctx context.Context, id uuid.UUID) error {
+	if id == uuid.Nil {
+		return fmt.Errorf("broadcasts: id must not be empty")
+	}
+	tag, err := r.db.Exec(
+		ctx,
+		`UPDATE notification_broadcasts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("broadcasts.Delete: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (r *NotificationsRepository) ListBroadcasts(
@@ -344,7 +362,7 @@ func (r *NotificationsRepository) ListBroadcasts(
 			ctx,
 			`SELECT id, type, title, body, target_type, target_id, payload_json, status, sent_count, created_by, created_at
 			 FROM notification_broadcasts
-			 WHERE (created_at, id) < ($2, $3)
+			 WHERE deleted_at IS NULL AND (created_at, id) < ($2, $3)
 			 ORDER BY created_at DESC, id DESC
 			 LIMIT $1`,
 			limit, beforeCreatedAt, beforeID,
@@ -354,6 +372,7 @@ func (r *NotificationsRepository) ListBroadcasts(
 			ctx,
 			`SELECT id, type, title, body, target_type, target_id, payload_json, status, sent_count, created_by, created_at
 			 FROM notification_broadcasts
+			 WHERE deleted_at IS NULL
 			 ORDER BY created_at DESC, id DESC
 			 LIMIT $1`,
 			limit,

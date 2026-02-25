@@ -35,13 +35,15 @@ func NewAgentConfigMiddleware(dbPool *pgxpool.Pool) RunMiddleware {
 			return next(ctx, rc)
 		}
 
-		ac, err := loadAgentConfig(ctx, dbPool, *configID)
+		ac, name, err := loadAgentConfig(ctx, dbPool, *configID)
 		if err != nil {
 			slog.WarnContext(ctx, "agent_config: load failed", "id", configID.String(), "err", err.Error())
 			return next(ctx, rc)
 		}
 		if ac != nil {
 			rc.AgentConfig = ac
+			rc.AgentConfigID = configID
+			rc.AgentConfigName = name
 		}
 
 		return next(ctx, rc)
@@ -86,8 +88,9 @@ func resolveAgentConfigID(
 	return nil
 }
 
-func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*ResolvedAgentConfig, error) {
+func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*ResolvedAgentConfig, string, error) {
 	var (
+		name                 string
 		systemPromptOverride *string
 		model                *string
 		temperature          *float64
@@ -105,21 +108,21 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 	)
 
 	err := pool.QueryRow(ctx,
-		`SELECT system_prompt_template_id, system_prompt_override,
+		`SELECT name, system_prompt_template_id, system_prompt_override,
 		        model, temperature, max_output_tokens, top_p, context_window_limit,
 		        tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json
 		 FROM agent_configs WHERE id = $1`,
 		id,
 	).Scan(
-		&systemPromptTemplateID, &systemPromptOverride,
+		&name, &systemPromptTemplateID, &systemPromptOverride,
 		&model, &temperature, &maxOutputTokens, &topP, &contextWindowLimit,
 		&toolPolicy, &toolAllowlist, &toolDenylist, &contentFilterLevel, &safetyRulesJSON,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// 决定最终 system prompt：override 优先，其次查 template（通过 JOIN 确保 org 隔离）
@@ -156,5 +159,5 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		ToolDenylist:       toolDenylist,
 		ContentFilterLevel: contentFilterLevel,
 		SafetyRulesJSON:    safetyRulesJSON,
-	}, nil
+	}, name, nil
 }
