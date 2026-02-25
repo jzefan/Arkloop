@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/testutil"
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ func TestNativeRunEngineV1HandlerWritesEventsAndMessage(t *testing.T) {
 		t.Fatalf("seed run failed: %v", err)
 	}
 
-	handler, err := NewNativeRunEngineV1Handler(pool, nil, nil, nil, nil)
+	handler, err := NewNativeRunEngineV1Handler(pool, nil, nil, nil, nil, app.DefaultConfig())
 	if err != nil {
 		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 		t.Fatalf("seed cancel_requested failed: %v", err)
 	}
 
-	handler, err := NewNativeRunEngineV1Handler(pool, nil, nil, nil, nil)
+	handler, err := NewNativeRunEngineV1Handler(pool, nil, nil, nil, nil, app.DefaultConfig())
 	if err != nil {
 		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
 	}

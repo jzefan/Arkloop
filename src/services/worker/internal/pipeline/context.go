@@ -77,4 +77,8 @@ type RunContext struct {
 
 	// -- 默认 10，SkillResolution 可覆盖 --
 	MaxIterations int
+
+	// -- LLM 重试，由 EngineV1.Execute 注入 --
+	LlmRetryMaxAttempts int
+	LlmRetryBaseDelayMs int
 }

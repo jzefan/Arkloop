@@ -91,13 +91,15 @@ func NewAgentLoopHandler(
 
 		loop := agent.NewLoop(rc.Gateway, toolExecutor)
 		runCtx := agent.RunContext{
-			RunID:         rc.Run.ID,
-			TraceID:       rc.TraceID,
-			InputJSON:     rc.InputJSON,
-			MaxIterations: rc.MaxIterations,
-			ToolExecutor:  toolExecutor,
-			ToolTimeoutMs: rc.ToolTimeoutMs,
-			ToolBudget:    rc.ToolBudget,
+			RunID:               rc.Run.ID,
+			TraceID:             rc.TraceID,
+			InputJSON:           rc.InputJSON,
+			MaxIterations:       rc.MaxIterations,
+			ToolExecutor:        toolExecutor,
+			ToolTimeoutMs:       rc.ToolTimeoutMs,
+			ToolBudget:          rc.ToolBudget,
+			LlmRetryMaxAttempts: rc.LlmRetryMaxAttempts,
+			LlmRetryBaseDelayMs: rc.LlmRetryBaseDelayMs,
 			CancelSignal: func() bool {
 				return ctx.Err() != nil
 			},
