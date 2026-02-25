@@ -35,6 +35,8 @@ export type AdminRunDetail = {
   skill_id?: string
   provider_kind?: string
   api_mode?: string
+  route_id?: string
+  credential_id?: string
   duration_ms?: number
   total_input_tokens?: number
   total_output_tokens?: number
@@ -45,6 +47,7 @@ export type AdminRunDetail = {
   created_by_user_id?: string
   created_by_user_name?: string
   created_by_email?: string
+  user_prompt?: string
   events_stats: AdminRunEventsStats
 }
 

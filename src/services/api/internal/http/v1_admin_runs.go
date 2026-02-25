@@ -29,6 +29,8 @@ type adminRunDetailResponse struct {
 	SkillID           *string  `json:"skill_id,omitempty"`
 	ProviderKind      *string  `json:"provider_kind,omitempty"`
 	APIMode           *string  `json:"api_mode,omitempty"`
+	RouteID           *string  `json:"route_id,omitempty"`
+	CredentialID      *string  `json:"credential_id,omitempty"`
 	DurationMs        *int64   `json:"duration_ms,omitempty"`
 	TotalInputTokens  *int64   `json:"total_input_tokens,omitempty"`
 	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
@@ -40,6 +42,8 @@ type adminRunDetailResponse struct {
 	CreatedByUserID   *string `json:"created_by_user_id,omitempty"`
 	CreatedByUserName *string `json:"created_by_user_name,omitempty"`
 	CreatedByEmail    *string `json:"created_by_email,omitempty"`
+	// 触发该 run 的用户 prompt（来自 messages 表）
+	UserPrompt *string `json:"user_prompt,omitempty"`
 	// 事件统计
 	EventsStats adminRunEventsStats `json:"events_stats"`
 }
@@ -50,6 +54,7 @@ func adminRunsEntry(
 	runRepo *data.RunEventRepository,
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	messagesRepo *data.MessageRepository,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -107,7 +112,7 @@ func adminRunsEntry(
 			return
 		}
 
-		stats, providerKind, apiMode := summarizeRunEvents(events)
+		stats, providerKind, apiMode, routeID, credentialID := summarizeRunEvents(events)
 
 		resp := adminRunDetailResponse{
 			RunID:             run.ID.String(),
@@ -118,6 +123,8 @@ func adminRunsEntry(
 			SkillID:           run.SkillID,
 			ProviderKind:      providerKind,
 			APIMode:           apiMode,
+			RouteID:           routeID,
+			CredentialID:      credentialID,
 			DurationMs:        run.DurationMs,
 			TotalInputTokens:  run.TotalInputTokens,
 			TotalOutputTokens: run.TotalOutputTokens,
@@ -145,15 +152,46 @@ func adminRunsEntry(
 			}
 		}
 
+		// 从 messages 表找触发该 run 的最后一条用户消息
+		if messagesRepo != nil {
+			msgs, mErr := messagesRepo.ListByThread(r.Context(), run.OrgID, run.ThreadID, 200)
+			if mErr == nil {
+				for i := len(msgs) - 1; i >= 0; i-- {
+					m := msgs[i]
+					if m.Role == "user" && !m.CreatedAt.After(run.CreatedAt) {
+						resp.UserPrompt = &m.Content
+						break
+					}
+				}
+			}
+		}
+
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
 	}
 }
 
-// summarizeRunEvents 遍历事件流，统计各类事件数量，并从首个 llm.request 提取 provider 信息。
-func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, providerKind *string, apiMode *string) {
+// summarizeRunEvents 遍历事件流，统计各类事件数量，并提取 provider/route/credential 信息。
+func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, providerKind *string, apiMode *string, routeID *string, credentialID *string) {
 	stats.Total = len(events)
 	for _, ev := range events {
 		switch ev.Type {
+		case "run.route.selected":
+			// 优先从路由事件提取，不依赖 llm.request（需开启 debug events）
+			if routeID == nil {
+				if r, ok := stringFromData(ev.DataJSON, "route_id"); ok {
+					routeID = &r
+				}
+			}
+			if credentialID == nil {
+				if c, ok := stringFromData(ev.DataJSON, "credential_id"); ok {
+					credentialID = &c
+				}
+			}
+			if providerKind == nil {
+				if pk, ok := stringFromData(ev.DataJSON, "provider_kind"); ok {
+					providerKind = &pk
+				}
+			}
 		case "llm.request":
 			stats.LlmTurns++
 			if providerKind == nil {
@@ -170,7 +208,33 @@ func summarizeRunEvents(events []data.RunEvent) (stats adminRunEventsStats, prov
 			stats.ProviderFallbacks++
 		}
 	}
-	return stats, providerKind, apiMode
+	// EmitDebugEvents=false 时 llm.request 不存在，通过 message.delta / tool.result 状态机推断轮次
+	if stats.LlmTurns == 0 {
+		type phase int
+		const (
+			phaseIdle  phase = iota
+			phaseInLLM       // 正在接收 LLM 输出
+			phaseInTools     // 工具执行中，等待下一轮 LLM
+		)
+		p := phaseIdle
+		for _, ev := range events {
+			switch ev.Type {
+			case "message.delta":
+				if p == phaseIdle {
+					stats.LlmTurns++
+					p = phaseInLLM
+				} else if p == phaseInTools {
+					stats.LlmTurns++
+					p = phaseInLLM
+				}
+			case "tool.result":
+				if p == phaseInLLM {
+					p = phaseInTools
+				}
+			}
+		}
+	}
+	return stats, providerKind, apiMode, routeID, credentialID
 }
 
 func stringFromData(dataJSON any, key string) (string, bool) {

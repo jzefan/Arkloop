@@ -22,26 +22,28 @@ export type LlmTurn = {
 
 /** 从 run_events 数组重建轮次列表 */
 export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
+  const hasLlmRequest = events.some((e) => e.type === 'llm.request')
+  return hasLlmRequest
+    ? buildTurnsFromDebugEvents(events)
+    : buildTurnsFromBasicEvents(events)
+}
+
+/** EmitDebugEvents=true：从 llm.request 精确重建 */
+function buildTurnsFromDebugEvents(events: RunEventRaw[]): LlmTurn[] {
   const turns: LlmTurn[] = []
   let current: LlmTurn | null = null
   const assistantChunks: string[] = []
-
-  // tool_call_id → result 映射，后续合并到对应 toolCall
   const resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }> = {}
 
   for (const ev of events) {
     if (ev.type === 'llm.request') {
-      // 保存上一轮的 assistant text
       if (current) {
         current.assistantText = assistantChunks.join('')
         assistantChunks.length = 0
       }
-
       const d = ev.data as Record<string, unknown>
       const payload = d.payload as Record<string, unknown> | undefined
       const messages = Array.isArray(payload?.messages) ? (payload.messages as Array<Record<string, unknown>>) : []
-
-      // 取该轮 payload 中最后一条 user 或 tool role 的内容作为本轮输入预览
       let userInput: string | undefined
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]
@@ -50,7 +52,6 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
           break
         }
       }
-
       current = {
         llmCallId: String(d.llm_call_id ?? ''),
         providerKind: String(d.provider_kind ?? ''),
@@ -72,33 +73,127 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       })
     } else if (ev.type === 'tool.result') {
       const d = ev.data as Record<string, unknown>
-      const callId = String(d.tool_call_id ?? '')
-      resultMap[callId] = {
+      resultMap[String(d.tool_call_id ?? '')] = {
         resultJSON: d.result as Record<string, unknown> | undefined,
         errorClass: ev.error_class,
       }
     } else if (ev.type === 'run.completed' || ev.type === 'run.failed') {
-      // 取最终 usage（如果有）
       if (current) {
         current.assistantText = assistantChunks.join('')
         assistantChunks.length = 0
-        const d = ev.data as Record<string, unknown>
-        const usage = d.usage as Record<string, unknown> | undefined
+        const usage = (ev.data as Record<string, unknown>).usage as Record<string, unknown> | undefined
         if (usage) {
-          current.inputTokens = (usage.input_tokens as number | undefined)
-          current.outputTokens = (usage.output_tokens as number | undefined)
+          current.inputTokens = usage.input_tokens as number | undefined
+          current.outputTokens = usage.output_tokens as number | undefined
         }
       }
       current = null
     }
   }
 
-  // flush 最后一轮
   if (current && assistantChunks.length > 0) {
     current.assistantText = assistantChunks.join('')
   }
 
-  // 合并 tool results 到对应 toolCall
+  mergeTurnResults(turns, resultMap)
+  return turns
+}
+
+/** EmitDebugEvents=false：从 message.delta / tool.* 重建（无 payload，无精确 call ID） */
+function buildTurnsFromBasicEvents(events: RunEventRaw[]): LlmTurn[] {
+  // 先提取 provider 信息（来自 run.route.selected）
+  let providerKind = ''
+  for (const ev of events) {
+    if (ev.type === 'run.route.selected') {
+      providerKind = String((ev.data as Record<string, unknown>).provider_kind ?? '')
+      break
+    }
+  }
+
+  const turns: LlmTurn[] = []
+  const resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }> = {}
+
+  type Phase = 'llm' | 'tools'
+  let phase: Phase = 'llm'
+  let current: LlmTurn | null = null
+  const chunks: string[] = []
+  let turnIndex = 0
+
+  for (const ev of events) {
+    switch (ev.type) {
+      case 'message.delta': {
+        const d = ev.data as Record<string, unknown>
+        // 跳过非 assistant role
+        if (d.role !== undefined && d.role !== null && d.role !== 'assistant') break
+
+        if (phase === 'tools') {
+          // tool results 之后遇到新 message.delta → 新轮次
+          if (current) current.assistantText = chunks.join('')
+          chunks.length = 0
+          phase = 'llm'
+          current = { llmCallId: `turn-${turnIndex++}`, providerKind, apiMode: '', assistantText: '', toolCalls: [] }
+          turns.push(current)
+        }
+
+        if (current === null) {
+          current = { llmCallId: `turn-${turnIndex++}`, providerKind, apiMode: '', assistantText: '', toolCalls: [] }
+          turns.push(current)
+        }
+        chunks.push(String(d.content_delta ?? ''))
+        break
+      }
+
+      case 'tool.call': {
+        if (current) {
+          const d = ev.data as Record<string, unknown>
+          current.toolCalls.push({
+            toolCallId: String(d.tool_call_id ?? ''),
+            toolName: String(d.tool_name ?? ev.tool_name ?? ''),
+            argsJSON: (d.arguments as Record<string, unknown>) ?? {},
+          })
+        }
+        break
+      }
+
+      case 'tool.result': {
+        const d = ev.data as Record<string, unknown>
+        resultMap[String(d.tool_call_id ?? '')] = {
+          resultJSON: d.result as Record<string, unknown> | undefined,
+          errorClass: ev.error_class,
+        }
+        phase = 'tools'
+        break
+      }
+
+      case 'run.completed':
+      case 'run.failed': {
+        if (current) {
+          if (chunks.length > 0) current.assistantText = chunks.join('')
+          chunks.length = 0
+          const usage = (ev.data as Record<string, unknown>).usage as Record<string, unknown> | undefined
+          if (usage) {
+            current.inputTokens = usage.input_tokens as number | undefined
+            current.outputTokens = usage.output_tokens as number | undefined
+          }
+        }
+        current = null
+        break
+      }
+    }
+  }
+
+  if (current && chunks.length > 0) {
+    current.assistantText = chunks.join('')
+  }
+
+  mergeTurnResults(turns, resultMap)
+  return turns
+}
+
+function mergeTurnResults(
+  turns: LlmTurn[],
+  resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }>,
+) {
   for (const turn of turns) {
     for (const tc of turn.toolCalls) {
       const r = resultMap[tc.toolCallId]
@@ -108,8 +203,6 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       }
     }
   }
-
-  return turns
 }
 
 function extractMessageText(msg: Record<string, unknown>): string {
