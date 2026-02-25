@@ -5,6 +5,7 @@ import type { GlobalRun, AdminRunDetail, RunEventRaw } from '../api/runs'
 import { getAdminRunDetail, fetchRunEventsOnce } from '../api/runs'
 import { TurnView, buildTurns } from './TurnView'
 import { Badge, type BadgeVariant } from './Badge'
+import { useLocale } from '../contexts/LocaleContext'
 
 function statusVariant(status: string): BadgeVariant {
   switch (status) {
@@ -101,6 +102,8 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [events, setEvents] = useState<RunEventRaw[] | null>(null)
   const [eventsLoading, setEventsLoading] = useState(false)
+  const { t } = useLocale()
+  const rt = t.pages.runs
 
   // 面板打开时加载 summary
   useEffect(() => {
@@ -187,42 +190,42 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
 
         <div className="flex-1 overflow-y-auto">
           {/* OVERVIEW */}
-          <Section title="Overview" defaultOpen>
+          <Section title={rt.sectionOverview} defaultOpen>
             {detailLoading && !d && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">Loading…</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.loading}</p>
             )}
             <div className="divide-y divide-[var(--c-border-console)]">
               <div className="pb-2">
-                <MetaRow label="User" value={
+                <MetaRow label={rt.labelUser} value={
                   (d?.created_by_user_name ?? run.created_by_user_name)
                     ? `${d?.created_by_user_name ?? run.created_by_user_name}${(d?.created_by_email ?? run.created_by_email) ? `  ·  ${d?.created_by_email ?? run.created_by_email}` : ''}`
                     : (d?.created_by_user_id ?? run.created_by_user_id)
                 } />
-                <MetaRow label="Thread" value={run.thread_id} mono />
-                <MetaRow label="Org" value={run.org_id} mono />
-                <MetaRow label="Skill" value={d?.skill_id ?? run.skill_id} />
+                <MetaRow label={rt.labelThread} value={run.thread_id} mono />
+                <MetaRow label={rt.labelOrg} value={run.org_id} mono />
+                <MetaRow label={rt.labelSkill} value={d?.skill_id ?? run.skill_id} />
               </div>
               <div className="pt-2">
-                <MetaRow label="Agent Config" value={d?.agent_config_name} />
-                <MetaRow label="LLM Credential" value={d?.credential_name} />
-                <MetaRow label="Model" value={d?.model ?? run.model} />
+                <MetaRow label={rt.labelAgentConfig} value={d?.agent_config_name} />
+                <MetaRow label={rt.labelCredential} value={d?.credential_name} />
+                <MetaRow label={rt.labelModel} value={d?.model ?? run.model} />
                 <MetaRow
-                  label="Tokens"
+                  label={rt.labelTokens}
                   value={
                     (d?.total_input_tokens ?? run.total_input_tokens) != null
                       ? `${d?.total_input_tokens ?? run.total_input_tokens} in / ${d?.total_output_tokens ?? run.total_output_tokens ?? 0} out`
                       : undefined
                   }
                 />
-                <MetaRow label="Cost" value={formatCost(d?.total_cost_usd ?? run.total_cost_usd)} />
+                <MetaRow label={rt.labelCost} value={formatCost(d?.total_cost_usd ?? run.total_cost_usd)} />
               </div>
               <div className="pt-2">
-                <MetaRow label="Created" value={new Date(run.created_at).toLocaleString()} />
+                <MetaRow label={rt.labelCreated} value={new Date(run.created_at).toLocaleString()} />
                 {(d?.completed_at ?? run.completed_at) && (
-                  <MetaRow label="Completed" value={new Date((d?.completed_at ?? run.completed_at)!).toLocaleString()} />
+                  <MetaRow label={rt.labelCompleted} value={new Date((d?.completed_at ?? run.completed_at)!).toLocaleString()} />
                 )}
                 {(d?.failed_at ?? run.failed_at) && (
-                  <MetaRow label="Failed at" value={new Date((d?.failed_at ?? run.failed_at)!).toLocaleString()} />
+                  <MetaRow label={rt.labelFailedAt} value={new Date((d?.failed_at ?? run.failed_at)!).toLocaleString()} />
                 )}
               </div>
             </div>
@@ -230,20 +233,19 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
 
           {/* CONVERSATION — 默认折叠，展开时懒加载 */}
           <Section
-            title="Conversation"
+            title={rt.sectionConversation}
             badge={conversationBadge}
             defaultOpen={false}
             onOpen={loadEvents}
           >
             {eventsLoading && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">Loading…</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.loading}</p>
             )}
-            {/* 用户 prompt（来自 messages 表，始终可见） */}
             {d?.user_prompt && (
-              <UserPromptBlock prompt={d.user_prompt} />
+              <UserPromptBlock prompt={d.user_prompt} label={rt.userPrompt} />
             )}
             {!eventsLoading && events !== null && turns.length === 0 && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">No conversation data</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.noConversation}</p>
             )}
             {turns.length > 0 && (
               <div className="space-y-3">
@@ -256,16 +258,16 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
 
           {/* RAW EVENTS — 调试用，始终折叠 */}
           <Section
-            title="Raw Events"
+            title={rt.sectionRawEvents}
             badge={rawEventsBadge}
             defaultOpen={false}
             onOpen={loadEvents}
           >
             {eventsLoading && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">Loading…</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.loading}</p>
             )}
             {!eventsLoading && events !== null && events.length === 0 && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">No events</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.noEvents}</p>
             )}
             {events && events.length > 0 && (
               <div className="space-y-1">
@@ -284,7 +286,7 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
 
 type RawEventRowProps = { event: RunEventRaw }
 
-function UserPromptBlock({ prompt }: { prompt: string }) {
+function UserPromptBlock({ prompt, label }: { prompt: string; label: string }) {
   const [open, setOpen] = useState(false)
   const preview = prompt.slice(0, 100) + (prompt.length > 100 ? '…' : '')
 
@@ -295,7 +297,7 @@ function UserPromptBlock({ prompt }: { prompt: string }) {
         className="flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--c-bg-sub)]"
       >
         <span className="shrink-0 rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-xs font-medium text-[var(--c-text-secondary)]">
-          User
+          {label}
         </span>
         {!open && (
           <span className="truncate text-xs text-[var(--c-text-muted)]">{preview}</span>

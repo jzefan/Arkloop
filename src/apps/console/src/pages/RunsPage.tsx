@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { RefreshCw, Play } from 'lucide-react'
 import type { ConsoleOutletContext } from '../layouts/ConsoleLayout'
@@ -7,18 +7,11 @@ import { DataTable, type Column } from '../components/DataTable'
 import { Badge, type BadgeVariant } from '../components/Badge'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useToast } from '../components/useToast'
+import { useLocale } from '../contexts/LocaleContext'
 import { RunDetailPanel } from '../components/RunDetailPanel'
 import { listRuns, cancelRun, type GlobalRun } from '../api/runs'
 
 const PAGE_SIZE = 50
-
-const STATUS_OPTIONS = [
-  { value: '', label: 'All' },
-  { value: 'running', label: 'Running' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'cancelled', label: 'Cancelled' },
-]
 
 function statusVariant(status: string): BadgeVariant {
   switch (status) {
@@ -50,6 +43,16 @@ function truncateId(id: string): string {
 export function RunsPage() {
   const { accessToken } = useOutletContext<ConsoleOutletContext>()
   const { addToast } = useToast()
+  const { t } = useLocale()
+  const rt = t.pages.runs
+
+  const statusOptions = useMemo(() => [
+    { value: '', label: rt.filterAll },
+    { value: 'running', label: rt.filterRunning },
+    { value: 'completed', label: rt.filterCompleted },
+    { value: 'failed', label: rt.filterFailed },
+    { value: 'cancelled', label: rt.filterCancelled },
+  ], [rt])
 
   const [runs, setRuns] = useState<GlobalRun[]>([])
   const [total, setTotal] = useState(0)
@@ -77,7 +80,7 @@ export function RunsPage() {
         setRuns(resp.data)
         setTotal(resp.total)
       } catch {
-        addToast('Failed to load runs', 'error')
+        addToast(rt.toastLoadFailed, 'error')
       } finally {
         setLoading(false)
       }
@@ -111,7 +114,7 @@ export function RunsPage() {
       setCancelTarget(null)
       void fetchRuns(statusFilter, userIdFilter, offset)
     } catch {
-      addToast('Failed to cancel run', 'error')
+      addToast(rt.toastCancelFailed, 'error')
     } finally {
       setCancelling(false)
     }
@@ -120,7 +123,7 @@ export function RunsPage() {
   const columns: Column<GlobalRun>[] = [
     {
       key: 'run_id',
-      header: 'ID',
+      header: rt.colId,
       render: (row) => (
         <span className="font-mono text-xs" title={row.run_id}>
           {truncateId(row.run_id)}
@@ -129,7 +132,7 @@ export function RunsPage() {
     },
     {
       key: 'user',
-      header: 'User',
+      header: rt.colUser,
       render: (row) => (
         <div className="flex flex-col">
           <span className="text-xs">{row.created_by_user_name ?? '--'}</span>
@@ -141,7 +144,7 @@ export function RunsPage() {
     },
     {
       key: 'thread_id',
-      header: 'Thread',
+      header: rt.colThread,
       render: (row) => (
         <span className="font-mono text-xs" title={row.thread_id}>
           {truncateId(row.thread_id)}
@@ -150,28 +153,28 @@ export function RunsPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: rt.colStatus,
       render: (row) => (
         <Badge variant={statusVariant(row.status)}>{row.status}</Badge>
       ),
     },
     {
       key: 'model',
-      header: 'Model',
+      header: rt.colModel,
       render: (row) => (
         <span className="text-xs">{row.model ?? '--'}</span>
       ),
     },
     {
       key: 'duration',
-      header: 'Duration',
+      header: rt.colDuration,
       render: (row) => (
         <span className="text-xs tabular-nums">{formatDuration(row.duration_ms)}</span>
       ),
     },
     {
       key: 'tokens',
-      header: 'Tokens (in/out)',
+      header: rt.colTokens,
       render: (row) => {
         const inp = row.total_input_tokens
         const out = row.total_output_tokens
@@ -185,14 +188,14 @@ export function RunsPage() {
     },
     {
       key: 'cost',
-      header: 'Cost',
+      header: rt.colCost,
       render: (row) => (
         <span className="text-xs tabular-nums">{formatCost(row.total_cost_usd)}</span>
       ),
     },
     {
       key: 'created_at',
-      header: 'Created At',
+      header: rt.colCreatedAt,
       render: (row) => (
         <span className="text-xs tabular-nums">
           {new Date(row.created_at).toLocaleString()}
@@ -209,7 +212,7 @@ export function RunsPage() {
             onClick={(e) => { e.stopPropagation(); setCancelTarget(row) }}
             className="rounded px-2 py-0.5 text-xs text-[var(--c-text-muted)] transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
           >
-            Cancel
+            {rt.cancel}
           </button>
         )
       },
@@ -223,7 +226,7 @@ export function RunsPage() {
     <>
       <input
         type="text"
-        placeholder="User ID"
+        placeholder={rt.filterUserPlaceholder}
         value={userIdFilter}
         onChange={(e) => handleUserIdChange(e.target.value)}
         className="w-60 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] placeholder:text-[var(--c-text-muted)] focus:outline-none"
@@ -233,7 +236,7 @@ export function RunsPage() {
         onChange={(e) => handleStatusChange(e.target.value)}
         className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] focus:outline-none"
       >
-        {STATUS_OPTIONS.map((opt) => (
+        {statusOptions.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label}
           </option>
@@ -245,14 +248,14 @@ export function RunsPage() {
         className="flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
       >
         <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-        Refresh
+        {rt.refresh}
       </button>
     </>
   )
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title="Runs" actions={actions} />
+      <PageHeader title={rt.title} actions={actions} />
 
       <div className="flex flex-1 flex-col overflow-auto">
         <DataTable
@@ -260,7 +263,7 @@ export function RunsPage() {
           data={runs}
           rowKey={(row) => row.run_id}
           loading={loading}
-          emptyMessage="No runs found"
+          emptyMessage={rt.empty}
           emptyIcon={<Play size={28} />}
           onRowClick={setSelectedRun}
           activeRowKey={selectedRun?.run_id}
@@ -278,7 +281,7 @@ export function RunsPage() {
               disabled={currentPage <= 1}
               className="rounded border border-[var(--c-border)] px-2.5 py-1 text-xs text-[var(--c-text-secondary)] disabled:opacity-40 hover:bg-[var(--c-bg-sub)]"
             >
-              Prev
+              {rt.prev}
             </button>
             <span className="flex items-center text-xs text-[var(--c-text-muted)]">
               {currentPage} / {totalPages}
@@ -288,7 +291,7 @@ export function RunsPage() {
               disabled={currentPage >= totalPages}
               className="rounded border border-[var(--c-border)] px-2.5 py-1 text-xs text-[var(--c-text-secondary)] disabled:opacity-40 hover:bg-[var(--c-bg-sub)]"
             >
-              Next
+              {rt.next}
             </button>
           </div>
         </div>
@@ -298,9 +301,9 @@ export function RunsPage() {
         open={cancelTarget !== null}
         onClose={() => setCancelTarget(null)}
         onConfirm={() => void handleCancelConfirm()}
-        title="Cancel Run"
-        message={`Cancel run ${cancelTarget ? truncateId(cancelTarget.run_id) : ''}?`}
-        confirmLabel="Cancel Run"
+        title={rt.cancelTitle}
+        message={rt.cancelMessage(cancelTarget ? truncateId(cancelTarget.run_id) : '')}
+        confirmLabel={rt.cancelConfirm}
         loading={cancelling}
       />
 
