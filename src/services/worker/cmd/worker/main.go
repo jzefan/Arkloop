@@ -65,15 +65,24 @@ func run() error {
 	}
 	defer pool.Close()
 
-	// 直连 pool，用于 LISTEN/NOTIFY（绕过 PgBouncer transaction mode）
+	// 直连 pool 用于 LISTEN/NOTIFY（绕过 PgBouncer transaction mode）；
+	// 未设置时回退到 main pool 并打警告，PgBouncer 场景下 LISTEN 将失效。
 	var directPool *pgxpool.Pool
 	if directDSN := lookupDirectDatabaseDSN(); directDSN != "" {
-		dp, err := pgxpool.New(ctx, normalizePostgresDSN(directDSN))
+		dpCfg, err := pgxpool.ParseConfig(normalizePostgresDSN(directDSN))
+		if err != nil {
+			return fmt.Errorf("direct pool config: %w", err)
+		}
+		dpCfg.MaxConns = int32(cfg.Concurrency + 2)
+		dp, err := pgxpool.NewWithConfig(ctx, dpCfg)
 		if err != nil {
 			return fmt.Errorf("direct pool: %w", err)
 		}
 		defer dp.Close()
 		directPool = dp
+	} else {
+		logger.Warn("ARKLOOP_DATABASE_DIRECT_URL not set: LISTEN/NOTIFY uses main pool, breaks with PgBouncer", app.LogFields{}, nil)
+		directPool = pool
 	}
 
 	// Redis 在 chooseHandler 之前初始化，以便传入 run limiter

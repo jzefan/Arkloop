@@ -33,7 +33,7 @@ type RunContext struct {
 	// -- 初始化时写入 --
 	Run        data.Run
 	Pool       *pgxpool.Pool
-	DirectPool *pgxpool.Pool // LISTEN/NOTIFY 专用直连，绕过 PgBouncer；nil 时回落 Pool
+	DirectPool *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
 	TraceID    string
 	Emitter events.Emitter
 	Router  *routing.ProviderRouter

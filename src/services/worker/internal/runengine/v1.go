@@ -34,7 +34,7 @@ type ExecuteInput struct {
 type EngineV1Deps struct {
 	Router          *routing.ProviderRouter
 	DBPool          *pgxpool.Pool
-	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连；nil 时 LISTEN 回落 DBPool
+	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
 	StubGateway     llm.Gateway
 	EmitDebugEvents bool
 	RunLimiterRDB   *redis.Client
@@ -124,10 +124,14 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 
 	traceID := strings.TrimSpace(input.TraceID)
 
+	directPool := e.directPool
+	if directPool == nil {
+		directPool = pool
+	}
 	rc := &pipeline.RunContext{
 		Run:           run,
 		Pool:          pool,
-		DirectPool:    e.directPool,
+		DirectPool:    directPool,
 		TraceID:       traceID,
 		Emitter:       events.NewEmitter(traceID),
 		Router:        e.router,
