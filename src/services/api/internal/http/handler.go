@@ -29,7 +29,7 @@ func defaultSSEConfig() SSEConfig {
 
 type HandlerConfig struct {
 	Pool       *pgxpool.Pool
-	DirectPool *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer；nil 时 fallback 到 Pool
+	DirectPool *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer
 	Logger               *observability.JSONLogger
 	SchemaRepository     *data.SchemaRepository
 	TrustIncomingTraceID bool

@@ -98,13 +98,20 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	if directDSN := strings.TrimSpace(a.config.DirectDatabaseDSN); directDSN != "" {
-		dp, err := data.NewDirectPool(ctx, directDSN)
+		dpCfg, err := pgxpool.ParseConfig(data.NormalizePostgresDSN(directDSN))
+		if err != nil {
+			return fmt.Errorf("direct pool config: %w", err)
+		}
+		dpCfg.MaxConns = 10
+		dp, err := pgxpool.NewWithConfig(ctx, dpCfg)
 		if err != nil {
 			return fmt.Errorf("direct pool: %w", err)
 		}
 		directPool = dp
 		defer directPool.Close()
-		a.logger.Info("direct pool connected", observability.LogFields{}, nil)
+	} else if pool != nil {
+		a.logger.Warn("ARKLOOP_DATABASE_DIRECT_URL not set: LISTEN/NOTIFY uses main pool, breaks with PgBouncer", observability.LogFields{}, nil)
+		directPool = pool
 	}
 
 	var redisClient *redis.Client
