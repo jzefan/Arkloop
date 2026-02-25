@@ -142,11 +142,16 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
   const d = detail
   const turns = events ? buildTurns(events) : []
 
-  const conversationBadge = d
-    ? `${d.events_stats.llm_turns} turn${d.events_stats.llm_turns !== 1 ? 's' : ''}` +
-      (d.events_stats.tool_calls > 0 ? ` · ${d.events_stats.tool_calls} tool calls` : '') +
-      (d.events_stats.provider_fallbacks > 0 ? ` · ${d.events_stats.provider_fallbacks} fallbacks` : '')
-    : undefined
+  const conversationBadge =
+    events !== null
+      ? `${turns.length} turn${turns.length !== 1 ? 's' : ''}` +
+        ((d?.events_stats.tool_calls ?? 0) > 0 ? ` · ${d!.events_stats.tool_calls} tool calls` : '') +
+        ((d?.events_stats.provider_fallbacks ?? 0) > 0 ? ` · ${d!.events_stats.provider_fallbacks} fallbacks` : '')
+      : d
+        ? `${d.events_stats.llm_turns} turn${d.events_stats.llm_turns !== 1 ? 's' : ''}` +
+          (d.events_stats.tool_calls > 0 ? ` · ${d.events_stats.tool_calls} tool calls` : '') +
+          (d.events_stats.provider_fallbacks > 0 ? ` · ${d.events_stats.provider_fallbacks} fallbacks` : '')
+        : undefined
 
   const rawEventsBadge = d ? `${d.events_stats.total} events` : undefined
 
@@ -207,6 +212,8 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
                       : undefined
                   }
                 />
+                <MetaRow label="Route" value={d?.route_id} mono />
+                <MetaRow label="Credential" value={d?.credential_id} mono />
                 <MetaRow
                   label="Tokens"
                   value={
@@ -239,8 +246,12 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
             {eventsLoading && (
               <p className="py-2 text-xs text-[var(--c-text-muted)]">Loading…</p>
             )}
+            {/* 用户 prompt（来自 messages 表，始终可见） */}
+            {d?.user_prompt && (
+              <UserPromptBlock prompt={d.user_prompt} />
+            )}
             {!eventsLoading && events !== null && turns.length === 0 && (
-              <p className="py-2 text-xs text-[var(--c-text-muted)]">No LLM turns found</p>
+              <p className="py-2 text-xs text-[var(--c-text-muted)]">No conversation data</p>
             )}
             {turns.length > 0 && (
               <div className="space-y-3">
@@ -280,6 +291,34 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
 }
 
 type RawEventRowProps = { event: RunEventRaw }
+
+function UserPromptBlock({ prompt }: { prompt: string }) {
+  const [open, setOpen] = useState(false)
+  const preview = prompt.slice(0, 100) + (prompt.length > 100 ? '…' : '')
+
+  return (
+    <div className="mb-3 rounded border border-[var(--c-border)] overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--c-bg-sub)]"
+      >
+        <span className="shrink-0 rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-xs font-medium text-[var(--c-text-secondary)]">
+          User
+        </span>
+        {!open && (
+          <span className="truncate text-xs text-[var(--c-text-muted)]">{preview}</span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-2">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--c-text-secondary)]">
+            {prompt}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function RawEventRow({ event }: RawEventRowProps) {
   const [open, setOpen] = useState(false)
