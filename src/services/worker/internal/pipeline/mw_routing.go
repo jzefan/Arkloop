@@ -87,7 +87,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(decision.Denied.ErrorClass),
 			)
-			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		selected := decision.Selected
@@ -102,7 +102,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(llm.ErrorClassInternalError),
 			)
-			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		gateway, err := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents)
@@ -117,7 +117,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(llm.ErrorClassInternalError),
 			)
-			if commitErr := appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn); commitErr != nil {
+			if commitErr := appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB); commitErr != nil {
 				return commitErr
 			}
 			return nil

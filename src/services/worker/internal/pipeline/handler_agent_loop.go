@@ -311,6 +311,11 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
 	_, _ = w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
 
+	if w.runLimiterRDB != nil {
+		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", w.run.ID.String())
+		_, _ = w.runLimiterRDB.Publish(ctx, redisChannel, "").Result()
+	}
+
 	if w.hasTerminal {
 		w.hasTerminal = false
 		key := runlimit.Key(w.run.OrgID.String())

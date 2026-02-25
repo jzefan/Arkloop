@@ -53,7 +53,7 @@ func NewSkillResolutionMiddleware(
 				run := rc.Run
 				releaseFn = func() { releaseSlot(ctx, run) }
 			}
-			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		rc.MaxIterations = defaultAgentMaxIterations

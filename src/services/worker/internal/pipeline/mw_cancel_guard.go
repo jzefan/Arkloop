@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -36,7 +37,7 @@ func NewCancelGuardMiddleware(
 		}
 		if cancelType == "run.cancel_requested" {
 			return appendAndCommitSingle(ctx, pool, run, runsRepo, eventsRepo,
-				rc.Emitter.Emit("run.cancelled", map[string]any{}, nil, nil), nil)
+				rc.Emitter.Emit("run.cancelled", map[string]any{}, nil, nil), nil, rc.BroadcastRDB)
 		}
 
 		terminalType, err := readLatestEventType(ctx, pool, eventsRepo, run.ID, terminalEventTypes)
@@ -106,6 +107,7 @@ func appendAndCommitSingle(
 	eventsRepo data.RunEventsRepository,
 	ev events.RunEvent,
 	releaseSlot func(),
+	rdb *redis.Client,
 ) error {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -131,6 +133,11 @@ func appendAndCommitSingle(
 
 	channel := fmt.Sprintf("run_events:%s", run.ID.String())
 	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+
+	if rdb != nil {
+		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", run.ID.String())
+		_, _ = rdb.Publish(ctx, redisChannel, "").Result()
+	}
 
 	if _, ok := TerminalStatuses[ev.Type]; ok && releaseSlot != nil {
 		releaseSlot()
