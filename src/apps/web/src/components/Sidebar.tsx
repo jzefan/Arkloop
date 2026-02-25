@@ -112,7 +112,9 @@ export function Sidebar({
       <div className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
         <h3 className="mb-[12px] shrink-0 px-2 text-[14px] font-medium tracking-[0.3px] text-[var(--c-text-muted)]">{t.recents}</h3>
         <div className="flex flex-col gap-[2px]">
-          {threads.map((thread) => (
+          {threads.length === 0 ? (
+            <p className="px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
+          ) : threads.map((thread) => (
             <button
               key={thread.id}
               onClick={() => navigate(`/t/${thread.id}`)}

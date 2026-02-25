@@ -149,6 +149,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           onClose={() => setSettingsOpen(false)}
           onLogout={handleLogout}
           onCreditsChanged={(balance) => setCreditsBalance(balance)}
+          onMeUpdated={(updated) => setMe(updated)}
         />
       )}
 

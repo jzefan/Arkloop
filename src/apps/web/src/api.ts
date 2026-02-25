@@ -21,7 +21,7 @@ export type LoginResponse = {
 export type RegisterRequest = {
   login: string
   password: string
-  display_name: string
+  display_name?: string
   invite_code?: string
 }
 
@@ -39,6 +39,7 @@ export type RegistrationModeResponse = {
 
 export type MeResponse = {
   id: string
+  login: string
   display_name: string
 }
 
@@ -223,6 +224,14 @@ export async function getMe(accessToken: string): Promise<MeResponse> {
   return await apiFetch<MeResponse>('/v1/me', {
     method: 'GET',
     accessToken,
+  })
+}
+
+export async function updateMe(accessToken: string, displayName: string): Promise<{ display_name: string }> {
+  return await apiFetch<{ display_name: string }>('/v1/me', {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ display_name: displayName }),
   })
 }
 
