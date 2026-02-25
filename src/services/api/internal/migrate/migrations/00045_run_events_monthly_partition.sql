@@ -84,6 +84,7 @@ ALTER TABLE run_events_flat RENAME TO run_events;
 ALTER TABLE run_events RENAME CONSTRAINT uq_run_events_flat_run_id_seq TO uq_run_events_run_id_seq;
 
 -- 重建原始索引
+CREATE INDEX ix_run_events_run_seq ON run_events(run_id, seq);
 CREATE INDEX ix_run_events_type ON run_events(type);
 CREATE INDEX ix_run_events_tool_name ON run_events(tool_name);
 CREATE INDEX ix_run_events_error_class ON run_events(error_class);
