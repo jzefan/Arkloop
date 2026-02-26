@@ -93,6 +93,12 @@ export interface LocaleStrings {
   emailVerifySuccess: string
   emailVerifyFailed: string
   emailVerifyGoToApp: string
+  // EmailVerificationGate
+  emailGateTitle: string
+  emailGateDesc: (email: string) => string
+  emailGateResend: string
+  emailGateResent: string
+  emailGateUseOtp: string
   otpLoginTab: string
   passwordLoginTab: string
   otpEmailPlaceholder: string

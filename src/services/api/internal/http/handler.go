@@ -110,7 +110,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/email/verify/confirm", emailVerifyConfirm(cfg.EmailVerifyService))
 	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService))
 	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(cfg.EmailOTPLoginService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo))
+	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo, cfg.FeatureFlagService))
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/daily", meDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/by-model", meUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
