@@ -16,7 +16,7 @@ import (
 type adminUserResponse struct {
 	ID              string  `json:"id"`
 	Login           *string `json:"login,omitempty"`
-	DisplayName     string  `json:"display_name"`
+	Username        string  `json:"username"`
 	Email           *string `json:"email"`
 	EmailVerifiedAt *string `json:"email_verified_at,omitempty"`
 	Status          string  `json:"status"`
@@ -40,7 +40,7 @@ type adminUserOrgResponse struct {
 func toAdminUserResponse(u data.User) adminUserResponse {
 	resp := adminUserResponse{
 		ID:          u.ID.String(),
-		DisplayName: u.DisplayName,
+		Username:    u.Username,
 		Email:       u.Email,
 		Status:      u.Status,
 		AvatarURL:   u.AvatarURL,
@@ -296,7 +296,7 @@ func patchAdminUser(
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	type patchBody struct {
 		Status        *string `json:"status"`
-		DisplayName   *string `json:"display_name"`
+		Username      *string `json:"username"`
 		Email         *string `json:"email"`
 		EmailVerified *bool   `json:"email_verified"`
 		Locale        *string `json:"locale"`
@@ -373,14 +373,14 @@ func patchAdminUser(
 		}
 
 		// profile 编辑
-		if body.DisplayName == nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "display_name is required", traceID, nil)
+		if body.Username == nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "username is required", traceID, nil)
 			return
 		}
 
-		displayName := strings.TrimSpace(*body.DisplayName)
-		if displayName == "" {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "display_name must not be empty", traceID, nil)
+		username := strings.TrimSpace(*body.Username)
+		if username == "" {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "username must not be empty", traceID, nil)
 			return
 		}
 
@@ -395,7 +395,7 @@ func patchAdminUser(
 		}
 
 		params := data.UpdateProfileParams{
-			DisplayName: displayName,
+			Username: username,
 			Locale:      existing.Locale,
 			Timezone:    existing.Timezone,
 			Email:       existing.Email,

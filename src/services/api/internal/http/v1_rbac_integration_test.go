@@ -94,7 +94,7 @@ func TestRBACPermissions(t *testing.T) {
 
 	// 注册 owner (A)
 	regA := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "rbac_owner", "password": "pwdpwdpwd", "display_name": "Owner"},
+		map[string]any{"login": "rbac_owner", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if regA.Code != nethttp.StatusCreated {
@@ -106,7 +106,7 @@ func TestRBACPermissions(t *testing.T) {
 
 	// 注册用户 B，随后降为 member
 	regB := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "rbac_member", "password": "pwdpwdpwd", "display_name": "Member"},
+		map[string]any{"login": "rbac_member", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if regB.Code != nethttp.StatusCreated {

@@ -12,7 +12,7 @@ import (
 
 type User struct {
 	ID                  uuid.UUID
-	DisplayName         string
+	Username            string
 	Email               *string
 	EmailVerifiedAt     *time.Time
 	Status              string
@@ -36,25 +36,25 @@ func NewUserRepository(db Querier) (*UserRepository, error) {
 	return &UserRepository{db: db}, nil
 }
 
-func (r *UserRepository) Create(ctx context.Context, displayName string, email string, locale string) (User, error) {
+func (r *UserRepository) Create(ctx context.Context, username string, email string, locale string) (User, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	if displayName == "" {
-		return User{}, fmt.Errorf("display_name must not be empty")
+	if username == "" {
+		return User{}, fmt.Errorf("username must not be empty")
 	}
 
 	var user User
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO users (display_name, email, locale)
+		`INSERT INTO users (username, email, locale)
 		 VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
-		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
+		 RETURNING id, username, email, email_verified_at, status, deleted_at,
 		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
-		displayName, email, locale,
+		username, email, locale,
 	).Scan(
-		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
@@ -72,14 +72,14 @@ func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (*User, 
 	var user User
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, display_name, email, email_verified_at, status, deleted_at,
+		`SELECT id, username, email, email_verified_at, status, deleted_at,
 		        avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at
 		 FROM users
 		 WHERE id = $1
 		 LIMIT 1`,
 		userID,
 	).Scan(
-		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
@@ -92,18 +92,18 @@ func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (*User, 
 	return &user, nil
 }
 
-// GetDisplayNames 批量获取用户 display_name，返回 map[user_id]display_name。
-func (r *UserRepository) GetDisplayNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+// GetUsernames 批量获取用户 username，返回 map[user_id]username。
+func (r *UserRepository) GetUsernames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
 	if len(userIDs) == 0 {
 		return nil, nil
 	}
 
 	rows, err := r.db.Query(ctx,
-		`SELECT id, display_name FROM users WHERE id = ANY($1)`,
+		`SELECT id, username FROM users WHERE id = ANY($1)`,
 		userIDs,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("users.GetDisplayNames: %w", err)
+		return nil, fmt.Errorf("users.GetUsernames: %w", err)
 	}
 	defer rows.Close()
 
@@ -112,7 +112,7 @@ func (r *UserRepository) GetDisplayNames(ctx context.Context, userIDs []uuid.UUI
 		var id uuid.UUID
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			return nil, fmt.Errorf("users.GetDisplayNames scan: %w", err)
+			return nil, fmt.Errorf("users.GetUsernames scan: %w", err)
 		}
 		result[id] = name
 	}
@@ -130,14 +130,14 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*User, e
 	var user User
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, display_name, email, email_verified_at, status, deleted_at,
+		`SELECT id, username, email, email_verified_at, status, deleted_at,
 		        avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at
 		 FROM users
 		 WHERE email = $1 AND deleted_at IS NULL
 		 LIMIT 1`,
 		email,
 	).Scan(
-		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
@@ -197,7 +197,7 @@ func (r *UserRepository) List(
 		return nil, fmt.Errorf("before_created_at and before_id must be provided together")
 	}
 
-	sql := `SELECT id, display_name, email, email_verified_at, status, deleted_at,
+	sql := `SELECT id, username, email, email_verified_at, status, deleted_at,
 	               avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at
 	        FROM users
 	        WHERE deleted_at IS NULL`
@@ -212,7 +212,7 @@ func (r *UserRepository) List(
 
 	if query != "" {
 		pattern := "%" + query + "%"
-		sql += fmt.Sprintf(" AND (display_name ILIKE $%d OR email ILIKE $%d)", argIdx, argIdx)
+		sql += fmt.Sprintf(" AND (username ILIKE $%d OR email ILIKE $%d)", argIdx, argIdx)
 		args = append(args, pattern)
 		argIdx++
 	}
@@ -236,7 +236,7 @@ func (r *UserRepository) List(
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(
-			&u.ID, &u.DisplayName, &u.Email, &u.EmailVerifiedAt,
+			&u.ID, &u.Username, &u.Email, &u.EmailVerifiedAt,
 			&u.Status, &u.DeletedAt, &u.AvatarURL, &u.Locale,
 			&u.Timezone, &u.LastLoginAt, &u.TokensInvalidBefore, &u.CreatedAt,
 		); err != nil {
@@ -266,11 +266,11 @@ func (r *UserRepository) UpdateStatus(ctx context.Context, userID uuid.UUID, sta
 		ctx,
 		`UPDATE users SET status = $1
 		 WHERE id = $2 AND deleted_at IS NULL
-		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
+		 RETURNING id, username, email, email_verified_at, status, deleted_at,
 		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
 		status, userID,
 	).Scan(
-		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
@@ -301,7 +301,7 @@ func (r *UserRepository) CountActiveSince(ctx context.Context, since time.Time) 
 }
 
 type UpdateProfileParams struct {
-	DisplayName     string
+	Username        string
 	Email           *string
 	EmailVerifiedAt *time.Time
 	Locale          *string
@@ -315,21 +315,21 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, pa
 	if userID == uuid.Nil {
 		return nil, fmt.Errorf("user_id must not be empty")
 	}
-	if params.DisplayName == "" {
-		return nil, fmt.Errorf("display_name must not be empty")
+	if params.Username == "" {
+		return nil, fmt.Errorf("username must not be empty")
 	}
 
 	var user User
 	err := r.db.QueryRow(
 		ctx,
 		`UPDATE users
-		 SET display_name = $1, email = $2, email_verified_at = $3, locale = $4, timezone = $5
+		 SET username = $1, email = $2, email_verified_at = $3, locale = $4, timezone = $5
 		 WHERE id = $6 AND deleted_at IS NULL
-		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
+		 RETURNING id, username, email, email_verified_at, status, deleted_at,
 		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
-		params.DisplayName, params.Email, params.EmailVerifiedAt, params.Locale, params.Timezone, userID,
+		params.Username, params.Email, params.EmailVerifiedAt, params.Locale, params.Timezone, userID,
 	).Scan(
-		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)

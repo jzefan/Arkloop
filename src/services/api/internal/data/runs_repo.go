@@ -499,7 +499,7 @@ func mapOrEmpty(value map[string]any) map[string]any {
 // RunWithUser 在 Run 基础上附加创建者的用户信息（LEFT JOIN users）。
 type RunWithUser struct {
 	Run
-	UserDisplayName     *string
+	UserUsername        *string
 	UserEmail           *string
 	CacheReadTokens     *int64
 	CacheCreationTokens *int64
@@ -572,7 +572,7 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 		        r.parent_run_id, r.status_updated_at, r.completed_at, r.failed_at,
 		        r.duration_ms, r.total_input_tokens, r.total_output_tokens, r.total_cost_usd,
 		        r.model, r.skill_id, r.deleted_at,
-		        u.display_name, u.email,
+		        u.username, u.email,
 		        ur.cache_read_tokens, ur.cache_creation_tokens, ur.cached_tokens,
 		        ABS(ct.amount) AS credits_used
 		 FROM runs r
@@ -598,7 +598,7 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 			&rw.ParentRunID, &rw.StatusUpdatedAt, &rw.CompletedAt, &rw.FailedAt,
 			&rw.DurationMs, &rw.TotalInputTokens, &rw.TotalOutputTokens, &rw.TotalCostUSD,
 			&rw.Model, &rw.SkillID, &rw.DeletedAt,
-			&rw.UserDisplayName, &rw.UserEmail,
+			&rw.UserUsername, &rw.UserEmail,
 			&rw.CacheReadTokens, &rw.CacheCreationTokens, &rw.CachedTokens,
 			&rw.CreditsUsed,
 		); err != nil {

@@ -112,7 +112,7 @@ func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) e
 		locale = *user.Locale
 	}
 
-	username := user.DisplayName
+	username := user.Username
 
 	var subject, htmlBody, text string
 	if locale == "zh" {

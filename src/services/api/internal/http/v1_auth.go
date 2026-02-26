@@ -519,14 +519,14 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 			}
 
 			updated, err := usersRepo.UpdateProfile(r.Context(), user.ID, data.UpdateProfileParams{
-				DisplayName: body.Username,
+				Username: body.Username,
 			})
 			if err != nil || updated == nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 
-			writeJSON(w, traceID, nethttp.StatusOK, updateMeResponse{Username: updated.DisplayName})
+			writeJSON(w, traceID, nethttp.StatusOK, updateMeResponse{Username: updated.Username})
 
 		default:
 			writeMethodNotAllowed(w, r)
@@ -598,7 +598,7 @@ func authenticateUser(
 
 	return &authUser{
 		ID:              user.ID,
-		DisplayName:     user.DisplayName,
+		Username:        user.Username,
 		Email:           user.Email,
 		EmailVerifiedAt: user.EmailVerifiedAt,
 		CreatedAt:       user.CreatedAt,
@@ -607,7 +607,7 @@ func authenticateUser(
 
 type authUser struct {
 	ID              uuid.UUID
-	DisplayName     string
+	Username        string
 	Email           *string
 	EmailVerifiedAt *time.Time
 	CreatedAt       time.Time
@@ -644,7 +644,7 @@ func emailVerifySend(authService *auth.Service, emailVerifyService *auth.EmailVe
 			return
 		}
 
-		if err := emailVerifyService.SendVerification(r.Context(), user.ID, user.DisplayName); err != nil {
+		if err := emailVerifyService.SendVerification(r.Context(), user.ID, user.Username); err != nil {
 			if err.Error() == "user has no email address" {
 				WriteError(w, nethttp.StatusUnprocessableEntity, "email.no_address", "user has no email address", traceID, nil)
 				return

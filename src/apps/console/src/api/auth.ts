@@ -13,7 +13,7 @@ export type LoginResponse = {
 
 export type MeResponse = {
   id: string
-  display_name: string
+  username: string
   created_at: string
   org_id: string
   org_name: string

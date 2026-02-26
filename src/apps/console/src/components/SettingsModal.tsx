@@ -27,7 +27,7 @@ type Props = {
 export function ConsoleSettingsModal({ me, onClose, onLogout }: Props) {
   const { t } = useLocale()
   const [active, setActive] = useState<Tab>('account')
-  const userInitial = me?.display_name?.charAt(0).toUpperCase() ?? '?'
+  const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
 
   const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon }[] = [
     { key: 'account',  label: t.account,  icon: User     },
@@ -129,7 +129,7 @@ function AccountTab({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-[var(--c-text-heading)]">
-            {me?.display_name ?? '...'}
+            {me?.username ?? '...'}
           </div>
           <div className="text-xs text-[var(--c-text-muted)]">{t.platformAdmin}</div>
         </div>

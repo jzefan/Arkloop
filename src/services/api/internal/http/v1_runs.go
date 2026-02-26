@@ -1116,7 +1116,7 @@ func listGlobalRuns(
 				CacheHitRate:      calcCacheHitRate(rw.TotalInputTokens, rw.CacheReadTokens, rw.CachedTokens),
 				CreditsUsed:       rw.CreditsUsed,
 				CreatedAt:         rw.CreatedAt.UTC().Format(time.RFC3339Nano),
-				CreatedByUserName: rw.UserDisplayName,
+				CreatedByUserName: rw.UserUsername,
 				CreatedByEmail:    rw.UserEmail,
 			}
 			if rw.CreatedByUserID != nil {

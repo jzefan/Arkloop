@@ -78,7 +78,7 @@ export function UsersPage() {
   // edit modal
   const [editTarget, setEditTarget] = useState<AdminUserDetail | null>(null)
   const [editForm, setEditForm] = useState({
-    display_name: '',
+    username: '',
     email: '',
     locale: '',
     timezone: '',
@@ -88,7 +88,7 @@ export function UsersPage() {
   const [editing, setEditing] = useState(false)
 
   // credit adjust modal
-  const [creditTarget, setCreditTarget] = useState<{ orgID: string; displayName: string } | null>(null)
+  const [creditTarget, setCreditTarget] = useState<{ orgID: string; username: string } | null>(null)
   const [creditForm, setCreditForm] = useState({ amount: '', note: '' })
   const [creditError, setCreditError] = useState('')
   const [creditAdjusting, setCreditAdjusting] = useState(false)
@@ -221,7 +221,7 @@ export function UsersPage() {
   const handleOpenEdit = useCallback((d: AdminUserDetail) => {
     setEditTarget(d)
     setEditForm({
-      display_name: d.display_name,
+      username: d.username,
       email: d.email ?? '',
       locale: d.locale ?? '',
       timezone: d.timezone ?? '',
@@ -233,7 +233,7 @@ export function UsersPage() {
   const handleOpenCredit = useCallback((d: AdminUserDetail) => {
     const orgID = d.orgs[0]?.org_id
     if (!orgID) return
-    setCreditTarget({ orgID, displayName: d.display_name })
+    setCreditTarget({ orgID, username: d.username })
     setCreditForm({ amount: '', note: '' })
     setCreditError('')
   }, [])
@@ -275,8 +275,8 @@ export function UsersPage() {
 
   const handleSaveEdit = useCallback(async () => {
     if (!editTarget) return
-    const displayName = editForm.display_name.trim()
-    if (!displayName) {
+    const username = editForm.username.trim()
+    if (!username) {
       setEditError(tc.editErrNameRequired)
       return
     }
@@ -286,7 +286,7 @@ export function UsersPage() {
       const updated = await updateAdminUser(
         editTarget.id,
         {
-          display_name: displayName,
+          username: username,
           email: editForm.email.trim() || null,
           locale: editForm.locale.trim() || null,
           timezone: editForm.timezone.trim() || null,
@@ -300,7 +300,7 @@ export function UsersPage() {
       setUsers((prev) =>
         prev.map((u) =>
           u.id === updated.id
-            ? { ...u, display_name: updated.display_name, email: updated.email }
+            ? { ...u, username: updated.username, email: updated.email }
             : u,
         ),
       )
@@ -367,7 +367,6 @@ export function UsersPage() {
                   <th className={thCls} />
                   <th className={thCls}>{tc.colId}</th>
                   <th className={thCls}>{tc.colLogin}</th>
-                  <th className={thCls}>{tc.colDisplayName}</th>
                   <th className={thCls}>{tc.colEmail}</th>
                   <th className={thCls}>{tc.colStatus}</th>
                   <th className={thCls}>{tc.colLastLogin}</th>
@@ -422,8 +421,8 @@ export function UsersPage() {
         title={isSuspendAction ? tc.suspendTitle : tc.activateTitle}
         message={
           isSuspendAction
-            ? tc.suspendMessage(statusTarget?.display_name ?? '')
-            : tc.activateMessage(statusTarget?.display_name ?? '')
+            ? tc.suspendMessage(statusTarget?.username ?? '')
+            : tc.activateMessage(statusTarget?.username ?? '')
         }
         confirmLabel={isSuspendAction ? tc.suspendConfirm : tc.activateConfirm}
         loading={statusChanging}
@@ -434,7 +433,7 @@ export function UsersPage() {
         onClose={() => { if (!deleting) setDeleteTarget(null) }}
         onConfirm={handleDelete}
         title={tc.deleteTitle}
-        message={tc.deleteMessage(deleteTarget?.display_name ?? '')}
+        message={tc.deleteMessage(deleteTarget?.username ?? '')}
         confirmLabel={tc.deleteConfirm}
         loading={deleting}
       />
@@ -447,12 +446,12 @@ export function UsersPage() {
         width="460px"
       >
         <div className="flex flex-col gap-4">
-          <FormField label={tc.editDisplayName}>
+          <FormField label={tc.editUsername}>
             <input
               type="text"
-              value={editForm.display_name}
+              value={editForm.username}
               onChange={(e) => {
-                setEditForm((f) => ({ ...f, display_name: e.target.value }))
+                setEditForm((f) => ({ ...f, username: e.target.value }))
                 setEditError('')
               }}
               className={inputCls}
@@ -662,9 +661,6 @@ function UserRow({
         </td>
         <td className={tdCls}>
           <span className="font-mono text-xs text-[var(--c-text-secondary)]">{user.login ?? '--'}</span>
-        </td>
-        <td className={tdCls}>
-          <span className="font-medium text-[var(--c-text-primary)]">{user.display_name}</span>
         </td>
         <td className={tdCls}>
           <span className="text-xs">{user.email ?? '--'}</span>

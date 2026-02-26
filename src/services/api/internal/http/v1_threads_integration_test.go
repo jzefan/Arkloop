@@ -89,7 +89,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd", "display_name": "Alice"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if registerResp.Code != nethttp.StatusCreated {
@@ -121,7 +121,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd", "display_name": "Bob"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if otherRegister.Code != nethttp.StatusCreated {
@@ -206,7 +206,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice2", "password": "pwdpwdpwd", "display_name": "Alice"},
+		map[string]any{"login": "alice2", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
