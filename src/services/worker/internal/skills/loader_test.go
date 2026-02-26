@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestLoadRegistryLoadsDemoSkill(t *testing.T) {
+func TestLoadRegistryLoadsLiteSkill(t *testing.T) {
 	root, err := BuiltinSkillsRoot()
 	if err != nil {
 		t.Fatalf("BuiltinSkillsRoot failed: %v", err)
@@ -15,9 +15,9 @@ func TestLoadRegistryLoadsDemoSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRegistry failed: %v", err)
 	}
-	def, ok := registry.Get("demo_no_tools")
+	def, ok := registry.Get("lite")
 	if !ok {
-		t.Fatalf("expected demo_no_tools skill loaded")
+		t.Fatalf("expected lite skill loaded")
 	}
 	if def.Version != "1" {
 		t.Fatalf("unexpected version: %s", def.Version)
@@ -49,9 +49,9 @@ func TestLoadSkillDefaultExecutorType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRegistry failed: %v", err)
 	}
-	def, ok := registry.Get("demo_no_tools")
+	def, ok := registry.Get("lite")
 	if !ok {
-		t.Fatalf("expected demo_no_tools skill loaded")
+		t.Fatalf("expected lite skill loaded")
 	}
 	if def.ExecutorType != "agent.simple" {
 		t.Fatalf("expected default executor_type 'agent.simple', got %q", def.ExecutorType)

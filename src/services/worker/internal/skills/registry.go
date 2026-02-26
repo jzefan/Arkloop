@@ -10,6 +10,8 @@ type Budgets struct {
 	MaxOutputTokens *int
 	ToolTimeoutMs   *int
 	ToolBudget      map[string]any
+	Temperature     *float64
+	TopP            *float64
 }
 
 type Definition struct {

@@ -247,8 +247,13 @@ export function WelcomePage() {
         : text
 
       await createMessage(accessToken, thread.id, { content })
-      const skillId = tier === 'Auto' ? 'test_interactive' : undefined
-      const run = await createRun(accessToken, thread.id, skillId)
+      const tierToSkillId: Record<SelectedTier, string> = {
+        Auto: 'auto',
+        Lite: 'lite',
+        Pro: 'pro',
+        Ultra: 'ultra',
+      }
+      const run = await createRun(accessToken, thread.id, tierToSkillId[tier])
 
       writeActiveThreadIdToStorage(thread.id)
       onThreadCreated(thread)

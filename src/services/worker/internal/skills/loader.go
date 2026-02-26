@@ -18,12 +18,15 @@ import (
 
 var (
 	idRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
-	budgetKeys = map[string]struct{}{"max_iterations": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}}
+	budgetKeys = map[string]struct{}{"max_iterations": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}, "temperature": {}, "top_p": {}}
 )
 
 const defaultExecutorType = "agent.simple"
 
 func BuiltinSkillsRoot() (string, error) {
+	if envRoot := os.Getenv("ARKLOOP_SKILLS_ROOT"); envRoot != "" {
+		return envRoot, nil
+	}
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("cannot locate skills root directory")
@@ -283,11 +286,22 @@ func asBudgets(value any) (Budgets, error) {
 		}
 	}
 
+	temperature, err := asOptionalFloat64(raw["temperature"], "budgets.temperature")
+	if err != nil {
+		return Budgets{}, err
+	}
+	topP, err := asOptionalFloat64(raw["top_p"], "budgets.top_p")
+	if err != nil {
+		return Budgets{}, err
+	}
+
 	return Budgets{
 		MaxIterations:   maxIterations,
 		MaxOutputTokens: maxOutputTokens,
 		ToolTimeoutMs:   toolTimeoutMs,
 		ToolBudget:      toolBudget,
+		Temperature:     temperature,
+		TopP:            topP,
 	}, nil
 }
 
@@ -424,5 +438,21 @@ func asOptionalPositiveInt(value any, label string) (*int, error) {
 		return nil, fmt.Errorf("%s must be a positive integer", label)
 	}
 	return &number, nil
+}
+
+func asOptionalFloat64(value any, label string) (*float64, error) {
+	if value == nil {
+		return nil, nil
+	}
+	var f float64
+	switch v := value.(type) {
+	case float64:
+		f = v
+	case int:
+		f = float64(v)
+	default:
+		return nil, fmt.Errorf("%s must be a number", label)
+	}
+	return &f, nil
 }
 

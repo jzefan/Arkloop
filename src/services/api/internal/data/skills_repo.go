@@ -38,6 +38,8 @@ type Skill struct {
 	IsActive            bool
 	CreatedAt           time.Time
 	PreferredCredential *string
+	ExecutorType        string
+	ExecutorConfigJSON  json.RawMessage
 }
 
 type SkillPatch struct {
@@ -48,6 +50,8 @@ type SkillPatch struct {
 	BudgetsJSON         json.RawMessage
 	IsActive            *bool
 	PreferredCredential *string
+	ExecutorType        *string
+	ExecutorConfigJSON  json.RawMessage
 }
 
 type SkillsRepository struct {
@@ -72,6 +76,8 @@ func (r *SkillsRepository) Create(
 	toolAllowlist []string,
 	budgetsJSON json.RawMessage,
 	preferredCredential *string,
+	executorType string,
+	executorConfigJSON json.RawMessage,
 ) (Skill, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -101,24 +107,32 @@ func (r *SkillsRepository) Create(
 	if preferredCredential != nil && strings.TrimSpace(*preferredCredential) == "" {
 		preferredCredential = nil
 	}
+	if strings.TrimSpace(executorType) == "" {
+		executorType = "agent.simple"
+	}
+	if len(executorConfigJSON) == 0 {
+		executorConfigJSON = json.RawMessage("{}")
+	}
 
 	var skill Skill
 	err := r.db.QueryRow(
 		ctx,
 		`INSERT INTO skills
 		    (org_id, skill_key, version, display_name, description, prompt_md,
-		     tool_allowlist, budgets_json, preferred_credential)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		     tool_allowlist, budgets_json, preferred_credential,
+		     executor_type, executor_config_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id, org_id, skill_key, version, display_name, description,
 		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		           preferred_credential`,
+		           preferred_credential, executor_type, executor_config_json`,
 		orgID, skillKey, version, displayName, description, promptMD,
 		toolAllowlist, budgetsJSON, preferredCredential,
+		executorType, executorConfigJSON,
 	).Scan(
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
-		&skill.PreferredCredential,
+		&skill.PreferredCredential, &skill.ExecutorType, &skill.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -139,7 +153,7 @@ func (r *SkillsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*S
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
 		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential
+		        preferred_credential, executor_type, executor_config_json
 		 FROM skills
 		 WHERE id = $1 AND org_id = $2`,
 		id, orgID,
@@ -147,7 +161,7 @@ func (r *SkillsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*S
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
-		&skill.PreferredCredential,
+		&skill.PreferredCredential, &skill.ExecutorType, &skill.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -168,7 +182,7 @@ func (r *SkillsRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]Sk
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
 		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential
+		        preferred_credential, executor_type, executor_config_json
 		 FROM skills
 		 WHERE org_id = $1 OR org_id IS NULL
 		 ORDER BY created_at ASC`,
@@ -193,7 +207,7 @@ func (r *SkillsRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUID)
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
 		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential
+		        preferred_credential, executor_type, executor_config_json
 		 FROM skills
 		 WHERE org_id = $1 AND is_active = TRUE
 		 ORDER BY created_at ASC`,
@@ -263,6 +277,20 @@ func (r *SkillsRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch
 			argIdx++
 		}
 	}
+	if patch.ExecutorType != nil {
+		trimmed := strings.TrimSpace(*patch.ExecutorType)
+		if trimmed == "" {
+			trimmed = "agent.simple"
+		}
+		setClauses = append(setClauses, fmt.Sprintf("executor_type = $%d", argIdx))
+		args = append(args, trimmed)
+		argIdx++
+	}
+	if len(patch.ExecutorConfigJSON) > 0 {
+		setClauses = append(setClauses, fmt.Sprintf("executor_config_json = $%d", argIdx))
+		args = append(args, patch.ExecutorConfigJSON)
+		argIdx++
+	}
 
 	if len(setClauses) == 0 {
 		return r.GetByID(ctx, orgID, id)
@@ -280,14 +308,14 @@ func (r *SkillsRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch
 		 WHERE id = $%d AND org_id = $%d
 		 RETURNING id, org_id, skill_key, version, display_name, description,
 		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		           preferred_credential`,
+		           preferred_credential, executor_type, executor_config_json`,
 			strings.Join(setClauses, ", "), idIdx, orgIdx),
 		args...,
 	).Scan(
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
-		&skill.PreferredCredential,
+		&skill.PreferredCredential, &skill.ExecutorType, &skill.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -309,7 +337,7 @@ func scanSkills(rows pgx.Rows) ([]Skill, error) {
 			&s.ID, &s.OrgID, &s.SkillKey, &s.Version,
 			&s.DisplayName, &s.Description, &s.PromptMD,
 			&s.ToolAllowlist, &s.BudgetsJSON, &s.IsActive, &s.CreatedAt,
-			&s.PreferredCredential,
+			&s.PreferredCredential, &s.ExecutorType, &s.ExecutorConfigJSON,
 		); err != nil {
 			return nil, err
 		}

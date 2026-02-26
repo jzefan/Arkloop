@@ -59,6 +59,8 @@ type RunContext struct {
 	SystemPrompt           string
 	SkillDefinition        *skills.Definition
 	MaxOutputTokens        *int
+	Temperature            *float64
+	TopP                   *float64
 	ToolTimeoutMs          *int
 	ToolBudget             map[string]any
 	PreferredCredentialName string // Skill.PreferredCredential 解析结果，供 RoutingMiddleware 使用

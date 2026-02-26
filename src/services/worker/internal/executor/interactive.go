@@ -84,6 +84,7 @@ func (e *InteractiveExecutor) Execute(
 		Messages:        messages,
 		Tools:           append([]llm.ToolSpec{}, rc.FinalSpecs...),
 		MaxOutputTokens: rc.MaxOutputTokens,
+		Temperature:     rc.Temperature,
 	}
 
 	maxWait := time.Duration(e.maxWaitSeconds) * time.Second

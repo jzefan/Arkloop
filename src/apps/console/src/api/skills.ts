@@ -12,6 +12,9 @@ export type Skill = {
   budgets: Record<string, unknown>
   is_active: boolean
   created_at: string
+  preferred_credential?: string
+  executor_type: string
+  executor_config: Record<string, unknown>
 }
 
 export type CreateSkillRequest = {
@@ -23,6 +26,9 @@ export type CreateSkillRequest = {
   tool_allowlist?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
+  preferred_credential?: string
+  executor_type?: string
+  executor_config?: Record<string, unknown>
 }
 
 export type PatchSkillRequest = {
@@ -32,6 +38,9 @@ export type PatchSkillRequest = {
   tool_allowlist?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
+  preferred_credential?: string
+  executor_type?: string
+  executor_config?: Record<string, unknown>
 }
 
 export async function listSkills(accessToken: string): Promise<Skill[]> {
