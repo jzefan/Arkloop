@@ -181,6 +181,38 @@ func (r *SecretsRepository) GetByName(ctx context.Context, orgID uuid.UUID, name
 	return &s, nil
 }
 
+// DecryptByID 按 secret ID 解密，不依赖 org 上下文。找不到返回 nil, nil。
+func (r *SecretsRepository) DecryptByID(ctx context.Context, id uuid.UUID) (*string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("id must not be empty")
+	}
+
+	var s Secret
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, org_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at
+		 FROM secrets
+		 WHERE id = $1`,
+		id,
+	).Scan(&s.ID, &s.OrgID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	plainBytes, err := r.keyRing.Decrypt(s.EncryptedValue, s.KeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("secrets: decrypt %q: %w", s.Name, err)
+	}
+	plain := string(plainBytes)
+	return &plain, nil
+}
+
 // DecryptByName 查库后解密，返回明文。找不到返回 nil, nil。
 func (r *SecretsRepository) DecryptByName(ctx context.Context, orgID uuid.UUID, name string) (*string, error) {
 	s, err := r.GetByName(ctx, orgID, name)

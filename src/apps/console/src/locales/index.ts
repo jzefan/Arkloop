@@ -815,6 +815,7 @@ export interface LocaleStrings {
       title: string
       addCredential: string
       colName: string
+      colScope: string
       colProvider: string
       colModel: string
       colKeyPrefix: string
@@ -823,6 +824,7 @@ export interface LocaleStrings {
       empty: string
       modalTitle: string
       fieldName: string
+      fieldScope: string
       fieldProvider: string
       fieldModel: string
       fieldApiKey: string

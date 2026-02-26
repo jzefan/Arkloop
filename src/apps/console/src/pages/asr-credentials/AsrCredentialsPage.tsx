@@ -33,6 +33,7 @@ type CreateFormState = {
   base_url: string
   model: string
   is_default: boolean
+  scope: string
 }
 
 function emptyForm(): CreateFormState {
@@ -43,13 +44,15 @@ function emptyForm(): CreateFormState {
     base_url: '',
     model: 'whisper-large-v3-turbo',
     is_default: false,
+    scope: 'org',
   }
 }
 
 type DeleteTarget = { id: string; name: string }
 
 export function AsrCredentialsPage() {
-  const { accessToken } = useOutletContext<ConsoleOutletContext>()
+  const { accessToken, me } = useOutletContext<ConsoleOutletContext>()
+  const isPlatformAdmin = me?.role === 'platform_admin'
   const { addToast } = useToast()
   const { t } = useLocale()
   const tc = t.pages.asrCredentials
@@ -112,6 +115,7 @@ export function AsrCredentialsPage() {
           base_url: form.base_url.trim() || undefined,
           model,
           is_default: form.is_default,
+          scope: isPlatformAdmin ? form.scope : 'org',
         },
         accessToken,
       )
@@ -166,6 +170,14 @@ export function AsrCredentialsPage() {
       ),
     },
     {
+      key: 'scope',
+      header: tc.colScope,
+      render: (row) =>
+        row.scope === 'platform' ? (
+          <Badge variant="warning">platform</Badge>
+        ) : null,
+    },
+    {
       key: 'provider',
       header: tc.colProvider,
       render: (row) => <Badge variant="neutral">{row.provider}</Badge>,
@@ -204,32 +216,36 @@ export function AsrCredentialsPage() {
     {
       key: 'actions',
       header: '',
-      render: (row) => (
-        <div className="flex items-center gap-1">
-          {!row.is_default && (
+      render: (row) => {
+        const canManage = row.scope !== 'platform' || isPlatformAdmin
+        if (!canManage) return null
+        return (
+          <div className="flex items-center gap-1">
+            {!row.is_default && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void handleSetDefault(row.id)
+                }}
+                className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
+                title={tc.setDefault}
+              >
+                <Star size={14} />
+              </button>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                void handleSetDefault(row.id)
+                setDeleteTarget({ id: row.id, name: row.name })
               }}
-              className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
-              title={tc.setDefault}
+              className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-status-error-text)]"
+              title={tc.deleteConfirm}
             >
-              <Star size={14} />
+              <Trash2 size={14} />
             </button>
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setDeleteTarget({ id: row.id, name: row.name })
-            }}
-            className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-status-error-text)]"
-            title={tc.deleteConfirm}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ),
+          </div>
+        )
+      },
     },
   ]
 
@@ -271,6 +287,19 @@ export function AsrCredentialsPage() {
         width="480px"
       >
         <div className="flex flex-col gap-4">
+          {isPlatformAdmin && (
+            <FormField label={tc.fieldScope}>
+              <select
+                value={form.scope}
+                onChange={(e) => handleFormField('scope', e.target.value)}
+                className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-1.5 text-sm text-[var(--c-text-secondary)] focus:outline-none"
+              >
+                <option value="org">org</option>
+                <option value="platform">platform</option>
+              </select>
+            </FormField>
+          )}
+
           <FormField label={tc.fieldName}>
             <input
               type="text"

@@ -52,8 +52,11 @@ func asrTranscribeEntry(
 			return
 		}
 
-		secretName := "asr_cred:" + cred.ID.String()
-		apiKey, err := secretsRepo.DecryptByName(r.Context(), actor.OrgID, secretName)
+		if cred.SecretID == nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		apiKey, err := secretsRepo.DecryptByID(r.Context(), *cred.SecretID)
 		if err != nil || apiKey == nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
