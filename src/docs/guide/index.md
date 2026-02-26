@@ -55,15 +55,37 @@ cd src/services/worker && go run ./cmd/worker
 
 ## 4. 启动前端（Web）
 
-```bash
+`docker compose up -d` 已包含 Gateway（默认监听 8000），前端代理应指向 Gateway：
+
+::: code-group
+
+```bash [Linux/macOS]
+export ARKLOOP_API_PROXY_TARGET=http://127.0.0.1:8000
 cd src/apps/web && pnpm install && pnpm dev
 ```
 
+```powershell [Windows]
+$env:ARKLOOP_API_PROXY_TARGET="http://127.0.0.1:8000"
+cd src/apps/web; pnpm install; pnpm dev
+```
+
+:::
+
 ## 5. 启动前端（Console）
 
-```bash
+::: code-group
+
+```bash [Linux/macOS]
+export ARKLOOP_API_PROXY_TARGET=http://127.0.0.1:8000
 cd src/apps/console && pnpm install && pnpm dev
 ```
+
+```powershell [Windows]
+$env:ARKLOOP_API_PROXY_TARGET="http://127.0.0.1:8000"
+cd src/apps/console; pnpm install; pnpm dev
+```
+
+:::
 
 ## 集成测试
 
