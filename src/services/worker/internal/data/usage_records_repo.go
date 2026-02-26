@@ -18,18 +18,23 @@ func (UsageRecordsRepository) Insert(
 	orgID, runID uuid.UUID,
 	model string,
 	inputTokens, outputTokens int64,
+	cacheCreationTokens, cacheReadTokens, cachedTokens int64,
 	costUSD float64,
 ) error {
 	tag, err := tx.Exec(
 		ctx,
-		`INSERT INTO usage_records (org_id, run_id, model, input_tokens, output_tokens, cost_usd)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO usage_records (org_id, run_id, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cached_tokens, cost_usd)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (run_id) DO UPDATE
-		   SET model         = EXCLUDED.model,
-		       input_tokens  = EXCLUDED.input_tokens,
-		       output_tokens = EXCLUDED.output_tokens,
-		       cost_usd      = EXCLUDED.cost_usd`,
-		orgID, runID, model, inputTokens, outputTokens, costUSD,
+		   SET model                = EXCLUDED.model,
+		       input_tokens         = EXCLUDED.input_tokens,
+		       output_tokens        = EXCLUDED.output_tokens,
+		       cache_creation_tokens = EXCLUDED.cache_creation_tokens,
+		       cache_read_tokens    = EXCLUDED.cache_read_tokens,
+		       cached_tokens        = EXCLUDED.cached_tokens,
+		       cost_usd             = EXCLUDED.cost_usd`,
+		orgID, runID, model, inputTokens, outputTokens,
+		cacheCreationTokens, cacheReadTokens, cachedTokens, costUSD,
 	)
 	if err != nil {
 		return fmt.Errorf("usage_records.Insert: %w", err)

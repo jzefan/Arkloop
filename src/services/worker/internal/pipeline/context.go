@@ -17,17 +17,18 @@ import (
 
 // ResolvedAgentConfig 保存继承链解析后的合并配置。
 type ResolvedAgentConfig struct {
-	SystemPrompt       *string
-	Model              *string
-	Temperature        *float64
-	MaxOutputTokens    *int
-	TopP               *float64
-	ContextWindowLimit *int
-	ToolPolicy         string // "allowlist" | "denylist" | "none"
-	ToolAllowlist      []string
-	ToolDenylist       []string
-	ContentFilterLevel string
-	SafetyRulesJSON    map[string]any
+	SystemPrompt        *string
+	Model               *string
+	Temperature         *float64
+	MaxOutputTokens     *int
+	TopP                *float64
+	ContextWindowLimit  *int
+	ToolPolicy          string // "allowlist" | "denylist" | "none"
+	ToolAllowlist       []string
+	ToolDenylist        []string
+	ContentFilterLevel  string
+	SafetyRulesJSON     map[string]any
+	PromptCacheControl  string // "none" | "system_prompt"
 }
 
 // RunContext 承载单次 Execute 调用的全部运行时状态，在 Pipeline 各中间件间共享。
