@@ -52,15 +52,16 @@ type registrationModeResponse struct {
 }
 
 type meResponse struct {
-	ID            string   `json:"id"`
-	Username      string   `json:"username"`
-	Email         *string  `json:"email,omitempty"`
-	EmailVerified bool     `json:"email_verified"`
-	CreatedAt     string   `json:"created_at"`
-	OrgID         string   `json:"org_id,omitempty"`
-	OrgName       string   `json:"org_name,omitempty"`
-	Role          string   `json:"role,omitempty"`
-	Permissions   []string `json:"permissions"`
+	ID                        string   `json:"id"`
+	Username                  string   `json:"username"`
+	Email                     *string  `json:"email,omitempty"`
+	EmailVerified             bool     `json:"email_verified"`
+	EmailVerificationRequired bool     `json:"email_verification_required"`
+	CreatedAt                 string   `json:"created_at"`
+	OrgID                     string   `json:"org_id,omitempty"`
+	OrgName                   string   `json:"org_name,omitempty"`
+	Role                      string   `json:"role,omitempty"`
+	Permissions               []string `json:"permissions"`
 }
 
 type updateMeRequest struct {
@@ -333,7 +334,7 @@ func register(
 	}
 }
 
-func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository, flagService *featureflag.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		if authService == nil {
@@ -349,11 +350,16 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 			}
 
 			var permissions []string
+			emailVerifyRequired := false
+			if flagService != nil {
+				emailVerifyRequired, _ = flagService.IsGloballyEnabled(r.Context(), "auth.require_email_verification")
+			}
 			resp := meResponse{
-				ID:            user.ID.String(),
-				Email:         user.Email,
-				EmailVerified: user.EmailVerifiedAt != nil,
-				CreatedAt:     user.CreatedAt.UTC().Format(time.RFC3339Nano),
+				ID:                        user.ID.String(),
+				Email:                     user.Email,
+				EmailVerified:             user.EmailVerifiedAt != nil,
+				EmailVerificationRequired: emailVerifyRequired,
+				CreatedAt:                 user.CreatedAt.UTC().Format(time.RFC3339Nano),
 			}
 
 			if credentialRepo != nil {

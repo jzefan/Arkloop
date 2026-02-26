@@ -5,6 +5,7 @@ import { Sidebar } from '../components/Sidebar'
 import { SettingsModal } from '../components/SettingsModal'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
 import { NotificationsPanel } from '../components/NotificationsPanel'
+import { EmailVerificationGate } from '../components/EmailVerificationGate'
 import type { SettingsTab } from '../components/SettingsModal'
 import {
   getMe,
@@ -117,6 +118,19 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       if (mountedRef.current) setCreditsBalance(resp.balance)
     }).catch(() => { /* 静默失败，不影响主流程 */ })
   }, [accessToken])
+
+  // email 验证门控：flag 开启 + 未验证时全屏拦截
+  if (me !== null && !me.email_verified && me.email_verification_required && me.email) {
+    return (
+      <EmailVerificationGate
+        accessToken={accessToken}
+        email={me.email}
+        onVerified={() => {
+          getMe(accessToken).then(setMe).catch(() => {})
+        }}
+      />
+    )
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--c-bg-page)]">

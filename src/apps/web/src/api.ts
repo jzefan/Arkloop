@@ -43,6 +43,7 @@ export type MeResponse = {
   username: string
   email?: string
   email_verified: boolean
+  email_verification_required: boolean
 }
 
 type ErrorEnvelope = {
