@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"arkloop/services/gateway/internal/clientip"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,9 +33,13 @@ func (f *Filter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgID := extractOrgIDWithRedis(r.Header.Get("Authorization"), f.redis, r.Context())
 		if orgID != "" {
-			clientIP := extractClientIP(r)
-			if clientIP != "" {
-				if blocked := f.check(r.Context(), orgID, clientIP); blocked {
+			// 优先从 context 取 clientip 中间件解析的真实 IP，降级到 RemoteAddr
+			clientIPStr := clientip.FromContext(r.Context())
+			if clientIPStr == "" {
+				clientIPStr = extractClientIP(r)
+			}
+			if clientIPStr != "" {
+				if blocked := f.check(r.Context(), orgID, clientIPStr); blocked {
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = w.Write([]byte(`{"code":"ip.blocked","message":"Forbidden"}`))
@@ -105,6 +111,7 @@ func matchCIDR(ip net.IP, cidr string) bool {
 }
 
 // extractClientIP 从 TCP 连接的 RemoteAddr 提取 IP（不信任 XFF，防止伪造）。
+// 如果 clientip 中间件已运行，应优先使用 clientip.FromContext。
 func extractClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"arkloop/services/gateway/internal/clientip"
 	"arkloop/services/gateway/internal/identity"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -163,10 +164,12 @@ func isSSE(r *http.Request) bool {
 		ssePathPattern.MatchString(r.URL.Path)
 }
 
-// clientIP 只从 RemoteAddr 提取客户端 IP。
-// 不信任 X-Forwarded-For，因为 Gateway 作为最外层入口时 XFF 由客户端控制。
-// 与 ipfilter 的 extractClientIP 保持一致的安全策略。
+// clientIP 优先从 context 读 clientip 中间件解析的真实 IP，降级到 RemoteAddr。
+// 与 ipfilter 的策略一致。
 func clientIP(r *http.Request) string {
+	if ip := clientip.FromContext(r.Context()); ip != "" {
+		return ip
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

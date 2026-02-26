@@ -440,6 +440,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 
 	mux.HandleFunc(
+		"/v1/admin/gateway-config",
+		adminGatewayConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient),
+	)
+
+	mux.HandleFunc(
 		"/v1/admin/platform-settings",
 		platformSettingsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo),
 	)

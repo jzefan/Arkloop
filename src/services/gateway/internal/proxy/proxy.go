@@ -6,6 +6,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+
+	"arkloop/services/gateway/internal/clientip"
 )
 
 // Config holds the reverse proxy configuration.
@@ -37,9 +39,13 @@ func New(cfg Config) (*Proxy, error) {
 	rp.Director = func(req *http.Request) {
 		originalHost := req.Host
 		original(req)
-		// Drop any client-supplied XFF so ServeHTTP sets it fresh from RemoteAddr.
 		req.Header.Del("X-Forwarded-For")
 		req.Header.Set("X-Forwarded-Host", originalHost)
+
+		// 透传 clientip 中间件解析的真实 IP
+		if realIP := clientip.FromContext(req.Context()); realIP != "" {
+			req.Header.Set("X-Real-IP", realIP)
+		}
 	}
 
 	return &Proxy{handler: rp}, nil
