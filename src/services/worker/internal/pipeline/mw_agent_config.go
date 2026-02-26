@@ -78,8 +78,16 @@ func resolveAgentConfigID(
 	// org 级（is_default=true，无 project 绑定）
 	var id uuid.UUID
 	err := pool.QueryRow(ctx,
-		`SELECT id FROM agent_configs WHERE org_id = $1 AND is_default = true AND project_id IS NULL LIMIT 1`,
+		`SELECT id FROM agent_configs WHERE org_id = $1 AND scope = 'org' AND is_default = true AND project_id IS NULL LIMIT 1`,
 		orgID,
+	).Scan(&id)
+	if err == nil {
+		return &id
+	}
+
+	// platform 级兜底（跨所有 org 的平台默认）
+	err = pool.QueryRow(ctx,
+		`SELECT id FROM agent_configs WHERE scope = 'platform' AND is_default = true LIMIT 1`,
 	).Scan(&id)
 	if err == nil {
 		return &id
@@ -102,6 +110,7 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		toolDenylist         []string
 		contentFilterLevel   string
 		safetyRulesJSON      map[string]any
+		promptCacheControl   string
 
 		// system_prompt_template_id 用于关联查询 prompt template
 		systemPromptTemplateID *uuid.UUID
@@ -110,13 +119,15 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 	err := pool.QueryRow(ctx,
 		`SELECT name, system_prompt_template_id, system_prompt_override,
 		        model, temperature, max_output_tokens, top_p, context_window_limit,
-		        tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json
+		        tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json,
+		        prompt_cache_control
 		 FROM agent_configs WHERE id = $1`,
 		id,
 	).Scan(
 		&name, &systemPromptTemplateID, &systemPromptOverride,
 		&model, &temperature, &maxOutputTokens, &topP, &contextWindowLimit,
 		&toolPolicy, &toolAllowlist, &toolDenylist, &contentFilterLevel, &safetyRulesJSON,
+		&promptCacheControl,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", nil
@@ -159,5 +170,6 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		ToolDenylist:       toolDenylist,
 		ContentFilterLevel: contentFilterLevel,
 		SafetyRulesJSON:    safetyRulesJSON,
+		PromptCacheControl: promptCacheControl,
 	}, name, nil
 }

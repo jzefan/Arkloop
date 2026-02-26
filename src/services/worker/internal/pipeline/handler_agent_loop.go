@@ -51,6 +51,7 @@ func NewAgentLoopHandler(
 			rc.Pool, rc.Run, rc.TraceID, runLimiterRDB,
 			selected.Route.Model, usageRepo, creditsRepo,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
+			selected.Route.CostPer1kCacheWrite, selected.Route.CostPer1kCacheRead,
 		)
 		defer writer.Close(ctx)
 
@@ -74,10 +75,15 @@ func NewAgentLoopHandler(
 
 		messages := append([]llm.Message{}, rc.Messages...)
 		if strings.TrimSpace(rc.SystemPrompt) != "" {
+			systemPart := llm.TextPart{Text: rc.SystemPrompt}
+			if rc.AgentConfig != nil && rc.AgentConfig.PromptCacheControl == "system_prompt" {
+				ephemeral := "ephemeral"
+				systemPart.CacheControl = &ephemeral
+			}
 			messages = append([]llm.Message{
 				{
 					Role:    "system",
-					Content: []llm.TextPart{{Text: rc.SystemPrompt}},
+					Content: []llm.TextPart{systemPart},
 				},
 			}, messages...)
 		}
@@ -137,9 +143,11 @@ type eventWriter struct {
 	usageRepo     data.UsageRecordsRepository
 	creditsRepo   data.CreditsRepository
 
-	multiplier      float64
-	costPer1kInput  *float64
-	costPer1kOutput *float64
+	multiplier          float64
+	costPer1kInput      *float64
+	costPer1kOutput     *float64
+	costPer1kCacheWrite *float64
+	costPer1kCacheRead  *float64
 
 	tx                       pgx.Tx
 	pendingEventsSinceCommit int
@@ -148,9 +156,12 @@ type eventWriter struct {
 	completed                bool
 	hasTerminal              bool
 
-	totalInputTokens  int64
-	totalOutputTokens int64
-	totalCostUSD      float64
+	totalInputTokens         int64
+	totalOutputTokens        int64
+	totalCacheCreationTokens int64
+	totalCacheReadTokens     int64
+	totalCachedTokens        int64
+	totalCostUSD             float64
 }
 
 func newEventWriter(
@@ -164,22 +175,26 @@ func newEventWriter(
 	multiplier float64,
 	costPer1kInput *float64,
 	costPer1kOutput *float64,
+	costPer1kCacheWrite *float64,
+	costPer1kCacheRead *float64,
 ) *eventWriter {
 	if multiplier <= 0 {
 		multiplier = 1.0
 	}
 	return &eventWriter{
-		pool:            pool,
-		run:             run,
-		traceID:         strings.TrimSpace(traceID),
-		lastCommitAt:    time.Now(),
-		runLimiterRDB:   runLimiterRDB,
-		model:           model,
-		usageRepo:       usageRepo,
-		creditsRepo:     creditsRepo,
-		multiplier:      multiplier,
-		costPer1kInput:  costPer1kInput,
-		costPer1kOutput: costPer1kOutput,
+		pool:                pool,
+		run:                 run,
+		traceID:             strings.TrimSpace(traceID),
+		lastCommitAt:        time.Now(),
+		runLimiterRDB:       runLimiterRDB,
+		model:               model,
+		usageRepo:           usageRepo,
+		creditsRepo:         creditsRepo,
+		multiplier:          multiplier,
+		costPer1kInput:      costPer1kInput,
+		costPer1kOutput:     costPer1kOutput,
+		costPer1kCacheWrite: costPer1kCacheWrite,
+		costPer1kCacheRead:  costPer1kCacheRead,
 	}
 }
 
@@ -233,7 +248,10 @@ func (w *eventWriter) Append(
 		}); err != nil {
 			return err
 		}
-		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model, w.totalInputTokens, w.totalOutputTokens, w.totalCostUSD); err != nil {
+		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model,
+			w.totalInputTokens, w.totalOutputTokens,
+			w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
+			w.totalCostUSD); err != nil {
 			return err
 		}
 		if credits := w.calcCreditDeduction(); credits > 0 {
@@ -283,7 +301,10 @@ func (w *eventWriter) Append(
 		}); err != nil {
 			return err
 		}
-		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model, w.totalInputTokens, w.totalOutputTokens, w.totalCostUSD); err != nil {
+		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model,
+			w.totalInputTokens, w.totalOutputTokens,
+			w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
+			w.totalCostUSD); err != nil {
 			return err
 		}
 		if credits := w.calcCreditDeduction(); credits > 0 {
@@ -385,6 +406,15 @@ func (w *eventWriter) accumUsage(dataJSON map[string]any) {
 		if v, ok := toInt64(usage["output_tokens"]); ok {
 			w.totalOutputTokens += v
 		}
+		if v, ok := toInt64(usage["cache_creation_input_tokens"]); ok {
+			w.totalCacheCreationTokens += v
+		}
+		if v, ok := toInt64(usage["cache_read_input_tokens"]); ok {
+			w.totalCacheReadTokens += v
+		}
+		if v, ok := toInt64(usage["cached_tokens"]); ok {
+			w.totalCachedTokens += v
+		}
 	}
 	if cost, ok := dataJSON["cost"].(map[string]any); ok {
 		if v, ok := toInt64(cost["amount_micros"]); ok {
@@ -409,13 +439,35 @@ func toInt64(v any) (int64, bool) {
 	}
 }
 
-// calcCreditDeduction 按公式计算积分消耗：ceil((input + output) / 1000 * multiplier)，最小 1。
+// calcCreditDeduction 按实际 cost（USD）计算积分消耗。
+// 汇率：1 积分 = $0.0001（CREDITS_PER_USD = 10000）× multiplier。
+// totalCostUSD 为 0 时退回按 token 计算的兜底值。
 func (w *eventWriter) calcCreditDeduction() int64 {
-	totalTokens := w.totalInputTokens + w.totalOutputTokens
-	if totalTokens <= 0 {
+	const creditsPerUSD = 1000.0 // 1 credit = $0.001
+
+	if w.totalCostUSD > 0 {
+		raw := w.totalCostUSD * creditsPerUSD * w.multiplier
+		credits := int64(math.Ceil(raw))
+		if credits < 1 {
+			credits = 1
+		}
+		return credits
+	}
+
+	// 兜底：无 cost 数据时按加权 token 计算
+	if w.totalInputTokens <= 0 && w.totalOutputTokens <= 0 {
 		return 0
 	}
-	raw := float64(totalTokens) / 1000.0 * w.multiplier
+	nonCached := w.totalInputTokens - w.totalCacheReadTokens - w.totalCachedTokens
+	if nonCached < 0 {
+		nonCached = 0
+	}
+	effective := float64(nonCached)*1.0 +
+		float64(w.totalCacheCreationTokens)*1.25 +
+		float64(w.totalCacheReadTokens)*0.1 +
+		float64(w.totalCachedTokens)*0.5 +
+		float64(w.totalOutputTokens)*1.0
+	raw := effective / 1000.0 * w.multiplier
 	credits := int64(math.Ceil(raw))
 	if credits < 1 {
 		credits = 1
@@ -423,17 +475,65 @@ func (w *eventWriter) calcCreditDeduction() int64 {
 	return credits
 }
 
-// calcPlatformCost 按配置的成本费率计算实际成本（USD）。未配置时返回 -1 表示使用 LLM 返回的原始值。
+// calcPlatformCost 分段计算实际成本（USD）。
+// 未配置任何 input/output 费率时返回 -1，表示使用 LLM 返回的原始值。
+// Cache 定价：
+//   - 未配置 costPer1kCacheWrite/Read 时，使用 input 费率乘以行业默认比例
+//   - Anthropic cache_creation: 1.25× input；cache_read: 0.10× input
+//   - OpenAI cached_tokens: 0.50× input（未命中部分 = totalInput - cachedTokens）
 func (w *eventWriter) calcPlatformCost() float64 {
 	if w.costPer1kInput == nil && w.costPer1kOutput == nil {
 		return -1
 	}
+
 	var cost float64
-	if w.costPer1kInput != nil {
-		cost += float64(w.totalInputTokens) / 1000.0 * *w.costPer1kInput
-	}
+
+	// output tokens（不受缓存影响）
 	if w.costPer1kOutput != nil {
 		cost += float64(w.totalOutputTokens) / 1000.0 * *w.costPer1kOutput
 	}
+
+	inputRate := 0.0
+	if w.costPer1kInput != nil {
+		inputRate = *w.costPer1kInput
+	}
+
+	// Anthropic cache tokens
+	if w.totalCacheCreationTokens > 0 || w.totalCacheReadTokens > 0 {
+		// Anthropic input_tokens = total context (非 cached 部分单独计费)
+		// non-cached input at full rate
+		nonCachedInput := w.totalInputTokens - w.totalCacheReadTokens
+		if nonCachedInput > 0 {
+			cost += float64(nonCachedInput) / 1000.0 * inputRate
+		}
+		if w.totalCacheCreationTokens > 0 {
+			rate := inputRate * 1.25
+			if w.costPer1kCacheWrite != nil {
+				rate = *w.costPer1kCacheWrite
+			}
+			cost += float64(w.totalCacheCreationTokens) / 1000.0 * rate
+		}
+		if w.totalCacheReadTokens > 0 {
+			rate := inputRate * 0.10
+			if w.costPer1kCacheRead != nil {
+				rate = *w.costPer1kCacheRead
+			}
+			cost += float64(w.totalCacheReadTokens) / 1000.0 * rate
+		}
+	} else if w.totalCachedTokens > 0 {
+		cacheRate := inputRate * 0.50
+		if w.costPer1kCacheRead != nil {
+			cacheRate = *w.costPer1kCacheRead
+		}
+		uncached := w.totalInputTokens - w.totalCachedTokens
+		if uncached < 0 {
+			uncached = 0
+		}
+		cost += float64(uncached)/1000.0*inputRate + float64(w.totalCachedTokens)/1000.0*cacheRate
+	} else {
+		// no cache
+		cost += float64(w.totalInputTokens) / 1000.0 * inputRate
+	}
+
 	return cost
 }
