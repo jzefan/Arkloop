@@ -8,6 +8,10 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"arkloop/services/gateway/internal/clientip"
+	"arkloop/services/gateway/internal/geoip"
+	"arkloop/services/gateway/internal/ua"
 )
 
 const traceIDHeader = "X-Trace-Id"
@@ -41,7 +45,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-func traceMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
+func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -59,13 +63,34 @@ func traceMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
 			return
 		}
 
-		tid := traceID
-		logger.Info("request", LogFields{TraceID: &tid}, map[string]any{
+		// 日志字段：clientip 中间件在 next.ServeHTTP 之前已写入 context
+		ip := clientip.FromContext(r.Context())
+		uaInfo := ua.Parse(r)
+
+		extra := map[string]any{
 			"method":      r.Method,
 			"path":        r.URL.Path,
 			"status_code": recorder.statusCode,
 			"duration_ms": time.Since(start).Milliseconds(),
-		})
+			"client_ip":   ip,
+			"user_agent":  uaInfo.Raw,
+			"ua_type":     string(uaInfo.Type),
+		}
+
+		if geo != nil && ip != "" {
+			result := geo.LookupIP(ip)
+			if result.Country != "" {
+				extra["country"] = result.Country
+			}
+		}
+
+		// risk_score 由 riskMiddleware 写在 X-Risk-Score 请求头（已转发给上游）
+		if score := r.Header.Get("X-Risk-Score"); score != "" {
+			extra["risk_score"] = score
+		}
+
+		tid := traceID
+		logger.Info("request", LogFields{TraceID: &tid}, extra)
 	})
 }
 

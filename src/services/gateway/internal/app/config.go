@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"arkloop/services/gateway/internal/ratelimit"
@@ -16,8 +17,26 @@ const (
 	redisURLEnv        = "ARKLOOP_REDIS_URL"
 	jwtSecretEnv       = "ARKLOOP_AUTH_JWT_SECRET"
 
+	// IP 透传模式：direct | cloudflare | trusted_proxy
+	ipModeEnv = "ARKLOOP_GATEWAY_IP_MODE"
+	// 逗号分隔的可信代理 CIDR 列表，cloudflare/trusted_proxy 模式使用
+	trustedCIDRsEnv = "ARKLOOP_GATEWAY_TRUSTED_CIDRS"
+	// MaxMind GeoLite2 数据库文件路径，留空则禁用 GeoIP
+	geoIPDBPathEnv = "ARKLOOP_GEOIP_DB_PATH"
+	// 风险评分拒绝阈值（0-100），0 表示只记录不拒绝
+	riskRejectThresholdEnv = "ARKLOOP_GATEWAY_RISK_REJECT_THRESHOLD"
+
 	defaultAddr     = "0.0.0.0:8000"
 	defaultUpstream = "http://127.0.0.1:8001"
+)
+
+// IPMode 定义 Gateway 的 IP 来源信任策略。
+type IPMode string
+
+const (
+	IPModeDirect       IPMode = "direct"        // 直连：只信任 RemoteAddr
+	IPModeCloudflare   IPMode = "cloudflare"     // Cloudflare 前置：读 CF-Connecting-IP
+	IPModeTrustedProxy IPMode = "trusted_proxy"  // 通用可信代理：读 XFF 最左端
 )
 
 type Config struct {
@@ -26,6 +45,11 @@ type Config struct {
 	RedisURL  string
 	JWTSecret string
 	RateLimit ratelimit.Config
+
+	IPMode              IPMode
+	TrustedCIDRs        []string // CIDR 字符串列表
+	GeoIPDBPath         string
+	RiskRejectThreshold int // 0 = 禁用拒绝
 }
 
 func DefaultConfig() Config {
@@ -54,6 +78,28 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	cfg.RateLimit = rlCfg
 
+	if raw := strings.TrimSpace(os.Getenv(ipModeEnv)); raw != "" {
+		cfg.IPMode = IPMode(raw)
+	}
+
+	if raw := strings.TrimSpace(os.Getenv(trustedCIDRsEnv)); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				cfg.TrustedCIDRs = append(cfg.TrustedCIDRs, s)
+			}
+		}
+	}
+
+	cfg.GeoIPDBPath = strings.TrimSpace(os.Getenv(geoIPDBPathEnv))
+
+	if raw := strings.TrimSpace(os.Getenv(riskRejectThresholdEnv)); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 || v > 100 {
+			return Config{}, fmt.Errorf("%s: must be an integer 0-100", riskRejectThresholdEnv)
+		}
+		cfg.RiskRejectThreshold = v
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -75,5 +121,12 @@ func (c Config) Validate() error {
 	if err != nil || strings.TrimSpace(u.Host) == "" {
 		return fmt.Errorf("upstream must be a valid URL with host: %s", c.Upstream)
 	}
+
+	switch c.IPMode {
+	case "", IPModeDirect, IPModeCloudflare, IPModeTrustedProxy:
+	default:
+		return fmt.Errorf("ip_mode must be one of: direct, cloudflare, trusted_proxy")
+	}
+
 	return nil
 }
