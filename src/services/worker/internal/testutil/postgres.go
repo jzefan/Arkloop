@@ -158,23 +158,31 @@ func initRunsSchema(t *testing.T, dsn string) error {
 
 	statements := []string{
 		`CREATE SEQUENCE run_events_seq_global START 1`,
+		`CREATE TABLE threads (
+			id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id     UUID        NOT NULL,
+			is_private BOOLEAN     NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMPTZ NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 		`CREATE TABLE runs (
-			id                 UUID        PRIMARY KEY,
-			org_id             UUID        NOT NULL,
-			thread_id          UUID        NOT NULL,
-			created_by_user_id UUID        NULL,
-			status             TEXT        NOT NULL DEFAULT 'running',
-			status_updated_at  TIMESTAMPTZ NULL,
-			completed_at       TIMESTAMPTZ NULL,
-			failed_at          TIMESTAMPTZ NULL,
-			duration_ms        BIGINT      NULL,
-			total_input_tokens BIGINT      NULL,
-			total_output_tokens BIGINT     NULL,
-			total_cost_usd     NUMERIC     NULL,
-			model              TEXT        NULL,
-			skill_id           TEXT        NULL,
-			deleted_at         TIMESTAMPTZ NULL,
-			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+			id                  UUID        PRIMARY KEY,
+			org_id              UUID        NOT NULL,
+			thread_id           UUID        NOT NULL,
+			parent_run_id       UUID        NULL,
+			created_by_user_id  UUID        NULL,
+			status              TEXT        NOT NULL DEFAULT 'running',
+			status_updated_at   TIMESTAMPTZ NULL,
+			completed_at        TIMESTAMPTZ NULL,
+			failed_at           TIMESTAMPTZ NULL,
+			duration_ms         BIGINT      NULL,
+			total_input_tokens  BIGINT      NULL,
+			total_output_tokens BIGINT      NULL,
+			total_cost_usd      NUMERIC     NULL,
+			model               TEXT        NULL,
+			skill_id            TEXT        NULL,
+			deleted_at          TIMESTAMPTZ NULL,
+			created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE TABLE run_events (
 			event_id    UUID        NOT NULL DEFAULT gen_random_uuid(),
@@ -198,6 +206,36 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE usage_records (
+			id                    UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id                UUID           NOT NULL,
+			run_id                UUID           NOT NULL UNIQUE,
+			model                 TEXT           NOT NULL DEFAULT '',
+			input_tokens          BIGINT         NOT NULL DEFAULT 0,
+			output_tokens         BIGINT         NOT NULL DEFAULT 0,
+			cache_creation_tokens BIGINT         NOT NULL DEFAULT 0,
+			cache_read_tokens     BIGINT         NOT NULL DEFAULT 0,
+			cached_tokens         BIGINT         NOT NULL DEFAULT 0,
+			cost_usd              NUMERIC(18, 8) NOT NULL DEFAULT 0,
+			recorded_at           TIMESTAMPTZ    NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX idx_usage_records_org_recorded ON usage_records (org_id, recorded_at)`,
+		`CREATE TABLE credits (
+			id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id     UUID        NOT NULL UNIQUE,
+			balance    BIGINT      NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE credit_transactions (
+			id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id         UUID        NOT NULL,
+			amount         BIGINT      NOT NULL,
+			type           TEXT        NOT NULL,
+			reference_type TEXT        NULL,
+			reference_id   UUID        NULL,
+			note           TEXT        NULL,
+			created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 	}
 
