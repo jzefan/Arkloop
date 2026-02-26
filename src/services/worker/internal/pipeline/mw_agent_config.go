@@ -173,3 +173,25 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		PromptCacheControl: promptCacheControl,
 	}, name, nil
 }
+
+// loadAgentConfigByName 按 name + org_id 查找 AgentConfig，找不到则查 platform 级别兜底。
+func loadAgentConfigByName(ctx context.Context, pool *pgxpool.Pool, name string, orgID uuid.UUID) (*ResolvedAgentConfig, string, error) {
+	var id uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT id FROM agent_configs WHERE name = $1 AND org_id = $2 LIMIT 1`,
+		name, orgID,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = pool.QueryRow(ctx,
+			`SELECT id FROM agent_configs WHERE name = $1 AND scope = 'platform' LIMIT 1`,
+			name,
+		).Scan(&id)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return loadAgentConfig(ctx, pool, id)
+}
