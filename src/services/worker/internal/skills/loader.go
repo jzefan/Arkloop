@@ -17,9 +17,11 @@ import (
 )
 
 var (
-	idRegex     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
-	budgetKeys  = map[string]struct{}{"max_iterations": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}}
+	idRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
+	budgetKeys = map[string]struct{}{"max_iterations": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}}
 )
+
+const defaultExecutorType = "agent.simple"
 
 func BuiltinSkillsRoot() (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
@@ -131,6 +133,15 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 		return Definition{}, err
 	}
 
+	executorType := defaultExecutorType
+	if raw := asOptionalString(obj["executor_type"]); raw != nil {
+		if !idRegex.MatchString(*raw) {
+			return Definition{}, fmt.Errorf("executor_type is invalid: %s", *raw)
+		}
+		executorType = *raw
+	}
+	executorConfig := asOptionalMap(obj["executor_config"])
+
 	rawPrompt, err := os.ReadFile(promptPath)
 	if err != nil {
 		return Definition{}, err
@@ -141,13 +152,15 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 	}
 
 	return Definition{
-		ID:            skillID,
-		Version:       version,
-		Title:         title,
-		Description:   description,
-		ToolAllowlist: allowlist,
-		Budgets:       budgets,
-		PromptMD:      prompt,
+		ID:             skillID,
+		Version:        version,
+		Title:          title,
+		Description:    description,
+		ToolAllowlist:  allowlist,
+		Budgets:        budgets,
+		PromptMD:       prompt,
+		ExecutorType:   executorType,
+		ExecutorConfig: executorConfig,
 	}, nil
 }
 
@@ -173,6 +186,17 @@ func asOptionalString(value any) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+func asOptionalMap(value any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return m
 }
 
 func asID(value any, label string) (string, error) {
@@ -307,12 +331,14 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 		}
 
 		def := Definition{
-			ID:            skillKey,
-			Version:       version,
-			Title:         displayName,
-			ToolAllowlist: toolAllowlist,
-			Budgets:       budgets,
-			PromptMD:      promptMD,
+			ID:             skillKey,
+			Version:        version,
+			Title:          displayName,
+			ToolAllowlist:  toolAllowlist,
+			Budgets:        budgets,
+			PromptMD:       promptMD,
+			ExecutorType:   defaultExecutorType,
+			ExecutorConfig: map[string]any{},
 		}
 		if description != nil && strings.TrimSpace(*description) != "" {
 			s := strings.TrimSpace(*description)
