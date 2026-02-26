@@ -119,7 +119,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolBuildMiddleware(),
 	}
 
-	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, usageRepo, creditsRepo)
+	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, usageRepo, creditsRepo, resolver)
 
 	return &EngineV1{
 		middlewares:         middlewares,

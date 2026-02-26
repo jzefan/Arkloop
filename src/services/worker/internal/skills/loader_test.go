@@ -139,17 +139,19 @@ func TestLoadSkillWithPreferredCredential(t *testing.T) {
 
 // TestLoadSkillWithoutPreferredCredential 验证无 preferred_credential 字段时 PreferredCredential 为 nil。
 func TestLoadSkillWithoutPreferredCredential(t *testing.T) {
-	root, err := BuiltinSkillsRoot()
-	if err != nil {
-		t.Fatalf("BuiltinSkillsRoot failed: %v", err)
-	}
-	registry, err := LoadRegistry(root)
+	dir := t.TempDir()
+	writeSkillFiles(t, dir, "no_cred_skill",
+		"id: no_cred_skill\nversion: \"1\"\ntitle: No Cred\n",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
 	if err != nil {
 		t.Fatalf("LoadRegistry failed: %v", err)
 	}
-	def, ok := registry.Get("demo_no_tools")
+	def, ok := registry.Get("no_cred_skill")
 	if !ok {
-		t.Fatalf("expected demo_no_tools skill loaded")
+		t.Fatal("expected no_cred_skill to be loaded")
 	}
 	if def.PreferredCredential != nil {
 		t.Fatalf("expected PreferredCredential nil, got %q", *def.PreferredCredential)

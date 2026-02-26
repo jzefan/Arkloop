@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"arkloop/services/worker/internal/data"
@@ -72,6 +74,44 @@ func NewCancelGuardMiddleware(
 
 		rc.CancelFunc = cancelExec
 		rc.ListenDone = listenDone
+
+		// 设置 WaitForInput：LISTEN run_input_{runID}，收到通知后查 DB 拿内容
+		inputCh := make(chan string, 1)
+		if inputConn, err := rc.DirectPool.Acquire(execCtx); err == nil {
+			inputChannel := fmt.Sprintf(`"run_input_%s"`, run.ID.String())
+			if _, err := inputConn.Exec(execCtx, "LISTEN "+inputChannel); err != nil {
+				inputConn.Release()
+			} else {
+				go func() {
+					defer inputConn.Release()
+					var lastSeq int64
+					for {
+						if err := inputConn.Conn().PgConn().WaitForNotification(execCtx); err != nil {
+							return
+						}
+						content, seq, ok := fetchLatestInput(execCtx, pool, run.ID, lastSeq)
+						if !ok {
+							continue
+						}
+						lastSeq = seq
+						select {
+						case inputCh <- content:
+						case <-execCtx.Done():
+							return
+						}
+					}
+				}()
+			}
+		}
+
+		rc.WaitForInput = func(ctx context.Context) (string, bool) {
+			select {
+			case text := <-inputCh:
+				return text, true
+			case <-ctx.Done():
+				return "", false
+			}
+		}
 
 		// 确保 Pipeline 结束后释放 LISTEN 连接
 		defer func() {
@@ -151,4 +191,37 @@ var TerminalStatuses = map[string]string{
 	"run.completed": "completed",
 	"run.failed":    "failed",
 	"run.cancelled": "cancelled",
+}
+
+// fetchLatestInput 查询 run_events 中 seq > sinceSeq 的最新 run.input_provided 事件。
+// 返回 (content, seq, true) 或 ("", 0, false)。
+func fetchLatestInput(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID, sinceSeq int64) (string, int64, bool) {
+	var rawJSON []byte
+	var seq int64
+	err := pool.QueryRow(
+		ctx,
+		`SELECT data_json, seq
+		 FROM run_events
+		 WHERE run_id = $1
+		   AND type = $2
+		   AND seq > $3
+		 ORDER BY seq ASC
+		 LIMIT 1`,
+		runID,
+		EventTypeInputProvided,
+		sinceSeq,
+	).Scan(&rawJSON, &seq)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, false
+		}
+		return "", 0, false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rawJSON, &payload); err != nil {
+		return "", 0, false
+	}
+	content, _ := payload["content"].(string)
+	return content, seq, true
 }

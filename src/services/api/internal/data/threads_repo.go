@@ -20,6 +20,8 @@ type Thread struct {
 	DeletedAt     *time.Time
 	ProjectID     *uuid.UUID
 	AgentConfigID *uuid.UUID
+	IsPrivate     bool
+	ExpiresAt     *time.Time
 }
 
 type ThreadWithActiveRun struct {
@@ -43,6 +45,7 @@ func (r *ThreadRepository) Create(
 	orgID uuid.UUID,
 	createdByUserID *uuid.UUID,
 	title *string,
+	isPrivate bool,
 ) (Thread, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -54,14 +57,15 @@ func (r *ThreadRepository) Create(
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (org_id, created_by_user_id, title)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id`,
+		`INSERT INTO threads (org_id, created_by_user_id, title, is_private, expires_at)
+		 VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN now() + INTERVAL '24 hours' ELSE NULL END)
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at`,
 		orgID,
 		createdByUserID,
 		title,
+		isPrivate,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID)
+		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt)
 	if err != nil {
 		return Thread{}, err
 	}
@@ -76,14 +80,14 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id
+		`SELECT id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at
 		 FROM threads
 		 WHERE id = $1
 		   AND deleted_at IS NULL
 		 LIMIT 1`,
 		threadID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID)
+		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -118,7 +122,7 @@ func (r *ThreadRepository) ListByOwner(
 	}
 
 	sql := `SELECT t.id, t.org_id, t.created_by_user_id, t.title, t.created_at,
-		       t.deleted_at, t.project_id, t.agent_config_id, r.id AS active_run_id
+		       t.deleted_at, t.project_id, t.agent_config_id, t.is_private, t.expires_at, r.id AS active_run_id
 		FROM threads t
 		LEFT JOIN LATERAL (
 			SELECT id FROM runs
@@ -128,7 +132,8 @@ func (r *ThreadRepository) ListByOwner(
 		) r ON true
 		WHERE t.org_id = $1
 		  AND t.created_by_user_id = $2
-		  AND t.deleted_at IS NULL`
+		  AND t.deleted_at IS NULL
+		  AND t.is_private = false`
 	args := []any{orgID, ownerUserID}
 
 	if beforeCreatedAt != nil && beforeID != nil {
@@ -155,7 +160,7 @@ func (r *ThreadRepository) ListByOwner(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.OrgID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.ActiveRunID,
+			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.IsPrivate, &item.ExpiresAt, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -182,11 +187,11 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		 SET title = $1
 		 WHERE id = $2
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at`,
 		title,
 		threadID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID)
+		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -229,13 +234,13 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 		     agent_config_id = CASE WHEN $6 THEN $7 ELSE agent_config_id END
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at`,
 		threadID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
 		params.SetAgentConfigID, params.AgentConfigID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID)
+		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -295,7 +300,7 @@ func (r *ThreadRepository) SearchByQuery(
 		ctx,
 		`SELECT DISTINCT ON (t.created_at, t.id)
 		        t.id, t.org_id, t.created_by_user_id, t.title, t.created_at,
-		        t.deleted_at, t.project_id, t.agent_config_id, r.id AS active_run_id
+		        t.deleted_at, t.project_id, t.agent_config_id, t.is_private, t.expires_at, r.id AS active_run_id
 		 FROM threads t
 		 LEFT JOIN messages m
 		   ON m.thread_id = t.id
@@ -310,6 +315,7 @@ func (r *ThreadRepository) SearchByQuery(
 		 WHERE t.org_id = $1
 		   AND t.created_by_user_id = $2
 		   AND t.deleted_at IS NULL
+		   AND t.is_private = false
 		   AND (
 		     t.title ILIKE $3
 		     OR m.content ILIKE $3
@@ -328,7 +334,7 @@ func (r *ThreadRepository) SearchByQuery(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.OrgID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.ActiveRunID,
+			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.IsPrivate, &item.ExpiresAt, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -338,4 +344,21 @@ func (r *ThreadRepository) SearchByQuery(
 		return nil, err
 	}
 	return threads, nil
+}
+
+// DeleteExpiredPrivate 硬删除所有已过期的私密 thread（is_private=true AND expires_at < now()）。
+// messages/runs/run_events 通过 ON DELETE CASCADE 自动清理。
+func (r *ThreadRepository) DeleteExpiredPrivate(ctx context.Context) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	tag, err := r.db.Exec(
+		ctx,
+		`DELETE FROM threads WHERE is_private = true AND expires_at < now()`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

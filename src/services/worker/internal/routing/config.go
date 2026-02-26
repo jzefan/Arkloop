@@ -329,9 +329,10 @@ func (c ProviderRoutingConfig) GetCredential(credentialID string) (ProviderCrede
 	return ProviderCredential{}, false
 }
 
-// GetHighestPriorityRouteByCredentialName 按凭证显示名称找到优先级最高的路由。
-// routes 已按 priority DESC 排好序，直接取第一个匹配项即可。
-func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialName(name string) (ProviderRouteRule, ProviderCredential, bool) {
+// GetHighestPriorityRouteByCredentialName 按凭证显示名称找到最优路由。
+// 优先匹配有 When 条件且命中 inputJSON 的路由，其次取该凭证首条路由。
+// routes 已按 priority DESC 排好序，直接遍历取首个匹配项即可。
+func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialName(name string, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
 	if strings.TrimSpace(name) == "" {
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
@@ -345,6 +346,21 @@ func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialName(name stri
 	if credIDByName == "" {
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
+	// 优先匹配有 When 条件且命中 inputJSON 的路由
+	for _, route := range c.Routes {
+		if route.CredentialID == credIDByName && len(route.When) > 0 && route.Matches(inputJSON) {
+			cred, _ := c.GetCredential(credIDByName)
+			return route, cred, true
+		}
+	}
+	// 其次取空 When 路由（通用兜底）
+	for _, route := range c.Routes {
+		if route.CredentialID == credIDByName && len(route.When) == 0 {
+			cred, _ := c.GetCredential(credIDByName)
+			return route, cred, true
+		}
+	}
+	// 最终兜底：取该凭证的首条路由（所有路由均有 When 但无匹配时）
 	for _, route := range c.Routes {
 		if route.CredentialID == credIDByName {
 			cred, _ := c.GetCredential(credIDByName)

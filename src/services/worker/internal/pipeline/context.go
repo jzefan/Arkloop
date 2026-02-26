@@ -86,4 +86,11 @@ type RunContext struct {
 	// -- LLM 重试，由 EngineV1.Execute 注入 --
 	LlmRetryMaxAttempts int
 	LlmRetryBaseDelayMs int
+
+	// -- Human-in-the-loop 钩子（AS-3），均为 nil 时 Executor 不触发，零开销 --
+	// WaitForInput 非 nil 时，Executor 在 CheckInAt 边界调用此函数阻塞等待用户输入。
+	// 返回 ("", false) 表示超时或不注入；返回 (text, true) 则将 text 作为 user message 注入。
+	WaitForInput func(ctx context.Context) (string, bool)
+	// CheckInAt 判断当前迭代 iter 是否为 check-in 边界，仅当 WaitForInput 非 nil 时有效。
+	CheckInAt func(iter int) bool
 }

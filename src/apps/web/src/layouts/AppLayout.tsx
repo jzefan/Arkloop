@@ -38,6 +38,8 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const [meLoaded, setMeLoaded] = useState(false)
   const [threads, setThreads] = useState<ThreadResponse[]>([])
   const [runningThreadIds, setRunningThreadIds] = useState<Set<string>>(new Set())
+  const [privateThreadIds, setPrivateThreadIds] = useState<Set<string>>(new Set())
+  const [isPrivateMode, setIsPrivateMode] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('account')
@@ -99,10 +101,18 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   // 从 WelcomePage 新建的 thread 需要注入到列表
   const handleThreadCreated = useCallback((thread: ThreadResponse) => {
+    if (thread.is_private) {
+      setPrivateThreadIds((prev) => new Set(prev).add(thread.id))
+      return
+    }
     setThreads((prev) => {
       if (prev.some((t) => t.id === thread.id)) return prev
       return [thread, ...prev]
     })
+  }, [])
+
+  const handleTogglePrivateMode = useCallback(() => {
+    setIsPrivateMode((prev) => !prev)
   }, [])
 
   const handleRunStarted = useCallback((threadId: string) => {
@@ -184,7 +194,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}

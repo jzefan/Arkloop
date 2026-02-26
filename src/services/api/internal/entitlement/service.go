@@ -28,6 +28,7 @@ var platformDefaults = map[string]EntitlementValue{
 	"credit.initial_grant":       {Raw: "1000", Type: "int"},
 	"credit.invite_reward":       {Raw: "500", Type: "int"},
 	"credit.invitee_reward":      {Raw: "200", Type: "int"},
+	"credit.deduction_policy":    {Raw: `{"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]}`, Type: "json"},
 }
 
 type EntitlementValue struct {

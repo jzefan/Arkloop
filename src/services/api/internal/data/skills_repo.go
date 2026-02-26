@@ -26,26 +26,28 @@ func (e SkillConflictError) Error() string {
 }
 
 type Skill struct {
-	ID            uuid.UUID
-	OrgID         *uuid.UUID
-	SkillKey      string
-	Version       string
-	DisplayName   string
-	Description   *string
-	PromptMD      string
-	ToolAllowlist []string
-	BudgetsJSON   json.RawMessage
-	IsActive      bool
-	CreatedAt     time.Time
+	ID                  uuid.UUID
+	OrgID               *uuid.UUID
+	SkillKey            string
+	Version             string
+	DisplayName         string
+	Description         *string
+	PromptMD            string
+	ToolAllowlist       []string
+	BudgetsJSON         json.RawMessage
+	IsActive            bool
+	CreatedAt           time.Time
+	PreferredCredential *string
 }
 
 type SkillPatch struct {
-	DisplayName   *string
-	Description   *string
-	PromptMD      *string
-	ToolAllowlist []string
-	BudgetsJSON   json.RawMessage
-	IsActive      *bool
+	DisplayName         *string
+	Description         *string
+	PromptMD            *string
+	ToolAllowlist       []string
+	BudgetsJSON         json.RawMessage
+	IsActive            *bool
+	PreferredCredential *string
 }
 
 type SkillsRepository struct {
@@ -69,6 +71,7 @@ func (r *SkillsRepository) Create(
 	promptMD string,
 	toolAllowlist []string,
 	budgetsJSON json.RawMessage,
+	preferredCredential *string,
 ) (Skill, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -95,22 +98,27 @@ func (r *SkillsRepository) Create(
 	if toolAllowlist == nil {
 		toolAllowlist = []string{}
 	}
+	if preferredCredential != nil && strings.TrimSpace(*preferredCredential) == "" {
+		preferredCredential = nil
+	}
 
 	var skill Skill
 	err := r.db.QueryRow(
 		ctx,
 		`INSERT INTO skills
 		    (org_id, skill_key, version, display_name, description, prompt_md,
-		     tool_allowlist, budgets_json)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		     tool_allowlist, budgets_json, preferred_credential)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, org_id, skill_key, version, display_name, description,
-		           prompt_md, tool_allowlist, budgets_json, is_active, created_at`,
+		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
+		           preferred_credential`,
 		orgID, skillKey, version, displayName, description, promptMD,
-		toolAllowlist, budgetsJSON,
+		toolAllowlist, budgetsJSON, preferredCredential,
 	).Scan(
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
+		&skill.PreferredCredential,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -130,7 +138,8 @@ func (r *SkillsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*S
 	err := r.db.QueryRow(
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at
+		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
+		        preferred_credential
 		 FROM skills
 		 WHERE id = $1 AND org_id = $2`,
 		id, orgID,
@@ -138,6 +147,7 @@ func (r *SkillsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*S
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
+		&skill.PreferredCredential,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -157,7 +167,8 @@ func (r *SkillsRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]Sk
 	rows, err := r.db.Query(
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at
+		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
+		        preferred_credential
 		 FROM skills
 		 WHERE org_id = $1 OR org_id IS NULL
 		 ORDER BY created_at ASC`,
@@ -181,7 +192,8 @@ func (r *SkillsRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUID)
 	rows, err := r.db.Query(
 		ctx,
 		`SELECT id, org_id, skill_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at
+		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
+		        preferred_credential
 		 FROM skills
 		 WHERE org_id = $1 AND is_active = TRUE
 		 ORDER BY created_at ASC`,
@@ -242,6 +254,15 @@ func (r *SkillsRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch
 		args = append(args, *patch.IsActive)
 		argIdx++
 	}
+	if patch.PreferredCredential != nil {
+		if strings.TrimSpace(*patch.PreferredCredential) == "" {
+			setClauses = append(setClauses, "preferred_credential = NULL")
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("preferred_credential = $%d", argIdx))
+			args = append(args, strings.TrimSpace(*patch.PreferredCredential))
+			argIdx++
+		}
+	}
 
 	if len(setClauses) == 0 {
 		return r.GetByID(ctx, orgID, id)
@@ -258,13 +279,15 @@ func (r *SkillsRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch
 		 SET %s
 		 WHERE id = $%d AND org_id = $%d
 		 RETURNING id, org_id, skill_key, version, display_name, description,
-		           prompt_md, tool_allowlist, budgets_json, is_active, created_at`,
+		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
+		           preferred_credential`,
 			strings.Join(setClauses, ", "), idIdx, orgIdx),
 		args...,
 	).Scan(
 		&skill.ID, &skill.OrgID, &skill.SkillKey, &skill.Version,
 		&skill.DisplayName, &skill.Description, &skill.PromptMD,
 		&skill.ToolAllowlist, &skill.BudgetsJSON, &skill.IsActive, &skill.CreatedAt,
+		&skill.PreferredCredential,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -286,6 +309,7 @@ func scanSkills(rows pgx.Rows) ([]Skill, error) {
 			&s.ID, &s.OrgID, &s.SkillKey, &s.Version,
 			&s.DisplayName, &s.Description, &s.PromptMD,
 			&s.ToolAllowlist, &s.BudgetsJSON, &s.IsActive, &s.CreatedAt,
+			&s.PreferredCredential,
 		); err != nil {
 			return nil, err
 		}

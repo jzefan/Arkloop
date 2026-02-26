@@ -33,6 +33,9 @@ type OutletContext = {
   notificationVersion: number
   creditsBalance: number
   me: MeResponse | null
+  isPrivateMode: boolean
+  onTogglePrivateMode: () => void
+  privateThreadIds: Set<string>
 }
 
 // 按时段、星期、节日生成问候语，全部基于浏览器本地时间。
@@ -167,7 +170,7 @@ function FreePlanBadge() {
 }
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, onOpenNotifications, notificationVersion, creditsBalance, me } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, onOpenNotifications, notificationVersion, creditsBalance, me, isPrivateMode, onTogglePrivateMode } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [sending, setSending] = useState(false)
@@ -234,7 +237,7 @@ export function WelcomePage() {
 
     try {
       const title = deriveTitle(text, t.newChatTitle)
-      const thread = await createThread(accessToken, { title })
+      const thread = await createThread(accessToken, { title, is_private: isPrivateMode })
 
       const fileParts = attachments.map(
         (a) => `<file name="${a.name}" encoding="${a.encoding}">\n${a.content}\n</file>`,
@@ -268,9 +271,18 @@ export function WelcomePage() {
           <span className="text-sm font-medium tabular-nums">{creditsBalance.toLocaleString()}</span>
         </div>
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} />
-        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
-          <Glasses size={18} />
-        </button>
+        <button
+            onClick={onTogglePrivateMode}
+            title={isPrivateMode ? '关闭私密模式' : '开启私密模式'}
+            className={[
+              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+              isPrivateMode
+                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+            ].join(' ')}
+          >
+            <Glasses size={18} />
+          </button>
       </div>
 
       {/* 居中内容 */}

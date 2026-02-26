@@ -15,36 +15,39 @@ import (
 )
 
 type createSkillRequest struct {
-	SkillKey      string          `json:"skill_key"`
-	Version       string          `json:"version"`
-	DisplayName   string          `json:"display_name"`
-	Description   *string         `json:"description"`
-	PromptMD      string          `json:"prompt_md"`
-	ToolAllowlist []string        `json:"tool_allowlist"`
-	BudgetsJSON   json.RawMessage `json:"budgets"`
+	SkillKey            string          `json:"skill_key"`
+	Version             string          `json:"version"`
+	DisplayName         string          `json:"display_name"`
+	Description         *string         `json:"description"`
+	PromptMD            string          `json:"prompt_md"`
+	ToolAllowlist       []string        `json:"tool_allowlist"`
+	BudgetsJSON         json.RawMessage `json:"budgets"`
+	PreferredCredential *string         `json:"preferred_credential"`
 }
 
 type patchSkillRequest struct {
-	DisplayName   *string         `json:"display_name"`
-	Description   *string         `json:"description"`
-	PromptMD      *string         `json:"prompt_md"`
-	ToolAllowlist []string        `json:"tool_allowlist"`
-	BudgetsJSON   json.RawMessage `json:"budgets"`
-	IsActive      *bool           `json:"is_active"`
+	DisplayName         *string         `json:"display_name"`
+	Description         *string         `json:"description"`
+	PromptMD            *string         `json:"prompt_md"`
+	ToolAllowlist       []string        `json:"tool_allowlist"`
+	BudgetsJSON         json.RawMessage `json:"budgets"`
+	IsActive            *bool           `json:"is_active"`
+	PreferredCredential *string         `json:"preferred_credential"`
 }
 
 type skillResponse struct {
-	ID            string          `json:"id"`
-	OrgID         *string         `json:"org_id"`
-	SkillKey      string          `json:"skill_key"`
-	Version       string          `json:"version"`
-	DisplayName   string          `json:"display_name"`
-	Description   *string         `json:"description,omitempty"`
-	PromptMD      string          `json:"prompt_md"`
-	ToolAllowlist []string        `json:"tool_allowlist"`
-	BudgetsJSON   json.RawMessage `json:"budgets"`
-	IsActive      bool            `json:"is_active"`
-	CreatedAt     string          `json:"created_at"`
+	ID                  string          `json:"id"`
+	OrgID               *string         `json:"org_id"`
+	SkillKey            string          `json:"skill_key"`
+	Version             string          `json:"version"`
+	DisplayName         string          `json:"display_name"`
+	Description         *string         `json:"description,omitempty"`
+	PromptMD            string          `json:"prompt_md"`
+	ToolAllowlist       []string        `json:"tool_allowlist"`
+	BudgetsJSON         json.RawMessage `json:"budgets"`
+	IsActive            bool            `json:"is_active"`
+	CreatedAt           string          `json:"created_at"`
+	PreferredCredential *string         `json:"preferred_credential,omitempty"`
 }
 
 func skillsEntry(
@@ -143,6 +146,7 @@ func createSkill(
 		req.PromptMD,
 		req.ToolAllowlist,
 		req.BudgetsJSON,
+		req.PreferredCredential,
 	)
 	if err != nil {
 		var conflict data.SkillConflictError
@@ -233,12 +237,13 @@ func patchSkill(
 	}
 
 	patch := data.SkillPatch{
-		DisplayName:   req.DisplayName,
-		Description:   req.Description,
-		PromptMD:      req.PromptMD,
-		ToolAllowlist: req.ToolAllowlist,
-		BudgetsJSON:   req.BudgetsJSON,
-		IsActive:      req.IsActive,
+		DisplayName:         req.DisplayName,
+		Description:         req.Description,
+		PromptMD:            req.PromptMD,
+		ToolAllowlist:       req.ToolAllowlist,
+		BudgetsJSON:         req.BudgetsJSON,
+		IsActive:            req.IsActive,
+		PreferredCredential: req.PreferredCredential,
 	}
 
 	updated, err := skillsRepo.Patch(r.Context(), actor.OrgID, skillID, patch)
@@ -272,16 +277,17 @@ func toSkillResponse(s data.Skill) skillResponse {
 	}
 
 	return skillResponse{
-		ID:            s.ID.String(),
-		OrgID:         orgIDStr,
-		SkillKey:      s.SkillKey,
-		Version:       s.Version,
-		DisplayName:   s.DisplayName,
-		Description:   s.Description,
-		PromptMD:      s.PromptMD,
-		ToolAllowlist: allowlist,
-		BudgetsJSON:   budgets,
-		IsActive:      s.IsActive,
-		CreatedAt:     s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		ID:                  s.ID.String(),
+		OrgID:               orgIDStr,
+		SkillKey:            s.SkillKey,
+		Version:             s.Version,
+		DisplayName:         s.DisplayName,
+		Description:         s.Description,
+		PromptMD:            s.PromptMD,
+		ToolAllowlist:       allowlist,
+		BudgetsJSON:         budgets,
+		IsActive:            s.IsActive,
+		CreatedAt:           s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		PreferredCredential: s.PreferredCredential,
 	}
 }
