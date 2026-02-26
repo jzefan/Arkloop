@@ -92,6 +92,37 @@ func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (*User, 
 	return &user, nil
 }
 
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if email == "" {
+		return nil, nil
+	}
+
+	var user User
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, display_name, email, email_verified_at, status, deleted_at,
+		        avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at
+		 FROM users
+		 WHERE email = $1 AND deleted_at IS NULL
+		 LIMIT 1`,
+		email,
+	).Scan(
+		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
+		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
+		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *UserRepository) BumpTokensInvalidBefore(ctx context.Context, userID uuid.UUID, tokensInvalidBefore time.Time) error {
 	if ctx == nil {
 		ctx = context.Background()

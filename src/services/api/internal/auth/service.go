@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/featureflag"
 
 	"github.com/google/uuid"
 )
@@ -38,6 +39,15 @@ func (e SuspendedUserError) Error() string {
 	return "user suspended"
 }
 
+// EmailNotVerifiedError 表示用户邮箱尚未验证，且平台强制要求验证后才能登录。
+type EmailNotVerifiedError struct {
+	UserID uuid.UUID
+}
+
+func (e EmailNotVerifiedError) Error() string {
+	return "email not verified"
+}
+
 // IssuedTokenPair 包含一次认证/刷新操作签发的 Access + Refresh Token 对。
 type IssuedTokenPair struct {
 	AccessToken  string
@@ -52,6 +62,7 @@ type Service struct {
 	passwordHasher   *BcryptPasswordHasher
 	tokenService     *JwtAccessTokenService
 	refreshTokenRepo *data.RefreshTokenRepository
+	flagService      *featureflag.Service
 }
 
 func NewService(
@@ -90,10 +101,22 @@ func NewService(
 	}, nil
 }
 
+// SetFlagService 注入 feature flag 服务，用于检查 auth.require_email_verification 开关。
+func (s *Service) SetFlagService(svc *featureflag.Service) {
+	s.flagService = svc
+}
+
 func (s *Service) IssueAccessToken(ctx context.Context, login string, password string) (IssuedTokenPair, error) {
 	credential, err := s.credentialRepo.GetByLogin(ctx, login)
 	if err != nil {
 		return IssuedTokenPair{}, err
+	}
+	// 用户名查不到时，尝试用邮箱匹配（静默兜底）
+	if credential == nil {
+		credential, err = s.credentialRepo.GetByUserEmail(ctx, login)
+		if err != nil {
+			return IssuedTokenPair{}, err
+		}
 	}
 	if credential == nil {
 		return IssuedTokenPair{}, InvalidCredentialsError{}
@@ -111,6 +134,14 @@ func (s *Service) IssueAccessToken(ctx context.Context, login string, password s
 	}
 	if user.Status != "active" {
 		return IssuedTokenPair{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
+	}
+
+	// 检查邮箱验证强制要求
+	if s.flagService != nil && user.EmailVerifiedAt == nil {
+		required, err := s.flagService.IsGloballyEnabled(ctx, "auth.require_email_verification")
+		if err == nil && required {
+			return IssuedTokenPair{}, EmailNotVerifiedError{UserID: user.ID}
+		}
 	}
 
 	return s.issueTokenPair(ctx, credential.UserID)

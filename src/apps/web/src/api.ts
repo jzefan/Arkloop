@@ -251,6 +251,27 @@ export async function confirmEmailVerification(token: string): Promise<{ ok: boo
   })
 }
 
+export async function sendEmailOTP(email: string): Promise<void> {
+  await apiFetch<void>('/v1/auth/email/otp/send', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function verifyEmailOTP(email: string, code: string): Promise<LoginResponse> {
+  return await apiFetch<LoginResponse>('/v1/auth/email/otp/verify', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
+  })
+}
+
+export async function checkUser(login: string): Promise<{ exists: boolean; masked_email?: string }> {
+  return await apiFetch<{ exists: boolean; masked_email?: string }>('/v1/auth/check', {
+    method: 'POST',
+    body: JSON.stringify({ login }),
+  })
+}
+
 export type LogoutResponse = {
   ok: boolean
 }

@@ -58,6 +58,7 @@ export interface LocaleStrings {
   // auth
   loginMode: string
   registerMode: string
+  identityPlaceholder: string
   enterUsername: string
   enterEmail: string
   enterPassword: string
@@ -69,6 +70,8 @@ export interface LocaleStrings {
   githubLogin: string
   noAccount: string
   hasAccount: string
+  useEmailOtpHint: string
+  creatingAccountHint: string
   // profile editing
   profileTitle: string
   profileName: string
@@ -85,6 +88,14 @@ export interface LocaleStrings {
   emailVerifySuccess: string
   emailVerifyFailed: string
   emailVerifyGoToApp: string
+  otpLoginTab: string
+  passwordLoginTab: string
+  otpEmailPlaceholder: string
+  otpCodePlaceholder: string
+  otpSendBtn: string
+  otpSendingCountdown: (s: number) => string
+  otpVerifyBtn: string
+  emailNotVerifiedHint: string
   newChatTitle: string
   chatPlaceholder: string
   // notifications

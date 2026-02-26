@@ -204,8 +204,11 @@ func (a *Application) Run(ctx context.Context) error {
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
 		emailVerifyService  *auth.EmailVerifyService
+		emailOTPLoginService *auth.EmailOTPLoginService
 		orgService          *auth.OrgService
 		auditWriter         *audit.Writer
+
+		emailOTPTokenRepo *data.EmailOTPTokenRepository
 	)
 
 	if pool != nil {
@@ -367,6 +370,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 
+		emailOTPTokenRepo, err = data.NewEmailOTPTokenRepository(pool)
+		if err != nil {
+			return err
+		}
 		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
 		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
 		if keyRingErr == nil {
@@ -416,6 +423,18 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 
 		registrationService.SetEmailVerifyService(emailVerifyService)
+
+		if userRepo != nil && emailOTPTokenRepo != nil && jobRepo != nil && tokenService != nil && refreshTokenRepo != nil && membershipRepo != nil {
+			emailOTPLoginService, err = auth.NewEmailOTPLoginService(userRepo, emailOTPTokenRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo)
+			if err != nil {
+				return err
+			}
+			emailOTPLoginService.SetAppBaseURL(a.config.AppBaseURL, platformSettingsRepo)
+		}
+
+		if featureFlagSvc != nil {
+			authService.SetFlagService(featureFlagSvc)
+		}
 
 		if auditRepo != nil {
 			auditWriter = audit.NewWriter(auditRepo, membershipRepo, a.logger)
@@ -496,6 +515,7 @@ func (a *Application) Run(ctx context.Context) error {
 			RunLimiter:           runLimiter,
 			AsrCredentialsRepo:   asrCredRepo,
 			EmailVerifyService:   emailVerifyService,
+			EmailOTPLoginService: emailOTPLoginService,
 			JobRepo:              jobRepo,
 			EmailFrom:            strings.TrimSpace(a.config.EmailFrom),
 			SSEConfig: apihttp.SSEConfig{

@@ -144,3 +144,30 @@ func (r *UserCredentialRepository) ListLoginsByUserIDs(ctx context.Context, user
 	}
 	return result, rows.Err()
 }
+
+// GetByUserEmail 通过用户邮箱查找 credential（用于邮箱作为 login 别名的场景）。
+func (r *UserCredentialRepository) GetByUserEmail(ctx context.Context, email string) (*UserCredential, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if email == "" {
+		return nil, nil
+	}
+
+	var credential UserCredential
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT uc.id, uc.user_id, uc.login, uc.password_hash, uc.created_at
+		 FROM user_credentials uc
+		 JOIN users u ON u.id = uc.user_id
+		 WHERE u.email = $1 AND u.deleted_at IS NULL`,
+		email,
+	).Scan(&credential.ID, &credential.UserID, &credential.Login, &credential.PasswordHash, &credential.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("user_credentials.GetByUserEmail: %w", err)
+	}
+	return &credential, nil
+}
