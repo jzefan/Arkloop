@@ -512,7 +512,7 @@ context.set_output(out)
 	t.Fatal("expected partial failure output")
 }
 
-func TestLuaExecutor_AgentRunParallel_ContextCancelled(t *testing.T) {
+func TestLuaExecutor_AgentRunParallel_ContextAlreadyCancelled(t *testing.T) {
 	ex, _ := NewLuaExecutor(map[string]any{
 		"script": `
 local results, errs = agent.run_parallel({{skill="lite", input="q"}})
@@ -546,4 +546,94 @@ end
 		}
 	}
 	t.Fatal("expected output after cancelled context")
+}
+
+func TestLuaExecutor_AgentRunParallel_ExceedsLimit(t *testing.T) {
+	// 构造超过 maxParallelTasks 数量的任务
+	script := `
+local tasks = {}
+for i = 1, 33 do
+  tasks[i] = {skill="lite", input="q"}
+end
+local results, errs = agent.run_parallel(tasks)
+if errs == nil then
+  context.set_output("unexpected_success")
+else
+  context.set_output("limit_exceeded")
+end
+`
+	ex, _ := NewLuaExecutor(map[string]any{"script": script})
+	rc := buildLuaRC(nil)
+	rc.SpawnChildRun = func(_ context.Context, _ string, _ string) (string, error) {
+		return "x", nil
+	}
+
+	emitter := events.NewEmitter("trace")
+	var got []events.RunEvent
+	err := ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	for _, ev := range got {
+		if ev.Type == "message.delta" {
+			if delta, _ := ev.DataJSON["content_delta"].(string); delta == "limit_exceeded" {
+				return
+			}
+		}
+	}
+	t.Fatal("expected limit_exceeded when task count exceeds maxParallelTasks")
+}
+
+func TestLuaExecutor_AgentRunParallel_ObservabilityEvents(t *testing.T) {
+	ex, _ := NewLuaExecutor(map[string]any{
+		"script": `
+local tasks = {
+  {skill="lite", input="q1"},
+  {skill="pro",  input="q2"},
+  {skill="lite", input="q3"},
+}
+local results, errs = agent.run_parallel(tasks)
+context.set_output("ok")
+`,
+	})
+	rc := buildLuaRC(nil)
+	rc.SpawnChildRun = func(_ context.Context, _ string, input string) (string, error) {
+		return input + "_done", nil
+	}
+
+	emitter := events.NewEmitter("trace")
+	var got []events.RunEvent
+	err := ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	var dispatchFound, completeFound bool
+	for _, ev := range got {
+		if ev.Type == "agent.parallel_dispatch" {
+			count, _ := ev.DataJSON["task_count"].(int)
+			if count == 3 {
+				dispatchFound = true
+			}
+		}
+		if ev.Type == "agent.parallel_complete" {
+			success, _ := ev.DataJSON["success_count"].(int)
+			errCount, _ := ev.DataJSON["error_count"].(int)
+			if success == 3 && errCount == 0 {
+				completeFound = true
+			}
+		}
+	}
+	if !dispatchFound {
+		t.Error("agent.parallel_dispatch event with task_count=3 not found")
+	}
+	if !completeFound {
+		t.Error("agent.parallel_complete event with success_count=3 not found")
+	}
 }
