@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"time"
 
@@ -13,13 +14,107 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/api/internal/turnstile"
 
 	"github.com/google/uuid"
 )
 
+const (
+	settingTurnstileSecretKey   = "turnstile.secret_key"
+	settingTurnstileSiteKey     = "turnstile.site_key"
+	settingTurnstileAllowedHost = "turnstile.allowed_host"
+)
+
+// loadTurnstileSecretKey reads from DB first, falls back to envFallback.
+func loadTurnstileSecretKey(r *nethttp.Request, repo *data.PlatformSettingsRepository, envFallback string) string {
+	if repo != nil {
+		if s, err := repo.Get(r.Context(), settingTurnstileSecretKey); err == nil && s != nil {
+			return s.Value
+		}
+	}
+	return envFallback
+}
+
+// loadTurnstileAllowedHost reads from DB first, falls back to envFallback.
+func loadTurnstileAllowedHost(r *nethttp.Request, repo *data.PlatformSettingsRepository, envFallback string) string {
+	if repo != nil {
+		if s, err := repo.Get(r.Context(), settingTurnstileAllowedHost); err == nil && s != nil {
+			return s.Value
+		}
+	}
+	return envFallback
+}
+
+// verifyTurnstileToken performs Turnstile validation if a secret key is configured.
+// Returns false and writes the error response when validation fails.
+func verifyTurnstileToken(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	token string,
+	repo *data.PlatformSettingsRepository,
+	envSecretKey string,
+	envAllowedHost string,
+) bool {
+	secretKey := loadTurnstileSecretKey(r, repo, envSecretKey)
+	if secretKey == "" {
+		return true // not configured, skip
+	}
+
+	allowedHost := loadTurnstileAllowedHost(r, repo, envAllowedHost)
+
+	// RemoteAddr 格式为 "IP:port"，需剥离端口再传给 Cloudflare
+	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteIP = r.RemoteAddr // 兜底，格式异常时原样传
+	}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		remoteIP = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
+	}
+
+	verifyErr := turnstile.Verify(r.Context(), nethttp.DefaultClient, turnstile.VerifyRequest{
+		SecretKey:   secretKey,
+		Token:       token,
+		RemoteIP:    strings.TrimSpace(remoteIP),
+		AllowedHost: allowedHost,
+	})
+	if verifyErr != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "auth.captcha_invalid", "captcha validation failed", traceID, nil)
+		return false
+	}
+	return true
+}
+
+type captchaConfigResponse struct {
+	Enabled bool   `json:"enabled"`
+	SiteKey string `json:"site_key"`
+}
+
+func captchaConfig(
+	settingsRepo *data.PlatformSettingsRepository,
+	envSiteKey string,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		traceID := observability.TraceIDFromContext(r.Context())
+
+		siteKey := envSiteKey
+		if settingsRepo != nil {
+			if s, err := settingsRepo.Get(r.Context(), settingTurnstileSiteKey); err == nil && s != nil {
+				siteKey = s.Value
+			}
+		}
+
+		writeJSON(w, traceID, nethttp.StatusOK, captchaConfigResponse{
+			Enabled: siteKey != "",
+			SiteKey: siteKey,
+		})
+	}
+}
+
 type loginRequest struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
+	Login           string `json:"login"`
+	Password        string `json:"password"`
+	CfTurnstileToken string `json:"cf_turnstile_token"`
 }
 
 type loginResponse struct {
@@ -33,10 +128,12 @@ type logoutResponse struct {
 }
 
 type registerRequest struct {
-	Login      string `json:"login"`
-	Password   string `json:"password"`
-	Email      string `json:"email"`
-	InviteCode string `json:"invite_code"`
+	Login            string `json:"login"`
+	Password         string `json:"password"`
+	Email            string `json:"email"`
+	InviteCode       string `json:"invite_code"`
+	Locale           string `json:"locale"`
+	CfTurnstileToken string `json:"cf_turnstile_token"`
 }
 
 type registerResponse struct {
@@ -72,7 +169,7 @@ type updateMeResponse struct {
 	Username string `json:"username"`
 }
 
-func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.ResponseWriter, *nethttp.Request) {
+func login(authService *auth.Service, auditWriter *audit.Writer, settingsRepo *data.PlatformSettingsRepository, envSecretKey, envAllowedHost string) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
 			writeMethodNotAllowed(w, r)
@@ -98,6 +195,10 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 		}
 		if body.Password == "" || len(body.Password) > 1024 {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
 			return
 		}
 
@@ -249,6 +350,8 @@ func register(
 	registrationService *auth.RegistrationService,
 	flagService *featureflag.Service,
 	auditWriter *audit.Writer,
+	settingsRepo *data.PlatformSettingsRepository,
+	envSecretKey, envAllowedHost string,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
@@ -271,6 +374,7 @@ func register(
 		body.Login = strings.TrimSpace(body.Login)
 		body.Email = strings.TrimSpace(body.Email)
 		body.InviteCode = strings.TrimSpace(body.InviteCode)
+		body.Locale = strings.TrimSpace(body.Locale)
 		if body.Login == "" || len(body.Login) > 256 {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
@@ -281,6 +385,10 @@ func register(
 		}
 		if body.Email == "" || len(body.Email) > 256 || !strings.Contains(body.Email, "@") {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "email is required and must be valid", traceID, nil)
+			return
+		}
+
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
 			return
 		}
 
@@ -298,7 +406,7 @@ func register(
 			return
 		}
 
-		created, err := registrationService.Register(r.Context(), body.Login, body.Password, body.Email, body.InviteCode, !openRegistration)
+		created, err := registrationService.Register(r.Context(), body.Login, body.Password, body.Email, body.Locale, body.InviteCode, !openRegistration)
 		if err != nil {
 			var loginExists auth.LoginExistsError
 			if errors.As(err, &loginExists) {
@@ -583,7 +691,8 @@ func emailVerifyConfirm(emailVerifyService *auth.EmailVerifyService) func(nethtt
 }
 
 type emailOTPSendRequest struct {
-	Email string `json:"email"`
+	Email            string `json:"email"`
+	CfTurnstileToken string `json:"cf_turnstile_token"`
 }
 
 type emailOTPVerifyRequest struct {
@@ -591,7 +700,7 @@ type emailOTPVerifyRequest struct {
 	Code  string `json:"code"`
 }
 
-func emailOTPSend(otpLoginService *auth.EmailOTPLoginService) func(nethttp.ResponseWriter, *nethttp.Request) {
+func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, settingsRepo *data.PlatformSettingsRepository, envSecretKey, envAllowedHost string) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
 			writeMethodNotAllowed(w, r)
@@ -612,6 +721,10 @@ func emailOTPSend(otpLoginService *auth.EmailOTPLoginService) func(nethttp.Respo
 		body.Email = strings.TrimSpace(body.Email)
 		if body.Email == "" || !strings.Contains(body.Email, "@") {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "valid email is required", traceID, nil)
+			return
+		}
+
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
 			return
 		}
 

@@ -27,6 +27,7 @@ export interface LocaleStrings {
     apiKeys: string
     webhooks: string
     ipRules: string
+    captcha: string
     members: string
     teams: string
     projects: string
@@ -793,6 +794,26 @@ export interface LocaleStrings {
       toastLoadFailed: string
       toastDeleteFailed: string
       toastDefaultFailed: string
+    }
+    captcha: {
+      title: string
+      statusTitle: string
+      statusConfigured: string
+      statusNotConfigured: string
+      sourceDb: string
+      sourceEnv: string
+      configTitle: string
+      fieldSiteKey: string
+      fieldSecretKey: string
+      fieldSecretKeySet: string
+      fieldSecretKeyPlaceholder: string
+      fieldAllowedHost: string
+      fieldAllowedHostPlaceholder: string
+      fieldAllowedHostHint: string
+      save: string
+      toastLoadFailed: string
+      toastSaved: string
+      toastSaveFailed: string
     }
     email: {
       title: string

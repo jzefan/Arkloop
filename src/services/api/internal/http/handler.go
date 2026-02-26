@@ -89,6 +89,10 @@ type HandlerConfig struct {
 
 	EmailFrom string
 
+	TurnstileEnvSecretKey   string
+	TurnstileEnvSiteKey     string
+	TurnstileEnvAllowedHost string
+
 	RedisClient *redis.Client
 	RunLimiter  *data.RunLimiter
 
@@ -100,15 +104,16 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(cfg.SchemaRepository, cfg.Logger))
 
-	mux.HandleFunc("/v1/auth/login", login(cfg.AuthService, cfg.AuditWriter))
+	mux.HandleFunc("GET /v1/auth/captcha-config", captchaConfig(cfg.PlatformSettingsRepo, cfg.TurnstileEnvSiteKey))
+	mux.HandleFunc("/v1/auth/login", login(cfg.AuthService, cfg.AuditWriter, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
 	mux.HandleFunc("/v1/auth/refresh", refreshToken(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter))
+	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
 	mux.HandleFunc("/v1/auth/registration-mode", registrationMode(cfg.FeatureFlagService))
 	mux.HandleFunc("POST /v1/auth/check", checkUser(cfg.UserCredentialRepo, cfg.UsersRepo))
 	mux.HandleFunc("/v1/auth/email/verify/send", emailVerifySend(cfg.AuthService, cfg.EmailVerifyService))
 	mux.HandleFunc("/v1/auth/email/verify/confirm", emailVerifyConfirm(cfg.EmailVerifyService))
-	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService))
+	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
 	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(cfg.EmailOTPLoginService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo, cfg.FeatureFlagService))
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))

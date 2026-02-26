@@ -86,6 +86,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       label: t.groups.security,
       items: [
         { label: t.nav.ipRules, path: '/ip-rules', icon: <ShieldCheck size={17} /> },
+        { label: t.nav.captcha, path: '/captcha',  icon: <Bot size={17} /> },
       ],
     },
     {

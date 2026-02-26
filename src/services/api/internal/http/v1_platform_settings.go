@@ -121,6 +121,13 @@ func platformSettingEntry(
 				UpdatedAt: setting.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			})
 
+		case nethttp.MethodDelete:
+			if err := settingsRepo.Delete(r.Context(), key); err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			w.WriteHeader(nethttp.StatusNoContent)
+
 		default:
 			writeMethodNotAllowed(w, r)
 		}

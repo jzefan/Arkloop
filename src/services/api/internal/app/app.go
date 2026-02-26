@@ -518,6 +518,9 @@ func (a *Application) Run(ctx context.Context) error {
 			EmailOTPLoginService: emailOTPLoginService,
 			JobRepo:              jobRepo,
 			EmailFrom:            strings.TrimSpace(a.config.EmailFrom),
+			TurnstileEnvSecretKey:   a.config.TurnstileSecretKey,
+			TurnstileEnvSiteKey:     a.config.TurnstileSiteKey,
+			TurnstileEnvAllowedHost: a.config.TurnstileAllowedHost,
 			SSEConfig: apihttp.SSEConfig{
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,

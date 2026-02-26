@@ -10,6 +10,7 @@ import {
 export type LoginRequest = {
   login: string
   password: string
+  cf_turnstile_token?: string
 }
 
 export type LoginResponse = {
@@ -23,6 +24,8 @@ export type RegisterRequest = {
   password: string
   email: string
   invite_code?: string
+  locale?: string
+  cf_turnstile_token?: string
 }
 
 export type RegisterResponse = {
@@ -252,10 +255,10 @@ export async function confirmEmailVerification(token: string): Promise<{ ok: boo
   })
 }
 
-export async function sendEmailOTP(email: string): Promise<void> {
+export async function sendEmailOTP(email: string, cfTurnstileToken?: string): Promise<void> {
   await apiFetch<void>('/v1/auth/email/otp/send', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, cf_turnstile_token: cfTurnstileToken }),
   })
 }
 
@@ -275,6 +278,15 @@ export async function checkUser(login: string): Promise<{ exists: boolean; maske
 
 export type LogoutResponse = {
   ok: boolean
+}
+
+export type CaptchaConfigResponse = {
+  enabled: boolean
+  site_key: string
+}
+
+export async function getCaptchaConfig(): Promise<CaptchaConfigResponse> {
+  return await apiFetch<CaptchaConfigResponse>('/v1/auth/captcha-config')
 }
 
 export async function logout(accessToken: string): Promise<LogoutResponse> {

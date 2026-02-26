@@ -111,6 +111,7 @@ func (s *RegistrationService) Register(
 	login string,
 	password string,
 	email string,
+	locale string,
 	inviteCode string,
 	requireValidCode bool,
 ) (RegisterResult, error) {
@@ -149,7 +150,7 @@ func (s *RegistrationService) Register(
 		return RegisterResult{}, LoginExistsError{}
 	}
 
-	user, err := userRepo.Create(ctx, login, email)
+	user, err := userRepo.Create(ctx, login, email, locale)
 	if err != nil {
 		return RegisterResult{}, err
 	}

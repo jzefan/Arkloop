@@ -13,6 +13,7 @@ import { MCPConfigsPage } from './pages/mcp-configs/MCPConfigsPage'
 import { SkillsPage } from './pages/skills/SkillsPage'
 import { APIKeysPage } from './pages/api-keys/APIKeysPage'
 import { IPRulesPage } from './pages/ip-rules/IPRulesPage'
+import { CaptchaPage } from './pages/captcha/CaptchaPage'
 import { TeamsPage } from './pages/teams/TeamsPage'
 import { UsagePage } from './pages/usage/UsagePage'
 import { MyUsagePage } from './pages/my-usage/MyUsagePage'
@@ -98,6 +99,7 @@ function App() {
         <Route path="webhooks" element={<PlaceholderPage title="Webhooks" />} />
         {/* Security */}
         <Route path="ip-rules" element={<IPRulesPage />} />
+        <Route path="captcha" element={<CaptchaPage />} />
         {/* Organization */}
         <Route path="members" element={<OrgsPage />} />
         <Route path="teams" element={<TeamsPage />} />

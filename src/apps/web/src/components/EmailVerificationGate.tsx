@@ -1,15 +1,33 @@
-import { useState, useRef } from 'react'
-import { sendEmailVerification, sendEmailOTP, verifyEmailOTP, isApiError } from '../api'
+import { useState, useRef, useEffect } from 'react'
+import { sendEmailVerification, sendEmailOTP, verifyEmailOTP, isApiError, getMe } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+
+const POLL_INTERVAL_MS = 4000
 
 interface Props {
   accessToken: string
   email: string
   onVerified: () => void
+  onPollVerified: () => void
+  onLogout: () => void
 }
 
-export function EmailVerificationGate({ accessToken, email, onVerified }: Props) {
+export function EmailVerificationGate({ accessToken, email, onVerified, onPollVerified, onLogout }: Props) {
   const { t } = useLocale()
+
+  // 轮询检测邮箱是否已在其他标签页/设备完成验证
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const me = await getMe(accessToken)
+        if (me.email_verified) {
+          clearInterval(id)
+          onPollVerified()
+        }
+      } catch { /* 静默 */ }
+    }, POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [accessToken, onPollVerified])
 
   const [resendCountdown, setResendCountdown] = useState(0)
   const [resending, setResending] = useState(false)
@@ -35,6 +53,18 @@ export function EmailVerificationGate({ accessToken, email, onVerified }: Props)
         return c - 1
       })
     }, 1000)
+  }
+
+  const [checking, setChecking] = useState(false)
+
+  const handleCheckNow = async () => {
+    setChecking(true)
+    try {
+      const me = await getMe(accessToken)
+      if (me.email_verified) onPollVerified()
+    } catch { /* 静默 */ } finally {
+      setChecking(false)
+    }
   }
 
   const handleResend = async () => {
@@ -115,10 +145,23 @@ export function EmailVerificationGate({ accessToken, email, onVerified }: Props)
             </button>
 
             <button
-              onClick={handleSwitchToOtp}
+              onClick={handleCheckNow}
+              disabled={checking}
               style={{
                 height: '36px', borderRadius: '8px', border: 'none',
                 background: 'none', color: 'var(--c-text-tertiary)',
+                fontSize: '12px', cursor: 'pointer',
+                opacity: checking ? 0.5 : 1,
+              }}
+            >
+              {t.emailGateAlreadyVerified}
+            </button>
+
+            <button
+              onClick={handleSwitchToOtp}
+              style={{
+                height: '28px', borderRadius: '8px', border: 'none',
+                background: 'none', color: 'var(--c-text-muted)',
                 fontSize: '12px', cursor: 'pointer',
               }}
             >
@@ -179,6 +222,19 @@ export function EmailVerificationGate({ accessToken, email, onVerified }: Props)
             </button>
           </div>
         )}
+
+        <div style={{ borderTop: '0.5px solid var(--c-border-subtle)', paddingTop: '12px' }}>
+          <button
+            onClick={onLogout}
+            style={{
+              width: '100%', height: '32px', borderRadius: '8px', border: 'none',
+              background: 'none', color: 'var(--c-text-muted)',
+              fontSize: '12px', cursor: 'pointer',
+            }}
+          >
+            {t.logout}
+          </button>
+        </div>
       </div>
     </div>
   )
