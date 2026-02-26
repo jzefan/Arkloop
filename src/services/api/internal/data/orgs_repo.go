@@ -15,6 +15,7 @@ type Org struct {
 	ID           uuid.UUID
 	Slug         string
 	Name         string
+	Type         string // "personal" | "workspace"
 	OwnerUserID  *uuid.UUID
 	Status       string
 	Country      *string
@@ -36,7 +37,7 @@ func NewOrgRepository(db Querier) (*OrgRepository, error) {
 	return &OrgRepository{db: db}, nil
 }
 
-func (r *OrgRepository) Create(ctx context.Context, slug string, name string) (Org, error) {
+func (r *OrgRepository) Create(ctx context.Context, slug string, name string, orgType string) (Org, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -47,18 +48,22 @@ func (r *OrgRepository) Create(ctx context.Context, slug string, name string) (O
 	if name == "" {
 		return Org{}, fmt.Errorf("name must not be empty")
 	}
+	if orgType != "personal" && orgType != "workspace" {
+		return Org{}, fmt.Errorf("org type must be personal or workspace")
+	}
 
 	var org Org
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO orgs (slug, name)
-		 VALUES ($1, $2)
-		 RETURNING id, slug, name, owner_user_id, status, country, timezone,
+		`INSERT INTO orgs (slug, name, type)
+		 VALUES ($1, $2, $3)
+		 RETURNING id, slug, name, type, owner_user_id, status, country, timezone,
 		           logo_url, settings_json, deleted_at, created_at`,
 		slug,
 		name,
+		orgType,
 	).Scan(
-		&org.ID, &org.Slug, &org.Name,
+		&org.ID, &org.Slug, &org.Name, &org.Type,
 		&org.OwnerUserID, &org.Status, &org.Country, &org.Timezone,
 		&org.LogoURL, &org.SettingsJSON, &org.DeletedAt, &org.CreatedAt,
 	)
@@ -79,14 +84,14 @@ func (r *OrgRepository) GetByID(ctx context.Context, orgID uuid.UUID) (*Org, err
 	var org Org
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, slug, name, owner_user_id, status, country, timezone,
+		`SELECT id, slug, name, type, owner_user_id, status, country, timezone,
 		        logo_url, settings_json, deleted_at, created_at
 		 FROM orgs
 		 WHERE id = $1
 		 LIMIT 1`,
 		orgID,
 	).Scan(
-		&org.ID, &org.Slug, &org.Name,
+		&org.ID, &org.Slug, &org.Name, &org.Type,
 		&org.OwnerUserID, &org.Status, &org.Country, &org.Timezone,
 		&org.LogoURL, &org.SettingsJSON, &org.DeletedAt, &org.CreatedAt,
 	)
@@ -97,6 +102,49 @@ func (r *OrgRepository) GetByID(ctx context.Context, orgID uuid.UUID) (*Org, err
 		return nil, err
 	}
 	return &org, nil
+}
+
+// ListByUser 返回用户所属的所有 org（通过 org_memberships JOIN）。
+func (r *OrgRepository) ListByUser(ctx context.Context, userID uuid.UUID) ([]Org, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("user_id must not be empty")
+	}
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT o.id, o.slug, o.name, o.type, o.owner_user_id, o.status, o.country, o.timezone,
+		        o.logo_url, o.settings_json, o.deleted_at, o.created_at
+		 FROM orgs o
+		 JOIN org_memberships m ON m.org_id = o.id
+		 WHERE m.user_id = $1
+		   AND o.deleted_at IS NULL
+		 ORDER BY o.created_at ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("orgs.ListByUser: %w", err)
+	}
+	defer rows.Close()
+
+	var orgs []Org
+	for rows.Next() {
+		var org Org
+		if err := rows.Scan(
+			&org.ID, &org.Slug, &org.Name, &org.Type,
+			&org.OwnerUserID, &org.Status, &org.Country, &org.Timezone,
+			&org.LogoURL, &org.SettingsJSON, &org.DeletedAt, &org.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("orgs.ListByUser scan: %w", err)
+		}
+		orgs = append(orgs, org)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("orgs.ListByUser rows: %w", err)
+	}
+	return orgs, nil
 }
 
 func (r *OrgRepository) CountActive(ctx context.Context) (int64, error) {

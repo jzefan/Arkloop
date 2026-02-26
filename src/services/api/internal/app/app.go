@@ -200,6 +200,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 		authService         *auth.Service
 		registrationService *auth.RegistrationService
+		orgService          *auth.OrgService
 		auditWriter         *audit.Writer
 	)
 
@@ -384,6 +385,10 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		orgService, err = auth.NewOrgService(pool, orgRepo, membershipRepo)
+		if err != nil {
+			return err
+		}
 		if entitlementSvc != nil {
 			registrationService.SetEntitlementResolver(&entitlementAdapter{svc: entitlementSvc})
 		}
@@ -427,6 +432,7 @@ func (a *Application) Run(ctx context.Context) error {
 			SchemaRepository:     schemaRepo,
 			AuthService:          authService,
 			RegistrationService:  registrationService,
+			OrgService:           orgService,
 			OrgMembershipRepo:    membershipRepo,
 			ThreadRepo:           threadRepo,
 			MessageRepo:          messageRepo,

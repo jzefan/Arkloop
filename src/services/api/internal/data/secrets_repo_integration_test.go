@@ -51,7 +51,7 @@ func setupSecretsTestRepo(t *testing.T) (*SecretsRepository, *OrgRepository, con
 func TestSecretsCreate(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-create", "Test Org Create")
+	org, err := orgRepo.Create(ctx, "test-org-create", "Test Org Create", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestSecretsCreate(t *testing.T) {
 func TestSecretsDecrypt(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-decrypt", "Test Org Decrypt")
+	org, err := orgRepo.Create(ctx, "test-org-decrypt", "Test Org Decrypt", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestSecretsDecrypt(t *testing.T) {
 func TestSecretsDecryptNotFound(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-notfound", "Test Org NotFound")
+	org, err := orgRepo.Create(ctx, "test-org-notfound", "Test Org NotFound", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSecretsDecryptNotFound(t *testing.T) {
 func TestSecretsUniqueConstraint(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-unique", "Test Org Unique")
+	org, err := orgRepo.Create(ctx, "test-org-unique", "Test Org Unique", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestSecretsUniqueConstraint(t *testing.T) {
 func TestSecretsUpsert(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-upsert", "Test Org Upsert")
+	org, err := orgRepo.Create(ctx, "test-org-upsert", "Test Org Upsert", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestSecretsUpsert(t *testing.T) {
 func TestSecretsDelete(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-delete", "Test Org Delete")
+	org, err := orgRepo.Create(ctx, "test-org-delete", "Test Org Delete", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestSecretsDelete(t *testing.T) {
 func TestSecretsDeleteNotFound(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-del-notfound", "Test Org Del NotFound")
+	org, err := orgRepo.Create(ctx, "test-org-del-notfound", "Test Org Del NotFound", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestSecretsDeleteNotFound(t *testing.T) {
 func TestSecretsList(t *testing.T) {
 	repo, orgRepo, ctx := setupSecretsTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "test-org-list", "Test Org List")
+	org, err := orgRepo.Create(ctx, "test-org-list", "Test Org List", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
