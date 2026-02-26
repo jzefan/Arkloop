@@ -300,6 +300,7 @@ export async function logout(accessToken: string): Promise<LogoutResponse> {
 
 export type CreateThreadRequest = {
   title?: string
+  is_private?: boolean
 }
 
 export type ThreadResponse = {
@@ -309,6 +310,7 @@ export type ThreadResponse = {
   title: string | null
   created_at: string
   active_run_id: string | null
+  is_private: boolean
 }
 
 export async function createThread(

@@ -459,6 +459,12 @@ func (a *Application) Run(ctx context.Context) error {
 		go reaper.Run(ctx)
 	}
 
+	// 启动私密 thread 清理器（每小时硬删除过期私密对话）
+	if threadRepo != nil {
+		privateReaper := jobs.NewPrivateThreadReaper(threadRepo, a.logger)
+		go privateReaper.Run(ctx)
+	}
+
 	listener, err := net.Listen("tcp", a.config.Addr)
 	if err != nil {
 		return err

@@ -21,7 +21,8 @@ import (
 )
 
 type createThreadRequest struct {
-	Title *string `json:"title"`
+	Title     *string `json:"title"`
+	IsPrivate bool    `json:"is_private"`
 }
 
 type updateThreadRequest struct {
@@ -38,6 +39,7 @@ type threadResponse struct {
 	ProjectID       *string `json:"project_id,omitempty"`
 	CreatedAt       string  `json:"created_at"`
 	ActiveRunID     *string `json:"active_run_id"`
+	IsPrivate       bool    `json:"is_private"`
 }
 
 type optionalString struct {
@@ -123,7 +125,7 @@ func createThread(
 			return
 		}
 
-		thread, err := threadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, body.Title)
+		thread, err := threadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, body.Title, body.IsPrivate)
 		if err != nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -775,6 +777,7 @@ func toThreadResponse(thread data.Thread) threadResponse {
 		ProjectID:       projectID,
 		CreatedAt:       thread.CreatedAt.UTC().Format(time.RFC3339Nano),
 		ActiveRunID:     nil,
+		IsPrivate:       thread.IsPrivate,
 	}
 }
 

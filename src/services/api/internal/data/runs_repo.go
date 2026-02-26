@@ -438,6 +438,57 @@ func (r *RunEventRepository) allocateSeq(ctx context.Context) (int64, error) {
 	return seq, nil
 }
 
+// ProvideInput 向运行中的 run 注入用户输入。
+// 检查 run 非终态后写入 run.input_provided 事件，调用方负责提交事务并 pg_notify。
+func (r *RunEventRepository) ProvideInput(
+	ctx context.Context,
+	runID uuid.UUID,
+	content string,
+	traceID string,
+) (*RunEvent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if runID == uuid.Nil {
+		return nil, fmt.Errorf("run_id must not be empty")
+	}
+	if content == "" {
+		return nil, fmt.Errorf("content must not be empty")
+	}
+
+	if err := r.lockRunRow(ctx, runID); err != nil {
+		return nil, err
+	}
+
+	terminal, err := r.GetLatestEventType(ctx, runID, []string{"run.completed", "run.failed", "run.cancelled"})
+	if err != nil {
+		return nil, err
+	}
+	if terminal != "" {
+		return nil, RunNotActiveError{RunID: runID}
+	}
+
+	dataJSON := map[string]any{"content": content}
+	if traceID != "" {
+		dataJSON["trace_id"] = traceID
+	}
+
+	event, err := r.insertEvent(ctx, runID, "run.input_provided", dataJSON, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+// RunNotActiveError 表示 run 已处于终态，无法接收输入。
+type RunNotActiveError struct {
+	RunID uuid.UUID
+}
+
+func (e RunNotActiveError) Error() string {
+	return "run is not active"
+}
+
 func mapOrEmpty(value map[string]any) map[string]any {
 	if value == nil {
 		return map[string]any{}

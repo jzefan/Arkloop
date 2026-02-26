@@ -60,7 +60,7 @@ func NewRoutingMiddleware(
 				credName = strings.TrimSpace(*rc.AgentConfig.Model)
 			}
 			if credName != "" && len(dbCfg.Routes) > 0 {
-				if route, cred, ok := dbCfg.GetHighestPriorityRouteByCredentialName(credName); ok {
+				if route, cred, ok := dbCfg.GetHighestPriorityRouteByCredentialName(credName, rc.InputJSON); ok {
 					if cred.Scope == routing.CredentialScopeOrg && !byokEnabled {
 						decision = routing.ProviderRouteDecision{
 							Denied: &routing.ProviderRouteDenied{

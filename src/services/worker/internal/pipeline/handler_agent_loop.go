@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/creditpolicy"
+	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/runlimit"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -41,15 +43,24 @@ func NewAgentLoopHandler(
 	runLimiterRDB *redis.Client,
 	usageRepo data.UsageRecordsRepository,
 	creditsRepo data.CreditsRepository,
+	resolver *sharedent.Resolver,
 ) RunHandler {
 	return func(ctx context.Context, rc *RunContext) error {
 		selected := rc.SelectedRoute
+
+		policy := creditpolicy.DefaultPolicy
+		if resolver != nil {
+			if p, err := resolver.ResolveDeductionPolicy(ctx, rc.Run.OrgID); err == nil {
+				policy = p
+			}
+		}
 
 		writer := newEventWriter(
 			rc.Pool, rc.Run, rc.TraceID, runLimiterRDB,
 			selected.Route.Model, usageRepo, creditsRepo,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
 			selected.Route.CostPer1kCacheWrite, selected.Route.CostPer1kCacheRead,
+			policy,
 		)
 		defer writer.Close(ctx)
 
@@ -119,6 +130,7 @@ type eventWriter struct {
 	costPer1kOutput     *float64
 	costPer1kCacheWrite *float64
 	costPer1kCacheRead  *float64
+	policy              creditpolicy.CreditDeductionPolicy
 
 	tx                       pgx.Tx
 	pendingEventsSinceCommit int
@@ -148,6 +160,7 @@ func newEventWriter(
 	costPer1kOutput *float64,
 	costPer1kCacheWrite *float64,
 	costPer1kCacheRead *float64,
+	policy creditpolicy.CreditDeductionPolicy,
 ) *eventWriter {
 	if multiplier <= 0 {
 		multiplier = 1.0
@@ -166,6 +179,7 @@ func newEventWriter(
 		costPer1kOutput:     costPer1kOutput,
 		costPer1kCacheWrite: costPer1kCacheWrite,
 		costPer1kCacheRead:  costPer1kCacheRead,
+		policy:              policy,
 	}
 }
 
@@ -416,8 +430,14 @@ func toInt64(v any) (int64, bool) {
 func (w *eventWriter) calcCreditDeduction() int64 {
 	const creditsPerUSD = 1000.0 // 1 credit = $0.001
 
+	totalTokens := w.totalInputTokens + w.totalOutputTokens
+	policyMultiplier := w.policy.MultiplierFor(totalTokens, w.totalCostUSD)
+	if policyMultiplier == 0 {
+		return 0
+	}
+
 	if w.totalCostUSD > 0 {
-		raw := w.totalCostUSD * creditsPerUSD * w.multiplier
+		raw := w.totalCostUSD * creditsPerUSD * w.multiplier * policyMultiplier
 		credits := int64(math.Ceil(raw))
 		if credits < 1 {
 			credits = 1
@@ -438,7 +458,7 @@ func (w *eventWriter) calcCreditDeduction() int64 {
 		float64(w.totalCacheReadTokens)*0.1 +
 		float64(w.totalCachedTokens)*0.5 +
 		float64(w.totalOutputTokens)*1.0
-	raw := effective / 1000.0 * w.multiplier
+	raw := effective / 1000.0 * w.multiplier * policyMultiplier
 	credits := int64(math.Ceil(raw))
 	if credits < 1 {
 		credits = 1

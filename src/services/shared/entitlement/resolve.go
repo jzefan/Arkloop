@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"time"
 
+	"arkloop/services/shared/creditpolicy"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -26,6 +28,7 @@ var defaults = map[string]entry{
 	"feature.mcp_remote_enabled": {raw: "false", typ: "bool"},
 	"credit.initial_grant":       {raw: "1000", typ: "int"},
 	"credit.invite_reward":       {raw: "500", typ: "int"},
+	"credit.deduction_policy":    {raw: creditpolicy.DefaultPolicyJSON, typ: "json"},
 }
 
 type entry struct {
@@ -201,4 +204,14 @@ func writeCache(ctx context.Context, rdb *redis.Client, orgID uuid.UUID, key, va
 		typ = def.typ
 	}
 	_ = rdb.Set(ctx, cachePrefix+orgID.String()+":"+key, typ+":"+val, cacheTTL).Err()
+}
+
+// ResolveDeductionPolicy 解析 credit.deduction_policy 权益，fail-open：
+// 解析失败或 key 不存在时返回 creditpolicy.DefaultPolicy。
+func (r *Resolver) ResolveDeductionPolicy(ctx context.Context, orgID uuid.UUID) (creditpolicy.CreditDeductionPolicy, error) {
+	raw, err := r.Resolve(ctx, orgID, "credit.deduction_policy")
+	if err != nil {
+		return creditpolicy.DefaultPolicy, nil
+	}
+	return creditpolicy.Parse(raw), nil
 }

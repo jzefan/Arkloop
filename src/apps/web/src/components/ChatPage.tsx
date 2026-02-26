@@ -42,12 +42,15 @@ type OutletContext = {
   onOpenNotifications: () => void
   notificationVersion: number
   creditsBalance: number
+  isPrivateMode: boolean
+  onTogglePrivateMode: () => void
+  privateThreadIds: Set<string>
 }
 
 type LocationState = { initialRunId?: string } | null
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -416,12 +419,24 @@ export function ChatPage() {
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
       <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
+        {threadId && privateThreadIds.has(threadId) && (
+          <span className="text-xs font-medium text-[var(--c-text-muted)]">Private</span>
+        )}
         <div className="flex items-center gap-1 text-[var(--c-text-secondary)]" style={{ opacity: 0.8 }}>
           <Zap size={13} strokeWidth={2.2} />
           <span className="text-sm font-medium tabular-nums">{creditsBalance.toLocaleString()}</span>
         </div>
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} />
-        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
+        <button
+          onClick={onTogglePrivateMode}
+          title={threadId && privateThreadIds.has(threadId) ? '私密对话' : '开启/关闭私密模式'}
+          className={[
+            'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+            threadId && privateThreadIds.has(threadId)
+              ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+              : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+          ].join(' ')}
+        >
           <Glasses size={18} />
         </button>
       </div>

@@ -316,16 +316,16 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 	var defs []Definition
 	for rows.Next() {
 		var (
-			skillKey              string
-			version               string
-			displayName           string
-			description           *string
-			promptMD              string
-			toolAllowlist         []string
-			budgetsRaw            []byte
-			executorType          string
-			executorConfigRaw     []byte
-			preferredCredential   *string
+			skillKey            string
+			version             string
+			displayName         string
+			description         *string
+			promptMD            string
+			toolAllowlist       []string
+			budgetsRaw          []byte
+			executorType        string
+			executorConfigRaw   []byte
+			preferredCredential *string
 		)
 		if err := rows.Scan(&skillKey, &version, &displayName, &description,
 			&promptMD, &toolAllowlist, &budgetsRaw,

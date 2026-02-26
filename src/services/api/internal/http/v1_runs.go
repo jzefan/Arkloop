@@ -62,6 +62,12 @@ type cancelRunResponse struct {
 	OK bool `json:"ok"`
 }
 
+type submitInputResponse struct {
+	OK bool `json:"ok"`
+}
+
+const maxInputContentBytes = 32 * 1024 // 32KB
+
 type globalRunResponse struct {
 	RunID             string   `json:"run_id"`
 	OrgID             string   `json:"org_id"`
@@ -467,6 +473,95 @@ func cancelRun(
 	}
 }
 
+func submitRunInput(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	runRepo *data.RunEventRepository,
+	auditWriter *audit.Writer,
+	pool *pgxpool.Pool,
+	apiKeysRepo *data.APIKeysRepository,
+) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
+		traceID := observability.TraceIDFromContext(r.Context())
+		if authService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		if runRepo == nil || pool == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+
+		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
+		if !ok {
+			return
+		}
+
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		if strings.TrimSpace(body.Content) == "" {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "content must not be empty", traceID, nil)
+			return
+		}
+		if len(body.Content) > maxInputContentBytes {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "content too large", traceID, nil)
+			return
+		}
+
+		run, err := runRepo.GetRun(r.Context(), runID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if run == nil {
+			WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
+			return
+		}
+
+		if !authorizeRunOrAudit(w, r, traceID, actor, "runs.input", run, auditWriter) {
+			return
+		}
+
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		defer tx.Rollback(r.Context())
+
+		txRepo, err := data.NewRunEventRepository(tx)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		if _, err := txRepo.ProvideInput(r.Context(), run.ID, body.Content, traceID); err != nil {
+			var notActive data.RunNotActiveError
+			if errors.As(err, &notActive) {
+				WriteError(w, nethttp.StatusConflict, "runs.not_active", "run is not active", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		if err := tx.Commit(r.Context()); err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		// 唤醒 Worker 侧的 WaitForInput LISTEN goroutine
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, '')", "run_input_"+run.ID.String())
+
+		writeJSON(w, traceID, nethttp.StatusOK, submitInputResponse{OK: true})
+	}
+}
+
 func streamRunEvents(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
@@ -763,6 +858,7 @@ func runEntry(
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
 	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
+	submitInput := submitRunInput(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
 	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, sseConfig, apiKeysRepo, rdb)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -812,6 +908,15 @@ func runEntry(
 				return
 			}
 			streamEvents(w, r, runID)
+			return
+		}
+
+		if parts[1] == "input" {
+			if r.Method != nethttp.MethodPost {
+				writeMethodNotAllowed(w, r)
+				return
+			}
+			submitInput(w, r, runID)
 			return
 		}
 
