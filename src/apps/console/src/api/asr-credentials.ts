@@ -2,7 +2,8 @@ import { apiFetch } from './client'
 
 export type AsrCredential = {
   id: string
-  org_id: string
+  org_id: string | null
+  scope: string
   provider: string
   name: string
   key_prefix: string | null
@@ -19,6 +20,7 @@ export type CreateAsrCredentialRequest = {
   base_url?: string
   model: string
   is_default: boolean
+  scope?: string
 }
 
 export async function listAsrCredentials(accessToken: string): Promise<AsrCredential[]> {
