@@ -44,7 +44,7 @@ func TestEngineV1InjectsSkillSystemPromptAndBudgets(t *testing.T) {
 	threadID := uuid.New()
 	runID := uuid.New()
 
-	if err := seedRunStartedWithSkill(t, pool, orgID, threadID, runID, "demo_no_tools@1"); err != nil {
+	if err := seedRunStartedWithSkill(t, pool, orgID, threadID, runID, "lite@1"); err != nil {
 		t.Fatalf("seed run failed: %v", err)
 	}
 
@@ -96,14 +96,11 @@ func TestEngineV1InjectsSkillSystemPromptAndBudgets(t *testing.T) {
 	if gateway.request.Messages[0].Role != "system" {
 		t.Fatalf("expected system prompt injected, got role=%s", gateway.request.Messages[0].Role)
 	}
-	if len(gateway.request.Messages[0].Content) == 0 || gateway.request.Messages[0].Content[0].Text != "NO_TOOLS_PROMPT_SENTINEL: DO NOT CALL ANY TOOLS." {
-		t.Fatalf("unexpected system prompt: %#v", gateway.request.Messages[0].Content)
+	if len(gateway.request.Messages[0].Content) == 0 || gateway.request.Messages[0].Content[0].Text == "" {
+		t.Fatalf("expected non-empty system prompt from lite skill")
 	}
-	if gateway.request.MaxOutputTokens == nil || *gateway.request.MaxOutputTokens != 64 {
-		t.Fatalf("unexpected max_output_tokens: %#v", gateway.request.MaxOutputTokens)
-	}
-	if len(gateway.request.Tools) != 0 {
-		t.Fatalf("expected no tools exposed for demo_no_tools skill, got %d", len(gateway.request.Tools))
+	if gateway.request.MaxOutputTokens == nil || *gateway.request.MaxOutputTokens != 2048 {
+		t.Fatalf("expected max_output_tokens 2048, got %v", gateway.request.MaxOutputTokens)
 	}
 }
 

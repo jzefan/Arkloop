@@ -1,9 +1,0 @@
-id: demo_no_tools
-version: "1"
-title: Demo No Tools
-description: Demo skill for testing SkillRunner system prompt and allowlist.
-tool_allowlist: []
-budgets:
-  max_iterations: 3
-  max_output_tokens: 64
-

@@ -1,0 +1,9 @@
+id: ultra
+version: "1"
+title: Ultra
+description: 高级模式，适合高复杂度任务、长文本生成和深度分析。
+tool_allowlist: []
+budgets:
+  max_iterations: 20
+  max_output_tokens: 8192
+  temperature: 0.7

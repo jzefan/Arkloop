@@ -359,8 +359,13 @@ export function ChatPage() {
       setAttachments([])
       setAssistantDraft('')
 
-      const skillId = tier === 'Auto' ? 'test_interactive' : undefined
-      const run = await createRun(accessToken, threadId, skillId)
+      const tierToSkillId: Record<SelectedTier, string> = {
+        Auto: 'auto',
+        Lite: 'lite',
+        Pro: 'pro',
+        Ultra: 'ultra',
+      }
+      const run = await createRun(accessToken, threadId, tierToSkillId[tier])
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()

@@ -60,15 +60,27 @@ func NewSkillResolutionMiddleware(
 		rc.ToolBudget = map[string]any{}
 		rc.SkillDefinition = resolution.Definition
 
-		// AgentConfigMiddleware 已解析的配置作为基础 fallback
+		// -- 分层遮罩逻辑 --
+		// 1. AgentConfig 提供基线配置（模型、凭证、安全约束、SystemPrompt 前缀）
+		// 2. Skill 在 AgentConfig 约束内设置执行参数（prompt 追加、预算、温度）
+		// 3. 工具策略：AgentConfig 定义可用池，Skill 从池中选取（交集）
+		// 4. MaxOutputTokens：AgentConfig 设上界，Skill 可以设更小值但不能超过
+
+		var agentConfigPromptPrefix string
+		var agentConfigMaxOutputTokens *int
+
 		if rc.AgentConfig != nil {
+			// AgentConfig 的 SystemPrompt 作为前缀基础
 			if rc.AgentConfig.SystemPrompt != nil {
-				rc.SystemPrompt = *rc.AgentConfig.SystemPrompt
+				agentConfigPromptPrefix = *rc.AgentConfig.SystemPrompt
 			}
-			if rc.AgentConfig.MaxOutputTokens != nil {
-				rc.MaxOutputTokens = rc.AgentConfig.MaxOutputTokens
-			}
-			// 将 agent_config 的工具策略应用到 allowlist
+			// AgentConfig 的 MaxOutputTokens 作为上界
+			agentConfigMaxOutputTokens = rc.AgentConfig.MaxOutputTokens
+			// AgentConfig 的 Temperature/TopP 作为 fallback
+			rc.Temperature = rc.AgentConfig.Temperature
+			rc.TopP = rc.AgentConfig.TopP
+
+			// AgentConfig 的工具策略始终生效，定义可用工具池
 			switch rc.AgentConfig.ToolPolicy {
 			case "allowlist":
 				if len(rc.AgentConfig.ToolAllowlist) > 0 {
@@ -85,25 +97,67 @@ func NewSkillResolutionMiddleware(
 					delete(rc.AllowlistSet, name)
 				}
 			}
-			// "none" 不限制，rc.AllowlistSet 保持不变
 		}
 
-		// skill 定义覆盖 agent_config 的对应字段
+		// Skill 在 AgentConfig 约束内设置执行参数
 		if resolution.Definition != nil {
 			def := resolution.Definition
-			rc.SystemPrompt = def.PromptMD
+
+			// SystemPrompt：AgentConfig 前缀 + Skill prompt 追加
+			if agentConfigPromptPrefix != "" && def.PromptMD != "" {
+				rc.SystemPrompt = agentConfigPromptPrefix + "\n\n" + def.PromptMD
+			} else if def.PromptMD != "" {
+				rc.SystemPrompt = def.PromptMD
+			} else {
+				rc.SystemPrompt = agentConfigPromptPrefix
+			}
+
 			if def.Budgets.MaxIterations != nil {
 				rc.MaxIterations = *def.Budgets.MaxIterations
 			}
-			rc.MaxOutputTokens = def.Budgets.MaxOutputTokens
+
+			// MaxOutputTokens：取 Skill 值，但不超过 AgentConfig 上界
+			if def.Budgets.MaxOutputTokens != nil {
+				if agentConfigMaxOutputTokens != nil && *def.Budgets.MaxOutputTokens > *agentConfigMaxOutputTokens {
+					rc.MaxOutputTokens = agentConfigMaxOutputTokens
+				} else {
+					rc.MaxOutputTokens = def.Budgets.MaxOutputTokens
+				}
+			} else {
+				rc.MaxOutputTokens = agentConfigMaxOutputTokens
+			}
+
+			// Temperature/TopP：Skill 设置优先（在合理范围内）
+			if def.Budgets.Temperature != nil {
+				rc.Temperature = def.Budgets.Temperature
+			}
+			if def.Budgets.TopP != nil {
+				rc.TopP = def.Budgets.TopP
+			}
+
 			rc.ToolTimeoutMs = def.Budgets.ToolTimeoutMs
 			for key, value := range def.Budgets.ToolBudget {
 				rc.ToolBudget[key] = value
 			}
-			// skill 声明的偏好凭证，供 RoutingMiddleware 按凭证名称选路
+
+			// Skill 的 tool_allowlist 从 AgentConfig 已缩窄的池中取交集
+			if len(def.ToolAllowlist) > 0 {
+				narrowed := make(map[string]struct{}, len(def.ToolAllowlist))
+				for _, name := range def.ToolAllowlist {
+					if _, ok := rc.AllowlistSet[name]; ok {
+						narrowed[name] = struct{}{}
+					}
+				}
+				rc.AllowlistSet = narrowed
+			}
+
 			if def.PreferredCredential != nil {
 				rc.PreferredCredentialName = *def.PreferredCredential
 			}
+		} else {
+			// 无 skill 定义时，使用 AgentConfig 的值
+			rc.SystemPrompt = agentConfigPromptPrefix
+			rc.MaxOutputTokens = agentConfigMaxOutputTokens
 		}
 
 		return next(ctx, rc)

@@ -23,6 +23,8 @@ type createSkillRequest struct {
 	ToolAllowlist       []string        `json:"tool_allowlist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	PreferredCredential *string         `json:"preferred_credential"`
+	ExecutorType        string          `json:"executor_type"`
+	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 }
 
 type patchSkillRequest struct {
@@ -33,6 +35,8 @@ type patchSkillRequest struct {
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	IsActive            *bool           `json:"is_active"`
 	PreferredCredential *string         `json:"preferred_credential"`
+	ExecutorType        *string         `json:"executor_type"`
+	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 }
 
 type skillResponse struct {
@@ -48,6 +52,8 @@ type skillResponse struct {
 	IsActive            bool            `json:"is_active"`
 	CreatedAt           string          `json:"created_at"`
 	PreferredCredential *string         `json:"preferred_credential,omitempty"`
+	ExecutorType        string          `json:"executor_type"`
+	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 }
 
 func skillsEntry(
@@ -147,6 +153,8 @@ func createSkill(
 		req.ToolAllowlist,
 		req.BudgetsJSON,
 		req.PreferredCredential,
+		req.ExecutorType,
+		req.ExecutorConfigJSON,
 	)
 	if err != nil {
 		var conflict data.SkillConflictError
@@ -244,6 +252,8 @@ func patchSkill(
 		BudgetsJSON:         req.BudgetsJSON,
 		IsActive:            req.IsActive,
 		PreferredCredential: req.PreferredCredential,
+		ExecutorType:        req.ExecutorType,
+		ExecutorConfigJSON:  req.ExecutorConfigJSON,
 	}
 
 	updated, err := skillsRepo.Patch(r.Context(), actor.OrgID, skillID, patch)
@@ -270,6 +280,16 @@ func toSkillResponse(s data.Skill) skillResponse {
 		budgets = json.RawMessage("{}")
 	}
 
+	executorConfig := s.ExecutorConfigJSON
+	if len(executorConfig) == 0 {
+		executorConfig = json.RawMessage("{}")
+	}
+
+	executorType := s.ExecutorType
+	if executorType == "" {
+		executorType = "agent.simple"
+	}
+
 	var orgIDStr *string
 	if s.OrgID != nil {
 		str := s.OrgID.String()
@@ -289,5 +309,7 @@ func toSkillResponse(s data.Skill) skillResponse {
 		IsActive:            s.IsActive,
 		CreatedAt:           s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		PreferredCredential: s.PreferredCredential,
+		ExecutorType:        executorType,
+		ExecutorConfigJSON:  executorConfig,
 	}
 }

@@ -26,6 +26,9 @@ type CreateFormState = {
   toolAllowlist: string
   budgetsJSON: string
   isActive: boolean
+  executorType: string
+  executorConfigJSON: string
+  preferredCredential: string
 }
 
 type EditFormState = {
@@ -35,6 +38,9 @@ type EditFormState = {
   toolAllowlist: string
   budgetsJSON: string
   isActive: boolean
+  executorType: string
+  executorConfigJSON: string
+  preferredCredential: string
 }
 
 function emptyCreateForm(): CreateFormState {
@@ -47,6 +53,9 @@ function emptyCreateForm(): CreateFormState {
     toolAllowlist: '',
     budgetsJSON: '{}',
     isActive: true,
+    executorType: 'agent.simple',
+    executorConfigJSON: '{}',
+    preferredCredential: '',
   }
 }
 
@@ -58,6 +67,9 @@ function skillToEditForm(skill: Skill): EditFormState {
     toolAllowlist: skill.tool_allowlist.join(', '),
     budgetsJSON: JSON.stringify(skill.budgets, null, 2),
     isActive: skill.is_active,
+    executorType: skill.executor_type || 'agent.simple',
+    executorConfigJSON: JSON.stringify(skill.executor_config ?? {}, null, 2),
+    preferredCredential: skill.preferred_credential ?? '',
   }
 }
 
@@ -102,6 +114,9 @@ export function SkillsPage() {
     toolAllowlist: '',
     budgetsJSON: '{}',
     isActive: true,
+    executorType: 'agent.simple',
+    executorConfigJSON: '{}',
+    preferredCredential: '',
   })
   const [editError, setEditError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -177,6 +192,12 @@ export function SkillsPage() {
       return
     }
 
+    const executorConfigParsed = tryParseJSON(createForm.executorConfigJSON)
+    if (!executorConfigParsed.ok) {
+      setCreateError(tc.errInvalidJSON)
+      return
+    }
+
     setCreating(true)
     setCreateError('')
     try {
@@ -190,6 +211,9 @@ export function SkillsPage() {
           tool_allowlist: parseToolAllowlist(createForm.toolAllowlist),
           budgets: budgetsParsed.value,
           is_active: createForm.isActive,
+          executor_type: createForm.executorType.trim() || undefined,
+          executor_config: executorConfigParsed.value,
+          preferred_credential: createForm.preferredCredential.trim() || undefined,
         },
         accessToken,
       )
@@ -218,6 +242,12 @@ export function SkillsPage() {
       return
     }
 
+    const executorConfigParsed = tryParseJSON(editForm.executorConfigJSON)
+    if (!executorConfigParsed.ok) {
+      setEditError(tc.errInvalidJSON)
+      return
+    }
+
     setSaving(true)
     setEditError('')
     try {
@@ -230,6 +260,9 @@ export function SkillsPage() {
           tool_allowlist: parseToolAllowlist(editForm.toolAllowlist),
           budgets: budgetsParsed.value,
           is_active: editForm.isActive,
+          executor_type: editForm.executorType.trim() || undefined,
+          executor_config: executorConfigParsed.value,
+          preferred_credential: editForm.preferredCredential.trim() || undefined,
         },
         accessToken,
       )
@@ -419,6 +452,34 @@ export function SkillsPage() {
             />
           </FormField>
 
+          <FormField label={tc.fieldExecutorType}>
+            <input
+              type="text"
+              value={createForm.executorType}
+              onChange={(e) => setCreateField('executorType', e.target.value)}
+              placeholder="agent.simple"
+              className={inputCls}
+            />
+          </FormField>
+
+          <FormField label={tc.fieldExecutorConfig}>
+            <textarea
+              value={createForm.executorConfigJSON}
+              onChange={(e) => setCreateField('executorConfigJSON', e.target.value)}
+              rows={3}
+              className={textareaCls}
+            />
+          </FormField>
+
+          <FormField label={tc.fieldPreferredCredential}>
+            <input
+              type="text"
+              value={createForm.preferredCredential}
+              onChange={(e) => setCreateField('preferredCredential', e.target.value)}
+              className={inputCls}
+            />
+          </FormField>
+
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -523,6 +584,34 @@ export function SkillsPage() {
               onChange={(e) => setEditField('budgetsJSON', e.target.value)}
               rows={3}
               className={textareaCls}
+            />
+          </FormField>
+
+          <FormField label={tc.fieldExecutorType}>
+            <input
+              type="text"
+              value={editForm.executorType}
+              onChange={(e) => setEditField('executorType', e.target.value)}
+              placeholder="agent.simple"
+              className={inputCls}
+            />
+          </FormField>
+
+          <FormField label={tc.fieldExecutorConfig}>
+            <textarea
+              value={editForm.executorConfigJSON}
+              onChange={(e) => setEditField('executorConfigJSON', e.target.value)}
+              rows={3}
+              className={textareaCls}
+            />
+          </FormField>
+
+          <FormField label={tc.fieldPreferredCredential}>
+            <input
+              type="text"
+              value={editForm.preferredCredential}
+              onChange={(e) => setEditField('preferredCredential', e.target.value)}
+              className={inputCls}
             />
           </FormField>
 

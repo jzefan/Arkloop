@@ -1,0 +1,9 @@
+id: lite
+version: "1"
+title: Lite
+description: 基础对话模式，适合简单问答和轻量任务。
+tool_allowlist: []
+budgets:
+  max_iterations: 5
+  max_output_tokens: 2048
+  temperature: 0.3
