@@ -4,6 +4,7 @@ import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
 import { ChatPage } from './components/ChatPage'
+import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
 import {
   clearActiveThreadIdInStorage,
@@ -49,6 +50,7 @@ function App() {
   return (
     <Routes>
       <Route path="/verify" element={<VerifyEmailPage />} />
+      <Route path="/s/:token" element={<SharePage />} />
       {!accessToken ? (
         <>
           <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />

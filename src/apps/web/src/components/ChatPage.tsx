@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type FormEvent } from 'react'
 import { useParams, useLocation, useOutletContext } from 'react-router-dom'
-import { Glasses, Paperclip, X, Zap } from 'lucide-react'
+import { Glasses, Paperclip, Share2, X, Zap } from 'lucide-react'
 import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
+import { ShareModal } from './ShareModal'
 import { NotificationBell } from './NotificationBell'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
@@ -76,6 +77,7 @@ export function ChatPage() {
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -474,6 +476,15 @@ export function ChatPage() {
           <span className="text-sm font-medium tabular-nums">{creditsBalance.toLocaleString()}</span>
         </div>
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+        {threadId && !privateThreadIds.has(threadId) && (
+          <button
+            onClick={() => setShareModalOpen(true)}
+            title={t.shareTitle}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          >
+            <Share2 size={18} />
+          </button>
+        )}
         <button
           onClick={threadId && privateThreadIds.has(threadId) ? undefined : onTogglePrivateMode}
           title={threadId && privateThreadIds.has(threadId) ? t.thisThreadIsIncognito : t.toggleIncognito}
@@ -651,6 +662,15 @@ export function ChatPage() {
         onReconnect={sse.reconnect}
         onClear={sse.clearEvents}
       />
+
+      {threadId && (
+        <ShareModal
+          accessToken={accessToken}
+          threadId={threadId}
+          open={shareModalOpen}
+          onClose={() => setShareModalOpen(false)}
+        />
+      )}
     </div>
   )
 }

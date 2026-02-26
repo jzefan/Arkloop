@@ -683,3 +683,83 @@ export async function transcribeAudio(
   }
   return response.json() as Promise<{ text: string }>
 }
+
+// Share API
+
+export type ShareResponse = {
+  token: string
+  url: string
+  access_type: 'public' | 'password'
+  created_at: string
+}
+
+export async function createThreadShare(
+  accessToken: string,
+  threadId: string,
+  accessType: 'public' | 'password',
+  password?: string,
+): Promise<ShareResponse> {
+  return await apiFetch<ShareResponse>(`/v1/threads/${threadId}:share`, {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({ access_type: accessType, password }),
+  })
+}
+
+export async function getThreadShare(
+  accessToken: string,
+  threadId: string,
+): Promise<ShareResponse> {
+  return await apiFetch<ShareResponse>(`/v1/threads/${threadId}:share`, {
+    method: 'GET',
+    accessToken,
+  })
+}
+
+export async function deleteThreadShare(
+  accessToken: string,
+  threadId: string,
+): Promise<void> {
+  await apiFetch<void>(`/v1/threads/${threadId}:share`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+export type SharedThreadResponse = {
+  requires_password: boolean
+  thread?: {
+    title: string | null
+    created_at: string
+  }
+  messages?: Array<{
+    id: string
+    role: string
+    content: string
+    created_at: string
+  }>
+}
+
+export async function getSharedThread(
+  token: string,
+  sessionToken?: string,
+): Promise<SharedThreadResponse> {
+  const params = new URLSearchParams()
+  if (sessionToken) params.set('session_token', sessionToken)
+  const qs = params.toString()
+  return await apiFetch<SharedThreadResponse>(`/v1/s/${token}${qs ? `?${qs}` : ''}`)
+}
+
+export type VerifyShareResponse = {
+  session_token: string
+}
+
+export async function verifySharePassword(
+  token: string,
+  password: string,
+): Promise<VerifyShareResponse> {
+  return await apiFetch<VerifyShareResponse>(`/v1/s/${token}/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+}
