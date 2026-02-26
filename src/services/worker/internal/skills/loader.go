@@ -145,6 +145,7 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 	}
 	executorConfig := asOptionalMap(obj["executor_config"])
 	preferredCredential := asOptionalString(obj["preferred_credential"])
+	agentConfigName := asOptionalString(obj["agent_config"])
 
 	rawPrompt, err := os.ReadFile(promptPath)
 	if err != nil {
@@ -166,6 +167,7 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 		ExecutorType:     executorType,
 		ExecutorConfig:   executorConfig,
 		PreferredCredential: preferredCredential,
+		AgentConfigName:  agentConfigName,
 	}, nil
 }
 
@@ -316,7 +318,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 		`SELECT skill_key, version, display_name, description,
 		        prompt_md, tool_allowlist, budgets_json,
 		        executor_type, executor_config_json,
-		        preferred_credential
+		        preferred_credential, agent_config_name
 		 FROM skills
 		 WHERE (org_id = $1 OR org_id IS NULL) AND is_active = TRUE
 		 ORDER BY (org_id IS NULL) DESC, created_at ASC`,
@@ -340,10 +342,11 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 			executorType        string
 			executorConfigRaw   []byte
 			preferredCredential *string
+			agentConfigName     *string
 		)
 		if err := rows.Scan(&skillKey, &version, &displayName, &description,
 			&promptMD, &toolAllowlist, &budgetsRaw,
-			&executorType, &executorConfigRaw, &preferredCredential); err != nil {
+			&executorType, &executorConfigRaw, &preferredCredential, &agentConfigName); err != nil {
 			return nil, err
 		}
 
@@ -371,6 +374,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 			ExecutorType:     executorType,
 			ExecutorConfig:   executorConfig,
 			PreferredCredential: preferredCredential,
+			AgentConfigName:  agentConfigName,
 		}
 		if description != nil && strings.TrimSpace(*description) != "" {
 			s := strings.TrimSpace(*description)

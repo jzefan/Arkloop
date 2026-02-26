@@ -60,6 +60,22 @@ func NewSkillResolutionMiddleware(
 		rc.ToolBudget = map[string]any{}
 		rc.SkillDefinition = resolution.Definition
 
+		// 若 skill 显式绑定了 AgentConfig，按名称覆盖继承链解析结果
+		if resolution.Definition != nil && resolution.Definition.AgentConfigName != nil && dbPool != nil {
+			ac, acName, err := loadAgentConfigByName(ctx, dbPool, *resolution.Definition.AgentConfigName, rc.Run.OrgID)
+			if err != nil {
+				slog.WarnContext(ctx, "skill: agent_config_name lookup failed",
+					"skill_id", resolution.Definition.ID,
+					"agent_config_name", *resolution.Definition.AgentConfigName,
+					"err", err.Error(),
+				)
+			} else if ac != nil {
+				rc.AgentConfig = ac
+				rc.AgentConfigName = acName
+				rc.AgentConfigID = nil
+			}
+		}
+
 		// -- 分层遮罩逻辑 --
 		// 1. AgentConfig 提供基线配置（模型、凭证、安全约束、SystemPrompt 前缀）
 		// 2. Skill 在 AgentConfig 约束内设置执行参数（prompt 追加、预算、温度）

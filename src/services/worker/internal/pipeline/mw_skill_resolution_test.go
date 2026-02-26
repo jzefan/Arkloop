@@ -95,6 +95,11 @@ func TestSkillResolutionUserRouteIDNotAffectedBySkillCredential(t *testing.T) {
 
 func buildSkillRegistry(t *testing.T, id string, preferredCredential *string) *skills.Registry {
 	t.Helper()
+	return buildSkillRegistryFull(t, id, preferredCredential, nil)
+}
+
+func buildSkillRegistryFull(t *testing.T, id string, preferredCredential *string, agentConfigName *string) *skills.Registry {
+	t.Helper()
 	reg := skills.NewRegistry()
 	def := skills.Definition{
 		ID:                  id,
@@ -104,9 +109,40 @@ func buildSkillRegistry(t *testing.T, id string, preferredCredential *string) *s
 		ExecutorType:        "agent.simple",
 		ExecutorConfig:      map[string]any{},
 		PreferredCredential: preferredCredential,
+		AgentConfigName:     agentConfigName,
 	}
 	if err := reg.Register(def); err != nil {
 		t.Fatalf("register skill failed: %v", err)
 	}
 	return reg
 }
+
+// TestSkillResolutionAgentConfigNameNilPreservesInheritance 验证 skill 无 agent_config_name 时，rc.AgentConfig 保持继承链结果不变。
+func TestSkillResolutionAgentConfigNameNilPreservesInheritance(t *testing.T) {
+	mw := pipeline.NewSkillResolutionMiddleware(
+		buildSkillRegistryFull(t, "test-skill", nil, nil),
+		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
+	)
+
+	existing := &pipeline.ResolvedAgentConfig{Model: strPtr("inherited-model")}
+	rc := &pipeline.RunContext{
+		InputJSON:   map[string]any{"skill_id": "test-skill"},
+		AgentConfig: existing,
+	}
+
+	var capturedConfig *pipeline.ResolvedAgentConfig
+	terminal := func(ctx context.Context, rc *pipeline.RunContext) error {
+		capturedConfig = rc.AgentConfig
+		return nil
+	}
+
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, terminal)
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedConfig != existing {
+		t.Fatalf("expected AgentConfig to be unchanged (inherited), got different pointer")
+	}
+}
+
+func strPtr(s string) *string { return &s }
