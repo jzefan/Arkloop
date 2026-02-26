@@ -159,7 +159,7 @@ func (s *RegistrationService) Register(
 	}
 
 	slugSuffix := uuidHexPrefix(user.ID, 8)
-	org, err := orgRepo.Create(ctx, fmt.Sprintf("user-%s", slugSuffix), fmt.Sprintf("%s's workspace", displayName))
+	org, err := orgRepo.Create(ctx, fmt.Sprintf("personal-%s", slugSuffix), fmt.Sprintf("%s's workspace", displayName), "personal")
 	if err != nil {
 		return RegisterResult{}, err
 	}

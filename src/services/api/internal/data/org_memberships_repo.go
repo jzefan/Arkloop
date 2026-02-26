@@ -69,10 +69,11 @@ func (r *OrgMembershipRepository) GetDefaultForUser(ctx context.Context, userID 
 	var membership OrgMembership
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, user_id, role, role_id, created_at
-		 FROM org_memberships
-		 WHERE user_id = $1
-		 ORDER BY created_at ASC
+		`SELECT m.id, m.org_id, m.user_id, m.role, m.role_id, m.created_at
+		 FROM org_memberships m
+		 JOIN orgs o ON o.id = m.org_id
+		 WHERE m.user_id = $1
+		   AND o.type = 'personal'
 		 LIMIT 1`,
 		userID,
 	).Scan(&membership.ID, &membership.OrgID, &membership.UserID, &membership.Role, &membership.RoleID, &membership.CreatedAt)
@@ -95,9 +96,11 @@ func (r *OrgMembershipRepository) SetRoleForUser(ctx context.Context, userID uui
 		`UPDATE org_memberships
 		 SET role = $1
 		 WHERE id = (
-		     SELECT id FROM org_memberships
-		     WHERE user_id = $2
-		     ORDER BY created_at ASC
+		     SELECT m.id
+		     FROM org_memberships m
+		     JOIN orgs o ON o.id = m.org_id
+		     WHERE m.user_id = $2
+		       AND o.type = 'personal'
 		     LIMIT 1
 		 )`,
 		role, userID,

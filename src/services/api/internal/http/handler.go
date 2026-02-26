@@ -37,6 +37,7 @@ type HandlerConfig struct {
 
 	AuthService         *auth.Service
 	RegistrationService *auth.RegistrationService
+	OrgService          *auth.OrgService
 	OrgMembershipRepo   *data.OrgMembershipRepository
 	ThreadRepo          *data.ThreadRepository
 	MessageRepo         *data.MessageRepository
@@ -214,8 +215,16 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 
 	mux.HandleFunc(
+		"/v1/orgs",
+		orgsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.OrgService, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
+		"/v1/orgs/me",
+		orgsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.OrgService, cfg.APIKeysRepo),
+	)
+	mux.HandleFunc(
 		"/v1/orgs/",
-		orgsInvitationsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter),
+		orgsInvitationsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter, cfg.OrgRepo),
 	)
 	mux.HandleFunc(
 		"/v1/org-invitations/",

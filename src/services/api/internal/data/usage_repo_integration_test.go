@@ -56,7 +56,7 @@ func insertUsageAt(t *testing.T, repo *UsageRepository, ctx context.Context, org
 func TestGetDailyUsage(t *testing.T) {
 	repo, orgRepo, ctx := setupUsageTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "daily-test", "Daily Test Org")
+	org, err := orgRepo.Create(ctx, "daily-test", "Daily Test Org", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestGetDailyUsage(t *testing.T) {
 func TestGetDailyUsageEmpty(t *testing.T) {
 	repo, orgRepo, ctx := setupUsageTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "empty-daily", "Empty Daily Org")
+	org, err := orgRepo.Create(ctx, "empty-daily", "Empty Daily Org", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestGetDailyUsageEmpty(t *testing.T) {
 func TestGetUsageByModel(t *testing.T) {
 	repo, orgRepo, ctx := setupUsageTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "model-test", "Model Test Org")
+	org, err := orgRepo.Create(ctx, "model-test", "Model Test Org", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestGetUsageByModel(t *testing.T) {
 func TestGetUsageByModelEmpty(t *testing.T) {
 	repo, orgRepo, ctx := setupUsageTestRepo(t)
 
-	org, err := orgRepo.Create(ctx, "model-empty", "Model Empty Org")
+	org, err := orgRepo.Create(ctx, "model-empty", "Model Empty Org", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
@@ -163,11 +163,11 @@ func TestGetUsageByModelEmpty(t *testing.T) {
 func TestGetGlobalDailyUsage(t *testing.T) {
 	repo, orgRepo, ctx := setupUsageTestRepo(t)
 
-	org1, err := orgRepo.Create(ctx, "global-org1", "Global Org 1")
+	org1, err := orgRepo.Create(ctx, "global-org1", "Global Org 1", "personal")
 	if err != nil {
 		t.Fatalf("create org1: %v", err)
 	}
-	org2, err := orgRepo.Create(ctx, "global-org2", "Global Org 2")
+	org2, err := orgRepo.Create(ctx, "global-org2", "Global Org 2", "personal")
 	if err != nil {
 		t.Fatalf("create org2: %v", err)
 	}

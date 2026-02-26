@@ -42,6 +42,7 @@ func orgsInvitationsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	invitationsRepo *data.OrgInvitationsRepository,
 	auditWriter *audit.Writer,
+	orgRepo *data.OrgRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -64,7 +65,7 @@ func orgsInvitationsEntry(
 
 		switch r.Method {
 		case nethttp.MethodPost:
-			createOrgInvitation(w, r, traceID, orgID, authService, membershipRepo, invitationsRepo, auditWriter)
+			createOrgInvitation(w, r, traceID, orgID, authService, membershipRepo, invitationsRepo, auditWriter, orgRepo)
 		case nethttp.MethodGet:
 			listOrgInvitations(w, r, traceID, orgID, authService, membershipRepo, invitationsRepo)
 		default:
@@ -128,6 +129,7 @@ func createOrgInvitation(
 	membershipRepo *data.OrgMembershipRepository,
 	invitationsRepo *data.OrgInvitationsRepository,
 	auditWriter *audit.Writer,
+	orgRepo *data.OrgRepository,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -148,6 +150,19 @@ func createOrgInvitation(
 	}
 	if !requirePerm(actor, auth.PermOrgMembersInvite, w, traceID) {
 		return
+	}
+
+	// personal org 不允许邀请成员
+	if orgRepo != nil {
+		org, err := orgRepo.GetByID(r.Context(), orgID)
+		if err != nil || org == nil {
+			WriteError(w, nethttp.StatusNotFound, "orgs.not_found", "org not found", traceID, nil)
+			return
+		}
+		if org.Type != "workspace" {
+			WriteError(w, nethttp.StatusBadRequest, "orgs.personal_not_invitable", "cannot invite members to a personal org", traceID, nil)
+			return
+		}
 	}
 
 	var req createOrgInvitationRequest
