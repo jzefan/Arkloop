@@ -189,6 +189,15 @@ func seedRunStarted(
 		runID,
 		string(encoded),
 	)
+	if err != nil {
+		return err
+	}
+
+	_, err = pool.Exec(
+		context.Background(),
+		`INSERT INTO credits (org_id, balance) VALUES ($1, 10000)`,
+		orgID,
+	)
 	return err
 }
 

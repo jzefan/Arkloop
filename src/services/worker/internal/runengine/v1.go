@@ -105,7 +105,11 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		runlimit.Release(ctx, rdb, key)
 	}
 
-	resolver := sharedent.NewResolver(deps.DBPool, rdb)
+	// deps.DBPool 为 nil 时 resolver 保持 nil，EntitlementMiddleware 以 fail-open 方式跳过检查
+	var resolver *sharedent.Resolver
+	if deps.DBPool != nil {
+		resolver = sharedent.NewResolver(deps.DBPool, rdb)
+	}
 
 	middlewares := []pipeline.RunMiddleware{
 		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo),
