@@ -143,6 +143,29 @@ export interface LocaleStrings {
   starThread: string
   unstarThread: string
   shareThread: string
+  // share
+  shareTitle: string
+  sharePublic: string
+  sharePassword: string
+  sharePasswordPlaceholder: string
+  shareCreate: string
+  shareCreating: string
+  shareCopyLink: string
+  shareCopied: string
+  shareRevoke: string
+  shareRevoking: string
+  shareRevokeConfirm: string
+  shareCurrentLink: string
+  shareNoLink: string
+  // share page
+  sharePageLogin: string
+  sharePageRegister: string
+  sharePagePasswordTitle: string
+  sharePagePasswordPlaceholder: string
+  sharePagePasswordSubmit: string
+  sharePagePasswordWrong: string
+  sharePageNotFound: string
+  sharePagePoweredBy: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }
