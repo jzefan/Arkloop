@@ -70,6 +70,17 @@ func (r *PlatformSettingsRepository) Set(ctx context.Context, key, value string)
 	return &s, nil
 }
 
+func (r *PlatformSettingsRepository) Delete(ctx context.Context, key string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := r.db.Exec(ctx, `DELETE FROM platform_settings WHERE key = $1`, key)
+	if err != nil {
+		return fmt.Errorf("platform_settings.Delete: %w", err)
+	}
+	return nil
+}
+
 func (r *PlatformSettingsRepository) List(ctx context.Context) ([]PlatformSetting, error) {
 	if ctx == nil {
 		ctx = context.Background()

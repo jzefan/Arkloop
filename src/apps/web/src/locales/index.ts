@@ -99,6 +99,7 @@ export interface LocaleStrings {
   emailGateResend: string
   emailGateResent: string
   emailGateUseOtp: string
+  emailGateAlreadyVerified: string
   otpLoginTab: string
   passwordLoginTab: string
   otpEmailPlaceholder: string

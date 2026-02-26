@@ -1,7 +1,8 @@
-import { useState, useMemo, useEffect, useRef, type FormEvent } from 'react'
-import { login, register, getRegistrationMode, isApiError, sendEmailOTP, verifyEmailOTP, checkUser } from '../api'
+import { useState, useMemo, useEffect, useCallback, useRef, type FormEvent } from 'react'
+import { login, register, getRegistrationMode, isApiError, sendEmailOTP, verifyEmailOTP, checkUser, getCaptchaConfig } from '../api'
 import type { RegistrationModeResponse } from '../api'
 import { ErrorCallout, type AppError } from './ErrorCallout'
+import { Turnstile } from './Turnstile'
 import { useLocale } from '../contexts/LocaleContext'
 
 function SpinnerIcon() {
@@ -136,13 +137,15 @@ export function AuthPage({ onLoggedIn }: Props) {
 
   const [error, setError] = useState<AppError | null>(null)
   const [registrationMode, setRegistrationMode] = useState<RegistrationModeResponse['mode']>('invite_only')
+  const [captchaSiteKey, setCaptchaSiteKey] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
 
   const passwordRef = useRef<HTMLInputElement>(null)
   const otpEmailRef = useRef<HTMLInputElement>(null)
   const otpCodeRef = useRef<HTMLInputElement>(null)
   const regFirstRef = useRef<HTMLInputElement>(null)
 
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
 
   useEffect(() => {
     const root = document.documentElement
@@ -152,7 +155,10 @@ export function AuthPage({ onLoggedIn }: Props) {
   }, [])
 
   useEffect(() => {
-    getRegistrationMode().then((res) => setRegistrationMode(res.mode)).catch(() => {})
+    void Promise.all([
+      getRegistrationMode().then((res) => setRegistrationMode(res.mode)).catch(() => {}),
+      getCaptchaConfig().then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) }).catch(() => {}),
+    ])
   }, [])
 
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current) }, [])
@@ -184,7 +190,12 @@ export function AuthPage({ onLoggedIn }: Props) {
     if (countdownRef.current) clearInterval(countdownRef.current)
     setMaskedEmail('')
     setError(null)
+    setTurnstileToken('')
   }
+
+  const handleTurnstileSuccess = useCallback((token: string) => {
+    setTurnstileToken(token)
+  }, [])
 
   const startCountdown = () => {
     setOtpCountdown(60)
@@ -244,9 +255,10 @@ export function AuthPage({ onLoggedIn }: Props) {
       if (!password) return
       setSubmitting(true)
       try {
-        const resp = await login({ login: identity.trim(), password })
+        const resp = await login({ login: identity.trim(), password, cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined })
         onLoggedIn(resp.access_token, resp.refresh_token)
       } catch (err) {
+        setTurnstileToken('')
         if (isApiError(err) && err.code === 'auth.email_not_verified') { switchToOtp(); return }
         setError(normalizeError(err, t.requestFailed))
       } finally {
@@ -259,8 +271,9 @@ export function AuthPage({ onLoggedIn }: Props) {
       const email = otpEmail.trim()
       if (!email) return
       setOtpSending(true)
-      try { await sendEmailOTP(email) } catch { /* 静默 */ } finally {
+      try { await sendEmailOTP(email, captchaSiteKey ? turnstileToken : undefined) } catch { /* 静默 */ } finally {
         setOtpSending(false)
+        setTurnstileToken('')
         setPhase('otp-code')
         startCountdown()
       }
@@ -290,10 +303,13 @@ export function AuthPage({ onLoggedIn }: Props) {
           login: regLogin.trim(),
           password: regPassword,
           email: regEmail.trim(),
+          locale,
+          cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined,
           ...(regInviteCode.trim() ? { invite_code: regInviteCode.trim() } : {}),
         })
         onLoggedIn(resp.access_token, resp.refresh_token)
       } catch (err) {
+        setTurnstileToken('')
         setError(normalizeError(err, t.requestFailed))
       } finally {
         setRegSubmitting(false)
@@ -305,17 +321,18 @@ export function AuthPage({ onLoggedIn }: Props) {
 
   const canSubmit = useMemo(() => {
     if (isLoading) return false
+    const captchaOk = !captchaSiteKey || !!turnstileToken
     if (phase === 'identity') return identity.trim().length > 0
-    if (phase === 'password') return password.length > 0
-    if (phase === 'otp-email') return otpEmail.trim().length > 0
+    if (phase === 'password') return password.length > 0 && captchaOk
+    if (phase === 'otp-email') return otpEmail.trim().length > 0 && captchaOk
     if (phase === 'otp-code') return otpEmail.trim().length > 0 && otpCode.length === 6
     if (phase === 'register') {
       if (!regLogin.trim() || !regEmail.trim() || regPassword.length < 8) return false
       if (inviteRequired && !regInviteCode.trim()) return false
-      return true
+      return captchaOk
     }
     return false
-  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, regInviteCode, inviteRequired, isLoading])
+  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, regInviteCode, inviteRequired, isLoading, captchaSiteKey, turnstileToken])
 
   const btnLabel = useMemo(() => {
     if (phase === 'otp-email') return t.otpSendBtn
@@ -425,7 +442,7 @@ export function AuthPage({ onLoggedIn }: Props) {
                 <span>{identity.trim()}</span>
                 <button
                   type="button"
-                  onClick={goBack}
+                  onClick={resetToIdentity}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3b82f6', fontSize: '12px', fontWeight: 500, padding: '0 2px', flexShrink: 0 }}
                 >
                   {t.editIdentity}
@@ -566,6 +583,16 @@ export function AuthPage({ onLoggedIn }: Props) {
             </Reveal>
 
             {/* Continue 按钮 */}
+            {captchaSiteKey && (phase === 'password' || phase === 'otp-email' || phase === 'register') && (
+              <div style={{ marginTop: '12px' }}>
+                <Turnstile
+                  siteKey={captchaSiteKey}
+                  onSuccess={handleTurnstileSuccess}
+                  onExpire={() => setTurnstileToken('')}
+                />
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={!canSubmit}

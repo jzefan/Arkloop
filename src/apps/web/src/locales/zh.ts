@@ -82,6 +82,7 @@ export const zh: LocaleStrings = {
   emailGateResend: '重新发送验证邮件',
   emailGateResent: '已发送',
   emailGateUseOtp: '使用验证码代替',
+  emailGateAlreadyVerified: '已完成验证',
   useEmailOtpHint: '或者使用邮箱验证码',
   creatingAccountHint: '正在创建新账号',
   enterYourPasswordTitle: '输入密码',

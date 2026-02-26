@@ -82,6 +82,7 @@ export const en: LocaleStrings = {
   emailGateResend: 'Resend verification email',
   emailGateResent: 'Sent',
   emailGateUseOtp: 'Use a verification code instead',
+  emailGateAlreadyVerified: 'Already verified',
   useEmailOtpHint: 'or use email verification code',
   creatingAccountHint: 'Creating a new account',
   enterYourPasswordTitle: 'Enter your password',

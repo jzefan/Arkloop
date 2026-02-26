@@ -14,6 +14,13 @@ export async function getPlatformSetting(key: string, accessToken: string): Prom
   return apiFetch<PlatformSetting>(`/v1/admin/platform-settings/${key}`, { accessToken })
 }
 
+export async function deletePlatformSetting(key: string, accessToken: string): Promise<void> {
+  return apiFetch<void>(`/v1/admin/platform-settings/${key}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
 export async function setPlatformSetting(
   key: string,
   value: string,

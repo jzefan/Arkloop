@@ -105,47 +105,45 @@ func (s *EmailVerifyService) SendVerification(ctx context.Context, userID uuid.U
 		locale = *user.Locale
 	}
 
-	var subject, html, text string
-	codeBlock := fmt.Sprintf("<strong style=\"font-size:28px;letter-spacing:6px\">%s</strong>", plaintext)
+	var subject, htmlBody, text string
 
 	if locale == "zh" {
 		subject = "验证您的邮箱"
+		params := emailParams{
+			Title:    "验证您的邮箱",
+			Greeting: fmt.Sprintf("你好 %s，", username),
+			Code:     plaintext,
+			Notice:   "验证码有效期 1 小时，请勿泄露",
+		}
 		if baseURL != "" {
 			link := baseURL + "/verify?token=" + plaintext
-			html = fmt.Sprintf(
-				`<p>你好 %s，</p><p>您的邮箱验证码：</p><p>%s</p><p>或点击链接自动完成验证：<br><a href="%s">%s</a></p><p>有效期 1 小时。</p>`,
-				username, codeBlock, link, link,
-			)
+			params.LinkURL = link
+			params.LinkLabel = "立即验证邮箱"
 			text = fmt.Sprintf("你好 %s，\n\n邮箱验证码：%s\n\n或点击链接验证：\n%s\n\n有效期 1 小时。", username, plaintext, link)
 		} else {
-			html = fmt.Sprintf(
-				`<p>你好 %s，</p><p>您的邮箱验证码：</p><p>%s</p><p>有效期 1 小时。</p>`,
-				username, codeBlock,
-			)
 			text = fmt.Sprintf("你好 %s，\n\n邮箱验证码：%s\n\n有效期 1 小时。", username, plaintext)
 		}
+		htmlBody = buildEmailHTMLZh(params)
 	} else {
 		subject = "Verify your email address"
+		params := emailParams{
+			Title:    "Verify your email",
+			Greeting: fmt.Sprintf("Hi %s,", username),
+			Code:     plaintext,
+			Notice:   "Expires in 1 hour · Do not share this code",
+		}
 		if baseURL != "" {
 			link := baseURL + "/verify?token=" + plaintext
-			html = fmt.Sprintf(
-				`<p>Hi %s,</p><p>Your email verification code:</p><p>%s</p><p>Or click to verify automatically:<br><a href="%s">%s</a></p><p>Expires in 1 hour.</p>`,
-				username, codeBlock, link, link,
-			)
-			text = fmt.Sprintf(
-				"Hi %s,\n\nYour email verification code: %s\n\nOr verify automatically:\n%s\n\nExpires in 1 hour.",
-				username, plaintext, link,
-			)
+			params.LinkURL = link
+			params.LinkLabel = "Verify email"
+			text = fmt.Sprintf("Hi %s,\n\nYour email verification code: %s\n\nOr verify automatically:\n%s\n\nExpires in 1 hour.", username, plaintext, link)
 		} else {
-			html = fmt.Sprintf(
-				`<p>Hi %s,</p><p>Your email verification code:</p><p>%s</p><p>Expires in 1 hour.</p>`,
-				username, codeBlock,
-			)
 			text = fmt.Sprintf("Hi %s,\n\nYour email verification code: %s\n\nExpires in 1 hour.", username, plaintext)
 		}
+		htmlBody = buildEmailHTML(params)
 	}
 
-	if _, err := s.jobRepo.EnqueueEmail(ctx, *user.Email, subject, html, text); err != nil {
+	if _, err := s.jobRepo.EnqueueEmail(ctx, *user.Email, subject, htmlBody, text); err != nil {
 		return fmt.Errorf("enqueue verification email: %w", err)
 	}
 	return nil

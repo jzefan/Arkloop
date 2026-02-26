@@ -113,26 +113,29 @@ func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) e
 	}
 
 	username := user.DisplayName
-	codeBlock := fmt.Sprintf("<strong style=\"font-size:28px;letter-spacing:6px\">%s</strong>", plaintext)
 
-	var subject, html, text string
+	var subject, htmlBody, text string
 	if locale == "zh" {
 		subject = "登录验证码"
-		html = fmt.Sprintf(
-			`<p>你好 %s，</p><p>您的登录验证码：</p><p>%s</p><p>有效期 1 小时，请勿泄露。</p>`,
-			username, codeBlock,
-		)
+		htmlBody = buildEmailHTMLZh(emailParams{
+			Title:    "登录验证码",
+			Greeting: fmt.Sprintf("你好 %s，", username),
+			Code:     plaintext,
+			Notice:   "验证码有效期 1 小时，请勿泄露",
+		})
 		text = fmt.Sprintf("你好 %s，\n\n登录验证码：%s\n\n有效期 1 小时，请勿泄露。", username, plaintext)
 	} else {
 		subject = "Your login code"
-		html = fmt.Sprintf(
-			`<p>Hi %s,</p><p>Your login code:</p><p>%s</p><p>Expires in 1 hour. Do not share this code.</p>`,
-			username, codeBlock,
-		)
+		htmlBody = buildEmailHTML(emailParams{
+			Title:    "Your login code",
+			Greeting: fmt.Sprintf("Hi %s,", username),
+			Code:     plaintext,
+			Notice:   "Expires in 1 hour · Do not share this code",
+		})
 		text = fmt.Sprintf("Hi %s,\n\nYour login code: %s\n\nExpires in 1 hour. Do not share this code.", username, plaintext)
 	}
 
-	if _, err := s.jobRepo.EnqueueEmail(ctx, email, subject, html, text); err != nil {
+	if _, err := s.jobRepo.EnqueueEmail(ctx, email, subject, htmlBody, text); err != nil {
 		return fmt.Errorf("enqueue login otp email: %w", err)
 	}
 	return nil

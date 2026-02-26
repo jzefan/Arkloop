@@ -35,6 +35,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   }, [location.pathname, navigate])
 
   const [me, setMe] = useState<MeResponse | null>(null)
+  const [meLoaded, setMeLoaded] = useState(false)
   const [threads, setThreads] = useState<ThreadResponse[]>([])
   const [runningThreadIds, setRunningThreadIds] = useState<Set<string>>(new Set())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -70,10 +71,13 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         setRunningThreadIds(
           new Set(threadItems.filter((t) => t.active_run_id != null).map((t) => t.id)),
         )
+        setMeLoaded(true)
       } catch (err) {
         if (!mountedRef.current) return
         if (isApiError(err) && err.status === 401) {
           onLoggedOut()
+        } else {
+          setMeLoaded(true)
         }
       }
     })()
@@ -120,6 +124,10 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   }, [accessToken])
 
   // email 验证门控：flag 开启 + 未验证时全屏拦截
+  if (!meLoaded) {
+    return <div style={{ position: 'fixed', inset: 0, background: 'var(--c-bg-page)' }} />
+  }
+
   if (me !== null && !me.email_verified && me.email_verification_required && me.email) {
     return (
       <EmailVerificationGate
@@ -128,6 +136,10 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         onVerified={() => {
           getMe(accessToken).then(setMe).catch(() => {})
         }}
+        onPollVerified={() => {
+          getMe(accessToken).then(setMe).catch(() => {})
+        }}
+        onLogout={handleLogout}
       />
     )
   }

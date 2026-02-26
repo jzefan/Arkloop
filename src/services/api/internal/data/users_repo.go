@@ -36,7 +36,7 @@ func NewUserRepository(db Querier) (*UserRepository, error) {
 	return &UserRepository{db: db}, nil
 }
 
-func (r *UserRepository) Create(ctx context.Context, displayName string, email string) (User, error) {
+func (r *UserRepository) Create(ctx context.Context, displayName string, email string, locale string) (User, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -48,11 +48,11 @@ func (r *UserRepository) Create(ctx context.Context, displayName string, email s
 	var user User
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO users (display_name, email)
-		 VALUES ($1, NULLIF($2, ''))
+		`INSERT INTO users (display_name, email, locale)
+		 VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
 		 RETURNING id, display_name, email, email_verified_at, status, deleted_at,
 		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
-		displayName, email,
+		displayName, email, locale,
 	).Scan(
 		&user.ID, &user.DisplayName, &user.Email, &user.EmailVerifiedAt,
 		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
@@ -316,20 +316,28 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, pa
 }
 
 func (r *UserRepository) SoftDelete(ctx context.Context, userID uuid.UUID) error {
-if ctx == nil {
-ctx = context.Background()
-}
-tag, err := r.db.Exec(ctx,
-`UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
-userID,
-)
-if err != nil {
-return fmt.Errorf("users.SoftDelete: %w", err)
-}
-if tag.RowsAffected() == 0 {
-return fmt.Errorf("users.SoftDelete: not found")
-}
-return nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tag, err := r.db.Exec(ctx,
+		`UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("users.SoftDelete: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("users.SoftDelete: not found")
+	}
+	// 释放 login，允许相同 login 重新注册
+	_, err = r.db.Exec(ctx,
+		`DELETE FROM user_credentials WHERE user_id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("users.SoftDelete credentials: %w", err)
+	}
+	return nil
 }
 
 // SetEmailVerified 将 email_verified_at 标记为当前时间，表示邮箱已通过验证。
