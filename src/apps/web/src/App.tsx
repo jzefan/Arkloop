@@ -51,8 +51,8 @@ function App() {
       <Route path="/verify" element={<VerifyEmailPage />} />
       {!accessToken ? (
         <>
-          <Route path="/login" element={<AuthPage mode="login" onLoggedIn={handleLoggedIn} />} />
-          <Route path="/register" element={<AuthPage mode="register" onLoggedIn={handleLoggedIn} />} />
+          <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />
+          <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </>
       ) : (

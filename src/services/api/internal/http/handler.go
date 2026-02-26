@@ -38,6 +38,7 @@ type HandlerConfig struct {
 	AuthService         *auth.Service
 	RegistrationService *auth.RegistrationService
 	EmailVerifyService  *auth.EmailVerifyService
+	EmailOTPLoginService *auth.EmailOTPLoginService
 	OrgService          *auth.OrgService
 	OrgMembershipRepo   *data.OrgMembershipRepository
 	ThreadRepo          *data.ThreadRepository
@@ -104,8 +105,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/registration-mode", registrationMode(cfg.FeatureFlagService))
+	mux.HandleFunc("POST /v1/auth/check", checkUser(cfg.UserCredentialRepo, cfg.UsersRepo))
 	mux.HandleFunc("/v1/auth/email/verify/send", emailVerifySend(cfg.AuthService, cfg.EmailVerifyService))
 	mux.HandleFunc("/v1/auth/email/verify/confirm", emailVerifyConfirm(cfg.EmailVerifyService))
+	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService))
+	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(cfg.EmailOTPLoginService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo))
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/daily", meDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))

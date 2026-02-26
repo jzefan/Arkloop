@@ -1,6 +1,5 @@
-import { useState, useMemo, useEffect, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { login, register, getRegistrationMode, isApiError } from '../api'
+import { useState, useMemo, useEffect, useRef, type FormEvent } from 'react'
+import { login, register, getRegistrationMode, isApiError, sendEmailOTP, verifyEmailOTP, checkUser } from '../api'
 import type { RegistrationModeResponse } from '../api'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { useLocale } from '../contexts/LocaleContext'
@@ -41,73 +40,224 @@ function normalizeError(error: unknown, fallback: string): AppError {
   return { message: fallback }
 }
 
+// 内嵌阶段：展开哪些额外字段
+type Phase =
+  | 'identity'           // 初始：只有身份输入框
+  | 'password'           // 展开：密码框
+  | 'otp-email'          // 展开：邮箱输入框（脱敏提示）
+  | 'otp-code'           // 展开：验证码输入框
+  | 'register'           // 展开：注册字段
+
 type Props = {
-  mode: 'login' | 'register'
   onLoggedIn: (accessToken: string, refreshToken: string) => void
 }
 
-export function AuthPage({ mode, onLoggedIn }: Props) {
-  const navigate = useNavigate()
-  const [loginValue, setLoginValue] = useState('')
-  const [email, setEmail] = useState('')
+const isEmail = (v: string) => v.includes('@')
+
+export function AuthPage({ onLoggedIn }: Props) {
+  // 身份输入
+  const [identity, setIdentity] = useState('')
+  const [phase, setPhase] = useState<Phase>('identity')
+  const [maskedEmail, setMaskedEmail] = useState('')
+  const [checking, setChecking] = useState(false)
+
+  // 密码登录
   const [password, setPassword] = useState('')
-  const [inviteCode, setInviteCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // OTP
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
+  const [otpCountdown, setOtpCountdown] = useState(0)
+  const [otpSending, setOtpSending] = useState(false)
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 注册
+  const [regLogin, setRegLogin] = useState('')
+  const [regEmail, setRegEmail] = useState('')
+  const [regPassword, setRegPassword] = useState('')
+  const [regInviteCode, setRegInviteCode] = useState('')
+  const [regSubmitting, setRegSubmitting] = useState(false)
+
   const [error, setError] = useState<AppError | null>(null)
   const [registrationMode, setRegistrationMode] = useState<RegistrationModeResponse['mode']>('invite_only')
+
   const { t } = useLocale()
 
-  // 登录页始终跟随系统，用户还没机会进设置改主题
+  // 登录页跟随系统主题
   useEffect(() => {
     const root = document.documentElement
     const prev = root.getAttribute('data-theme')
     root.removeAttribute('data-theme')
-    return () => {
-      if (prev) root.setAttribute('data-theme', prev)
-    }
+    return () => { if (prev) root.setAttribute('data-theme', prev) }
   }, [])
 
   useEffect(() => {
-    getRegistrationMode()
-      .then((res) => setRegistrationMode(res.mode))
-      .catch(() => {})
+    getRegistrationMode().then((res) => setRegistrationMode(res.mode)).catch(() => {})
   }, [])
+
+  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current) }, [])
 
   const inviteRequired = registrationMode === 'invite_only'
 
-  const canSubmit = useMemo(() => {
-    if (submitting) return false
-    if (!loginValue.trim() || !password) return false
-    if (mode === 'register' && password.length < 8) return false
-    if (mode === 'register' && !email.trim()) return false
-    if (mode === 'register' && inviteRequired && !inviteCode.trim()) return false
-    return true
-  }, [loginValue, email, password, inviteCode, submitting, mode, inviteRequired])
-
-  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!canSubmit) return
-    setSubmitting(true)
+  // 重置到初始状态（切换身份时）
+  const resetToIdentity = () => {
+    setPhase('identity')
+    setPassword('')
+    setOtpEmail('')
+    setOtpCode('')
+    setOtpSent(false)
+    setOtpCountdown(0)
+    if (countdownRef.current) clearInterval(countdownRef.current)
+    setMaskedEmail('')
     setError(null)
-    try {
-      if (mode === 'login') {
-        const resp = await login({ login: loginValue, password })
+  }
+
+  // 倒计时
+  const startCountdown = () => {
+    setOtpCountdown(60)
+    if (countdownRef.current) clearInterval(countdownRef.current)
+    countdownRef.current = setInterval(() => {
+      setOtpCountdown((c) => {
+        if (c <= 1) { clearInterval(countdownRef.current!); return 0 }
+        return c - 1
+      })
+    }, 1000)
+  }
+
+  // 切换到 OTP 邮箱阶段
+  const switchToOtp = () => {
+    const email = isEmail(identity.trim()) ? identity.trim() : ''
+    setOtpEmail(email)
+    setOtpSent(false)
+    setOtpCode('')
+    setPhase('otp-email')
+    setError(null)
+  }
+
+  // 处理主按钮提交
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    if (phase === 'identity') {
+      const id = identity.trim()
+      if (!id) return
+      setChecking(true)
+      try {
+        const res = await checkUser(id)
+        if (res.exists) {
+          setMaskedEmail(res.masked_email ?? '')
+          setPhase('password')
+        } else {
+          if (isEmail(id)) {
+            setRegEmail(id)
+            setRegLogin(id.split('@')[0])
+          } else {
+            setRegLogin(id)
+            setRegEmail('')
+          }
+          setRegPassword('')
+          setRegInviteCode('')
+          setPhase('register')
+        }
+      } catch (err) {
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setChecking(false)
+      }
+      return
+    }
+
+    if (phase === 'password') {
+      if (!password) return
+      setSubmitting(true)
+      try {
+        const resp = await login({ login: identity.trim(), password })
         onLoggedIn(resp.access_token, resp.refresh_token)
-      } else {
+      } catch (err) {
+        if (isApiError(err) && err.code === 'auth.email_not_verified') {
+          switchToOtp()
+          return
+        }
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
+    if (phase === 'otp-email') {
+      const email = otpEmail.trim()
+      if (!email) return
+      setOtpSending(true)
+      try { await sendEmailOTP(email) } catch { /* 静默 */ } finally {
+        setOtpSending(false)
+        setOtpSent(true)
+        setPhase('otp-code')
+        startCountdown()
+      }
+      return
+    }
+
+    if (phase === 'otp-code') {
+      const email = otpEmail.trim()
+      const code = otpCode.trim()
+      if (!email || code.length !== 6) return
+      setOtpSubmitting(true)
+      try {
+        const resp = await verifyEmailOTP(email, code)
+        onLoggedIn(resp.access_token, resp.refresh_token)
+      } catch (err) {
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setOtpSubmitting(false)
+      }
+      return
+    }
+
+    if (phase === 'register') {
+      setRegSubmitting(true)
+      try {
         const resp = await register({
-          login: loginValue,
-          password,
-          email: email.trim(),
-          ...(inviteCode.trim() ? { invite_code: inviteCode.trim() } : {}),
+          login: regLogin.trim(),
+          password: regPassword,
+          email: regEmail.trim(),
+          ...(regInviteCode.trim() ? { invite_code: regInviteCode.trim() } : {}),
         })
         onLoggedIn(resp.access_token, resp.refresh_token)
+      } catch (err) {
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setRegSubmitting(false)
       }
-    } catch (err) {
-      setError(normalizeError(err, t.requestFailed))
-    } finally {
-      setSubmitting(false)
+      return
     }
   }
+
+  const isLoading = checking || submitting || otpSending || otpSubmitting || regSubmitting
+
+  const canSubmit = useMemo(() => {
+    if (isLoading) return false
+    if (phase === 'identity') return identity.trim().length > 0
+    if (phase === 'password') return password.length > 0
+    if (phase === 'otp-email') return otpEmail.trim().length > 0
+    if (phase === 'otp-code') return otpEmail.trim().length > 0 && otpCode.length === 6
+    if (phase === 'register') {
+      if (!regLogin.trim() || !regEmail.trim() || regPassword.length < 8) return false
+      if (inviteRequired && !regInviteCode.trim()) return false
+      return true
+    }
+    return false
+  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, regInviteCode, inviteRequired, isLoading])
+
+  const btnLabel = useMemo(() => {
+    if (phase === 'otp-email') return t.otpSendBtn
+    if (phase === 'otp-code') return t.otpVerifyBtn
+    return t.continueBtn
+  }, [phase, t])
 
   const inputStyle = {
     border: '0.5px solid var(--c-border-auth)',
@@ -117,6 +267,9 @@ export function AuthPage({ mode, onLoggedIn }: Props) {
     fontWeight: 500,
     fontFamily: 'inherit',
   }
+  const inputCls = 'w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]'
+
+  const stepTitle = phase === 'register' ? t.registerMode : t.loginMode
 
   return (
     <div
@@ -139,61 +292,164 @@ export function AuthPage({ mode, onLoggedIn }: Props) {
       >
         <header className="flex flex-col items-center" style={{ gap: '8px' }}>
           <div style={{ fontSize: '28px', fontWeight: 500, color: 'var(--c-text-primary)' }}>Arkloop</div>
-          <div style={{ fontSize: '15px', fontWeight: 500, color: 'var(--c-placeholder)' }}>
-            {mode === 'login' ? t.loginMode : t.registerMode}
-          </div>
+          <div style={{ fontSize: '15px', fontWeight: 500, color: 'var(--c-placeholder)' }}>{stepTitle}</div>
         </header>
 
         <section style={{ width: 'min(400px, 100%)' }}>
-          <form className="flex flex-col" style={{ gap: '12px' }} onSubmit={onSubmit}>
-            <input
-              className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
-              style={inputStyle}
-              type="text"
-              placeholder={t.enterUsername}
-              value={loginValue}
-              onChange={(e) => setLoginValue(e.target.value)}
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+          {phase === 'register' && (
+            <div style={{ fontSize: '12px', color: 'var(--c-placeholder)', marginBottom: '12px' }}>
+              {t.creatingAccountHint}
+            </div>
+          )}
 
-            {mode === 'register' && (
+          <form className="flex flex-col" style={{ gap: '10px' }} onSubmit={handleSubmit}>
+            {/* 身份输入框 — 始终可见，非 identity 阶段时只读展示 */}
+            {phase === 'identity' ? (
               <input
-                className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
+                className={inputCls}
                 style={inputStyle}
-                type="email"
-                placeholder={t.enterEmail}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
+                type="text"
+                placeholder={t.identityPlaceholder}
+                value={identity}
+                onChange={(e) => { setIdentity(e.target.value); resetToIdentity() }}
+                autoComplete="username"
                 autoCapitalize="none"
                 spellCheck={false}
-                required
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={resetToIdentity}
+                style={{
+                  ...inputStyle,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-secondary)',
+                  cursor: 'pointer',
+                  textAlign: 'left' as const,
+                  width: '100%',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                  <path d="M8 2L4 6l4 4" />
+                </svg>
+                <span style={{ flex: 1 }}>{identity.trim()}</span>
+              </button>
+            )}
+
+            {/* 密码框 */}
+            {phase === 'password' && (
+              <input
+                className={inputCls}
+                style={inputStyle}
+                type="password"
+                placeholder={t.enterPassword}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                autoFocus
               />
             )}
 
-            <input
-              className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
-              style={inputStyle}
-              type="password"
-              placeholder={t.enterPassword}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            />
+            {/* OTP 邮箱输入框 */}
+            {(phase === 'otp-email' || phase === 'otp-code') && (
+              <div className="flex flex-col" style={{ gap: '4px' }}>
+                <input
+                  className={inputCls}
+                  style={inputStyle}
+                  type="email"
+                  placeholder={t.otpEmailPlaceholder}
+                  value={otpEmail}
+                  onChange={(e) => setOtpEmail(e.target.value)}
+                  disabled={phase === 'otp-code'}
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  autoFocus={phase === 'otp-email' && !otpEmail}
+                />
+                {maskedEmail && phase === 'otp-email' && (
+                  <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', paddingLeft: '4px' }}>
+                    {maskedEmail}
+                  </div>
+                )}
+                {phase === 'otp-code' && otpCountdown > 0 && (
+                  <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', paddingLeft: '4px' }}>
+                    {t.otpSendingCountdown(otpCountdown)}
+                  </div>
+                )}
+              </div>
+            )}
 
-            {mode === 'register' && (
+            {/* 验证码输入框 */}
+            {phase === 'otp-code' && (
               <input
-                className="w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]"
+                className={inputCls}
                 style={inputStyle}
                 type="text"
-                placeholder={inviteRequired ? t.enterInviteCode : t.enterInviteCodeOptional}
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-                autoComplete="off"
-                required={inviteRequired}
+                inputMode="numeric"
+                placeholder={t.otpCodePlaceholder}
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                autoComplete="one-time-code"
+                autoFocus
               />
+            )}
+
+            {/* 注册字段 */}
+            {phase === 'register' && (
+              <>
+                {isEmail(identity.trim()) ? (
+                  // identity 是邮箱：展示用户名输入（预填邮箱前缀）
+                  <input
+                    className={inputCls}
+                    style={inputStyle}
+                    type="text"
+                    placeholder={t.enterUsername}
+                    value={regLogin}
+                    onChange={(e) => setRegLogin(e.target.value)}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                ) : (
+                  // identity 是用户名：展示邮箱输入
+                  <input
+                    className={inputCls}
+                    style={inputStyle}
+                    type="email"
+                    placeholder={t.enterEmail}
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                )}
+                <input
+                  className={inputCls}
+                  style={inputStyle}
+                  type="password"
+                  placeholder={t.enterPassword}
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <input
+                  className={inputCls}
+                  style={inputStyle}
+                  type="text"
+                  placeholder={inviteRequired ? t.enterInviteCode : t.enterInviteCodeOptional}
+                  value={regInviteCode}
+                  onChange={(e) => setRegInviteCode(e.target.value)}
+                  autoComplete="off"
+                />
+              </>
             )}
 
             <button
@@ -201,7 +457,7 @@ export function AuthPage({ mode, onLoggedIn }: Props) {
               disabled={!canSubmit}
               style={{
                 height: '38px',
-                marginTop: '4px',
+                marginTop: '2px',
                 borderRadius: '10px',
                 border: 'none',
                 cursor: 'pointer',
@@ -217,36 +473,77 @@ export function AuthPage({ mode, onLoggedIn }: Props) {
               }}
               className="disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? (
-                <>
-                  <SpinnerIcon />
-                  {t.continueBtn}
-                </>
-              ) : t.continueBtn}
+              {isLoading ? <><SpinnerIcon />{btnLabel}</> : btnLabel}
             </button>
           </form>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0' }}>
-            <div style={{ flex: 1, height: '0.5px', background: 'var(--c-border-auth)' }} />
-            <span style={{ fontSize: '11px', color: 'var(--c-placeholder)', fontWeight: 500 }}>{t.orDivider}</span>
-            <div style={{ flex: 1, height: '0.5px', background: 'var(--c-border-auth)' }} />
-          </div>
+          {/* 密码阶段：OTP 跳转提示 */}
+          {phase === 'password' && (
+            <button
+              type="button"
+              onClick={switchToOtp}
+              style={{
+                marginTop: '10px',
+                fontSize: '12px',
+                color: 'var(--c-placeholder)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                display: 'block',
+              }}
+            >
+              {t.useEmailOtpHint}
+            </button>
+          )}
 
-          <button type="button" className="github-btn">
-            <GitHubIcon />
-            {t.githubLogin}
-          </button>
+          {/* OTP code 阶段：重发验证码 */}
+          {phase === 'otp-code' && (
+            <button
+              type="button"
+              disabled={otpCountdown > 0 || otpSending}
+              onClick={async () => {
+                const email = otpEmail.trim()
+                if (!email) return
+                setOtpSending(true)
+                try { await sendEmailOTP(email) } catch { /* 静默 */ } finally {
+                  setOtpSending(false)
+                  startCountdown()
+                }
+              }}
+              style={{
+                marginTop: '10px',
+                fontSize: '12px',
+                color: 'var(--c-placeholder)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                display: 'block',
+              }}
+              className="disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {otpCountdown > 0 ? t.otpSendingCountdown(otpCountdown) : t.otpSendBtn}
+            </button>
+          )}
+
+          {/* identity 阶段：GitHub 登录 */}
+          {phase === 'identity' && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0' }}>
+                <div style={{ flex: 1, height: '0.5px', background: 'var(--c-border-auth)' }} />
+                <span style={{ fontSize: '11px', color: 'var(--c-placeholder)', fontWeight: 500 }}>{t.orDivider}</span>
+                <div style={{ flex: 1, height: '0.5px', background: 'var(--c-border-auth)' }} />
+              </div>
+              <button type="button" className="github-btn">
+                <GitHubIcon />
+                {t.githubLogin}
+              </button>
+            </>
+          )}
 
           {error && <ErrorCallout error={error} />}
         </section>
-
-        <button
-          type="button"
-          onClick={() => navigate(mode === 'login' ? '/register' : '/login')}
-          style={{ fontSize: '13px', color: 'var(--c-placeholder)', background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          {mode === 'login' ? t.noAccount : t.hasAccount}
-        </button>
       </div>
 
       <footer

@@ -753,6 +753,14 @@ export interface LocaleStrings {
       toastUpdateFailed: string
       toastSettingsSaved: string
       toastSettingsFailed: string
+      emailVerifyTitle: string
+      emailVerifyDesc: string
+      emailVerifyOn: string
+      emailVerifyOff: string
+      emailVerifyToggleOn: string
+      emailVerifyToggleOff: string
+      toastEmailVerifyUpdated: string
+      toastEmailVerifyFailed: string
     }
     asrCredentials: {
       title: string

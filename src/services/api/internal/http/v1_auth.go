@@ -118,6 +118,11 @@ func login(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.Re
 				WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
 				return
 			}
+			var unverified auth.EmailNotVerifiedError
+			if errors.As(err, &unverified) {
+				WriteError(w, nethttp.StatusForbidden, "auth.email_not_verified", "email not verified", traceID, nil)
+				return
+			}
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
@@ -568,5 +573,155 @@ func emailVerifyConfirm(emailVerifyService *auth.EmailVerifyService) func(nethtt
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+type emailOTPSendRequest struct {
+	Email string `json:"email"`
+}
+
+type emailOTPVerifyRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+func emailOTPSend(otpLoginService *auth.EmailOTPLoginService) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodPost {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+
+		traceID := observability.TraceIDFromContext(r.Context())
+		if otpLoginService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+
+		var body emailOTPSendRequest
+		if err := decodeJSON(r, &body); err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		body.Email = strings.TrimSpace(body.Email)
+		if body.Email == "" || !strings.Contains(body.Email, "@") {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "valid email is required", traceID, nil)
+			return
+		}
+
+		// 静默处理：无论邮箱是否存在都返回 204
+		_ = otpLoginService.SendLoginOTP(r.Context(), body.Email)
+		w.WriteHeader(nethttp.StatusNoContent)
+	}
+}
+
+func emailOTPVerify(otpLoginService *auth.EmailOTPLoginService, auditWriter *audit.Writer) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodPost {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+
+		traceID := observability.TraceIDFromContext(r.Context())
+		if otpLoginService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+
+		var body emailOTPVerifyRequest
+		if err := decodeJSON(r, &body); err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		body.Email = strings.TrimSpace(body.Email)
+		body.Code = strings.TrimSpace(body.Code)
+		if body.Email == "" || body.Code == "" {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "email and code are required", traceID, nil)
+			return
+		}
+
+		issued, err := otpLoginService.VerifyLoginOTP(r.Context(), body.Email, body.Code)
+		if err != nil {
+			var expired auth.OTPExpiredOrUsedError
+			if errors.As(err, &expired) {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "auth.otp_invalid", "code invalid or expired", traceID, nil)
+				return
+			}
+			var suspended auth.SuspendedUserError
+			if errors.As(err, &suspended) {
+				WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		if auditWriter != nil {
+			auditWriter.WriteLoginSucceeded(r.Context(), traceID, issued.UserID, body.Email)
+		}
+
+		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
+			AccessToken:  issued.AccessToken,
+			RefreshToken: issued.RefreshToken,
+			TokenType:    "bearer",
+		})
+	}
+}
+
+type checkUserRequest struct {
+	Login string `json:"login"`
+}
+
+type checkUserResponse struct {
+	Exists      bool   `json:"exists"`
+	MaskedEmail string `json:"masked_email,omitempty"`
+}
+
+// maskEmail 脱敏：john.doe@example.com → j***e@example.com
+func maskEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return email
+	}
+	local, domain := parts[0], parts[1]
+	if len(local) <= 2 {
+		return local[:1] + "***@" + domain
+	}
+	return local[:1] + "***" + local[len(local)-1:] + "@" + domain
+}
+
+func checkUser(credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		traceID := observability.TraceIDFromContext(r.Context())
+		if credentialRepo == nil || usersRepo == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "service_unavailable", "service unavailable", traceID, nil)
+			return
+		}
+		var body checkUserRequest
+		if err := decodeJSON(r, &body); err != nil {
+			WriteError(w, nethttp.StatusBadRequest, "bad_request", "invalid request body", traceID, nil)
+			return
+		}
+		body.Login = strings.TrimSpace(body.Login)
+
+		var maskedEmail string
+		exists := false
+
+		if cred, err := credentialRepo.GetByLogin(r.Context(), body.Login); err == nil && cred != nil {
+			exists = true
+			if user, err := usersRepo.GetByID(r.Context(), cred.UserID); err == nil && user != nil && user.Email != nil && *user.Email != "" {
+				maskedEmail = maskEmail(*user.Email)
+			}
+		}
+		if !exists {
+			if user, err := usersRepo.GetByEmail(r.Context(), body.Login); err == nil && user != nil {
+				exists = true
+				if user.Email != nil {
+					maskedEmail = maskEmail(*user.Email)
+				}
+			}
+		}
+
+		writeJSON(w, traceID, nethttp.StatusOK, checkUserResponse{Exists: exists, MaskedEmail: maskedEmail})
 	}
 }

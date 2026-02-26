@@ -18,6 +18,7 @@ import {
 } from '../../api/platform-settings'
 
 const FLAG_KEY = 'registration.open'
+const EMAIL_VERIFY_FLAG_KEY = 'auth.require_email_verification'
 
 const DEFAULTS = {
   'credit.initial_grant': '1000',
@@ -36,6 +37,8 @@ export function RegistrationPage() {
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
   const [openRegistration, setOpenRegistration] = useState<boolean | null>(null)
+  const [emailVerifyRequired, setEmailVerifyRequired] = useState<boolean | null>(null)
+  const [togglingEmailVerify, setTogglingEmailVerify] = useState(false)
 
   // 平台设置
   const [initialGrant, setInitialGrant] = useState('')
@@ -54,6 +57,12 @@ export function RegistrationPage() {
         throw err
       })
       setOpenRegistration(flag?.default_value ?? false)
+
+      const emailVerifyFlag = await getFeatureFlag(EMAIL_VERIFY_FLAG_KEY, accessToken).catch((err) => {
+        if (isApiError(err) && err.status === 404) return null
+        throw err
+      })
+      setEmailVerifyRequired(emailVerifyFlag?.default_value ?? false)
 
       // 加载平台设置
       const loadSetting = async (key: SettingKey) => {
@@ -107,6 +116,28 @@ export function RegistrationPage() {
     }
   }, [openRegistration, accessToken, addToast, tc])
 
+  const handleToggleEmailVerify = useCallback(async () => {
+    const nextValue = !(emailVerifyRequired ?? false)
+    setTogglingEmailVerify(true)
+    try {
+      try {
+        await updateFeatureFlagDefault(EMAIL_VERIFY_FLAG_KEY, { default_value: nextValue }, accessToken)
+      } catch (err) {
+        if (isApiError(err) && err.status === 404) {
+          await createFeatureFlag({ key: EMAIL_VERIFY_FLAG_KEY, default_value: nextValue }, accessToken)
+        } else {
+          throw err
+        }
+      }
+      setEmailVerifyRequired(nextValue)
+      addToast(tc.toastEmailVerifyUpdated, 'success')
+    } catch {
+      addToast(tc.toastEmailVerifyFailed, 'error')
+    } finally {
+      setTogglingEmailVerify(false)
+    }
+  }, [emailVerifyRequired, accessToken, addToast, tc])
+
   const settingsChanged = initialGrant !== savedInitialGrant || inviteReward !== savedInviteReward || inviteeReward !== savedInviteeReward
 
   const handleSaveSettings = useCallback(async () => {
@@ -154,6 +185,7 @@ export function RegistrationPage() {
   }, [initialGrant, inviteReward, inviteeReward, savedInitialGrant, savedInviteReward, savedInviteeReward, accessToken, addToast, tc])
 
   const isOpen = openRegistration ?? false
+  const isEmailVerifyRequired = emailVerifyRequired ?? false
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -200,6 +232,33 @@ export function RegistrationPage() {
               <p className="mt-1 text-xs leading-relaxed text-[var(--c-text-muted)]">
                 {isOpen ? tc.inviteCodeOpenHint : tc.inviteCodeInviteHint}
               </p>
+            </div>
+
+            {/* 邮箱验证强制开关 */}
+            <div className="rounded-lg border border-[var(--c-border-console)] bg-[var(--c-bg-card)] p-5">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-medium text-[var(--c-text-primary)]">
+                    {tc.emailVerifyTitle}
+                  </h3>
+                  <p className="text-xs text-[var(--c-text-muted)]">
+                    {tc.emailVerifyDesc}
+                  </p>
+                </div>
+                <Badge variant={isEmailVerifyRequired ? 'success' : 'neutral'}>
+                  {isEmailVerifyRequired ? tc.emailVerifyOn : tc.emailVerifyOff}
+                </Badge>
+              </div>
+              <div className="mt-4 border-t border-[var(--c-border-console)] pt-4">
+                <button
+                  onClick={handleToggleEmailVerify}
+                  disabled={togglingEmailVerify}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
+                >
+                  {togglingEmailVerify && <Loader2 size={12} className="animate-spin" />}
+                  {isEmailVerifyRequired ? tc.emailVerifyToggleOff : tc.emailVerifyToggleOn}
+                </button>
+              </div>
             </div>
 
             {/* 推荐奖励设置 */}
