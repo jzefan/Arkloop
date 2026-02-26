@@ -86,7 +86,7 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 
 	// 注册管理员
 	adminReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "admin@test.com", "password": "adminpass123", "display_name": "Admin User"}, nil)
+		map[string]any{"login": "admin@test.com", "password": "adminpass123"}, nil)
 	if adminReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
@@ -106,7 +106,7 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 
 	// 注册普通用户
 	aliceReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice@test.com", "password": "alicepass123", "display_name": "Alice"}, nil)
+		map[string]any{"login": "alice@test.com", "password": "alicepass123"}, nil)
 	if aliceReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d %s", aliceReg.Code, aliceReg.Body.String())
 	}

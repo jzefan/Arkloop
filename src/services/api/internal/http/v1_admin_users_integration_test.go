@@ -80,7 +80,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 
 	// 注册管理员用户
 	adminReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "admin@test.com", "password": "adminpass123", "display_name": "Admin User"}, nil)
+		map[string]any{"login": "admin@test.com", "password": "adminpass123"}, nil)
 	if adminReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
@@ -102,14 +102,14 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 
 	// 注册普通用户
 	regAlice := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice@test.com", "password": "alicepass123", "display_name": "Alice"}, nil)
+		map[string]any{"login": "alice@test.com", "password": "alicepass123"}, nil)
 	if regAlice.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d %s", regAlice.Code, regAlice.Body.String())
 	}
 	alicePayload := decodeJSONBody[registerResponse](t, regAlice.Body.Bytes())
 
 	regBob := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "bob@test.com", "password": "bobpass12345", "display_name": "Bob"}, nil)
+		map[string]any{"login": "bob@test.com", "password": "bobpass12345"}, nil)
 	if regBob.Code != nethttp.StatusCreated {
 		t.Fatalf("register bob: %d %s", regBob.Code, regBob.Body.String())
 	}
@@ -132,8 +132,8 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		}
 	})
 
-	// 测试: 搜索 display_name
-	t.Run("search by display_name", func(t *testing.T) {
+	// 测试: 搜索 username
+	t.Run("search by username", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/users?q=Alice&limit=50", nil, authHeader(adminToken))
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("search: %d %s", resp.Code, resp.Body.String())
@@ -142,8 +142,8 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		if len(users) != 1 {
 			t.Fatalf("expected 1 user, got %d", len(users))
 		}
-		if users[0].DisplayName != "Alice" {
-			t.Fatalf("expected Alice, got %s", users[0].DisplayName)
+		if users[0].Username != "alice@test.com" {
+			t.Fatalf("expected alice@test.com, got %s", users[0].Username)
 		}
 	})
 
@@ -186,8 +186,8 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 			t.Fatalf("get: %d %s", resp.Code, resp.Body.String())
 		}
 		detail := decodeJSONBody[adminUserDetailResponse](t, resp.Body.Bytes())
-		if detail.DisplayName != "Alice" {
-			t.Fatalf("expected Alice, got %s", detail.DisplayName)
+		if detail.Username != "alice@test.com" {
+			t.Fatalf("expected alice@test.com, got %s", detail.Username)
 		}
 		if len(detail.Orgs) == 0 {
 			t.Fatal("expected at least one org")

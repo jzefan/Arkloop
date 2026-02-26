@@ -3,7 +3,7 @@ import { apiFetch } from './client'
 export type AdminUser = {
   id: string
   login?: string
-  display_name: string
+  username: string
   email: string | null
   email_verified_at?: string
   status: string
@@ -65,7 +65,7 @@ export async function updateAdminUserStatus(
 }
 
 export type UpdateAdminUserRequest = {
-  display_name: string
+  username: string
   email: string | null
   locale: string | null
   timezone: string | null

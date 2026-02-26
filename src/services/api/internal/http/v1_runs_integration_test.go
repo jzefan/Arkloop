@@ -99,7 +99,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd", "display_name": "Alice"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
@@ -249,7 +249,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd", "display_name": "Bob"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if bobRegister.Code != nethttp.StatusCreated {
@@ -353,7 +353,7 @@ func TestStreamRunEvents(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice_sse", "password": "pwdpwdpwd", "display_name": "Alice"},
+		map[string]any{"login": "alice_sse", "password": "pwdpwdpwd"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
@@ -435,7 +435,7 @@ func TestStreamRunEvents(t *testing.T) {
 			handler,
 			nethttp.MethodPost,
 			"/v1/auth/register",
-			map[string]any{"login": "bob_sse", "password": "pwdpwdpwd", "display_name": "Bob"},
+			map[string]any{"login": "bob_sse", "password": "pwdpwdpwd"},
 			nil,
 		)
 		if bobRegister.Code != nethttp.StatusCreated {
@@ -552,7 +552,7 @@ func TestListGlobalRuns(t *testing.T) {
 
 	// alice 注册并创建 thread + run
 	aliceReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice_gr", "password": "pwdpwdpwd", "display_name": "Alice"}, nil)
+		map[string]any{"login": "alice_gr", "password": "pwdpwdpwd"}, nil)
 	if aliceReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d body=%s", aliceReg.Code, aliceReg.Body.String())
 	}
@@ -573,7 +573,7 @@ func TestListGlobalRuns(t *testing.T) {
 
 	// bob 注册（不同 org）
 	bobReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "bob_gr", "password": "pwdpwdpwd", "display_name": "Bob"}, nil)
+		map[string]any{"login": "bob_gr", "password": "pwdpwdpwd"}, nil)
 	if bobReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register bob: %d body=%s", bobReg.Code, bobReg.Body.String())
 	}

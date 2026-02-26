@@ -17,7 +17,7 @@ export type AccessLogEntry = {
   identity_type: string
   org_id: string
   user_id: string
-  display_name: string
+  username: string
 }
 
 export type AccessLogResponse = {

@@ -178,7 +178,7 @@ func adminRunsEntry(
 
 			user, err := usersRepo.GetByID(r.Context(), *run.CreatedByUserID)
 			if err == nil && user != nil {
-				resp.CreatedByUserName = &user.DisplayName
+				resp.CreatedByUserName = &user.Username
 				resp.CreatedByEmail = user.Email
 			}
 		}

@@ -35,7 +35,7 @@ type accessLogEntry struct {
 	IdentityType string `json:"identity_type"`
 	OrgID        string `json:"org_id"`
 	UserID       string `json:"user_id"`
-	DisplayName  string `json:"display_name"`
+	Username     string `json:"username"`
 }
 
 type accessLogFilters struct {
@@ -167,9 +167,9 @@ func listAccessLog(
 		entries = entries[:count]
 	}
 
-	// 批量解析 user_id → display_name
+	// 批量解析 user_id → username
 	if usersRepo != nil {
-		resolveDisplayNames(r.Context(), entries, usersRepo)
+		resolveUsernames(r.Context(), entries, usersRepo)
 	}
 
 	resp := map[string]any{
@@ -205,8 +205,7 @@ func matchFilters(e accessLogEntry, f accessLogFilters) bool {
 	return true
 }
 
-func resolveDisplayNames(ctx context.Context, entries []accessLogEntry, usersRepo *data.UserRepository) {
-	// 收集去重 user_id
+func resolveUsernames(ctx context.Context, entries []accessLogEntry, usersRepo *data.UserRepository) {
 	idSet := make(map[uuid.UUID]struct{})
 	for i := range entries {
 		if entries[i].UserID == "" {
@@ -226,7 +225,7 @@ func resolveDisplayNames(ctx context.Context, entries []accessLogEntry, usersRep
 		ids = append(ids, id)
 	}
 
-	names, err := usersRepo.GetDisplayNames(ctx, ids)
+	names, err := usersRepo.GetUsernames(ctx, ids)
 	if err != nil || len(names) == 0 {
 		return
 	}
@@ -240,7 +239,7 @@ func resolveDisplayNames(ctx context.Context, entries []accessLogEntry, usersRep
 			continue
 		}
 		if name, ok := names[uid]; ok {
-			entries[i].DisplayName = name
+			entries[i].Username = name
 		}
 	}
 }

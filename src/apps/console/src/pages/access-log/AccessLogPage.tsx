@@ -41,7 +41,7 @@ function riskBadge(score: number, t: { riskLow: string; riskMedium: string; risk
 
 function identityLabel(entry: AccessLogEntry, anonLabel: string) {
   if (entry.identity_type === 'jwt') {
-    const label = entry.display_name || entry.user_id?.slice(0, 8) || '--'
+    const label = entry.username || entry.user_id?.slice(0, 8) || '--'
     return (
       <span className="font-mono text-xs" title={`user: ${entry.user_id}\norg: ${entry.org_id}`}>
         {label}

@@ -516,7 +516,6 @@ export interface LocaleStrings {
       title: string
       colId: string
       colLogin: string
-      colDisplayName: string
       colEmail: string
       colStatus: string
       colLastLogin: string
@@ -554,7 +553,7 @@ export interface LocaleStrings {
       toastDetailFailed: string
       editButton: string
       editTitle: string
-      editDisplayName: string
+      editUsername: string
       editEmail: string
       editEmailVerified: string
       editLocale: string

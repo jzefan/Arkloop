@@ -173,7 +173,7 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
     })
   }, [])
 
-  const userInitial = me?.display_name?.charAt(0).toUpperCase() ?? '?'
+  const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
   const context: ConsoleOutletContext = { accessToken, onLoggedOut, me }
 
   if (!meLoaded) {
@@ -295,7 +295,7 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
               {userInitial}
             </div>
             <div className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--c-text-secondary)]">
-              {me?.display_name ?? '...'}
+              {me?.username ?? '...'}
             </div>
             <button
               onClick={() => setSettingsOpen(true)}
