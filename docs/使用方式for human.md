@@ -15,8 +15,11 @@ cd src/services/api && go run ./cmd/api
 cd src/services/worker && go run ./cmd/worker
 
 # 前端
+# docker compose up 模式（gateway 在 8000）：
+export ARKLOOP_API_PROXY_TARGET=http://127.0.0.1:8000
+# 纯本地 Go 进程模式（直连 API 在 8001）：
+# export ARKLOOP_API_PROXY_TARGET=http://127.0.0.1:8001
 pnpm -C src/apps/web dev
- 如需覆盖代理目标：export ARKLOOP_API_PROXY_TARGET=http://127.0.0.1:8001
 
 # Console前端
 pnpm -C src/apps/console dev
