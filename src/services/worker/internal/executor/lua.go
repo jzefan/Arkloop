@@ -129,11 +129,15 @@ func (rt *luaRuntime) agentRun(L *lua.LState) int {
 	return 2
 }
 
+// maxParallelTasks 防止 Lua 脚本一次性爆发过多 goroutine 和 Redis 连接。
+const maxParallelTasks = 32
+
 // agent.run_parallel(tasks) -> (results, errors)
 // tasks 是 Lua table，每项为 {skill="...", input="..."}，索引从 1 开始。
 // 所有子任务并行执行，全部完成后返回两个等长 table：
-//   results[i] = 输出文本（失败时为 nil）
-//   errors[i]  = 错误信息（成功时为 nil）
+//
+//	results[i] = 输出文本（失败时为 nil）
+//	errors[i]  = 错误信息（成功时为 nil）
 func (rt *luaRuntime) agentRunParallel(L *lua.LState) int {
 	if rt.ctx.Err() != nil {
 		L.Push(lua.LNil)
@@ -149,6 +153,12 @@ func (rt *luaRuntime) agentRunParallel(L *lua.LState) int {
 
 	tasksTable := L.CheckTable(1)
 	n := tasksTable.Len()
+
+	if n > maxParallelTasks {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(fmt.Sprintf("agent.run_parallel: task count %d exceeds limit %d", n, maxParallelTasks)))
+		return 2
+	}
 
 	type taskEntry struct {
 		skillID string
@@ -179,6 +189,19 @@ func (rt *luaRuntime) agentRunParallel(L *lua.LState) int {
 		tasks[i] = taskEntry{skillID: string(skillLV), input: string(inputLV)}
 	}
 
+	skillIDs := make([]string, n)
+	for i, t := range tasks {
+		skillIDs[i] = t.skillID
+	}
+	if err := rt.yield(rt.emitter.Emit("agent.parallel_dispatch", map[string]any{
+		"task_count": n,
+		"skill_ids":  skillIDs,
+	}, nil, nil)); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
 	outputs := make([]string, n)
 	errs := make([]error, n)
 
@@ -194,6 +217,22 @@ func (rt *luaRuntime) agentRunParallel(L *lua.LState) int {
 		}()
 	}
 	wg.Wait()
+
+	successCount := 0
+	for _, e := range errs {
+		if e == nil {
+			successCount++
+		}
+	}
+	if err := rt.yield(rt.emitter.Emit("agent.parallel_complete", map[string]any{
+		"task_count":    n,
+		"success_count": successCount,
+		"error_count":   n - successCount,
+	}, nil, nil)); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
 
 	resultsTable := L.NewTable()
 	errorsTable := L.NewTable()
