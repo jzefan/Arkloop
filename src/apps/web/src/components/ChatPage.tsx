@@ -210,8 +210,9 @@ export function ChatPage() {
 
     for (const event of fresh) {
       if (event.type === 'message.delta') {
-        const obj = event.data as { content_delta?: unknown; role?: unknown }
+        const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
+        if (obj.channel === 'thinking') continue
         if (typeof obj.content_delta !== 'string' || !obj.content_delta) continue
         setAssistantDraft((prev) => prev + obj.content_delta)
         continue

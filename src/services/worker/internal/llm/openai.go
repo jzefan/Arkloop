@@ -573,6 +573,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 	terminalEmitted := false
 	var handlerFailed bool
 	var streamedUsage *Usage
+	var inThink bool
 
 	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
 		defer func() {
@@ -637,8 +638,17 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			role = strings.TrimSpace(*choice.Delta.Role)
 		}
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.Content, Role: role}); err != nil {
-				return err
+			thinkingPart, mainPart := splitThinkContent(&inThink, *choice.Delta.Content)
+			thinkingChannel := "thinking"
+			if thinkingPart != "" {
+				if err := yield(StreamMessageDelta{ContentDelta: thinkingPart, Role: role, Channel: &thinkingChannel}); err != nil {
+					return err
+				}
+			}
+			if mainPart != "" {
+				if err := yield(StreamMessageDelta{ContentDelta: mainPart, Role: role}); err != nil {
+					return err
+				}
 			}
 		}
 		for idx, toolDelta := range choice.Delta.ToolCalls {
@@ -735,8 +745,15 @@ func (g *OpenAIGateway) streamResponsesSSE(
 
 		typ, _ := root["type"].(string)
 		if delta := openAIResponsesDeltaText(root); delta != "" {
-			if err := yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant"}); err != nil {
-				return err
+			thinkingChannel := "thinking"
+			if openAIResponsesIsReasoningDelta(typ) {
+				if err := yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant", Channel: &thinkingChannel}); err != nil {
+					return err
+				}
+			} else {
+				if err := yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant"}); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1355,6 +1372,40 @@ func openAIResponsesDeltaText(event map[string]any) string {
 		}
 	}
 	return b.String()
+}
+
+// openAIResponsesIsReasoningDelta 判断 responses API 事件是否为 reasoning（思考）类 delta。
+// o3 系列模型使用 response.reasoning_summary_text.delta 等类型发出 reasoning 内容。
+func openAIResponsesIsReasoningDelta(typ string) bool {
+	return strings.HasPrefix(typ, "response.reasoning") && strings.HasSuffix(typ, ".delta")
+}
+
+// splitThinkContent 按 <think>/<think> 边界将一段 delta 拆分为 thinking 部分和 main 部分。
+// inThink 为跨 chunk 的状态标志，函数会原地修改它。
+// 不处理跨 chunk 的部分 tag（如 "<thi" + "nk>"），实践中 LLM 不会如此切割 tag。
+func splitThinkContent(inThink *bool, delta string) (thinkingPart, mainPart string) {
+	if *inThink {
+		if idx := strings.Index(delta, "</think>"); idx >= 0 {
+			thinkingPart = delta[:idx]
+			mainPart = delta[idx+len("</think>"):]
+			*inThink = false
+		} else {
+			thinkingPart = delta
+		}
+	} else {
+		if idx := strings.Index(delta, "<think>"); idx >= 0 {
+			mainPart = delta[:idx]
+			rest := delta[idx+len("<think>"):]
+			*inThink = true
+			// rest 部分可能已含 </think>，递归处理一次
+			tPart, mPart := splitThinkContent(inThink, rest)
+			thinkingPart = tPart
+			mainPart += mPart
+		} else {
+			mainPart = delta
+		}
+	}
+	return
 }
 
 func openAIParseFailure(err error, message string, toolCallMessage string) StreamRunFailed {
