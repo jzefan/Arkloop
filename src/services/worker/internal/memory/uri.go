@@ -13,17 +13,18 @@ func sanitizeKey(key string) string {
 	return reInvalidKey.ReplaceAllString(key, "_")
 }
 
-// BuildURI 构造标准的 memory URI，确保格式统一且不会串租。
-// 例：BuildURI(MemoryScopeUser, ident, MemoryCategoryPreference, "language")
+// BuildURI 构造标准 memory URI，与 OpenViking 内部存储路径保持一致。
+// 多租户隔离由请求头（X-OpenViking-User/Agent）处理，不体现在 URI 路径中。
 //
-//	→ "viking://user/{user_id}/preferences/language"
-func BuildURI(scope MemoryScope, ident MemoryIdentity, category MemoryCategory, key string) string {
+// 例：BuildURI(MemoryScopeUser, MemoryCategoryPreference, "language")
+//
+//	→ "viking://user/memories/preferences/language"
+func BuildURI(scope MemoryScope, category MemoryCategory, key string) string {
 	key = sanitizeKey(strings.TrimSpace(key))
 	switch scope {
 	case MemoryScopeAgent:
-		space := fmt.Sprintf("%s_%s", ident.AgentID, ident.UserID.String()[:8])
-		return fmt.Sprintf("viking://agent/%s/%s/%s", space, string(category), key)
+		return fmt.Sprintf("viking://agent/memories/%s/%s", string(category), key)
 	default:
-		return fmt.Sprintf("viking://user/%s/%s/%s", ident.UserID.String(), string(category), key)
+		return fmt.Sprintf("viking://user/memories/%s/%s", string(category), key)
 	}
 }

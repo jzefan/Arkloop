@@ -3,19 +3,18 @@ package openviking
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"arkloop/services/worker/internal/memory"
-
-	"github.com/google/uuid"
 )
 
 // retryBaseDelay 是重试的初始等待时间，每次翻倍。
@@ -33,24 +32,14 @@ func sanitizeAgentID(id string) string {
 	return reInvalidAgentID.ReplaceAllString(id, "_")
 }
 
-// agentSpace 计算 agent 隔离空间标识：sanitizedAgentID_<md5前8位>。
-// 保留可读前缀便于线上排查，后缀保证租户隔离不依赖 agentID 全局唯一。
-func agentSpace(userID uuid.UUID, agentID string) string {
-	sum := md5.Sum([]byte(userID.String() + agentID))
-	prefix := sanitizeAgentID(agentID)
-	if len(prefix) > 16 {
-		prefix = prefix[:16]
-	}
-	return fmt.Sprintf("%s_%x", prefix, sum[:4])
-}
-
-// scopeURI 将 MemoryScope 转换为对应的 viking URI 前缀，避免上层忘记拼 space 导致串租。
-func scopeURI(scope memory.MemoryScope, ident memory.MemoryIdentity) string {
+// scopeURI 返回 MemoryScope 对应的 viking 检索目标 URI。
+// 多租户隔离由 X-OpenViking-User/Agent 请求头提供，URI 本身不含身份信息。
+func scopeURI(scope memory.MemoryScope) string {
 	switch scope {
 	case memory.MemoryScopeAgent:
-		return fmt.Sprintf("viking://agent/%s", agentSpace(ident.UserID, ident.AgentID))
+		return "viking://agent/memories/"
 	default:
-		return fmt.Sprintf("viking://user/%s", ident.UserID.String())
+		return "viking://user/memories/"
 	}
 }
 
@@ -207,7 +196,7 @@ type apiError struct {
 func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, scope memory.MemoryScope, query string, limit int) ([]memory.MemoryHit, error) {
 	req := findRequest{
 		Query:     query,
-		TargetURI: scopeURI(scope, ident),
+		TargetURI: scopeURI(scope),
 		Limit:     limit,
 	}
 
@@ -305,9 +294,13 @@ type createSessionResult struct {
 
 // Write 通过"建立专属 session → 写入内容 → commit 触发提取"将结构化记忆写入用户空间。
 //
-// OpenViking 的写入路径依赖 LLM 提取（commit），因此 Write 本质上是同步但有 LLM 延迟的操作。
-// 写入完成后内容会被向量化，可通过 Find 语义检索。
+// OpenViking 的 commit 会在服务端异步处理 LLM 提取和向量化；
+// POST /api/v1/sessions 不支持 target_uri，存储路径由服务端根据 identity headers 决定。
 func (c *client) Write(ctx context.Context, ident memory.MemoryIdentity, _ memory.MemoryScope, entry memory.MemoryEntry) error {
+	if strings.TrimSpace(entry.Content) == "" {
+		return errors.New("memory write: content is empty")
+	}
+
 	// 1. 创建临时 session
 	var createResp apiResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/sessions", nil, ident, &createResp); err != nil {
@@ -329,13 +322,17 @@ func (c *client) Write(ctx context.Context, ident memory.MemoryIdentity, _ memor
 		{Role: "assistant", Content: "Noted."},
 	} {
 		if err := c.doJSON(ctx, http.MethodPost, msgPath, msg, ident, nil); err != nil {
+			slog.WarnContext(ctx, "memory write: message failed, session leaked",
+				"session_id", sid, "role", msg.Role, "err", err.Error())
 			return fmt.Errorf("memory write add message role=%s: %w", msg.Role, err)
 		}
 	}
 
-	// 3. commit 触发 LLM 提取 + 向量化（同步等待直到提取完成）
+	// 3. commit 触发 LLM 提取（commit HTTP 调用本身会快速返回，提取为异步）
 	commitPath := fmt.Sprintf("/api/v1/sessions/%s/commit", url.PathEscape(sid))
 	if err := c.doJSON(ctx, http.MethodPost, commitPath, nil, ident, nil); err != nil {
+		slog.WarnContext(ctx, "memory write: commit failed, session leaked",
+			"session_id", sid, "err", err.Error())
 		return fmt.Errorf("memory write commit session=%s: %w", sid, err)
 	}
 	return nil
