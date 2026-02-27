@@ -105,7 +105,7 @@ func TestParseAnthropicMessage_ToolUse(t *testing.T) {
   ]
 }`)
 
-	content, toolCalls, err := parseAnthropicMessage(body)
+	content, _, toolCalls, err := parseAnthropicMessage(body)
 	if err != nil {
 		t.Fatalf("parseAnthropicMessage failed: %v", err)
 	}

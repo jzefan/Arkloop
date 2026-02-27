@@ -199,7 +199,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		})
 	}
 
-	content, toolCalls, err := parseAnthropicMessage(body)
+	content, thinkingText, toolCalls, err := parseAnthropicMessage(body)
 	if err != nil {
 		if errors.Is(err, errAnthropicToolUseInput) {
 			return yield(StreamRunFailed{
@@ -217,6 +217,13 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 				Details:    map[string]any{"reason": err.Error()},
 			},
 		})
+	}
+
+	if thinkingText != "" {
+		thinkingChannel := "thinking"
+		if err := yield(StreamMessageDelta{ContentDelta: thinkingText, Role: "assistant", Channel: &thinkingChannel}); err != nil {
+			return err
+		}
 	}
 
 	if content != "" {
@@ -375,32 +382,40 @@ func toAnthropicTools(specs []ToolSpec) []map[string]any {
 	return out
 }
 
-func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
+func parseAnthropicMessage(body []byte) (content string, thinkingText string, toolCalls []ToolCall, err error) {
 	var parsed any
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", nil, err
+	if err = json.Unmarshal(body, &parsed); err != nil {
+		return
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", nil, fmt.Errorf("response root is not an object")
+		err = fmt.Errorf("response root is not an object")
+		return
 	}
-	content, ok := root["content"].([]any)
-	if !ok || len(content) == 0 {
-		return "", nil, fmt.Errorf("response missing content")
+	rawContent, ok := root["content"].([]any)
+	if !ok || len(rawContent) == 0 {
+		err = fmt.Errorf("response missing content")
+		return
 	}
 
-	var b strings.Builder
-	toolCalls := []ToolCall{}
+	var textBuilder strings.Builder
+	var thinkingBuilder strings.Builder
+	toolCalls = []ToolCall{}
 
-	for idx, rawItem := range content {
+	for idx, rawItem := range rawContent {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
 		typ, _ := item["type"].(string)
+		if typ == "thinking" {
+			text, _ := item["thinking"].(string)
+			thinkingBuilder.WriteString(text)
+			continue
+		}
 		if typ == "text" {
 			text, _ := item["text"].(string)
-			b.WriteString(text)
+			textBuilder.WriteString(text)
 			continue
 		}
 		if typ != "tool_use" {
@@ -410,19 +425,22 @@ func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 		toolCallID, _ := item["id"].(string)
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return "", nil, fmt.Errorf("content[%d] missing tool_use.id", idx)
+			err = fmt.Errorf("content[%d] missing tool_use.id", idx)
+			return
 		}
 		toolName, _ := item["name"].(string)
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" {
-			return "", nil, fmt.Errorf("content[%d] missing tool_use.name", idx)
+			err = fmt.Errorf("content[%d] missing tool_use.name", idx)
+			return
 		}
 
 		argumentsJSON := map[string]any{}
 		if rawInput, ok := item["input"]; ok && rawInput != nil {
 			obj, ok := rawInput.(map[string]any)
 			if !ok {
-				return "", nil, fmt.Errorf("%w: content[%d].input must be a JSON object", errAnthropicToolUseInput, idx)
+				err = fmt.Errorf("%w: content[%d].input must be a JSON object", errAnthropicToolUseInput, idx)
+				return
 			}
 			argumentsJSON = obj
 		}
@@ -434,7 +452,9 @@ func parseAnthropicMessage(body []byte) (string, []ToolCall, error) {
 		})
 	}
 
-	return b.String(), toolCalls, nil
+	content = textBuilder.String()
+	thinkingText = thinkingBuilder.String()
+	return
 }
 
 func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[string]any) {
