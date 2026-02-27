@@ -19,10 +19,11 @@ type TerminalStatusUpdate struct {
 }
 
 type Run struct {
-	ID          uuid.UUID
-	OrgID       uuid.UUID
-	ThreadID    uuid.UUID
-	ParentRunID *uuid.UUID // nil 表示顶级 Run，非 nil 表示子 Run
+	ID                uuid.UUID
+	OrgID             uuid.UUID
+	ThreadID          uuid.UUID
+	ParentRunID       *uuid.UUID // nil 表示顶级 Run，非 nil 表示子 Run
+	CreatedByUserID   *uuid.UUID // nil 表示系统触发或用户已删除，Memory 层按此隔离
 }
 
 type RunsRepository struct{}
@@ -31,12 +32,12 @@ func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*
 	var run Run
 	err := tx.QueryRow(
 		ctx,
-		`SELECT id, org_id, thread_id, parent_run_id
+		`SELECT id, org_id, thread_id, parent_run_id, created_by_user_id
 		 FROM runs
 		 WHERE id = $1
 		 LIMIT 1`,
 		runID,
-	).Scan(&run.ID, &run.OrgID, &run.ThreadID, &run.ParentRunID)
+	).Scan(&run.ID, &run.OrgID, &run.ThreadID, &run.ParentRunID, &run.CreatedByUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

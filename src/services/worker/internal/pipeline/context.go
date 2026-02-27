@@ -42,6 +42,13 @@ type RunContext struct {
 	Emitter events.Emitter
 	Router  *routing.ProviderRouter
 
+	// -- EngineV1.Execute 从 Run.CreatedByUserID 注入；nil 时 MemoryMiddleware 跳过写入 --
+	// agent_id 约定：默认取 SkillDefinition.ID；OpenViking 要求字符集 [a-zA-Z0-9_-]，adapter 层 sanitize
+	UserID *uuid.UUID
+
+	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 OpenViking --
+	FinalAssistantOutput string
+
 	// -- CancelGuardMiddleware 写入 --
 	CancelFunc context.CancelFunc // 释放 LISTEN 连接
 	ListenDone <-chan struct{}    // LISTEN goroutine 完成信号

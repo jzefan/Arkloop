@@ -112,6 +112,7 @@ func NewAgentLoopHandler(
 			if err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.OrgID, rc.Run.ThreadID); err != nil {
 				return err
 			}
+			rc.FinalAssistantOutput = writer.AssistantOutput()
 		}
 		return writer.Flush(ctx)
 	}
@@ -364,6 +365,11 @@ func (w *eventWriter) commit(ctx context.Context) error {
 
 func (w *eventWriter) Completed() bool {
 	return w.completed
+}
+
+// AssistantOutput 返回本次 run 的 assistant 最终拼接文本，供调用方写回 RunContext。
+func (w *eventWriter) AssistantOutput() string {
+	return strings.Join(w.assistantDeltas, "")
 }
 
 func (w *eventWriter) InsertAssistantMessage(
