@@ -155,20 +155,27 @@ services:
     restart: unless-stopped
     environment:
       BROWSER_PORT: "3000"
+      BROWSER_MAX_BROWSERS: "${ARKLOOP_BROWSER_MAX_BROWSERS:-2}"
+      BROWSER_MAX_CONTEXTS_PER_BROWSER: "${ARKLOOP_BROWSER_MAX_CONTEXTS:-20}"
+      BROWSER_CONTEXT_IDLE_TIMEOUT_S: "60"
+      BROWSER_CONTEXT_MAX_LIFETIME_S: "1800"
       BROWSER_MINIO_ENDPOINT: "minio:9000"
       BROWSER_MINIO_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-minioadmin}"
       BROWSER_MINIO_SECRET_KEY: "${ARKLOOP_S3_SECRET_KEY:?请在 .env 中设置 ARKLOOP_S3_SECRET_KEY}"
+      BROWSER_MINIO_BUCKET_SESSIONS: "browser-sessions"
+      BROWSER_MINIO_BUCKET_SCREENSHOTS: "browser-screenshots"
       BROWSER_MINIO_PUBLIC_ENDPOINT: "${BROWSER_MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}"
+      BROWSER_BLOCKED_HOSTS: "postgres,redis,minio,openviking,api,worker,gateway,pgbouncer"
     ports:
-      - "${BROWSER_SERVICE_PORT:-3100}:3000"
+      - "${ARKLOOP_BROWSER_PORT:-3100}:3000"
     depends_on:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   worker:
     build:
