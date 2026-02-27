@@ -295,3 +295,59 @@ func (c *client) CommitSession(ctx context.Context, ident memory.MemoryIdentity,
 	path := fmt.Sprintf("/api/v1/sessions/%s/commit", url.PathEscape(sessionID))
 	return c.doJSON(ctx, http.MethodPost, path, nil, ident, nil)
 }
+
+// --- Write ---
+
+// createSessionResult 对应 POST /api/v1/sessions 返回的 result 字段。
+type createSessionResult struct {
+	SessionID string `json:"session_id"`
+}
+
+// Write 通过"建立专属 session → 写入内容 → commit 触发提取"将结构化记忆写入用户空间。
+//
+// OpenViking 的写入路径依赖 LLM 提取（commit），因此 Write 本质上是同步但有 LLM 延迟的操作。
+// 写入完成后内容会被向量化，可通过 Find 语义检索。
+func (c *client) Write(ctx context.Context, ident memory.MemoryIdentity, _ memory.MemoryScope, entry memory.MemoryEntry) error {
+	// 1. 创建临时 session
+	var createResp apiResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/sessions", nil, ident, &createResp); err != nil {
+		return fmt.Errorf("memory write create session: %w", err)
+	}
+	if createResp.Error != nil {
+		return fmt.Errorf("memory write create session: [%s] %s", createResp.Error.Code, createResp.Error.Message)
+	}
+	var sessionResult createSessionResult
+	if err := json.Unmarshal(createResp.Result, &sessionResult); err != nil {
+		return fmt.Errorf("memory write parse session id: %w", err)
+	}
+	sid := sessionResult.SessionID
+
+	// 2. 写入内容作为 user 消息，assistant 回执确保 commit 不因空对话跳过提取
+	msgPath := fmt.Sprintf("/api/v1/sessions/%s/messages", url.PathEscape(sid))
+	for _, msg := range []addMessageRequest{
+		{Role: "user", Content: entry.Content},
+		{Role: "assistant", Content: "Noted."},
+	} {
+		if err := c.doJSON(ctx, http.MethodPost, msgPath, msg, ident, nil); err != nil {
+			return fmt.Errorf("memory write add message role=%s: %w", msg.Role, err)
+		}
+	}
+
+	// 3. commit 触发 LLM 提取 + 向量化（同步等待直到提取完成）
+	commitPath := fmt.Sprintf("/api/v1/sessions/%s/commit", url.PathEscape(sid))
+	if err := c.doJSON(ctx, http.MethodPost, commitPath, nil, ident, nil); err != nil {
+		return fmt.Errorf("memory write commit session=%s: %w", sid, err)
+	}
+	return nil
+}
+
+// --- Delete ---
+
+// Delete 删除指定 URI 的记忆，同时从向量索引中移除（viking_fs.rm 保证两者一致）。
+func (c *client) Delete(ctx context.Context, ident memory.MemoryIdentity, uri string) error {
+	path := "/api/v1/fs?uri=" + url.QueryEscape(uri) + "&recursive=false"
+	if err := c.doJSON(ctx, http.MethodDelete, path, nil, ident, nil); err != nil {
+		return fmt.Errorf("memory delete uri=%s: %w", uri, err)
+	}
+	return nil
+}
