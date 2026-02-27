@@ -612,7 +612,7 @@ AS-3.5.4（并行原语）
 - URI 规则：OpenViking 的 URI 是“所见即所得”映射（不会自动注入 user/agent space）。Worker 必须构造带 space 的 URI，否则会写进共享路径导致串租：
   - user space：`viking://user/{user_id}/...`
   - agent space：`viking://agent/{agent_space}/...`，其中 `agent_space = md5(user_id + agent_id)[:12]`
-  - session space：`viking://session/{user_id}/{session_id}/...`
+  - session space：`viking://session/{session_id}/...`（HTTP API 只用 `session_id`；内部存储含 user_space 但对 HTTP 客户端透明）
 - 记忆分类：commit 会从会话消息中提取 6 类记忆（profile/preferences/entities/events/cases/patterns），写入 user/agent space 并建立向量索引。
 
 **解决的问题**：F1
@@ -699,10 +699,21 @@ Worker 侧配置（DB 主，ENV 兜底，与 email/LLM 凭证同模式）：
   - `openviking.root_api_key`（与 `ov.conf.server.root_api_key` 一致；未启用 auth 时留空）
 - **兜底**：ENV `ARKLOOP_OPENVIKING_BASE_URL` / `ARKLOOP_OPENVIKING_ROOT_API_KEY`（本地开发 / 无 DB 时）
 
-`ov.conf` 至少需要：
-- `storage.agfs.path=/app/data`
-- `storage.vectordb.path=/app/data`
-- `embedding`/`vlm`/`rerank` 的 provider 配置（否则 find/search/commit 可能无法工作）
+`ov.conf` 至少需要（JSON 格式）：
+
+```json
+{
+  "storage": {
+    "agfs":    { "backend": "local", "path": "/app/data" },
+    "vectordb": { "backend": "local", "path": "/app/data" }
+  },
+  "embedding": { "dense": { "provider": "...", "api_key": "...", "model": "...", "dimension": 1024 } },
+  "vlm":       { "provider": "...", "api_key": "...", "model": "..." },
+  "rerank":    { "provider": "...", "api_key": "...", "model": "..." }
+}
+```
+
+`embedding`/`vlm` 必须配置否则 find/search/commit 无法工作；`rerank` 可选（缺少时仅用向量相似度排序）。`storage` 必须包含 `backend` 字段，否则启动失败。
 
 ### AS-5.3 — OpenViking 适配器（HTTP Client）
 
@@ -832,8 +843,12 @@ type MemoryProvider interface {
 
 **修改** `internal/memory/openviking/client.go`，新增：
 
-- `Write` → OpenViking `PUT /api/v1/content/write`（或 `POST /api/v1/resources/create`，以 OpenViking 实际 API 为准）。适配器负责将 `MemoryScope` + `MemoryCategory` 转换为正确的 URI 路径（如 `viking://user/{user_id}/preferences/language`），调用方只传 category + key，不需要知道 OpenViking 的 URI 规则。
-- `Delete` → OpenViking `DELETE /api/v1/content?uri=...`。
+- `Write` → **OpenViking HTTP API 当前无直接写入 `user://` / `agent://` scope 的端点**。
+  - `PUT /api/v1/content/write` 不存在；`POST /api/v1/resources` 只接受 `resources` scope（源码 `resource_service.py` 明确拒绝 user/agent scope）。
+  - 唯一 HTTP 写路径：通过 `AppendSessionMessages` + `CommitSession`（OpenViking 在 commit 时自动提取结构化记忆写入 user/agent space）。
+  - 结论：**主动写入结构化记忆必须改为"写消息 + commit"范式**，而不是直接写 URI。
+  - 如果 OpenViking 未来开放写入接口，在此更新。
+- `Delete` → OpenViking `DELETE /api/v1/fs?uri={uri}&recursive={bool}`（filesystem 路由，**不是** content 路由）。
 
 #### 5.5.3 — URI 构造辅助
 

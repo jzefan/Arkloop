@@ -79,7 +79,7 @@ button:not(:disabled) {
     --c-btn-bg: #1A1A18;
     --c-btn-text: #FAFAFA;
     --c-accent-send: #FFFFFF;
-    --c-accent-send-hover: #F0F0EE;
+    --c-accent-send-hover: #EBEBEB;
     --c-accent-send-text: #1A1A19;
     --c-pro-bg: #EAF2FC;
     --c-overlay: rgba(0, 0, 0, 0.25);
@@ -125,7 +125,7 @@ button:not(:disabled) {
   --c-btn-bg: #1A1A18;
   --c-btn-text: #FAFAFA;
   --c-accent-send: #FFFFFF;
-  --c-accent-send-hover: #F0F0EE;
+  --c-accent-send-hover: #EBEBEB;
   --c-accent-send-text: #1A1A19;
   --c-pro-bg: #EAF2FC;
   --c-overlay: rgba(0, 0, 0, 0.25);
