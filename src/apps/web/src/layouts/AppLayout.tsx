@@ -16,7 +16,7 @@ import {
   type MeResponse,
   type ThreadResponse,
 } from '../api'
-import { clearActiveThreadIdInStorage } from '../storage'
+import { clearActiveThreadIdInStorage, writeSelectedTierToStorage } from '../storage'
 
 type Props = {
   accessToken: string
@@ -57,6 +57,11 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   // 同步 ref，使 popstate 回调始终拿到最新值
   useEffect(() => { isSearchModeRef.current = isSearchMode }, [isSearchMode])
+
+  // 离开 / 时退出搜索模式（覆盖 popstate 和 navigate 两种场景）
+  useEffect(() => {
+    if (location.pathname !== '/') setIsSearchMode(false)
+  }, [location.pathname])
 
   // Mouse 5 / 浏览器返回键：退出搜索模式而非离开页面
   useEffect(() => {
@@ -117,7 +122,6 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   // 从 WelcomePage 新建的 thread 需要注入到列表
   const handleThreadCreated = useCallback((thread: ThreadResponse) => {
-    setIsSearchMode(false)
     if (thread.is_private) {
       setPrivateThreadIds((prev) => new Set(prev).add(thread.id))
       return
@@ -142,6 +146,12 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       next.delete(threadId)
       return next
     })
+  }, [])
+
+  const handleThreadTitleUpdated = useCallback((threadId: string, title: string) => {
+    setThreads((prev) =>
+      prev.map((t) => (t.id === threadId ? { ...t, title } : t)),
+    )
   }, [])
 
   const refreshCredits = useCallback(() => {
@@ -197,6 +207,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         onOpenSearch={() => {
             if (location.pathname !== '/') navigate('/')
             window.history.pushState({ searchMode: true }, '', '/')
+            writeSelectedTierToStorage('Search')
             setIsSearchMode(true)
           }}
         isSearchMode={isSearchMode}
@@ -219,7 +230,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onExitSearchMode: () => setIsSearchMode(false) }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}

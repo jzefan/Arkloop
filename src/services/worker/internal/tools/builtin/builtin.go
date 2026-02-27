@@ -2,12 +2,14 @@ package builtin
 
 import (
 	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
+	summarizethread "arkloop/services/worker/internal/tools/builtin/summarize_thread"
 	webfetch "arkloop/services/worker/internal/tools/builtin/web_fetch"
 	websearch "arkloop/services/worker/internal/tools/builtin/web_search"
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func AgentSpecs() []tools.AgentToolSpec {
@@ -17,6 +19,7 @@ func AgentSpecs() []tools.AgentToolSpec {
 		websearch.AgentSpec,
 		webfetch.AgentSpec,
 		spawnagent.AgentSpec,
+		summarizethread.AgentSpec,
 	}
 }
 
@@ -27,17 +30,20 @@ func LlmSpecs() []llm.ToolSpec {
 		websearch.LlmSpec,
 		webfetch.LlmSpec,
 		spawnagent.LlmSpec,
+		summarizethread.LlmSpec,
 	}
 }
 
 // Executors 返回所有内置工具的 Executor 实例。
 // pool 可选；非 nil 时工具配置优先从 platform_settings 读取，回退到 ENV。
-func Executors(pool *pgxpool.Pool) map[string]tools.Executor {
+// rdb 可选；非 nil 时用于跨实例通知推送。
+func Executors(pool *pgxpool.Pool, rdb *redis.Client) map[string]tools.Executor {
 	return map[string]tools.Executor{
-		EchoAgentSpec.Name:       EchoExecutor{},
-		NoopAgentSpec.Name:       NoopExecutor{},
-		websearch.AgentSpec.Name: websearch.NewToolExecutor(pool),
-		webfetch.AgentSpec.Name:  webfetch.NewToolExecutor(pool),
+		EchoAgentSpec.Name:              EchoExecutor{},
+		NoopAgentSpec.Name:              NoopExecutor{},
+		websearch.AgentSpec.Name:        websearch.NewToolExecutor(pool),
+		webfetch.AgentSpec.Name:         webfetch.NewToolExecutor(pool),
+		summarizethread.AgentSpec.Name:  &summarizethread.ToolExecutor{Pool: pool, RDB: rdb},
 	}
 }
 

@@ -14,6 +14,12 @@ type Budgets struct {
 	TopP            *float64
 }
 
+// TitleSummarizerConfig 控制 goroutine 模式下的标题自动生成。
+type TitleSummarizerConfig struct {
+	Prompt    string
+	MaxTokens int
+}
+
 type Definition struct {
 	ID               string
 	Version          string
@@ -27,6 +33,7 @@ type Definition struct {
 	ExecutorConfig   map[string]any // Executor 配置，默认 {}
 	PreferredCredential *string     // 偏好凭证名称，nil 表示不绑定
 	AgentConfigName  *string        // 显式绑定 AgentConfig 名称，nil 则走继承链
+	TitleSummarizer  *TitleSummarizerConfig // nil 表示此 skill 不自动生成标题
 }
 
 type Registry struct {

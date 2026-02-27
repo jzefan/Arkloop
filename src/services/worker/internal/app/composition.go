@@ -53,7 +53,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
-	executors := builtin.Executors(pool)
+	executors := builtin.Executors(pool, rdb)
 	allLlmSpecs := builtin.LlmSpecs()
 
 	// 全局 MCP pool，用于 env-loaded 工具及 per-run org 工具的连接复用

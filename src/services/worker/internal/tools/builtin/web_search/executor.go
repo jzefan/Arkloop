@@ -37,7 +37,7 @@ var LlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query":       map[string]any{"type": "string", "minLength": 1},
+			"query":       map[string]any{"type": "string"},
 			"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": maxResultsLimit},
 		},
 		"required":             []string{"query", "max_results"},

@@ -150,6 +150,10 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 	executorConfig := asOptionalMap(obj["executor_config"])
 	preferredCredential := asOptionalString(obj["preferred_credential"])
 	agentConfigName := asOptionalString(obj["agent_config"])
+	titleSummarizer, err := asTitleSummarizer(obj["title_summarize"])
+	if err != nil {
+		return Definition{}, err
+	}
 
 	rawPrompt, err := os.ReadFile(promptPath)
 	if err != nil {
@@ -173,6 +177,7 @@ func loadSingleSkill(yamlPath string, promptPath string) (Definition, error) {
 		ExecutorConfig:   executorConfig,
 		PreferredCredential: preferredCredential,
 		AgentConfigName:  agentConfigName,
+		TitleSummarizer:  titleSummarizer,
 	}, nil
 }
 
@@ -465,5 +470,36 @@ func asOptionalFloat64(value any, label string) (*float64, error) {
 		return nil, fmt.Errorf("%s must be a number", label)
 	}
 	return &f, nil
+}
+
+const defaultTitleSummarizeMaxTokens = 20
+
+// asTitleSummarizer 从 YAML 解析 title_summarize 字段。
+func asTitleSummarizer(value any) (*TitleSummarizerConfig, error) {
+	if value == nil {
+		return nil, nil
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("title_summarize must be an object")
+	}
+	prompt, err := asNonEmptyString(m["prompt"], "title_summarize.prompt")
+	if err != nil {
+		return nil, err
+	}
+	maxTokens := defaultTitleSummarizeMaxTokens
+	if raw, exists := m["max_tokens"]; exists {
+		parsed, err := asOptionalPositiveInt(raw, "title_summarize.max_tokens")
+		if err != nil {
+			return nil, err
+		}
+		if parsed != nil {
+			maxTokens = *parsed
+		}
+	}
+	return &TitleSummarizerConfig{
+		Prompt:    prompt,
+		MaxTokens: maxTokens,
+	}, nil
 }
 

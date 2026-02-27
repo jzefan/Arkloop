@@ -178,6 +178,8 @@ func NewSkillResolutionMiddleware(
 			if def.PreferredCredential != nil {
 				rc.PreferredCredentialName = *def.PreferredCredential
 			}
+
+			rc.TitleSummarizer = def.TitleSummarizer
 		} else {
 			// 无 skill 定义时，使用 AgentConfig 的值
 			rc.SystemPrompt = agentConfigPromptPrefix

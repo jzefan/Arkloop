@@ -51,11 +51,11 @@ export function GatewayConfigPage() {
         .map((s) => s.trim())
         .filter(Boolean)
 
-      const updated = await updateGatewayConfig(
+      const cfg = await updateGatewayConfig(
         { ip_mode: ipMode, trusted_cidrs: cidrs, risk_reject_threshold: riskThreshold },
         accessToken,
       )
-      applyConfig(updated)
+      applyConfig(cfg)
       addToast(tc.toastSaved, 'success')
     } catch (err) {
       addToast(isApiError(err) ? err.message : tc.toastSaveFailed, 'error')
@@ -128,3 +128,4 @@ export function GatewayConfigPage() {
     </div>
   )
 }
+

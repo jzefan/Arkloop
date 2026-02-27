@@ -27,7 +27,7 @@ var EchoLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"text": map[string]any{"type": "string", "minLength": 1},
+			"text": map[string]any{"type": "string"},
 		},
 		"required":             []string{"text"},
 		"additionalProperties": false,

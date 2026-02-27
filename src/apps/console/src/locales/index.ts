@@ -47,6 +47,7 @@ export interface LocaleStrings {
     broadcasts: string
     asrCredentials: string
     email: string
+    titleSummarizer: string
   }
   // settings
   account: string
@@ -385,6 +386,16 @@ export interface LocaleStrings {
       fieldTrustedCIDRsHint: string
       fieldRiskThreshold: string
       fieldRiskThresholdHint: string
+      save: string
+      toastSaved: string
+      toastLoadFailed: string
+      toastSaveFailed: string
+    }
+    titleSummarizer: {
+      title: string
+      fieldAgent: string
+      fieldAgentHint: string
+      agentNone: string
       save: string
       toastSaved: string
       toastLoadFailed: string

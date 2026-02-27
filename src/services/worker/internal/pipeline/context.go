@@ -113,4 +113,7 @@ type RunContext struct {
 	// SpawnChildRun 创建子 Run 并异步等待其完成，父 Run 挂起期间不持有 DB 连接。
 	// ctx 取消时立即返回 error，子 Run 继续执行直至超时。
 	SpawnChildRun func(ctx context.Context, skillID string, input string) (string, error)
+
+	// -- SkillResolutionMiddleware 写入，TitleSummarizerMiddleware 读取 --
+	TitleSummarizer *skills.TitleSummarizerConfig
 }

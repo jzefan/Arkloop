@@ -23,7 +23,7 @@ var SearchLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query": map[string]any{"type": "string", "minLength": 1},
+			"query": map[string]any{"type": "string"},
 			"scope": map[string]any{"type": "string", "enum": []string{"user", "agent"}},
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 		},
@@ -48,7 +48,7 @@ var ReadLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"uri":   map[string]any{"type": "string", "minLength": 1},
+			"uri":   map[string]any{"type": "string"},
 			"depth": map[string]any{"type": "string", "enum": []string{"overview", "full"}},
 		},
 		"required":             []string{"uri"},
@@ -76,8 +76,8 @@ var WriteLlmSpec = llm.ToolSpec{
 				"type": "string",
 				"enum": []string{"profile", "preferences", "entities", "events", "cases", "patterns"},
 			},
-			"key":     map[string]any{"type": "string", "minLength": 1, "pattern": `^[a-zA-Z0-9_\-\.]+$`},
-			"content": map[string]any{"type": "string", "minLength": 1},
+			"key":     map[string]any{"type": "string", "pattern": `^[a-zA-Z0-9_\-\.]+$`},
+			"content": map[string]any{"type": "string"},
 			"scope":   map[string]any{"type": "string", "enum": []string{"user", "agent"}},
 		},
 		"required":             []string{"category", "key", "content"},
@@ -102,7 +102,7 @@ var ForgetLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"uri": map[string]any{"type": "string", "minLength": 1},
+			"uri": map[string]any{"type": "string"},
 		},
 		"required":             []string{"uri"},
 		"additionalProperties": false,

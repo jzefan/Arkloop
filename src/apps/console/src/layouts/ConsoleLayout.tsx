@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   Users, UsersRound, FolderOpen, UserPlus,
   Package, Receipt, BadgeCheck, BarChart3,
-  Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail,
+  Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail, AlignLeft,
   PanelLeftClose, PanelLeftOpen, ChevronDown,
   Settings, ScrollText,
 } from 'lucide-react'
@@ -69,6 +69,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
         { label: t.nav.mcpConfigs,       path: '/mcp-configs',      icon: <Plug size={17} /> },
         { label: t.nav.skills,           path: '/skills',           icon: <Sparkles size={17} /> },
         { label: t.nav.asrCredentials,   path: '/asr-credentials',  icon: <Mic size={17} /> },
+        { label: t.nav.titleSummarizer,  path: '/title-summarizer', icon: <AlignLeft size={17} /> },
       ],
     },
     {
