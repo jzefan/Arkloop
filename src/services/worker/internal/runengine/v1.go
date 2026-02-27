@@ -53,7 +53,7 @@ type EngineV1Deps struct {
 	AllLlmToolSpecs        []llm.ToolSpec
 	BaseToolAllowlistNames []string
 
-	SkillRegistry   *skills.Registry
+	SkillRegistryGetter func() *skills.Registry
 	MCPPool         *mcp.Pool
 	MCPDiscoveryCache *mcp.DiscoveryCache  // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
 	ExecutorRegistry pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
@@ -135,7 +135,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		),
 		pipeline.NewSpawnAgentMiddleware(),
 		pipeline.NewAgentConfigMiddleware(deps.DBPool),
-		pipeline.NewSkillResolutionMiddleware(deps.SkillRegistry, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
+		pipeline.NewSkillResolutionMiddleware(deps.SkillRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMemoryMiddleware(deps.MemoryProvider),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.DBPool, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewToolBuildMiddleware(),

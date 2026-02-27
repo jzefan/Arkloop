@@ -75,7 +75,7 @@ func TestEngineV1InjectsSkillSystemPromptAndBudgets(t *testing.T) {
 		ToolExecutors:          builtin.Executors(),
 		AllLlmToolSpecs:        builtin.LlmSpecs(),
 		BaseToolAllowlistNames: []string{"echo"},
-		SkillRegistry:          skillRegistry,
+		SkillRegistryGetter:    func() *skills.Registry { return skillRegistry },
 		ExecutorRegistry:       executor.DefaultExecutorRegistry(),
 	})
 	if err != nil {

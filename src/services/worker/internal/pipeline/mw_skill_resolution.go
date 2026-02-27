@@ -14,14 +14,16 @@ const defaultAgentMaxIterations = 10
 
 // NewSkillResolutionMiddleware 加载 org skills 并解析 skill_id，设置 RunContext 的 skill 相关字段。
 // skill 解析失败时写入 run.failed 并短路。
+// getBaseRegistry 每次 run 调用时获取最新 registry，支持热重载。
 func NewSkillResolutionMiddleware(
-	baseSkillRegistry *skills.Registry,
+	getBaseRegistry func() *skills.Registry,
 	dbPool *pgxpool.Pool,
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
 	releaseSlot func(ctx context.Context, run data.Run),
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		baseSkillRegistry := getBaseRegistry()
 		// per-run 动态加载 org skill
 		runSkillRegistry := baseSkillRegistry
 		if dbPool != nil {
