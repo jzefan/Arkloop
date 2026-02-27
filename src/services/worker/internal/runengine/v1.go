@@ -17,6 +17,7 @@ import (
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/skills"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/sandbox"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -188,5 +189,12 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 
 	handler := pipeline.Build(e.middlewares, e.terminal)
-	return handler(ctx, rc)
+	err := handler(ctx, rc)
+
+	// run 结束后清理 sandbox session（不阻塞返回结果）
+	if sandboxURL := sandbox.BaseURLFromEnv(); sandboxURL != "" {
+		go sandbox.CleanupSession(sandboxURL, run.ID.String())
+	}
+
+	return err
 }

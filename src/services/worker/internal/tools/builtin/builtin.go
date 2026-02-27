@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"arkloop/services/worker/internal/tools/builtin/browser"
+	"arkloop/services/worker/internal/tools/builtin/sandbox"
 	webfetch "arkloop/services/worker/internal/tools/builtin/web_fetch"
 	websearch "arkloop/services/worker/internal/tools/builtin/web_search"
 
@@ -20,6 +21,9 @@ func AgentSpecs() []tools.AgentToolSpec {
 	if browser.BaseURLFromEnv() != "" {
 		specs = append(specs, browser.AgentSpecs()...)
 	}
+	if sandbox.BaseURLFromEnv() != "" {
+		specs = append(specs, sandbox.AgentSpecs()...)
+	}
 	return specs
 }
 
@@ -32,6 +36,9 @@ func LlmSpecs() []llm.ToolSpec {
 	}
 	if browser.BaseURLFromEnv() != "" {
 		specs = append(specs, browser.LlmSpecs()...)
+	}
+	if sandbox.BaseURLFromEnv() != "" {
+		specs = append(specs, sandbox.LlmSpecs()...)
 	}
 	return specs
 }
@@ -48,6 +55,12 @@ func Executors(pool *pgxpool.Pool) map[string]tools.Executor {
 	if baseURL := browser.BaseURLFromEnv(); baseURL != "" {
 		exec := browser.NewToolExecutor(baseURL)
 		for _, spec := range browser.AgentSpecs() {
+			m[spec.Name] = exec
+		}
+	}
+	if baseURL := sandbox.BaseURLFromEnv(); baseURL != "" {
+		exec := sandbox.NewToolExecutor(baseURL)
+		for _, spec := range sandbox.AgentSpecs() {
 			m[spec.Name] = exec
 		}
 	}
