@@ -24,7 +24,9 @@ const retryBaseDelay = 50 * time.Millisecond
 
 const (
 	defaultHTTPTimeout = 10 * time.Second
-	maxReadRetries     = 2
+	// writeHTTPTimeout 用于 commit 等需要 LLM 处理的写操作，远长于普通 HTTP 调用。
+	writeHTTPTimeout = 120 * time.Second
+	maxReadRetries   = 2
 )
 
 // sanitizeAgentID 将 agentID 收敛到 OpenViking 要求的 [a-zA-Z0-9_-] 字符集。
@@ -34,14 +36,14 @@ func sanitizeAgentID(id string) string {
 	return reInvalidAgentID.ReplaceAllString(id, "_")
 }
 
-// scopeURI 返回 MemoryScope 对应的 viking 检索目标 URI。
-// 多租户隔离由 X-OpenViking-User/Agent 请求头提供，URI 本身不含身份信息。
-func scopeURI(scope memory.MemoryScope) string {
+// scopeURI 返回 Find 操作所需的完整 target_uri。
+// OpenViking 的 Find 端点不走 header 路由，必须在 URI 中包含身份信息。
+func scopeURI(scope memory.MemoryScope, ident memory.MemoryIdentity) string {
 	switch scope {
 	case memory.MemoryScopeAgent:
-		return "viking://agent/memories/"
+		return fmt.Sprintf("viking://agent/%s/memories/", sanitizeAgentID(ident.AgentID))
 	default:
-		return "viking://user/memories/"
+		return fmt.Sprintf("viking://user/%s/memories/", ident.UserID.String())
 	}
 }
 
@@ -78,7 +80,8 @@ func isRetryable(err error) bool {
 type client struct {
 	baseURL    string
 	rootAPIKey string
-	http       *http.Client
+	http       *http.Client // 读操作（Find/Content）短超时
+	writeHTTP  *http.Client // 写操作（commit/session）长超时，LLM 处理需要
 }
 
 func newClient(baseURL, rootAPIKey string) *client {
@@ -86,11 +89,21 @@ func newClient(baseURL, rootAPIKey string) *client {
 		baseURL:    baseURL,
 		rootAPIKey: rootAPIKey,
 		http:       &http.Client{Timeout: defaultHTTPTimeout},
+		writeHTTP:  &http.Client{Timeout: writeHTTPTimeout},
 	}
 }
 
 // doJSON 发起 JSON 请求并将响应 body 解码到 out。
 func (c *client) doJSON(ctx context.Context, method, path string, body any, ident memory.MemoryIdentity, out any) error {
+	return c.doJSONWith(ctx, c.http, method, path, body, ident, out)
+}
+
+// doWriteJSON 使用长超时 HTTP client，用于 commit 等需要 LLM 处理的写操作。
+func (c *client) doWriteJSON(ctx context.Context, method, path string, body any, ident memory.MemoryIdentity, out any) error {
+	return c.doJSONWith(ctx, c.writeHTTP, method, path, body, ident, out)
+}
+
+func (c *client) doJSONWith(ctx context.Context, hc *http.Client, method, path string, body any, ident memory.MemoryIdentity, out any) error {
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -107,7 +120,7 @@ func (c *client) doJSON(ctx context.Context, method, path string, body any, iden
 	req.Header.Set("Content-Type", "application/json")
 	setIdentityHeaders(req, c.rootAPIKey, ident)
 
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("openviking %s %s: %w", method, path, err)
 	}
@@ -198,7 +211,7 @@ type apiError struct {
 func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, scope memory.MemoryScope, query string, limit int) ([]memory.MemoryHit, error) {
 	req := findRequest{
 		Query:     query,
-		TargetURI: scopeURI(scope),
+		TargetURI: scopeURI(scope, ident),
 		Limit:     limit,
 	}
 
@@ -284,7 +297,7 @@ func (c *client) AppendSessionMessages(ctx context.Context, ident memory.MemoryI
 
 func (c *client) CommitSession(ctx context.Context, ident memory.MemoryIdentity, sessionID string) error {
 	path := fmt.Sprintf("/api/v1/sessions/%s/commit", url.PathEscape(sessionID))
-	return c.doJSON(ctx, http.MethodPost, path, nil, ident, nil)
+	return c.doWriteJSON(ctx, http.MethodPost, path, nil, ident, nil)
 }
 
 // --- Write ---
@@ -337,9 +350,9 @@ func (c *client) Write(ctx context.Context, ident memory.MemoryIdentity, scope m
 		}
 	}
 
-	// 3. commit 触发 LLM 提取（commit HTTP 调用本身会快速返回，提取为异步）
+	// 3. commit 触发 LLM 提取（同步阻塞直到提取完成，用 writeHTTP 避免短超时截断）
 	commitPath := fmt.Sprintf("/api/v1/sessions/%s/commit", url.PathEscape(sid))
-	if err := c.doJSON(ctx, http.MethodPost, commitPath, nil, writeIdent, nil); err != nil {
+	if err := c.doWriteJSON(ctx, http.MethodPost, commitPath, nil, writeIdent, nil); err != nil {
 		slog.WarnContext(ctx, "memory write: commit failed, session leaked",
 			"session_id", sid, "err", err.Error())
 		return fmt.Errorf("memory write commit session=%s: %w", sid, err)
