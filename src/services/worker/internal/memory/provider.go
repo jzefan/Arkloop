@@ -46,10 +46,10 @@ type MemoryMessage struct {
 }
 
 // MemoryEntry 是一条主动写入的结构化记忆。
+// Write 通过 session/commit 路径写入，OpenViking 根据 identity headers 决定存储空间，
+// 因此不支持指定目标 URI。
 type MemoryEntry struct {
-	URI      string            // 目标存储路径，如 "viking://user/{id}/preferences/language"
-	Content  string            // 记忆正文（纯文本）
-	Metadata map[string]string // 可选元数据：source_run_id, category 等
+	Content string // 记忆正文（纯文本）
 }
 
 // MemoryCategory 预定义的记忆分类，与 OpenViking 的 6 类记忆对齐。
