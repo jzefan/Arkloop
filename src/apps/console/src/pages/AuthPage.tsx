@@ -1,5 +1,6 @@
-import { useState, useMemo, type FormEvent } from 'react'
-import { login, isApiError } from '../api'
+import { useState, useMemo, useEffect, useCallback, type FormEvent } from 'react'
+import { login, isApiError, getCaptchaConfig } from '../api'
+import { Turnstile } from '../components/Turnstile'
 import { useLocale } from '../contexts/LocaleContext'
 
 type AppError = {
@@ -28,11 +29,25 @@ export function AuthPage({ onLoggedIn }: Props) {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
+  const [captchaSiteKey, setCaptchaSiteKey] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+
+  useEffect(() => {
+    getCaptchaConfig()
+      .then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) })
+      .catch(() => {})
+  }, [])
+
+  const handleTurnstileSuccess = useCallback((token: string) => {
+    setTurnstileToken(token)
+  }, [])
 
   const canSubmit = useMemo(() => {
     if (submitting) return false
-    return Boolean(loginValue.trim() && password)
-  }, [loginValue, password, submitting])
+    if (!loginValue.trim() || !password) return false
+    if (captchaSiteKey && !turnstileToken) return false
+    return true
+  }, [loginValue, password, submitting, captchaSiteKey, turnstileToken])
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -40,9 +55,10 @@ export function AuthPage({ onLoggedIn }: Props) {
     setSubmitting(true)
     setError(null)
     try {
-      const resp = await login({ login: loginValue, password })
+      const resp = await login({ login: loginValue, password, cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined })
       onLoggedIn(resp.access_token, resp.refresh_token)
     } catch (err) {
+      setTurnstileToken('')
       setError(normalizeError(err, t.loading))
     } finally {
       setSubmitting(false)
@@ -96,6 +112,16 @@ export function AuthPage({ onLoggedIn }: Props) {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
           />
+
+          {captchaSiteKey && (
+            <div style={{ marginTop: '4px' }}>
+              <Turnstile
+                siteKey={captchaSiteKey}
+                onSuccess={handleTurnstileSuccess}
+                onExpire={() => setTurnstileToken('')}
+              />
+            </div>
+          )}
 
           <button
             type="submit"
