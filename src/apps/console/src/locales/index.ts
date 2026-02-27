@@ -157,6 +157,7 @@ export interface LocaleStrings {
       fieldContentFilterLevel: string
       fieldIsDefault: string
       fieldPromptCacheControl: string
+      fieldReasoningMode: string
       // buttons
       cancel: string
       create: string

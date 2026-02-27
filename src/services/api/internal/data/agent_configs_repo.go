@@ -31,6 +31,7 @@ type AgentConfig struct {
 	SkillID                *uuid.UUID
 	IsDefault              bool
 	PromptCacheControl     string
+	ReasoningMode          string // "auto" | "enabled" | "disabled" | "none"
 	CreatedAt              time.Time
 }
 
@@ -53,6 +54,7 @@ type CreateAgentConfigRequest struct {
 	SkillID                *uuid.UUID
 	IsDefault              bool
 	PromptCacheControl     string
+	ReasoningMode          string
 }
 
 type AgentConfigUpdateFields struct {
@@ -84,6 +86,8 @@ type AgentConfigUpdateFields struct {
 	IsDefault                 bool
 	SetPromptCacheControl     bool
 	PromptCacheControl        string
+	SetReasoningMode          bool
+	ReasoningMode             string
 	SetScope                  bool
 	Scope                     string // "org" | "platform"
 }
@@ -102,7 +106,7 @@ func NewAgentConfigRepository(db Querier) (*AgentConfigRepository, error) {
 const agentConfigColumns = `id, org_id, scope, name, system_prompt_template_id, system_prompt_override,
 	model, temperature, max_output_tokens, top_p, context_window_limit,
 	tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json,
-	project_id, skill_id, is_default, prompt_cache_control, created_at`
+	project_id, skill_id, is_default, prompt_cache_control, reasoning_mode, created_at`
 
 // agentConfigScanner 覆盖 pgx.Row（struct）和 pgx.Rows（interface）共有的 Scan 方法。
 type agentConfigScanner interface {
@@ -115,7 +119,7 @@ func scanAgentConfig(row agentConfigScanner) (AgentConfig, error) {
 		&ac.ID, &ac.OrgID, &ac.Scope, &ac.Name, &ac.SystemPromptTemplateID, &ac.SystemPromptOverride,
 		&ac.Model, &ac.Temperature, &ac.MaxOutputTokens, &ac.TopP, &ac.ContextWindowLimit,
 		&ac.ToolPolicy, &ac.ToolAllowlist, &ac.ToolDenylist, &ac.ContentFilterLevel, &ac.SafetyRulesJSON,
-		&ac.ProjectID, &ac.SkillID, &ac.IsDefault, &ac.PromptCacheControl, &ac.CreatedAt,
+		&ac.ProjectID, &ac.SkillID, &ac.IsDefault, &ac.PromptCacheControl, &ac.ReasoningMode, &ac.CreatedAt,
 	)
 	return ac, err
 }
@@ -167,6 +171,10 @@ func (r *AgentConfigRepository) Create(ctx context.Context, orgID uuid.UUID, req
 	if promptCacheControl == "" {
 		promptCacheControl = "none"
 	}
+	reasoningMode := req.ReasoningMode
+	if reasoningMode == "" {
+		reasoningMode = "auto"
+	}
 
 	ac, err := scanAgentConfig(r.db.QueryRow(
 		ctx,
@@ -174,13 +182,13 @@ func (r *AgentConfigRepository) Create(ctx context.Context, orgID uuid.UUID, req
 			org_id, scope, name, system_prompt_template_id, system_prompt_override,
 			model, temperature, max_output_tokens, top_p, context_window_limit,
 			tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json,
-			project_id, skill_id, is_default, prompt_cache_control
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19)
+			project_id, skill_id, is_default, prompt_cache_control, reasoning_mode
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20)
 		RETURNING `+agentConfigColumns,
 		orgIDParam, scope, req.Name, req.SystemPromptTemplateID, req.SystemPromptOverride,
 		req.Model, req.Temperature, req.MaxOutputTokens, req.TopP, req.ContextWindowLimit,
 		toolPolicy, req.ToolAllowlist, req.ToolDenylist, contentFilterLevel, req.SafetyRulesJSON,
-		req.ProjectID, req.SkillID, req.IsDefault, promptCacheControl,
+		req.ProjectID, req.SkillID, req.IsDefault, promptCacheControl, reasoningMode,
 	))
 	if err != nil {
 		return AgentConfig{}, fmt.Errorf("agent_configs.Create: %w", err)
@@ -275,7 +283,7 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 		!fields.SetModel && !fields.SetTemperature && !fields.SetMaxOutputTokens &&
 		!fields.SetTopP && !fields.SetContextWindowLimit && !fields.SetToolPolicy &&
 		!fields.SetToolAllowlist && !fields.SetToolDenylist && !fields.SetContentFilterLevel &&
-		!fields.SetIsDefault && !fields.SetPromptCacheControl && !fields.SetScope {
+		!fields.SetIsDefault && !fields.SetPromptCacheControl && !fields.SetReasoningMode && !fields.SetScope {
 		return nil, fmt.Errorf("agent_configs.Update: no fields to update")
 	}
 
@@ -317,6 +325,7 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 		     content_filter_level      = CASE WHEN $27 THEN $28 ELSE content_filter_level END,
 		     is_default                = CASE WHEN $21 THEN $22 ELSE is_default END,
 		     prompt_cache_control      = CASE WHEN $29 THEN $30 ELSE prompt_cache_control END,
+		     reasoning_mode            = CASE WHEN $33 THEN $34 ELSE reasoning_mode END,
 		     scope                     = CASE WHEN $31 THEN $32 ELSE scope END,
 		     org_id                    = CASE WHEN $31 AND $32='platform' THEN NULL
 		                                      WHEN $31 THEN $2
@@ -339,6 +348,7 @@ func (r *AgentConfigRepository) Update(ctx context.Context, id uuid.UUID, orgID 
 			fields.SetContentFilterLevel, fields.ContentFilterLevel,
 			fields.SetPromptCacheControl, fields.PromptCacheControl,
 			fields.SetScope, fields.Scope,
+			fields.SetReasoningMode, fields.ReasoningMode,
 		)...,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
