@@ -45,11 +45,31 @@ type MemoryMessage struct {
 	Content string
 }
 
+// MemoryEntry 是一条主动写入的结构化记忆。
+type MemoryEntry struct {
+	URI      string            // 目标存储路径，如 "viking://user/{id}/preferences/language"
+	Content  string            // 记忆正文（纯文本）
+	Metadata map[string]string // 可选元数据：source_run_id, category 等
+}
+
+// MemoryCategory 预定义的记忆分类，与 OpenViking 的 6 类记忆对齐。
+type MemoryCategory string
+
+const (
+	MemoryCategoryProfile    MemoryCategory = "profile"     // 用户基础信息
+	MemoryCategoryPreference MemoryCategory = "preferences" // 偏好设置
+	MemoryCategoryEntity     MemoryCategory = "entities"    // 关键实体（人/项目/技术栈）
+	MemoryCategoryEvent      MemoryCategory = "events"      // 事件记录
+	MemoryCategoryCase       MemoryCategory = "cases"       // 执行案例（Sandbox/Browser 结论）
+	MemoryCategoryPattern    MemoryCategory = "patterns"    // 行为模式
+)
+
 // MemoryProvider 是 Worker 侧的 Memory 抽象，屏蔽底层实现（当前为 OpenViking）。
 //
-// 两条主链路：
+// 三条主链路：
 //   - 记忆注入：Find + Content（run 之前，注入 system prompt）
 //   - 记忆提取：AppendSessionMessages + CommitSession（run 之后，异步归档）
+//   - 主动写入：Write + Delete（Agent tool call 直接操作记忆）
 //
 // OpenViking 不可用时实现应降级为"无记忆"，不影响 run 主流程。
 type MemoryProvider interface {
@@ -64,4 +84,11 @@ type MemoryProvider interface {
 
 	// CommitSession 触发会话归档与长期记忆提取。应在 goroutine 中异步调用，不阻塞 run 返回。
 	CommitSession(ctx context.Context, ident MemoryIdentity, sessionID string) error
+
+	// Write 主动写入一条结构化记忆，内容会被 OpenViking 建立向量索引，之后可通过 Find 检索。
+	// URI 由调用方通过 BuildURI 构造，适配器负责将 entry 路由到正确的 scope。
+	Write(ctx context.Context, ident MemoryIdentity, scope MemoryScope, entry MemoryEntry) error
+
+	// Delete 删除指定 URI 的记忆，同时从向量索引中移除。
+	Delete(ctx context.Context, ident MemoryIdentity, uri string) error
 }
