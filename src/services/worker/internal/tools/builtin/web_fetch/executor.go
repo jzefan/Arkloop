@@ -10,6 +10,7 @@ import (
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -47,11 +48,13 @@ var LlmSpec = llm.ToolSpec{
 
 type ToolExecutor struct {
 	provider Provider
+	pool     *pgxpool.Pool
 	timeout  time.Duration
 }
 
-func NewToolExecutor() *ToolExecutor {
+func NewToolExecutor(pool *pgxpool.Pool) *ToolExecutor {
 	return &ToolExecutor{
+		pool:    pool,
 		timeout: defaultTimeout,
 	}
 }
@@ -76,7 +79,7 @@ func (e *ToolExecutor) Execute(
 
 	provider := e.provider
 	if provider == nil {
-		built, err := providerFromEnv()
+		built, err := e.loadProvider(ctx)
 		if err != nil {
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
@@ -173,6 +176,20 @@ func (e *ToolExecutor) Execute(
 	}
 }
 
+// loadProvider 加载配置并构建 Provider：DB 优先，ENV 兜底。
+func (e *ToolExecutor) loadProvider(ctx context.Context) (Provider, error) {
+	if e.pool != nil {
+		dbCfg, ok, err := LoadConfigFromDB(ctx, e.pool)
+		if err != nil {
+			// DB 查询失败，降级到 ENV 而不是直接报错
+			_ = err
+		} else if ok {
+			return buildProvider(dbCfg)
+		}
+	}
+	return providerFromEnv()
+}
+
 func providerFromEnv() (Provider, error) {
 	cfg, err := ConfigFromEnv(false)
 	if err != nil {
@@ -181,7 +198,10 @@ func providerFromEnv() (Provider, error) {
 	if cfg == nil {
 		return nil, nil
 	}
+	return buildProvider(cfg)
+}
 
+func buildProvider(cfg *Config) (Provider, error) {
 	switch cfg.ProviderKind {
 	case ProviderKindBasic:
 		return NewBasicProvider(), nil
