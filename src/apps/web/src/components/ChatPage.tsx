@@ -3,6 +3,7 @@ import { useParams, useLocation, useOutletContext } from 'react-router-dom'
 import { Glasses, Paperclip, Share2, X, Zap } from 'lucide-react'
 import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
+import { ThinkingBlock } from './ThinkingBlock'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
 import { ShareModal } from './ShareModal'
@@ -78,6 +79,13 @@ export function ChatPage() {
   const [checkInDraft, setCheckInDraft] = useState('')
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+
+  // segment 状态：用于渲染 Agent 规划轮折叠块
+  type Segment = { segmentId: string; kind: string; mode: string; label: string; content: string; isStreaming: boolean }
+  const [segments, setSegments] = useState<Segment[]>([])
+  const activeSegmentIdRef = useRef<string | null>(null)
+  // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
+  const [thinkingDraft, setThinkingDraft] = useState('')
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -177,6 +185,9 @@ export function ChatPage() {
   // 切换 thread 时清理 SSE 和排队消息
   useEffect(() => {
     setAssistantDraft('')
+    setSegments([])
+    activeSegmentIdRef.current = null
+    setThinkingDraft('')
     setCancelSubmitting(false)
     pendingMessageRef.current = null
     setQueuedDraft(null)
@@ -193,6 +204,9 @@ export function ChatPage() {
     sse.connect()
     processedEventCountRef.current = 0
     setAssistantDraft('')
+    setSegments([])
+    activeSegmentIdRef.current = null
+    setThinkingDraft('')
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -209,12 +223,52 @@ export function ChatPage() {
     processedEventCountRef.current = nextProcessedCount
 
     for (const event of fresh) {
+      if (event.type === 'run.segment.start') {
+        const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
+        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+        const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
+        const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown }
+        const mode = typeof display.mode === 'string' ? display.mode : 'collapsed'
+        const label = typeof display.label === 'string' ? display.label : ''
+        if (!segmentId) continue
+        activeSegmentIdRef.current = segmentId
+        setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true }])
+        continue
+      }
+
+      if (event.type === 'run.segment.end') {
+        const obj = event.data as { segment_id?: unknown }
+        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+        if (segmentId && activeSegmentIdRef.current === segmentId) {
+          activeSegmentIdRef.current = null
+        }
+        setSegments((prev) =>
+          prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
+        )
+        continue
+      }
+
       if (event.type === 'message.delta') {
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
-        if (obj.channel === 'thinking') continue
         if (typeof obj.content_delta !== 'string' || !obj.content_delta) continue
-        setAssistantDraft((prev) => prev + obj.content_delta)
+        const delta = obj.content_delta
+        const isThinking = obj.channel === 'thinking'
+        const activeSeg = activeSegmentIdRef.current
+        if (activeSeg) {
+          // segment 内：主内容和 thinking 都属于该规划轮，追加到 segment buffer
+          setSegments((prev) =>
+            prev.map((s) =>
+              s.segmentId === activeSeg && s.mode !== 'hidden'
+                ? { ...s, content: s.content + delta }
+                : s,
+            ),
+          )
+        } else if (isThinking) {
+          setThinkingDraft((prev) => prev + delta)
+        } else {
+          setAssistantDraft((prev) => prev + delta)
+        }
         continue
       }
 
@@ -227,6 +281,9 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setAssistantDraft('')
+        setThinkingDraft('')
+        setSegments([])
+        activeSegmentIdRef.current = null
         setQueuedDraft(null)
         setAwaitingInput(false)
         setCheckInDraft('')
@@ -245,6 +302,9 @@ export function ChatPage() {
       if (event.type === 'run.cancelled') {
         sse.disconnect()
         setActiveRunId(null)
+        setThinkingDraft('')
+        setSegments([])
+        activeSegmentIdRef.current = null
         setAwaitingInput(false)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
@@ -257,6 +317,9 @@ export function ChatPage() {
       if (event.type === 'run.failed') {
         sse.disconnect()
         setActiveRunId(null)
+        setThinkingDraft('')
+        setSegments([])
+        activeSegmentIdRef.current = null
         setAwaitingInput(false)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
@@ -280,7 +343,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, assistantDraft])
+  }, [messages, assistantDraft, thinkingDraft, segments])
 
   // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
   const scrollToBottom = useCallback(() => {
@@ -525,6 +588,27 @@ export function ChatPage() {
                   }
                 />
               ))}
+
+              {segments.map((seg) => (
+                <ThinkingBlock
+                  key={seg.segmentId}
+                  kind={seg.kind}
+                  label={seg.label}
+                  mode={seg.mode as 'visible' | 'collapsed' | 'hidden'}
+                  content={seg.content}
+                  isStreaming={seg.isStreaming}
+                />
+              ))}
+
+              {thinkingDraft && (
+                <ThinkingBlock
+                  kind="thinking"
+                  label="思考过程"
+                  mode="collapsed"
+                  content={thinkingDraft}
+                  isStreaming={!!activeRunId}
+                />
+              )}
 
               {assistantDraft && <StreamingBubble content={assistantDraft} />}
 
