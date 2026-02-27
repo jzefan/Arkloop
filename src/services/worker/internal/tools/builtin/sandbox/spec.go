@@ -30,7 +30,7 @@ var CodeExecuteLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"code":       map[string]any{"type": "string", "minLength": 1},
+			"code":       map[string]any{"type": "string"},
 			"timeout_ms": map[string]any{"type": "integer", "minimum": 1000, "maximum": 300000},
 		},
 		"required":             []string{"code"},
@@ -44,7 +44,7 @@ var ShellExecuteLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"command":    map[string]any{"type": "string", "minLength": 1},
+			"command":    map[string]any{"type": "string"},
 			"timeout_ms": map[string]any{"type": "integer", "minimum": 1000, "maximum": 300000},
 		},
 		"required":             []string{"command"},

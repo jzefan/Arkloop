@@ -8,3 +8,6 @@ tool_denylist:
 budgets:
   max_iterations: 10
   max_output_tokens: 4096
+title_summarize:
+  prompt: "Keep it under 8 Chinese characters. Focus on the core topic."
+  max_tokens: 15

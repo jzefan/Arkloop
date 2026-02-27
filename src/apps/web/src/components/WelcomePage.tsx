@@ -5,7 +5,7 @@ import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
 import { createThread, createMessage, createRun, isApiError, type ThreadResponse, type MeResponse } from '../api'
-import { writeActiveThreadIdToStorage, type SelectedTier } from '../storage'
+import { writeActiveThreadIdToStorage, addSearchThreadId, type SelectedTier } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 
 function normalizeError(error: unknown, fallback: string): AppError {
@@ -37,6 +37,7 @@ type OutletContext = {
   onTogglePrivateMode: () => void
   privateThreadIds: Set<string>
   isSearchMode: boolean
+  onExitSearchMode: () => void
 }
 
 // 按时段、星期、节日生成问候语，全部基于浏览器本地时间。
@@ -171,7 +172,7 @@ function FreePlanBadge() {
 }
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, onOpenNotifications, notificationVersion, creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, onOpenNotifications, notificationVersion, creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onExitSearchMode } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [sending, setSending] = useState(false)
@@ -253,13 +254,15 @@ export function WelcomePage() {
         Lite: 'lite',
         Pro: 'pro',
         Ultra: 'ultra',
+        Search: 'search',
       }
-      const skillId = isSearchMode ? 'search' : tierToSkillId[tier]
+      const skillId = tierToSkillId[tier]
       const run = await createRun(accessToken, thread.id, skillId)
 
+      if (skillId === 'search') addSearchThreadId(thread.id)
       writeActiveThreadIdToStorage(thread.id)
       onThreadCreated(thread)
-      navigate(`/t/${thread.id}`, { state: { initialRunId: run.run_id } })
+      navigate(`/t/${thread.id}`, { state: { initialRunId: run.run_id, isSearch: skillId === 'search' } })
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -385,6 +388,7 @@ export function WelcomePage() {
             onAttachFiles={handleAttachFiles}
             accessToken={accessToken}
             onAsrError={handleAsrError}
+            onTierChange={(tier) => { if (tier !== 'Search' && isSearchMode) onExitSearchMode() }}
           />
           {/* incognito note: 平滑展开/收起 */}
           <div

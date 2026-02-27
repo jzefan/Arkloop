@@ -23,3 +23,6 @@ executor_config:
 budgets:
   max_iterations: 1
   max_output_tokens: 8192
+title_summarize:
+  prompt: "Keep it under 8 Chinese characters. Focus on the core topic."
+  max_tokens: 15

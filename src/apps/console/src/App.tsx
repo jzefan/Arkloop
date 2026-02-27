@@ -27,6 +27,7 @@ import { FeatureFlagsPage } from './pages/feature-flags/FeatureFlagsPage'
 import { RegistrationPage } from './pages/registration/RegistrationPage'
 import { AsrCredentialsPage } from './pages/asr-credentials/AsrCredentialsPage'
 import { EmailPage } from './pages/email/EmailPage'
+import { TitleSummarizerPage } from './pages/title-summarizer/TitleSummarizerPage'
 import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import {
@@ -96,6 +97,8 @@ function App() {
         <Route path="prompt-templates" element={<PromptTemplatesPage />} />
         <Route path="mcp-configs" element={<MCPConfigsPage />} />
         <Route path="skills" element={<SkillsPage />} />
+        <Route path="asr-credentials" element={<AsrCredentialsPage />} />
+        <Route path="title-summarizer" element={<TitleSummarizerPage />} />
         {/* Integration */}
         <Route path="api-keys" element={<APIKeysPage />} />
         <Route path="webhooks" element={<PlaceholderPage title="Webhooks" />} />
@@ -122,7 +125,6 @@ function App() {
         <Route path="redemption-codes" element={<RedemptionCodesPage />} />
         <Route path="credits-admin" element={<CreditsAdminPage />} />
         <Route path="broadcasts" element={<BroadcastsPage />} />
-        <Route path="asr-credentials" element={<AsrCredentialsPage />} />
         <Route path="email" element={<EmailPage />} />
         {/* Redirects */}
         <Route path="providers" element={<Navigate to="/credentials" replace />} />

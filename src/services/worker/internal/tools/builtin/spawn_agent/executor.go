@@ -30,12 +30,10 @@ var LlmSpec = llm.ToolSpec{
 		"type": "object",
 		"properties": map[string]any{
 			"skill_id": map[string]any{
-				"type":      "string",
-				"minLength": 1,
+				"type": "string",
 			},
 			"input": map[string]any{
-				"type":      "string",
-				"minLength": 1,
+				"type": "string",
 			},
 		},
 		"required":             []string{"skill_id", "input"},

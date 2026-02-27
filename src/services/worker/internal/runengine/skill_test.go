@@ -72,7 +72,7 @@ func TestEngineV1InjectsSkillSystemPromptAndBudgets(t *testing.T) {
 		StubGateway:            gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
-		ToolExecutors:          builtin.Executors(),
+		ToolExecutors:          builtin.Executors(nil, nil),
 		AllLlmToolSpecs:        builtin.LlmSpecs(),
 		BaseToolAllowlistNames: []string{"echo"},
 		SkillRegistryGetter:    func() *skills.Registry { return skillRegistry },

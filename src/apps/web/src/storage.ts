@@ -176,13 +176,13 @@ export function writeThemeToStorage(theme: Theme): void {
   }
 }
 
-export type SelectedTier = 'Auto' | 'Lite' | 'Pro' | 'Ultra'
+export type SelectedTier = 'Auto' | 'Lite' | 'Pro' | 'Ultra' | 'Search'
 
 export function readSelectedTierFromStorage(): SelectedTier {
   if (!canUseLocalStorage()) return 'Lite'
   try {
     const raw = localStorage.getItem(SELECTED_TIER_KEY)
-    if (raw === 'Auto' || raw === 'Lite' || raw === 'Pro' || raw === 'Ultra') return raw
+    if (raw === 'Auto' || raw === 'Lite' || raw === 'Pro' || raw === 'Ultra' || raw === 'Search') return raw
     return 'Lite'
   } catch {
     return 'Lite'
@@ -196,4 +196,27 @@ export function writeSelectedTierToStorage(tier: SelectedTier): void {
   } catch {
     // 忽略存储失败
   }
+}
+
+const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
+
+export function addSearchThreadId(threadId: string): void {
+  if (!canUseLocalStorage()) return
+  try {
+    const raw = localStorage.getItem(SEARCH_THREAD_IDS_KEY)
+    const ids: string[] = raw ? (JSON.parse(raw) as string[]) : []
+    if (ids.includes(threadId)) return
+    ids.push(threadId)
+    if (ids.length > 500) ids.splice(0, ids.length - 500)
+    localStorage.setItem(SEARCH_THREAD_IDS_KEY, JSON.stringify(ids))
+  } catch { /* ignore */ }
+}
+
+export function isSearchThreadId(threadId: string): boolean {
+  if (!canUseLocalStorage()) return false
+  try {
+    const raw = localStorage.getItem(SEARCH_THREAD_IDS_KEY)
+    if (!raw) return false
+    return (JSON.parse(raw) as string[]).includes(threadId)
+  } catch { return false }
 }

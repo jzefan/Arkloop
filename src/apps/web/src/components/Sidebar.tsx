@@ -94,11 +94,13 @@ export function Sidebar({
     setMenuThreadId((prev) => (prev === id ? null : id))
   }, [])
 
-  // 点击外部关闭菜单
+  // 点击外部关闭菜单（排除触发按钮本身，否则 mousedown 会先关闭再被 click 重新打开）
   useEffect(() => {
     if (!menuThreadId) return
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-menu-button]')) return
+      if (menuRef.current && !menuRef.current.contains(target)) {
         setMenuThreadId(null)
       }
     }
@@ -257,7 +259,7 @@ export function Sidebar({
                     transition={{ duration: 0.15, ease: 'easeOut' }}
                     className={[
                       'group relative flex w-full items-center rounded-[6px]',
-                      thread.id === threadId
+                      thread.id === threadId || isMenuOpen
                         ? 'bg-[var(--c-bg-deep)]'
                         : 'hover:bg-[var(--c-bg-deep)]',
                     ].join(' ')}
@@ -295,6 +297,7 @@ export function Sidebar({
                         ].join(' ')}
                       >
                         <button
+                          data-menu-button={thread.id}
                           onClick={(e) => openMenu(e, thread.id)}
                           className={[
                             'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',

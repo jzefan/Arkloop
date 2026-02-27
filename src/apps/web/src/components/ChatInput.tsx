@@ -29,6 +29,7 @@ type Props = {
   onAttachFiles?: (files: File[]) => void
   accessToken?: string
   onAsrError?: (error: unknown) => void
+  onTierChange?: (tier: SelectedTier) => void
 }
 
 export function formatFileSize(bytes: number): string {
@@ -55,6 +56,7 @@ export function ChatInput({
   onAttachFiles,
   accessToken,
   onAsrError,
+  onTierChange,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -259,17 +261,18 @@ export function ChatInput({
   }
 
   const cycleTier = () => {
-    setSelectedTier((prev) => {
-      const next: SelectedTier = prev === 'Lite' ? 'Pro' : prev === 'Pro' ? 'Ultra' : prev === 'Ultra' ? 'Auto' : 'Lite'
-      writeSelectedTierToStorage(next)
-      return next
-    })
+    const order: SelectedTier[] = ['Auto', 'Lite', 'Pro', 'Ultra', 'Search']
+    const next = order[(order.indexOf(selectedTier) + 1) % order.length]
+    setSelectedTier(next)
+    writeSelectedTierToStorage(next)
+    onTierChange?.(next)
   }
 
   const handleTierSelect = (tier: SelectedTier) => {
     setSelectedTier(tier)
     writeSelectedTierToStorage(tier)
     setTierMenuOpen(false)
+    onTierChange?.(tier)
   }
 
   return (
@@ -373,7 +376,7 @@ export function ChatInput({
           }
         }}
       >
-      <form onSubmit={(e) => onSubmit(e, selectedTier)}>
+      <form onSubmit={(e) => onSubmit(e, searchMode ? 'Search' : selectedTier)}>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -392,7 +395,7 @@ export function ChatInput({
             marginTop: '-4px',
             marginBottom: '16px',
             letterSpacing: '-0.16px',
-            overflow: 'hidden',
+            overflow: 'auto',
           }}
         />
 
@@ -454,7 +457,7 @@ export function ChatInput({
           </div>
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
-            {/* 单个变形按钮：searchMode 时文字变为 Search，bg/color/width 平滑过渡 */}
+            {/* tier 按钮：searchMode 时显示 'Search'，其余显示当前 tier */}
             <button
               type="button"
               onClick={searchMode ? undefined : cycleTier}
@@ -468,14 +471,16 @@ export function ChatInput({
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
                 cursor: searchMode ? 'default' : 'pointer',
-                width: searchMode ? '64px' : (selectedTier === 'Lite' ? '40px' : selectedTier === 'Pro' ? '44px' : selectedTier === 'Ultra' ? '58px' : '44px'),
-                background: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra')
+                width: searchMode
+                  ? '68px'
+                  : (selectedTier === 'Lite' ? '40px' : selectedTier === 'Pro' ? '44px' : selectedTier === 'Ultra' ? '58px' : selectedTier === 'Search' ? '68px' : '44px'),
+                background: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra' || selectedTier === 'Search')
                   ? 'var(--c-pro-bg)'
                   : proHovered ? 'var(--c-bg-deep)' : 'transparent',
-                color: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra')
+                color: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra' || selectedTier === 'Search')
                   ? '#4691F6'
                   : 'var(--c-text-secondary)',
-                opacity: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra')
+                opacity: (searchMode || selectedTier === 'Pro' || selectedTier === 'Ultra' || selectedTier === 'Search')
                   ? 1 : proHovered ? 1 : 0.7,
                 fontSize: '14px',
                 transition: 'width 0.22s ease, background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
@@ -484,27 +489,17 @@ export function ChatInput({
               {searchMode ? 'Search' : selectedTier}
             </button>
 
-            {/* chevron：进入 searchMode 后宽度收缩到 0 淡出；dropdown 提升到外层 position:relative 容器，不被 overflow:hidden 裁剪 */}
-            <div
-              style={{
-                width: searchMode ? '0px' : '32px',
-                overflow: 'hidden',
-                opacity: searchMode ? 0 : 1,
-                flexShrink: 0,
-                transition: 'width 0.22s ease, opacity 0.18s ease',
-              }}
+            {/* chevron：始终可见，searchMode 下打开下拉可切换其他 tier */}
+            <button
+              ref={chevronBtnRef}
+              type="button"
+              onClick={() => setTierMenuOpen((v) => !v)}
+              className="relative top-px flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100"
             >
-              <button
-                ref={chevronBtnRef}
-                type="button"
-                onClick={() => setTierMenuOpen((v) => !v)}
-                className="relative top-px flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100"
-              >
-                <ChevronDown size={16} />
-              </button>
-            </div>
+              <ChevronDown size={16} />
+            </button>
 
-            {tierMenuOpen && !searchMode && (
+            {tierMenuOpen && (
               <div
                 ref={tierMenuRef}
                 className={`absolute right-0 z-50 ${variant === 'welcome' ? 'dropdown-menu' : 'dropdown-menu-up'}`}
@@ -521,9 +516,10 @@ export function ChatInput({
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {(['Auto', 'Lite', 'Pro', 'Ultra'] as const).map((tier) => {
-                    const isBlue = tier === 'Pro' || tier === 'Ultra'
-                    const isSelected = selectedTier === tier
+                  {(['Auto', 'Lite', 'Pro', 'Ultra', 'Search'] as const).map((tier) => {
+                    const isBlue = tier === 'Pro' || tier === 'Ultra' || tier === 'Search'
+                    const effectiveSelected = searchMode ? 'Search' : selectedTier
+                    const isSelected = effectiveSelected === tier
                     return (
                       <button
                         key={tier}
