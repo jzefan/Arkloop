@@ -52,6 +52,7 @@ type EngineV1Deps struct {
 
 	SkillRegistry   *skills.Registry
 	MCPPool         *mcp.Pool
+	MCPDiscoveryCache *mcp.DiscoveryCache  // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
 	ExecutorRegistry pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
 
 	// JobQueue 可选；非 nil 时启用 SpawnChildRun（AS-3.5.2）
@@ -120,7 +121,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMCPDiscoveryMiddleware(
-			deps.MCPPool,
+			deps.MCPDiscoveryCache,
 			pipeline.CopyToolExecutors(deps.ToolExecutors),
 			append([]llm.ToolSpec{}, deps.AllLlmToolSpecs...),
 			baseAllowlistSet,
@@ -166,6 +167,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		TraceID:             traceID,
 		Emitter:             events.NewEmitter(traceID),
 		Router:              e.router,
+		UserID:              run.CreatedByUserID,
 		ExecutorBuilder:     e.executorRegistry,
 		MaxIterations:       10,
 		ToolBudget:          map[string]any{},
