@@ -12,8 +12,9 @@ import (
 // TestSkillResolutionPreferredCredentialSet 验证 skill 有 preferred_credential 时，设置 rc.PreferredCredentialName。
 func TestSkillResolutionPreferredCredentialSet(t *testing.T) {
 	credName := "my-anthropic"
+	reg := buildSkillRegistry(t, "test-skill", &credName)
 	mw := pipeline.NewSkillResolutionMiddleware(
-		buildSkillRegistry(t, "test-skill", &credName),
+		func() *skills.Registry { return reg },
 		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
 	)
 
@@ -38,8 +39,9 @@ func TestSkillResolutionPreferredCredentialSet(t *testing.T) {
 
 // TestSkillResolutionNoPreferredCredentialEmpty 验证 skill 无 preferred_credential 时，PreferredCredentialName 为空。
 func TestSkillResolutionNoPreferredCredentialEmpty(t *testing.T) {
+	reg := buildSkillRegistry(t, "test-skill", nil)
 	mw := pipeline.NewSkillResolutionMiddleware(
-		buildSkillRegistry(t, "test-skill", nil),
+		func() *skills.Registry { return reg },
 		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
 	)
 
@@ -66,8 +68,9 @@ func TestSkillResolutionNoPreferredCredentialEmpty(t *testing.T) {
 func TestSkillResolutionUserRouteIDNotAffectedBySkillCredential(t *testing.T) {
 	skillCred := "my-anthropic"
 	userRouteID := "openai-gpt4"
+	reg := buildSkillRegistry(t, "test-skill", &skillCred)
 	mw := pipeline.NewSkillResolutionMiddleware(
-		buildSkillRegistry(t, "test-skill", &skillCred),
+		func() *skills.Registry { return reg },
 		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
 	)
 
@@ -119,8 +122,9 @@ func buildSkillRegistryFull(t *testing.T, id string, preferredCredential *string
 
 // TestSkillResolutionAgentConfigNameNilPreservesInheritance 验证 skill 无 agent_config_name 时，rc.AgentConfig 保持继承链结果不变。
 func TestSkillResolutionAgentConfigNameNilPreservesInheritance(t *testing.T) {
+	reg := buildSkillRegistryFull(t, "test-skill", nil, nil)
 	mw := pipeline.NewSkillResolutionMiddleware(
-		buildSkillRegistryFull(t, "test-skill", nil, nil),
+		func() *skills.Registry { return reg },
 		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
 	)
 

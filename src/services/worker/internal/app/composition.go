@@ -131,10 +131,12 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	if err != nil {
 		return nil, err
 	}
-	skillRegistry, err := skills.LoadRegistry(skillsRoot)
+	initialSkillRegistry, err := skills.LoadRegistry(skillsRoot)
 	if err != nil {
 		return nil, err
 	}
+	watchedSkills := skills.NewWatchedRegistry(skillsRoot, initialSkillRegistry)
+	watchedSkills.Watch(ctx)
 
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
@@ -146,7 +148,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ToolExecutors:          executors,
 		AllLlmToolSpecs:        allLlmSpecs,
 		BaseToolAllowlistNames: baseAllowlistNames,
-		SkillRegistry:          skillRegistry,
+		SkillRegistryGetter:    watchedSkills.Get,
 		MCPPool:                mcpPool,
 		MCPDiscoveryCache:      discoveryCache,
 		ExecutorRegistry:       execRegistry,
