@@ -30,6 +30,7 @@ type ResolvedAgentConfig struct {
 	ContentFilterLevel  string
 	SafetyRulesJSON     map[string]any
 	PromptCacheControl  string // "none" | "system_prompt"
+	ReasoningMode       string // "auto" | "enabled" | "disabled" | "none"
 }
 
 // RunContext 承载单次 Execute 调用的全部运行时状态，在 Pipeline 各中间件间共享。
@@ -72,6 +73,7 @@ type RunContext struct {
 	ToolTimeoutMs          *int
 	ToolBudget             map[string]any
 	PreferredCredentialName string // Skill.PreferredCredential 解析结果，供 RoutingMiddleware 使用
+	ReasoningMode          string // "auto" | "enabled" | "disabled" | "none"
 
 	// -- 初始化时写入 base 值，MCPDiscovery/ToolBuild 覆盖 --
 	ToolSpecs     []llm.ToolSpec

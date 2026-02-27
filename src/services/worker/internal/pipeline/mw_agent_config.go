@@ -111,6 +111,7 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		contentFilterLevel   string
 		safetyRulesJSON      map[string]any
 		promptCacheControl   string
+		reasoningMode        string
 
 		// system_prompt_template_id 用于关联查询 prompt template
 		systemPromptTemplateID *uuid.UUID
@@ -120,14 +121,14 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		`SELECT name, system_prompt_template_id, system_prompt_override,
 		        model, temperature, max_output_tokens, top_p, context_window_limit,
 		        tool_policy, tool_allowlist, tool_denylist, content_filter_level, safety_rules_json,
-		        prompt_cache_control
+		        prompt_cache_control, reasoning_mode
 		 FROM agent_configs WHERE id = $1`,
 		id,
 	).Scan(
 		&name, &systemPromptTemplateID, &systemPromptOverride,
 		&model, &temperature, &maxOutputTokens, &topP, &contextWindowLimit,
 		&toolPolicy, &toolAllowlist, &toolDenylist, &contentFilterLevel, &safetyRulesJSON,
-		&promptCacheControl,
+		&promptCacheControl, &reasoningMode,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", nil
@@ -171,6 +172,7 @@ func loadAgentConfig(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*Re
 		ContentFilterLevel: contentFilterLevel,
 		SafetyRulesJSON:    safetyRulesJSON,
 		PromptCacheControl: promptCacheControl,
+		ReasoningMode:      reasoningMode,
 	}, name, nil
 }
 

@@ -382,6 +382,7 @@ type agentConfigResponse struct {
 	SkillID                *string        `json:"skill_id,omitempty"`
 	IsDefault              bool           `json:"is_default"`
 	PromptCacheControl     string         `json:"prompt_cache_control"`
+	ReasoningMode          string         `json:"reasoning_mode"`
 	CreatedAt              string         `json:"created_at"`
 }
 
@@ -404,6 +405,7 @@ type createAgentConfigRequest struct {
 	SkillID                *string        `json:"skill_id"`
 	IsDefault              bool           `json:"is_default"`
 	PromptCacheControl     string         `json:"prompt_cache_control"`
+	ReasoningMode          string         `json:"reasoning_mode"`
 }
 
 type updateAgentConfigRequest struct {
@@ -421,6 +423,7 @@ type updateAgentConfigRequest struct {
 	ContentFilterLevel     *string   `json:"content_filter_level"`
 	IsDefault              *bool     `json:"is_default"`
 	PromptCacheControl     *string   `json:"prompt_cache_control"`
+	ReasoningMode          *string   `json:"reasoning_mode"`
 	Scope                  *string   `json:"scope"` // "org" | "platform"; platform_admin only
 }
 
@@ -521,6 +524,10 @@ func createAgentConfig(
 	}
 	if req.PromptCacheControl != "" && req.PromptCacheControl != "none" && req.PromptCacheControl != "system_prompt" {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "prompt_cache_control must be none or system_prompt", traceID, nil)
+		return
+	}
+	if req.ReasoningMode != "" && req.ReasoningMode != "auto" && req.ReasoningMode != "enabled" && req.ReasoningMode != "disabled" && req.ReasoningMode != "none" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "reasoning_mode must be auto, enabled, disabled, or none", traceID, nil)
 		return
 	}
 	if req.Scope != "" && req.Scope != "org" && req.Scope != "platform" {
@@ -663,7 +670,7 @@ func updateAgentConfig(
 		req.Model == nil && req.Temperature == nil && req.MaxOutputTokens == nil &&
 		req.TopP == nil && req.ContextWindowLimit == nil && req.ToolPolicy == nil &&
 		req.ToolAllowlist == nil && req.ToolDenylist == nil && req.ContentFilterLevel == nil &&
-		req.IsDefault == nil && req.PromptCacheControl == nil && req.Scope == nil {
+		req.IsDefault == nil && req.PromptCacheControl == nil && req.ReasoningMode == nil && req.Scope == nil {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "no fields to update", traceID, nil)
 		return
 	}
@@ -685,6 +692,10 @@ func updateAgentConfig(
 	}
 	if req.PromptCacheControl != nil && *req.PromptCacheControl != "none" && *req.PromptCacheControl != "system_prompt" {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "prompt_cache_control must be none or system_prompt", traceID, nil)
+		return
+	}
+	if req.ReasoningMode != nil && *req.ReasoningMode != "auto" && *req.ReasoningMode != "enabled" && *req.ReasoningMode != "disabled" && *req.ReasoningMode != "none" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "reasoning_mode must be auto, enabled, disabled, or none", traceID, nil)
 		return
 	}
 
@@ -764,6 +775,10 @@ func updateAgentConfig(
 	if req.PromptCacheControl != nil {
 		fields.SetPromptCacheControl = true
 		fields.PromptCacheControl = *req.PromptCacheControl
+	}
+	if req.ReasoningMode != nil {
+		fields.SetReasoningMode = true
+		fields.ReasoningMode = *req.ReasoningMode
 	}
 	if req.Scope != nil {
 		fields.SetScope = true
@@ -847,6 +862,7 @@ func toCreateAgentConfigRequest(req createAgentConfigRequest) (data.CreateAgentC
 		SafetyRulesJSON:      req.SafetyRulesJSON,
 		IsDefault:            req.IsDefault,
 		PromptCacheControl:   req.PromptCacheControl,
+		ReasoningMode:        req.ReasoningMode,
 	}
 
 	if req.SystemPromptTemplateID != nil && *req.SystemPromptTemplateID != "" {
@@ -904,6 +920,7 @@ func toAgentConfigResponse(ac data.AgentConfig) agentConfigResponse {
 		SafetyRulesJSON:      safetyRules,
 		IsDefault:            ac.IsDefault,
 		PromptCacheControl:   ac.PromptCacheControl,
+		ReasoningMode:        ac.ReasoningMode,
 		CreatedAt:            ac.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if ac.OrgID != nil {

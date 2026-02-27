@@ -97,6 +97,7 @@ func NewSkillResolutionMiddleware(
 			// AgentConfig 的 Temperature/TopP 作为 fallback
 			rc.Temperature = rc.AgentConfig.Temperature
 			rc.TopP = rc.AgentConfig.TopP
+			rc.ReasoningMode = rc.AgentConfig.ReasoningMode
 
 			// AgentConfig 的工具策略始终生效，定义可用工具池
 			switch rc.AgentConfig.ToolPolicy {

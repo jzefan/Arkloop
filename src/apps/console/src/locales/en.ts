@@ -138,6 +138,7 @@ export const en: LocaleStrings = {
       fieldContentFilterLevel: 'Content Filter Level',
       fieldIsDefault: 'Set as default',
       fieldPromptCacheControl: 'Prompt Cache Control',
+      fieldReasoningMode: 'Reasoning Mode',
       cancel: 'Cancel',
       create: 'Create',
       save: 'Save',

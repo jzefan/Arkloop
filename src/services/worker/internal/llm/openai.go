@@ -318,6 +318,26 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 			payload[k] = v
 		}
 	}
+	// reasoning_mode 控制是否发送 reasoning 参数
+	switch request.ReasoningMode {
+	case "enabled":
+		if rObj, ok := payload["reasoning"].(map[string]any); ok {
+			if _, has := rObj["summary"]; !has {
+				rObj["summary"] = "auto"
+			}
+		} else {
+			payload["reasoning"] = map[string]any{"summary": "auto"}
+		}
+	case "disabled":
+		delete(payload, "reasoning")
+	default: // "auto", "none", ""
+		// AdvancedJSON 已注入 reasoning 时，补全 summary
+		if rObj, ok := payload["reasoning"].(map[string]any); ok {
+			if _, has := rObj["summary"]; !has {
+				rObj["summary"] = "auto"
+			}
+		}
+	}
 
 	if g.cfg.EmitDebugEvents {
 		baseURL := g.cfg.BaseURL
@@ -453,9 +473,10 @@ func errorClassFromStatus(status int) string {
 type openAIChatCompletionStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   *string                         `json:"content"`
-			Role      *string                         `json:"role"`
-			ToolCalls []openAIChatCompletionToolDelta `json:"tool_calls"`
+			Content          *string                         `json:"content"`
+			ReasoningContent *string                         `json:"reasoning_content"`
+			Role             *string                         `json:"role"`
+			ToolCalls        []openAIChatCompletionToolDelta `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -636,6 +657,12 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		role := "assistant"
 		if choice.Delta.Role != nil && strings.TrimSpace(*choice.Delta.Role) != "" {
 			role = strings.TrimSpace(*choice.Delta.Role)
+		}
+		if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
+			thinkingChannel := "thinking"
+			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.ReasoningContent, Role: role, Channel: &thinkingChannel}); err != nil {
+				return err
+			}
 		}
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 			thinkingPart, mainPart := splitThinkContent(&inThink, *choice.Delta.Content)

@@ -142,6 +142,7 @@ type Request struct {
 	Tools            []ToolSpec
 	Metadata         map[string]any
 	ExperimentalJSON map[string]any
+	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none"
 }
 
 func (r Request) ToJSON() map[string]any {

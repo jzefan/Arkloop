@@ -21,6 +21,7 @@ export type AgentConfig = {
   skill_id?: string
   is_default: boolean
   prompt_cache_control: string
+  reasoning_mode: string
   created_at: string
 }
 
@@ -40,6 +41,7 @@ export type CreateAgentConfigRequest = {
   content_filter_level?: string
   is_default?: boolean
   prompt_cache_control?: string
+  reasoning_mode?: string
 }
 
 export type UpdateAgentConfigRequest = {
@@ -58,6 +60,7 @@ export type UpdateAgentConfigRequest = {
   content_filter_level?: string
   is_default?: boolean
   prompt_cache_control?: string
+  reasoning_mode?: string
 }
 
 export async function listAgentConfigs(accessToken: string): Promise<AgentConfig[]> {

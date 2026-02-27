@@ -138,6 +138,7 @@ export const zh: LocaleStrings = {
       fieldContentFilterLevel: '内容过滤级别',
       fieldIsDefault: '设为默认',
       fieldPromptCacheControl: 'Prompt Cache 控制',
+      fieldReasoningMode: 'Reasoning Mode',
       cancel: '取消',
       create: '创建',
       save: '保存',

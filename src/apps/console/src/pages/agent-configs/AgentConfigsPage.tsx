@@ -23,6 +23,7 @@ import { listPromptTemplates, type PromptTemplate } from '../../api/prompt-templ
 
 const TOOL_POLICIES = ['allowlist', 'denylist', 'none'] as const
 const PROMPT_CACHE_CONTROLS = ['none', 'system_prompt'] as const
+const REASONING_MODES = ['auto', 'enabled', 'disabled', 'none'] as const
 const SCOPES = ['org', 'platform'] as const
 
 type FormState = {
@@ -40,6 +41,7 @@ type FormState = {
   content_filter_level: string
   is_default: boolean
   prompt_cache_control: string
+  reasoning_mode: string
 }
 
 function emptyForm(): FormState {
@@ -58,6 +60,7 @@ function emptyForm(): FormState {
     content_filter_level: '',
     is_default: false,
     prompt_cache_control: 'none',
+    reasoning_mode: 'auto',
   }
 }
 
@@ -77,6 +80,7 @@ function configToForm(ac: AgentConfig): FormState {
     content_filter_level: ac.content_filter_level,
     is_default: ac.is_default,
     prompt_cache_control: ac.prompt_cache_control ?? 'none',
+    reasoning_mode: ac.reasoning_mode ?? 'auto',
   }
 }
 
@@ -198,6 +202,7 @@ export function AgentConfigsPage() {
             content_filter_level: form.content_filter_level.trim(),
             is_default: form.is_default,
             prompt_cache_control: form.prompt_cache_control,
+            reasoning_mode: form.reasoning_mode,
           },
           accessToken,
         )
@@ -218,6 +223,7 @@ export function AgentConfigsPage() {
           content_filter_level: form.content_filter_level.trim() || undefined,
           is_default: form.is_default,
           prompt_cache_control: form.prompt_cache_control || undefined,
+          reasoning_mode: form.reasoning_mode || undefined,
         }
         await createAgentConfig(req, accessToken)
         addToast(tc.toastCreated, 'success')
@@ -567,6 +573,20 @@ export function AgentConfigsPage() {
               {PROMPT_CACHE_CONTROLS.map((p) => (
                 <option key={p} value={p}>
                   {p}
+                </option>
+              ))}
+            </select>
+          </FormField>
+
+          <FormField label={tc.fieldReasoningMode}>
+            <select
+              value={form.reasoning_mode}
+              onChange={(e) => handleFormField('reasoning_mode', e.target.value)}
+              className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-1.5 text-sm text-[var(--c-text-secondary)] focus:outline-none"
+            >
+              {REASONING_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
                 </option>
               ))}
             </select>

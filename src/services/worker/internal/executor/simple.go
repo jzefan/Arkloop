@@ -46,6 +46,7 @@ func (e *SimpleExecutor) Execute(
 		Tools:           append([]llm.ToolSpec{}, rc.FinalSpecs...),
 		MaxOutputTokens: rc.MaxOutputTokens,
 		Temperature:     rc.Temperature,
+		ReasoningMode:   rc.ReasoningMode,
 	}
 
 	runCtx := agent.RunContext{
