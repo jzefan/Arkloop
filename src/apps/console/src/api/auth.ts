@@ -3,6 +3,12 @@ import { apiFetch } from './client'
 export type LoginRequest = {
   login: string
   password: string
+  cf_turnstile_token?: string
+}
+
+export type CaptchaConfigResponse = {
+  enabled: boolean
+  site_key: string
 }
 
 export type LoginResponse = {
@@ -30,6 +36,10 @@ export async function login(req: LoginRequest): Promise<LoginResponse> {
     method: 'POST',
     body: JSON.stringify(req),
   })
+}
+
+export async function getCaptchaConfig(): Promise<CaptchaConfigResponse> {
+  return await apiFetch<CaptchaConfigResponse>('/v1/auth/captcha-config')
 }
 
 export async function getMe(accessToken: string): Promise<MeResponse> {
