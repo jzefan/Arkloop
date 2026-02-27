@@ -17,11 +17,17 @@ import (
 
 // --- test helpers ---
 
+var (
+	fixedOrgID   = uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000001")
+	fixedUserID  = uuid.MustParse("bbbbbbbb-0000-0000-0000-000000000002")
+	fixedAgentID = "test-agent"
+)
+
 func newIdent() memory.MemoryIdentity {
 	return memory.MemoryIdentity{
-		OrgID:   uuid.New(),
-		UserID:  uuid.New(),
-		AgentID: "test-agent",
+		OrgID:   fixedOrgID,
+		UserID:  fixedUserID,
+		AgentID: fixedAgentID,
 	}
 }
 
@@ -72,8 +78,9 @@ func TestClient_Find_Success(t *testing.T) {
 		t.Fatalf("unexpected URI: %q", hits[0].URI)
 	}
 
-	// 验证 request body 中 target_uri 正确
-	if gotBody["target_uri"] != "viking://user/memories/" {
+	// 验证 request body 中 target_uri 含 userID
+	wantTargetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	if gotBody["target_uri"] != wantTargetURI {
 		t.Fatalf("unexpected target_uri: %v", gotBody["target_uri"])
 	}
 	if gotBody["query"] != "programming language" {
@@ -97,7 +104,7 @@ func TestClient_Find_AgentScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotBody["target_uri"] != "viking://agent/memories/" {
+	if gotBody["target_uri"] != "viking://agent/"+fixedAgentID+"/memories/" {
 		t.Fatalf("unexpected target_uri for agent scope: %v", gotBody["target_uri"])
 	}
 }

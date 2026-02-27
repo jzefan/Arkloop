@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	memoryFindLimit       = 5
-	memoryHighScoreL1     = 0.85  // 高分命中时额外拉 L1
-	memoryCommitTimeout   = 15 * time.Second
+	memoryFindLimit     = 5
+	memoryHighScoreL1   = 0.85 // 高分命中时额外拉 L1
+	memoryCommitTimeout = 120 * time.Second
 )
 
 // NewMemoryMiddleware 在 run 前注入长期记忆到 SystemPrompt，run 后异步归档对话。
