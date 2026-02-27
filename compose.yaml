@@ -170,6 +170,32 @@ services:
       redis:
         condition: service_healthy
 
+  sandbox:
+    build:
+      context: .
+      dockerfile: src/services/sandbox/Dockerfile
+    restart: unless-stopped
+    # Sandbox 需要 KVM 设备访问权限以运行 Firecracker microVM
+    devices:
+      - /dev/kvm:/dev/kvm
+    privileged: true
+    environment:
+      ARKLOOP_SANDBOX_ADDR: "0.0.0.0:8002"
+      ARKLOOP_FIRECRACKER_BIN: "${ARKLOOP_FIRECRACKER_BIN:-/usr/bin/firecracker}"
+      ARKLOOP_SANDBOX_KERNEL_IMAGE: "${ARKLOOP_SANDBOX_KERNEL_IMAGE:-/opt/sandbox/vmlinux}"
+      ARKLOOP_SANDBOX_ROOTFS: "${ARKLOOP_SANDBOX_ROOTFS:-/opt/sandbox/rootfs.ext4}"
+      ARKLOOP_SANDBOX_SOCKET_DIR: "/run/sandbox"
+      ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
+    volumes:
+      - sandbox_sockets:/run/sandbox
+    ports:
+      - "${ARKLOOP_SANDBOX_PORT:-8002}:8002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8002/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   openviking:
     image: ghcr.io/volcengine/openviking:main
     restart: unless-stopped
@@ -190,3 +216,4 @@ volumes:
   redis_data:
   minio_data:
   openviking_data:
+  sandbox_sockets:
