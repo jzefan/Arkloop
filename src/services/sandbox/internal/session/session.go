@@ -25,6 +25,32 @@ type ExecResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// ArtifactEntry 描述 microVM 输出目录中的一个文件。
+type ArtifactEntry struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"` // base64
+}
+
+// FetchArtifactsResult 是 fetch_artifacts 请求的响应。
+type FetchArtifactsResult struct {
+	Artifacts []ArtifactEntry `json:"artifacts"`
+	Truncated bool            `json:"truncated"`
+}
+
+// agentRequest 是 v2 协议的请求格式。
+type agentRequest struct {
+	Action string `json:"action"`
+}
+
+// agentResponse 是 v2 协议的响应格式。
+type agentResponse struct {
+	Action    string                `json:"action"`
+	Artifacts *FetchArtifactsResult `json:"artifacts,omitempty"`
+	Error     string                `json:"error,omitempty"`
+}
+
 // Session 对应一个 Firecracker microVM 的执行上下文。
 type Session struct {
 	ID        string
@@ -125,6 +151,37 @@ func (s *Session) Exec(ctx context.Context, job ExecJob) (*ExecResult, error) {
 		return nil, fmt.Errorf("read result: %w", err)
 	}
 	return &result, nil
+}
+
+// FetchArtifacts 通过 vsock 请求 guest agent 返回输出目录中的文件。
+func (s *Session) FetchArtifacts(ctx context.Context) (*FetchArtifactsResult, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	conn, err := s.connectToAgent(fetchCtx)
+	if err != nil {
+		return nil, fmt.Errorf("connect to agent: %w", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+
+	req := agentRequest{Action: "fetch_artifacts"}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, fmt.Errorf("send fetch_artifacts request: %w", err)
+	}
+
+	var resp agentResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("read fetch_artifacts response: %w", err)
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("agent error: %s", resp.Error)
+	}
+	if resp.Artifacts == nil {
+		return &FetchArtifactsResult{Artifacts: []ArtifactEntry{}}, nil
+	}
+	return resp.Artifacts, nil
 }
 
 // connectToAgent 通过 Firecracker vsock 握手协议建立 HOST→GUEST 连接。
