@@ -110,6 +110,7 @@ func (rt *luaRuntime) mergeUsage(u *llm.Usage) {
 	}
 	addInt(&rt.accumulatedUsage.InputTokens, u.InputTokens)
 	addInt(&rt.accumulatedUsage.OutputTokens, u.OutputTokens)
+	addInt(&rt.accumulatedUsage.TotalTokens, u.TotalTokens)
 	addInt(&rt.accumulatedUsage.CacheCreationInputTokens, u.CacheCreationInputTokens)
 	addInt(&rt.accumulatedUsage.CacheReadInputTokens, u.CacheReadInputTokens)
 	addInt(&rt.accumulatedUsage.CachedTokens, u.CachedTokens)
@@ -122,7 +123,9 @@ func (rt *luaRuntime) register(L *lua.LState) {
 	L.SetField(agentTable, "classify", L.NewFunction(rt.agentClassify))
 	L.SetField(agentTable, "generate", L.NewFunction(rt.agentGenerate))
 	L.SetField(agentTable, "stream", L.NewFunction(rt.agentStream))
+	L.SetField(agentTable, "stream_route", L.NewFunction(rt.agentStreamRoute))
 	L.SetField(agentTable, "loop", L.NewFunction(rt.agentLoop))
+	L.SetField(agentTable, "loop_capture", L.NewFunction(rt.agentLoopCapture))
 	L.SetGlobal("agent", agentTable)
 
 	toolsTable := L.NewTable()
@@ -541,6 +544,138 @@ func (rt *luaRuntime) contextEmit(L *lua.LState) int {
 	return 2
 }
 
+func parseMaxTokensOption(opts *lua.LTable) *int {
+	if opts == nil {
+		return nil
+	}
+	if raw := opts.RawGetString("max_tokens"); raw != lua.LNil {
+		if number, ok := raw.(lua.LNumber); ok {
+			value := int(number)
+			return &value
+		}
+	}
+	return nil
+}
+
+func parseAgentMessages(systemPrompt string, messagesArg lua.LValue, bindingName string) ([]llm.Message, error) {
+	messages := []llm.Message{
+		{Role: "system", Content: []llm.TextPart{{Text: systemPrompt}}},
+	}
+
+	switch value := messagesArg.(type) {
+	case lua.LString:
+		messages = append(messages, llm.Message{
+			Role:    "user",
+			Content: []llm.TextPart{{Text: string(value)}},
+		})
+		return messages, nil
+	case *lua.LTable:
+		n := value.Len()
+		for i := 1; i <= n; i++ {
+			item := value.RawGetInt(i)
+			tbl, ok := item.(*lua.LTable)
+			if !ok {
+				continue
+			}
+			role := ""
+			if rawRole, ok := tbl.RawGetString("role").(lua.LString); ok {
+				role = string(rawRole)
+			}
+			content := ""
+			if rawContent, ok := tbl.RawGetString("content").(lua.LString); ok {
+				content = string(rawContent)
+			}
+			if strings.TrimSpace(role) == "" || strings.TrimSpace(content) == "" {
+				continue
+			}
+			messages = append(messages, llm.Message{
+				Role:    role,
+				Content: []llm.TextPart{{Text: content}},
+			})
+		}
+		return messages, nil
+	default:
+		return nil, fmt.Errorf("%s: messages must be a string or table", bindingName)
+	}
+}
+
+func usageFromRunEvent(data map[string]any) *llm.Usage {
+	if data == nil {
+		return nil
+	}
+	rawUsage, ok := data["usage"]
+	if !ok {
+		return nil
+	}
+	usageMap, ok := rawUsage.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	usage := llm.Usage{
+		InputTokens:              intPtrFromAny(usageMap["input_tokens"]),
+		OutputTokens:             intPtrFromAny(usageMap["output_tokens"]),
+		TotalTokens:              intPtrFromAny(usageMap["total_tokens"]),
+		CacheCreationInputTokens: intPtrFromAny(usageMap["cache_creation_input_tokens"]),
+		CacheReadInputTokens:     intPtrFromAny(usageMap["cache_read_input_tokens"]),
+		CachedTokens:             intPtrFromAny(usageMap["cached_tokens"]),
+	}
+	if len(usage.ToJSON()) == 0 {
+		return nil
+	}
+	return &usage
+}
+
+func intPtrFromAny(value any) *int {
+	switch typed := value.(type) {
+	case int:
+		v := typed
+		return &v
+	case int8:
+		v := int(typed)
+		return &v
+	case int16:
+		v := int(typed)
+		return &v
+	case int32:
+		v := int(typed)
+		return &v
+	case int64:
+		v := int(typed)
+		return &v
+	case uint:
+		v := int(typed)
+		return &v
+	case uint8:
+		v := int(typed)
+		return &v
+	case uint16:
+		v := int(typed)
+		return &v
+	case uint32:
+		v := int(typed)
+		return &v
+	case uint64:
+		v := int(typed)
+		return &v
+	case float32:
+		v := int(typed)
+		return &v
+	case float64:
+		v := int(typed)
+		return &v
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return nil
+		}
+		v := int(parsed)
+		return &v
+	default:
+		return nil
+	}
+}
+
 // agent.generate(system_prompt, user_message, [opts]) -> (output, err)
 // 轻量级 LLM 调用，不创建子 Run，不 yield 事件。
 // opts: {max_tokens=number}
@@ -567,14 +702,7 @@ func (rt *luaRuntime) agentGenerate(L *lua.LState) int {
 			{Role: "user", Content: []llm.TextPart{{Text: userMessage}}},
 		},
 	}
-	if opts := L.OptTable(3, nil); opts != nil {
-		if mt := opts.RawGetString("max_tokens"); mt != lua.LNil {
-			if n, ok := mt.(lua.LNumber); ok {
-				v := int(n)
-				req.MaxOutputTokens = &v
-			}
-		}
-	}
+	req.MaxOutputTokens = parseMaxTokensOption(L.OptTable(3, nil))
 
 	var chunks []string
 	var streamFailed *llm.StreamRunFailed
