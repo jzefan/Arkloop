@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
@@ -53,6 +54,31 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 		pool = NewPool()
 	}
 
+	type serverResult struct {
+		index  int
+		server ServerConfig
+		tools  []Tool
+	}
+
+	results := make([]serverResult, len(cfg.Servers))
+	var wg sync.WaitGroup
+	for i, server := range cfg.Servers {
+		wg.Add(1)
+		go func(idx int, srv ServerConfig) {
+			defer wg.Done()
+			client, err := pool.Borrow(ctx, srv)
+			if err != nil {
+				return
+			}
+			toolsList, err := client.ListTools(ctx, srv.CallTimeoutMs)
+			if err != nil || len(toolsList) == 0 {
+				return
+			}
+			results[idx] = serverResult{index: idx, server: srv, tools: toolsList}
+		}(i, server)
+	}
+	wg.Wait()
+
 	discoveredByServer := []struct {
 		server ServerConfig
 		tools  []Tool
@@ -60,24 +86,16 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 
 	baseCounts := map[string]int{}
 
-	for _, server := range cfg.Servers {
-		client, err := pool.Borrow(ctx, server)
-		if err != nil {
-			continue
-		}
-		toolsList, err := client.ListTools(ctx, server.CallTimeoutMs)
-		if err != nil {
-			continue
-		}
-		if len(toolsList) == 0 {
+	for _, r := range results {
+		if len(r.tools) == 0 {
 			continue
 		}
 		discoveredByServer = append(discoveredByServer, struct {
 			server ServerConfig
 			tools  []Tool
-		}{server: server, tools: toolsList})
-		for _, tool := range toolsList {
-			base := mcpToolBaseName(server.ServerID, tool.Name)
+		}{server: r.server, tools: r.tools})
+		for _, tool := range r.tools {
+			base := mcpToolBaseName(r.server.ServerID, tool.Name)
 			baseCounts[base]++
 		}
 	}
