@@ -8,6 +8,7 @@ import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
 import { ShareModal } from './ShareModal'
 import { NotificationBell } from './NotificationBell'
+import { SourcesPanel } from './SourcesPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
 import { selectFreshRunEvents } from '../runEventProcessing'
@@ -25,7 +26,7 @@ import {
   isApiError,
   type MessageResponse,
 } from '../api'
-import { type SelectedTier, isSearchThreadId } from '../storage'
+import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, type WebSource } from '../storage'
 
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
@@ -87,6 +88,12 @@ export function ChatPage() {
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
 
+  // web 引用来源：messageId -> WebSource[]
+  const [messageSourcesMap, setMessageSourcesMap] = useState<Map<string, WebSource[]>>(new Map())
+  // 当前 run 累积的搜索结果（按工具调用顺序拼接，1-indexed）
+  const currentRunSourcesRef = useRef<WebSource[]>([])
+  // sources 侧边面板：显示哪条消息的来源
+  const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // segment 状态：用于渲染 Agent 规划轮折叠块
   type Segment = { segmentId: string; kind: string; mode: string; label: string; content: string; isStreaming: boolean }
   const [segments, setSegments] = useState<Segment[]>([])
@@ -114,13 +121,15 @@ export function ChatPage() {
     activeRunId != null &&
     (sse.state === 'connecting' || sse.state === 'connected' || sse.state === 'reconnecting')
 
-  const refreshMessages = useCallback(async () => {
-    if (!threadId) return
+  const refreshMessages = useCallback(async (): Promise<MessageResponse[]> => {
+    if (!threadId) return []
     try {
       const items = await listMessages(accessToken, threadId)
       setMessages(items)
+      return items
     } catch (err) {
       setError(normalizeError(err))
+      return []
     }
   }, [accessToken, threadId])
 
@@ -166,6 +175,17 @@ export function ChatPage() {
           listThreadRuns(accessToken, threadId, 1),
         ])
         setMessages(items)
+
+        // 加载各消息缓存的 web 来源
+        const sourcesMap = new Map<string, WebSource[]>()
+        for (const msg of items) {
+          if (msg.role === 'assistant') {
+            const cached = readMessageSources(msg.id)
+            if (cached) sourcesMap.set(msg.id, cached)
+          }
+        }
+        setMessageSourcesMap(sourcesMap)
+
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         if (locationState?.initialRunId) {
           if (threadId) onRunStarted(threadId)
@@ -198,6 +218,9 @@ export function ChatPage() {
     setCancelSubmitting(false)
     pendingMessageRef.current = null
     setQueuedDraft(null)
+    currentRunSourcesRef.current = []
+    setMessageSourcesMap(new Map())
+    setSourcePanelMessageId(null)
     sse.disconnect()
     sse.clearEvents()
     processedEventCountRef.current = 0
@@ -210,6 +233,7 @@ export function ChatPage() {
     sse.reset()
     sse.connect()
     processedEventCountRef.current = 0
+    currentRunSourcesRef.current = []
     setAssistantDraft('')
     setSegments([])
     activeSegmentIdRef.current = null
@@ -279,6 +303,25 @@ export function ChatPage() {
         continue
       }
 
+      if (event.type === 'tool.result') {
+        const obj = event.data as { tool_name?: unknown; result?: unknown }
+        if (obj.tool_name === 'web_search') {
+          const result = obj.result as { results?: unknown[] } | undefined
+          if (Array.isArray(result?.results)) {
+            const newSources: WebSource[] = result.results
+              .filter((r): r is Record<string, unknown> => r != null && typeof r === 'object')
+              .map((r) => ({
+                title: typeof r.title === 'string' ? r.title : '',
+                url: typeof r.url === 'string' ? r.url : '',
+                snippet: typeof r.snippet === 'string' ? r.snippet : undefined,
+              }))
+              .filter((s) => !!s.url)
+            currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
+          }
+        }
+        continue
+      }
+
       if (event.type === 'thread.title.updated') {
         const obj = event.data as { thread_id?: unknown; title?: unknown }
         const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
@@ -304,7 +347,16 @@ export function ChatPage() {
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
-        void refreshMessages().then(() => {
+        const runSources = [...currentRunSourcesRef.current]
+        currentRunSourcesRef.current = []
+        void refreshMessages().then((items) => {
+          if (runSources.length > 0) {
+            const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
+            if (lastAssistant) {
+              writeMessageSources(lastAssistant.id, runSources)
+              setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+            }
+          }
           const pending = pendingMessageRef.current
           if (pending) {
             pendingMessageRef.current = null
@@ -589,6 +641,16 @@ export function ChatPage() {
     return normalizeError(sse.error)
   }, [sse.error])
 
+  const sourcePanelSources = sourcePanelMessageId ? messageSourcesMap.get(sourcePanelMessageId) : undefined
+  const sourcePanelUserQuery = useMemo(() => {
+    if (!sourcePanelMessageId) return undefined
+    const idx = messages.findIndex((m) => m.id === sourcePanelMessageId)
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return messages[i].content
+    }
+    return undefined
+  }, [sourcePanelMessageId, messages])
+
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
@@ -624,12 +686,15 @@ export function ChatPage() {
         </button>
       </div>
 
-      {/* 消息列表 */}
-      <div
-        ref={scrollContainerRef}
-        onScroll={handleScrollContainerScroll}
-        className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
-      >
+      {/* 主体区域：消息 + 输入 + 可选的 sources 侧边面板 */}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex flex-1 min-w-0 flex-col">
+          {/* 消息列表 */}
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScrollContainerScroll}
+            className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
+          >
         <div
           style={{ maxWidth: 800, margin: '0 auto', padding: '50px 60px' }}
           className="flex w-full flex-col gap-6"
@@ -657,6 +722,12 @@ export function ChatPage() {
                       ? () => void handleFork(msg.id)
                       : undefined
                   }
+                  webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
+                  onShowSources={
+                    msg.role === 'assistant' && messageSourcesMap.has(msg.id)
+                      ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
+                      : undefined
+                  }
                 />
               ))}
 
@@ -681,7 +752,12 @@ export function ChatPage() {
                 />
               )}
 
-              {assistantDraft && <StreamingBubble content={assistantDraft} />}
+              {assistantDraft && (
+                <StreamingBubble
+                  content={assistantDraft}
+                  webSources={currentRunSourcesRef.current.length > 0 ? currentRunSourcesRef.current : undefined}
+                />
+              )}
 
               {awaitingInput && (
                 <div
@@ -806,6 +882,17 @@ export function ChatPage() {
           <div className="w-full max-w-[756px]">
             <ErrorCallout error={error} />
           </div>
+        )}
+      </div>
+
+        </div>
+        {/* sources 侧边面板 */}
+        {sourcePanelSources && sourcePanelSources.length > 0 && (
+          <SourcesPanel
+            sources={sourcePanelSources}
+            userQuery={sourcePanelUserQuery}
+            onClose={() => setSourcePanelMessageId(null)}
+          />
         )}
       </div>
 

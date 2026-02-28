@@ -143,6 +143,7 @@ export interface LocaleStrings {
   starThread: string
   unstarThread: string
   shareThread: string
+  renameThread: string
   // share
   shareTitle: string
   sharePublic: string

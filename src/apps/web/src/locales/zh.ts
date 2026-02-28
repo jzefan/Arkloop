@@ -139,6 +139,7 @@ export const zh: LocaleStrings = {
   starThread: '收藏',
   unstarThread: '取消收藏',
   shareThread: '分享',
+  renameThread: '重命名',
   shareTitle: '分享此对话',
   sharePublic: '任何有链接的人',
   sharePassword: '密码保护',

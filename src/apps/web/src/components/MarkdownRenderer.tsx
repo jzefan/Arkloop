@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useContext, Fragment, isValidElement, cloneElement } from 'react'
+import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -6,6 +7,8 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import { Copy, Check } from 'lucide-react'
 import type { Components } from 'react-markdown'
+import { CitationBadge, WebSourcesContext } from './CitationBadge'
+import type { WebSource } from '../storage'
 
 function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = useState(false)
@@ -63,6 +66,63 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
   )
 }
 
+// 匹配 【web:N】 或 [web:N] 形式的引用，支持连续引用分组
+const CITATION_GROUP_RE = /(?:【web:(\d+)】|\[web:(\d+)\])+/g
+const CITATION_SINGLE_RE = /【web:(\d+)】|\[web:(\d+)\]/g
+
+function extractIndices(group: string): number[] {
+  const indices: number[] = []
+  let m: RegExpExecArray | null
+  CITATION_SINGLE_RE.lastIndex = 0
+  while ((m = CITATION_SINGLE_RE.exec(group)) !== null) {
+    const idx = parseInt(m[1] ?? m[2], 10)
+    if (!isNaN(idx)) indices.push(idx)
+  }
+  return indices
+}
+
+function processText(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = []
+  let lastIndex = 0
+  let groupIdx = 0
+  CITATION_GROUP_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = CITATION_GROUP_RE.exec(text)) !== null) {
+    if (lastIndex < m.index) parts.push(text.slice(lastIndex, m.index))
+    parts.push(<CitationBadge key={`${keyPrefix}-${groupIdx++}`} indices={extractIndices(m[0])} />)
+    lastIndex = m.index + m[0].length
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex))
+  return parts
+}
+
+function processChildren(children: ReactNode, prefix: string): ReactNode {
+  if (typeof children === 'string') {
+    const parts = processText(children, prefix)
+    if (parts.length === 1 && typeof parts[0] === 'string') return parts[0]
+    return <>{parts}</>
+  }
+  if (Array.isArray(children)) {
+    return (
+      <>
+        {children.map((child, i) => (
+          <Fragment key={i}>{processChildren(child, `${prefix}-${i}`)}</Fragment>
+        ))}
+      </>
+    )
+  }
+  if (isValidElement<{ children?: ReactNode }>(children) && children.props?.children !== undefined) {
+    return cloneElement(children, {}, processChildren(children.props.children, `${prefix}-e`))
+  }
+  return children
+}
+
+function WithCitations({ children, prefix }: { children: ReactNode; prefix: string }) {
+  const webSources = useContext(WebSourcesContext)
+  if (webSources.length === 0) return <>{children}</>
+  return <>{processChildren(children, prefix)}</>
+}
+
 const mdComponents: Components = {
   pre: ({ children }) => <CodeBlockWrapper>{children}</CodeBlockWrapper>,
 
@@ -90,7 +150,7 @@ const mdComponents: Components = {
 
   p: ({ children }) => (
     <p style={{ color: 'var(--c-text-primary)', fontSize: '16px', lineHeight: 1.6, letterSpacing: '0.16px', margin: '0 0 1em' }}>
-      {children}
+      <WithCitations prefix="p">{children}</WithCitations>
     </p>
   ),
 
@@ -130,11 +190,11 @@ const mdComponents: Components = {
     </ol>
   ),
 
-  li: ({ children }) => <li style={{ marginBottom: '0.3em' }}>{children}</li>,
+  li: ({ children }) => <li style={{ marginBottom: '0.3em' }}><WithCitations prefix="li">{children}</WithCitations></li>,
 
   blockquote: ({ children }) => (
     <blockquote style={{ borderLeft: '3px solid var(--c-border-mid)', paddingLeft: '1em', margin: '1em 0', color: 'var(--c-text-secondary)', fontStyle: 'italic' }}>
-      {children}
+      <WithCitations prefix="bq">{children}</WithCitations>
     </blockquote>
   ),
 
@@ -165,7 +225,7 @@ const mdComponents: Components = {
 
   td: ({ children }) => (
     <td style={{ borderBottom: '0.5px solid var(--c-border-subtle)', padding: '8px 12px', color: 'var(--c-text-primary)', verticalAlign: 'top' }}>
-      {children}
+      <WithCitations prefix="td">{children}</WithCitations>
     </td>
   ),
 
@@ -184,9 +244,9 @@ const mdComponents: Components = {
   ),
 }
 
-type Props = { content: string; disableMath?: boolean }
+type Props = { content: string; disableMath?: boolean; webSources?: WebSource[] }
 
-export function MarkdownRenderer({ content, disableMath }: Props) {
+export function MarkdownRenderer({ content, disableMath, webSources }: Props) {
   const remarkPlugins = disableMath
     ? [remarkGfm]
     : [remarkGfm, remarkMath]
@@ -200,14 +260,16 @@ export function MarkdownRenderer({ content, disableMath }: Props) {
       ]
 
   return (
-    <div style={{ maxWidth: '100%' }}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={mdComponents}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <WebSourcesContext.Provider value={webSources ?? []}>
+      <div style={{ maxWidth: '100%' }}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={mdComponents}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    </WebSourcesContext.Provider>
   )
 }

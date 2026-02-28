@@ -139,6 +139,7 @@ export const en: LocaleStrings = {
   starThread: 'Star',
   unstarThread: 'Unstar',
   shareThread: 'Share',
+  renameThread: 'Rename',
   shareTitle: 'Share this chat',
   sharePublic: 'Anyone with the link',
   sharePassword: 'Password protected',

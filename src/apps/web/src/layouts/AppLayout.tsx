@@ -211,6 +211,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
             setIsSearchMode(true)
           }}
         isSearchMode={isSearchMode}
+        onThreadTitleUpdated={handleThreadTitleUpdated}
       />
 
       {settingsOpen && (

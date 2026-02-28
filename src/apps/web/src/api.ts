@@ -378,6 +378,18 @@ export async function unstarThread(accessToken: string, threadId: string): Promi
   })
 }
 
+export async function updateThreadTitle(
+  accessToken: string,
+  threadId: string,
+  title: string,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ title }),
+  })
+}
+
 export async function forkThread(
   accessToken: string,
   threadId: string,

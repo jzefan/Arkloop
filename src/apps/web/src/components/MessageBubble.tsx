@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil } from 'lucide-react'
 import type { MessageResponse } from '../api'
+import type { WebSource } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 
 type Props = {
@@ -8,6 +9,16 @@ type Props = {
   onRetry?: () => void
   onEdit?: (newContent: string) => void
   onFork?: () => void
+  webSources?: WebSource[]
+  onShowSources?: () => void
+}
+
+function getDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
 }
 
 function extractFilesFromContent(content: string): { text: string; fileNames: string[] } {
@@ -21,7 +32,7 @@ function extractFilesFromContent(content: string): { text: string; fileNames: st
   return { text, fileNames }
 }
 
-export function MessageBubble({ message, onRetry, onEdit, onFork }: Props) {
+export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, onShowSources }: Props) {
   const [copied, setCopied] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -284,7 +295,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div style={{ maxWidth: '663px' }}>
-        <MarkdownRenderer content={message.content} />
+        <MarkdownRenderer content={message.content} webSources={webSources} />
         <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <div style={{ position: 'relative' }}>
@@ -347,6 +358,53 @@ export function MessageBubble({ message, onRetry, onEdit, onFork }: Props) {
             >
               <Split size={15} />
             </button>
+            {webSources && webSources.length > 0 && onShowSources && (
+              <button
+                onClick={onShowSources}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 12px 4px 6px',
+                  borderRadius: '999px',
+                  border: 'none',
+                  background: 'var(--c-bg-deep)',
+                  cursor: 'pointer',
+                  marginLeft: '4px',
+                  transition: 'background 150ms',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  {webSources.slice(0, 3).map((s, i) => {
+                    const domain = getDomain(s.url)
+                    return (
+                      <img
+                        key={i}
+                        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=16`}
+                        width={18}
+                        height={18}
+                        style={{
+                          borderRadius: '50%',
+                          border: '1.5px solid var(--c-bg-deep)',
+                          marginLeft: i > 0 ? '-6px' : 0,
+                          position: 'relative',
+                          zIndex: 3 - i,
+                          background: 'var(--c-bg-page)',
+                        }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        alt=""
+                      />
+                    )
+                  })}
+                </div>
+                <span style={{ fontSize: '13px', color: 'var(--c-text-secondary)', fontWeight: 500 }}>
+                  {webSources.length} sources
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -356,13 +414,14 @@ export function MessageBubble({ message, onRetry, onEdit, onFork }: Props) {
 
 type StreamingBubbleProps = {
   content: string
+  webSources?: WebSource[]
 }
 
-export function StreamingBubble({ content }: StreamingBubbleProps) {
+export function StreamingBubble({ content, webSources }: StreamingBubbleProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div style={{ maxWidth: '663px' }}>
-        <MarkdownRenderer content={content} disableMath />
+        <MarkdownRenderer content={content} disableMath webSources={webSources} />
       </div>
     </div>
   )
