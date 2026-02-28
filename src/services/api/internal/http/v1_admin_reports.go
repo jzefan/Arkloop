@@ -81,27 +81,39 @@ func adminReportsEntry(
 		}
 		if raw := strings.TrimSpace(r.URL.Query().Get("report_id")); raw != "" {
 			parsed, err := uuid.Parse(raw)
-			if err != nil {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid report_id", traceID, nil)
-				return
+			if err == nil {
+				params.ReportID = &parsed
+			} else {
+				if !uuidPrefixRegex.MatchString(raw) {
+					WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid report_id", traceID, nil)
+					return
+				}
+				params.ReportIDPrefix = &raw
 			}
-			params.ReportID = &parsed
 		}
 		if raw := strings.TrimSpace(r.URL.Query().Get("thread_id")); raw != "" {
 			parsed, err := uuid.Parse(raw)
-			if err != nil {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid thread_id", traceID, nil)
-				return
+			if err == nil {
+				params.ThreadID = &parsed
+			} else {
+				if !uuidPrefixRegex.MatchString(raw) {
+					WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid thread_id", traceID, nil)
+					return
+				}
+				params.ThreadIDPrefix = &raw
 			}
-			params.ThreadID = &parsed
 		}
 		if raw := strings.TrimSpace(r.URL.Query().Get("reporter_id")); raw != "" {
 			parsed, err := uuid.Parse(raw)
-			if err != nil {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid reporter_id", traceID, nil)
-				return
+			if err == nil {
+				params.ReporterID = &parsed
+			} else {
+				if !uuidPrefixRegex.MatchString(raw) {
+					WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid reporter_id", traceID, nil)
+					return
+				}
+				params.ReporterIDPrefix = &raw
 			}
-			params.ReporterID = &parsed
 		}
 		if raw := strings.TrimSpace(r.URL.Query().Get("reporter_email")); raw != "" {
 			params.ReporterEmail = &raw
