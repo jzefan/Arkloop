@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -22,12 +25,18 @@ const (
 )
 
 // ToolExecutor 实现 tools.Executor，将 memory_search/read/write/forget 分发到 MemoryProvider。
+// pool 非 nil 时 search 操作优先读 PG 快照缓存，避免每次 tool call 都打到 OpenViking。
 type ToolExecutor struct {
-	provider memory.MemoryProvider
+	provider     memory.MemoryProvider
+	pool         *pgxpool.Pool
+	snapshotRepo data.MemorySnapshotRepository
 }
 
-func NewToolExecutor(provider memory.MemoryProvider) *ToolExecutor {
-	return &ToolExecutor{provider: provider}
+func NewToolExecutor(provider memory.MemoryProvider, pool *pgxpool.Pool) *ToolExecutor {
+	return &ToolExecutor{
+		provider: provider,
+		pool:     pool,
+	}
 }
 
 func (e *ToolExecutor) Execute(
@@ -79,6 +88,29 @@ func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident me
 	scope := parseScope(args)
 	limit := parseLimit(args, defaultSearchLimit)
 
+	// user scope 优先从 PG 快照缓存读取，避免 OpenViking 并发瓶颈
+	if scope == memory.MemoryScopeUser && e.pool != nil {
+		cached, found, err := e.snapshotRepo.GetHits(ctx, e.pool, ident.OrgID, ident.UserID, ident.AgentID)
+		if err != nil {
+			slog.WarnContext(ctx, "memory: snapshot cache read failed", "err", err.Error())
+		} else if found {
+			results := make([]map[string]any, 0, min(len(cached), limit))
+			for i, h := range cached {
+				if i >= limit {
+					break
+				}
+				results = append(results, map[string]any{
+					"uri":      h.URI,
+					"abstract": h.Abstract,
+				})
+			}
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"hits": results},
+				DurationMs: durationMs(started),
+			}
+		}
+	}
+
 	hits, err := e.provider.Find(ctx, ident, scope, query, limit)
 	if err != nil {
 		return providerError("search", err, started)
@@ -90,6 +122,22 @@ func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident me
 			"uri":      h.URI,
 			"abstract": h.Abstract,
 		})
+	}
+
+	// Find 成功时异步回写缓存，供后续 tool call 使用
+	if scope == memory.MemoryScopeUser && e.pool != nil && len(hits) > 0 {
+		cachedHits := make([]data.MemoryHitCache, len(hits))
+		for i, h := range hits {
+			cachedHits[i] = data.MemoryHitCache{
+				URI: h.URI, Abstract: h.Abstract, Score: h.Score,
+				MatchReason: h.MatchReason, IsLeaf: h.IsLeaf,
+			}
+		}
+		go func() {
+			uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = e.snapshotRepo.UpsertWithHits(uCtx, e.pool, ident.OrgID, ident.UserID, ident.AgentID, "", cachedHits)
+		}()
 	}
 
 	return tools.ExecutionResult{
