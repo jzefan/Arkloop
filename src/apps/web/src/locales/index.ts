@@ -23,7 +23,13 @@ export interface LocaleStrings {
   }
   // settings
   getHelp: string
+  submitSuggestion: string
+  suggestionTitle: string
+  suggestionPlaceholder: string
+  suggestionSubmit: string
+  suggestionSuccess: string
   comingSoon: string
+  requestFailed: string
   logout: string
   language: string
   appearance: string

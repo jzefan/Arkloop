@@ -847,6 +847,17 @@ export async function createThreadReport(
   })
 }
 
+export async function createSuggestionFeedback(
+  accessToken: string,
+  feedback: string,
+): Promise<void> {
+  await apiFetch<void>('/v1/me/feedback', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({ feedback }),
+  })
+}
+
 export type SharedThreadResponse = {
   requires_password: boolean
   thread?: {

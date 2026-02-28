@@ -40,6 +40,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   too_long: 'bg-purple-500/15 text-purple-400',
   harmful_or_offensive: 'bg-red-500/15 text-red-400',
   wrong_sources: 'bg-orange-500/15 text-orange-400',
+  product_suggestion: 'bg-emerald-500/15 text-emerald-400',
 }
 
 const CATEGORY_OPTIONS = Object.keys(CATEGORY_COLORS)
@@ -326,15 +327,17 @@ export function ReportsPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5 text-[var(--c-text-secondary)]">
                     <div className="flex flex-col gap-1">
-                      <span className="font-mono text-xs" title={r.thread_id}>
-                        {r.thread_id}
+                      <span className="font-mono text-xs" title={r.thread_id || '--'}>
+                        {r.thread_id || '--'}
                       </span>
-                      <Link
-                        to={`/runs?thread_id=${encodeURIComponent(r.thread_id)}`}
-                        className="text-[11px] text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
-                      >
-                        {p.gotoRuns}
-                      </Link>
+                      {r.thread_id && (
+                        <Link
+                          to={`/runs?thread_id=${encodeURIComponent(r.thread_id)}`}
+                          className="text-[11px] text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
+                        >
+                          {p.gotoRuns}
+                        </Link>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
