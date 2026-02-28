@@ -82,29 +82,29 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 
 	findCtx, cancel := context.WithTimeout(ctx, memoryFindTimeout)
 	defer cancel()
-	block := renderMemoryBlock(findCtx, provider, ident, query)
+	block, hits := renderMemoryBlock(findCtx, provider, ident, query)
 	if block != "" {
 		rc.SystemPrompt += block
-		// 降级 Find 成功时顺便写入快照，引导缓存
 		if pool != nil {
 			go func() {
 				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer uCancel()
-				_ = snapshotRepo.Upsert(uCtx, pool, ident.OrgID, ident.UserID, ident.AgentID, block)
+				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
 			}()
 		}
 	}
 }
 
 // renderMemoryBlock 通过 OpenViking Find 构建 <memory> 块，返回空串表示无结果。
-func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, query string) string {
+// 同时返回 raw hits 供快照缓存使用。
+func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, query string) (string, []memory.MemoryHit) {
 	hits, err := provider.Find(ctx, ident, memory.MemoryScopeUser, query, memoryFindLimit)
 	if err != nil {
 		slog.WarnContext(ctx, "memory: find failed", "err", err.Error())
-		return ""
+		return "", nil
 	}
 	if len(hits) == 0 {
-		return ""
+		return "", nil
 	}
 
 	var sb strings.Builder
@@ -130,9 +130,9 @@ func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, iden
 
 	block := sb.String()
 	if strings.TrimSpace(block) == "<memory>\n</memory>" {
-		return ""
+		return "", nil
 	}
-	return block
+	return block, hits
 }
 
 // commitAndSnapshotAsync 先快照当前记忆到 PG（在 commit 阻塞 OV 之前），再归档对话。
@@ -143,10 +143,10 @@ func commitAndSnapshotAsync(ident memory.MemoryIdentity, provider memory.MemoryP
 	// 先快照：commit 会阻塞 OpenViking 数分钟，必须在 commit 之前 Find
 	if pool != nil {
 		snapCtx, snapCancel := context.WithTimeout(ctx, snapshotFindTimeout)
-		block := renderMemoryBlock(snapCtx, provider, ident, lastQuery)
+		block, hits := renderMemoryBlock(snapCtx, provider, ident, lastQuery)
 		snapCancel()
 		if block != "" {
-			if err := snapshotRepo.Upsert(ctx, pool, ident.OrgID, ident.UserID, ident.AgentID, block); err != nil {
+			if err := snapshotRepo.UpsertWithHits(ctx, pool, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
 				slog.Warn("memory: snapshot upsert failed",
 					"org_id", ident.OrgID.String(),
 					"user_id", ident.UserID.String(),
@@ -169,6 +169,24 @@ func commitAndSnapshotAsync(ident memory.MemoryIdentity, provider memory.MemoryP
 			"err", err.Error(),
 		)
 	}
+}
+
+// hitsToCache 将 memory.MemoryHit 转换为 data.MemoryHitCache 用于 PG 存储。
+func hitsToCache(hits []memory.MemoryHit) []data.MemoryHitCache {
+	if len(hits) == 0 {
+		return nil
+	}
+	cached := make([]data.MemoryHitCache, len(hits))
+	for i, h := range hits {
+		cached[i] = data.MemoryHitCache{
+			URI:         h.URI,
+			Abstract:    h.Abstract,
+			Score:       h.Score,
+			MatchReason: h.MatchReason,
+			IsLeaf:      h.IsLeaf,
+		}
+	}
+	return cached
 }
 
 // lastUserMessageText 从消息列表中倒序找最后一条 user 消息的文本内容。
