@@ -138,6 +138,7 @@ func (a *Application) Run(ctx context.Context) error {
 		})
 	}
 
+	var artifactStore *objectstore.Store
 	if strings.TrimSpace(a.config.S3Endpoint) != "" {
 		_, err := objectstore.New(
 			ctx,
@@ -151,6 +152,20 @@ func (a *Application) Run(ctx context.Context) error {
 			return fmt.Errorf("objectstore: %w", err)
 		}
 		a.logger.Info("objectstore connected", observability.LogFields{}, map[string]any{"bucket": a.config.S3Bucket})
+
+		as, err := objectstore.New(
+			ctx,
+			a.config.S3Endpoint,
+			a.config.S3AccessKey,
+			a.config.S3SecretKey,
+			"sandbox-artifacts",
+			a.config.S3Region,
+		)
+		if err != nil {
+			return fmt.Errorf("artifact store: %w", err)
+		}
+		artifactStore = as
+		a.logger.Info("artifact store connected", observability.LogFields{}, nil)
 	}
 
 	var (
@@ -535,6 +550,7 @@ func (a *Application) Run(ctx context.Context) error {
 			EmailVerifyService:   emailVerifyService,
 			EmailOTPLoginService: emailOTPLoginService,
 			JobRepo:              jobRepo,
+			ArtifactStore:        artifactStore,
 			EmailFrom:            strings.TrimSpace(a.config.EmailFrom),
 			TurnstileEnvSecretKey:   a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:     a.config.TurnstileSiteKey,

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil } from 'lucide-react'
 import type { MessageResponse } from '../api'
-import type { WebSource } from '../storage'
+import type { WebSource, ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { ArtifactImage } from './ArtifactImage'
 
 type Props = {
   message: MessageResponse
@@ -10,6 +11,8 @@ type Props = {
   onEdit?: (newContent: string) => void
   onFork?: () => void
   webSources?: WebSource[]
+  artifacts?: ArtifactRef[]
+  accessToken?: string
   onShowSources?: () => void
 }
 
@@ -32,7 +35,7 @@ function extractFilesFromContent(content: string): { text: string; fileNames: st
   return { text, fileNames }
 }
 
-export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, onShowSources }: Props) {
+export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, artifacts, accessToken, onShowSources }: Props) {
   const [copied, setCopied] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -293,10 +296,19 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, on
     )
   }
 
+  const imageArtifacts = artifacts?.filter((a) => a.mime_type.startsWith('image/'))
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div style={{ maxWidth: '663px' }}>
         <MarkdownRenderer content={message.content} webSources={webSources} />
+        {imageArtifacts && imageArtifacts.length > 0 && accessToken && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+            {imageArtifacts.map((a) => (
+              <ArtifactImage key={a.key} artifact={a} accessToken={accessToken} />
+            ))}
+          </div>
+        )}
         <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <div style={{ position: 'relative' }}>

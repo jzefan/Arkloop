@@ -51,6 +51,7 @@ func (p *PolicyEnforcer) RequestToolCall(
 	callPayload := map[string]any{
 		"tool_call_id": resolvedID,
 		"tool_name":    toolName,
+		"arguments":    argsJSON,
 	}
 	if argsHash != "" {
 		callPayload["args_hash"] = argsHash

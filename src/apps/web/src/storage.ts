@@ -226,6 +226,35 @@ export function writeMessageSources(messageId: string, sources: WebSource[]): vo
   } catch { /* ignore */ }
 }
 
+export type ArtifactRef = {
+  key: string
+  filename: string
+  size: number
+  mime_type: string
+}
+
+function messageArtifactsKey(messageId: string): string {
+  return `arkloop:web:msg_artifacts:${messageId}`
+}
+
+export function readMessageArtifacts(messageId: string): ArtifactRef[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageArtifactsKey(messageId))
+    if (!raw) return null
+    return JSON.parse(raw) as ArtifactRef[]
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageArtifacts(messageId: string, artifacts: ArtifactRef[]): void {
+  if (!canUseLocalStorage() || !messageId || artifacts.length === 0) return
+  try {
+    localStorage.setItem(messageArtifactsKey(messageId), JSON.stringify(artifacts))
+  } catch { /* ignore */ }
+}
+
 const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
 
 export function addSearchThreadId(threadId: string): void {
