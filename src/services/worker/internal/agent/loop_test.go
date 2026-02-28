@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -127,6 +128,69 @@ func TestAgentLoopExecutesToolCalls(t *testing.T) {
 	}
 }
 
+func TestAgentLoopExecutesMultipleToolCallsInParallel(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{
+		Name:        "slow_echo",
+		Version:     "1",
+		Description: "slow echo for parallel test",
+		RiskLevel:   tools.RiskLevelLow,
+		SideEffects: false,
+	}); err != nil {
+		t.Fatalf("register slow_echo failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{"slow_echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	dispatcher := tools.NewDispatchingExecutor(registry, policy)
+	observer := &observedSlowExecutor{delay: 40 * time.Millisecond}
+	if err := dispatcher.Bind("slow_echo", observer); err != nil {
+		t.Fatalf("bind slow_echo failed: %v", err)
+	}
+
+	gateway := &multiToolCallGateway{}
+	loop := NewLoop(gateway, dispatcher)
+	runID := uuid.New()
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:         runID,
+			TraceID:       "trace",
+			InputJSON:     map[string]any{},
+			MaxIterations: 3,
+			ToolExecutor:  dispatcher,
+			ToolTimeoutMs: intPtr(1000),
+			ToolBudget:    map[string]any{"foo": "bar"},
+			CancelSignal:  func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if atomic.LoadInt32(&observer.maxActive) < 2 {
+		t.Fatalf("expected parallel tool execution, max active = %d", atomic.LoadInt32(&observer.maxActive))
+	}
+
+	toolResults := 0
+	for _, ev := range got {
+		if ev.Type == "tool.result" {
+			toolResults++
+		}
+	}
+	if toolResults < 2 {
+		t.Fatalf("expected at least 2 tool.result events, got %d", toolResults)
+	}
+}
+
 type scriptedGateway struct {
 	calls int
 }
@@ -153,6 +217,73 @@ func (g *scriptedGateway) Stream(ctx context.Context, request llm.Request, yield
 		return err
 	}
 	return yield(llm.StreamRunCompleted{})
+}
+
+type multiToolCallGateway struct {
+	calls int
+}
+
+func (g *multiToolCallGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_1",
+			ToolName:      "slow_echo",
+			ArgumentsJSON: map[string]any{"text": "a"},
+		}); err != nil {
+			return err
+		}
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_2",
+			ToolName:      "slow_echo",
+			ArgumentsJSON: map[string]any{"text": "b"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+type observedSlowExecutor struct {
+	delay     time.Duration
+	active    int32
+	maxActive int32
+}
+
+func (e *observedSlowExecutor) Execute(
+	ctx context.Context,
+	toolName string,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	toolCallID string,
+) tools.ExecutionResult {
+	_ = ctx
+	_ = toolName
+	_ = args
+	_ = execCtx
+	_ = toolCallID
+
+	current := atomic.AddInt32(&e.active, 1)
+	for {
+		peak := atomic.LoadInt32(&e.maxActive)
+		if current <= peak {
+			break
+		}
+		if atomic.CompareAndSwapInt32(&e.maxActive, peak, current) {
+			break
+		}
+	}
+	time.Sleep(e.delay)
+	atomic.AddInt32(&e.active, -1)
+
+	return tools.ExecutionResult{ResultJSON: map[string]any{"ok": true}}
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

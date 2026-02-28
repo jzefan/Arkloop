@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"arkloop/services/worker/internal/events"
@@ -141,24 +142,13 @@ func (l *Loop) Run(
 			return yield(emitter.Emit("run.cancelled", map[string]any{"reason": "cancel_signal"}, nil, nil))
 		}
 
-		for _, call := range pending {
-			if runCtx.ToolExecutor == nil {
-				return fmt.Errorf("tool executor not initialized")
-			}
-
-			execCtx := tools.ExecutionContext{
-				RunID:     runCtx.RunID,
-				TraceID:   runCtx.TraceID,
-				OrgID:     runCtx.OrgID,
-				ThreadID:  runCtx.ThreadID,
-				UserID:    runCtx.UserID,
-				AgentID:   runCtx.AgentID,
-				TimeoutMs: runCtx.ToolTimeoutMs,
-				Budget:    copyMap(runCtx.ToolBudget),
-				Emitter:   emitter,
-			}
-			result := runCtx.ToolExecutor.Execute(ctx, call.ToolName, copyMap(call.ArgumentsJSON), execCtx, call.ToolCallID)
-
+		if runCtx.ToolExecutor == nil {
+			return fmt.Errorf("tool executor not initialized")
+		}
+		executedCalls := l.executePendingToolCalls(ctx, runCtx, pending, emitter)
+		for _, executed := range executedCalls {
+			call := executed.Call
+			result := executed.Result
 			emittedToolCall := false
 			for _, ev := range result.Events {
 				if ev.Type == "tool.call" {
@@ -214,6 +204,47 @@ func (l *Loop) Run(
 		Details:    map[string]any{"max_iterations": runCtx.MaxIterations},
 	}
 	return yield(emitter.Emit("run.failed", errPayload.ToJSON(), nil, stringPtr(errPayload.ErrorClass)))
+}
+
+type pendingToolExecution struct {
+	Call   llm.ToolCall
+	Result tools.ExecutionResult
+}
+
+func (l *Loop) executePendingToolCalls(
+	ctx context.Context,
+	runCtx RunContext,
+	pending []llm.ToolCall,
+	emitter events.Emitter,
+) []pendingToolExecution {
+	results := make([]pendingToolExecution, len(pending))
+	var wg sync.WaitGroup
+	wg.Add(len(pending))
+	for idx := range pending {
+		idx := idx
+		call := pending[idx]
+		go func() {
+			defer wg.Done()
+			execCtx := tools.ExecutionContext{
+				RunID:     runCtx.RunID,
+				TraceID:   runCtx.TraceID,
+				OrgID:     runCtx.OrgID,
+				ThreadID:  runCtx.ThreadID,
+				UserID:    runCtx.UserID,
+				AgentID:   runCtx.AgentID,
+				TimeoutMs: runCtx.ToolTimeoutMs,
+				Budget:    copyMap(runCtx.ToolBudget),
+				Emitter:   emitter,
+			}
+			result := runCtx.ToolExecutor.Execute(ctx, call.ToolName, copyMap(call.ArgumentsJSON), execCtx, call.ToolCallID)
+			results[idx] = pendingToolExecution{
+				Call:   call,
+				Result: result,
+			}
+		}()
+	}
+	wg.Wait()
+	return results
 }
 
 type turnResult struct {
