@@ -45,6 +45,7 @@ type HandlerConfig struct {
 	ThreadRepo          *data.ThreadRepository
 	ThreadStarRepo      *data.ThreadStarRepository
 	ThreadShareRepo     *data.ThreadShareRepository
+	ThreadReportRepo    *data.ThreadReportRepository
 	MessageRepo         *data.MessageRepository
 	RunEventRepo        *data.RunEventRepository
 	AuditWriter         *audit.Writer
@@ -135,6 +136,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			cfg.ThreadRepo,
 			cfg.ThreadStarRepo,
 			cfg.ThreadShareRepo,
+			cfg.ThreadReportRepo,
 			cfg.MessageRepo,
 			cfg.RunEventRepo,
 			cfg.ProjectRepo,
@@ -358,6 +360,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/admin/runs/",
 		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo, cfg.AgentConfigsRepo, cfg.ThreadRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/reports",
+		adminReportsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadReportRepo, cfg.APIKeysRepo),
 	)
 	mux.HandleFunc(
 		"/v1/admin/usage/daily",

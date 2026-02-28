@@ -176,6 +176,7 @@ func (a *Application) Run(ctx context.Context) error {
 		threadRepo     *data.ThreadRepository
 		threadStarRepo  *data.ThreadStarRepository
 		threadShareRepo *data.ThreadShareRepository
+		threadReportRepo *data.ThreadReportRepository
 		messageRepo    *data.MessageRepository
 		runEventRepo   *data.RunEventRepository
 		auditRepo      *data.AuditLogRepository
@@ -255,6 +256,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		threadShareRepo, err = data.NewThreadShareRepository(pool)
+		if err != nil {
+			return err
+		}
+		threadReportRepo, err = data.NewThreadReportRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -511,6 +516,7 @@ func (a *Application) Run(ctx context.Context) error {
 			ThreadRepo:           threadRepo,
 			ThreadStarRepo:       threadStarRepo,
 			ThreadShareRepo:     threadShareRepo,
+			ThreadReportRepo:    threadReportRepo,
 			MessageRepo:          messageRepo,
 			RunEventRepo:         runEventRepo,
 			AuditWriter:          auditWriter,

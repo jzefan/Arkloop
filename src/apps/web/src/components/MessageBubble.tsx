@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil } from 'lucide-react'
+import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil, MoreHorizontal, Flag } from 'lucide-react'
 import type { MessageResponse } from '../api'
 import type { WebSource, ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { useLocale } from '../contexts/LocaleContext'
 
 type Props = {
   message: MessageResponse
@@ -10,6 +11,7 @@ type Props = {
   onEdit?: (newContent: string) => void
   onFork?: () => void
   onShare?: () => void
+  onReport?: () => void
   webSources?: WebSource[]
   artifacts?: ArtifactRef[]
   accessToken?: string
@@ -35,12 +37,25 @@ function extractFilesFromContent(content: string): { text: string; fileNames: st
   return { text, fileNames }
 }
 
-export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, webSources, artifacts, accessToken, onShowSources }: Props) {
+export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onReport, webSources, artifacts, accessToken, onShowSources }: Props) {
+  const { t } = useLocale()
   const [copied, setCopied] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // close popover on outside click
+  useEffect(() => {
+    if (!moreOpen) return
+    const handler = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [moreOpen])
 
   const handleCopy = () => {
     const { text } = extractFilesFromContent(message.content)
@@ -356,6 +371,43 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, webSo
             >
               <Split size={15} />
             </button>
+            {onReport && (
+              <div ref={moreRef} style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setMoreOpen(v => !v)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-60 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100 cursor-pointer border-none bg-transparent"
+                >
+                  <MoreHorizontal size={15} />
+                </button>
+                {moreOpen && (
+                  <div
+                    className="dropdown-slide-in"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: '4px',
+                      background: 'var(--c-bg-page)',
+                      border: '0.5px solid var(--c-border-subtle)',
+                      borderRadius: '10px',
+                      padding: '4px',
+                      zIndex: 20,
+                      minWidth: '120px',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                    }}
+                  >
+                    <button
+                      onClick={() => { setMoreOpen(false); onReport() }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
+                      style={{ color: 'var(--c-text-primary)', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >
+                      <Flag size={14} style={{ color: 'var(--c-text-muted)' }} />
+                      {t.reportButton}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {webSources && webSources.length > 0 && onShowSources && (
               <button
                 onClick={onShowSources}

@@ -598,6 +598,7 @@ func threadEntry(
 	threadRepo *data.ThreadRepository,
 	threadStarRepo *data.ThreadStarRepository,
 	threadShareRepo *data.ThreadShareRepository,
+	threadReportRepo *data.ThreadReportRepository,
 	messageRepo *data.MessageRepository,
 	runRepo *data.RunEventRepository,
 	projectRepo *data.ProjectRepository,
@@ -620,6 +621,7 @@ func threadEntry(
 	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	share := shareEntry(authService, membershipRepo, threadRepo, threadShareRepo, messageRepo, auditWriter, apiKeysRepo)
+	report := reportEntry(authService, membershipRepo, threadRepo, threadReportRepo, auditWriter, apiKeysRepo)
 	fork := forkThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
@@ -658,6 +660,8 @@ func threadEntry(
 				handleThreadStar(w, r, traceID, authService, membershipRepo, threadRepo, threadStarRepo, apiKeysRepo, auditWriter, threadID)
 			case "share":
 				share(w, r, threadID)
+			case "report":
+				report(w, r, threadID)
 			case "fork":
 				fork(w, r, threadID)
 			default:

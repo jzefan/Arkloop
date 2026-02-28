@@ -173,6 +173,22 @@ export interface LocaleStrings {
   sharePagePasswordWrong: string
   sharePageNotFound: string
   sharePagePoweredBy: string
+  // report
+  reportButton: string
+  reportTitle: string
+  reportSubtitle: string
+  reportInaccurate: string
+  reportOutOfDate: string
+  reportTooShort: string
+  reportTooLong: string
+  reportHarmful: string
+  reportWrongSources: string
+  reportFeedbackPlaceholder: string
+  reportFeedbackLabel: string
+  reportSubmit: string
+  reportSubmitting: string
+  reportCancel: string
+  reportSuccess: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

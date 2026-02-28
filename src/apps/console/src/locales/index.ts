@@ -48,6 +48,7 @@ export interface LocaleStrings {
     asrCredentials: string
     email: string
     titleSummarizer: string
+    reports: string
   }
   // settings
   account: string
@@ -967,6 +968,19 @@ export interface LocaleStrings {
       noConversation: string
       noEvents: string
       userPrompt: string
+    }
+    reports: {
+      title: string
+      colCreatedAt: string
+      colReporter: string
+      colThread: string
+      colCategories: string
+      colFeedback: string
+      empty: string
+      refresh: string
+      prev: string
+      next: string
+      toastLoadFailed: string
     }
   }
 }
