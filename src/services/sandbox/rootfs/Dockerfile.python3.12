@@ -1,0 +1,72 @@
+# Sandbox microVM rootfs (Firecracker)
+#
+# 输出: python3.12.ext4
+# 构建: ./build.sh
+
+# -- Stage 1: sandbox-agent --
+FROM golang:1.26-alpine AS agent
+WORKDIR /build
+COPY src/services/sandbox/go.mod src/services/sandbox/go.sum src/services/sandbox/
+RUN printf 'go 1.26.0\nuse (\n\t./src/services/sandbox\n)\n' > go.work
+RUN cd src/services/sandbox && go mod download
+COPY src/services/sandbox src/services/sandbox
+RUN cd src/services/sandbox && \
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+    go build -ldflags="-s -w" -o /sandbox-agent ./agent
+
+# -- Stage 2: rootfs 文件系统 --
+FROM python:3.12-slim-bookworm AS rootfs
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    busybox \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    sqlite3 \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG NODE_VERSION=20.18.1
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | \
+    tar -xJ --strip-components=1 -C /usr/local
+
+RUN pip install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    scipy \
+    sympy \
+    pillow \
+    scikit-learn \
+    requests \
+    httpx \
+    beautifulsoup4 \
+    lxml \
+    openpyxl \
+    pyyaml \
+    rich
+
+COPY --from=agent /sandbox-agent /usr/local/bin/sandbox-agent
+COPY src/services/sandbox/rootfs/init /sbin/init
+RUN chmod +x /sbin/init /usr/local/bin/sandbox-agent
+
+RUN mkdir -p /tmp/output /run
+RUN rm -rf /var/cache/* /root/.cache /tmp/*.tar*
+
+# -- Stage 3: ext4 打包 --
+FROM ubuntu:24.04 AS ext4
+RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=rootfs / /rootfs/
+
+RUN rm -f /rootfs/.dockerenv && \
+    : > /rootfs/etc/hostname && \
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/run /rootfs/tmp/output
+
+RUN truncate -s 2G /python3.12.ext4 && \
+    mkfs.ext4 -d /rootfs -L rootfs /python3.12.ext4
+
+FROM scratch
+COPY --from=ext4 /python3.12.ext4 /
