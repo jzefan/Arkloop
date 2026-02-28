@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+const ArtifactBucket = "sandbox-artifacts"
+
 // Store 封装 S3 兼容存储客户端，绑定到单个 bucket。
 // 支持 MinIO、AWS S3、GCS（S3 兼容模式）等。
 type Store struct {
@@ -122,6 +124,23 @@ func (o *Store) Put(ctx context.Context, key string, data []byte) error {
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(data),
 	})
+	if err != nil {
+		return fmt.Errorf("put object %q: %w", key, err)
+	}
+	return nil
+}
+
+// PutWithContentType 上传对象并指定 Content-Type。
+func (o *Store) PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(data),
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	_, err := o.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("put object %q: %w", key, err)
 	}

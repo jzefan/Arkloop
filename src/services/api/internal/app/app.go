@@ -158,7 +158,7 @@ func (a *Application) Run(ctx context.Context) error {
 			a.config.S3Endpoint,
 			a.config.S3AccessKey,
 			a.config.S3SecretKey,
-			"sandbox-artifacts",
+			objectstore.ArtifactBucket,
 			a.config.S3Region,
 		)
 		if err != nil {
