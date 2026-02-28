@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type FormEvent } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { Glasses, Paperclip, Share2, X, Zap } from 'lucide-react'
 import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
-import { ThinkingBlock, type CodeExecution } from './ThinkingBlock'
+import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
@@ -57,12 +58,13 @@ type OutletContext = {
   isPrivateMode: boolean
   onTogglePrivateMode: () => void
   privateThreadIds: Set<string>
+  onSetPendingIncognito: (v: boolean) => void
 }
 
-type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean } | null
+type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -109,6 +111,8 @@ export function ChatPage() {
   const activeSegmentIdRef = useRef<string | null>(null)
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
+  // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
+  const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
   // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
   const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
 
@@ -204,7 +208,9 @@ export function ChatPage() {
         setMessageArtifactsMap(artifactsMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
+        // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
         if (locationState?.initialRunId) {
+          setActiveRunId(locationState.initialRunId)
           if (threadId) onRunStarted(threadId)
         } else {
           const latest = runs[0]
@@ -227,12 +233,13 @@ export function ChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, threadId])
 
-  // 切换 thread 时清理 SSE 和排队消息
+  // 切换 thread 时清理 SSE 和排队消息，并重置 pendingIncognito
   useEffect(() => {
     setAssistantDraft('')
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
+    setTopLevelCodeExecutions([])
     setCancelSubmitting(false)
     pendingMessageRef.current = null
     setQueuedDraft(null)
@@ -244,8 +251,16 @@ export function ChatPage() {
     sse.disconnect()
     sse.clearEvents()
     processedEventCountRef.current = 0
+    setPendingIncognito(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId])
+
+  // 同步 pendingIncognito 到 AppLayout（用于 Sidebar 无痕 UI）
+  useEffect(() => {
+    onSetPendingIncognito(pendingIncognito)
+    return () => { onSetPendingIncognito(false) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingIncognito])
 
   // 连接 SSE
   useEffect(() => {
@@ -626,7 +641,7 @@ export function ChatPage() {
         setDraft('')
         setAttachments([])
         navigate(`/t/${forked.id}`, {
-          state: { isIncognitoFork: true, initialRunId: run.run_id },
+          state: { isIncognitoFork: true, initialRunId: run.run_id, forkBaseCount: messages.length },
           replace: false,
         })
         onRunStarted(forked.id)
@@ -916,6 +931,10 @@ export function ChatPage() {
                         : undefined
                     }
                   />
+                  {/* 无痕分割线：固定在 fork 基点之后 */}
+                  {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
+                    <IncognitoDivider text={t.incognitoForkDivider} />
+                  )}
                 </div>
               ))}
 
@@ -995,15 +1014,9 @@ export function ChatPage() {
 
               {terminalSseError && <ErrorCallout error={terminalSseError} />}
 
-              {(pendingIncognito || locationState?.isIncognitoFork) && !isStreaming && (
-                <div className="flex items-center gap-3 py-1">
-                  <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
-                  <span className="flex items-center gap-1.5 text-xs text-[var(--c-text-muted)]">
-                    <Glasses size={12} />
-                    {t.incognitoForkDivider}
-                  </span>
-                  <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
-                </div>
+              {/* pendingIncognito：末尾展示分隔线，等待用户发送第一条消息 */}
+              {pendingIncognito && (
+                <IncognitoDivider text={t.incognitoForkDivider} />
               )}
 
               <div ref={bottomRef} />
@@ -1138,5 +1151,23 @@ export function ChatPage() {
         />
       )}
     </div>
+  )
+}
+
+function IncognitoDivider({ text }: { text: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className="flex items-center gap-3 py-1 mt-6"
+    >
+      <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
+      <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--c-text-muted)' }}>
+        <Glasses size={12} strokeWidth={1.5} style={{ opacity: 0.7 }} />
+        {text}
+      </span>
+      <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
+    </motion.div>
   )
 }

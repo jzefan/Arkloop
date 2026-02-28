@@ -40,6 +40,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const [runningThreadIds, setRunningThreadIds] = useState<Set<string>>(new Set())
   const [privateThreadIds, setPrivateThreadIds] = useState<Set<string>>(new Set())
   const [isPrivateMode, setIsPrivateMode] = useState(false)
+  const [pendingIncognitoMode, setPendingIncognitoMode] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isSearchMode, setIsSearchMode] = useState(false)
   // ref 用于在 popstate 回调里读取最新值，避免闭包过期
@@ -136,6 +137,10 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
     setIsPrivateMode((prev) => !prev)
   }, [])
 
+  const handleSetPendingIncognito = useCallback((v: boolean) => {
+    setPendingIncognitoMode(v)
+  }, [])
+
   const handleRunStarted = useCallback((threadId: string) => {
     setRunningThreadIds((prev) => new Set(prev).add(threadId))
   }, [])
@@ -205,7 +210,10 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         me={me}
         threads={threads}
         runningThreadIds={runningThreadIds}
-        isPrivateMode={isPrivateMode}
+        isPrivateMode={(() => {
+          const currentThreadId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null
+          return isPrivateMode || pendingIncognitoMode || (currentThreadId != null && privateThreadIds.has(currentThreadId))
+        })()}
         accessToken={accessToken}
         onNewThread={handleNewThread}
         onLogout={handleLogout}
@@ -240,7 +248,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onExitSearchMode: () => setIsSearchMode(false) }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}
