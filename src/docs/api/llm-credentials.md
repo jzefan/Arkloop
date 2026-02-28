@@ -102,6 +102,24 @@ DELETE /v1/llm-credentials/{cred_id}
 
 ---
 
+## 复制凭证
+
+```http
+POST /v1/llm-credentials/{cred_id}/copy
+```
+
+复制指定凭证及其全部路由，行为如下：
+
+- 新凭证名称自动追加 `-N` 后缀（例如 `main-openai` -> `main-openai-1`，重复复制会继续递增）。
+- 复用原 API Key（不需要重新输入）。
+- 复制后的路由会重新生成新的 `route_id`。
+
+**响应** `201 Created`
+
+返回结构与「创建凭证」一致（包含 `routes`）。
+
+---
+
 ## 更新路由
 
 ```http

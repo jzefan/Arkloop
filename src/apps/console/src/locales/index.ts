@@ -122,11 +122,17 @@ export interface LocaleStrings {
       toastDeleteFailed: string
       // edit cred modal
       fieldApiKeyOptional: string
+      editRoutesTitle: string
+      editRoutesSave: string
+      editCredTitle: string
       editCredSave: string
       toastCredUpdated: string
       toastCredUpdateFailed: string
       toastRouteUpdated: string
       toastRouteUpdateFailed: string
+      copyTitle: string
+      toastCopied: string
+      toastCopyFailed: string
     }
     agentConfigs: {
       title: string

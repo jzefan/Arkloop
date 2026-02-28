@@ -111,6 +111,9 @@ export const zh: LocaleStrings = {
       toastCredUpdated: '凭证已更新',
       toastCredUpdateFailed: '更新凭证失败',
       fieldApiKeyOptional: 'API Key（留空则不修改）',
+      copyTitle: '复制凭证',
+      toastCopied: '凭证已复制',
+      toastCopyFailed: '复制凭证失败',
     },
     agentConfigs: {
       title: 'Agent 配置',

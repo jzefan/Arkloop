@@ -119,3 +119,13 @@ export async function deleteLlmCredential(
     accessToken,
   })
 }
+
+export async function duplicateLlmCredential(
+  id: string,
+  accessToken: string,
+): Promise<LlmCredential> {
+  return apiFetch<LlmCredential>(`/v1/llm-credentials/${id}/copy`, {
+    method: 'POST',
+    accessToken,
+  })
+}
