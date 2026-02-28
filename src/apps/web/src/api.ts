@@ -390,6 +390,13 @@ export async function updateThreadTitle(
   })
 }
 
+export async function deleteThread(accessToken: string, threadId: string): Promise<void> {
+  await apiFetch<void>(`/v1/threads/${threadId}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
 export async function forkThread(
   accessToken: string,
   threadId: string,

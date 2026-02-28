@@ -25,6 +25,7 @@ import {
   listThreadRuns,
   isApiError,
   type MessageResponse,
+  type ThreadResponse,
 } from '../api'
 import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, type WebSource } from '../storage'
 
@@ -106,6 +107,8 @@ export function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const lastUserMsgRef = useRef<HTMLDivElement>(null)
+  const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
   const pendingMessageRef = useRef<string | null>(null)
   // 用户是否停留在底部区域（距底部 80px 以内视为"在底部"）
@@ -409,6 +412,19 @@ export function ChatPage() {
     }
   }, [sse.error, onLoggedOut])
 
+  // 初始加载完成后，将最后一条 user 消息滚动至顶部
+  useEffect(() => {
+    if (messagesLoading) {
+      wasLoadingRef.current = true
+      return
+    }
+    if (!wasLoadingRef.current) return
+    wasLoadingRef.current = false
+    requestAnimationFrame(() => {
+      lastUserMsgRef.current?.scrollIntoView({ behavior: 'instant', block: 'start' })
+    })
+  }, [messagesLoading])
+
   // 新消息/流式内容时，仅在用户停留在底部时自动滚动
   useEffect(() => {
     if (!isAtBottomRef.current) return
@@ -644,6 +660,13 @@ export function ChatPage() {
     return normalizeError(sse.error)
   }, [sse.error])
 
+  const lastUserMsgIdx = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return i
+    }
+    return -1
+  }, [messages])
+
   const sourcePanelSources = sourcePanelMessageId ? messageSourcesMap.get(sourcePanelMessageId) : undefined
   const sourcePanelUserQuery = useMemo(() => {
     if (!sourcePanelMessageId) return undefined
@@ -713,31 +736,32 @@ export function ChatPage() {
           ) : (
             <>
               {messages.map((msg, idx) => (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  onRetry={
-                    msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming && !sending
-                      ? handleRetry
-                      : undefined
-                  }
-                  onEdit={
-                    msg.role === 'user' && !isStreaming && !sending
-                      ? (newContent) => handleEditMessage(msg.id, newContent)
-                      : undefined
-                  }
-                  onFork={
-                    msg.role === 'assistant' && !isStreaming && !sending
-                      ? () => void handleFork(msg.id)
-                      : undefined
-                  }
-                  webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
-                  onShowSources={
-                    msg.role === 'assistant' && messageSourcesMap.has(msg.id)
-                      ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
-                      : undefined
-                  }
-                />
+                <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
+                  <MessageBubble
+                    message={msg}
+                    onRetry={
+                      msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming && !sending
+                        ? handleRetry
+                        : undefined
+                    }
+                    onEdit={
+                      msg.role === 'user' && !isStreaming && !sending
+                        ? (newContent) => handleEditMessage(msg.id, newContent)
+                        : undefined
+                    }
+                    onFork={
+                      msg.role === 'assistant' && !isStreaming && !sending
+                        ? () => void handleFork(msg.id)
+                        : undefined
+                    }
+                    webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
+                    onShowSources={
+                      msg.role === 'assistant' && messageSourcesMap.has(msg.id)
+                        ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
+                        : undefined
+                    }
+                  />
+                </div>
               ))}
 
               {segments.map((seg) => (

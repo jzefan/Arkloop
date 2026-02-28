@@ -15,11 +15,13 @@ import {
   Star,
   Share2,
   Pencil,
+  Trash2,
 } from 'lucide-react'
 import type { SettingsTab } from './SettingsModal'
 import type { ThreadResponse, MeResponse } from '../api'
-import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle } from '../api'
+import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { ShareModal } from './ShareModal'
 
 type Props = {
   me: MeResponse | null
@@ -35,6 +37,7 @@ type Props = {
   onOpenSearch: () => void
   isSearchMode: boolean
   onThreadTitleUpdated: (threadId: string, title: string) => void
+  onThreadDeleted: (threadId: string) => void
 }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
@@ -56,6 +59,7 @@ export function Sidebar({
   onOpenSearch,
   isSearchMode,
   onThreadTitleUpdated,
+  onThreadDeleted,
 }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -64,11 +68,13 @@ export function Sidebar({
 
   const [starredIds, setStarredIds] = useState<string[]>([])
   const [menuThreadId, setMenuThreadId] = useState<string | null>(null)
+  const [shareModalThreadId, setShareModalThreadId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState<string>('')
   const editInputRef = useRef<HTMLInputElement>(null)
+  const [deleteConfirmThreadId, setDeleteConfirmThreadId] = useState<string | null>(null)
 
   // 初始化时从服务端拉取收藏列表
   useEffect(() => {
@@ -118,6 +124,16 @@ export function Sidebar({
     }
   }, [accessToken, onThreadTitleUpdated])
 
+  const handleDelete = useCallback(async (id: string) => {
+    setDeleteConfirmThreadId(null)
+    try {
+      await deleteThread(accessToken, id)
+      onThreadDeleted(id)
+    } catch {
+      // 失败静默
+    }
+  }, [accessToken, onThreadDeleted])
+
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
     if (editingThreadId && editInputRef.current) {
@@ -139,6 +155,14 @@ export function Sidebar({
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [menuThreadId])
+
+  // deleteConfirm 时 Escape 关闭
+  useEffect(() => {
+    if (!deleteConfirmThreadId) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setDeleteConfirmThreadId(null) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [deleteConfirmThreadId])
 
   const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
 
@@ -478,17 +502,107 @@ export function Sidebar({
             {starredIds.includes(menuThreadId) ? t.unstarThread : t.starThread}
           </button>
           <button
-            disabled
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px]"
-            style={{ color: 'var(--c-text-muted)', background: 'var(--c-bg-menu)', borderRadius: '8px', opacity: 0.4, cursor: 'not-allowed' }}
+            onClick={() => {
+              const id = menuThreadId
+              setMenuThreadId(null)
+              setShareModalThreadId(id)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] transition-colors duration-100"
+            style={{ color: 'var(--c-text-secondary)', background: 'var(--c-bg-menu)', borderRadius: '8px' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-bg-deep)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-bg-menu)' }}
           >
             <Share2 size={13} style={{ flexShrink: 0 }} />
             {t.shareThread}
+          </button>
+          <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
+          <button
+            onClick={() => {
+              const id = menuThreadId
+              setMenuThreadId(null)
+              setDeleteConfirmThreadId(id)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] transition-colors duration-100"
+            style={{ color: '#ef4444', background: 'var(--c-bg-menu)', borderRadius: '8px' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(239,68,68,0.08)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-bg-menu)' }}
+          >
+            <Trash2 size={13} style={{ flexShrink: 0 }} />
+            {t.deleteThread}
           </button>
         </div>
       </div>,
       document.body,
     )}
+      {shareModalThreadId && (
+        <ShareModal
+          accessToken={accessToken}
+          threadId={shareModalThreadId}
+          open={shareModalThreadId !== null}
+          onClose={() => setShareModalThreadId(null)}
+        />
+      )}
+      {deleteConfirmThreadId !== null && createPortal(
+        <div
+          className="overlay-fade-in fixed inset-0 flex items-center justify-center"
+          style={{ zIndex: 10000, background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmThreadId(null) }}
+        >
+          <div
+            className="modal-enter"
+            style={{
+              background: 'var(--c-bg-page)',
+              border: '0.5px solid var(--c-border-subtle)',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '320px',
+              boxShadow: 'var(--c-dropdown-shadow)',
+            }}
+          >
+            <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px' }}>
+              {t.deleteThreadConfirmTitle}
+            </p>
+            <p style={{ fontSize: '13px', color: 'var(--c-text-secondary)', lineHeight: 1.55, marginBottom: '20px' }}>
+              {t.deleteThreadConfirmBody}
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setDeleteConfirmThreadId(null)}
+                className="transition-colors hover:bg-[var(--c-bg-deep)]"
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  color: 'var(--c-text-secondary)',
+                  background: 'transparent',
+                  border: '0.5px solid var(--c-border-subtle)',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.deleteThreadCancel}
+              </button>
+              <button
+                onClick={() => handleDelete(deleteConfirmThreadId)}
+                className="transition-opacity hover:opacity-85 active:opacity-70"
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  color: '#fff',
+                  background: '#ef4444',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.deleteThreadConfirm}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </>
   )
 }
