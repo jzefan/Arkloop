@@ -29,7 +29,7 @@ import {
   type MessageResponse,
   type ThreadResponse,
 } from '../api'
-import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, readMessageArtifacts, writeMessageArtifacts, type WebSource, type ArtifactRef } from '../storage'
+import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, readMessageArtifacts, writeMessageArtifacts, readMessageCodeExecutions, writeMessageCodeExecutions, type WebSource, type ArtifactRef, type CodeExecutionRef } from '../storage'
 
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
@@ -73,7 +73,9 @@ export function ChatPage() {
 
   const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
 
-  const isSearchThread = locationState?.isSearch === true || isSearchThreadId(threadId ?? '')
+  const [isSearchThread, setIsSearchThread] = useState(
+    () => locationState?.isSearch === true || isSearchThreadId(threadId ?? ''),
+  )
 
   const [messages, setMessages] = useState<MessageResponse[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
@@ -100,6 +102,9 @@ export function ChatPage() {
   // artifact 产物：messageId -> ArtifactRef[]
   const [messageArtifactsMap, setMessageArtifactsMap] = useState<Map<string, ArtifactRef[]>>(new Map())
   const currentRunArtifactsRef = useRef<ArtifactRef[]>([])
+  // 代码执行记录：messageId -> CodeExecutionRef[]
+  const [messageCodeExecutionsMap, setMessageCodeExecutionsMap] = useState<Map<string, CodeExecutionRef[]>>(new Map())
+  const currentRunCodeExecutionsRef = useRef<CodeExecutionRef[]>([])
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 关闭动画期间保留上一次的数据
@@ -196,16 +201,20 @@ export function ChatPage() {
         // 加载各消息缓存的 web 来源
         const sourcesMap = new Map<string, WebSource[]>()
         const artifactsMap = new Map<string, ArtifactRef[]>()
+        const codeExecMap = new Map<string, CodeExecutionRef[]>()
         for (const msg of items) {
           if (msg.role === 'assistant') {
             const cached = readMessageSources(msg.id)
             if (cached) sourcesMap.set(msg.id, cached)
             const cachedArt = readMessageArtifacts(msg.id)
             if (cachedArt) artifactsMap.set(msg.id, cachedArt)
+            const cachedExec = readMessageCodeExecutions(msg.id)
+            if (cachedExec) codeExecMap.set(msg.id, cachedExec)
           }
         }
         setMessageSourcesMap(sourcesMap)
         setMessageArtifactsMap(artifactsMap)
+        setMessageCodeExecutionsMap(codeExecMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
@@ -245,8 +254,10 @@ export function ChatPage() {
     setQueuedDraft(null)
     currentRunSourcesRef.current = []
     currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
     setMessageSourcesMap(new Map())
     setMessageArtifactsMap(new Map())
+    setMessageCodeExecutionsMap(new Map())
     setSourcePanelMessageId(null)
     sse.disconnect()
     sse.clearEvents()
@@ -270,10 +281,12 @@ export function ChatPage() {
     processedEventCountRef.current = 0
     currentRunSourcesRef.current = []
     currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
     setAssistantDraft('')
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
+    setTopLevelCodeExecutions([])
     setSearchSteps([])
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
@@ -377,27 +390,36 @@ export function ChatPage() {
       }
 
       if (event.type === 'tool.call') {
-        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown }
+        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
         if (toolName === 'code_execute' || toolName === 'shell_execute') {
+          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
+          const language: CodeExecution['language'] = toolName === 'code_execute' ? 'python' : 'shell'
+          const args = obj.arguments as Record<string, unknown> | undefined
+          const code = typeof args?.code === 'string' ? args.code
+            : typeof args?.command === 'string' ? args.command
+            : undefined
+          const entry: CodeExecution = { id: callId, language, code }
+          // ref 同步记录，不受 React 批处理影响
+          currentRunCodeExecutionsRef.current = [...currentRunCodeExecutionsRef.current, entry]
           const activeSeg = activeSegmentIdRef.current
           if (activeSeg) {
-            const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
-            const language: CodeExecution['language'] = toolName === 'code_execute' ? 'python' : 'shell'
             setSegments((prev) =>
               prev.map((s) =>
                 s.segmentId === activeSeg
-                  ? { ...s, codeExecutions: [...s.codeExecutions, { id: callId, language }] }
+                  ? { ...s, codeExecutions: [...s.codeExecutions, entry] }
                   : s,
               ),
             )
+          } else {
+            setTopLevelCodeExecutions((prev) => [...prev, entry])
           }
         }
         continue
       }
 
       if (event.type === 'tool.result') {
-        const obj = event.data as { tool_name?: unknown; result?: unknown }
+        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
         if (obj.tool_name === 'web_search') {
           const result = obj.result as { results?: unknown[] } | undefined
           if (Array.isArray(result?.results)) {
@@ -414,7 +436,7 @@ export function ChatPage() {
         }
         // 检测 sandbox 执行产物
         if (obj.tool_name === 'code_execute' || obj.tool_name === 'shell_execute') {
-          const result = obj.result as { artifacts?: unknown[] } | undefined
+          const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown } | undefined
           if (Array.isArray(result?.artifacts)) {
             const newArtifacts: ArtifactRef[] = result.artifacts
               .filter((a): a is Record<string, unknown> => a != null && typeof a === 'object')
@@ -428,6 +450,25 @@ export function ChatPage() {
             if (newArtifacts.length > 0) {
               currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
             }
+          }
+          // 将 stdout/exitCode 回填到对应的 code execution 记录
+          const resultCallId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+          const rawOutput = exitCode != null && exitCode !== 0
+            ? (typeof result?.stderr === 'string' && result.stderr ? result.stderr : typeof result?.stdout === 'string' ? result.stdout : '')
+            : (typeof result?.stdout === 'string' ? result.stdout : '')
+          const output = rawOutput || undefined
+          if (resultCallId && (output || exitCode != null)) {
+            const patchExec = (exec: CodeExecution): CodeExecution =>
+              exec.id === resultCallId ? { ...exec, output, exitCode } : exec
+            currentRunCodeExecutionsRef.current = currentRunCodeExecutionsRef.current.map(patchExec)
+            setTopLevelCodeExecutions((prev) => prev.map(patchExec))
+            setSegments((prev) =>
+              prev.map((s) => ({
+                ...s,
+                codeExecutions: s.codeExecutions.map(patchExec),
+              })),
+            )
           }
         }
         continue
@@ -451,6 +492,7 @@ export function ChatPage() {
         setActiveRunId(null)
         setAssistantDraft('')
         setThinkingDraft('')
+        setTopLevelCodeExecutions([])
         setSegments([])
         activeSegmentIdRef.current = null
         // 搜索模式：添加 Finished 步骤，保留 searchSteps 不清除
@@ -472,6 +514,8 @@ export function ChatPage() {
         // 下次 run 开始时 SSE connect effect 自动清除
         const runArtifacts = [...currentRunArtifactsRef.current]
         currentRunArtifactsRef.current = []
+        const runCodeExecs = [...currentRunCodeExecutionsRef.current]
+        currentRunCodeExecutionsRef.current = []
         void refreshMessages().then((items) => {
           const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
           if (lastAssistant) {
@@ -482,6 +526,10 @@ export function ChatPage() {
             if (runArtifacts.length > 0) {
               writeMessageArtifacts(lastAssistant.id, runArtifacts)
               setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
+            }
+            if (runCodeExecs.length > 0) {
+              writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
+              setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
             }
           }
           const pending = pendingMessageRef.current
@@ -497,9 +545,11 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        setTopLevelCodeExecutions([])
         setSegments([])
         setSearchSteps([])
         activeSegmentIdRef.current = null
+        currentRunCodeExecutionsRef.current = []
         setAwaitingInput(false)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
@@ -513,9 +563,11 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        setTopLevelCodeExecutions([])
         setSegments([])
         setSearchSteps([])
         activeSegmentIdRef.current = null
+        currentRunCodeExecutionsRef.current = []
         setAwaitingInput(false)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
@@ -873,7 +925,7 @@ export function ChatPage() {
 
       {/* 主体区域：消息 + 输入 + 可选的 sources 侧边面板 */}
       <div className="flex flex-1 min-h-0">
-        <div className="flex flex-1 min-w-0 flex-col">
+        <div className="relative flex flex-1 min-w-0 flex-col">
           {/* 消息列表 */}
           <div
             ref={scrollContainerRef}
@@ -881,7 +933,7 @@ export function ChatPage() {
             className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
           >
         <div
-          style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? '32px' : '60px'}` }}
+          style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? '32px' : '60px'} 200px` }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
@@ -898,6 +950,14 @@ export function ChatPage() {
                         sources={currentRunSourcesRef.current}
                         isComplete
                       />
+                    </div>
+                  )}
+                  {/* 已完成消息的代码执行卡片 */}
+                  {msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
+                      {messageCodeExecutionsMap.get(msg.id)!.map((ce) => (
+                        <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                      ))}
                     </div>
                   )}
                   <MessageBubble
@@ -970,6 +1030,15 @@ export function ChatPage() {
                 />
               )}
 
+              {/* segment 外的顶层代码执行卡片（Ultra/Pro 模式） */}
+              {topLevelCodeExecutions.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {topLevelCodeExecutions.map((ce) => (
+                    <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                  ))}
+                </div>
+              )}
+
               {assistantDraft && (
                 <StreamingBubble
                   content={assistantDraft}
@@ -1016,7 +1085,14 @@ export function ChatPage() {
 
               {/* pendingIncognito：末尾展示分隔线，等待用户发送第一条消息 */}
               {pendingIncognito && (
-                <IncognitoDivider text={t.incognitoForkDivider} />
+                <IncognitoDivider
+                  text={t.incognitoForkDivider}
+                  onComplete={() => {
+                    if (isAtBottomRef.current) {
+                      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+                    }
+                  }}
+                />
               )}
 
               <div ref={bottomRef} />
@@ -1027,7 +1103,7 @@ export function ChatPage() {
 
       {/* 输入区域 */}
       <div
-        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${isPanelOpen ? '32px' : '60px'} 16px`, flexShrink: 0 }}
+        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${isPanelOpen ? '32px' : '60px'} 16px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10 }}
         className="flex w-full flex-col items-center gap-2"
       >
         {queuedDraft && (
@@ -1096,6 +1172,7 @@ export function ChatPage() {
           accessToken={accessToken}
           onAsrError={handleAsrError}
           searchMode={isSearchThread}
+          onTierChange={(tier) => setIsSearchThread(tier === 'Search')}
         />
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>
           Arkloop is AI and can make mistakes. Please double-check responses.
@@ -1154,20 +1231,23 @@ export function ChatPage() {
   )
 }
 
-function IncognitoDivider({ text }: { text: string }) {
+function IncognitoDivider({ text, onComplete }: { text: string; onComplete?: () => void }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className="flex items-center gap-3 py-1 mt-6"
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      style={{ overflow: 'hidden' }}
+      onAnimationComplete={onComplete}
     >
-      <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
-      <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--c-text-muted)' }}>
-        <Glasses size={12} strokeWidth={1.5} style={{ opacity: 0.7 }} />
-        {text}
-      </span>
-      <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
+      <div className="flex items-center gap-3 py-1 mt-6">
+        <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
+        <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--c-text-muted)' }}>
+          <Glasses size={12} strokeWidth={1.5} style={{ opacity: 0.7 }} />
+          {text}
+        </span>
+        <div className="h-px flex-1" style={{ background: 'var(--c-border-subtle)' }} />
+      </div>
     </motion.div>
   )
 }

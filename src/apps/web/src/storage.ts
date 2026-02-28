@@ -255,6 +255,36 @@ export function writeMessageArtifacts(messageId: string, artifacts: ArtifactRef[
   } catch { /* ignore */ }
 }
 
+export type CodeExecutionRef = {
+  id: string
+  language: 'python' | 'shell'
+  code?: string
+  output?: string
+  exitCode?: number
+}
+
+function messageCodeExecutionsKey(messageId: string): string {
+  return `arkloop:web:msg_code_exec:${messageId}`
+}
+
+export function readMessageCodeExecutions(messageId: string): CodeExecutionRef[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageCodeExecutionsKey(messageId))
+    if (!raw) return null
+    return JSON.parse(raw) as CodeExecutionRef[]
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageCodeExecutions(messageId: string, executions: CodeExecutionRef[]): void {
+  if (!canUseLocalStorage() || !messageId || executions.length === 0) return
+  try {
+    localStorage.setItem(messageCodeExecutionsKey(messageId), JSON.stringify(executions))
+  } catch { /* ignore */ }
+}
+
 const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
 
 export function addSearchThreadId(threadId: string): void {
