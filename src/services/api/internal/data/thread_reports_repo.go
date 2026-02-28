@@ -25,16 +25,19 @@ type ThreadReportRow struct {
 }
 
 type ThreadReportListParams struct {
-	ReportID        *uuid.UUID
-	ThreadID        *uuid.UUID
-	ReporterID      *uuid.UUID
-	ReporterEmail   *string
-	Category        *string
-	FeedbackKeyword *string
-	Since           *time.Time
-	Until           *time.Time
-	Limit           int
-	Offset          int
+	ReportID         *uuid.UUID
+	ReportIDPrefix   *string
+	ThreadID         *uuid.UUID
+	ThreadIDPrefix   *string
+	ReporterID       *uuid.UUID
+	ReporterIDPrefix *string
+	ReporterEmail    *string
+	Category         *string
+	FeedbackKeyword  *string
+	Since            *time.Time
+	Until            *time.Time
+	Limit            int
+	Offset           int
 }
 
 type ThreadReportRepository struct {
@@ -111,12 +114,18 @@ func (r *ThreadReportRepository) List(
 
 	if params.ReportID != nil {
 		conds = append(conds, "r.id = "+addArg(*params.ReportID))
+	} else if params.ReportIDPrefix != nil {
+		conds = append(conds, "r.id::text ILIKE "+addArg(*params.ReportIDPrefix)+" || '%'")
 	}
 	if params.ThreadID != nil {
 		conds = append(conds, "r.thread_id = "+addArg(*params.ThreadID))
+	} else if params.ThreadIDPrefix != nil {
+		conds = append(conds, "r.thread_id::text ILIKE "+addArg(*params.ThreadIDPrefix)+" || '%'")
 	}
 	if params.ReporterID != nil {
 		conds = append(conds, "r.reporter_id = "+addArg(*params.ReporterID))
+	} else if params.ReporterIDPrefix != nil {
+		conds = append(conds, "r.reporter_id::text ILIKE "+addArg(*params.ReporterIDPrefix)+" || '%'")
 	}
 	if params.ReporterEmail != nil {
 		trimmed := strings.TrimSpace(*params.ReporterEmail)
