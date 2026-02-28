@@ -14,10 +14,11 @@ import {
   MoreHorizontal,
   Star,
   Share2,
+  Pencil,
 } from 'lucide-react'
 import type { SettingsTab } from './SettingsModal'
 import type { ThreadResponse, MeResponse } from '../api'
-import { listStarredThreadIds, starThread, unstarThread } from '../api'
+import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 
 type Props = {
@@ -33,6 +34,7 @@ type Props = {
   onToggleCollapse: () => void
   onOpenSearch: () => void
   isSearchMode: boolean
+  onThreadTitleUpdated: (threadId: string, title: string) => void
 }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
@@ -53,6 +55,7 @@ export function Sidebar({
   onToggleCollapse,
   onOpenSearch,
   isSearchMode,
+  onThreadTitleUpdated,
 }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -63,6 +66,9 @@ export function Sidebar({
   const [menuThreadId, setMenuThreadId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState<string>('')
+  const editInputRef = useRef<HTMLInputElement>(null)
 
   // 初始化时从服务端拉取收藏列表
   useEffect(() => {
@@ -93,6 +99,32 @@ export function Sidebar({
     setMenuPos({ x: rect.right, y: rect.bottom + 4 })
     setMenuThreadId((prev) => (prev === id ? null : id))
   }, [])
+
+  const startRename = useCallback((id: string, currentTitle: string) => {
+    setMenuThreadId(null)
+    setEditingThreadId(id)
+    setEditingTitle(currentTitle)
+  }, [])
+
+  const commitRename = useCallback(async (id: string, newTitle: string) => {
+    const trimmed = newTitle.trim()
+    setEditingThreadId(null)
+    if (!trimmed) return
+    try {
+      await updateThreadTitle(accessToken, id, trimmed)
+      onThreadTitleUpdated(id, trimmed)
+    } catch {
+      // 失败静默，保持旧标题
+    }
+  }, [accessToken, onThreadTitleUpdated])
+
+  // 进入编辑模式后自动聚焦 input
+  useEffect(() => {
+    if (editingThreadId && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingThreadId])
 
   // 点击外部关闭菜单（排除触发按钮本身，否则 mousedown 会先关闭再被 click 重新打开）
   useEffect(() => {
@@ -250,6 +282,7 @@ export function Sidebar({
               const renderThread = (thread: ThreadResponse, section: 'starred' | 'regular') => {
                 const isRunning = runningThreadIds.has(thread.id)
                 const isMenuOpen = menuThreadId === thread.id
+                const isEditing = editingThreadId === thread.id
                 return (
                   <motion.div
                     key={`${thread.id}-${section}`}
@@ -264,53 +297,75 @@ export function Sidebar({
                         : 'hover:bg-[var(--c-bg-deep)]',
                     ].join(' ')}
                   >
-                    <button
-                      onClick={() => navigate(`/t/${thread.id}`)}
-                      className={[
-                        'flex min-w-0 flex-1 items-center gap-2 px-2 py-[9px] text-left text-[13px] font-[350]',
-                        thread.id === threadId
-                          ? 'text-[var(--c-text-primary)]'
-                          : 'text-[var(--c-text-secondary)]',
-                      ].join(' ')}
-                    >
-                      {starredSet.has(thread.id) && (
-                        <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate">{threadTitle(thread, t.untitled)}</span>
-                    </button>
-
-                    {/* 右侧操作区 */}
-                    <div className="flex shrink-0 items-center mr-1">
-                      {isRunning && (
-                        <span className="shrink-0 h-3 w-3 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent mr-1" />
-                      )}
-                      {/*
-                        运行中：width 0→6 滑入（spinner 在左，三点从右挤入）
-                        静止时：w-6 固定占位，纯 opacity 渐显，无位移感
-                      */}
-                      <div
+                    {isEditing ? (
+                      <input
+                        ref={editInputRef}
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={() => commitRename(thread.id, editingTitle)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            commitRename(thread.id, editingTitle)
+                          } else if (e.key === 'Escape') {
+                            setEditingThreadId(null)
+                          }
+                        }}
+                        className="min-w-0 flex-1 bg-transparent px-2 py-[9px] text-[13px] font-[350] text-[var(--c-text-primary)] outline-none"
+                        style={{ border: 'none' }}
+                        maxLength={200}
+                      />
+                    ) : (
+                      <button
+                        onClick={() => navigate(`/t/${thread.id}`)}
                         className={[
-                          'shrink-0',
-                          isRunning
-                            ? `overflow-hidden transition-[width] duration-150 ${isMenuOpen ? 'w-6' : 'w-0 group-hover:w-6'}`
-                            : 'w-6',
+                          'flex min-w-0 flex-1 items-center gap-2 px-2 py-[9px] text-left text-[13px] font-[350]',
+                          thread.id === threadId
+                            ? 'text-[var(--c-text-primary)]'
+                            : 'text-[var(--c-text-secondary)]',
                         ].join(' ')}
                       >
-                        <button
-                          data-menu-button={thread.id}
-                          onClick={(e) => openMenu(e, thread.id)}
+                        {starredSet.has(thread.id) && (
+                          <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{threadTitle(thread, t.untitled)}</span>
+                      </button>
+                    )}
+
+                    {/* 右侧操作区：编辑模式下隐藏 */}
+                    {!isEditing && (
+                      <div className="flex shrink-0 items-center mr-1">
+                        {isRunning && (
+                          <span className="shrink-0 h-3 w-3 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent mr-1" />
+                        )}
+                        {/*
+                          运行中：width 0→6 滑入（spinner 在左，三点从右挤入）
+                          静止时：w-6 固定占位，纯 opacity 渐显，无位移感
+                        */}
+                        <div
                           className={[
-                            'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
-                            'transition-[opacity,background-color,color] duration-150',
-                            isMenuOpen
-                              ? 'opacity-100 bg-[rgba(0,0,0,0.18)] text-[var(--c-text-secondary)]'
-                              : 'opacity-0 group-hover:opacity-100 text-[var(--c-text-muted)] hover:bg-[rgba(0,0,0,0.18)] hover:text-[var(--c-text-secondary)]',
+                            'shrink-0',
+                            isRunning
+                              ? `overflow-hidden transition-[width] duration-150 ${isMenuOpen ? 'w-6' : 'w-0 group-hover:w-6'}`
+                              : 'w-6',
                           ].join(' ')}
                         >
-                          <MoreHorizontal size={14} />
-                        </button>
+                          <button
+                            data-menu-button={thread.id}
+                            onClick={(e) => openMenu(e, thread.id)}
+                            className={[
+                              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+                              'transition-[opacity,background-color,color] duration-150',
+                              isMenuOpen
+                                ? 'opacity-100 bg-[rgba(0,0,0,0.18)] text-[var(--c-text-secondary)]'
+                                : 'opacity-0 group-hover:opacity-100 text-[var(--c-text-muted)] hover:bg-[rgba(0,0,0,0.18)] hover:text-[var(--c-text-secondary)]',
+                            ].join(' ')}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </motion.div>
                 )
               }
@@ -391,6 +446,20 @@ export function Sidebar({
         className="dropdown-menu"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <button
+            onClick={() => {
+              const thread = threads.find((th) => th.id === menuThreadId)
+              const currentTitle = thread ? threadTitle(thread, t.untitled) : ''
+              startRename(menuThreadId, currentTitle === t.untitled ? '' : currentTitle)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] transition-colors duration-100"
+            style={{ color: 'var(--c-text-secondary)', background: 'var(--c-bg-menu)', borderRadius: '8px' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-bg-deep)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-bg-menu)' }}
+          >
+            <Pencil size={13} style={{ flexShrink: 0 }} />
+            {t.renameThread}
+          </button>
           <button
             onClick={() => toggleStar(menuThreadId)}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-[13px] transition-colors duration-100"

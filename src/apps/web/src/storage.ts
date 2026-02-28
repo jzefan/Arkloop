@@ -198,6 +198,34 @@ export function writeSelectedTierToStorage(tier: SelectedTier): void {
   }
 }
 
+export type WebSource = {
+  title: string
+  url: string
+  snippet?: string
+}
+
+function messageSourcesKey(messageId: string): string {
+  return `arkloop:web:msg_sources:${messageId}`
+}
+
+export function readMessageSources(messageId: string): WebSource[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageSourcesKey(messageId))
+    if (!raw) return null
+    return JSON.parse(raw) as WebSource[]
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageSources(messageId: string, sources: WebSource[]): void {
+  if (!canUseLocalStorage() || !messageId || sources.length === 0) return
+  try {
+    localStorage.setItem(messageSourcesKey(messageId), JSON.stringify(sources))
+  } catch { /* ignore */ }
+}
+
 const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
 
 export function addSearchThreadId(threadId: string): void {

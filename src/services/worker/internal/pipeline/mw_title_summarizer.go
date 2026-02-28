@@ -196,7 +196,7 @@ title = string([]rune(title)[:50])
 }
 
 _, err = pool.Exec(ctx,
-`UPDATE threads SET title = $1 WHERE id = $2 AND deleted_at IS NULL`,
+`UPDATE threads SET title = $1 WHERE id = $2 AND deleted_at IS NULL AND title_locked = false`,
 title, threadID,
 )
 if err != nil {
