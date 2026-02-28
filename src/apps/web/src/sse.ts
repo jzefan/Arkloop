@@ -63,6 +63,8 @@ export type SSEClientOptions = {
   onError?: (error: Error) => void
   maxRetries?: number
   retryDelayMs?: number
+  /** 读超时（毫秒）。超过此时间未收到任何数据（含心跳）则判定连接死亡并重连。默认 45000（3x 服务端心跳） */
+  readTimeoutMs?: number
 }
 
 async function readJsonSafely(response: Response): Promise<unknown | null> {
@@ -159,6 +161,7 @@ export class SSEClient {
       follow: true,
       maxRetries: 5,
       retryDelayMs: 1000,
+      readTimeoutMs: 45_000,
       ...options,
     }
     this.lastSeq = this.options.afterSeq
@@ -191,7 +194,12 @@ export class SSEClient {
 
       const error = err instanceof Error ? err : new Error(String(err))
 
-      if (error.name === 'AbortError') return
+      if (error.name === 'AbortError') {
+        // close() 会先设 this.closed=true 再 abort；到这里 closed=false 说明是读超时
+        if (this.closed) return
+        await this.scheduleRetry()
+        return
+      }
 
       this.options.onError?.(error)
 
@@ -267,16 +275,26 @@ export class SSEClient {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let readTimer: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleReadTimeout = () => {
+      if (readTimer !== null) clearTimeout(readTimer)
+      readTimer = setTimeout(() => {
+        this.abortController?.abort()
+      }, this.options.readTimeoutMs)
+    }
 
     try {
+      scheduleReadTimeout()
       while (true) {
         const { value, done } = await reader.read()
 
         if (done) {
-          // 流正常结束
           this.setState('closed')
           break
         }
+
+        scheduleReadTimeout()
 
         buffer += decoder.decode(value, { stream: true })
         const { events, remaining } = parseSSEChunk(buffer)
@@ -287,6 +305,7 @@ export class SSEClient {
         }
       }
     } finally {
+      if (readTimer !== null) clearTimeout(readTimer)
       reader.releaseLock()
     }
   }
