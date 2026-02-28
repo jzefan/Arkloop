@@ -154,6 +154,14 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
     )
   }, [])
 
+  const handleThreadDeleted = useCallback((deletedId: string) => {
+    setThreads((prev) => prev.filter((t) => t.id !== deletedId))
+    // 如果删除的是当前打开的会话，跳回首页
+    if (location.pathname === `/t/${deletedId}` || location.pathname.startsWith(`/t/${deletedId}/`)) {
+      navigate('/')
+    }
+  }, [location.pathname, navigate])
+
   const refreshCredits = useCallback(() => {
     void getMyCredits(accessToken).then((resp) => {
       if (mountedRef.current) setCreditsBalance(resp.balance)
@@ -212,6 +220,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           }}
         isSearchMode={isSearchMode}
         onThreadTitleUpdated={handleThreadTitleUpdated}
+        onThreadDeleted={handleThreadDeleted}
       />
 
       {settingsOpen && (

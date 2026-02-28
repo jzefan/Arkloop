@@ -105,7 +105,7 @@ export function ShareModal({ accessToken, threadId, open, onClose }: Props) {
   return (
     <div
       className="overlay-fade-in fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)' }}
+      style={{ background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div

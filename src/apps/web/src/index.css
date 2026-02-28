@@ -328,7 +328,7 @@ button:not(:disabled) {
 @keyframes modal-enter {
   from {
     opacity: 0;
-    transform: scale(0.96) translateY(6px);
+    transform: scale(0.92) translateY(12px);
   }
   to {
     opacity: 1;
@@ -336,14 +336,15 @@ button:not(:disabled) {
   }
 }
 .modal-enter {
-  animation: modal-enter 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: modal-enter 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
 }
 @keyframes overlay-fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
 .overlay-fade-in {
-  animation: overlay-fade-in 0.15s ease-out;
+  animation: overlay-fade-in 0.18s ease-out;
 }
 @keyframes dropdown-slide-in {
   from { opacity: 0; transform: translateY(-6px); }

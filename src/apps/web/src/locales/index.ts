@@ -144,6 +144,11 @@ export interface LocaleStrings {
   unstarThread: string
   shareThread: string
   renameThread: string
+  deleteThread: string
+  deleteThreadConfirmTitle: string
+  deleteThreadConfirmBody: string
+  deleteThreadConfirm: string
+  deleteThreadCancel: string
   // share
   shareTitle: string
   sharePublic: string

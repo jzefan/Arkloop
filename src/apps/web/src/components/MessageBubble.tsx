@@ -185,7 +185,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, on
 
     return (
       <div
-        style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}
+        style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: '8px' }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -198,18 +198,19 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, on
             opacity: hovered ? 1 : 0,
             transition: 'opacity 150ms ease',
             pointerEvents: hovered ? 'auto' : 'none',
+            marginTop: '6px',
           }}
         >
           <button
             onClick={handleCopy}
             title="复制"
             style={{
-              width: '28px',
-              height: '28px',
+              width: '32px',
+              height: '32px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: '7px',
+              borderRadius: '8px',
               border: 'none',
               background: 'transparent',
               color: 'var(--c-text-secondary)',
@@ -219,18 +220,18 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, on
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
           >
-            {copied ? <Check size={15} /> : <Copy size={15} />}
+            {copied ? <Check size={16} /> : <Copy size={16} />}
           </button>
           <button
             onClick={handleEditStart}
             title="编辑"
             style={{
-              width: '28px',
-              height: '28px',
+              width: '32px',
+              height: '32px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: '7px',
+              borderRadius: '8px',
               border: 'none',
               background: 'transparent',
               color: 'var(--c-text-secondary)',
@@ -240,7 +241,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, webSources, on
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
           >
-            <Pencil size={15} />
+            <Pencil size={16} />
           </button>
         </div>
 
