@@ -1049,6 +1049,15 @@ func listGlobalRuns(
 		q := r.URL.Query()
 		params := data.ListRunsParams{}
 
+		if rawRunID := strings.TrimSpace(q.Get("run_id")); rawRunID != "" {
+			parsed, err := uuid.Parse(rawRunID)
+			if err != nil {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid run_id", traceID, nil)
+				return
+			}
+			params.RunID = &parsed
+		}
+
 		if rawOrg := q.Get("org_id"); rawOrg != "" {
 			parsed, err := uuid.Parse(rawOrg)
 			if err != nil {
@@ -1062,6 +1071,15 @@ func listGlobalRuns(
 			params.OrgID = &parsed
 		} else if !isPlatformAdmin {
 			params.OrgID = &actor.OrgID
+		}
+
+		if rawThreadID := strings.TrimSpace(q.Get("thread_id")); rawThreadID != "" {
+			parsed, err := uuid.Parse(rawThreadID)
+			if err != nil {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid thread_id", traceID, nil)
+				return
+			}
+			params.ThreadID = &parsed
 		}
 
 		// user_id 筛选：仅 platform_admin 可跨用户过滤
@@ -1091,6 +1109,12 @@ func listGlobalRuns(
 			v = strings.TrimSpace(v)
 			params.Status = &v
 		}
+		if v := strings.TrimSpace(q.Get("model")); v != "" {
+			params.Model = &v
+		}
+		if v := strings.TrimSpace(q.Get("skill_id")); v != "" {
+			params.SkillID = &v
+		}
 		if v := q.Get("since"); v != "" {
 			t, err := time.Parse(time.RFC3339, v)
 			if err != nil {
@@ -1106,6 +1130,10 @@ func listGlobalRuns(
 				return
 			}
 			params.Until = &t
+		}
+		if params.Since != nil && params.Until != nil && params.Since.After(*params.Until) {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "since must be <= until", traceID, nil)
+			return
 		}
 		if v := q.Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)

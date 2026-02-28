@@ -510,10 +510,14 @@ type RunWithUser struct {
 // ListRunsParams 控制 ListRuns 的过滤和分页行为。
 // OrgID 为 nil 时不按 org 过滤（平台管理员全局查询专用）。
 type ListRunsParams struct {
+	RunID       *uuid.UUID
 	OrgID       *uuid.UUID
+	ThreadID    *uuid.UUID
 	UserID      *uuid.UUID
 	ParentRunID *uuid.UUID
 	Status      *string
+	Model       *string
+	SkillID     *string
 	Since       *time.Time
 	Until       *time.Time
 	Limit       int
@@ -546,6 +550,12 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 	if params.OrgID != nil {
 		conds = append(conds, "r.org_id = "+addArg(*params.OrgID))
 	}
+	if params.RunID != nil {
+		conds = append(conds, "r.id = "+addArg(*params.RunID))
+	}
+	if params.ThreadID != nil {
+		conds = append(conds, "r.thread_id = "+addArg(*params.ThreadID))
+	}
 	if params.UserID != nil {
 		conds = append(conds, "r.created_by_user_id = "+addArg(*params.UserID))
 	}
@@ -554,6 +564,12 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 	}
 	if params.Status != nil {
 		conds = append(conds, "r.status = "+addArg(*params.Status))
+	}
+	if params.Model != nil {
+		conds = append(conds, "COALESCE(r.model, '') ILIKE '%' || "+addArg(*params.Model)+" || '%'")
+	}
+	if params.SkillID != nil {
+		conds = append(conds, "COALESCE(r.skill_id, '') ILIKE '%' || "+addArg(*params.SkillID)+" || '%'")
 	}
 	if params.Since != nil {
 		conds = append(conds, "r.created_at >= "+addArg(*params.Since))
