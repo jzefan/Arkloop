@@ -135,6 +135,9 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	if err != nil {
 		return nil, err
 	}
+	if err := skills.SyncBuiltinSkillsToDB(ctx, pool, initialSkillRegistry); err != nil {
+		return nil, err
+	}
 	watchedSkills := skills.NewWatchedRegistry(skillsRoot, initialSkillRegistry)
 	watchedSkills.Watch(ctx)
 
