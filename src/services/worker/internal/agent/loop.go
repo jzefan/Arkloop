@@ -77,6 +77,7 @@ func (l *Loop) Run(
 
 	messages := append([]llm.Message{}, request.Messages...)
 	webSourceCount := 0
+	completionTotals := newCompletionTotals()
 	for iter := 1; iter <= runCtx.MaxIterations; iter++ {
 		if cancelled(runCtx) {
 			return yield(emitter.Emit("run.cancelled", map[string]any{"reason": "cancel_signal"}, nil, nil))
@@ -128,14 +129,15 @@ func (l *Loop) Run(
 			event := emitter.Emit("run.failed", internal.ToJSON(), nil, stringPtr(internal.ErrorClass))
 			return yield(event)
 		}
+		completionTotals.Add(turn.CompletedDataJSON)
 
 		if len(turn.ToolCalls) == 0 {
-			return yield(emitter.Emit("run.completed", mapOrEmpty(turn.CompletedDataJSON), nil, nil))
+			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 		}
 
 		pending := pendingToolCalls(turn.ToolCalls, turn.ToolResults)
 		if len(pending) == 0 {
-			return yield(emitter.Emit("run.completed", mapOrEmpty(turn.CompletedDataJSON), nil, nil))
+			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 		}
 
 		if cancelled(runCtx) {
@@ -255,6 +257,107 @@ type turnResult struct {
 	ToolResults       []llm.StreamToolResult
 	AssistantText     string
 	CompletedDataJSON map[string]any
+}
+
+type completionTotals struct {
+	inputTokens      int64
+	hasInputTokens   bool
+	outputTokens     int64
+	hasOutputTokens  bool
+	totalTokens      int64
+	hasTotalTokens   bool
+	cacheCreation    int64
+	hasCacheCreation bool
+	cacheRead        int64
+	hasCacheRead     bool
+	cachedTokens     int64
+	hasCachedTokens  bool
+	costMicros       int64
+	hasCostMicros    bool
+	currency         string
+}
+
+func newCompletionTotals() *completionTotals {
+	return &completionTotals{}
+}
+
+func (t *completionTotals) Add(completed map[string]any) {
+	if completed == nil {
+		return
+	}
+	usage, _ := completed["usage"].(map[string]any)
+	if usage != nil {
+		if v, ok := anyToInt64(usage["input_tokens"]); ok {
+			t.inputTokens += v
+			t.hasInputTokens = true
+		}
+		if v, ok := anyToInt64(usage["output_tokens"]); ok {
+			t.outputTokens += v
+			t.hasOutputTokens = true
+		}
+		if v, ok := anyToInt64(usage["total_tokens"]); ok {
+			t.totalTokens += v
+			t.hasTotalTokens = true
+		}
+		if v, ok := anyToInt64(usage["cache_creation_input_tokens"]); ok {
+			t.cacheCreation += v
+			t.hasCacheCreation = true
+		}
+		if v, ok := anyToInt64(usage["cache_read_input_tokens"]); ok {
+			t.cacheRead += v
+			t.hasCacheRead = true
+		}
+		if v, ok := anyToInt64(usage["cached_tokens"]); ok {
+			t.cachedTokens += v
+			t.hasCachedTokens = true
+		}
+	}
+	cost, _ := completed["cost"].(map[string]any)
+	if cost != nil {
+		if v, ok := anyToInt64(cost["amount_micros"]); ok {
+			t.costMicros += v
+			t.hasCostMicros = true
+		}
+		if currency, ok := cost["currency"].(string); ok && strings.TrimSpace(currency) != "" {
+			t.currency = strings.TrimSpace(currency)
+		}
+	}
+}
+
+func (t *completionTotals) Apply(completed map[string]any) map[string]any {
+	merged := copyMap(mapOrEmpty(completed))
+	usage := map[string]any{}
+	if t.hasInputTokens {
+		usage["input_tokens"] = t.inputTokens
+	}
+	if t.hasOutputTokens {
+		usage["output_tokens"] = t.outputTokens
+	}
+	if t.hasTotalTokens {
+		usage["total_tokens"] = t.totalTokens
+	}
+	if t.hasCacheCreation {
+		usage["cache_creation_input_tokens"] = t.cacheCreation
+	}
+	if t.hasCacheRead {
+		usage["cache_read_input_tokens"] = t.cacheRead
+	}
+	if t.hasCachedTokens {
+		usage["cached_tokens"] = t.cachedTokens
+	}
+	if len(usage) > 0 {
+		merged["usage"] = usage
+	}
+	if t.hasCostMicros {
+		cost := map[string]any{
+			"amount_micros": t.costMicros,
+		}
+		if t.currency != "" {
+			cost["currency"] = t.currency
+		}
+		merged["cost"] = cost
+	}
+	return merged
 }
 
 // runTurnWithRetry 在遇到 provider.retryable 失败时自动重试，并发出 run.llm.retry 事件。
@@ -538,6 +641,35 @@ func copyMap(value map[string]any) map[string]any {
 		out[key] = item
 	}
 	return out
+}
+
+func anyToInt64(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int8:
+		return int64(typed), true
+	case int16:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case uint:
+		return int64(typed), true
+	case uint8:
+		return int64(typed), true
+	case uint16:
+		return int64(typed), true
+	case uint32:
+		return int64(typed), true
+	case uint64:
+		return int64(typed), typed <= uint64(^uint64(0)>>1)
+	case float64:
+		return int64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func mapOrEmpty(value map[string]any) map[string]any {

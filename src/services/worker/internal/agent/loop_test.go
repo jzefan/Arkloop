@@ -191,6 +191,70 @@ func TestAgentLoopExecutesMultipleToolCallsInParallel(t *testing.T) {
 	}
 }
 
+func TestAgentLoopAggregatesUsageAcrossTurns(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
+
+	gateway := &usageScriptedGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:         uuid.New(),
+			TraceID:       "trace",
+			InputJSON:     map[string]any{},
+			MaxIterations: 3,
+			ToolExecutor:  executor,
+			CancelSignal:  func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	var completed events.RunEvent
+	found := false
+	for _, ev := range got {
+		if ev.Type == "run.completed" {
+			completed = ev
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.completed")
+	}
+	usage, ok := completed.DataJSON["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage payload in run.completed")
+	}
+	if value := mustInt64(t, usage["input_tokens"]); value != 30 {
+		t.Fatalf("expected input_tokens=30, got %d", value)
+	}
+	if value := mustInt64(t, usage["output_tokens"]); value != 8 {
+		t.Fatalf("expected output_tokens=8, got %d", value)
+	}
+	if value := mustInt64(t, usage["cached_tokens"]); value != 10 {
+		t.Fatalf("expected cached_tokens=10, got %d", value)
+	}
+}
+
 type scriptedGateway struct {
 	calls int
 }
@@ -251,6 +315,42 @@ func (g *multiToolCallGateway) Stream(ctx context.Context, request llm.Request, 
 	return yield(llm.StreamRunCompleted{})
 }
 
+type usageScriptedGateway struct {
+	calls int
+}
+
+func (g *usageScriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_1",
+			ToolName:      "echo",
+			ArgumentsJSON: map[string]any{"text": "hi"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{
+			Usage: &llm.Usage{
+				InputTokens:  intPtr(10),
+				OutputTokens: intPtr(3),
+				CachedTokens: intPtr(4),
+			},
+		})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{
+		Usage: &llm.Usage{
+			InputTokens:  intPtr(20),
+			OutputTokens: intPtr(5),
+			CachedTokens: intPtr(6),
+		},
+	})
+}
+
 type observedSlowExecutor struct {
 	delay     time.Duration
 	active    int32
@@ -299,4 +399,19 @@ func sleep(ctx context.Context, d time.Duration) error {
 
 func intPtr(value int) *int {
 	return &value
+}
+
+func mustInt64(t *testing.T, value any) int64 {
+	t.Helper()
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	default:
+		t.Fatalf("unexpected numeric type %T", value)
+		return 0
+	}
 }
