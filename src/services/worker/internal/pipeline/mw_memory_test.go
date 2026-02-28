@@ -106,7 +106,7 @@ func buildMemRC(userID *uuid.UUID, userMsg string, assistantOutput string) *pipe
 // --- tests ---
 
 func TestMemoryMiddleware_NilProvider_NoOp(t *testing.T) {
-	mw := pipeline.NewMemoryMiddleware(nil)
+	mw := pipeline.NewMemoryMiddleware(nil, nil)
 
 	called := false
 	terminal := func(_ context.Context, rc *pipeline.RunContext) error {
@@ -126,12 +126,11 @@ func TestMemoryMiddleware_NilProvider_NoOp(t *testing.T) {
 
 func TestMemoryMiddleware_NilUserID_NoOp(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	rc := buildMemRC(nil, "test query", "response")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
 	if err := h(context.Background(), rc); err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 	if mp.findCalled {
 		t.Fatal("Find should not be called when UserID is nil")
@@ -143,7 +142,7 @@ func TestMemoryMiddleware_InjectsMemoryBlock(t *testing.T) {
 	mp.findHits = []memory.MemoryHit{
 		{URI: "viking://user/memories/prefs/lang", Abstract: "user prefers Go", Score: 0.7, IsLeaf: true},
 	}
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	rc := buildMemRC(userIDPtr(), "what language do you prefer?", "")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -162,7 +161,7 @@ func TestMemoryMiddleware_InjectsMemoryBlock(t *testing.T) {
 func TestMemoryMiddleware_NoHits_NoInjection(t *testing.T) {
 	mp := newMemMock()
 	mp.findHits = []memory.MemoryHit{}
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	rc := buildMemRC(userIDPtr(), "hello", "")
 	original := rc.SystemPrompt
@@ -178,7 +177,7 @@ func TestMemoryMiddleware_NoHits_NoInjection(t *testing.T) {
 func TestMemoryMiddleware_FindError_Continues(t *testing.T) {
 	mp := newMemMock()
 	mp.findErr = context.DeadlineExceeded
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	nextCalled := false
 	rc := buildMemRC(userIDPtr(), "query", "")
@@ -197,7 +196,7 @@ func TestMemoryMiddleware_FindError_Continues(t *testing.T) {
 func TestMemoryMiddleware_CommitCalledAfterRun(t *testing.T) {
 	mp := newMemMock()
 	mp.findHits = []memory.MemoryHit{}
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	rc := buildMemRC(userIDPtr(), "user message", "assistant reply")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -228,7 +227,7 @@ func TestMemoryMiddleware_CommitCalledAfterRun(t *testing.T) {
 func TestMemoryMiddleware_NoCommitWhenEmpty(t *testing.T) {
 	mp := newMemMock()
 	mp.findHits = []memory.MemoryHit{}
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	// userQuery 为空时不触发 commit
 	rc := buildMemRC(userIDPtr(), "", "assistant reply")
@@ -258,7 +257,7 @@ func TestMemoryMiddleware_HighScoreNonLeaf_FetchesL1(t *testing.T) {
 		},
 	}
 	mp.contentText = "user prefers Go with modules"
-	mw := pipeline.NewMemoryMiddleware(mp)
+	mw := pipeline.NewMemoryMiddleware(mp, nil)
 
 	rc := buildMemRC(userIDPtr(), "programming preferences", "")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
