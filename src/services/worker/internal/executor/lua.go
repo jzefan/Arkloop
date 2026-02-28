@@ -66,7 +66,11 @@ func (e *LuaExecutor) Execute(
 		}
 	}
 
-	return yield(emitter.Emit("run.completed", map[string]any{}, nil, nil))
+	completedData := map[string]any{}
+	if usageJSON := rt.accumulatedUsage.ToJSON(); len(usageJSON) > 0 {
+		completedData["usage"] = usageJSON
+	}
+	return yield(emitter.Emit("run.completed", completedData, nil, nil))
 }
 
 // luaRuntime 持有单次 Execute 调用的运行时状态，注册为 Lua bindings。
@@ -76,6 +80,31 @@ type luaRuntime struct {
 	emitter events.Emitter
 	yield   func(events.RunEvent) error
 	output  string
+	// 累积 agent.generate / agent.stream 消耗的 token，随最终 run.completed 上报
+	accumulatedUsage llm.Usage
+}
+
+// mergeUsage 将一次 LLM 调用的 usage 累加到 accumulatedUsage。
+func (rt *luaRuntime) mergeUsage(u *llm.Usage) {
+	if u == nil {
+		return
+	}
+	addInt := func(dst **int, src *int) {
+		if src == nil {
+			return
+		}
+		if *dst == nil {
+			v := *src
+			*dst = &v
+		} else {
+			**dst += *src
+		}
+	}
+	addInt(&rt.accumulatedUsage.InputTokens, u.InputTokens)
+	addInt(&rt.accumulatedUsage.OutputTokens, u.OutputTokens)
+	addInt(&rt.accumulatedUsage.CacheCreationInputTokens, u.CacheCreationInputTokens)
+	addInt(&rt.accumulatedUsage.CacheReadInputTokens, u.CacheReadInputTokens)
+	addInt(&rt.accumulatedUsage.CachedTokens, u.CachedTokens)
 }
 
 func (rt *luaRuntime) register(L *lua.LState) {
@@ -552,6 +581,7 @@ func (rt *luaRuntime) agentGenerate(L *lua.LState) int {
 			streamFailed = &typed
 			return sentinel
 		case llm.StreamRunCompleted:
+			rt.mergeUsage(typed.Usage)
 			return sentinel
 		}
 		return nil
@@ -661,6 +691,7 @@ func (rt *luaRuntime) agentStream(L *lua.LState) int {
 			streamFailed = &typed
 			return sentinel
 		case llm.StreamRunCompleted:
+			rt.mergeUsage(typed.Usage)
 			return sentinel
 		}
 		return nil

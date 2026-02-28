@@ -9,6 +9,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -88,6 +89,8 @@ type HandlerConfig struct {
 	UserCredentialRepo *data.UserCredentialRepository
 
 	JobRepo *data.JobRepository
+
+	ArtifactStore *objectstore.Store
 
 	EmailFrom string
 
@@ -480,6 +483,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/admin/email/test",
 		adminEmailTest(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.JobRepo, cfg.PlatformSettingsRepo, cfg.EmailFrom),
+	)
+
+	mux.HandleFunc(
+		"/v1/artifacts/",
+		artifactsEntry(cfg.AuthService, cfg.ArtifactStore),
 	)
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

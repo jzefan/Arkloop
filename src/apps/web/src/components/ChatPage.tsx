@@ -4,6 +4,7 @@ import { Glasses, Paperclip, Share2, X, Zap } from 'lucide-react'
 import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock } from './ThinkingBlock'
+import { SearchTimeline, type SearchStep } from './SearchTimeline'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
 import { ShareModal } from './ShareModal'
@@ -27,7 +28,7 @@ import {
   type MessageResponse,
   type ThreadResponse,
 } from '../api'
-import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, type WebSource } from '../storage'
+import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, readMessageArtifacts, writeMessageArtifacts, type WebSource, type ArtifactRef } from '../storage'
 
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
@@ -93,6 +94,9 @@ export function ChatPage() {
   const [messageSourcesMap, setMessageSourcesMap] = useState<Map<string, WebSource[]>>(new Map())
   // 当前 run 累积的搜索结果（按工具调用顺序拼接，1-indexed）
   const currentRunSourcesRef = useRef<WebSource[]>([])
+  // artifact 产物：messageId -> ArtifactRef[]
+  const [messageArtifactsMap, setMessageArtifactsMap] = useState<Map<string, ArtifactRef[]>>(new Map())
+  const currentRunArtifactsRef = useRef<ArtifactRef[]>([])
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 关闭动画期间保留上一次的数据
@@ -104,6 +108,8 @@ export function ChatPage() {
   const activeSegmentIdRef = useRef<string | null>(null)
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
+  // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
+  const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -184,13 +190,17 @@ export function ChatPage() {
 
         // 加载各消息缓存的 web 来源
         const sourcesMap = new Map<string, WebSource[]>()
+        const artifactsMap = new Map<string, ArtifactRef[]>()
         for (const msg of items) {
           if (msg.role === 'assistant') {
             const cached = readMessageSources(msg.id)
             if (cached) sourcesMap.set(msg.id, cached)
+            const cachedArt = readMessageArtifacts(msg.id)
+            if (cachedArt) artifactsMap.set(msg.id, cachedArt)
           }
         }
         setMessageSourcesMap(sourcesMap)
+        setMessageArtifactsMap(artifactsMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         if (locationState?.initialRunId) {
@@ -225,7 +235,9 @@ export function ChatPage() {
     pendingMessageRef.current = null
     setQueuedDraft(null)
     currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
     setMessageSourcesMap(new Map())
+    setMessageArtifactsMap(new Map())
     setSourcePanelMessageId(null)
     sse.disconnect()
     sse.clearEvents()
@@ -240,10 +252,12 @@ export function ChatPage() {
     sse.connect()
     processedEventCountRef.current = 0
     currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
     setAssistantDraft('')
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
+    setSearchSteps([])
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,12 +278,31 @@ export function ChatPage() {
         const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
         const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
         const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
-        const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown }
+        const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown; queries?: unknown }
         const mode = typeof display.mode === 'string' ? display.mode : 'collapsed'
         const label = typeof display.label === 'string' ? display.label : ''
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
-        setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true }])
+
+        // 搜索模式：search_* kind 路由到 searchSteps
+        if (isSearchThread && kind.startsWith('search_')) {
+          const searchKind = kind === 'search_planning' ? 'planning'
+            : kind === 'search_queries' ? 'searching'
+            : kind === 'search_reviewing' ? 'reviewing'
+            : 'planning'
+          const queries = Array.isArray(display.queries)
+            ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
+            : undefined
+          setSearchSteps((prev) => [...prev, {
+            id: segmentId,
+            kind: searchKind as SearchStep['kind'],
+            label,
+            status: 'active',
+            queries,
+          }])
+        } else {
+          setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true }])
+        }
         continue
       }
 
@@ -281,6 +314,9 @@ export function ChatPage() {
         }
         setSegments((prev) =>
           prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
+        )
+        setSearchSteps((prev) =>
+          prev.map((s) => (s.id === segmentId ? { ...s, status: 'done' as const } : s)),
         )
         continue
       }
@@ -325,6 +361,24 @@ export function ChatPage() {
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
           }
         }
+        // 检测 sandbox 执行产物
+        if (obj.tool_name === 'code_execute' || obj.tool_name === 'shell_execute') {
+          const result = obj.result as { artifacts?: unknown[] } | undefined
+          if (Array.isArray(result?.artifacts)) {
+            const newArtifacts: ArtifactRef[] = result.artifacts
+              .filter((a): a is Record<string, unknown> => a != null && typeof a === 'object')
+              .filter((a) => typeof a.key === 'string' && typeof a.filename === 'string')
+              .map((a) => ({
+                key: a.key as string,
+                filename: a.filename as string,
+                size: typeof a.size === 'number' ? a.size : 0,
+                mime_type: typeof a.mime_type === 'string' ? a.mime_type : '',
+              }))
+            if (newArtifacts.length > 0) {
+              currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
+            }
+          }
+        }
         continue
       }
 
@@ -348,19 +402,35 @@ export function ChatPage() {
         setThinkingDraft('')
         setSegments([])
         activeSegmentIdRef.current = null
+        // 搜索模式：添加 Finished 步骤，保留 searchSteps 不清除
+        // （下次 run 开始时 SSE connect effect 自动清除）
+        if (isSearchThread) {
+          setSearchSteps((prev) =>
+            prev.length > 0
+              ? [...prev, { id: 'finished', kind: 'finished', label: 'Finished', status: 'done' }]
+              : prev,
+          )
+        }
         setQueuedDraft(null)
         setAwaitingInput(false)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
         const runSources = [...currentRunSourcesRef.current]
-        currentRunSourcesRef.current = []
+        // 不清除 currentRunSourcesRef —— SearchTimeline 完成后仍需读取
+        // 下次 run 开始时 SSE connect effect 自动清除
+        const runArtifacts = [...currentRunArtifactsRef.current]
+        currentRunArtifactsRef.current = []
         void refreshMessages().then((items) => {
-          if (runSources.length > 0) {
-            const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
-            if (lastAssistant) {
+          const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
+          if (lastAssistant) {
+            if (runSources.length > 0) {
               writeMessageSources(lastAssistant.id, runSources)
               setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+            }
+            if (runArtifacts.length > 0) {
+              writeMessageArtifacts(lastAssistant.id, runArtifacts)
+              setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
             }
           }
           const pending = pendingMessageRef.current
@@ -377,6 +447,7 @@ export function ChatPage() {
         setActiveRunId(null)
         setThinkingDraft('')
         setSegments([])
+        setSearchSteps([])
         activeSegmentIdRef.current = null
         setAwaitingInput(false)
         setCheckInDraft('')
@@ -392,6 +463,7 @@ export function ChatPage() {
         setActiveRunId(null)
         setThinkingDraft('')
         setSegments([])
+        setSearchSteps([])
         activeSegmentIdRef.current = null
         setAwaitingInput(false)
         setCheckInDraft('')
@@ -682,6 +754,7 @@ export function ChatPage() {
   if (sourcePanelUserQuery !== undefined) lastPanelQueryRef.current = sourcePanelUserQuery
   const panelDisplaySources = sourcePanelSources ?? lastPanelSourcesRef.current
   const panelDisplayQuery = sourcePanelUserQuery ?? lastPanelQueryRef.current
+  const isPanelOpen = !!(sourcePanelSources && sourcePanelSources.length > 0)
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -728,7 +801,7 @@ export function ChatPage() {
             className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
           >
         <div
-          style={{ maxWidth: 800, margin: '0 auto', padding: '50px 60px' }}
+          style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? '32px' : '60px'}` }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
@@ -737,6 +810,16 @@ export function ChatPage() {
             <>
               {messages.map((msg, idx) => (
                 <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
+                  {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
+                  {msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming && isSearchThread && searchSteps.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <SearchTimeline
+                        steps={searchSteps}
+                        sources={currentRunSourcesRef.current}
+                        isComplete
+                      />
+                    </div>
+                  )}
                   <MessageBubble
                     message={msg}
                     onRetry={
@@ -755,6 +838,8 @@ export function ChatPage() {
                         : undefined
                     }
                     webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
+                    artifacts={msg.role === 'assistant' ? messageArtifactsMap.get(msg.id) : undefined}
+                    accessToken={accessToken}
                     onShowSources={
                       msg.role === 'assistant' && messageSourcesMap.has(msg.id)
                         ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
@@ -764,7 +849,17 @@ export function ChatPage() {
                 </div>
               ))}
 
-              {segments.map((seg) => (
+              {/* 搜索模式：流式期间的 live 时间轴（在 assistantDraft 上方） */}
+              {isSearchThread && isStreaming && searchSteps.length > 0 && (
+                <SearchTimeline
+                  steps={searchSteps}
+                  sources={currentRunSourcesRef.current}
+                  isComplete={false}
+                />
+              )}
+
+              {/* 非搜索模式：常规 segment 渲染 */}
+              {!isSearchThread && segments.map((seg) => (
                 <ThinkingBlock
                   key={seg.segmentId}
                   kind={seg.kind}
@@ -837,7 +932,7 @@ export function ChatPage() {
 
       {/* 输入区域 */}
       <div
-        style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 60px 24px', flexShrink: 0 }}
+        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${isPanelOpen ? '32px' : '60px'} 16px`, flexShrink: 0 }}
         className="flex w-full flex-col items-center gap-2"
       >
         {queuedDraft && (
