@@ -87,15 +87,13 @@ func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident me
 	results := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		results = append(results, map[string]any{
-			"uri":          h.URI,
-			"abstract":     h.Abstract,
-			"score":        h.Score,
-			"match_reason": h.MatchReason,
+			"uri":      h.URI,
+			"abstract": h.Abstract,
 		})
 	}
 
 	return tools.ExecutionResult{
-		ResultJSON: map[string]any{"hits": results, "count": len(results)},
+		ResultJSON: map[string]any{"hits": results},
 		DurationMs: durationMs(started),
 	}
 }
@@ -117,7 +115,7 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 	}
 
 	return tools.ExecutionResult{
-		ResultJSON: map[string]any{"uri": uri, "content": content},
+		ResultJSON: map[string]any{"content": content},
 		DurationMs: durationMs(started),
 	}
 }
@@ -138,8 +136,6 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 
 	scope := parseScope(args)
 
-	uri := memory.BuildURI(scope, memory.MemoryCategory(category), key)
-
 	// scope 前缀让 OpenViking LLM 提取时能区分 user/agent 命名空间
 	writable := "[" + string(scope) + "/" + category + "/" + key + "] " + content
 
@@ -149,12 +145,7 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 	}
 
 	return tools.ExecutionResult{
-		ResultJSON: map[string]any{
-			"status":   "ok",
-			"category": category,
-			"key":      key,
-			"uri":      uri,
-		},
+		ResultJSON: map[string]any{"status": "ok"},
 		DurationMs: durationMs(started),
 	}
 }
@@ -170,7 +161,7 @@ func (e *ToolExecutor) forget(ctx context.Context, args map[string]any, ident me
 	}
 
 	return tools.ExecutionResult{
-		ResultJSON: map[string]any{"status": "ok", "uri": uri},
+		ResultJSON: map[string]any{"status": "ok"},
 		DurationMs: durationMs(started),
 	}
 }

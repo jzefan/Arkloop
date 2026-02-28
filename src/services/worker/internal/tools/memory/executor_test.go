@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"arkloop/services/worker/internal/events"
@@ -212,13 +213,6 @@ func TestMemoryExecutor_Write_Success(t *testing.T) {
 	if result.ResultJSON["status"] != "ok" {
 		t.Fatalf("unexpected status: %v", result.ResultJSON["status"])
 	}
-	if result.ResultJSON["key"] != "language" {
-		t.Fatalf("unexpected key: %v", result.ResultJSON["key"])
-	}
-	uri, _ := result.ResultJSON["uri"].(string)
-	if uri == "" {
-		t.Fatal("expected non-empty uri in result")
-	}
 	if !mp.writeCalled {
 		t.Fatal("expected Write to be called on provider")
 	}
@@ -257,9 +251,12 @@ func TestMemoryExecutor_Write_AgentScope(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error.Message)
 	}
-	uri, _ := result.ResultJSON["uri"].(string)
-	if uri == "" || uri[:len("viking://agent")] != "viking://agent" {
-		t.Fatalf("expected agent scope uri, got: %q", uri)
+	if result.ResultJSON["status"] != "ok" {
+		t.Fatalf("unexpected status: %v", result.ResultJSON["status"])
+	}
+	// 验证 entry 内容以 [agent/ 开头，说明 scope 正确路由到 agent 命名空间
+	if !strings.HasPrefix(mp.lastWriteEntry.Content, "[agent/") {
+		t.Fatalf("expected agent scope content prefix, got: %q", mp.lastWriteEntry.Content)
 	}
 }
 
