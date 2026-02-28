@@ -34,6 +34,8 @@ type gatewayDynamicConfig struct {
 	IPMode              string   `json:"ip_mode,omitempty"`
 	TrustedCIDRs        []string `json:"trusted_cidrs,omitempty"`
 	RiskRejectThreshold int      `json:"risk_reject_threshold,omitempty"`
+	RateLimitCapacity   float64  `json:"rate_limit_capacity,omitempty"`
+	RateLimitPerMinute  float64  `json:"rate_limit_per_minute,omitempty"`
 }
 
 type Application struct {
@@ -99,6 +101,18 @@ func (a *Application) effectiveRiskThreshold() int {
 		return dyn.RiskRejectThreshold
 	}
 	return a.config.RiskRejectThreshold
+}
+
+func (a *Application) effectiveRateLimit() ratelimit.Config {
+	cfg := a.config.RateLimit
+	dyn := a.getDynamicConfig()
+	if dyn.RateLimitCapacity > 0 {
+		cfg.Capacity = dyn.RateLimitCapacity
+	}
+	if dyn.RateLimitPerMinute > 0 {
+		cfg.RatePerMinute = dyn.RateLimitPerMinute
+	}
+	return cfg
 }
 
 func (a *Application) buildResolver() clientip.Resolver {
@@ -171,16 +185,17 @@ func (a *Application) Run(ctx context.Context) error {
 		// 启动时加载动态配置
 		a.loadDynamicConfig(ctx, rdb)
 
-		bucket, err := ratelimit.NewTokenBucket(rdb, a.config.RateLimit)
+		bucket, err := ratelimit.NewTokenBucketWithProvider(rdb, a.config.RateLimit, a.effectiveRateLimit)
 		if err != nil {
 			return fmt.Errorf("ratelimit: %w", err)
 		}
 		limiter = bucket
 		ipFilter = ipfilter.NewFilter(rdb)
 
+		effectiveRL := a.effectiveRateLimit()
 		a.logger.Info("ratelimit enabled", LogFields{}, map[string]any{
-			"capacity":        a.config.RateLimit.Capacity,
-			"rate_per_minute": a.config.RateLimit.RatePerMinute,
+			"capacity":        effectiveRL.Capacity,
+			"rate_per_minute": effectiveRL.RatePerMinute,
 		})
 		a.logger.Info("ipfilter enabled", LogFields{}, nil)
 

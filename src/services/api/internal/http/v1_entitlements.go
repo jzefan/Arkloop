@@ -253,14 +253,27 @@ func deleteEntitlementOverride(
 		return
 	}
 
+	invalidateKey := ""
+	if entitlementService != nil {
+		overrides, err := entitlementsRepo.ListOverridesByOrg(r.Context(), orgID)
+		if err == nil {
+			for _, o := range overrides {
+				if o.ID == overrideID {
+					invalidateKey = o.Key
+					break
+				}
+			}
+		}
+	}
+
 	if err := entitlementsRepo.DeleteOverride(r.Context(), overrideID, orgID); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	// 无法精确知道 key，对整个 org 不做缓存失效（或可扩展为先查再删）
-	// 这里选择简单方案：让缓存自然过期（TTL 5min）
-	_ = entitlementService
+	if entitlementService != nil && invalidateKey != "" {
+		entitlementService.InvalidateCache(r.Context(), orgID, invalidateKey)
+	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
 }

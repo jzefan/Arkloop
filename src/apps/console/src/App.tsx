@@ -31,6 +31,7 @@ import { EmailPage } from './pages/email/EmailPage'
 import { TitleSummarizerPage } from './pages/title-summarizer/TitleSummarizerPage'
 import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
+import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
 import {
   readAccessTokenFromStorage,
   writeAccessTokenToStorage,
@@ -116,7 +117,7 @@ function App() {
         {/* Billing */}
         <Route path="plans" element={<PlaceholderPage title="Plans" />} />
         <Route path="subscriptions" element={<PlaceholderPage title="Subscriptions" />} />
-        <Route path="entitlements" element={<PlaceholderPage title="Entitlements" />} />
+        <Route path="entitlements" element={<EntitlementsPage />} />
         <Route path="usage" element={<UsagePage />} />
         <Route path="my-usage" element={<MyUsagePage />} />
         {/* Platform */}
