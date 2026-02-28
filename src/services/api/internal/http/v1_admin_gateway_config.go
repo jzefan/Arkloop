@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	nethttp "net/http"
@@ -20,9 +21,14 @@ const (
 	settingGatewayIPMode              = "gateway.ip_mode"
 	settingGatewayTrustedCIDRs        = "gateway.trusted_cidrs"
 	settingGatewayRiskRejectThreshold = "gateway.risk_reject_threshold"
+	settingGatewayRateLimitCapacity   = "gateway.ratelimit_capacity"
+	settingGatewayRateLimitPerMinute  = "gateway.ratelimit_rate_per_minute"
 
 	// gatewayConfigRedisKey 与 gateway 服务约定的 Redis key
 	gatewayConfigRedisKey = "arkloop:gateway:config"
+
+	defaultGatewayRateLimitCapacity  = 600.0
+	defaultGatewayRateLimitPerMinute = 300.0
 )
 
 var validIPModes = map[string]struct{}{
@@ -35,12 +41,16 @@ type gatewayConfigResponse struct {
 	IPMode              string   `json:"ip_mode"`
 	TrustedCIDRs        []string `json:"trusted_cidrs"`
 	RiskRejectThreshold int      `json:"risk_reject_threshold"`
+	RateLimitCapacity   float64  `json:"rate_limit_capacity"`
+	RateLimitPerMinute  float64  `json:"rate_limit_per_minute"`
 }
 
 type updateGatewayConfigRequest struct {
 	IPMode              string   `json:"ip_mode"`
 	TrustedCIDRs        []string `json:"trusted_cidrs"`
 	RiskRejectThreshold *int     `json:"risk_reject_threshold"`
+	RateLimitCapacity   *float64 `json:"rate_limit_capacity"`
+	RateLimitPerMinute  *float64 `json:"rate_limit_per_minute"`
 }
 
 func adminGatewayConfigEntry(
@@ -127,6 +137,12 @@ func validateGatewayConfig(body updateGatewayConfigRequest) error {
 			return fmt.Errorf("risk_reject_threshold must be 0-100")
 		}
 	}
+	if body.RateLimitCapacity != nil && *body.RateLimitCapacity <= 0 {
+		return fmt.Errorf("rate_limit_capacity must be positive")
+	}
+	if body.RateLimitPerMinute != nil && *body.RateLimitPerMinute <= 0 {
+		return fmt.Errorf("rate_limit_per_minute must be positive")
+	}
 
 	return nil
 }
@@ -150,14 +166,28 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			return err
 		}
 	}
+	if body.RateLimitCapacity != nil {
+		val := strconv.FormatFloat(*body.RateLimitCapacity, 'f', -1, 64)
+		if _, err := settingsRepo.Set(ctx, settingGatewayRateLimitCapacity, val); err != nil {
+			return err
+		}
+	}
+	if body.RateLimitPerMinute != nil {
+		val := strconv.FormatFloat(*body.RateLimitPerMinute, 'f', -1, 64)
+		if _, err := settingsRepo.Set(ctx, settingGatewayRateLimitPerMinute, val); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
 
 func loadGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsRepository) (*gatewayConfigResponse, error) {
 	cfg := &gatewayConfigResponse{
-		IPMode:       "direct",
-		TrustedCIDRs: []string{},
+		IPMode:             "direct",
+		TrustedCIDRs:       []string{},
+		RateLimitCapacity:  defaultGatewayRateLimitCapacity,
+		RateLimitPerMinute: defaultGatewayRateLimitPerMinute,
 	}
 
 	if s, err := settingsRepo.Get(ctx, settingGatewayIPMode); err != nil {
@@ -183,6 +213,20 @@ func loadGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			cfg.RiskRejectThreshold = v
 		}
 	}
+	if s, err := settingsRepo.Get(ctx, settingGatewayRateLimitCapacity); err != nil {
+		return nil, err
+	} else if s != nil {
+		if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+			cfg.RateLimitCapacity = v
+		}
+	}
+	if s, err := settingsRepo.Get(ctx, settingGatewayRateLimitPerMinute); err != nil {
+		return nil, err
+	} else if s != nil {
+		if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+			cfg.RateLimitPerMinute = v
+		}
+	}
 
 	return cfg, nil
 }
@@ -192,6 +236,8 @@ type gatewayRedisPayload struct {
 	IPMode              string   `json:"ip_mode,omitempty"`
 	TrustedCIDRs        []string `json:"trusted_cidrs,omitempty"`
 	RiskRejectThreshold int      `json:"risk_reject_threshold,omitempty"`
+	RateLimitCapacity   float64  `json:"rate_limit_capacity,omitempty"`
+	RateLimitPerMinute  float64  `json:"rate_limit_per_minute,omitempty"`
 }
 
 func pushGatewayConfigToRedis(ctx context.Context, rdb *redis.Client, body updateGatewayConfigRequest) error {
@@ -201,6 +247,12 @@ func pushGatewayConfigToRedis(ctx context.Context, rdb *redis.Client, body updat
 	}
 	if body.RiskRejectThreshold != nil {
 		payload.RiskRejectThreshold = *body.RiskRejectThreshold
+	}
+	if body.RateLimitCapacity != nil {
+		payload.RateLimitCapacity = *body.RateLimitCapacity
+	}
+	if body.RateLimitPerMinute != nil {
+		payload.RateLimitPerMinute = *body.RateLimitPerMinute
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

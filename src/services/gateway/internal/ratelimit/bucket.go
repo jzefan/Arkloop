@@ -65,13 +65,20 @@ return {allowed and 1 or 0, math.floor(tokens), retry_after, math.floor(capacity
 // TokenBucket 是基于 Redis 的 token bucket 限流器。
 type TokenBucket struct {
 	rdb      *redis.Client
-	capacity float64
-	rate     float64        // tokens per second
+	capacity float64        // fallback capacity
+	rate     float64        // fallback tokens per second
+	provider func() Config  // 可选动态配置
 	now      func() float64 // 返回 Unix 时间（秒，浮点），可注入以便测试
 }
 
 // NewTokenBucket 创建一个 token bucket。cfg.Capacity 和 cfg.RatePerSecond() 决定限流参数。
 func NewTokenBucket(rdb *redis.Client, cfg Config) (*TokenBucket, error) {
+	return NewTokenBucketWithProvider(rdb, cfg, nil)
+}
+
+// NewTokenBucketWithProvider 创建可选动态配置的 token bucket。
+// provider 返回值非法时回退到 cfg。
+func NewTokenBucketWithProvider(rdb *redis.Client, cfg Config, provider func() Config) (*TokenBucket, error) {
 	if rdb == nil {
 		return nil, fmt.Errorf("redis client must not be nil")
 	}
@@ -85,6 +92,7 @@ func NewTokenBucket(rdb *redis.Client, cfg Config) (*TokenBucket, error) {
 		rdb:      rdb,
 		capacity: cfg.Capacity,
 		rate:     cfg.RatePerSecond(),
+		provider: provider,
 		now:      func() float64 { return float64(time.Now().UnixNano()) / 1e9 },
 	}, nil
 }
@@ -92,10 +100,21 @@ func NewTokenBucket(rdb *redis.Client, cfg Config) (*TokenBucket, error) {
 // Consume 从指定 key 的 bucket 消耗一个 token。
 func (b *TokenBucket) Consume(ctx context.Context, key string) (ConsumeResult, error) {
 	now := b.now()
+	capacity := b.capacity
+	rate := b.rate
+	if b.provider != nil {
+		cfg := b.provider()
+		if cfg.Capacity > 0 {
+			capacity = cfg.Capacity
+		}
+		if cfg.RatePerMinute > 0 {
+			rate = cfg.RatePerSecond()
+		}
+	}
 
 	result, err := tokenBucketScript.Run(ctx, b.rdb, []string{key},
-		fmt.Sprintf("%g", b.capacity),
-		fmt.Sprintf("%g", b.rate),
+		fmt.Sprintf("%g", capacity),
+		fmt.Sprintf("%g", rate),
 		fmt.Sprintf("%.6f", now),
 	).Slice()
 	if err != nil {

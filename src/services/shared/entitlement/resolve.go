@@ -176,7 +176,17 @@ func (r *Resolver) resolveFromDB(ctx context.Context, orgID uuid.UUID, key strin
 		return planVal, nil
 	}
 
-	// 3. 平台默认值
+	// 3. 平台设置（可覆盖硬编码默认值）
+	var settingVal string
+	err = r.pool.QueryRow(ctx,
+		`SELECT value FROM platform_settings WHERE key = $1 LIMIT 1`,
+		key,
+	).Scan(&settingVal)
+	if err == nil {
+		return settingVal, nil
+	}
+
+	// 4. 平台默认值
 	if def, ok := defaults[key]; ok {
 		return def.raw, nil
 	}

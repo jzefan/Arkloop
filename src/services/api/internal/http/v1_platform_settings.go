@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"strings"
 
 	nethttp "net/http"
@@ -8,6 +9,8 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type platformSettingResponse struct {
@@ -64,6 +67,7 @@ func platformSettingEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	settingsRepo *data.PlatformSettingsRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -115,6 +119,9 @@ func platformSettingEntry(
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
+			if shouldInvalidateEntitlementCache(key) {
+				invalidateEntitlementCacheByKey(r.Context(), rdb, key)
+			}
 			writeJSON(w, traceID, nethttp.StatusOK, platformSettingResponse{
 				Key:       setting.Key,
 				Value:     setting.Value,
@@ -126,10 +133,51 @@ func platformSettingEntry(
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
+			if shouldInvalidateEntitlementCache(key) {
+				invalidateEntitlementCacheByKey(r.Context(), rdb, key)
+			}
 			w.WriteHeader(nethttp.StatusNoContent)
 
 		default:
 			writeMethodNotAllowed(w, r)
+		}
+	}
+}
+
+func shouldInvalidateEntitlementCache(key string) bool {
+	switch {
+	case strings.HasPrefix(key, "quota."):
+		return true
+	case strings.HasPrefix(key, "limit."):
+		return true
+	case strings.HasPrefix(key, "feature."):
+		return true
+	case strings.HasPrefix(key, "invite."):
+		return true
+	case strings.HasPrefix(key, "credit."):
+		return true
+	default:
+		return false
+	}
+}
+
+func invalidateEntitlementCacheByKey(ctx context.Context, rdb *redis.Client, key string) {
+	if rdb == nil {
+		return
+	}
+	pattern := "arkloop:entitlement:*:" + key
+	var cursor uint64
+	for {
+		keys, next, err := rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return
+		}
+		if len(keys) > 0 {
+			_ = rdb.Del(ctx, keys...).Err()
+		}
+		cursor = next
+		if cursor == 0 {
+			return
 		}
 	}
 }

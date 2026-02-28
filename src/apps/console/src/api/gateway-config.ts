@@ -4,12 +4,16 @@ export type GatewayConfig = {
   ip_mode: 'direct' | 'cloudflare' | 'trusted_proxy'
   trusted_cidrs: string[]
   risk_reject_threshold: number
+  rate_limit_capacity: number
+  rate_limit_per_minute: number
 }
 
 export type UpdateGatewayConfigRequest = {
   ip_mode: string
   trusted_cidrs: string[]
-  risk_reject_threshold: number
+  risk_reject_threshold?: number
+  rate_limit_capacity?: number
+  rate_limit_per_minute?: number
 }
 
 export async function getGatewayConfig(accessToken: string): Promise<GatewayConfig> {
