@@ -92,7 +92,15 @@ func (l *Loop) Run(
 			return err
 		}
 
+		hasToolCalls := len(turn.ToolCalls) > 0
 		for _, event := range turn.Events {
+			// 当 turn 同时产生了 tool calls 时，跳过非 thinking 的 message.delta，
+			// 避免 LLM echo 出的工具参数 JSON 被累积到最终消息内容中
+			if hasToolCalls && event.Type == "message.delta" {
+				if ch, _ := event.DataJSON["channel"].(string); ch == "" {
+					continue
+				}
+			}
 			if err := yield(event); err != nil {
 				return err
 			}
@@ -409,7 +417,6 @@ func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {
 func toolResultMessage(result llm.StreamToolResult) llm.Message {
 	envelope := map[string]any{
 		"tool_call_id": result.ToolCallID,
-		"tool_name":    result.ToolName,
 	}
 	if result.ResultJSON != nil {
 		envelope["result"] = result.ResultJSON
