@@ -9,11 +9,12 @@ import { SearchTimeline, type SearchStep } from './SearchTimeline'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
 import { ShareModal } from './ShareModal'
+import { ReportModal } from './ReportModal'
 import { NotificationBell } from './NotificationBell'
 import { SourcesPanel } from './SourcesPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
-import { selectFreshRunEvents } from '../runEventProcessing'
+import { buildMessageThinkingFromRunEvents, selectFreshRunEvents } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
 import {
   createMessage,
@@ -24,12 +25,28 @@ import {
   editMessage,
   forkThread,
   listMessages,
+  listRunEvents,
   listThreadRuns,
   isApiError,
   type MessageResponse,
   type ThreadResponse,
 } from '../api'
-import { type SelectedTier, isSearchThreadId, readMessageSources, writeMessageSources, readMessageArtifacts, writeMessageArtifacts, readMessageCodeExecutions, writeMessageCodeExecutions, type WebSource, type ArtifactRef, type CodeExecutionRef } from '../storage'
+import {
+  type SelectedTier,
+  isSearchThreadId,
+  readMessageSources,
+  writeMessageSources,
+  readMessageArtifacts,
+  writeMessageArtifacts,
+  readMessageCodeExecutions,
+  writeMessageCodeExecutions,
+  readMessageThinking,
+  writeMessageThinking,
+  type WebSource,
+  type ArtifactRef,
+  type CodeExecutionRef,
+  type MessageThinkingRef,
+} from '../storage'
 
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
@@ -93,6 +110,7 @@ export function ChatPage() {
   const [checkInDraft, setCheckInDraft] = useState('')
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [reportModalOpen, setReportModalOpen] = useState(false)
   const [pendingIncognito, setPendingIncognito] = useState(false)
 
   // web 引用来源：messageId -> WebSource[]
@@ -105,6 +123,8 @@ export function ChatPage() {
   // 代码执行记录：messageId -> CodeExecutionRef[]
   const [messageCodeExecutionsMap, setMessageCodeExecutionsMap] = useState<Map<string, CodeExecutionRef[]>>(new Map())
   const currentRunCodeExecutionsRef = useRef<CodeExecutionRef[]>([])
+  // 思考过程缓存：messageId -> thinking snapshot
+  const [messageThinkingMap, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 关闭动画期间保留上一次的数据
@@ -114,8 +134,10 @@ export function ChatPage() {
   type Segment = { segmentId: string; kind: string; mode: string; label: string; content: string; isStreaming: boolean; codeExecutions: CodeExecution[] }
   const [segments, setSegments] = useState<Segment[]>([])
   const activeSegmentIdRef = useRef<string | null>(null)
+  const segmentsRef = useRef<Segment[]>([])
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
+  const thinkingDraftRef = useRef('')
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
   // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
@@ -127,13 +149,44 @@ export function ChatPage() {
   const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
   const pendingMessageRef = useRef<string | null>(null)
+  // 仅在当前 run 的 SSE 确认进入过连接态后，才允许触发终端兜底。
+  const sseTerminalFallbackRunIdRef = useRef<string | null>(null)
+  const sseTerminalFallbackArmedRef = useRef(false)
   // 用户是否停留在底部区域（距底部 80px 以内视为"在底部"）
   const isAtBottomRef = useRef(true)
+
+  useEffect(() => {
+    segmentsRef.current = segments
+  }, [segments])
+
+  useEffect(() => {
+    thinkingDraftRef.current = thinkingDraft
+  }, [thinkingDraft])
 
   const handleScrollContainerScroll = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
     isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
+  }, [])
+
+  const buildLiveThinkingSnapshot = useCallback((): MessageThinkingRef | null => {
+    const liveSegments = segmentsRef.current
+      .filter((s) => s.mode !== 'hidden' && s.content.trim() !== '')
+      .map((s) => ({
+        segmentId: s.segmentId,
+        kind: s.kind,
+        mode: s.mode,
+        label: s.label,
+        content: s.content,
+      }))
+    const liveThinking = thinkingDraftRef.current
+    if (liveSegments.length === 0 && liveThinking.trim() === '') {
+      return null
+    }
+    return {
+      thinkingText: liveThinking,
+      segments: liveSegments,
+    }
   }, [])
 
   const sse = useSSE({ runId: activeRunId ?? '', accessToken, baseUrl })
@@ -202,6 +255,7 @@ export function ChatPage() {
         const sourcesMap = new Map<string, WebSource[]>()
         const artifactsMap = new Map<string, ArtifactRef[]>()
         const codeExecMap = new Map<string, CodeExecutionRef[]>()
+        const thinkingMap = new Map<string, MessageThinkingRef>()
         for (const msg of items) {
           if (msg.role === 'assistant') {
             const cached = readMessageSources(msg.id)
@@ -210,11 +264,31 @@ export function ChatPage() {
             if (cachedArt) artifactsMap.set(msg.id, cachedArt)
             const cachedExec = readMessageCodeExecutions(msg.id)
             if (cachedExec) codeExecMap.set(msg.id, cachedExec)
+            const cachedThinking = readMessageThinking(msg.id)
+            if (cachedThinking) thinkingMap.set(msg.id, cachedThinking)
           }
         }
+
+        // 服务端回放：若本地无思考缓存，则回放最新 run 的事件重建
+        const latest = runs[0]
+        const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
+        if (latest && latest.status !== 'running' && lastAssistant && !thinkingMap.has(lastAssistant.id)) {
+          try {
+            const replayEvents = await listRunEvents(accessToken, latest.run_id, { follow: false })
+            const thinking = buildMessageThinkingFromRunEvents(replayEvents)
+            if (thinking) {
+              thinkingMap.set(lastAssistant.id, thinking)
+              writeMessageThinking(lastAssistant.id, thinking)
+            }
+          } catch {
+            // 回放失败不影响主流程
+          }
+        }
+
         setMessageSourcesMap(sourcesMap)
         setMessageArtifactsMap(artifactsMap)
         setMessageCodeExecutionsMap(codeExecMap)
+        setMessageThinkingMap(thinkingMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
@@ -222,7 +296,6 @@ export function ChatPage() {
           setActiveRunId(locationState.initialRunId)
           if (threadId) onRunStarted(threadId)
         } else {
-          const latest = runs[0]
           const isRunning = latest?.status === 'running'
           setActiveRunId(isRunning ? latest.run_id : null)
           if (isRunning && threadId) onRunStarted(threadId)
@@ -262,6 +335,7 @@ export function ChatPage() {
     setMessageSourcesMap(new Map())
     setMessageArtifactsMap(new Map())
     setMessageCodeExecutionsMap(new Map())
+    setMessageThinkingMap(new Map())
     setSourcePanelMessageId(null)
     sse.disconnect()
     sse.clearEvents()
@@ -282,6 +356,8 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    sseTerminalFallbackRunIdRef.current = activeRunId
+    sseTerminalFallbackArmedRef.current = false
     sse.reset()
     sse.connect()
     processedEventCountRef.current = 0
@@ -298,6 +374,23 @@ export function ChatPage() {
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRunId])
+
+  // 避免上一轮 run 的 closed/error 状态误触发当前 run 的终端兜底。
+  useEffect(() => {
+    if (!activeRunId) {
+      sseTerminalFallbackRunIdRef.current = null
+      sseTerminalFallbackArmedRef.current = false
+      return
+    }
+    if (
+      sse.state === 'connecting' ||
+      sse.state === 'connected' ||
+      sse.state === 'reconnecting'
+    ) {
+      sseTerminalFallbackRunIdRef.current = activeRunId
+      sseTerminalFallbackArmedRef.current = true
+    }
+  }, [activeRunId, sse.state])
 
   // 页面从后台回到前台时，若 SSE 已断开则重连
   useEffect(() => {
@@ -421,6 +514,35 @@ export function ChatPage() {
             setTopLevelCodeExecutions((prev) => [...prev, entry])
           }
         }
+        // 搜索模式：web_search tool.call 驱动 SearchTimeline
+        if (isSearchThread && toolName === 'web_search') {
+          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
+          const args = obj.arguments as Record<string, unknown> | undefined
+          const query = typeof args?.query === 'string' ? args.query : undefined
+          const queries = Array.isArray(args?.queries)
+            ? (args.queries as unknown[]).filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
+            : undefined
+          const displayQueries = queries && queries.length > 0
+            ? queries
+            : query
+              ? [query]
+              : undefined
+          // 首次 web_search 调用时插入 planning 步骤
+          setSearchSteps((prev) => {
+            const steps: SearchStep[] = []
+            if (prev.length === 0) {
+              steps.push({ id: `plan-${callId}`, kind: 'planning', label: 'Analyzing query', status: 'done' })
+            }
+            steps.push({
+              id: callId,
+              kind: 'searching',
+              label: 'Searching',
+              status: 'active',
+              queries: displayQueries,
+            })
+            return [...prev, ...steps]
+          })
+        }
         continue
       }
 
@@ -438,6 +560,13 @@ export function ChatPage() {
               }))
               .filter((s) => !!s.url)
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
+          }
+          // 搜索模式：标记 searching 步骤完成
+          if (isSearchThread) {
+            const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+            setSearchSteps((prev) =>
+              prev.map((s) => s.id === callId ? { ...s, status: 'done' as const } : s),
+            )
           }
         }
         // 检测 sandbox 执行产物
@@ -494,6 +623,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.completed') {
+        const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
         setAssistantDraft('')
@@ -504,11 +634,17 @@ export function ChatPage() {
         // 搜索模式：添加 Finished 步骤，保留 searchSteps 不清除
         // （下次 run 开始时 SSE connect effect 自动清除）
         if (isSearchThread) {
-          setSearchSteps((prev) =>
-            prev.length > 0
-              ? [...prev, { id: 'finished', kind: 'finished', label: 'Finished', status: 'done' }]
-              : prev,
-          )
+          setSearchSteps((prev) => {
+            if (prev.length === 0) return prev
+            const steps = [...prev]
+            // 如果最后一个搜索步骤不是 reviewing，插入 reviewing
+            const lastNonFinished = steps.filter((s) => s.kind !== 'finished').at(-1)
+            if (lastNonFinished && lastNonFinished.kind !== 'reviewing') {
+              steps.push({ id: 'reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' })
+            }
+            steps.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
+            return steps
+          })
         }
         setQueuedDraft(null)
         setAwaitingInput(false)
@@ -536,6 +672,10 @@ export function ChatPage() {
             if (runCodeExecs.length > 0) {
               writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
               setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
+            }
+            if (runThinking) {
+              writeMessageThinking(lastAssistant.id, runThinking)
+              setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
             }
           }
           const pending = pendingMessageRef.current
@@ -599,10 +739,15 @@ export function ChatPage() {
   useEffect(() => {
     if (!activeRunId) return
     if (sse.state !== 'closed' && sse.state !== 'error') return
+    if (!sseTerminalFallbackArmedRef.current) return
+    if (sseTerminalFallbackRunIdRef.current !== activeRunId) return
 
     // run.completed 等终端事件处理中会同步 setActiveRunId(null)，
     // React 批量更新后 activeRunId 已经为 null，不会到达此处。
     // 到达此处说明 SSE 关闭时确实没有处理过终端事件。
+    sseTerminalFallbackArmedRef.current = false
+    sseTerminalFallbackRunIdRef.current = null
+    const runThinking = buildLiveThinkingSnapshot()
     const runSources = [...currentRunSourcesRef.current]
     const runArtifacts = [...currentRunArtifactsRef.current]
     const runCodeExecs = [...currentRunCodeExecutionsRef.current]
@@ -643,9 +788,13 @@ export function ChatPage() {
           writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
           setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
         }
+        if (runThinking) {
+          writeMessageThinking(lastAssistant.id, runThinking)
+          setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
+        }
       }
     })
-  }, [activeRunId, sse.state]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, sse.state, buildLiveThinkingSnapshot]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 初始加载完成后，将最后一条 user 消息滚动至顶部
   useEffect(() => {
@@ -664,7 +813,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, assistantDraft, thinkingDraft, segments])
+  }, [messages, assistantDraft, segments])
 
   // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
   const scrollToBottom = useCallback(() => {
@@ -1013,6 +1162,22 @@ export function ChatPage() {
                     </div>
                   )}
                   {/* 已完成消息的代码执行卡片 */}
+                  {msg.role === 'assistant' && messageThinkingMap.has(msg.id) && messageThinkingMap.get(msg.id)!.segments.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
+                      {messageThinkingMap.get(msg.id)!.segments.map((seg) => (
+                        <ThinkingBlock
+                          key={`${msg.id}-${seg.segmentId}`}
+                          kind={seg.kind}
+                          label={seg.label}
+                          mode={seg.mode as 'visible' | 'collapsed' | 'hidden'}
+                          content={seg.content}
+                          isStreaming={false}
+                          codeExecutions={[]}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* 已完成消息的代码执行卡片 */}
                   {msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
                       {messageCodeExecutionsMap.get(msg.id)!.map((ce) => (
@@ -1040,6 +1205,11 @@ export function ChatPage() {
                     onShare={
                       msg.role === 'assistant' && !isStreaming && !sending && threadId && !privateThreadIds.has(threadId)
                         ? () => setShareModalOpen(true)
+                        : undefined
+                    }
+                    onReport={
+                      msg.role === 'assistant' && !isStreaming && !sending && threadId
+                        ? () => setReportModalOpen(true)
                         : undefined
                     }
                     webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
@@ -1080,15 +1250,7 @@ export function ChatPage() {
                 />
               ))}
 
-              {thinkingDraft && (
-                <ThinkingBlock
-                  kind="thinking"
-                  label="思考过程"
-                  mode="collapsed"
-                  content={thinkingDraft}
-                  isStreaming={!!activeRunId}
-                />
-              )}
+
 
               {/* segment 外的顶层代码执行卡片（Ultra/Pro 模式） */}
               {topLevelCodeExecutions.length > 0 && (
@@ -1163,7 +1325,7 @@ export function ChatPage() {
 
       {/* 输入区域 */}
       <div
-        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${isPanelOpen ? '32px' : '60px'} 16px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10 }}
+        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${isPanelOpen ? '32px' : '60px'} 16px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)' }}
         className="flex w-full flex-col items-center gap-2"
       >
         {queuedDraft && (
@@ -1285,6 +1447,15 @@ export function ChatPage() {
           threadId={threadId}
           open={shareModalOpen}
           onClose={() => setShareModalOpen(false)}
+        />
+      )}
+
+      {threadId && (
+        <ReportModal
+          accessToken={accessToken}
+          threadId={threadId}
+          open={reportModalOpen}
+          onClose={() => setReportModalOpen(false)}
         />
       )}
     </div>

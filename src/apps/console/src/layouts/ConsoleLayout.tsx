@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } fro
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Play, ClipboardList,
+  Play, ClipboardList, AlertTriangle,
   KeyRound, Bot, FileText, Plug, Sparkles,
   Key, Webhook,
   ShieldCheck,
@@ -43,6 +43,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
         { label: t.nav.dashboard, path: '/dashboard', icon: <LayoutDashboard size={17} /> },
         { label: t.nav.runs,      path: '/runs',  icon: <Play size={17} /> },
         { label: t.nav.auditLogs, path: '/audit', icon: <ClipboardList size={17} /> },
+        { label: t.nav.reports,   path: '/reports', icon: <AlertTriangle size={17} /> },
       ],
     },
     {

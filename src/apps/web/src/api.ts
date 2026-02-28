@@ -6,6 +6,7 @@ import {
   clearRefreshTokenFromStorage,
   writeAccessTokenToStorage,
 } from './storage'
+import { parseSSEChunk, type RunEvent } from './sse'
 
 export type LoginRequest = {
   login: string
@@ -507,6 +508,65 @@ export async function listThreadRuns(
   )
 }
 
+export async function listRunEvents(
+  accessToken: string,
+  runId: string,
+  options?: { afterSeq?: number; follow?: boolean },
+): Promise<RunEvent[]> {
+  const sp = new URLSearchParams()
+  sp.set('follow', options?.follow === true ? 'true' : 'false')
+  sp.set('after_seq', String(options?.afterSeq ?? 0))
+
+  const response = await fetch(buildUrl(`/v1/runs/${runId}/events?${sp.toString()}`), {
+    method: 'GET',
+    headers: {
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  })
+
+  if (!response.ok) {
+    const headerTraceId = response.headers.get(TRACE_ID_HEADER) ?? undefined
+    const payload = await readJsonSafely(response)
+    if (payload && typeof payload === 'object') {
+      const env = payload as ErrorEnvelope
+      const traceId = typeof env.trace_id === 'string' ? env.trace_id : headerTraceId
+      const code = typeof env.code === 'string' ? env.code : undefined
+      const message =
+        typeof env.message === 'string'
+          ? env.message
+          : `请求失败（HTTP ${response.status}）`
+      throw new ApiError({
+        status: response.status,
+        message,
+        code,
+        traceId,
+        details: env.details,
+      })
+    }
+    throw new ApiError({
+      status: response.status,
+      message: `请求失败（HTTP ${response.status}）`,
+      traceId: headerTraceId,
+    })
+  }
+
+  const text = await response.text()
+  if (text.trim() === '') return []
+
+  const { events } = parseSSEChunk(text.endsWith('\n') ? text : `${text}\n`)
+  const runEvents: RunEvent[] = []
+  for (const event of events) {
+    if (!event.data) continue
+    try {
+      runEvents.push(JSON.parse(event.data) as RunEvent)
+    } catch {
+      // ignore malformed item
+    }
+  }
+  return runEvents
+}
+
 export type CancelRunResponse = {
   ok: boolean
 }
@@ -771,6 +831,19 @@ export async function deleteThreadShare(
   await apiFetch<void>(`/v1/threads/${threadId}:share`, {
     method: 'DELETE',
     accessToken,
+  })
+}
+
+export async function createThreadReport(
+  accessToken: string,
+  threadId: string,
+  categories: string[],
+  feedback?: string,
+): Promise<void> {
+  await apiFetch<void>(`/v1/threads/${threadId}:report`, {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({ categories, feedback: feedback || undefined }),
   })
 }
 

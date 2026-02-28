@@ -4,6 +4,7 @@ import { ConsoleLayout } from './layouts/ConsoleLayout'
 import { PageHeader } from './components/PageHeader'
 import { AuthPage } from './pages/AuthPage'
 import { AuditPage } from './pages/AuditPage'
+import { ReportsPage } from './pages/reports/ReportsPage'
 import { RunsPage } from './pages/RunsPage'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
 import { CredentialsPage } from './pages/credentials/CredentialsPage'
@@ -91,6 +92,7 @@ function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="audit" element={<AuditPage />} />
+        <Route path="reports" element={<ReportsPage />} />
         {/* Configuration */}
         <Route path="credentials" element={<CredentialsPage />} />
         <Route path="agent-configs" element={<AgentConfigsPage />} />
