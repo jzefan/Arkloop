@@ -6,19 +6,28 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
 	memoryFindLimit     = 5
 	memoryHighScoreL1   = 0.85 // 高分命中时额外拉 L1
 	memoryCommitTimeout = 120 * time.Second
+	memoryFindTimeout   = 5 * time.Second
+	// snapshotFindTimeout 用于 commit 后快照更新，允许稍长
+	snapshotFindTimeout = 15 * time.Second
 )
 
-// NewMemoryMiddleware 在 run 前注入长期记忆到 SystemPrompt，run 后异步归档对话。
+var snapshotRepo = data.MemorySnapshotRepository{}
+
+// NewMemoryMiddleware 在 run 前注入长期记忆到 SystemPrompt，run 后异步归档对话并快照到 PG。
 // provider 为 nil 时整个 middleware 为 no-op。
-func NewMemoryMiddleware(provider memory.MemoryProvider) RunMiddleware {
+// pool 为 nil 时跳过快照缓存，每次直接 Find。
+func NewMemoryMiddleware(provider memory.MemoryProvider, pool *pgxpool.Pool) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if provider == nil || rc.UserID == nil {
 			return next(ctx, rc)
@@ -37,16 +46,14 @@ func NewMemoryMiddleware(provider memory.MemoryProvider) RunMiddleware {
 
 		userQuery := lastUserMessageText(rc.Messages)
 
-		// 注入：有 query 才检索，避免空查询
 		if userQuery != "" {
-			injectMemory(ctx, rc, provider, ident, userQuery)
+			injectFromCacheOrFind(ctx, rc, provider, pool, ident, userQuery)
 		}
 
 		if err := next(ctx, rc); err != nil {
 			return err
 		}
 
-		// 提取：user 和 assistant 消息均存在时才写入
 		assistantOutput := strings.TrimSpace(rc.FinalAssistantOutput)
 		if userQuery != "" && assistantOutput != "" {
 			sessionID := rc.Run.ThreadID.String()
@@ -54,22 +61,42 @@ func NewMemoryMiddleware(provider memory.MemoryProvider) RunMiddleware {
 				{Role: "user", Content: userQuery},
 				{Role: "assistant", Content: assistantOutput},
 			}
-			go commitMemoryAsync(ident, provider, sessionID, msgs)
+			go commitAndSnapshotAsync(ident, provider, pool, sessionID, msgs, userQuery)
 		}
 
 		return nil
 	}
 }
 
-// injectMemory 调 Find，将检索结果组装成 memory block 追加到 rc.SystemPrompt 末尾。
-func injectMemory(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, ident memory.MemoryIdentity, query string) {
+// injectFromCacheOrFind 优先从 PG 快照读取记忆，缓存缺失时降级到 OpenViking Find。
+func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, pool *pgxpool.Pool, ident memory.MemoryIdentity, query string) {
+	if pool != nil {
+		block, found, err := snapshotRepo.Get(ctx, pool, ident.OrgID, ident.UserID, ident.AgentID)
+		if err != nil {
+			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
+		} else if found && strings.TrimSpace(block) != "" {
+			rc.SystemPrompt += block
+			return
+		}
+	}
+
+	findCtx, cancel := context.WithTimeout(ctx, memoryFindTimeout)
+	defer cancel()
+	block := renderMemoryBlock(findCtx, provider, ident, query)
+	if block != "" {
+		rc.SystemPrompt += block
+	}
+}
+
+// renderMemoryBlock 通过 OpenViking Find 构建 <memory> 块，返回空串表示无结果。
+func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, query string) string {
 	hits, err := provider.Find(ctx, ident, memory.MemoryScopeUser, query, memoryFindLimit)
 	if err != nil {
 		slog.WarnContext(ctx, "memory: find failed", "err", err.Error())
-		return
+		return ""
 	}
 	if len(hits) == 0 {
-		return
+		return ""
 	}
 
 	var sb strings.Builder
@@ -81,12 +108,10 @@ func injectMemory(ctx context.Context, rc *RunContext, provider memory.MemoryPro
 		sb.WriteString("- ")
 		sb.WriteString(hit.Abstract)
 
-		// 高分非叶节点额外拉 L1
 		if hit.Score >= memoryHighScoreL1 && !hit.IsLeaf {
 			overview, ovErr := provider.Content(ctx, ident, hit.URI, memory.MemoryLayerOverview)
 			if ovErr == nil && strings.TrimSpace(overview) != "" {
 				sb.WriteString("\n  ")
-				// 仅取 overview 首行，避免 token 暴涨
 				firstLine := strings.SplitN(strings.TrimSpace(overview), "\n", 2)[0]
 				sb.WriteString(firstLine)
 			}
@@ -96,15 +121,14 @@ func injectMemory(ctx context.Context, rc *RunContext, provider memory.MemoryPro
 	sb.WriteString("</memory>")
 
 	block := sb.String()
-	// 只有确实写了内容时才追加
-	if strings.TrimSpace(block) == "\n\n<memory>\n</memory>" {
-		return
+	if strings.TrimSpace(block) == "<memory>\n</memory>" {
+		return ""
 	}
-	rc.SystemPrompt += block
+	return block
 }
 
-// commitMemoryAsync 在独立 goroutine 中归档对话，不阻塞 run 返回。
-func commitMemoryAsync(ident memory.MemoryIdentity, provider memory.MemoryProvider, sessionID string, msgs []memory.MemoryMessage) {
+// commitAndSnapshotAsync 归档对话后快照最新记忆到 PG，供下次 run 直接读取。
+func commitAndSnapshotAsync(ident memory.MemoryIdentity, provider memory.MemoryProvider, pool *pgxpool.Pool, sessionID string, msgs []memory.MemoryMessage, lastQuery string) {
 	ctx, cancel := context.WithTimeout(context.Background(), memoryCommitTimeout)
 	defer cancel()
 
@@ -118,6 +142,26 @@ func commitMemoryAsync(ident memory.MemoryIdentity, provider memory.MemoryProvid
 	if err := provider.CommitSession(ctx, ident, sessionID); err != nil {
 		slog.Warn("memory: commit session failed",
 			"session_id", sessionID,
+			"err", err.Error(),
+		)
+		// commit 失败也尝试快照，因为记忆可能已部分更新
+	}
+
+	// commit 完成后立即快照最新记忆到 PG
+	if pool == nil {
+		return
+	}
+	snapCtx, snapCancel := context.WithTimeout(context.Background(), snapshotFindTimeout)
+	defer snapCancel()
+
+	block := renderMemoryBlock(snapCtx, provider, ident, lastQuery)
+	if block == "" {
+		return
+	}
+	if err := snapshotRepo.Upsert(snapCtx, pool, ident.OrgID, ident.UserID, ident.AgentID, block); err != nil {
+		slog.Warn("memory: snapshot upsert failed",
+			"org_id", ident.OrgID.String(),
+			"user_id", ident.UserID.String(),
 			"err", err.Error(),
 		)
 	}
