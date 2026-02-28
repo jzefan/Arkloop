@@ -832,3 +832,239 @@ end
 		t.Fatalf("expected error when provider is nil, got: %v", texts)
 	}
 }
+
+// --- context.emit tests ---
+
+func TestLuaExecutor_ContextEmit_Table(t *testing.T) {
+	evs := runLuaScript(t, `
+context.emit("run.segment.start", {
+  segment_id = "seg1",
+  kind = "search_planning",
+  display = { mode = "visible", label = "Testing" }
+})
+`, buildLuaRC(nil))
+
+	for _, ev := range evs {
+		if ev.Type == "run.segment.start" {
+			if ev.DataJSON["segment_id"] == "seg1" && ev.DataJSON["kind"] == "search_planning" {
+				display, ok := ev.DataJSON["display"].(map[string]any)
+				if ok && display["label"] == "Testing" {
+					return
+				}
+			}
+		}
+	}
+	t.Fatal("expected run.segment.start with segment_id=seg1")
+}
+
+func TestLuaExecutor_ContextEmit_JSONString(t *testing.T) {
+	evs := runLuaScript(t, `
+context.emit("run.segment.end", '{"segment_id":"seg1"}')
+`, buildLuaRC(nil))
+
+	for _, ev := range evs {
+		if ev.Type == "run.segment.end" && ev.DataJSON["segment_id"] == "seg1" {
+			return
+		}
+	}
+	t.Fatal("expected run.segment.end with segment_id=seg1")
+}
+
+func TestLuaExecutor_ContextEmit_InvalidJSON(t *testing.T) {
+	evs := runLuaScript(t, `
+local ok, err = context.emit("run.segment.start", "not json")
+if not ok then
+  context.set_output("emit_failed")
+end
+`, buildLuaRC(nil))
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "emit_failed" {
+		t.Fatalf("expected emit_failed, got: %v", texts)
+	}
+}
+
+// --- context.get extensions ---
+
+func TestLuaExecutor_ContextGet_SystemPrompt(t *testing.T) {
+	rc := buildLuaRC(nil)
+	rc.SystemPrompt = "You are a search assistant."
+	evs := runLuaScript(t, `
+context.set_output(context.get("system_prompt"))
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "You are a search assistant." {
+		t.Fatalf("expected system_prompt, got: %v", texts)
+	}
+}
+
+func TestLuaExecutor_ContextGet_Messages(t *testing.T) {
+	rc := buildLuaRC(nil)
+	rc.Messages = []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "hello"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "hi"}}},
+	}
+	evs := runLuaScript(t, `
+local msgs = context.get("messages")
+local parsed = json.decode(msgs)
+context.set_output(tostring(#parsed) .. ":" .. parsed[1].role)
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "2:user" {
+		t.Fatalf("expected '2:user', got: %v", texts)
+	}
+}
+
+// --- agent.generate tests ---
+
+func TestLuaExecutor_AgentGenerate_Basic(t *testing.T) {
+	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 1})
+	rc := buildLuaRC(gw)
+	evs := runLuaScript(t, `
+local out, err = agent.generate("system", "user input")
+if err then error(err) end
+context.set_output(out)
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "stub delta 1" {
+		t.Fatalf("expected 'stub delta 1', got: %v", texts)
+	}
+	// agent.generate 不应产生 message.delta 事件（只在最后 set_output 时产生）
+	deltasBeforeSetOutput := 0
+	for _, ev := range evs {
+		if ev.Type == "message.delta" {
+			deltasBeforeSetOutput++
+		}
+	}
+	if deltasBeforeSetOutput != 1 {
+		t.Fatalf("agent.generate should not yield message.delta, but got %d (1 from set_output)", deltasBeforeSetOutput)
+	}
+}
+
+func TestLuaExecutor_AgentGenerate_GatewayNil(t *testing.T) {
+	rc := buildLuaRC(nil)
+	evs := runLuaScript(t, `
+local out, err = agent.generate("sys", "msg")
+if err then
+  context.set_output("err:" .. err)
+end
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || !strings.HasPrefix(texts[0], "err:") {
+		t.Fatalf("expected error when gateway is nil, got: %v", texts)
+	}
+}
+
+func TestLuaExecutor_AgentGenerate_MaxTokens(t *testing.T) {
+	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 1})
+	rc := buildLuaRC(gw)
+	evs := runLuaScript(t, `
+local out, err = agent.generate("sys", "msg", {max_tokens = 256})
+if err then error(err) end
+context.set_output(out)
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 {
+		t.Fatal("expected output from agent.generate with max_tokens")
+	}
+}
+
+// --- agent.stream tests ---
+
+func TestLuaExecutor_AgentStream_StringMessage(t *testing.T) {
+	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 3})
+	rc := buildLuaRC(gw)
+	evs := runLuaScript(t, `
+local out, err = agent.stream("system prompt", "user query")
+if err then error(err) end
+-- out 应包含完整文本，不需要 set_output
+`, rc)
+
+	// agent.stream 应产生 message.delta 事件
+	var deltas []string
+	for _, ev := range evs {
+		if ev.Type == "message.delta" {
+			if d, ok := ev.DataJSON["content_delta"].(string); ok {
+				deltas = append(deltas, d)
+			}
+		}
+	}
+	if len(deltas) != 3 {
+		t.Fatalf("expected 3 message.delta from stream, got %d", len(deltas))
+	}
+}
+
+func TestLuaExecutor_AgentStream_MessagesTable(t *testing.T) {
+	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 2})
+	rc := buildLuaRC(gw)
+	evs := runLuaScript(t, `
+local msgs = {
+  {role = "user", content = "hello"},
+  {role = "assistant", content = "hi"},
+  {role = "user", content = "how are you"},
+}
+local out, err = agent.stream("system", msgs)
+if err then error(err) end
+`, rc)
+
+	var deltaCount int
+	for _, ev := range evs {
+		if ev.Type == "message.delta" {
+			deltaCount++
+		}
+	}
+	if deltaCount != 2 {
+		t.Fatalf("expected 2 message.delta, got %d", deltaCount)
+	}
+}
+
+func TestLuaExecutor_AgentStream_GatewayNil(t *testing.T) {
+	rc := buildLuaRC(nil)
+	evs := runLuaScript(t, `
+local out, err = agent.stream("sys", "msg")
+if err then
+  context.set_output("err:" .. err)
+end
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || !strings.HasPrefix(texts[0], "err:") {
+		t.Fatalf("expected error when gateway is nil, got: %v", texts)
+	}
+}
+
+// --- tools.call_parallel tests ---
+
+func TestLuaExecutor_ToolsCallParallel_EmptyCalls(t *testing.T) {
+	rc := buildLuaRC(nil)
+	evs := runLuaScript(t, `
+local results, errs = tools.call_parallel({})
+context.set_output(tostring(#results) .. ":" .. tostring(#errs))
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "0:0" {
+		t.Fatalf("expected '0:0', got: %v", texts)
+	}
+}
+
+func TestLuaExecutor_ToolsCallParallel_ExecutorNil(t *testing.T) {
+	rc := buildLuaRC(nil)
+	rc.ToolExecutor = nil
+	evs := runLuaScript(t, `
+local results, errs = tools.call_parallel({{name="web_search", args='{"query":"test"}'}})
+if results == nil then
+  context.set_output("nil_exec")
+end
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "nil_exec" {
+		t.Fatalf("expected 'nil_exec', got: %v", texts)
+	}
+}

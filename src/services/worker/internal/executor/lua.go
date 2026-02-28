@@ -83,15 +83,19 @@ func (rt *luaRuntime) register(L *lua.LState) {
 	L.SetField(agentTable, "run", L.NewFunction(rt.agentRun))
 	L.SetField(agentTable, "run_parallel", L.NewFunction(rt.agentRunParallel))
 	L.SetField(agentTable, "classify", L.NewFunction(rt.agentClassify))
+	L.SetField(agentTable, "generate", L.NewFunction(rt.agentGenerate))
+	L.SetField(agentTable, "stream", L.NewFunction(rt.agentStream))
 	L.SetGlobal("agent", agentTable)
 
 	toolsTable := L.NewTable()
 	L.SetField(toolsTable, "call", L.NewFunction(rt.toolsCall))
+	L.SetField(toolsTable, "call_parallel", L.NewFunction(rt.toolsCallParallel))
 	L.SetGlobal("tools", toolsTable)
 
 	contextTable := L.NewTable()
 	L.SetField(contextTable, "get", L.NewFunction(rt.contextGet))
 	L.SetField(contextTable, "set_output", L.NewFunction(rt.contextSetOutput))
+	L.SetField(contextTable, "emit", L.NewFunction(rt.contextEmit))
 	L.SetGlobal("context", contextTable)
 
 	jsonTable := L.NewTable()
@@ -401,8 +405,33 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 }
 
 // context.get(key) -> value（string 直接返回，其他类型 JSON marshal）
+// 额外支持 "system_prompt" 和 "messages" 读取 RunContext 字段。
 func (rt *luaRuntime) contextGet(L *lua.LState) int {
 	key := L.CheckString(1)
+
+	// RunContext 级字段优先
+	switch key {
+	case "system_prompt":
+		L.Push(lua.LString(rt.rc.SystemPrompt))
+		return 1
+	case "messages":
+		msgs := make([]map[string]any, 0, len(rt.rc.Messages))
+		for _, m := range rt.rc.Messages {
+			text := ""
+			for _, p := range m.Content {
+				text += p.Text
+			}
+			msgs = append(msgs, map[string]any{"role": m.Role, "content": text})
+		}
+		encoded, err := json.Marshal(msgs)
+		if err != nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(string(encoded)))
+		return 1
+	}
+
 	if rt.rc.InputJSON == nil {
 		L.Push(lua.LNil)
 		return 1
@@ -430,6 +459,388 @@ func (rt *luaRuntime) contextGet(L *lua.LState) int {
 func (rt *luaRuntime) contextSetOutput(L *lua.LState) int {
 	rt.output = L.CheckString(1)
 	return 0
+}
+
+// context.emit(event_type, data) -> (ok, err)
+// data 接受 Lua table（自动转 map）或 JSON string。
+func (rt *luaRuntime) contextEmit(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LFalse)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+
+	eventType := L.CheckString(1)
+	dataArg := L.CheckAny(2)
+
+	var data map[string]any
+	switch v := dataArg.(type) {
+	case *lua.LTable:
+		raw := luaToGoValue(v)
+		if m, ok := raw.(map[string]any); ok {
+			data = m
+		} else {
+			data = map[string]any{}
+		}
+	case lua.LString:
+		if err := json.Unmarshal([]byte(string(v)), &data); err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(fmt.Sprintf("context.emit: invalid JSON: %s", err.Error())))
+			return 2
+		}
+	default:
+		data = map[string]any{}
+	}
+
+	if err := rt.yield(rt.emitter.Emit(eventType, data, nil, nil)); err != nil {
+		L.Push(lua.LFalse)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	L.Push(lua.LTrue)
+	L.Push(lua.LNil)
+	return 2
+}
+
+// agent.generate(system_prompt, user_message, [opts]) -> (output, err)
+// 轻量级 LLM 调用，不创建子 Run，不 yield 事件。
+// opts: {max_tokens=number}
+func (rt *luaRuntime) agentGenerate(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+
+	if rt.rc.Gateway == nil || rt.rc.SelectedRoute == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("agent.generate not available: gateway not initialized"))
+		return 2
+	}
+
+	sysPrompt := L.CheckString(1)
+	userMessage := L.CheckString(2)
+
+	req := llm.Request{
+		Model: rt.rc.SelectedRoute.Route.Model,
+		Messages: []llm.Message{
+			{Role: "system", Content: []llm.TextPart{{Text: sysPrompt}}},
+			{Role: "user", Content: []llm.TextPart{{Text: userMessage}}},
+		},
+	}
+	if opts := L.OptTable(3, nil); opts != nil {
+		if mt := opts.RawGetString("max_tokens"); mt != lua.LNil {
+			if n, ok := mt.(lua.LNumber); ok {
+				v := int(n)
+				req.MaxOutputTokens = &v
+			}
+		}
+	}
+
+	var chunks []string
+	var streamFailed *llm.StreamRunFailed
+	sentinel := fmt.Errorf("stop")
+
+	err := rt.rc.Gateway.Stream(rt.ctx, req, func(ev llm.StreamEvent) error {
+		switch typed := ev.(type) {
+		case llm.StreamMessageDelta:
+			if typed.ContentDelta != "" {
+				chunks = append(chunks, typed.ContentDelta)
+			}
+		case llm.StreamRunFailed:
+			streamFailed = &typed
+			return sentinel
+		case llm.StreamRunCompleted:
+			return sentinel
+		}
+		return nil
+	})
+	if err != nil && err != sentinel {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if streamFailed != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(streamFailed.Error.Message))
+		return 2
+	}
+
+	L.Push(lua.LString(strings.TrimSpace(strings.Join(chunks, ""))))
+	L.Push(lua.LNil)
+	return 2
+}
+
+// agent.stream(system_prompt, messages, [opts]) -> (output, err)
+// 流式 LLM 调用，每个 delta 通过 yield 推送 message.delta 到前端。
+// messages: string（单条 user 消息）或 table（{role, content} 数组）。
+// opts: {max_tokens=number}
+func (rt *luaRuntime) agentStream(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+
+	if rt.rc.Gateway == nil || rt.rc.SelectedRoute == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("agent.stream not available: gateway not initialized"))
+		return 2
+	}
+
+	sysPrompt := L.CheckString(1)
+	messagesArg := L.CheckAny(2)
+
+	messages := []llm.Message{
+		{Role: "system", Content: []llm.TextPart{{Text: sysPrompt}}},
+	}
+
+	switch v := messagesArg.(type) {
+	case lua.LString:
+		messages = append(messages, llm.Message{
+			Role:    "user",
+			Content: []llm.TextPart{{Text: string(v)}},
+		})
+	case *lua.LTable:
+		n := v.Len()
+		for i := 1; i <= n; i++ {
+			item := v.RawGetInt(i)
+			tbl, ok := item.(*lua.LTable)
+			if !ok {
+				continue
+			}
+			role := ""
+			if r, ok := tbl.RawGetString("role").(lua.LString); ok {
+				role = string(r)
+			}
+			content := ""
+			if c, ok := tbl.RawGetString("content").(lua.LString); ok {
+				content = string(c)
+			}
+			if role != "" && content != "" {
+				messages = append(messages, llm.Message{
+					Role:    role,
+					Content: []llm.TextPart{{Text: content}},
+				})
+			}
+		}
+	default:
+		L.Push(lua.LNil)
+		L.Push(lua.LString("agent.stream: messages must be a string or table"))
+		return 2
+	}
+
+	req := llm.Request{
+		Model:    rt.rc.SelectedRoute.Route.Model,
+		Messages: messages,
+	}
+	if opts := L.OptTable(3, nil); opts != nil {
+		if mt := opts.RawGetString("max_tokens"); mt != lua.LNil {
+			if n, ok := mt.(lua.LNumber); ok {
+				v := int(n)
+				req.MaxOutputTokens = &v
+			}
+		}
+	}
+
+	var chunks []string
+	var streamFailed *llm.StreamRunFailed
+	sentinel := fmt.Errorf("stop")
+
+	err := rt.rc.Gateway.Stream(rt.ctx, req, func(ev llm.StreamEvent) error {
+		switch typed := ev.(type) {
+		case llm.StreamMessageDelta:
+			if typed.ContentDelta != "" {
+				chunks = append(chunks, typed.ContentDelta)
+				if yieldErr := rt.yield(rt.emitter.Emit("message.delta", typed.ToDataJSON(), nil, nil)); yieldErr != nil {
+					return yieldErr
+				}
+			}
+		case llm.StreamRunFailed:
+			streamFailed = &typed
+			return sentinel
+		case llm.StreamRunCompleted:
+			return sentinel
+		}
+		return nil
+	})
+	if err != nil && err != sentinel {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if streamFailed != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(streamFailed.Error.Message))
+		return 2
+	}
+
+	L.Push(lua.LString(strings.Join(chunks, "")))
+	L.Push(lua.LNil)
+	return 2
+}
+
+// tools.call_parallel(calls) -> (results, errors)
+// calls: {{name="tool_name", args='{"key":"val"}'}, ...}
+// 并行执行所有 tool 调用，事件通过 mutex 序列化推送。
+func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+
+	callsTable := L.CheckTable(1)
+	n := callsTable.Len()
+	if n == 0 {
+		L.Push(L.NewTable())
+		L.Push(L.NewTable())
+		return 2
+	}
+
+	if rt.rc.ToolExecutor == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("tools.call_parallel not available: tool executor not initialized"))
+		return 2
+	}
+	if n > maxParallelTasks {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(fmt.Sprintf("tools.call_parallel: count %d exceeds limit %d", n, maxParallelTasks)))
+		return 2
+	}
+
+	type callEntry struct {
+		name    string
+		args    map[string]any
+		argsRaw string
+	}
+
+	calls := make([]callEntry, n)
+	for i := 0; i < n; i++ {
+		v := callsTable.RawGetInt(i + 1)
+		tbl, ok := v.(*lua.LTable)
+		if !ok {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("calls[%d] must be a table", i+1)))
+			return 2
+		}
+		nameLV, ok := tbl.RawGetString("name").(lua.LString)
+		if !ok || string(nameLV) == "" {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("calls[%d].name must be a non-empty string", i+1)))
+			return 2
+		}
+		argsLV, ok := tbl.RawGetString("args").(lua.LString)
+		if !ok {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("calls[%d].args must be a JSON string", i+1)))
+			return 2
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(string(argsLV)), &args); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(fmt.Sprintf("calls[%d].args: invalid JSON: %s", i+1, err.Error())))
+			return 2
+		}
+		calls[i] = callEntry{name: string(nameLV), args: args, argsRaw: string(argsLV)}
+	}
+
+	type callResult struct {
+		resultJSON string
+		err        error
+	}
+	results := make([]callResult, n)
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i, c := range calls {
+		i, c := i, c
+		go func() {
+			defer wg.Done()
+			execCtx := tools.ExecutionContext{
+				RunID:     rt.rc.Run.ID,
+				TraceID:   rt.rc.TraceID,
+				OrgID:     &rt.rc.Run.OrgID,
+				ThreadID:  &rt.rc.Run.ThreadID,
+				UserID:    rt.rc.UserID,
+				AgentID:   agentIDFromSkill(rt.rc),
+				TimeoutMs: rt.rc.ToolTimeoutMs,
+				Budget:    rt.rc.ToolBudget,
+				Emitter:   rt.emitter,
+			}
+			result := rt.rc.ToolExecutor.Execute(rt.ctx, c.name, c.args, execCtx, "")
+
+			// 序列化事件推送
+			mu.Lock()
+			for _, ev := range result.Events {
+				_ = rt.yield(ev)
+			}
+			// 补发 tool.call（若 executor 未发射）
+			emittedCall := false
+			for _, ev := range result.Events {
+				if ev.Type == "tool.call" {
+					emittedCall = true
+					break
+				}
+			}
+			if !emittedCall {
+				_ = rt.yield(rt.emitter.Emit("tool.call", map[string]any{
+					"tool_name": c.name,
+					"arguments": c.args,
+				}, stringPtr(c.name), nil))
+			}
+			// 发射 tool.result
+			var errorClass *string
+			if result.Error != nil {
+				errorClass = stringPtr(result.Error.ErrorClass)
+			}
+			resultData := map[string]any{
+				"tool_name": c.name,
+			}
+			if result.ResultJSON != nil {
+				resultData["result"] = result.ResultJSON
+			}
+			if result.Error != nil {
+				resultData["error"] = map[string]any{
+					"error_class": result.Error.ErrorClass,
+					"message":     result.Error.Message,
+				}
+			}
+			_ = rt.yield(rt.emitter.Emit("tool.result", resultData, stringPtr(c.name), errorClass))
+			mu.Unlock()
+
+			if result.Error != nil {
+				results[i] = callResult{err: fmt.Errorf("%s", result.Error.Message)}
+			} else {
+				encoded, err := json.Marshal(result.ResultJSON)
+				if err != nil {
+					results[i] = callResult{err: err}
+				} else {
+					results[i] = callResult{resultJSON: string(encoded)}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	resultsTable := L.NewTable()
+	errorsTable := L.NewTable()
+	for i := 0; i < n; i++ {
+		if results[i].err != nil {
+			resultsTable.RawSetInt(i+1, lua.LNil)
+			errorsTable.RawSetInt(i+1, lua.LString(results[i].err.Error()))
+		} else {
+			resultsTable.RawSetInt(i+1, lua.LString(results[i].resultJSON))
+			errorsTable.RawSetInt(i+1, lua.LNil)
+		}
+	}
+
+	L.Push(resultsTable)
+	L.Push(errorsTable)
+	return 2
 }
 
 // memory.search(query, [scope], [limit]) -> (results_json, err)
