@@ -146,6 +146,26 @@ func (o *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+// GetWithContentType 下载对象并返回内容及 Content-Type。
+func (o *Store) GetWithContentType(ctx context.Context, key string) ([]byte, string, error) {
+	out, err := o.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("get object %q: %w", key, err)
+	}
+	defer out.Body.Close()
+
+	contentType := aws.ToString(out.ContentType)
+
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read object %q: %w", key, err)
+	}
+	return data, contentType, nil
+}
+
 // Delete 删除对象。
 func (o *Store) Delete(ctx context.Context, key string) error {
 	_, err := o.client.DeleteObject(ctx, &s3.DeleteObjectInput{

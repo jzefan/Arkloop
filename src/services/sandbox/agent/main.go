@@ -11,11 +11,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/mdlayher/vsock"
@@ -24,6 +28,11 @@ import (
 const (
 	listenPort   = 8080
 	maxCodeBytes = 4 * 1024 * 1024 // 4 MB
+
+	artifactOutputDir  = "/home/user/output"
+	maxArtifactFiles   = 5
+	maxArtifactBytes   = 5 * 1024 * 1024  // 单文件 5 MB
+	maxTotalArtifacts  = 10 * 1024 * 1024  // 总上限 10 MB
 )
 
 type ExecJob struct {
@@ -36,6 +45,32 @@ type ExecResult struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
+}
+
+// AgentRequest 是 v2 协议的请求格式，通过 action 字段区分操作类型。
+type AgentRequest struct {
+	Action  string   `json:"action"`            // "exec" | "fetch_artifacts"
+	ExecJob *ExecJob `json:"exec_job,omitempty"`
+}
+
+// AgentResponse 是 v2 协议的统一响应。
+type AgentResponse struct {
+	Action    string                `json:"action"`
+	Exec      *ExecResult           `json:"exec,omitempty"`
+	Artifacts *FetchArtifactsResult `json:"artifacts,omitempty"`
+	Error     string                `json:"error,omitempty"`
+}
+
+type ArtifactEntry struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"` // base64
+}
+
+type FetchArtifactsResult struct {
+	Artifacts []ArtifactEntry `json:"artifacts"`
+	Truncated bool            `json:"truncated"`
 }
 
 func main() {
@@ -67,14 +102,53 @@ func run() error {
 func handleConn(conn net.Conn) {
 	defer conn.Close()
 
-	var job ExecJob
-	if err := json.NewDecoder(conn).Decode(&job); err != nil {
-		writeResult(conn, ExecResult{Stderr: fmt.Sprintf("decode job: %v", err), ExitCode: 1})
+	// 读取原始 JSON 以判断协议版本
+	var raw json.RawMessage
+	if err := json.NewDecoder(conn).Decode(&raw); err != nil {
+		writeJSON(conn, ExecResult{Stderr: fmt.Sprintf("decode request: %v", err), ExitCode: 1})
 		return
 	}
 
+	// 尝试解析为 v2 协议（含 action 字段）
+	var req AgentRequest
+	if err := json.Unmarshal(raw, &req); err == nil && req.Action != "" {
+		handleV2(conn, req)
+		return
+	}
+
+	// 回退到 v1 协议：直接作为 ExecJob 处理
+	var job ExecJob
+	if err := json.Unmarshal(raw, &job); err != nil {
+		writeJSON(conn, ExecResult{Stderr: fmt.Sprintf("decode job: %v", err), ExitCode: 1})
+		return
+	}
+	ensureOutputDir()
 	result := executeJob(job)
-	writeResult(conn, result)
+	writeJSON(conn, result)
+}
+
+func handleV2(conn net.Conn, req AgentRequest) {
+	switch req.Action {
+	case "exec":
+		if req.ExecJob == nil {
+			writeJSON(conn, AgentResponse{Action: "exec", Error: "exec_job is required"})
+			return
+		}
+		ensureOutputDir()
+		result := executeJob(*req.ExecJob)
+		writeJSON(conn, AgentResponse{Action: "exec", Exec: &result})
+
+	case "fetch_artifacts":
+		result := fetchArtifacts()
+		writeJSON(conn, AgentResponse{Action: "fetch_artifacts", Artifacts: &result})
+
+	default:
+		writeJSON(conn, AgentResponse{Action: req.Action, Error: fmt.Sprintf("unknown action: %s", req.Action)})
+	}
+}
+
+func ensureOutputDir() {
+	_ = os.MkdirAll(artifactOutputDir, 0o755)
 }
 
 func executeJob(job ExecJob) ExecResult {
@@ -108,6 +182,9 @@ func executeJob(job ExecJob) ExecResult {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1
+			if stderr.Len() == 0 {
+				stderr.WriteString(err.Error())
+			}
 		}
 	}
 
@@ -118,17 +195,19 @@ func executeJob(job ExecJob) ExecResult {
 	}
 }
 
+const python3Bin = "/usr/local/bin/python3"
+
 // buildPythonCmd 将代码写入临时文件后执行，避免 -c 参数引号转义问题。
 func buildPythonCmd(ctx context.Context, code string) *exec.Cmd {
 	f, err := os.CreateTemp("", "exec-*.py")
 	if err != nil {
 		// 降级为 -c 模式
-		return exec.CommandContext(ctx, "python3", "-c", code)
+		return exec.CommandContext(ctx, python3Bin, "-c", code)
 	}
 	_, _ = f.WriteString(code)
 	_ = f.Close()
 
-	cmd := exec.CommandContext(ctx, "python3", f.Name())
+	cmd := exec.CommandContext(ctx, python3Bin, f.Name())
 	// 执行后清理临时文件
 	go func() {
 		<-ctx.Done()
@@ -137,6 +216,82 @@ func buildPythonCmd(ctx context.Context, code string) *exec.Cmd {
 	return cmd
 }
 
-func writeResult(conn net.Conn, result ExecResult) {
-	_ = json.NewEncoder(conn).Encode(result)
+func writeJSON(conn net.Conn, v any) {
+	_ = json.NewEncoder(conn).Encode(v)
+}
+
+func fetchArtifacts() FetchArtifactsResult {
+	entries, err := os.ReadDir(artifactOutputDir)
+	if err != nil {
+		return FetchArtifactsResult{}
+	}
+
+	var artifacts []ArtifactEntry
+	var totalSize int64
+	truncated := false
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if len(artifacts) >= maxArtifactFiles {
+			truncated = true
+			break
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		fileSize := info.Size()
+		if fileSize > maxArtifactBytes {
+			truncated = true
+			continue
+		}
+		if totalSize+fileSize > maxTotalArtifacts {
+			truncated = true
+			break
+		}
+
+		path := filepath.Join(artifactOutputDir, entry.Name())
+		data, err := readFileLimited(path, maxArtifactBytes)
+		if err != nil {
+			continue
+		}
+
+		mimeType := detectMimeType(entry.Name())
+		artifacts = append(artifacts, ArtifactEntry{
+			Filename: entry.Name(),
+			Size:     int64(len(data)),
+			MimeType: mimeType,
+			Data:     base64.StdEncoding.EncodeToString(data),
+		})
+		totalSize += int64(len(data))
+	}
+
+	if artifacts == nil {
+		artifacts = []ArtifactEntry{}
+	}
+	return FetchArtifactsResult{Artifacts: artifacts, Truncated: truncated}
+}
+
+func readFileLimited(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, limit+1))
+}
+
+func detectMimeType(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		return "application/octet-stream"
+	}
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		return "application/octet-stream"
+	}
+	return mimeType
 }

@@ -36,6 +36,7 @@ func run() error {
 
 	// 可选依赖：MinIO 快照存储 + Template 注册表
 	var snapshotStore storage.SnapshotStore
+	var artifactStore storage.ArtifactStore
 	var registry *template.Registry
 
 	if cfg.S3Endpoint != "" {
@@ -45,6 +46,13 @@ func run() error {
 			return err
 		}
 		snapshotStore = store
+
+		aStore, err := storage.NewMinIOArtifactStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey)
+		if err != nil {
+			return err
+		}
+		artifactStore = aStore
+		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
 	if cfg.TemplatesPath != "" {
@@ -98,7 +106,7 @@ func run() error {
 		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
 	})
 
-	handler := sandboxhttp.NewHandler(mgr, logger)
+	handler := sandboxhttp.NewHandler(mgr, artifactStore, logger)
 
 	application, err := app.NewApplication(cfg, logger, mgr)
 	if err != nil {
