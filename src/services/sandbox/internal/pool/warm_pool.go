@@ -372,7 +372,7 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 func (p *WarmPool) startFirecracker(apiSocket string) (*os.Process, error) {
 	cmd := exec.Command(p.cfg.FirecrackerBin,
 		"--api-sock", apiSocket,
-		"--log-level", "Error",
+		"--level", "Error",
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

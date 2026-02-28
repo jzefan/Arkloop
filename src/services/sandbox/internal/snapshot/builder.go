@@ -147,7 +147,7 @@ func (b *Builder) EnsureAll(ctx context.Context, registry *template.Registry) er
 
 // startProcess 以非阻塞方式启动 Firecracker 进程，返回 os.Process。
 func startProcess(firecrackerBin, apiSocket string) (*os.Process, error) {
-	cmd := exec.Command(firecrackerBin, "--api-sock", apiSocket, "--log-level", "Error")
+	cmd := exec.Command(firecrackerBin, "--api-sock", apiSocket, "--level", "Error")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

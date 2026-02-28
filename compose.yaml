@@ -220,6 +220,10 @@ services:
       ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
     volumes:
       - sandbox_sockets:/run/sandbox
+      - ./config/sandbox/templates.json:/opt/sandbox/templates.json:ro
+      - /usr/bin/firecracker:/usr/bin/firecracker:ro
+      - /opt/sandbox/vmlinux:/opt/sandbox/vmlinux:ro
+      - /opt/sandbox/rootfs:/opt/sandbox/rootfs:ro
     ports:
       - "${ARKLOOP_SANDBOX_PORT:-8002}:8002"
     healthcheck:
