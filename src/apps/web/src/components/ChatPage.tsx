@@ -6,6 +6,7 @@ import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
+import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { DebugFloatingPanel } from './DebugFloatingPanel'
 import { ShareModal } from './ShareModal'
@@ -42,10 +43,13 @@ import {
   writeMessageCodeExecutions,
   readMessageThinking,
   writeMessageThinking,
+  readMessageSearchSteps,
+  writeMessageSearchSteps,
   type WebSource,
   type ArtifactRef,
   type CodeExecutionRef,
   type MessageThinkingRef,
+  type MessageSearchStepRef,
 } from '../storage'
 
 function normalizeError(error: unknown): AppError {
@@ -79,6 +83,42 @@ type OutletContext = {
 }
 
 type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
+
+const SHOW_EXPLICIT_THINKING = false
+
+function buildHistoricalSearchSteps(userQuery?: string): SearchStep[] {
+  const query = userQuery?.trim()
+  return [
+    { id: 'history-plan', kind: 'planning', label: 'Analyzing query', status: 'done' },
+    {
+      id: 'history-search',
+      kind: 'searching',
+      label: 'Searching',
+      status: 'done',
+      queries: query ? [query] : undefined,
+    },
+    { id: 'history-reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' },
+    { id: 'history-finished', kind: 'finished', label: 'Finished', status: 'done' },
+  ]
+}
+
+function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
+  if (steps.length === 0) return []
+  const normalized: MessageSearchStepRef[] = steps.map((step) => ({
+    id: step.id,
+    kind: step.kind,
+    label: step.label,
+    status: 'done',
+    queries: step.queries ? [...step.queries] : undefined,
+  }))
+  if (!normalized.some((step) => step.kind === 'reviewing')) {
+    normalized.push({ id: 'reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' })
+  }
+  if (!normalized.some((step) => step.kind === 'finished')) {
+    normalized.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
+  }
+  return normalized
+}
 
 export function ChatPage() {
   const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito } = useOutletContext<OutletContext>()
@@ -124,7 +164,9 @@ export function ChatPage() {
   const [messageCodeExecutionsMap, setMessageCodeExecutionsMap] = useState<Map<string, CodeExecutionRef[]>>(new Map())
   const currentRunCodeExecutionsRef = useRef<CodeExecutionRef[]>([])
   // 思考过程缓存：messageId -> thinking snapshot
-  const [messageThinkingMap, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
+  const [, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
+  // Search 时间轴缓存：messageId -> steps
+  const [messageSearchStepsMap, setMessageSearchStepsMap] = useState<Map<string, MessageSearchStepRef[]>>(new Map())
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 关闭动画期间保留上一次的数据
@@ -142,6 +184,18 @@ export function ChatPage() {
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
   // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
   const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
+  const searchStepsRef = useRef<SearchStep[]>([])
+  const applySearchSteps = useCallback((updater: (prev: SearchStep[]) => SearchStep[]) => {
+    setSearchSteps((prev) => {
+      const next = updater(prev)
+      searchStepsRef.current = next
+      return next
+    })
+  }, [])
+  const resetSearchSteps = useCallback(() => {
+    searchStepsRef.current = []
+    setSearchSteps([])
+  }, [])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -256,6 +310,7 @@ export function ChatPage() {
         const artifactsMap = new Map<string, ArtifactRef[]>()
         const codeExecMap = new Map<string, CodeExecutionRef[]>()
         const thinkingMap = new Map<string, MessageThinkingRef>()
+        const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
         for (const msg of items) {
           if (msg.role === 'assistant') {
             const cached = readMessageSources(msg.id)
@@ -266,6 +321,8 @@ export function ChatPage() {
             if (cachedExec) codeExecMap.set(msg.id, cachedExec)
             const cachedThinking = readMessageThinking(msg.id)
             if (cachedThinking) thinkingMap.set(msg.id, cachedThinking)
+            const cachedSearchSteps = readMessageSearchSteps(msg.id)
+            if (cachedSearchSteps) searchStepsMap.set(msg.id, cachedSearchSteps)
           }
         }
 
@@ -289,6 +346,7 @@ export function ChatPage() {
         setMessageArtifactsMap(artifactsMap)
         setMessageCodeExecutionsMap(codeExecMap)
         setMessageThinkingMap(thinkingMap)
+        setMessageSearchStepsMap(searchStepsMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
@@ -323,7 +381,7 @@ export function ChatPage() {
     activeSegmentIdRef.current = null
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setSearchSteps([])
+    resetSearchSteps()
     setCancelSubmitting(false)
     setAwaitingInput(false)
     setCheckInDraft('')
@@ -336,6 +394,7 @@ export function ChatPage() {
     setMessageArtifactsMap(new Map())
     setMessageCodeExecutionsMap(new Map())
     setMessageThinkingMap(new Map())
+    setMessageSearchStepsMap(new Map())
     setSourcePanelMessageId(null)
     sse.disconnect()
     sse.clearEvents()
@@ -369,7 +428,7 @@ export function ChatPage() {
     activeSegmentIdRef.current = null
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setSearchSteps([])
+    resetSearchSteps()
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -436,7 +495,7 @@ export function ChatPage() {
           const queries = Array.isArray(display.queries)
             ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
             : undefined
-          setSearchSteps((prev) => [...prev, {
+          applySearchSteps((prev) => [...prev, {
             id: segmentId,
             kind: searchKind as SearchStep['kind'],
             label,
@@ -458,7 +517,7 @@ export function ChatPage() {
         setSegments((prev) =>
           prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
         )
-        setSearchSteps((prev) =>
+        applySearchSteps((prev) =>
           prev.map((s) => (s.id === segmentId ? { ...s, status: 'done' as const } : s)),
         )
         continue
@@ -528,7 +587,7 @@ export function ChatPage() {
               ? [query]
               : undefined
           // 首次 web_search 调用时插入 planning 步骤
-          setSearchSteps((prev) => {
+          applySearchSteps((prev) => {
             const steps: SearchStep[] = []
             if (prev.length === 0) {
               steps.push({ id: `plan-${callId}`, kind: 'planning', label: 'Analyzing query', status: 'done' })
@@ -564,7 +623,7 @@ export function ChatPage() {
           // 搜索模式：标记 searching 步骤完成
           if (isSearchThread) {
             const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
-            setSearchSteps((prev) =>
+            applySearchSteps((prev) =>
               prev.map((s) => s.id === callId ? { ...s, status: 'done' as const } : s),
             )
           }
@@ -631,21 +690,8 @@ export function ChatPage() {
         setTopLevelCodeExecutions([])
         setSegments([])
         activeSegmentIdRef.current = null
-        // 搜索模式：添加 Finished 步骤，保留 searchSteps 不清除
-        // （下次 run 开始时 SSE connect effect 自动清除）
-        if (isSearchThread) {
-          setSearchSteps((prev) => {
-            if (prev.length === 0) return prev
-            const steps = [...prev]
-            // 如果最后一个搜索步骤不是 reviewing，插入 reviewing
-            const lastNonFinished = steps.filter((s) => s.kind !== 'finished').at(-1)
-            if (lastNonFinished && lastNonFinished.kind !== 'reviewing') {
-              steps.push({ id: 'reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' })
-            }
-            steps.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
-            return steps
-          })
-        }
+        const runSearchSteps = isSearchThread ? finalizeSearchSteps(searchStepsRef.current) : []
+        if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
         setQueuedDraft(null)
         setAwaitingInput(false)
         setCheckInDraft('')
@@ -664,6 +710,10 @@ export function ChatPage() {
             if (runSources.length > 0) {
               writeMessageSources(lastAssistant.id, runSources)
               setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+            }
+            if (runSearchSteps.length > 0) {
+              writeMessageSearchSteps(lastAssistant.id, runSearchSteps)
+              setMessageSearchStepsMap((prev) => new Map(prev).set(lastAssistant.id, runSearchSteps))
             }
             if (runArtifacts.length > 0) {
               writeMessageArtifacts(lastAssistant.id, runArtifacts)
@@ -693,7 +743,7 @@ export function ChatPage() {
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
         setSegments([])
-        setSearchSteps([])
+        resetSearchSteps()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         setAwaitingInput(false)
@@ -711,7 +761,7 @@ export function ChatPage() {
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
         setSegments([])
-        setSearchSteps([])
+        resetSearchSteps()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         setAwaitingInput(false)
@@ -760,13 +810,8 @@ export function ChatPage() {
     setTopLevelCodeExecutions([])
     setSegments([])
     activeSegmentIdRef.current = null
-    if (isSearchThread) {
-      setSearchSteps((prev) =>
-        prev.length > 0
-          ? [...prev, { id: 'finished', kind: 'finished', label: 'Finished', status: 'done' }]
-          : prev,
-      )
-    }
+    const runSearchSteps = isSearchThread ? finalizeSearchSteps(searchStepsRef.current) : []
+    if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
     setQueuedDraft(null)
     setAwaitingInput(false)
     setCheckInDraft('')
@@ -779,6 +824,10 @@ export function ChatPage() {
         if (runSources.length > 0) {
           writeMessageSources(lastAssistant.id, runSources)
           setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+        }
+        if (runSearchSteps.length > 0) {
+          writeMessageSearchSteps(lastAssistant.id, runSearchSteps)
+          setMessageSearchStepsMap((prev) => new Map(prev).set(lastAssistant.id, runSearchSteps))
         }
         if (runArtifacts.length > 0) {
           writeMessageArtifacts(lastAssistant.id, runArtifacts)
@@ -1071,7 +1120,38 @@ export function ChatPage() {
     return -1
   }, [messages])
 
-  const sourcePanelSources = sourcePanelMessageId ? messageSourcesMap.get(sourcePanelMessageId) : undefined
+  const resolvedMessageSources = useMemo(() => {
+    return resolveMessageSourcesForRender(messages, messageSourcesMap)
+  }, [messages, messageSourcesMap])
+
+  const historicalTimelineMap = useMemo(() => {
+    const timelineMap = new Map<string, { steps: MessageSearchStepRef[]; sources: WebSource[] }>()
+    if (!isSearchThread) return timelineMap
+
+    messages.forEach((msg, idx) => {
+      if (msg.role !== 'assistant') return
+      const sources = resolvedMessageSources.get(msg.id)
+      if (!sources || sources.length === 0) return
+      const cachedSteps = messageSearchStepsMap.get(msg.id)
+      if (cachedSteps && cachedSteps.length > 0) {
+        timelineMap.set(msg.id, { steps: cachedSteps, sources })
+        return
+      }
+
+      let userQuery: string | undefined
+      for (let j = idx - 1; j >= 0; j--) {
+        if (messages[j].role === 'user') {
+          userQuery = messages[j].content
+          break
+        }
+      }
+      timelineMap.set(msg.id, { steps: buildHistoricalSearchSteps(userQuery), sources })
+    })
+
+    return timelineMap
+  }, [isSearchThread, messages, resolvedMessageSources, messageSearchStepsMap])
+
+  const sourcePanelSources = sourcePanelMessageId ? resolvedMessageSources.get(sourcePanelMessageId) : undefined
   const sourcePanelUserQuery = useMemo(() => {
     if (!sourcePanelMessageId) return undefined
     const idx = messages.findIndex((m) => m.id === sourcePanelMessageId)
@@ -1149,32 +1229,25 @@ export function ChatPage() {
             <div className="py-20 text-center text-sm text-[var(--c-text-muted)]">加载中...</div>
           ) : (
             <>
-              {messages.map((msg, idx) => (
-                <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
+              {messages.map((msg, idx) => {
+                const resolvedSources = msg.role === 'assistant' ? resolvedMessageSources.get(msg.id) : undefined
+                const canShowSources = !!(resolvedSources && resolvedSources.length > 0)
+                const timeline = msg.role === 'assistant' && isSearchThread
+                  ? historicalTimelineMap.get(msg.id)
+                  : undefined
+                const timelineSteps = timeline?.steps ?? []
+                const timelineSources = timeline?.sources ?? (resolvedSources ?? [])
+
+                return (
+                  <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
                   {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
-                  {msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming && isSearchThread && searchSteps.length > 0 && (
+                  {timelineSteps.length > 0 && (
                     <div style={{ marginBottom: '12px' }}>
                       <SearchTimeline
-                        steps={searchSteps}
-                        sources={currentRunSourcesRef.current}
+                        steps={timelineSteps}
+                        sources={timelineSources}
                         isComplete
                       />
-                    </div>
-                  )}
-                  {/* 已完成消息的代码执行卡片 */}
-                  {msg.role === 'assistant' && messageThinkingMap.has(msg.id) && messageThinkingMap.get(msg.id)!.segments.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
-                      {messageThinkingMap.get(msg.id)!.segments.map((seg) => (
-                        <ThinkingBlock
-                          key={`${msg.id}-${seg.segmentId}`}
-                          kind={seg.kind}
-                          label={seg.label}
-                          mode={seg.mode as 'visible' | 'collapsed' | 'hidden'}
-                          content={seg.content}
-                          isStreaming={false}
-                          codeExecutions={[]}
-                        />
-                      ))}
                     </div>
                   )}
                   {/* 已完成消息的代码执行卡片 */}
@@ -1212,11 +1285,11 @@ export function ChatPage() {
                         ? () => setReportModalOpen(true)
                         : undefined
                     }
-                    webSources={msg.role === 'assistant' ? messageSourcesMap.get(msg.id) : undefined}
+                    webSources={resolvedSources}
                     artifacts={msg.role === 'assistant' ? messageArtifactsMap.get(msg.id) : undefined}
                     accessToken={accessToken}
                     onShowSources={
-                      msg.role === 'assistant' && messageSourcesMap.has(msg.id)
+                      msg.role === 'assistant' && canShowSources
                         ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
                         : undefined
                     }
@@ -1225,8 +1298,9 @@ export function ChatPage() {
                   {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
                     <IncognitoDivider text={t.incognitoForkDivider} />
                   )}
-                </div>
-              ))}
+                  </div>
+                )
+              })}
 
               {/* 搜索模式：流式期间的 live 时间轴（在 assistantDraft 上方） */}
               {isSearchThread && isStreaming && searchSteps.length > 0 && (
@@ -1238,7 +1312,7 @@ export function ChatPage() {
               )}
 
               {/* 非搜索模式：常规 segment 渲染 */}
-              {!isSearchThread && segments.map((seg) => (
+              {SHOW_EXPLICIT_THINKING && !isSearchThread && segments.map((seg) => (
                 <ThinkingBlock
                   key={seg.segmentId}
                   kind={seg.kind}
@@ -1249,6 +1323,16 @@ export function ChatPage() {
                   codeExecutions={seg.codeExecutions}
                 />
               ))}
+
+              {SHOW_EXPLICIT_THINKING && thinkingDraft && (
+                <ThinkingBlock
+                  kind="thinking"
+                  label="thinking"
+                  mode="collapsed"
+                  content={thinkingDraft}
+                  isStreaming={!!activeRunId}
+                />
+              )}
 
 
 

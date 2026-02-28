@@ -125,7 +125,7 @@ type Props = {
   codeExecutions?: CodeExecution[]
 }
 
-export function ThinkingBlock({ kind: _kind, label, mode, content, isStreaming, codeExecutions }: Props) {
+export function ThinkingBlock({ label, mode, content, isStreaming, codeExecutions }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   if (mode === 'hidden') return null

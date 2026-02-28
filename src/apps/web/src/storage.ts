@@ -335,6 +335,54 @@ export function writeMessageThinking(messageId: string, thinking: MessageThinkin
   } catch { /* ignore */ }
 }
 
+export type MessageSearchStepRef = {
+  id: string
+  kind: 'planning' | 'searching' | 'reviewing' | 'finished'
+  label: string
+  status: 'active' | 'done'
+  queries?: string[]
+}
+
+function messageSearchStepsKey(messageId: string): string {
+  return `arkloop:web:msg_search_steps:${messageId}`
+}
+
+export function readMessageSearchSteps(messageId: string): MessageSearchStepRef[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageSearchStepsKey(messageId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    const steps = parsed
+      .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
+      .map((item): MessageSearchStepRef | null => {
+        const id = typeof item.id === 'string' ? item.id : ''
+        const kind = item.kind
+        const label = typeof item.label === 'string' ? item.label : ''
+        const status = item.status
+        const queries = Array.isArray(item.queries)
+          ? item.queries.filter((q): q is string => typeof q === 'string')
+          : undefined
+        if (!id) return null
+        if (kind !== 'planning' && kind !== 'searching' && kind !== 'reviewing' && kind !== 'finished') return null
+        if (status !== 'active' && status !== 'done') return null
+        return { id, kind, label, status, queries }
+      })
+      .filter((step): step is MessageSearchStepRef => step != null)
+    return steps.length > 0 ? steps : null
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageSearchSteps(messageId: string, steps: MessageSearchStepRef[]): void {
+  if (!canUseLocalStorage() || !messageId || steps.length === 0) return
+  try {
+    localStorage.setItem(messageSearchStepsKey(messageId), JSON.stringify(steps))
+  } catch { /* ignore */ }
+}
+
 const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
 
 export function addSearchThreadId(threadId: string): void {
