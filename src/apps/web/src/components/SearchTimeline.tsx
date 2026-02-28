@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Check, Search, BookOpen, Sparkles } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ChevronRight, Loader2, Search } from 'lucide-react'
 import type { WebSource } from '../storage'
 
 export type SearchStep = {
@@ -24,29 +25,22 @@ function getDomain(url: string): string {
   }
 }
 
+function getDomainShort(url: string): string {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '')
+    const parts = hostname.split('.')
+    return parts.length >= 2 ? parts[parts.length - 2] : hostname
+  } catch {
+    return url
+  }
+}
+
 function isHttpUrl(url: string): boolean {
   try {
     const p = new URL(url)
     return p.protocol === 'http:' || p.protocol === 'https:'
   } catch {
     return false
-  }
-}
-
-function StepIcon({ kind, status }: { kind: SearchStep['kind']; status: SearchStep['status'] }) {
-  const size = 14
-  if (status === 'active') {
-    return <Loader2 size={size} className="animate-spin" style={{ color: 'var(--c-accent)' }} />
-  }
-  switch (kind) {
-    case 'planning':
-      return <Sparkles size={size} style={{ color: 'var(--c-text-muted)' }} />
-    case 'searching':
-      return <Search size={size} style={{ color: 'var(--c-text-muted)' }} />
-    case 'reviewing':
-      return <BookOpen size={size} style={{ color: 'var(--c-text-muted)' }} />
-    case 'finished':
-      return <Check size={size} style={{ color: 'var(--c-accent)' }} />
   }
 }
 
@@ -69,9 +63,10 @@ function QueryPill({ text }: { text: string }) {
   )
 }
 
-function SourceCard({ source }: { source: WebSource }) {
+function SourceItem({ source }: { source: WebSource }) {
   if (!isHttpUrl(source.url)) return null
   const domain = getDomain(source.url)
+  const shortDomain = getDomainShort(source.url)
   return (
     <a
       href={source.url}
@@ -81,14 +76,17 @@ function SourceCard({ source }: { source: WebSource }) {
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        padding: '6px 10px',
-        borderRadius: '6px',
-        background: 'var(--c-bg-sub)',
-        border: '0.5px solid var(--c-border-subtle)',
+        padding: '5px 10px',
+        borderRadius: '8px',
         textDecoration: 'none',
         color: 'inherit',
-        transition: 'border-color 0.15s',
-        minWidth: 0,
+        transition: 'background 0.1s',
+      }}
+      onMouseEnter={(e) => {
+        ;(e.currentTarget as HTMLAnchorElement).style.background = 'var(--c-bg-deep)'
+      }}
+      onMouseLeave={(e) => {
+        ;(e.currentTarget as HTMLAnchorElement).style.background = 'transparent'
       }}
     >
       <img
@@ -110,7 +108,9 @@ function SourceCard({ source }: { source: WebSource }) {
       >
         {source.title || domain}
       </span>
-      <span style={{ fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>{domain}</span>
+      <span style={{ fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
+        {shortDomain}
+      </span>
     </a>
   )
 }
@@ -118,7 +118,6 @@ function SourceCard({ source }: { source: WebSource }) {
 export function SearchTimeline({ steps, sources, isComplete }: Props) {
   const [collapsed, setCollapsed] = useState(isComplete)
 
-  // 完成时自动折叠
   useEffect(() => {
     if (isComplete) setCollapsed(true)
   }, [isComplete])
@@ -130,8 +129,12 @@ export function SearchTimeline({ steps, sources, isComplete }: Props) {
     : steps[steps.length - 1]?.label || 'Searching...'
 
   return (
-    <div style={{ maxWidth: '663px' }}>
-      {/* 可折叠标题 */}
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      style={{ maxWidth: '663px' }}
+    >
       <button
         type="button"
         onClick={() => setCollapsed((p) => !p)}
@@ -149,89 +152,138 @@ export function SearchTimeline({ steps, sources, isComplete }: Props) {
         }}
       >
         {!isComplete ? (
-          <Loader2 size={13} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-accent)' }} />
-        ) : collapsed ? (
-          <ChevronRight size={13} style={{ flexShrink: 0 }} />
+          <Loader2
+            size={13}
+            className="animate-spin"
+            style={{ flexShrink: 0, color: 'var(--c-text-secondary)' }}
+          />
         ) : (
-          <ChevronDown size={13} style={{ flexShrink: 0 }} />
+          <motion.div
+            animate={{ rotate: collapsed ? 0 : 90 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            style={{ display: 'flex', flexShrink: 0 }}
+          >
+            <ChevronRight size={13} />
+          </motion.div>
         )}
         <span>{headerLabel}</span>
       </button>
 
-      {/* 时间轴 */}
-      {!collapsed && (
-        <div style={{ paddingLeft: '4px', marginTop: '4px' }}>
-          {steps.map((step, idx) => {
-            const isLast = idx === steps.length - 1
-            return (
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{ position: 'relative', paddingLeft: '24px', paddingTop: '2px', paddingBottom: '2px' }}>
+              {/* 连贯实线 */}
               <div
-                key={step.id}
                 style={{
-                  display: 'flex',
-                  gap: '10px',
-                  position: 'relative',
-                  paddingBottom: isLast ? 0 : '12px',
+                  position: 'absolute',
+                  left: '8px',
+                  top: '12px',
+                  bottom: '10px',
+                  width: '1.5px',
+                  background: 'var(--c-border-subtle)',
                 }}
-              >
-                {/* 竖线 + 图标 */}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    width: '16px',
-                    flexShrink: 0,
-                  }}
-                >
-                  <div style={{ marginTop: '2px' }}>
-                    <StepIcon kind={step.kind} status={step.status} />
-                  </div>
-                  {!isLast && (
+              />
+
+              <AnimatePresence initial={false}>
+              {steps.map((step, idx) => {
+                const isLast = idx === steps.length - 1
+                const hasDot = step.kind !== 'searching'
+
+                const dotColor =
+                  step.status === 'active'
+                    ? 'var(--c-text-secondary)'
+                    : step.kind === 'finished'
+                      ? 'var(--c-text-secondary)'
+                      : 'var(--c-text-muted)'
+
+                return (
+                  <motion.div
+                    key={step.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
+                    style={{ position: 'relative', paddingBottom: isLast ? 0 : '14px' }}
+                  >
+                    {hasDot && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '-19px',
+                          top: '5px',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: dotColor,
+                          border: '2px solid var(--c-bg-page)',
+                          zIndex: 1,
+                        }}
+                      />
+                    )}
+
                     <div
                       style={{
-                        flex: 1,
-                        width: '1px',
-                        background: 'var(--c-border-subtle)',
-                        marginTop: '4px',
+                        fontSize: '13px',
+                        color: 'var(--c-text-primary)',
+                        lineHeight: '18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
                       }}
-                    />
-                  )}
-                </div>
-
-                {/* 内容 */}
-                <div style={{ flex: 1, minWidth: 0, paddingTop: '1px' }}>
-                  <div style={{ fontSize: '13px', color: 'var(--c-text-primary)', lineHeight: '18px' }}>
-                    {step.label}
-                  </div>
-
-                  {/* 搜索关键词 pills */}
-                  {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                      {step.queries.map((q) => (
-                        <QueryPill key={q} text={q} />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* 来源卡片 */}
-                  {step.kind === 'reviewing' && step.status === 'done' && sources.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                      {sources.slice(0, 6).map((s, i) => (
-                        <SourceCard key={`${s.url}-${i}`} source={s} />
-                      ))}
-                      {sources.length > 6 && (
-                        <span style={{ fontSize: '12px', color: 'var(--c-text-muted)', paddingLeft: '2px' }}>
-                          +{sources.length - 6} more
-                        </span>
+                    >
+                      {step.kind === 'searching' && (
+                        <Search size={12} style={{ color: 'var(--c-text-muted)', flexShrink: 0 }} />
                       )}
+                      {step.status === 'active' && (
+                        <Loader2
+                          size={12}
+                          className="animate-spin"
+                          style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }}
+                        />
+                      )}
+                      <span>{step.label}</span>
                     </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
+
+                    {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                        {step.queries.map((q) => (
+                          <QueryPill key={q} text={q} />
+                        ))}
+                      </div>
+                    )}
+
+                    {step.kind === 'reviewing' && step.status === 'done' && sources.length > 0 && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          borderRadius: '10px',
+                          border: '0.5px solid var(--c-border-subtle)',
+                          background: 'var(--c-bg-menu)',
+                          maxHeight: '240px',
+                          overflowY: 'auto',
+                          padding: '4px',
+                        }}
+                      >
+                        {sources.map((s, i) => (
+                          <SourceItem key={`${s.url}-${i}`} source={s} />
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                )
+              })}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
