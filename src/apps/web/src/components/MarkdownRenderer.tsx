@@ -6,7 +6,8 @@ import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import { Copy, Check } from 'lucide-react'
-import type { Components } from 'react-markdown'
+import type { Components, UrlTransform } from 'react-markdown'
+import { defaultUrlTransform } from 'react-markdown'
 import { CitationBadge, WebSourcesContext } from './CitationBadge'
 import type { WebSource, ArtifactRef } from '../storage'
 import { ArtifactImage } from './ArtifactImage'
@@ -21,6 +22,12 @@ type ArtifactsContextValue = {
 const ArtifactsContext = createContext<ArtifactsContextValue>({ artifacts: [], accessToken: '' })
 
 const ARTIFACT_PREFIX = 'artifact:'
+
+// react-markdown v10 的 defaultUrlTransform 会过滤非标准协议，需要放行 artifact:
+const artifactUrlTransform: UrlTransform = (url) => {
+  if (url.startsWith(ARTIFACT_PREFIX)) return url
+  return defaultUrlTransform(url)
+}
 
 function findArtifactByKey(artifacts: ArtifactRef[], key: string): ArtifactRef | undefined {
   return artifacts.find((a) => a.key === key)
@@ -361,6 +368,7 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}
             components={mdComponents}
+            urlTransform={artifactUrlTransform}
           >
             {content}
           </ReactMarkdown>
