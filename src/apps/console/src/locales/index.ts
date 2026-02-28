@@ -922,14 +922,27 @@ export interface LocaleStrings {
       filterCompleted: string
       filterFailed: string
       filterCancelled: string
+      filterRunPlaceholder: string
+      filterThreadPlaceholder: string
       filterUserPlaceholder: string
+      filterOrgPlaceholder: string
+      filterParentRunPlaceholder: string
+      filterModelPlaceholder: string
+      filterSkillPlaceholder: string
+      filterSinceLabel: string
+      filterUntilLabel: string
+      applyFilters: string
+      resetFilters: string
+      filterActiveCount: (count: number) => string
       refresh: string
       // table columns
       colId: string
       colUser: string
+      colOrg: string
       colThread: string
       colStatus: string
       colModel: string
+      colSkill: string
       colDuration: string
       colTokens: string
       colCost: string
@@ -972,10 +985,23 @@ export interface LocaleStrings {
     reports: {
       title: string
       colCreatedAt: string
+      colReportId: string
       colReporter: string
       colThread: string
       colCategories: string
       colFeedback: string
+      filterReportPlaceholder: string
+      filterThreadPlaceholder: string
+      filterReporterPlaceholder: string
+      filterReporterEmailPlaceholder: string
+      filterCategoryAll: string
+      filterFeedbackPlaceholder: string
+      filterSinceLabel: string
+      filterUntilLabel: string
+      applyFilters: string
+      resetFilters: string
+      filterActiveCount: (count: number) => string
+      gotoRuns: string
       empty: string
       refresh: string
       prev: string
