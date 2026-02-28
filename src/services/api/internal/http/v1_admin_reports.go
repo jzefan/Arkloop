@@ -153,9 +153,13 @@ func adminReportsEntry(
 
 		items := make([]adminReportItem, 0, len(rows))
 		for _, row := range rows {
+			threadID := ""
+			if row.ThreadID != nil {
+				threadID = row.ThreadID.String()
+			}
 			items = append(items, adminReportItem{
 				ID:            row.ID.String(),
-				ThreadID:      row.ThreadID.String(),
+				ThreadID:      threadID,
 				ReporterID:    row.ReporterID.String(),
 				ReporterEmail: row.ReporterEmail,
 				Categories:    row.Categories,

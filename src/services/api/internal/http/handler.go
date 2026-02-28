@@ -125,6 +125,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/daily", meDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage/by-model", meUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
+	mux.HandleFunc("/v1/me/feedback", meFeedback(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadReportRepo, cfg.APIKeysRepo))
 	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
 	mux.HandleFunc("/v1/threads/search", searchThreads(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
 	mux.HandleFunc("/v1/threads/starred", listStarredThreads(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadStarRepo, cfg.APIKeysRepo, cfg.AuditWriter))

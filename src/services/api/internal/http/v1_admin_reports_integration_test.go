@@ -259,6 +259,31 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("suggestion feedback appears in reports", func(t *testing.T) {
+		createResp := doJSON(handler, nethttp.MethodPost, "/v1/me/feedback", map[string]any{
+			"feedback": "please add export markdown",
+		}, aliceHeaders)
+		if createResp.Code != nethttp.StatusCreated {
+			t.Fatalf("create feedback: %d body=%s", createResp.Code, createResp.Body.String())
+		}
+
+		listResp := doJSON(handler, nethttp.MethodGet, "/v1/admin/reports?category=product_suggestion", nil, authHeader(adminToken))
+		if listResp.Code != nethttp.StatusOK {
+			t.Fatalf("filter suggestion: %d body=%s", listResp.Code, listResp.Body.String())
+		}
+		body := decodeJSONBody[adminReportsResponse](t, listResp.Body.Bytes())
+		if body.Total != 1 || len(body.Data) != 1 {
+			t.Fatalf("unexpected suggestion count: total=%d data=%#v", body.Total, body.Data)
+		}
+		item := body.Data[0]
+		if item.ThreadID != "" {
+			t.Fatalf("expected empty thread_id for suggestion, got %q", item.ThreadID)
+		}
+		if item.Feedback == nil || *item.Feedback != "please add export markdown" {
+			t.Fatalf("unexpected suggestion feedback: %#v", item.Feedback)
+		}
+	})
+
 	t.Run("invalid thread_id returns 422", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/reports?thread_id=invalid", nil, authHeader(adminToken))
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")

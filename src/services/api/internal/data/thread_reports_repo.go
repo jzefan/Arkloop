@@ -20,8 +20,18 @@ type ThreadReport struct {
 }
 
 type ThreadReportRow struct {
-	ThreadReport
+	ID            uuid.UUID
+	ThreadID      *uuid.UUID
+	ReporterID    uuid.UUID
+	Categories    []string
+	Feedback      *string
+	CreatedAt     time.Time
 	ReporterEmail string
+}
+
+type ThreadReportSuggestion struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
 }
 
 type ThreadReportListParams struct {
@@ -43,6 +53,8 @@ type ThreadReportListParams struct {
 type ThreadReportRepository struct {
 	db Querier
 }
+
+const ThreadReportCategoryProductSuggestion = "product_suggestion"
 
 func NewThreadReportRepository(db Querier) (*ThreadReportRepository, error) {
 	if db == nil {
@@ -82,6 +94,34 @@ func (r *ThreadReportRepository) Create(
 		&report.ID, &report.ThreadID, &report.ReporterID,
 		&report.Categories, &report.Feedback, &report.CreatedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	return &report, nil
+}
+
+func (r *ThreadReportRepository) CreateSuggestion(
+	ctx context.Context,
+	reporterID uuid.UUID,
+	feedback string,
+) (*ThreadReportSuggestion, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if reporterID == uuid.Nil {
+		return nil, fmt.Errorf("reporter_id must not be empty")
+	}
+
+	var report ThreadReportSuggestion
+	err := r.db.QueryRow(
+		ctx,
+		`INSERT INTO thread_reports (thread_id, reporter_id, categories, feedback)
+		 VALUES (NULL, $1, $2, $3)
+		 RETURNING id, created_at`,
+		reporterID,
+		[]string{ThreadReportCategoryProductSuggestion},
+		feedback,
+	).Scan(&report.ID, &report.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
