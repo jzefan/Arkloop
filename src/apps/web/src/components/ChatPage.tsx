@@ -94,6 +94,9 @@ export function ChatPage() {
   const currentRunSourcesRef = useRef<WebSource[]>([])
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
+  // 关闭动画期间保留上一次的数据
+  const lastPanelSourcesRef = useRef<WebSource[] | undefined>(undefined)
+  const lastPanelQueryRef = useRef<string | undefined>(undefined)
   // segment 状态：用于渲染 Agent 规划轮折叠块
   type Segment = { segmentId: string; kind: string; mode: string; label: string; content: string; isStreaming: boolean }
   const [segments, setSegments] = useState<Segment[]>([])
@@ -651,6 +654,12 @@ export function ChatPage() {
     return undefined
   }, [sourcePanelMessageId, messages])
 
+  // 保留最近一次数据，使关闭时面板内容在过渡动画期间仍可见
+  if (sourcePanelSources) lastPanelSourcesRef.current = sourcePanelSources
+  if (sourcePanelUserQuery !== undefined) lastPanelQueryRef.current = sourcePanelUserQuery
+  const panelDisplaySources = sourcePanelSources ?? lastPanelSourcesRef.current
+  const panelDisplayQuery = sourcePanelUserQuery ?? lastPanelQueryRef.current
+
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
@@ -886,14 +895,26 @@ export function ChatPage() {
       </div>
 
         </div>
-        {/* sources 侧边面板 */}
-        {sourcePanelSources && sourcePanelSources.length > 0 && (
-          <SourcesPanel
-            sources={sourcePanelSources}
-            userQuery={sourcePanelUserQuery}
-            onClose={() => setSourcePanelMessageId(null)}
-          />
-        )}
+        {/* sources 侧边面板 - width 过渡驱动整体布局动画 */}
+        <div
+          style={{
+            width: (sourcePanelSources && sourcePanelSources.length > 0) ? '420px' : '0px',
+            overflow: 'hidden',
+            flexShrink: 0,
+            transition: 'width 280ms cubic-bezier(0.16,1,0.3,1)',
+            borderLeft: panelDisplaySources ? '0.5px solid var(--c-border-subtle)' : 'none',
+          }}
+        >
+          {panelDisplaySources && panelDisplaySources.length > 0 && (
+            <div style={{ width: '420px', height: '100%' }}>
+              <SourcesPanel
+                sources={panelDisplaySources}
+                userQuery={panelDisplayQuery}
+                onClose={() => setSourcePanelMessageId(null)}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 调试悬浮面板 */}

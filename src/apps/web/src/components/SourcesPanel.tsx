@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import type { WebSource } from '../storage'
 
@@ -17,22 +16,14 @@ type Props = {
 }
 
 export function SourcesPanel({ sources, userQuery, onClose }: Props) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { requestAnimationFrame(() => setMounted(true)) }, [])
-
   return (
     <div
       style={{
         width: '420px',
-        flexShrink: 0,
-        borderLeft: '0.5px solid var(--c-border-subtle)',
         background: 'var(--c-bg-page)',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        transform: mounted ? 'translateX(0)' : 'translateX(100%)',
-        opacity: mounted ? 1 : 0,
-        transition: 'transform 250ms cubic-bezier(0.16,1,0.3,1), opacity 200ms ease',
       }}
     >
       <div
