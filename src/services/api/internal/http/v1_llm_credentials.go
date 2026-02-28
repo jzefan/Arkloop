@@ -92,6 +92,51 @@ var validOpenAIAPIModes = map[string]bool{
 	"chat_completions": true,
 }
 
+const (
+	anthropicAdvancedVersionKey      = "anthropic_version"
+	anthropicAdvancedExtraHeadersKey = "extra_headers"
+	anthropicBetaHeaderName          = "anthropic-beta"
+)
+
+func validateAdvancedJSONForProvider(provider string, advancedJSON map[string]any) error {
+	if strings.TrimSpace(provider) != "anthropic" || advancedJSON == nil {
+		return nil
+	}
+	return validateAnthropicAdvancedJSON(advancedJSON)
+}
+
+func validateAnthropicAdvancedJSON(advancedJSON map[string]any) error {
+	if advancedJSON == nil {
+		return nil
+	}
+	if rawVersion, ok := advancedJSON[anthropicAdvancedVersionKey]; ok {
+		version, ok := rawVersion.(string)
+		if !ok || strings.TrimSpace(version) == "" {
+			return errors.New("advanced_json.anthropic_version must be a non-empty string")
+		}
+	}
+
+	rawHeaders, ok := advancedJSON[anthropicAdvancedExtraHeadersKey]
+	if !ok {
+		return nil
+	}
+	headers, ok := rawHeaders.(map[string]any)
+	if !ok {
+		return errors.New("advanced_json.extra_headers must be an object")
+	}
+	for key, value := range headers {
+		headerName := strings.ToLower(strings.TrimSpace(key))
+		if headerName != anthropicBetaHeaderName {
+			return errors.New("advanced_json.extra_headers only supports anthropic-beta")
+		}
+		headerValue, ok := value.(string)
+		if !ok || strings.TrimSpace(headerValue) == "" {
+			return errors.New("advanced_json.extra_headers.anthropic-beta must be a non-empty string")
+		}
+	}
+	return nil
+}
+
 func llmCredentialsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
@@ -226,6 +271,10 @@ func createLlmCredential(
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid openai_api_mode", traceID, nil)
 			return
 		}
+	}
+	if err := validateAdvancedJSONForProvider(req.Provider, req.AdvancedJSON); err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+		return
 	}
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
@@ -443,6 +492,21 @@ func updateLlmCredential(
 		} else {
 			req.BaseURL = &u
 		}
+	}
+	providerForValidation := req.Provider
+	if providerForValidation == "" && req.AdvancedJSON != nil {
+		current, err := credRepo.GetByID(r.Context(), actor.OrgID, credID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if current != nil {
+			providerForValidation = current.Provider
+		}
+	}
+	if err := validateAdvancedJSONForProvider(providerForValidation, req.AdvancedJSON); err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+		return
 	}
 
 	// 若要更新 API Key，需要事务

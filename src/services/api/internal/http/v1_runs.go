@@ -1188,7 +1188,7 @@ func listGlobalRuns(
 				TotalOutputTokens: rw.TotalOutputTokens,
 				TotalCostUSD:      rw.TotalCostUSD,
 				DurationMs:        rw.DurationMs,
-				CacheHitRate:      calcCacheHitRate(rw.TotalInputTokens, rw.CacheReadTokens, rw.CachedTokens),
+				CacheHitRate:      calcCacheHitRate(rw.TotalInputTokens, rw.CacheReadTokens, rw.CacheCreationTokens, rw.CachedTokens),
 				CreditsUsed:       rw.CreditsUsed,
 				CreatedAt:         rw.CreatedAt.UTC().Format(time.RFC3339Nano),
 				CreatedByUserName: rw.UserUsername,
@@ -1221,21 +1221,38 @@ func listGlobalRuns(
 }
 
 // calcCacheHitRate 计算命中率（0-1），无 cache 时返回 nil。
-// Anthropic: cacheRead / (input + cacheRead)，input = 非 cached 部分
+// Anthropic: cacheRead / (input + cacheRead + cacheCreation)
 // OpenAI: cachedTokens / input（input 含 cached）
-func calcCacheHitRate(inputTokens, cacheRead, cachedTokens *int64) *float64 {
-	if cacheRead != nil && *cacheRead > 0 {
-		total := float64(*cacheRead)
+// 混合 provider cache 字段并存时返回 nil，避免误导。
+func calcCacheHitRate(inputTokens, cacheRead, cacheCreation, cachedTokens *int64) *float64 {
+	hasAnthropic := (cacheRead != nil && *cacheRead > 0) || (cacheCreation != nil && *cacheCreation > 0)
+	hasOpenAI := cachedTokens != nil && *cachedTokens > 0
+
+	if hasAnthropic && hasOpenAI {
+		return nil
+	}
+	if hasAnthropic {
+		total := 0.0
 		if inputTokens != nil {
 			total += float64(*inputTokens)
+		}
+		if cacheRead != nil {
+			total += float64(*cacheRead)
+		}
+		if cacheCreation != nil {
+			total += float64(*cacheCreation)
 		}
 		if total <= 0 {
 			return nil
 		}
-		r := float64(*cacheRead) / total
+		read := 0.0
+		if cacheRead != nil {
+			read = float64(*cacheRead)
+		}
+		r := read / total
 		return &r
 	}
-	if cachedTokens != nil && *cachedTokens > 0 && inputTokens != nil && *inputTokens > 0 {
+	if hasOpenAI && inputTokens != nil && *inputTokens > 0 {
 		r := float64(*cachedTokens) / float64(*inputTokens)
 		return &r
 	}

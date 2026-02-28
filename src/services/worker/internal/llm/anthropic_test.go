@@ -338,6 +338,95 @@ func TestAnthropicGateway_Stream_AdvancedJSON_Merged(t *testing.T) {
 	}
 }
 
+func TestAnthropicGateway_Stream_AdvancedJSON_VersionAndHeaderApplied(t *testing.T) {
+	var capturedBody []byte
+	var capturedVersion string
+	var capturedBeta string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedVersion = r.Header.Get("anthropic-version")
+		capturedBeta = r.Header.Get("anthropic-beta")
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		AdvancedJSON: map[string]any{
+			"anthropic_version": "2024-01-01",
+			"extra_headers": map[string]any{
+				"anthropic-beta": "prompt-caching-2024-07-31",
+			},
+			"metadata": map[string]any{"user_id": "u1"},
+		},
+	})
+
+	_ = gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error { return nil })
+
+	if capturedVersion != "2024-01-01" {
+		t.Fatalf("expected anthropic-version overridden, got %q", capturedVersion)
+	}
+	if capturedBeta != "prompt-caching-2024-07-31" {
+		t.Fatalf("expected anthropic-beta header, got %q", capturedBeta)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(capturedBody, &body); err != nil {
+		t.Fatalf("request body not valid json: %v", err)
+	}
+	if _, ok := body["anthropic_version"]; ok {
+		t.Fatalf("anthropic_version should not be merged into body: %v", body)
+	}
+	if _, ok := body["extra_headers"]; ok {
+		t.Fatalf("extra_headers should not be merged into body: %v", body)
+	}
+	if body["metadata"] == nil {
+		t.Fatalf("expected metadata in body, got: %v", body)
+	}
+}
+
+func TestAnthropicGateway_Stream_AdvancedJSON_RejectsInvalidHeaderKey(t *testing.T) {
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: "http://127.0.0.1:0",
+		AdvancedJSON: map[string]any{
+			"extra_headers": map[string]any{
+				"x-custom": "v",
+			},
+		},
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected StreamRunFailed event, got none")
+	}
+	failed, ok := events[0].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[0])
+	}
+	if failed.Error.Message != "advanced_json.extra_headers only supports anthropic-beta" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+	if failed.Error.Details["invalid_header"] != "x-custom" {
+		t.Fatalf("expected invalid_header=x-custom, got: %v", failed.Error.Details)
+	}
+}
+
 func TestAnthropicGateway_Stream_AdvancedJSON_CannotEnableStream(t *testing.T) {
 	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
 		APIKey:       "test",

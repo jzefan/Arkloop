@@ -482,15 +482,40 @@ func (w *eventWriter) calcCreditDeduction() int64 {
 	if w.totalInputTokens <= 0 && w.totalOutputTokens <= 0 {
 		return 0
 	}
-	nonCached := w.totalInputTokens - w.totalCacheReadTokens - w.totalCachedTokens
-	if nonCached < 0 {
-		nonCached = 0
+	hasAnthropicCache := w.totalCacheCreationTokens > 0 || w.totalCacheReadTokens > 0
+	hasOpenAICache := w.totalCachedTokens > 0
+
+	effective := 0.0
+	switch {
+	case hasAnthropicCache && !hasOpenAICache:
+		// Anthropic: input_tokens 为非缓存输入，cache_read/cache_creation 单独计量
+		effective = float64(w.totalInputTokens)*1.0 +
+			float64(w.totalCacheCreationTokens)*1.25 +
+			float64(w.totalCacheReadTokens)*0.1 +
+			float64(w.totalOutputTokens)*1.0
+	case hasOpenAICache && !hasAnthropicCache:
+		// OpenAI: input_tokens 含 cached_tokens，未命中部分按全价计
+		nonCached := w.totalInputTokens - w.totalCachedTokens
+		if nonCached < 0 {
+			nonCached = 0
+		}
+		effective = float64(nonCached)*1.0 +
+			float64(w.totalCachedTokens)*0.5 +
+			float64(w.totalOutputTokens)*1.0
+	case hasAnthropicCache && hasOpenAICache:
+		// TODO: 混合 provider 缓存口径统一后再替换；当前保留旧逻辑避免行为突变。
+		nonCached := w.totalInputTokens - w.totalCacheReadTokens - w.totalCachedTokens
+		if nonCached < 0 {
+			nonCached = 0
+		}
+		effective = float64(nonCached)*1.0 +
+			float64(w.totalCacheCreationTokens)*1.25 +
+			float64(w.totalCacheReadTokens)*0.1 +
+			float64(w.totalCachedTokens)*0.5 +
+			float64(w.totalOutputTokens)*1.0
+	default:
+		effective = float64(w.totalInputTokens)*1.0 + float64(w.totalOutputTokens)*1.0
 	}
-	effective := float64(nonCached)*1.0 +
-		float64(w.totalCacheCreationTokens)*1.25 +
-		float64(w.totalCacheReadTokens)*0.1 +
-		float64(w.totalCachedTokens)*0.5 +
-		float64(w.totalOutputTokens)*1.0
 	raw := effective / 1000.0 * w.multiplier * policyMultiplier
 	credits := int64(math.Ceil(raw))
 	if credits < 1 {
@@ -522,10 +547,40 @@ func (w *eventWriter) calcPlatformCost() float64 {
 		inputRate = *w.costPer1kInput
 	}
 
-	// Anthropic cache tokens
-	if w.totalCacheCreationTokens > 0 || w.totalCacheReadTokens > 0 {
-		// Anthropic input_tokens = total context (非 cached 部分单独计费)
-		// non-cached input at full rate
+	hasAnthropicCache := w.totalCacheCreationTokens > 0 || w.totalCacheReadTokens > 0
+	hasOpenAICache := w.totalCachedTokens > 0
+
+	switch {
+	case hasAnthropicCache && !hasOpenAICache:
+		// Anthropic: input_tokens 为非缓存输入，cache_write/cache_read 单独计费
+		cost += float64(w.totalInputTokens) / 1000.0 * inputRate
+		if w.totalCacheCreationTokens > 0 {
+			rate := inputRate * 1.25
+			if w.costPer1kCacheWrite != nil {
+				rate = *w.costPer1kCacheWrite
+			}
+			cost += float64(w.totalCacheCreationTokens) / 1000.0 * rate
+		}
+		if w.totalCacheReadTokens > 0 {
+			rate := inputRate * 0.10
+			if w.costPer1kCacheRead != nil {
+				rate = *w.costPer1kCacheRead
+			}
+			cost += float64(w.totalCacheReadTokens) / 1000.0 * rate
+		}
+	case hasOpenAICache && !hasAnthropicCache:
+		// OpenAI: input_tokens 含 cached_tokens，命中部分按 cache_read 费率
+		cacheRate := inputRate * 0.50
+		if w.costPer1kCacheRead != nil {
+			cacheRate = *w.costPer1kCacheRead
+		}
+		uncached := w.totalInputTokens - w.totalCachedTokens
+		if uncached < 0 {
+			uncached = 0
+		}
+		cost += float64(uncached)/1000.0*inputRate + float64(w.totalCachedTokens)/1000.0*cacheRate
+	case hasAnthropicCache && hasOpenAICache:
+		// TODO: 混合 provider 缓存口径统一后再替换；当前保留旧逻辑避免行为突变。
 		nonCachedInput := w.totalInputTokens - w.totalCacheReadTokens
 		if nonCachedInput > 0 {
 			cost += float64(nonCachedInput) / 1000.0 * inputRate
@@ -544,17 +599,7 @@ func (w *eventWriter) calcPlatformCost() float64 {
 			}
 			cost += float64(w.totalCacheReadTokens) / 1000.0 * rate
 		}
-	} else if w.totalCachedTokens > 0 {
-		cacheRate := inputRate * 0.50
-		if w.costPer1kCacheRead != nil {
-			cacheRate = *w.costPer1kCacheRead
-		}
-		uncached := w.totalInputTokens - w.totalCachedTokens
-		if uncached < 0 {
-			uncached = 0
-		}
-		cost += float64(uncached)/1000.0*inputRate + float64(w.totalCachedTokens)/1000.0*cacheRate
-	} else {
+	default:
 		// no cache
 		cost += float64(w.totalInputTokens) / 1000.0 * inputRate
 	}
