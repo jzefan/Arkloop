@@ -31,6 +31,25 @@ var anthropicAdvancedJSONDenylist = map[string]struct{}{
 	"system":      {},
 }
 
+const (
+	anthropicAdvancedKeyVersion      = "anthropic_version"
+	anthropicAdvancedKeyExtraHeaders = "extra_headers"
+	anthropicBetaHeader              = "anthropic-beta"
+)
+
+type anthropicAdvancedJSONError struct {
+	Message string
+	Details map[string]any
+}
+
+func (e anthropicAdvancedJSONError) Error() string { return e.Message }
+
+type anthropicAdvancedConfig struct {
+	Version      *string
+	ExtraHeaders map[string]string
+	Payload      map[string]any
+}
+
 type AnthropicGatewayConfig struct {
 	APIKey           string
 	BaseURL          string
@@ -102,23 +121,28 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	if len(request.Tools) > 0 {
 		payload["tools"] = toAnthropicTools(request.Tools)
 	}
-	// reject advanced_json if it contains denied critical fields
-	for k := range g.cfg.AdvancedJSON {
-		if _, denied := anthropicAdvancedJSONDenylist[k]; denied {
-			return yield(StreamRunFailed{
-				Error: GatewayError{
-					ErrorClass: ErrorClassInternalError,
-					Message:    fmt.Sprintf("advanced_json must not set critical field: %s", k),
-					Details:    map[string]any{"denied_key": k},
-				},
-			})
+
+	advancedCfg, err := parseAnthropicAdvancedJSON(g.cfg.AdvancedJSON)
+	if err != nil {
+		ge := GatewayError{
+			ErrorClass: ErrorClassInternalError,
+			Message:    err.Error(),
 		}
+		if typed, ok := err.(anthropicAdvancedJSONError); ok && len(typed.Details) > 0 {
+			ge.Details = typed.Details
+		}
+		return yield(StreamRunFailed{Error: ge})
 	}
+
 	// merge keys not already present in payload
-	for k, v := range g.cfg.AdvancedJSON {
+	for k, v := range advancedCfg.Payload {
 		if _, exists := payload[k]; !exists {
 			payload[k] = v
 		}
+	}
+	anthropicVersion := g.cfg.AnthropicVersion
+	if advancedCfg.Version != nil {
+		anthropicVersion = *advancedCfg.Version
 	}
 
 	if g.cfg.EmitDebugEvents {
@@ -157,7 +181,10 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		})
 	}
 	req.Header.Set("x-api-key", strings.TrimSpace(g.cfg.APIKey))
-	req.Header.Set("anthropic-version", g.cfg.AnthropicVersion)
+	req.Header.Set("anthropic-version", anthropicVersion)
+	for k, v := range advancedCfg.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -239,6 +266,63 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	}
 
 	return yield(StreamRunCompleted{Usage: parseAnthropicUsage(body)})
+}
+
+func parseAnthropicAdvancedJSON(raw map[string]any) (anthropicAdvancedConfig, error) {
+	cfg := anthropicAdvancedConfig{
+		ExtraHeaders: map[string]string{},
+		Payload:      map[string]any{},
+	}
+	if raw == nil {
+		return cfg, nil
+	}
+
+	for key, value := range raw {
+		switch key {
+		case anthropicAdvancedKeyVersion:
+			version, ok := value.(string)
+			if !ok || strings.TrimSpace(version) == "" {
+				return anthropicAdvancedConfig{}, anthropicAdvancedJSONError{
+					Message: "advanced_json.anthropic_version must be a non-empty string",
+				}
+			}
+			v := strings.TrimSpace(version)
+			cfg.Version = &v
+		case anthropicAdvancedKeyExtraHeaders:
+			headers, ok := value.(map[string]any)
+			if !ok {
+				return anthropicAdvancedConfig{}, anthropicAdvancedJSONError{
+					Message: "advanced_json.extra_headers must be an object",
+				}
+			}
+			for hk, hv := range headers {
+				headerName := strings.ToLower(strings.TrimSpace(hk))
+				if headerName != anthropicBetaHeader {
+					return anthropicAdvancedConfig{}, anthropicAdvancedJSONError{
+						Message: "advanced_json.extra_headers only supports anthropic-beta",
+						Details: map[string]any{"invalid_header": hk},
+					}
+				}
+				headerValue, ok := hv.(string)
+				if !ok || strings.TrimSpace(headerValue) == "" {
+					return anthropicAdvancedConfig{}, anthropicAdvancedJSONError{
+						Message: "advanced_json.extra_headers.anthropic-beta must be a non-empty string",
+					}
+				}
+				cfg.ExtraHeaders[anthropicBetaHeader] = strings.TrimSpace(headerValue)
+			}
+		default:
+			if _, denied := anthropicAdvancedJSONDenylist[key]; denied {
+				return anthropicAdvancedConfig{}, anthropicAdvancedJSONError{
+					Message: fmt.Sprintf("advanced_json must not set critical field: %s", key),
+					Details: map[string]any{"denied_key": key},
+				}
+			}
+			cfg.Payload[key] = value
+		}
+	}
+
+	return cfg, nil
 }
 
 func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any, error) {
