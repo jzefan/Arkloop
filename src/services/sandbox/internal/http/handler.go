@@ -7,11 +7,11 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
-	"arkloop/services/sandbox/internal/storage"
+	"arkloop/services/shared/objectstore"
 )
 
 // NewHandler 注册所有路由并返回 HTTP handler。
-func NewHandler(mgr *session.Manager, artifactStore storage.ArtifactStore, logger *logging.JSONLogger) http.Handler {
+func NewHandler(mgr *session.Manager, artifactStore *objectstore.Store, logger *logging.JSONLogger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz(mgr))
 	mux.HandleFunc("GET /v1/stats", stats(mgr))

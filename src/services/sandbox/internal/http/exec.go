@@ -11,7 +11,7 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
-	"arkloop/services/sandbox/internal/storage"
+	"arkloop/services/shared/objectstore"
 )
 
 // ExecRequest 是 POST /v1/exec 的请求体。
@@ -41,7 +41,7 @@ type ExecResponse struct {
 	Artifacts  []ArtifactRef `json:"artifacts,omitempty"`
 }
 
-func handleExec(mgr *session.Manager, artifactStore storage.ArtifactStore, logger *logging.JSONLogger) http.HandlerFunc {
+func handleExec(mgr *session.Manager, artifactStore *objectstore.Store, logger *logging.JSONLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ExecRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -116,7 +116,7 @@ func handleExec(mgr *session.Manager, artifactStore storage.ArtifactStore, logge
 }
 
 // collectArtifacts 从 microVM 拉取产物并上传到对象存储，失败不阻断主流程。
-func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string, store storage.ArtifactStore, logger *logging.JSONLogger) []ArtifactRef {
+func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string, store *objectstore.Store, logger *logging.JSONLogger) []ArtifactRef {
 	fetchResult, err := sn.FetchArtifacts(ctx)
 	if err != nil {
 		logger.Warn("fetch artifacts failed", logging.LogFields{SessionID: &sessionID}, map[string]any{"error": err.Error()})
@@ -138,7 +138,7 @@ func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string
 		}
 
 		key := fmt.Sprintf("%s/%s", sessionID, entry.Filename)
-		if err := store.Upload(ctx, key, data, entry.MimeType); err != nil {
+		if err := store.PutWithContentType(ctx, key, data, entry.MimeType); err != nil {
 			logger.Warn("upload artifact failed", logging.LogFields{SessionID: &sessionID}, map[string]any{
 				"key":   key,
 				"error": err.Error(),

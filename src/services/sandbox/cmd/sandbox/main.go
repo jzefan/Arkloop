@@ -13,6 +13,7 @@ import (
 	"arkloop/services/sandbox/internal/snapshot"
 	"arkloop/services/sandbox/internal/storage"
 	"arkloop/services/sandbox/internal/template"
+	"arkloop/services/shared/objectstore"
 )
 
 func main() {
@@ -36,7 +37,7 @@ func run() error {
 
 	// 可选依赖：MinIO 快照存储 + Template 注册表
 	var snapshotStore storage.SnapshotStore
-	var artifactStore storage.ArtifactStore
+	var artifactStore *objectstore.Store
 	var registry *template.Registry
 
 	if cfg.S3Endpoint != "" {
@@ -47,7 +48,7 @@ func run() error {
 		}
 		snapshotStore = store
 
-		aStore, err := storage.NewMinIOArtifactStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey)
+		aStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.ArtifactBucket, "")
 		if err != nil {
 			return err
 		}
