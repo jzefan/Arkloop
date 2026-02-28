@@ -111,6 +111,9 @@ export const en: LocaleStrings = {
       toastCredUpdated: 'Credential updated',
       toastCredUpdateFailed: 'Failed to update credential',
       fieldApiKeyOptional: 'API Key (leave blank to keep)',
+      copyTitle: 'Copy credential',
+      toastCopied: 'Credential copied',
+      toastCopyFailed: 'Failed to copy credential',
     },
     agentConfigs: {
       title: 'Agent Configs',

@@ -3,6 +3,8 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 
 	nethttp "net/http"
@@ -201,6 +203,22 @@ func llmCredentialEntry(
 			return
 		}
 
+		// /v1/llm-credentials/{cred_id}/copy
+		if strings.HasSuffix(tail, "/copy") {
+			credIDStr := strings.Trim(strings.TrimSuffix(tail, "/copy"), "/")
+			credID, err := uuid.Parse(credIDStr)
+			if err != nil {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid credential id", traceID, nil)
+				return
+			}
+			if r.Method != nethttp.MethodPost {
+				writeMethodNotAllowed(w, r)
+				return
+			}
+			duplicateLlmCredential(w, r, traceID, credID, authService, membershipRepo, credRepo, routeRepo, pool)
+			return
+		}
+
 		// /v1/llm-credentials/{cred_id}
 		credID, err := uuid.Parse(tail)
 		if err != nil {
@@ -362,6 +380,127 @@ func createLlmCredential(
 
 	writeJSON(w, traceID, nethttp.StatusCreated, llmCredentialWithRoutesResponse{
 		llmCredentialResponse: toLlmCredentialResponse(cred),
+		Routes:                routes,
+	})
+}
+
+func duplicateLlmCredential(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	credID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	credRepo *data.LlmCredentialsRepository,
+	routeRepo *data.LlmRoutesRepository,
+	pool *pgxpool.Pool,
+) {
+	if authService == nil {
+		writeAuthNotConfigured(w, traceID)
+		return
+	}
+	if credRepo == nil || pool == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+
+	sourceCred, err := credRepo.GetByID(r.Context(), actor.OrgID, credID)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if sourceCred == nil {
+		WriteError(w, nethttp.StatusNotFound, "llm_credentials.not_found", "credential not found", traceID, nil)
+		return
+	}
+
+	creds, err := credRepo.ListByOrg(r.Context(), actor.OrgID)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	existingNames := make(map[string]struct{}, len(creds))
+	for _, cred := range creds {
+		existingNames[cred.Name] = struct{}{}
+	}
+	nextName := nextCopiedCredentialName(sourceCred.Name, existingNames)
+
+	sourceRoutes := make([]data.LlmRoute, 0)
+	if routeRepo != nil {
+		sourceRoutes, err = routeRepo.ListByCredential(r.Context(), actor.OrgID, sourceCred.ID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+	}
+
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	duplicatedCred, err := credRepo.WithTx(tx).Create(
+		r.Context(),
+		uuid.New(),
+		actor.OrgID,
+		sourceCred.Provider,
+		nextName,
+		sourceCred.SecretID,
+		sourceCred.KeyPrefix,
+		sourceCred.BaseURL,
+		sourceCred.OpenAIAPIMode,
+		sourceCred.AdvancedJSON,
+	)
+	if err != nil {
+		var nameConflict data.LlmCredentialNameConflictError
+		if errors.As(err, &nameConflict) {
+			WriteError(w, nethttp.StatusConflict, "llm_credentials.name_conflict", "credential name already exists", traceID, nil)
+			return
+		}
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	routes := make([]llmRouteResponse, 0, len(sourceRoutes))
+	if routeRepo != nil {
+		txRoutes := routeRepo.WithTx(tx)
+		for _, sourceRoute := range sourceRoutes {
+			route, err := txRoutes.Create(
+				r.Context(),
+				actor.OrgID,
+				duplicatedCred.ID,
+				sourceRoute.Model,
+				sourceRoute.Priority,
+				sourceRoute.IsDefault,
+				sourceRoute.WhenJSON,
+				sourceRoute.Multiplier,
+				sourceRoute.CostPer1kInput,
+				sourceRoute.CostPer1kOutput,
+				sourceRoute.CostPer1kCacheWrite,
+				sourceRoute.CostPer1kCacheRead,
+			)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			routes = append(routes, toLlmRouteResponse(route))
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	writeJSON(w, traceID, nethttp.StatusCreated, llmCredentialWithRoutesResponse{
+		llmCredentialResponse: toLlmCredentialResponse(duplicatedCred),
 		Routes:                routes,
 	})
 }
@@ -720,4 +859,34 @@ func computeKeyPrefix(apiKey string) string {
 		return string(runes)
 	}
 	return string(runes[:8])
+}
+
+func nextCopiedCredentialName(sourceName string, existingNames map[string]struct{}) string {
+	baseName, nextSuffix := copyNameSeed(sourceName)
+	for {
+		candidate := fmt.Sprintf("%s-%d", baseName, nextSuffix)
+		if _, exists := existingNames[candidate]; !exists {
+			return candidate
+		}
+		nextSuffix++
+	}
+}
+
+func copyNameSeed(sourceName string) (string, int) {
+	trimmed := strings.TrimSpace(sourceName)
+	if trimmed == "" {
+		return "credential", 1
+	}
+
+	sepIdx := strings.LastIndex(trimmed, "-")
+	if sepIdx <= 0 || sepIdx == len(trimmed)-1 {
+		return trimmed, 1
+	}
+
+	suffix, err := strconv.Atoi(trimmed[sepIdx+1:])
+	if err != nil || suffix < 1 {
+		return trimmed, 1
+	}
+
+	return trimmed[:sepIdx], suffix + 1
 }

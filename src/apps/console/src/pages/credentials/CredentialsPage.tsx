@@ -15,6 +15,7 @@ import {
   listLlmCredentials,
   createLlmCredential,
   deleteLlmCredential,
+  duplicateLlmCredential,
   updateLlmCredential,
   updateLlmRoute,
   type LlmCredential,
@@ -115,6 +116,7 @@ export function CredentialsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
 
   // 编辑 modal
   const [editCred, setEditCred] = useState<LlmCredential | null>(null)
@@ -278,6 +280,19 @@ export function CredentialsPage() {
       setDeleting(false)
     }
   }, [deleteTarget, accessToken, fetchCreds, addToast])
+
+  const handleDuplicate = useCallback(async (cred: LlmCredential) => {
+    setDuplicatingId(cred.id)
+    try {
+      await duplicateLlmCredential(cred.id, accessToken)
+      await fetchCreds()
+      addToast(tc.toastCopied, 'success')
+    } catch {
+      addToast(tc.toastCopyFailed, 'error')
+    } finally {
+      setDuplicatingId((current) => (current === cred.id ? null : current))
+    }
+  }, [accessToken, fetchCreds, addToast, tc])
 
   const handleOpenEdit = useCallback((cred: LlmCredential) => {
     setEditCred(cred)
@@ -464,6 +479,17 @@ export function CredentialsPage() {
       header: '',
       render: (row) => (
         <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleDuplicate(row)
+            }}
+            disabled={duplicatingId === row.id}
+            className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
+            title={tc.copyTitle}
+          >
+            <Copy size={14} />
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation()
