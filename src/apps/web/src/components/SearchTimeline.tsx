@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
 import type { WebSource } from '../storage'
@@ -116,11 +116,7 @@ function SourceItem({ source }: { source: WebSource }) {
 }
 
 export function SearchTimeline({ steps, sources, isComplete }: Props) {
-  const [collapsed, setCollapsed] = useState(isComplete)
-
-  useEffect(() => {
-    if (isComplete) setCollapsed(true)
-  }, [isComplete])
+  const [collapsed, setCollapsed] = useState(false)
 
   if (steps.length === 0) return null
 

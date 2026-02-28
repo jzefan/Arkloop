@@ -113,9 +113,37 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
   )
 }
 
+const CODE_LANGUAGE_CLASS_RE = /(?:^|\s)language-([a-z0-9_-]+)(?:\s|$)/i
+
+function extractCodeLanguage(children: ReactNode): string | null {
+  if (isValidElement<{ className?: string }>(children)) {
+    const className = children.props?.className
+    if (typeof className === 'string') {
+      const match = CODE_LANGUAGE_CLASS_RE.exec(className)
+      if (match?.[1]) return match[1].toLowerCase()
+    }
+  }
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const lang = extractCodeLanguage(child)
+      if (lang) return lang
+    }
+  }
+  return null
+}
+
+function normalizeCodeLanguageLabel(language: string | null): string {
+  if (!language) return 'text'
+  if (language === 'plaintext' || language === 'plain' || language === 'txt') return 'text'
+  return language
+}
+
 function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = useState(false)
+  const [copyHover, setCopyHover] = useState(false)
   const preRef = useRef<HTMLPreElement>(null)
+  const languageLabel = normalizeCodeLanguageLabel(extractCodeLanguage(children))
+  const frameRadius = 10
 
   const handleCopy = useCallback(() => {
     const text = preRef.current?.textContent ?? ''
@@ -126,18 +154,53 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <div style={{ position: 'relative', margin: '1em 0' }}>
+    <div
+      style={{
+        position: 'relative',
+        margin: '1em 0',
+        border: '0.5px solid var(--c-border-subtle)',
+        borderRadius: `${frameRadius}px`,
+        background: 'var(--c-bg-deep)',
+        overflow: 'hidden',
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          zIndex: 1,
+          display: 'inline-flex',
+          alignItems: 'center',
+          height: '24px',
+          borderTopLeftRadius: `${frameRadius}px`,
+          borderTopRightRadius: '0',
+          borderBottomLeftRadius: '0',
+          borderBottomRightRadius: '8px',
+          borderRight: '0.5px solid var(--c-border-subtle)',
+          borderBottom: '0.5px solid var(--c-border-subtle)',
+          background: 'var(--c-bg-sub)',
+          color: 'var(--c-text-secondary)',
+          fontSize: '11px',
+          letterSpacing: '0.18px',
+          padding: '0 10px',
+          textTransform: 'lowercase',
+          userSelect: 'none',
+        }}
+      >
+        {languageLabel}
+      </span>
       <pre
         ref={preRef}
         style={{
-          background: 'var(--c-bg-deep)',
-          borderRadius: '8px',
-          padding: '14px 44px 14px 16px',
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 0,
+          padding: '36px 44px 14px 16px',
           overflowX: 'auto',
           fontSize: '13.5px',
           lineHeight: 1.65,
           fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
-          border: '0.5px solid var(--c-border-subtle)',
           margin: 0,
         }}
       >
@@ -145,6 +208,8 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
       </pre>
       <button
         onClick={handleCopy}
+        onMouseEnter={() => setCopyHover(true)}
+        onMouseLeave={() => setCopyHover(false)}
         style={{
           position: 'absolute',
           top: '8px',
@@ -156,11 +221,10 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
           height: '26px',
           borderRadius: '6px',
           border: '0.5px solid var(--c-border-subtle)',
-          background: 'var(--c-bg-sub)',
+          background: copyHover ? 'var(--c-bg-deep)' : 'transparent',
           color: copied ? 'var(--c-text-secondary)' : 'var(--c-text-icon)',
-          cursor: 'pointer',
-          opacity: 0.85,
-          transition: 'opacity 0.15s',
+          opacity: copyHover || copied ? 1 : 0.6,
+          transition: 'opacity 0.15s, background 0.15s',
         }}
       >
         {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -169,33 +233,65 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
   )
 }
 
-// 匹配 【web:N】 或 [web:N] 形式的引用，支持连续引用分组
-const CITATION_GROUP_RE = /(?:【web:(\d+)】|\[web:(\d+)\])+/g
-const CITATION_SINGLE_RE = /【web:(\d+)】|\[web:(\d+)\]/g
+const CITATION_TOKEN_RE = /【\s*web\s*[:：]\s*(\d+)\s*】|\[\s*web\s*[:：]\s*(\d+)\s*\]|\bweb\s*[:：]\s*(\d+)\b/gi
+const CITATION_GROUP_SEPARATOR_RE = /^[\s,，、;；]*$/
 
-function extractIndices(group: string): number[] {
-  const indices: number[] = []
+type CitationGroup = {
+  start: number
+  end: number
+  indices: number[]
+}
+
+function extractCitationGroups(text: string): CitationGroup[] {
+  const groups: CitationGroup[] = []
+  let pending: CitationGroup | null = null
   let m: RegExpExecArray | null
-  CITATION_SINGLE_RE.lastIndex = 0
-  while ((m = CITATION_SINGLE_RE.exec(group)) !== null) {
-    const idx = parseInt(m[1] ?? m[2], 10)
-    if (!isNaN(idx)) indices.push(idx)
+  CITATION_TOKEN_RE.lastIndex = 0
+
+  while ((m = CITATION_TOKEN_RE.exec(text)) !== null) {
+    const idx = parseInt(m[1] ?? m[2] ?? m[3], 10)
+    if (Number.isNaN(idx)) continue
+
+    const start = m.index
+    const end = m.index + m[0].length
+
+    if (!pending) {
+      pending = { start, end, indices: [idx] }
+      continue
+    }
+
+    const separator = text.slice(pending.end, start)
+    if (separator.length === 0 || CITATION_GROUP_SEPARATOR_RE.test(separator)) {
+      pending.end = end
+      pending.indices.push(idx)
+      continue
+    }
+
+    groups.push(pending)
+    pending = { start, end, indices: [idx] }
   }
-  return indices
+
+  if (pending) groups.push(pending)
+  return groups
 }
 
 function processText(text: string, keyPrefix: string): ReactNode[] {
+  const groups = extractCitationGroups(text)
+  if (groups.length === 0) return [text]
+
   const parts: ReactNode[] = []
   let lastIndex = 0
-  let groupIdx = 0
-  CITATION_GROUP_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = CITATION_GROUP_RE.exec(text)) !== null) {
-    if (lastIndex < m.index) parts.push(text.slice(lastIndex, m.index))
-    parts.push(<CitationBadge key={`${keyPrefix}-${groupIdx++}`} indices={extractIndices(m[0])} />)
-    lastIndex = m.index + m[0].length
+
+  groups.forEach((group, index) => {
+    if (lastIndex < group.start) parts.push(text.slice(lastIndex, group.start))
+    parts.push(<CitationBadge key={`${keyPrefix}-${index}`} indices={group.indices} />)
+    lastIndex = group.end
+  })
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
   }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex))
+
   return parts
 }
 
@@ -215,6 +311,16 @@ function processChildren(children: ReactNode, prefix: string): ReactNode {
     )
   }
   if (isValidElement<{ children?: ReactNode }>(children) && children.props?.children !== undefined) {
+    const nodeTag = typeof (children.props as { node?: { tagName?: unknown } }).node?.tagName === 'string'
+      ? (children.props as { node?: { tagName?: string } }).node?.tagName
+      : undefined
+    if (
+      (typeof children.type === 'string' && (children.type === 'code' || children.type === 'pre')) ||
+      nodeTag === 'code' ||
+      nodeTag === 'pre'
+    ) {
+      return children
+    }
     return cloneElement(children, {}, processChildren(children.props.children, `${prefix}-e`))
   }
   return children
