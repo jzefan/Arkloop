@@ -84,7 +84,6 @@ type HandlerConfig struct {
 	RedemptionCodesRepo *data.RedemptionCodesRepository
 
 	PlatformSettingsRepo *data.PlatformSettingsRepository
-	OrgSettingsRepo      *data.OrgSettingsRepository
 
 	UsersRepo *data.UserRepository
 	OrgRepo   *data.OrgRepository
@@ -523,17 +522,6 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		"GET /v1/config/schema",
 		configSchemaEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, registry),
 	)
-
-	if cfg.OrgSettingsRepo != nil {
-		mux.HandleFunc(
-			"/v1/orgs/{orgID}/settings",
-			orgSettingsListEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgSettingsRepo, cfg.APIKeysRepo, registry),
-		)
-		mux.HandleFunc(
-			"/v1/orgs/{orgID}/settings/{key...}",
-			orgSettingEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient, invalidator, registry),
-		)
-	}
 
 	mux.HandleFunc(
 		"/v1/artifacts/",
