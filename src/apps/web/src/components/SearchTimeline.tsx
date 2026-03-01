@@ -116,7 +116,7 @@ function SourceItem({ source }: { source: WebSource }) {
 }
 
 export function SearchTimeline({ steps, sources, isComplete }: Props) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => isComplete)
 
   if (steps.length === 0) return null
 
