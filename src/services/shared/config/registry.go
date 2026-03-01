@@ -11,6 +11,7 @@ import (
 const (
 	TypeString   = "string"
 	TypeInt      = "int"
+	TypeNumber   = "number"
 	TypeBool     = "bool"
 	TypeDuration = "duration"
 )
@@ -57,7 +58,7 @@ func (r *Registry) Register(e Entry) error {
 	e.Key = cleanKey
 
 	switch e.Type {
-	case TypeString, TypeInt, TypeBool, TypeDuration:
+	case TypeString, TypeInt, TypeNumber, TypeBool, TypeDuration:
 	default:
 		return fmt.Errorf("config entry %q: unsupported type %q", e.Key, e.Type)
 	}

@@ -189,7 +189,7 @@ func RegisterTrackA(r *Registry) error {
 		},
 		{
 			Key:         "gateway.ratelimit_capacity",
-			Type:        TypeInt,
+			Type:        TypeNumber,
 			Default:     "600",
 			Description: "Gateway Rate Limit Capacity",
 			Sensitive:   false,
@@ -198,7 +198,7 @@ func RegisterTrackA(r *Registry) error {
 		},
 		{
 			Key:         "gateway.ratelimit_rate_per_minute",
-			Type:        TypeInt,
+			Type:        TypeNumber,
 			Default:     "300",
 			Description: "Gateway Rate Limit Per Minute",
 			Sensitive:   false,
