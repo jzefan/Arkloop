@@ -7,9 +7,10 @@ import (
 )
 
 type Result struct {
-	Title   string
-	URL     string
-	Snippet string
+	QueryIndex int
+	Title      string
+	URL        string
+	Snippet    string
 }
 
 func (r Result) ToJSON() map[string]any {
@@ -18,8 +19,9 @@ func (r Result) ToJSON() map[string]any {
 	snippet := normalizeInlineText(r.Snippet, 240)
 
 	payload := map[string]any{
-		"title": title,
-		"url":   urlText,
+		"query_index": r.QueryIndex,
+		"title":       title,
+		"url":         urlText,
 	}
 	if snippet != "" {
 		payload["snippet"] = snippet

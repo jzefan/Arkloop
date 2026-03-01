@@ -96,7 +96,7 @@ async function loadPlatformSettings(keys: string[]): Promise<Record<string, stri
 
     try {
       const res = await client.query<{ key: string; value: string }>(
-        'SELECT key, value FROM platform_settings WHERE key = ANY($1)',
+        'SELECT key, value FROM platform_settings WHERE key = ANY($1::text[])',
         [keys],
       );
 
