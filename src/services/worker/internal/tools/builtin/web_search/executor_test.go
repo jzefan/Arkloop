@@ -38,6 +38,21 @@ func TestParseArgsRejectTooManyQueries(t *testing.T) {
 	}
 }
 
+func TestParseArgsDefaultsMaxResults(t *testing.T) {
+	queries, maxResults, err := parseArgs(map[string]any{
+		"query": "q1",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if maxResults != defaultMaxResults {
+		t.Fatalf("expected maxResults=%d, got %d", defaultMaxResults, maxResults)
+	}
+	if len(queries) != 1 || queries[0] != "q1" {
+		t.Fatalf("unexpected queries: %#v", queries)
+	}
+}
+
 func TestExecuteMultiSearchPartialFailure(t *testing.T) {
 	executor := &ToolExecutor{
 		provider: stubProvider{

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -48,14 +48,14 @@ var LlmSpec = llm.ToolSpec{
 
 type ToolExecutor struct {
 	provider Provider
-	pool     *pgxpool.Pool
+	resolver sharedconfig.Resolver
 	timeout  time.Duration
 }
 
-func NewToolExecutor(pool *pgxpool.Pool) *ToolExecutor {
+func NewToolExecutor(resolver sharedconfig.Resolver) *ToolExecutor {
 	return &ToolExecutor{
-		pool:    pool,
-		timeout: defaultTimeout,
+		resolver: resolver,
+		timeout:  defaultTimeout,
 	}
 }
 
@@ -79,7 +79,7 @@ func (e *ToolExecutor) Execute(
 
 	provider := e.provider
 	if provider == nil {
-		built, err := e.loadProvider(ctx)
+		built, err := e.loadProvider(ctx, execCtx)
 		if err != nil {
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
@@ -176,26 +176,21 @@ func (e *ToolExecutor) Execute(
 	}
 }
 
-// loadProvider 加载配置并构建 Provider：DB 优先，ENV 兜底。
-func (e *ToolExecutor) loadProvider(ctx context.Context) (Provider, error) {
-	if e.pool != nil {
-		dbCfg, ok, err := LoadConfigFromDB(ctx, e.pool)
-		if err != nil {
-			// DB 查询失败，降级到 ENV 而不是直接报错
-			_ = err
-		} else if ok {
-			return buildProvider(dbCfg)
-		}
+func (e *ToolExecutor) loadProvider(ctx context.Context, execCtx tools.ExecutionContext) (Provider, error) {
+	if e.resolver == nil {
+		return nil, nil
 	}
-	return providerFromEnv()
-}
-
-func providerFromEnv() (Provider, error) {
-	cfg, err := ConfigFromEnv(false)
+	scope := sharedconfig.Scope{OrgID: execCtx.OrgID}
+	m, err := e.resolver.ResolvePrefix(ctx, "web_fetch.", scope)
 	if err != nil {
 		return nil, err
 	}
-	if cfg == nil {
+
+	cfg, ok, err := configFromSettings(m)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, nil
 	}
 	return buildProvider(cfg)
@@ -212,6 +207,26 @@ func buildProvider(cfg *Config) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("web_fetch provider not implemented")
 	}
+}
+
+func configFromSettings(m map[string]string) (*Config, bool, error) {
+	raw := strings.TrimSpace(m[settingProvider])
+	if raw == "" {
+		return nil, false, nil
+	}
+
+	kind, err := parseProviderKind(raw)
+	if err != nil {
+		return nil, false, err
+	}
+
+	cfg := &Config{
+		ProviderKind:     kind,
+		FirecrawlAPIKey:  strings.TrimSpace(m[settingFirecrawlKey]),
+		FirecrawlBaseURL: strings.TrimRight(strings.TrimSpace(m[settingFirecrawlURL]), "/"),
+		JinaAPIKey:       strings.TrimSpace(m[settingJinaKey]),
+	}
+	return cfg, true, nil
 }
 
 func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {

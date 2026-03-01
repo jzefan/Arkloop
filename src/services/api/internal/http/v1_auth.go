@@ -15,6 +15,7 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/turnstile"
+	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/google/uuid"
 )
@@ -25,26 +26,6 @@ const (
 	settingTurnstileAllowedHost = "turnstile.allowed_host"
 )
 
-// loadTurnstileSecretKey reads from DB first, falls back to envFallback.
-func loadTurnstileSecretKey(r *nethttp.Request, repo *data.PlatformSettingsRepository, envFallback string) string {
-	if repo != nil {
-		if s, err := repo.Get(r.Context(), settingTurnstileSecretKey); err == nil && s != nil {
-			return s.Value
-		}
-	}
-	return envFallback
-}
-
-// loadTurnstileAllowedHost reads from DB first, falls back to envFallback.
-func loadTurnstileAllowedHost(r *nethttp.Request, repo *data.PlatformSettingsRepository, envFallback string) string {
-	if repo != nil {
-		if s, err := repo.Get(r.Context(), settingTurnstileAllowedHost); err == nil && s != nil {
-			return s.Value
-		}
-	}
-	return envFallback
-}
-
 // verifyTurnstileToken performs Turnstile validation if a secret key is configured.
 // Returns false and writes the error response when validation fails.
 func verifyTurnstileToken(
@@ -52,16 +33,28 @@ func verifyTurnstileToken(
 	r *nethttp.Request,
 	traceID string,
 	token string,
-	repo *data.PlatformSettingsRepository,
-	envSecretKey string,
-	envAllowedHost string,
+	resolver sharedconfig.Resolver,
 ) bool {
-	secretKey := loadTurnstileSecretKey(r, repo, envSecretKey)
+	if resolver == nil {
+		return true
+	}
+
+	secretKey, err := resolver.Resolve(r.Context(), settingTurnstileSecretKey, sharedconfig.Scope{})
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return false
+	}
+	secretKey = strings.TrimSpace(secretKey)
 	if secretKey == "" {
 		return true // not configured, skip
 	}
 
-	allowedHost := loadTurnstileAllowedHost(r, repo, envAllowedHost)
+	allowedHost, err := resolver.Resolve(r.Context(), settingTurnstileAllowedHost, sharedconfig.Scope{})
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return false
+	}
+	allowedHost = strings.TrimSpace(allowedHost)
 
 	// RemoteAddr 格式为 "IP:port"，需剥离端口再传给 Cloudflare
 	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -91,17 +84,19 @@ type captchaConfigResponse struct {
 }
 
 func captchaConfig(
-	settingsRepo *data.PlatformSettingsRepository,
-	envSiteKey string,
+	resolver sharedconfig.Resolver,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 
-		siteKey := envSiteKey
-		if settingsRepo != nil {
-			if s, err := settingsRepo.Get(r.Context(), settingTurnstileSiteKey); err == nil && s != nil {
-				siteKey = s.Value
+		siteKey := ""
+		if resolver != nil {
+			val, err := resolver.Resolve(r.Context(), settingTurnstileSiteKey, sharedconfig.Scope{})
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
 			}
+			siteKey = strings.TrimSpace(val)
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, captchaConfigResponse{
@@ -112,8 +107,8 @@ func captchaConfig(
 }
 
 type loginRequest struct {
-	Login           string `json:"login"`
-	Password        string `json:"password"`
+	Login            string `json:"login"`
+	Password         string `json:"password"`
 	CfTurnstileToken string `json:"cf_turnstile_token"`
 }
 
@@ -169,7 +164,7 @@ type updateMeResponse struct {
 	Username string `json:"username"`
 }
 
-func login(authService *auth.Service, auditWriter *audit.Writer, settingsRepo *data.PlatformSettingsRepository, envSecretKey, envAllowedHost string) func(nethttp.ResponseWriter, *nethttp.Request) {
+func login(authService *auth.Service, auditWriter *audit.Writer, resolver sharedconfig.Resolver) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
 			writeMethodNotAllowed(w, r)
@@ -198,7 +193,7 @@ func login(authService *auth.Service, auditWriter *audit.Writer, settingsRepo *d
 			return
 		}
 
-		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, resolver) {
 			return
 		}
 
@@ -350,8 +345,7 @@ func register(
 	registrationService *auth.RegistrationService,
 	flagService *featureflag.Service,
 	auditWriter *audit.Writer,
-	settingsRepo *data.PlatformSettingsRepository,
-	envSecretKey, envAllowedHost string,
+	resolver sharedconfig.Resolver,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
@@ -388,7 +382,7 @@ func register(
 			return
 		}
 
-		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, resolver) {
 			return
 		}
 
@@ -700,7 +694,7 @@ type emailOTPVerifyRequest struct {
 	Code  string `json:"code"`
 }
 
-func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, settingsRepo *data.PlatformSettingsRepository, envSecretKey, envAllowedHost string) func(nethttp.ResponseWriter, *nethttp.Request) {
+func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, resolver sharedconfig.Resolver) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
 			writeMethodNotAllowed(w, r)
@@ -724,7 +718,7 @@ func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, settingsRepo *data
 			return
 		}
 
-		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, settingsRepo, envSecretKey, envAllowedHost) {
+		if !verifyTurnstileToken(w, r, traceID, body.CfTurnstileToken, resolver) {
 			return
 		}
 

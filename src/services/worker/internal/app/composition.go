@@ -3,16 +3,19 @@ package app
 import (
 	"context"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/memory/openviking"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/runengine"
-	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
 	browsertool "arkloop/services/worker/internal/tools/builtin/browser"
@@ -34,6 +37,14 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ctx = context.Background()
 	}
 
+	configRegistry := sharedconfig.DefaultRegistry()
+	var configCache sharedconfig.Cache
+	configCacheTTL := sharedconfig.CacheTTLFromEnv()
+	if rdb != nil && configCacheTTL > 0 {
+		configCache = sharedconfig.NewRedisCache(rdb)
+	}
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, configCacheTTL)
+
 	routingCfg, err := loadRoutingConfig(ctx, pool)
 	if err != nil {
 		return nil, err
@@ -53,7 +64,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
-	executors := builtin.Executors(pool, rdb)
+	executors := builtin.Executors(pool, rdb, configResolver)
 	allLlmSpecs := builtin.LlmSpecs()
 
 	// 全局 MCP pool，用于 env-loaded 工具及 per-run org 工具的连接复用
@@ -80,13 +91,17 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	baseAllowlistNames := tools.ParseAllowlistNamesFromEnv()
 
-	// MemoryProvider：DB 优先，ENV 兜底；未配置时传 nil，MemoryMiddleware 自动降级为 no-op
-	ovCfg, found, err := openviking.LoadConfigFromDB(ctx, pool)
-	if err != nil {
-		slog.WarnContext(ctx, "memory: db config load failed, falling back to env", "err", err.Error())
-	}
-	if !found {
-		ovCfg = openviking.LoadConfigFromEnv()
+	ovCfg := openviking.Config{}
+	if configResolver != nil {
+		m, err := configResolver.ResolvePrefix(ctx, "openviking.", sharedconfig.Scope{})
+		if err != nil {
+			slog.WarnContext(ctx, "memory: config load failed, skipping", "err", err.Error())
+		} else {
+			ovCfg = openviking.Config{
+				BaseURL:    strings.TrimSpace(m["openviking.base_url"]),
+				RootAPIKey: strings.TrimSpace(m["openviking.root_api_key"]),
+			}
+		}
 	}
 	memoryProvider := openviking.NewProvider(ovCfg)
 	if memoryProvider == nil {
@@ -141,6 +156,26 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	watchedPersonas := personas.NewWatchedRegistry(personasRoot, initialPersonaRegistry)
 	watchedPersonas.Watch(ctx)
 
+	llmRetryMaxAttempts := 3
+	llmRetryBaseDelayMs := 1000
+	if configResolver != nil {
+		m, err := configResolver.ResolvePrefix(ctx, "llm.retry.", sharedconfig.Scope{})
+		if err != nil {
+			slog.WarnContext(ctx, "llm retry config load failed, using defaults", "err", err.Error())
+		} else {
+			if raw := strings.TrimSpace(m["llm.retry.max_attempts"]); raw != "" {
+				if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+					llmRetryMaxAttempts = v
+				}
+			}
+			if raw := strings.TrimSpace(m["llm.retry.base_delay_ms"]); raw != "" {
+				if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+					llmRetryBaseDelayMs = v
+				}
+			}
+		}
+	}
+
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
 		DBPool:                 pool,
@@ -151,14 +186,14 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ToolExecutors:          executors,
 		AllLlmToolSpecs:        allLlmSpecs,
 		BaseToolAllowlistNames: baseAllowlistNames,
-		PersonaRegistryGetter:    watchedPersonas.Get,
+		PersonaRegistryGetter:  watchedPersonas.Get,
 		MCPPool:                mcpPool,
 		MCPDiscoveryCache:      discoveryCache,
 		ExecutorRegistry:       execRegistry,
 		JobQueue:               jobQueue,
 		RunLimiterRDB:          rdb,
-		LlmRetryMaxAttempts:    cfg.LlmRetryMaxAttempts,
-		LlmRetryBaseDelayMs:    cfg.LlmRetryBaseDelayMs,
+		LlmRetryMaxAttempts:    llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs:    llmRetryBaseDelayMs,
 		MemoryProvider:         memoryProvider,
 	})
 }

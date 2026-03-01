@@ -10,6 +10,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	sharedconfig "arkloop/services/shared/config"
 )
 
 const (
@@ -49,28 +50,18 @@ type adminEmailTestRequest struct {
 	To string `json:"to"`
 }
 
-// loadEmailSettings reads all email.* keys from platform_settings.
-func loadEmailSettings(ctx context.Context, repo *data.PlatformSettingsRepository) (map[string]string, error) {
-	keys := []string{settingEmailFrom, settingEmailSMTPHost, settingEmailSMTPPort, settingEmailSMTPUser, settingEmailSMTPPass, settingEmailTLSMode}
-	result := make(map[string]string, len(keys))
-	for _, k := range keys {
-		s, err := repo.Get(ctx, k)
-		if err != nil {
-			return nil, err
-		}
-		if s != nil {
-			result[k] = s.Value
-		}
+func loadEmailSettings(ctx context.Context, resolver sharedconfig.Resolver) (map[string]string, error) {
+	if resolver == nil {
+		return map[string]string{}, nil
 	}
-	return result, nil
+	return resolver.ResolvePrefix(ctx, "email.", sharedconfig.Scope{})
 }
 
 func adminEmailStatus(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
-	settingsRepo *data.PlatformSettingsRepository,
-	envFrom string,
+	resolver sharedconfig.Resolver,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -88,24 +79,34 @@ func adminEmailStatus(
 		}
 
 		resp := emailStatusResponse{Source: "none"}
-
-		if settingsRepo != nil {
-			s, err := settingsRepo.Get(r.Context(), settingEmailFrom)
+		if resolver != nil {
+			var (
+				val string
+				src string
+				err error
+			)
+			if sr, ok := resolver.(sharedconfig.ResolverWithSource); ok {
+				val, src, err = sr.ResolveWithSource(r.Context(), settingEmailFrom, sharedconfig.Scope{})
+			} else {
+				val, err = resolver.Resolve(r.Context(), settingEmailFrom, sharedconfig.Scope{})
+			}
 			if err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
-			if s != nil && strings.TrimSpace(s.Value) != "" {
+			val = strings.TrimSpace(val)
+			if val != "" {
 				resp.Configured = true
-				resp.From = strings.TrimSpace(s.Value)
-				resp.Source = "db"
+				resp.From = val
 			}
-		}
-
-		if !resp.Configured && strings.TrimSpace(envFrom) != "" {
-			resp.Configured = true
-			resp.From = strings.TrimSpace(envFrom)
-			resp.Source = "env"
+			switch src {
+			case "env":
+				resp.Source = "env"
+			case "platform_db":
+				resp.Source = "db"
+			default:
+				resp.Source = "none"
+			}
 		}
 
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
@@ -117,9 +118,11 @@ func adminEmailConfig(
 	membershipRepo *data.OrgMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	settingsRepo *data.PlatformSettingsRepository,
+	resolver sharedconfig.Resolver,
+	invalidator sharedconfig.Invalidator,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	getHandler := adminEmailGetConfig(authService, membershipRepo, apiKeysRepo, settingsRepo)
-	putHandler := adminEmailPutConfig(authService, membershipRepo, apiKeysRepo, settingsRepo)
+	getHandler := adminEmailGetConfig(authService, membershipRepo, apiKeysRepo, resolver)
+	putHandler := adminEmailPutConfig(authService, membershipRepo, apiKeysRepo, settingsRepo, invalidator)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodGet:
@@ -136,7 +139,7 @@ func adminEmailGetConfig(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
-	settingsRepo *data.PlatformSettingsRepository,
+	resolver sharedconfig.Resolver,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -153,22 +156,17 @@ func adminEmailGetConfig(
 			return
 		}
 
-		if settingsRepo == nil {
-			WriteError(w, nethttp.StatusServiceUnavailable, "db.not_configured", "database not available", traceID, nil)
-			return
-		}
-
-		m, err := loadEmailSettings(r.Context(), settingsRepo)
+		m, err := loadEmailSettings(r.Context(), resolver)
 		if err != nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
-		port := m[settingEmailSMTPPort]
+		port := strings.TrimSpace(m[settingEmailSMTPPort])
 		if port == "" {
 			port = "587"
 		}
-		tlsMode := m[settingEmailTLSMode]
+		tlsMode := strings.TrimSpace(m[settingEmailTLSMode])
 		if tlsMode == "" {
 			tlsMode = "starttls"
 		}
@@ -189,6 +187,7 @@ func adminEmailPutConfig(
 	membershipRepo *data.OrgMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	settingsRepo *data.PlatformSettingsRepository,
+	invalidator sharedconfig.Invalidator,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPut {
@@ -247,12 +246,18 @@ func adminEmailPutConfig(
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
+			if invalidator != nil {
+				_ = invalidator.Invalidate(ctx, k, sharedconfig.Scope{})
+			}
 		}
 		// Password: only update if non-empty (empty = keep existing)
 		if body.SMTPPass != "" {
 			if _, err := settingsRepo.Set(ctx, settingEmailSMTPPass, body.SMTPPass); err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
+			}
+			if invalidator != nil {
+				_ = invalidator.Invalidate(ctx, settingEmailSMTPPass, sharedconfig.Scope{})
 			}
 		}
 
@@ -266,7 +271,7 @@ func adminEmailTest(
 	apiKeysRepo *data.APIKeysRepository,
 	jobRepo *data.JobRepository,
 	settingsRepo *data.PlatformSettingsRepository,
-	envFrom string,
+	resolver sharedconfig.Resolver,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
@@ -283,11 +288,10 @@ func adminEmailTest(
 			return
 		}
 
-		// Check if email is effectively configured (DB or env)
-		configured := strings.TrimSpace(envFrom) != ""
-		if !configured && settingsRepo != nil {
-			s, err := settingsRepo.Get(r.Context(), settingEmailFrom)
-			if err == nil && s != nil && strings.TrimSpace(s.Value) != "" {
+		configured := false
+		if resolver != nil {
+			val, err := resolver.Resolve(r.Context(), settingEmailFrom, sharedconfig.Scope{})
+			if err == nil && strings.TrimSpace(val) != "" {
 				configured = true
 			}
 		}
@@ -322,4 +326,3 @@ func adminEmailTest(
 		w.WriteHeader(nethttp.StatusNoContent)
 	}
 }
-

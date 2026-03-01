@@ -13,6 +13,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -59,6 +60,8 @@ func adminGatewayConfigEntry(
 	settingsRepo *data.PlatformSettingsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	rdb *redis.Client,
+	resolver sharedconfig.Resolver,
+	invalidator sharedconfig.Invalidator,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -72,7 +75,7 @@ func adminGatewayConfigEntry(
 
 		switch r.Method {
 		case nethttp.MethodGet:
-			cfg, err := loadGatewayConfig(r.Context(), settingsRepo)
+			cfg, err := loadGatewayConfig(r.Context(), resolver)
 			if err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
@@ -91,7 +94,7 @@ func adminGatewayConfigEntry(
 				return
 			}
 
-			if err := saveGatewayConfig(r.Context(), settingsRepo, body); err != nil {
+			if err := saveGatewayConfig(r.Context(), settingsRepo, body, invalidator); err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
@@ -101,7 +104,7 @@ func adminGatewayConfigEntry(
 				_ = pushGatewayConfigToRedis(r.Context(), rdb, body)
 			}
 
-			cfg, err := loadGatewayConfig(r.Context(), settingsRepo)
+			cfg, err := loadGatewayConfig(r.Context(), resolver)
 			if err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
@@ -147,10 +150,13 @@ func validateGatewayConfig(body updateGatewayConfigRequest) error {
 	return nil
 }
 
-func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsRepository, body updateGatewayConfigRequest) error {
+func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsRepository, body updateGatewayConfigRequest, invalidator sharedconfig.Invalidator) error {
 	if body.IPMode != "" {
 		if _, err := settingsRepo.Set(ctx, settingGatewayIPMode, body.IPMode); err != nil {
 			return err
+		}
+		if invalidator != nil {
+			_ = invalidator.Invalidate(ctx, settingGatewayIPMode, sharedconfig.Scope{})
 		}
 	}
 
@@ -159,11 +165,17 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 	if _, err := settingsRepo.Set(ctx, settingGatewayTrustedCIDRs, string(encoded)); err != nil {
 		return err
 	}
+	if invalidator != nil {
+		_ = invalidator.Invalidate(ctx, settingGatewayTrustedCIDRs, sharedconfig.Scope{})
+	}
 
 	if body.RiskRejectThreshold != nil {
 		val := fmt.Sprintf("%d", *body.RiskRejectThreshold)
 		if _, err := settingsRepo.Set(ctx, settingGatewayRiskRejectThreshold, val); err != nil {
 			return err
+		}
+		if invalidator != nil {
+			_ = invalidator.Invalidate(ctx, settingGatewayRiskRejectThreshold, sharedconfig.Scope{})
 		}
 	}
 	if body.RateLimitCapacity != nil {
@@ -171,18 +183,24 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 		if _, err := settingsRepo.Set(ctx, settingGatewayRateLimitCapacity, val); err != nil {
 			return err
 		}
+		if invalidator != nil {
+			_ = invalidator.Invalidate(ctx, settingGatewayRateLimitCapacity, sharedconfig.Scope{})
+		}
 	}
 	if body.RateLimitPerMinute != nil {
 		val := strconv.FormatFloat(*body.RateLimitPerMinute, 'f', -1, 64)
 		if _, err := settingsRepo.Set(ctx, settingGatewayRateLimitPerMinute, val); err != nil {
 			return err
 		}
+		if invalidator != nil {
+			_ = invalidator.Invalidate(ctx, settingGatewayRateLimitPerMinute, sharedconfig.Scope{})
+		}
 	}
 
 	return nil
 }
 
-func loadGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsRepository) (*gatewayConfigResponse, error) {
+func loadGatewayConfig(ctx context.Context, resolver sharedconfig.Resolver) (*gatewayConfigResponse, error) {
 	cfg := &gatewayConfigResponse{
 		IPMode:             "direct",
 		TrustedCIDRs:       []string{},
@@ -190,45 +208,57 @@ func loadGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 		RateLimitPerMinute: defaultGatewayRateLimitPerMinute,
 	}
 
-	if s, err := settingsRepo.Get(ctx, settingGatewayIPMode); err != nil {
-		return nil, err
-	} else if s != nil {
-		cfg.IPMode = s.Value
-	}
+	if resolver != nil {
+		m, err := resolver.ResolvePrefix(ctx, "gateway.", sharedconfig.Scope{})
+		if err != nil {
+			return nil, err
+		}
 
-	if s, err := settingsRepo.Get(ctx, settingGatewayTrustedCIDRs); err != nil {
-		return nil, err
-	} else if s != nil {
-		var cidrs []string
-		if err := json.Unmarshal([]byte(s.Value), &cidrs); err == nil {
-			cfg.TrustedCIDRs = cidrs
+		if raw := strings.TrimSpace(m[settingGatewayIPMode]); raw != "" {
+			if _, ok := validIPModes[raw]; ok {
+				cfg.IPMode = raw
+			}
 		}
-	}
 
-	if s, err := settingsRepo.Get(ctx, settingGatewayRiskRejectThreshold); err != nil {
-		return nil, err
-	} else if s != nil {
-		var v int
-		if _, err := fmt.Sscanf(s.Value, "%d", &v); err == nil {
-			cfg.RiskRejectThreshold = v
+		cfg.TrustedCIDRs = parseTrustedCIDRs(m[settingGatewayTrustedCIDRs])
+
+		if raw := strings.TrimSpace(m[settingGatewayRiskRejectThreshold]); raw != "" {
+			var v int
+			if _, err := fmt.Sscanf(raw, "%d", &v); err == nil {
+				cfg.RiskRejectThreshold = v
+			}
 		}
-	}
-	if s, err := settingsRepo.Get(ctx, settingGatewayRateLimitCapacity); err != nil {
-		return nil, err
-	} else if s != nil {
-		if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
-			cfg.RateLimitCapacity = v
+
+		if raw := strings.TrimSpace(m[settingGatewayRateLimitCapacity]); raw != "" {
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
+				cfg.RateLimitCapacity = v
+			}
 		}
-	}
-	if s, err := settingsRepo.Get(ctx, settingGatewayRateLimitPerMinute); err != nil {
-		return nil, err
-	} else if s != nil {
-		if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
-			cfg.RateLimitPerMinute = v
+		if raw := strings.TrimSpace(m[settingGatewayRateLimitPerMinute]); raw != "" {
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
+				cfg.RateLimitPerMinute = v
+			}
 		}
 	}
 
 	return cfg, nil
+}
+
+func parseTrustedCIDRs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+
+	var cidrs []string
+	if strings.HasPrefix(raw, "[") {
+		if err := json.Unmarshal([]byte(raw), &cidrs); err == nil {
+			return filterCIDRs(cidrs)
+		}
+	}
+
+	parts := strings.Split(raw, ",")
+	return filterCIDRs(parts)
 }
 
 // gatewayRedisPayload 与 gateway 服务的 gatewayDynamicConfig 结构对应。

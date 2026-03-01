@@ -8,9 +8,9 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/executor"
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/runengine"
-	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/testutil"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
@@ -72,10 +72,10 @@ func TestEngineV1InjectsPersonaSystemPromptAndBudgets(t *testing.T) {
 		StubGateway:            gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
-		ToolExecutors:          builtin.Executors(nil, nil),
+		ToolExecutors:          builtin.Executors(nil, nil, nil),
 		AllLlmToolSpecs:        builtin.LlmSpecs(),
 		BaseToolAllowlistNames: []string{"echo"},
-		PersonaRegistryGetter:    func() *personas.Registry { return personaRegistry },
+		PersonaRegistryGetter:  func() *personas.Registry { return personaRegistry },
 		ExecutorRegistry:       executor.DefaultExecutorRegistry(),
 	})
 	if err != nil {
@@ -115,7 +115,7 @@ func seedRunStartedWithPersona(
 	t.Helper()
 
 	startedData := map[string]any{
-		"route_id": "default",
+		"route_id":   "default",
 		"persona_id": personaRef,
 	}
 	encoded, err := json.Marshal(startedData)
@@ -144,4 +144,3 @@ func seedRunStartedWithPersona(
 	)
 	return err
 }
-

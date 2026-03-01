@@ -7,25 +7,32 @@ import (
 )
 
 const (
-	webFetchProviderEnv   = "ARKLOOP_WEB_FETCH_PROVIDER"
-	firecrawlAPIKeyEnv    = "ARKLOOP_WEB_FETCH_FIRECRAWL_API_KEY"
-	firecrawlBaseURLEnv   = "ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL"
-	jinaAPIKeyEnv         = "ARKLOOP_WEB_FETCH_JINA_API_KEY"
+	webFetchProviderEnv = "ARKLOOP_WEB_FETCH_PROVIDER"
+	firecrawlAPIKeyEnv  = "ARKLOOP_WEB_FETCH_FIRECRAWL_API_KEY"
+	firecrawlBaseURLEnv = "ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL"
+	jinaAPIKeyEnv       = "ARKLOOP_WEB_FETCH_JINA_API_KEY"
+)
+
+const (
+	settingProvider     = "web_fetch.provider"
+	settingFirecrawlKey = "web_fetch.firecrawl_api_key"
+	settingFirecrawlURL = "web_fetch.firecrawl_base_url"
+	settingJinaKey      = "web_fetch.jina_api_key"
 )
 
 type ProviderKind string
 
 const (
-	ProviderKindBasic    ProviderKind = "basic"
+	ProviderKindBasic     ProviderKind = "basic"
 	ProviderKindFirecrawl ProviderKind = "firecrawl"
-	ProviderKindJina     ProviderKind = "jina"
+	ProviderKindJina      ProviderKind = "jina"
 )
 
 type Config struct {
-	ProviderKind    ProviderKind
-	FirecrawlAPIKey string
+	ProviderKind     ProviderKind
+	FirecrawlAPIKey  string
 	FirecrawlBaseURL string
-	JinaAPIKey      string
+	JinaAPIKey       string
 }
 
 func ConfigFromEnv(required bool) (*Config, error) {
@@ -81,4 +88,3 @@ func parseProviderKind(raw string) (ProviderKind, error) {
 		return "", fmt.Errorf("%s must be basic/firecrawl/jina", webFetchProviderEnv)
 	}
 }
-

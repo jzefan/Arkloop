@@ -21,6 +21,7 @@ import (
 	"arkloop/services/api/internal/jobs"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/objectstore"
 	sharedredis "arkloop/services/shared/redis"
 
@@ -138,6 +139,14 @@ func (a *Application) Run(ctx context.Context) error {
 		})
 	}
 
+	configRegistry := sharedconfig.DefaultRegistry()
+	var configCache sharedconfig.Cache
+	cacheTTL := sharedconfig.CacheTTLFromEnv()
+	if redisClient != nil && cacheTTL > 0 {
+		configCache = sharedconfig.NewRedisCache(redisClient)
+	}
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
+
 	var artifactStore *objectstore.Store
 	if strings.TrimSpace(a.config.S3Endpoint) != "" {
 		_, err := objectstore.New(
@@ -169,23 +178,23 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	var (
-		userRepo       *data.UserRepository
-		credentialRepo *data.UserCredentialRepository
-		membershipRepo *data.OrgMembershipRepository
-		orgRepo        *data.OrgRepository
-		threadRepo     *data.ThreadRepository
-		threadStarRepo  *data.ThreadStarRepository
-		threadShareRepo *data.ThreadShareRepository
+		userRepo         *data.UserRepository
+		credentialRepo   *data.UserCredentialRepository
+		membershipRepo   *data.OrgMembershipRepository
+		orgRepo          *data.OrgRepository
+		threadRepo       *data.ThreadRepository
+		threadStarRepo   *data.ThreadStarRepository
+		threadShareRepo  *data.ThreadShareRepository
 		threadReportRepo *data.ThreadReportRepository
-		messageRepo    *data.MessageRepository
-		runEventRepo   *data.RunEventRepository
-		auditRepo      *data.AuditLogRepository
+		messageRepo      *data.MessageRepository
+		runEventRepo     *data.RunEventRepository
+		auditRepo        *data.AuditLogRepository
 
 		secretsRepo         *data.SecretsRepository
 		llmCredRepo         *data.LlmCredentialsRepository
 		llmRoutesRepo       *data.LlmRoutesRepository
 		mcpConfigsRepo      *data.MCPConfigsRepository
-		personasRepo          *data.PersonasRepository
+		personasRepo        *data.PersonasRepository
 		ipRulesRepo         *data.IPRulesRepository
 		apiKeysRepo         *data.APIKeysRepository
 		orgInvitationsRepo  *data.OrgInvitationsRepository
@@ -219,12 +228,12 @@ func (a *Application) Run(ctx context.Context) error {
 
 		emailVerifyTokenRepo *data.EmailVerificationTokenRepository
 
-		authService         *auth.Service
-		registrationService *auth.RegistrationService
-		emailVerifyService  *auth.EmailVerifyService
+		authService          *auth.Service
+		registrationService  *auth.RegistrationService
+		emailVerifyService   *auth.EmailVerifyService
 		emailOTPLoginService *auth.EmailOTPLoginService
-		orgService          *auth.OrgService
-		auditWriter         *audit.Writer
+		orgService           *auth.OrgService
+		auditWriter          *audit.Writer
 
 		emailOTPTokenRepo *data.EmailOTPTokenRepository
 	)
@@ -503,64 +512,67 @@ func (a *Application) Run(ctx context.Context) error {
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
-			Pool:                 pool,
-			DirectPool:           directPool,
-			Logger:               a.logger,
-			TrustIncomingTraceID: a.config.TrustIncomingTraceID,
-			TrustXForwardedFor:   a.config.TrustXForwardedFor,
-			SchemaRepository:     schemaRepo,
-			AuthService:          authService,
-			RegistrationService:  registrationService,
-			OrgService:           orgService,
-			OrgMembershipRepo:    membershipRepo,
-			ThreadRepo:           threadRepo,
-			ThreadStarRepo:       threadStarRepo,
-			ThreadShareRepo:     threadShareRepo,
-			ThreadReportRepo:    threadReportRepo,
-			MessageRepo:          messageRepo,
-			RunEventRepo:         runEventRepo,
-			AuditWriter:          auditWriter,
-			LlmCredentialsRepo:   llmCredRepo,
-			LlmRoutesRepo:        llmRoutesRepo,
-			SecretsRepo:          secretsRepo,
-			MCPConfigsRepo:       mcpConfigsRepo,
-			PersonasRepo:           personasRepo,
-			IPRulesRepo:          ipRulesRepo,
-			APIKeysRepo:          apiKeysRepo,
-			OrgInvitationsRepo:   orgInvitationsRepo,
-			TeamRepo:             teamRepo,
-			ProjectRepo:          projectRepo,
-			WebhookRepo:          webhookRepo,
-			PromptTemplatesRepo:  promptTemplatesRepo,
-			AgentConfigsRepo:     agentConfigsRepo,
-			PlansRepo:            plansRepo,
-			SubscriptionsRepo:    subscriptionsRepo,
-			EntitlementsRepo:     entitlementsRepo,
-			EntitlementService:   entitlementSvc,
-			UsageRepo:            usageRepo,
-			FeatureFlagsRepo:     featureFlagsRepo,
-			FeatureFlagService:   featureFlagSvc,
-			NotificationsRepo:    notificationsRepo,
-			AuditLogRepo:         auditRepo,
-			UsersRepo:            userRepo,
-			OrgRepo:              orgRepo,
-			UserCredentialRepo:   credentialRepo,
-			InviteCodesRepo:      inviteCodesRepo,
-			ReferralsRepo:        referralsRepo,
-			CreditsRepo:          creditsRepo,
-			RedemptionCodesRepo:  redemptionCodesRepo,
-			PlatformSettingsRepo: platformSettingsRepo,
-			RedisClient:          redisClient,
-			RunLimiter:           runLimiter,
-			AsrCredentialsRepo:   asrCredRepo,
-			EmailVerifyService:   emailVerifyService,
-			EmailOTPLoginService: emailOTPLoginService,
-			JobRepo:              jobRepo,
-			ArtifactStore:        artifactStore,
-			EmailFrom:            strings.TrimSpace(a.config.EmailFrom),
+			Pool:                    pool,
+			DirectPool:              directPool,
+			Logger:                  a.logger,
+			TrustIncomingTraceID:    a.config.TrustIncomingTraceID,
+			TrustXForwardedFor:      a.config.TrustXForwardedFor,
+			SchemaRepository:        schemaRepo,
+			AuthService:             authService,
+			RegistrationService:     registrationService,
+			OrgService:              orgService,
+			OrgMembershipRepo:       membershipRepo,
+			ThreadRepo:              threadRepo,
+			ThreadStarRepo:          threadStarRepo,
+			ThreadShareRepo:         threadShareRepo,
+			ThreadReportRepo:        threadReportRepo,
+			MessageRepo:             messageRepo,
+			RunEventRepo:            runEventRepo,
+			AuditWriter:             auditWriter,
+			LlmCredentialsRepo:      llmCredRepo,
+			LlmRoutesRepo:           llmRoutesRepo,
+			SecretsRepo:             secretsRepo,
+			MCPConfigsRepo:          mcpConfigsRepo,
+			PersonasRepo:            personasRepo,
+			IPRulesRepo:             ipRulesRepo,
+			APIKeysRepo:             apiKeysRepo,
+			OrgInvitationsRepo:      orgInvitationsRepo,
+			TeamRepo:                teamRepo,
+			ProjectRepo:             projectRepo,
+			WebhookRepo:             webhookRepo,
+			PromptTemplatesRepo:     promptTemplatesRepo,
+			AgentConfigsRepo:        agentConfigsRepo,
+			PlansRepo:               plansRepo,
+			SubscriptionsRepo:       subscriptionsRepo,
+			EntitlementsRepo:        entitlementsRepo,
+			EntitlementService:      entitlementSvc,
+			UsageRepo:               usageRepo,
+			FeatureFlagsRepo:        featureFlagsRepo,
+			FeatureFlagService:      featureFlagSvc,
+			NotificationsRepo:       notificationsRepo,
+			AuditLogRepo:            auditRepo,
+			UsersRepo:               userRepo,
+			OrgRepo:                 orgRepo,
+			UserCredentialRepo:      credentialRepo,
+			InviteCodesRepo:         inviteCodesRepo,
+			ReferralsRepo:           referralsRepo,
+			CreditsRepo:             creditsRepo,
+			RedemptionCodesRepo:     redemptionCodesRepo,
+			PlatformSettingsRepo:    platformSettingsRepo,
+			RedisClient:             redisClient,
+			RunLimiter:              runLimiter,
+			AsrCredentialsRepo:      asrCredRepo,
+			EmailVerifyService:      emailVerifyService,
+			EmailOTPLoginService:    emailOTPLoginService,
+			JobRepo:                 jobRepo,
+			ArtifactStore:           artifactStore,
+			EmailFrom:               strings.TrimSpace(a.config.EmailFrom),
 			TurnstileEnvSecretKey:   a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:     a.config.TurnstileSiteKey,
 			TurnstileEnvAllowedHost: a.config.TurnstileAllowedHost,
+			ConfigResolver:          configResolver,
+			ConfigInvalidator:       configResolver,
+			ConfigRegistry:          configRegistry,
 			SSEConfig: apihttp.SSEConfig{
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,

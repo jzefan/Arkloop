@@ -7,9 +7,15 @@ import (
 )
 
 const (
-	webSearchProviderEnv    = "ARKLOOP_WEB_SEARCH_PROVIDER"
-	searxngBaseURLEnv       = "ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL"
-	tavilyAPIKeyEnv         = "ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"
+	webSearchProviderEnv = "ARKLOOP_WEB_SEARCH_PROVIDER"
+	searxngBaseURLEnv    = "ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL"
+	tavilyAPIKeyEnv      = "ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"
+)
+
+const (
+	settingProvider   = "web_search.provider"
+	settingSearxngURL = "web_search.searxng_base_url"
+	settingTavilyKey  = "web_search.tavily_api_key"
 )
 
 type ProviderKind string
@@ -21,7 +27,7 @@ const (
 )
 
 type Config struct {
-	ProviderKind  ProviderKind
+	ProviderKind   ProviderKind
 	SearxngBaseURL string
 	TavilyAPIKey   string
 }
@@ -48,7 +54,7 @@ func ConfigFromEnv(required bool) (*Config, error) {
 		}
 		baseURL = strings.TrimRight(baseURL, "/")
 		return &Config{
-			ProviderKind:  kind,
+			ProviderKind:   kind,
 			SearxngBaseURL: baseURL,
 		}, nil
 	case ProviderKindTavily:
@@ -80,4 +86,3 @@ func parseProviderKind(raw string) (ProviderKind, error) {
 		return "", fmt.Errorf("%s must be searxng/tavily/serper", webSearchProviderEnv)
 	}
 }
-

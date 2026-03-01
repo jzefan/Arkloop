@@ -9,6 +9,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -68,6 +69,7 @@ func platformSettingEntry(
 	settingsRepo *data.PlatformSettingsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	rdb *redis.Client,
+	invalidator sharedconfig.Invalidator,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -119,6 +121,9 @@ func platformSettingEntry(
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
+			if invalidator != nil {
+				_ = invalidator.Invalidate(r.Context(), key, sharedconfig.Scope{})
+			}
 			if shouldInvalidateEntitlementCache(key) {
 				invalidateEntitlementCacheByKey(r.Context(), rdb, key)
 			}
@@ -132,6 +137,9 @@ func platformSettingEntry(
 			if err := settingsRepo.Delete(r.Context(), key); err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
+			}
+			if invalidator != nil {
+				_ = invalidator.Invalidate(r.Context(), key, sharedconfig.Scope{})
 			}
 			if shouldInvalidateEntitlementCache(key) {
 				invalidateEntitlementCacheByKey(r.Context(), rdb, key)
