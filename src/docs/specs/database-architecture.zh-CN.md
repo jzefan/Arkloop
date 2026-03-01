@@ -1,156 +1,355 @@
-# 数据库架构与数据模型（PostgreSQL 优先）
+# 数据库架构与数据模型
 
-本文用于把 Arkloop 的数据库边界、核心表与权限/审计/计费的“不变量”先定下来，避免后续在多租户、共享、导出与审计上反复返工。
+本文描述 Arkloop 的数据库边界、核心表与权限/审计/计费的架构约束。生产形态以 PostgreSQL 为唯一目标后端。
 
-范围：
-- 仅讨论架构与数据模型（不涉及 ORM/代码实现）
-- 生产形态以 PostgreSQL 作为唯一目标后端
+迁移工具：Goose（嵌入 `src/services/api/internal/migrate/migrations/`，74 个迁移文件）。
 
-## 1. 术语：`org` 是不是“公司”？
+## 1. 术语
 
-`org` 在系统里更准确的含义是：**租户边界（tenant boundary）**。
-
-在多数商业场景下，一个 `org` 往往对应“一家公司/一个客户/一个账单主体”，因此产品层面可以称作“公司/组织/租户”，但技术层面应把它当作：
+`org` 是**租户边界（tenant boundary）**：
 - 数据隔离边界（权限、导出、删除、保留策略）
 - 审计边界（日志归属与追责范围）
 - 计费与配额边界（预算、倍率、用量报表）
 
-公司下面的部门/小组不建议做成“嵌套 org”（会显著放大权限与计费复杂度），用 `team` 表达即可。
+## 2. 顶层结构：`org / team / project`
 
-## 2. 顶层结构：`org / team / project` 自上而下
+### 2.1 `orgs`（租户/公司）
 
-### 2.1 `org`（租户/公司）
-- 负责：隔离、策略（保留期/快照/加密）、账单默认归属、管理员域
-- 典型角色：`org_admin`、`security_admin`、`billing_admin`
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `slug` | URL 友好标识 |
+| `name` | 显示名称 |
+| `created_at` | 创建时间 |
 
-### 2.2 `team`（组织内小组）
-- 负责：组织内部的权限分组与可见性
-- 典型用途：项目成员管理、同组可见策略、组级预算/倍率覆盖
+### 2.2 `users`（用户主体）
 
-### 2.3 `project`（协作域/案件）
-`project` 非强制存在：允许“个人聊天（无 project）”与“项目聊天（有 project）”并存。
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `username` | 用户名 |
+| `created_at` | 创建时间 |
 
-核心原则：
-- 成员加入必须显式化（成员列表/邀请链接）
-- `org_admin` 可按权限越权访问（并强审计）
+### 2.3 `org_memberships`（组织成员关系）
 
-## 3. 用户模型：一个人可加入多个 `org`
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `user_id` | FK -> users |
+| `role` | 角色（owner / member） |
 
-系统默认支持“一个自然人多个组织（多租户成员）”。同时允许“组织托管账号”（由组织创建/回收）作为策略层能力，而不是换一套数据模型：
-- `users` 表达“人”的主体
-- `org_memberships` 表达加入关系
-- 认证身份（密码/OIDC/SSO）用独立的 `auth_identities` 表承载，避免把认证形态写死在用户表
+### 2.4 `teams`（组织内小组）
 
-## 4. `project` 支持跨 `org/team` 加入：建议采用 Owner-Org（主组织）模型
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `name` | 名称 |
 
-你希望 `project` 可能允许多个 org 或 team 加入协作。为了避免导出/删除/保留期/计费归属冲突，建议采用：
+### 2.5 `projects`（项目/协作域）
 
-### 4.1 Owner-Org 模型（建议）
-- `projects.owner_org_id` 固定为主组织（责任方）
-- 其他 org/team/user 以“协作方成员”加入（获得访问权，但不改变数据的默认归属）
-- `project` 内的核心数据（threads/messages/runs/events/attachments）默认归属 owner_org
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `team_id` | FK -> teams（可选） |
+| `name` | 名称 |
+| `description` | 描述 |
+| `visibility` | 可见性 |
+| `deleted_at` | 软删除标记 |
 
-这样能把这些规则固定下来：
-- 数据保留/删除：以 owner_org 的策略为准（协作方仅按授权导出/查看）
-- 审计：责任明确（谁能看、谁能导出、谁能删、谁能配置策略）
-- 计费：默认记到“发起 run 的 org”或“project.owner_org”（二选一，但必须写死并可追溯）
+## 3. 会话与消息
 
-### 4.2 Multi-Org 归属模型（不建议早期做）
-允许同一 project 的数据同时归属多个 org，会导致：
-- 保留期冲突
-- 删除权冲突
-- 导出权冲突
-- 计费分账与对账复杂度大幅上升
+### 3.1 `threads`（会话容器）
 
-## 5. 可见性与“管理员可看明文”
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `created_by_user_id` | FK -> users |
+| `title` | 标题 |
+| `project_id` | FK -> projects（可选） |
+| `agent_config_id` | FK -> agent_configs（可选） |
+| `private` | 私有标记 |
+| `deleted_at` | 软删除 |
+| `created_at` | 创建时间 |
 
-你已明确：管理员允许查看消息明文；同事默认不可互看，除非通过配置/共享加入。
+### 3.2 `messages`（消息）
 
-建议把它拆成三条不可变约束：
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `thread_id` | FK -> threads |
+| `org_id` | FK -> orgs |
+| `role` | user / assistant / system |
+| `content` | 文本内容 |
+| `content_json` | JSONB 结构化内容 |
+| `hidden` | 隐藏标记 |
+| `created_at` | 创建时间 |
 
-1) 默认最小可见：
-   - 个人聊天：仅 thread owner 可见
-   - 项目聊天：仅 project 成员可见
-2) “能看明文”是独立权限位（例如 `messages.read_any`），不要默认下放给所有 admin
-3) 任何越权查看/导出/策略变更都必须落 `audit_logs`（谁、何时、范围、来源、trace_id）
+## 4. 运行与事件
 
-## 6. 核心表（建议最小闭环）
+### 4.1 `runs`（执行实例）
 
-以下是 Phase 1~2 的核心表集合（命名可调整），重点是字段语义与约束：
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `thread_id` | FK -> threads |
+| `created_by_user_id` | FK -> users |
+| `status` | 状态机 |
+| `parent_run_id` | FK -> runs（子运行） |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
 
-### 6.1 租户与成员
-- `orgs`
-- `users`
-- `org_memberships`
-- `teams`
-- `team_memberships`
+### 4.2 `run_events`（事件流 -- 唯一真相）
 
-### 6.2 项目与会话
-- `projects`（含 `owner_org_id`）
-- `project_memberships`（支持 subject 为 user/team/org，含 role）
-- `project_invite_links`（分享链接是“授予 membership 的手段”，不是 membership 本身）
-- `threads`
-- `thread_participants`（个人/项目/共享统一靠 participants/ACL 表达）
-- `messages`（存最终归并内容；流式细节放事件表）
+**按月分区**（`created_at`），自动管理分区生命周期（`ARKLOOP_RUN_EVENTS_RETENTION_MONTHS`）。
 
-### 6.3 运行与事件（唯一真相）
-- `runs`
-- `run_events`
-  - `seq`：run 内单调递增（断线续传/回放依赖它）
-  - `type`：稳定事件类型（started/delta/tool.call/denied/failed/...）
-  - `data_json`：可变 payload
-  - 关键可检索字段抽列：例如 `tool_name`、`error_class`、`cost_usd`、`duration_ms`
+| 列 | 说明 |
+|----|------|
+| `event_id` | PK |
+| `run_id` | FK -> runs |
+| `seq` | run 内单调递增序号 |
+| `ts` | 服务端时间戳 |
+| `type` | 事件类型 |
+| `data_json` | JSONB 负载 |
+| `tool_name` | 抽列索引 |
+| `error_class` | 抽列索引 |
+| `created_at` | 分区键 |
 
-## 7. 计费、倍率与快照（不要“分死”，但要“可追溯”）
+关键约束：
+- `seq` 在同一 run 内严格递增
+- Worker 写入，API 读取并以 SSE 回放
+- 支持 `after_seq` 游标断线续传
 
-原则：倍率/单价可以按 org/team/user/project 多层覆盖，但用量落库必须记录“当时生效的快照”，否则未来改价会导致历史账单不可复算。
+## 5. LLM 凭证与路由
 
-建议最小组件：
-- `rate_cards`：按模型的基础单价（可版本化）
-- `pricing_rules`：覆盖规则（org/team/user/project，含优先级）
-- `usage_records`：实际用量与成本（含 `effective_multiplier`、`effective_unit_price`、`pricing_version`）
+### 5.1 `llm_credentials`（LLM 提供商凭证）
 
-## 8. 导出/导入（需要提前为 ID 与版本留口子）
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs（可选，platform 级别为 NULL） |
+| `provider` | 提供商标识 |
+| `name` | 显示名称 |
+| `secret_id` | FK -> secrets（加密存储） |
+| `key_prefix` | 密钥前缀（用于识别） |
+| `base_url` | 自定义 base URL |
+| `advanced_json` | JSONB 高级配置 |
 
-你要求支持导出导入，这意味着：
-- 主键建议使用 UUID/ULID（跨环境迁移更稳定）
-- 导出包必须带 `package_version`（对应 schema 版本）
-- 导入需要 `id_mapping`（避免冲突并保持引用完整性）
-- 导出任务必须可审计（谁导出、范围、产物引用、过期删除）
+### 5.2 `llm_routes`（模型路由规则）
 
-建议最小组件：
-- `export_jobs`
-- `import_jobs`
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `credential_id` | FK -> llm_credentials |
+| `model` | 模型标识 |
+| `priority` | 优先级 |
+| `is_default` | 默认路由标记 |
+| `when_json` | JSONB 条件规则 |
+| `multiplier` | 费率倍率 |
+| `cache_pricing_json` | 缓存定价 |
 
-## 9. 附件、网页快照与保留策略
+### 5.3 `secrets`（通用加密存储）
 
-### 9.1 附件（必须保存，但可分层存储与保留期）
-- 附件内容建议落对象存储（或本地存储），DB 仅存元数据与引用
-- 支持热/冷分层（hot/cold tier）与 `retention_until`
+AES-256-GCM 加密，密钥由 `ARKLOOP_ENCRYPTION_KEY` 提供。
 
-### 9.2 网页快照（可选保存正文，但必须留“可保存的可能性”）
-建议把 org 级策略做成可配置项：
-- `web_snapshot_policy = off | metadata_only | full_content`
-  - `metadata_only`：记录 url、抓取时间、hash、响应摘要
-  - `full_content`：保存当时版本正文/渲染结果（用于审计/回放）
+## 6. Skills 与 Agent 配置
 
-对应数据模型建议拆为：
-- `web_fetch_logs`：每次抓取的元数据（必有）
-- `web_snapshots`：正文内容（按策略可选）
+### 6.1 `skills`（技能定义）
 
-## 10. 当前已确定的决策（记录）
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `skill_key` | 技能标识 |
+| `version` | 版本 |
+| `display_name` | 显示名称 |
+| `description` | 描述 |
+| `prompt_md` | system prompt |
+| `tool_allowlist` | 允许的工具列表 |
+| `tool_denylist` | 禁止的工具列表 |
+| `preferred_route_id` | 首选路由 |
+| `agent_config_name` | 关联 agent 配置 |
 
-- 数据库：生产形态以 PostgreSQL 为唯一目标后端
-- 用户：一个人可加入多个 org
-- project：非强制；成员加入显式化；允许分享链接；`org_admin` 可按权限越权
-- 管理员查看明文：允许，但“看明文”应是独立权限位，且必须强审计
-- 附件：保存，支持保留期与冷存储
-- 网页快照：支持按 org 策略开启保存当时版本
+### 6.2 `agent_configs`（Agent 配置）
 
-## 11. 待拍板（会影响全局）
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `name` | 配置名称 |
+| `system_prompt_override` | system prompt 覆盖 |
+| `model` | 模型标识 |
+| `temperature` | 温度 |
+| `max_output_tokens` | 最大输出 token |
+| `tool_policy` | 工具策略 |
+| `tool_allowlist` | 工具白名单 |
+| `cache_control_json` | 缓存控制 |
+| `reasoning_mode` | 推理模式 |
+| `scope` | 作用域 |
 
-1) SaaS 形态下是否允许不同客户 org 之间共享 project？
-   - 建议默认不允许；仅允许同一企业账户/同一交付实例内的 org 互邀
-2) run 的默认计费归属：记到“发起人所在 org”还是“project.owner_org”？
-   - 两种都合理，但必须在策略里定死并在用量表记录快照
+## 7. 计费与配额
 
+### 7.1 `plans`（订阅计划）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `name` | 计划标识 |
+| `display_name` | 显示名称 |
+
+### 7.2 `subscriptions`（订阅关系）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `plan_id` | FK -> plans |
+| `status` | 状态 |
+| `current_period_start` | 当前周期起 |
+| `current_period_end` | 当前周期止 |
+| `cancelled_at` | 取消时间 |
+
+### 7.3 `plan_entitlements`（计划功能配额）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `plan_id` | FK -> plans |
+| `key` | 功能键 |
+| `value` | 配额值 |
+| `value_type` | 值类型 |
+
+### 7.4 `org_entitlement_overrides`（组织级覆盖）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `key` | 功能键 |
+| `value` | 覆盖值 |
+| `reason` | 原因 |
+| `expires_at` | 过期时间 |
+
+### 7.5 `credits` / `credit_transactions`（积分体系）
+
+| 表 | 关键列 |
+|----|--------|
+| `credits` | org_id, amount, balance |
+| `credit_transactions` | credits_id, amount, type |
+
+### 7.6 `usage_records`（用量记录）
+
+缓存列：`input_tokens`、`output_tokens`、`cache_hit_rate`。
+
+## 8. 社交与分享
+
+| 表 | 说明 |
+|----|------|
+| `thread_stars` | 收藏（thread_id + user_id） |
+| `thread_shares` | 分享（shared_by_user_id, recipient_user_id） |
+| `thread_reports` | 举报（reason, status） |
+
+## 9. 基础设施
+
+### 9.1 `jobs`（后台任务队列）
+
+PostgreSQL 表 + Advisory Lock 实现的任务队列。
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `job_type` | 类型（`run.execute` / `webhook.deliver` / `email.send`） |
+| `payload_json` | JSONB 负载（跨语言协议，必须版本化） |
+| `status` | 状态 |
+| `available_at` | 可用时间 |
+| `leased_until` | 租约到期 |
+| `attempts` | 重试次数 |
+| `worker_tags` | Worker 能力标签 |
+
+### 9.2 `worker_registrations`（Worker 注册）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `name` | Worker 名称 |
+| `capabilities_json` | 能力集 |
+| `heartbeat_at` | 心跳时间 |
+
+### 9.3 `webhook_endpoints`（Webhook）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `url` | 回调地址 |
+| `events` | 订阅事件类型数组 |
+| `active` | 启用状态 |
+
+### 9.4 `api_keys`（API 密钥）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `key_prefix` | 密钥前缀 |
+| `last_used_at` | 最后使用时间 |
+
+## 10. 认证与安全
+
+| 表 | 说明 |
+|----|------|
+| `user_credentials` | 登录凭证（login, password_hash） |
+| `refresh_tokens` | JWT refresh token（user_id, token, revoked_at） |
+| `email_verification_tokens` | 邮箱验证 |
+| `email_otp_tokens` | OTP（email, code, expires_at） |
+| `rbac_roles` | 角色定义（permissions_json） |
+
+## 11. 通知与审计
+
+| 表 | 说明 |
+|----|------|
+| `notifications` | 用户通知（type, title, body, read_at） |
+| `notification_broadcasts` | 平台广播（软删除） |
+| `audit_logs` | 审计日志（user_id, action, resource_type, ip_address, user_agent） |
+
+## 12. MCP 与外部集成
+
+### 12.1 `mcp_configs`（MCP 服务器配置）
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs |
+| `name` | 服务器名称 |
+| `url` | 连接地址 |
+| `env_json` | 环境变量 |
+| `tools_json` | 工具定义 |
+
+### 12.2 `asr_credentials`（语音转文字凭证）
+
+与 `llm_credentials` 结构类似，独立管理。
+
+## 13. 其他
+
+| 表 | 说明 |
+|----|------|
+| `user_memory_snapshots` | 用户记忆快照（org_id, data_json, hits_json），对接 OpenViking |
+| `platform_settings` | 全局平台配置（key-value JSONB） |
+| `feature_flags` | 功能开关 |
+| `redemption_codes` | 兑换码（value, usage_count, expires_at） |
+| `invite_codes` | 邀请码 |
+
+## 14. 架构决策记录
+
+- **存储引擎**：PostgreSQL（唯一生产后端）
+- **加密**：AES-256-GCM（`ARKLOOP_ENCRYPTION_KEY`），用于 `llm_credentials`、`asr_credentials`、`secrets`
+- **分区**：`run_events` 按月分区（`created_at`），自动清理过期分区
+- **软删除**：`threads`、`notification_broadcasts`、`projects` 使用 `deleted_at`
+- **UUID**：主键使用 UUID（`pgcrypto` 扩展）
+- **任务队列**：PostgreSQL 表 + Advisory Lock（不依赖外部 MQ）
+- **实时推送**：PostgreSQL `LISTEN/NOTIFY` -> SSE
+- **凭证范围**：`llm_credentials` 支持 platform 级（`org_id` 为 NULL）和 org 级两种作用域
