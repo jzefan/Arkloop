@@ -54,7 +54,7 @@ func TestResolvePriorityEnvOverridesAll(t *testing.T) {
 	cache := NewMemoryCache()
 	resolver, _ := NewResolver(reg, store, cache, 60*time.Second)
 
-	if err := os.Setenv("ARKLOOP_TEST_X_K", ""); err != nil {
+	if err := os.Setenv("ARKLOOP_TEST_X_K", "env"); err != nil {
 		t.Fatalf("setenv: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Unsetenv("ARKLOOP_TEST_X_K") })
@@ -64,7 +64,42 @@ func TestResolvePriorityEnvOverridesAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if val != "" || src != "env" {
+	if val != "env" || src != "env" {
+		t.Fatalf("unexpected value/source: %q %q", val, src)
+	}
+}
+
+func TestResolveEnvEmptyIsIgnoredFallsBackToDB(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Register(Entry{
+		Key:     "x.k",
+		Type:    TypeString,
+		Default: "def",
+		Scope:   ScopeBoth,
+		EnvKeys: []string{"ARKLOOP_TEST_X_K"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	orgID := uuid.New()
+	store := &stubStore{
+		platform: map[string]string{"x.k": "p"},
+		org: map[uuid.UUID]map[string]string{
+			orgID: {"x.k": "o"},
+		},
+	}
+	resolver, _ := NewResolver(reg, store, nil, 0)
+
+	if err := os.Setenv("ARKLOOP_TEST_X_K", ""); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("ARKLOOP_TEST_X_K") })
+
+	val, src, err := resolver.ResolveWithSource(context.Background(), "x.k", Scope{OrgID: &orgID})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if val != "o" || src != "org_db" {
 		t.Fatalf("unexpected value/source: %q %q", val, src)
 	}
 }
