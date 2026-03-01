@@ -14,6 +14,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const maskedSensitiveValue = "******"
+
 type platformSettingResponse struct {
 	Key       string `json:"key"`
 	Value     string `json:"value"`
@@ -24,11 +26,26 @@ type updatePlatformSettingRequest struct {
 	Value string `json:"value"`
 }
 
+func maskIfSensitive(key, value string, registry *sharedconfig.Registry) string {
+	if registry == nil {
+		registry = sharedconfig.DefaultRegistry()
+	}
+	entry, ok := registry.Get(key)
+	if !ok || !entry.Sensitive {
+		return value
+	}
+	if strings.TrimSpace(value) == "" {
+		return value
+	}
+	return maskedSensitiveValue
+}
+
 func platformSettingsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	settingsRepo *data.PlatformSettingsRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	registry *sharedconfig.Registry,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -55,7 +72,7 @@ func platformSettingsEntry(
 		for _, s := range items {
 			result = append(result, platformSettingResponse{
 				Key:       s.Key,
-				Value:     s.Value,
+				Value:     maskIfSensitive(s.Key, s.Value, registry),
 				UpdatedAt: s.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			})
 		}
@@ -70,6 +87,7 @@ func platformSettingEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	rdb *redis.Client,
 	invalidator sharedconfig.Invalidator,
+	registry *sharedconfig.Registry,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -100,7 +118,7 @@ func platformSettingEntry(
 			}
 			writeJSON(w, traceID, nethttp.StatusOK, platformSettingResponse{
 				Key:       setting.Key,
-				Value:     setting.Value,
+				Value:     maskIfSensitive(setting.Key, setting.Value, registry),
 				UpdatedAt: setting.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			})
 
@@ -129,7 +147,7 @@ func platformSettingEntry(
 			}
 			writeJSON(w, traceID, nethttp.StatusOK, platformSettingResponse{
 				Key:       setting.Key,
-				Value:     setting.Value,
+				Value:     maskIfSensitive(setting.Key, setting.Value, registry),
 				UpdatedAt: setting.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			})
 
