@@ -1,0 +1,18 @@
+id: search-output
+version: "1"
+title: Search Output
+description: 搜索最终输出阶段，用于整理检索草稿并生成最终回答。
+tool_denylist:
+  - spawn_agent
+executor_type: agent.lua
+executor_config:
+  script_file: agent.lua
+budgets:
+  max_iterations: 2
+  max_output_tokens: 8192
+  temperature: 0.2
+agent_config: sub-haiku-4.5
+title_summarize:
+  prompt: "Keep it under 5 Chinese characters. Extract the search intent."
+  max_tokens: 10
+

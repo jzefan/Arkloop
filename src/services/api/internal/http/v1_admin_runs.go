@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,38 @@ type adminRunEventsStats struct {
 	LlmTurns          int `json:"llm_turns"`
 	ToolCalls         int `json:"tool_calls"`
 	ProviderFallbacks int `json:"provider_fallbacks"`
+}
+
+type adminRunUsageItem struct {
+	RunID              string   `json:"run_id"`
+	OrgID              string   `json:"org_id"`
+	ThreadID           string   `json:"thread_id"`
+	ParentRunID        *string  `json:"parent_run_id,omitempty"`
+	Status             string   `json:"status"`
+	PersonaID          *string  `json:"persona_id,omitempty"`
+	Model              *string  `json:"model,omitempty"`
+	ProviderKind       *string  `json:"provider_kind,omitempty"`
+	CredentialName     *string  `json:"credential_name,omitempty"`
+	AgentConfigName    *string  `json:"agent_config_name,omitempty"`
+	DurationMs         *int64   `json:"duration_ms,omitempty"`
+	TotalInputTokens   *int64   `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens  *int64   `json:"total_output_tokens,omitempty"`
+	TotalCostUSD       *float64 `json:"total_cost_usd,omitempty"`
+	CacheHitRate       *float64 `json:"cache_hit_rate,omitempty"`
+	CacheCreationTokens *int64  `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens    *int64   `json:"cache_read_tokens,omitempty"`
+	CachedTokens       *int64   `json:"cached_tokens,omitempty"`
+	CreditsUsed        *int64   `json:"credits_used,omitempty"`
+	CreatedAt          string   `json:"created_at"`
+	CompletedAt        *string  `json:"completed_at,omitempty"`
+	FailedAt           *string  `json:"failed_at,omitempty"`
+}
+
+type adminRunUsageAggregate struct {
+	TotalInputTokens  *int64   `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
+	TotalCostUSD      *float64 `json:"total_cost_usd,omitempty"`
+	CreditsUsed       *int64   `json:"credits_used,omitempty"`
 }
 
 type adminRunDetailResponse struct {
@@ -43,6 +76,8 @@ type adminRunDetailResponse struct {
 	CreatedByEmail    *string  `json:"created_by_email,omitempty"`
 	UserPrompt        *string  `json:"user_prompt,omitempty"`
 	EventsStats       adminRunEventsStats `json:"events_stats"`
+	Children          []adminRunUsageItem `json:"children,omitempty"`
+	TotalAggregate    *adminRunUsageAggregate `json:"total_aggregate,omitempty"`
 }
 
 func adminRunsEntry(
@@ -197,8 +232,187 @@ func adminRunsEntry(
 			}
 		}
 
+		// child runs usage breakdown（按模型拆分）
+		childIDs, err := runRepo.ListChildRunIDs(r.Context(), runID)
+		if err != nil {
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if len(childIDs) > 0 {
+			// 复用 runs 列表查询的 join 口径，补齐 cache / credits 字段
+			parentRow, err := loadRunUsageRow(r.Context(), runRepo, runID)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			childRows, err := loadChildRunUsageRows(r.Context(), runRepo, runID)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+
+			children := make([]adminRunUsageItem, 0, len(childRows))
+			agg := &adminRunUsageAggregate{}
+
+			appendToAgg := func(item adminRunUsageItem) {
+				if item.TotalInputTokens != nil {
+					agg.TotalInputTokens = addInt64Ptr(agg.TotalInputTokens, *item.TotalInputTokens)
+				}
+				if item.TotalOutputTokens != nil {
+					agg.TotalOutputTokens = addInt64Ptr(agg.TotalOutputTokens, *item.TotalOutputTokens)
+				}
+				if item.TotalCostUSD != nil {
+					agg.TotalCostUSD = addFloat64Ptr(agg.TotalCostUSD, *item.TotalCostUSD)
+				}
+				if item.CreditsUsed != nil {
+					agg.CreditsUsed = addInt64Ptr(agg.CreditsUsed, *item.CreditsUsed)
+				}
+			}
+
+			if parentRow != nil {
+				appendToAgg(*parentRow)
+			}
+
+			// created_at 升序，符合执行顺序
+			sort.Slice(childRows, func(i, j int) bool {
+				return childRows[i].CreatedAt < childRows[j].CreatedAt
+			})
+
+			for _, row := range childRows {
+				children = append(children, row)
+				appendToAgg(row)
+			}
+
+			resp.Children = children
+			resp.TotalAggregate = agg
+		}
+
 		writeJSON(w, traceID, nethttp.StatusOK, resp)
 	}
+}
+
+func addInt64Ptr(dst *int64, v int64) *int64 {
+	if dst == nil {
+		x := v
+		return &x
+	}
+	*dst += v
+	return dst
+}
+
+func addFloat64Ptr(dst *float64, v float64) *float64 {
+	if dst == nil {
+		x := v
+		return &x
+	}
+	*dst += v
+	return dst
+}
+
+func loadRunUsageRow(ctx context.Context, repo *data.RunEventRepository, runID uuid.UUID) (*adminRunUsageItem, error) {
+	if repo == nil || runID == uuid.Nil {
+		return nil, nil
+	}
+	params := data.ListRunsParams{RunID: &runID, Limit: 1, Offset: 0}
+	rows, _, err := repo.ListRuns(ctx, params)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	item := toAdminRunUsageItem(rows[0], nil)
+	_ = fillAdminRunUsageMeta(ctx, repo, runID, item)
+	return item, nil
+}
+
+func loadChildRunUsageRows(ctx context.Context, repo *data.RunEventRepository, parentRunID uuid.UUID) ([]adminRunUsageItem, error) {
+	if repo == nil || parentRunID == uuid.Nil {
+		return nil, nil
+	}
+	params := data.ListRunsParams{ParentRunID: &parentRunID, Limit: 200, Offset: 0}
+	rows, _, err := repo.ListRuns(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]adminRunUsageItem, 0, len(rows))
+	parentID := parentRunID.String()
+	for _, r := range rows {
+		item := toAdminRunUsageItem(r, &parentID)
+		_ = fillAdminRunUsageMeta(ctx, repo, r.ID, item)
+		out = append(out, *item)
+	}
+	return out, nil
+}
+
+func toAdminRunUsageItem(rw data.RunWithUser, parentRunID *string) *adminRunUsageItem {
+	item := &adminRunUsageItem{
+		RunID:             rw.ID.String(),
+		OrgID:             rw.OrgID.String(),
+		ThreadID:          rw.ThreadID.String(),
+		ParentRunID:       parentRunID,
+		Status:            rw.Status,
+		Model:             rw.Model,
+		PersonaID:         rw.PersonaID,
+		DurationMs:        rw.DurationMs,
+		TotalInputTokens:  rw.TotalInputTokens,
+		TotalOutputTokens: rw.TotalOutputTokens,
+		TotalCostUSD:      rw.TotalCostUSD,
+		CacheCreationTokens: rw.CacheCreationTokens,
+		CacheReadTokens:   rw.CacheReadTokens,
+		CachedTokens:      rw.CachedTokens,
+		CreditsUsed:       rw.CreditsUsed,
+		CreatedAt:         rw.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if rw.CompletedAt != nil {
+		s := rw.CompletedAt.UTC().Format(time.RFC3339Nano)
+		item.CompletedAt = &s
+	}
+	if rw.FailedAt != nil {
+		s := rw.FailedAt.UTC().Format(time.RFC3339Nano)
+		item.FailedAt = &s
+	}
+	item.CacheHitRate = calcCacheHitRate(rw.TotalInputTokens, rw.CacheReadTokens, rw.CacheCreationTokens, rw.CachedTokens)
+	return item
+}
+
+func fillAdminRunUsageMeta(
+	ctx context.Context,
+	repo *data.RunEventRepository,
+	runID uuid.UUID,
+	item *adminRunUsageItem,
+) error {
+	if repo == nil || item == nil || runID == uuid.Nil {
+		return nil
+	}
+	events, err := repo.ListEvents(ctx, runID, 0, 200)
+	if err != nil {
+		return err
+	}
+
+	_, routeModel, providerKind, _, credentialName, agentConfigName := summarizeRunEvents(events)
+	if routeModel != nil {
+		item.Model = routeModel
+	}
+	item.ProviderKind = providerKind
+	item.CredentialName = credentialName
+	item.AgentConfigName = agentConfigName
+
+	if item.PersonaID == nil {
+		if pid := personaIDFromEvents(events); pid != "" {
+			item.PersonaID = &pid
+		}
+	}
+	return nil
+}
+
+func personaIDFromEvents(events []data.RunEvent) string {
+	for _, ev := range events {
+		if ev.Type != "run.started" {
+			continue
+		}
+		if pid, ok := stringFromData(ev.DataJSON, "persona_id"); ok {
+			return pid
+		}
+	}
+	return ""
 }
 
 // summarizeRunEvents 遍历事件流，统计各类事件数量，并提取路由相关信息。

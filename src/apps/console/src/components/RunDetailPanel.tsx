@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ChevronDown, ChevronRight } from 'lucide-react'
-import type { GlobalRun, AdminRunDetail, RunEventRaw } from '../api/runs'
+import type { GlobalRun, AdminRunDetail, AdminRunUsageItem, AdminRunUsageAggregate, RunEventRaw } from '../api/runs'
 import { getAdminRunDetail, fetchRunEventsOnce } from '../api/runs'
 import { TurnView, buildTurns } from './TurnView'
 import { Badge, type BadgeVariant } from './Badge'
@@ -17,7 +17,7 @@ function statusVariant(status: string): BadgeVariant {
 }
 
 function formatDuration(ms?: number): string {
-  if (ms == null) return '--'
+  if (ms == null) return '—'
   const secs = Math.floor(ms / 1000)
   if (secs < 60) return `${secs}s`
   const mins = Math.floor(secs / 60)
@@ -25,7 +25,7 @@ function formatDuration(ms?: number): string {
 }
 
 function formatCost(usd?: number): string {
-  if (usd == null) return '--'
+  if (usd == null) return '—'
   const decimals = Math.abs(usd) < 0.01 ? 6 : 4
   return `$${usd.toFixed(decimals)}`
 }
@@ -96,9 +96,10 @@ type Props = {
   run: GlobalRun | null
   accessToken: string
   onClose: () => void
+  onOpenRun?: (run: GlobalRun) => void
 }
 
-export function RunDetailPanel({ run, accessToken, onClose }: Props) {
+export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) {
   const [detail, setDetail] = useState<AdminRunDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [events, setEvents] = useState<RunEventRaw[] | null>(null)
@@ -158,6 +159,32 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
         : undefined
 
   const rawEventsBadge = d ? `${d.events_stats.total} events` : undefined
+
+  const usageChildren = d?.children ?? []
+  const hasUsageBreakdown = usageChildren.length > 0
+  const usageAggregate = d?.total_aggregate
+
+  const selfUsageItem: AdminRunUsageItem = {
+    run_id: run.run_id,
+    org_id: run.org_id,
+    thread_id: run.thread_id,
+    parent_run_id: run.parent_run_id,
+    status: run.status,
+    persona_id: d?.persona_id ?? run.persona_id,
+    model: d?.model ?? run.model,
+    provider_kind: d?.provider_kind,
+    credential_name: d?.credential_name,
+    agent_config_name: d?.agent_config_name,
+    duration_ms: d?.duration_ms ?? run.duration_ms,
+    total_input_tokens: d?.total_input_tokens ?? run.total_input_tokens,
+    total_output_tokens: d?.total_output_tokens ?? run.total_output_tokens,
+    total_cost_usd: d?.total_cost_usd ?? run.total_cost_usd,
+    cache_hit_rate: run.cache_hit_rate,
+    credits_used: run.credits_used,
+    created_at: run.created_at,
+    completed_at: d?.completed_at ?? run.completed_at,
+    failed_at: d?.failed_at ?? run.failed_at,
+  }
 
   return createPortal(
     <>
@@ -241,6 +268,22 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
             </div>
           </Section>
 
+          {/* USAGE BREAKDOWN */}
+          {hasUsageBreakdown && (
+            <Section
+              title={rt.sectionUsage}
+              badge={`${usageChildren.length + 1} runs`}
+              defaultOpen
+            >
+              <UsageBreakdownTable
+                self={selfUsageItem}
+                children={usageChildren}
+                aggregate={usageAggregate}
+                onOpenRun={onOpenRun}
+              />
+            </Section>
+          )}
+
           {/* CONVERSATION — 默认折叠，展开时懒加载 */}
           <Section
             title={rt.sectionConversation}
@@ -291,6 +334,160 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
       </div>
     </>,
     document.body,
+  )
+}
+
+function toGlobalRun(item: AdminRunUsageItem): GlobalRun {
+  return {
+    run_id: item.run_id,
+    org_id: item.org_id,
+    thread_id: item.thread_id,
+    status: item.status,
+    model: item.model,
+    persona_id: item.persona_id,
+    parent_run_id: item.parent_run_id,
+    total_input_tokens: item.total_input_tokens,
+    total_output_tokens: item.total_output_tokens,
+    total_cost_usd: item.total_cost_usd,
+    duration_ms: item.duration_ms,
+    cache_hit_rate: item.cache_hit_rate,
+    credits_used: item.credits_used,
+    created_at: item.created_at,
+    completed_at: item.completed_at,
+    failed_at: item.failed_at,
+    created_by_user_id: undefined,
+    created_by_user_name: undefined,
+    created_by_email: undefined,
+  }
+}
+
+type UsageBreakdownTableProps = {
+  self: AdminRunUsageItem
+  children: AdminRunUsageItem[]
+  aggregate?: AdminRunUsageAggregate
+  onOpenRun?: (run: GlobalRun) => void
+}
+
+function stageLabel(rt: ReturnType<typeof useLocale>['t']['pages']['runs'], item: AdminRunUsageItem, isSelf: boolean): string {
+  if (isSelf) return rt.usageStageMain
+  if (item.persona_id === 'search-output') return rt.usageStageFinal
+  return rt.usageStageChild
+}
+
+function cacheLabel(item: AdminRunUsageItem): string {
+  if (item.cache_hit_rate == null) return '—'
+  return `${(item.cache_hit_rate * 100).toFixed(0)}%`
+}
+
+function cacheTitle(item: AdminRunUsageItem): string | undefined {
+  const parts: string[] = []
+  if (item.cache_read_tokens != null) parts.push(`read ${item.cache_read_tokens}`)
+  if (item.cache_creation_tokens != null) parts.push(`write ${item.cache_creation_tokens}`)
+  if (item.cached_tokens != null) parts.push(`cached ${item.cached_tokens}`)
+  return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
+function UsageBreakdownTable({ self, children, aggregate, onOpenRun }: UsageBreakdownTableProps) {
+  const { t } = useLocale()
+  const rt = t.pages.runs
+
+  const rows: Array<{ item: AdminRunUsageItem; isSelf: boolean }> = [
+    { item: self, isSelf: true },
+    ...children.map((c) => ({ item: c, isSelf: false })),
+  ]
+
+  return (
+    <div className="space-y-2">
+      <div className="overflow-x-auto rounded-lg border border-[var(--c-border)]">
+        <table className="min-w-[860px] w-full text-xs">
+          <thead className="bg-[var(--c-bg-sub)] text-[var(--c-text-muted)]">
+            <tr className="text-left">
+              <th className="w-24 whitespace-nowrap px-3 py-2 font-medium">{rt.usageColStage}</th>
+              <th className="min-w-[280px] whitespace-nowrap px-3 py-2 font-medium">{rt.usageColModel}</th>
+              <th className="w-40 whitespace-nowrap px-3 py-2 font-medium">{rt.usageColTokens}</th>
+              <th className="w-28 whitespace-nowrap px-3 py-2 font-medium">{rt.usageColCost}</th>
+              <th className="w-24 whitespace-nowrap px-3 py-2 font-medium">{rt.usageColCache}</th>
+              <th className="min-w-[260px] whitespace-nowrap px-3 py-2 font-medium">{rt.usageColRun}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--c-border-console)]">
+            {rows.map(({ item, isSelf }) => {
+              const inp = item.total_input_tokens ?? 0
+              const out = item.total_output_tokens ?? 0
+              const modelText = item.model ?? '—'
+              const providerText = item.provider_kind ? ` · ${item.provider_kind}` : ''
+
+              return (
+                <tr key={item.run_id} className="bg-[var(--c-bg-deep2)]">
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--c-text-secondary)]">
+                    {stageLabel(rt, item, isSelf)}
+                  </td>
+                  <td className="px-3 py-2 text-[var(--c-text-secondary)]" title={modelText}>
+                    <div className="truncate">
+                      {modelText}
+                      <span className="text-[var(--c-text-muted)]">{providerText}</span>
+                    </div>
+                    {(item.credential_name || item.agent_config_name) && (
+                      <div
+                        className="truncate text-[11px] text-[var(--c-text-muted)]"
+                        title={item.credential_name ?? item.agent_config_name}
+                      >
+                        {item.credential_name ?? item.agent_config_name}
+                      </div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-[var(--c-text-secondary)]">
+                    {inp} / {out}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-[var(--c-text-secondary)]">
+                    {formatCost(item.total_cost_usd)}
+                  </td>
+                  <td
+                    className={[
+                      'whitespace-nowrap px-3 py-2 tabular-nums',
+                      item.cache_hit_rate != null ? 'text-[var(--c-status-success-text)]' : 'text-[var(--c-text-muted)]',
+                    ].join(' ')}
+                    title={cacheTitle(item)}
+                  >
+                    {cacheLabel(item)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {onOpenRun ? (
+                      <button
+                        onClick={() => onOpenRun(toGlobalRun(item))}
+                        className="font-mono text-[11px] text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]"
+                        title={item.run_id}
+                      >
+                        {item.run_id}
+                      </button>
+                    ) : (
+                      <span className="font-mono text-[11px] text-[var(--c-text-muted)]" title={item.run_id}>
+                        {item.run_id}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+
+            {aggregate && (
+              <tr className="bg-[var(--c-bg-sub)]">
+                <td className="px-3 py-2 font-medium text-[var(--c-text-secondary)]">{rt.usageTotal}</td>
+                <td className="px-3 py-2 text-[var(--c-text-muted)]" />
+                <td className="px-3 py-2 tabular-nums font-medium text-[var(--c-text-secondary)]">
+                  {(aggregate.total_input_tokens ?? 0)} / {(aggregate.total_output_tokens ?? 0)}
+                </td>
+                <td className="px-3 py-2 tabular-nums font-medium text-[var(--c-text-secondary)]">
+                  {formatCost(aggregate.total_cost_usd)}
+                </td>
+                <td className="px-3 py-2 text-[var(--c-text-muted)]" />
+                <td className="px-3 py-2 text-[var(--c-text-muted)]" />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

@@ -1,3 +1,4 @@
+local OUTPUT_PERSONA_ID = "search-output"
 local OUTPUT_AGENT_NAME = "sub-haiku-4.5"
 
 local system_prompt = context.get("system_prompt") or ""
@@ -17,6 +18,7 @@ if loop_err ~= nil then
 end
 
 context.emit("search.hybrid.route.selected", {
+  persona_id = OUTPUT_PERSONA_ID,
   agent_name = OUTPUT_AGENT_NAME,
   stage = "final_output",
 })
@@ -38,21 +40,34 @@ local final_messages = {
   }
 }
 
+local child_input = final_messages[1].content
+local child_output, child_err = agent.run(OUTPUT_PERSONA_ID, child_input)
+if child_err == nil and child_output ~= nil and child_output ~= "" then
+  context.set_output(child_output)
+  return
+end
+
+local reason = child_err or "unknown"
+context.emit("search.hybrid.route.fallback", {
+  persona_id = OUTPUT_PERSONA_ID,
+  agent_name = OUTPUT_AGENT_NAME,
+  stage = "final_output",
+  reason = reason,
+})
+
 local _, stream_err = agent.stream_agent(OUTPUT_AGENT_NAME, final_system_prompt, final_messages)
-if stream_err ~= nil then
-  if string.find(stream_err, "agent_resolve_failed:", 1, true) == 1 then
-    context.emit("search.hybrid.route.fallback", {
-      agent_name = OUTPUT_AGENT_NAME,
-      stage = "final_output",
-      reason = stream_err,
-    })
-    local _, fallback_err = agent.stream(final_system_prompt, final_messages)
-    if fallback_err ~= nil then
-      error(fallback_err)
-    end
-  elseif string.find(stream_err, "stream_terminal_failed:", 1, true) == 1 then
+if stream_err == nil then
+  return
+end
+
+if string.find(stream_err, "stream_terminal_failed:", 1, true) == 1 then
+  return
+end
+
+local _, fallback_err = agent.stream(final_system_prompt, final_messages)
+if fallback_err ~= nil then
+  if string.find(fallback_err, "stream_terminal_failed:", 1, true) == 1 then
     return
-  else
-    error(stream_err)
   end
+  error(fallback_err)
 end

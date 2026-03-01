@@ -102,14 +102,15 @@ func createAndEnqueueChildRun(
 		return fmt.Errorf("insert child message: %w", err)
 	}
 
-	// 创建子 Run（继承父 Run 的 org，指向独立临时线程）
+	// 创建子 Run（继承父 Run 的 org/user，指向独立临时线程）
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO runs (id, org_id, thread_id, parent_run_id, status)
-		 VALUES ($1, $2, $3, $4, 'running')`,
+		`INSERT INTO runs (id, org_id, thread_id, parent_run_id, created_by_user_id, status)
+		 VALUES ($1, $2, $3, $4, $5, 'running')`,
 		childRunID,
 		parentRun.OrgID,
 		childThreadID,
 		parentRun.ID,
+		parentRun.CreatedByUserID,
 	); err != nil {
 		return fmt.Errorf("insert child run: %w", err)
 	}
