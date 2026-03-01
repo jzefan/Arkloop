@@ -14,6 +14,7 @@ import { MCPConfigsPage } from './pages/mcp-configs/MCPConfigsPage'
 import { PersonasPage } from './pages/personas/PersonasPage'
 import { APIKeysPage } from './pages/api-keys/APIKeysPage'
 import { IPRulesPage } from './pages/ip-rules/IPRulesPage'
+import { CaptchaPage } from './pages/captcha/CaptchaPage'
 import { TeamsPage } from './pages/teams/TeamsPage'
 import { UsagePage } from './pages/usage/UsagePage'
 import { MyUsagePage } from './pages/my-usage/MyUsagePage'
@@ -27,8 +28,10 @@ import { FeatureFlagsPage } from './pages/feature-flags/FeatureFlagsPage'
 import { RegistrationPage } from './pages/registration/RegistrationPage'
 import { AsrCredentialsPage } from './pages/asr-credentials/AsrCredentialsPage'
 import { EmailPage } from './pages/email/EmailPage'
-import { PlatformConfigPage } from './pages/platform-config/PlatformConfigPage'
+import { TitleSummarizerPage } from './pages/title-summarizer/TitleSummarizerPage'
+import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
+import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
 import {
   readAccessTokenFromStorage,
   writeAccessTokenToStorage,
@@ -98,15 +101,14 @@ function App() {
         <Route path="mcp-configs" element={<MCPConfigsPage />} />
         <Route path="personas" element={<PersonasPage />} />
         <Route path="asr-credentials" element={<AsrCredentialsPage />} />
-        <Route path="title-summarizer" element={<Navigate to="/platform-config" replace />} />
-        <Route path="platform-config" element={<PlatformConfigPage />} />
+        <Route path="title-summarizer" element={<TitleSummarizerPage />} />
         {/* Integration */}
         <Route path="api-keys" element={<APIKeysPage />} />
         <Route path="webhooks" element={<PlaceholderPage title="Webhooks" />} />
         {/* Security */}
         <Route path="ip-rules" element={<IPRulesPage />} />
-        <Route path="captcha" element={<Navigate to="/platform-config" replace />} />
-        <Route path="gateway-config" element={<Navigate to="/platform-config" replace />} />
+        <Route path="captcha" element={<CaptchaPage />} />
+        <Route path="gateway-config" element={<GatewayConfigPage />} />
         <Route path="access-log" element={<AccessLogPage />} />
         {/* Organization */}
         <Route path="members" element={<OrgsPage />} />
@@ -115,7 +117,7 @@ function App() {
         {/* Billing */}
         <Route path="plans" element={<PlaceholderPage title="Plans" />} />
         <Route path="subscriptions" element={<PlaceholderPage title="Subscriptions" />} />
-        <Route path="entitlements" element={<Navigate to="/platform-config" replace />} />
+        <Route path="entitlements" element={<EntitlementsPage />} />
         <Route path="usage" element={<UsagePage />} />
         <Route path="my-usage" element={<MyUsagePage />} />
         {/* Platform */}

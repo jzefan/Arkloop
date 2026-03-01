@@ -220,7 +220,6 @@ func (a *Application) Run(ctx context.Context) error {
 		redemptionCodesRepo *data.RedemptionCodesRepository
 
 		platformSettingsRepo *data.PlatformSettingsRepository
-		orgSettingsRepo      *data.OrgSettingsRepository
 
 		asrCredRepo *data.AsrCredentialsRepository
 
@@ -383,10 +382,6 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		platformSettingsRepo, err = data.NewPlatformSettingsRepository(pool)
-		if err != nil {
-			return err
-		}
-		orgSettingsRepo, err = data.NewOrgSettingsRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -561,7 +556,6 @@ func (a *Application) Run(ctx context.Context) error {
 			CreditsRepo:             creditsRepo,
 			RedemptionCodesRepo:     redemptionCodesRepo,
 			PlatformSettingsRepo:    platformSettingsRepo,
-			OrgSettingsRepo:         orgSettingsRepo,
 			RedisClient:             redisClient,
 			RunLimiter:              runLimiter,
 			AsrCredentialsRepo:      asrCredRepo,
