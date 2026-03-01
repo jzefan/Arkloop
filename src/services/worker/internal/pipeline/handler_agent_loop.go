@@ -64,9 +64,14 @@ func NewAgentLoopHandler(
 			creditsPerUSD = 1000.0
 		}
 
+		personaID := ""
+		if rc.PersonaDefinition != nil {
+			personaID = rc.PersonaDefinition.ID
+		}
+
 		writer := newEventWriter(
 			rc.Pool, rc.Run, rc.TraceID, runLimiterRDB,
-			selected.Route.Model, usageRepo, creditsRepo,
+			selected.Route.Model, personaID, usageRepo, creditsRepo,
 			creditsPerUSD,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
 			selected.Route.CostPer1kCacheWrite, selected.Route.CostPer1kCacheRead,
@@ -133,6 +138,7 @@ type eventWriter struct {
 	traceID       string
 	runLimiterRDB *redis.Client // 双职责：并发槽释放（runlimit.Release）+ 跨实例 SSE 广播（Publish）
 	model         string
+	personaID     string
 	usageRepo     data.UsageRecordsRepository
 	creditsRepo   data.CreditsRepository
 
@@ -168,6 +174,7 @@ func newEventWriter(
 	traceID string,
 	runLimiterRDB *redis.Client,
 	model string,
+	personaID string,
 	usageRepo data.UsageRecordsRepository,
 	creditsRepo data.CreditsRepository,
 	creditsPerUSD float64,
@@ -191,6 +198,7 @@ func newEventWriter(
 		lastCommitAt:        time.Now(),
 		runLimiterRDB:       runLimiterRDB,
 		model:               model,
+		personaID:           strings.TrimSpace(personaID),
 		usageRepo:           usageRepo,
 		creditsRepo:         creditsRepo,
 		creditsPerUSD:       creditsPerUSD,
@@ -229,6 +237,12 @@ func (w *eventWriter) Append(
 
 	if err := runsRepo.LockRunRow(ctx, w.tx, runID); err != nil {
 		return err
+	}
+
+	if ev.Type == "run.route.selected" {
+		if err := runsRepo.UpdateRunMetadata(ctx, w.tx, runID, w.model, w.personaID); err != nil {
+			return err
+		}
 	}
 
 	cancelType, err := eventsRepo.GetLatestEventType(ctx, w.tx, runID, cancelEvtTypes)

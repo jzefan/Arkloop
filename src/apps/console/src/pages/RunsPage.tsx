@@ -546,6 +546,7 @@ export function RunsPage() {
         run={selectedRun}
         accessToken={accessToken}
         onClose={() => setSelectedRun(null)}
+        onOpenRun={setSelectedRun}
       />
     </div>
   )

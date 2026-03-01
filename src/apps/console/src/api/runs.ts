@@ -7,6 +7,7 @@ export type GlobalRun = {
   status: string
   model?: string
   persona_id?: string
+  parent_run_id?: string
   total_input_tokens?: number
   total_output_tokens?: number
   total_cost_usd?: number
@@ -26,6 +27,38 @@ export type AdminRunEventsStats = {
   llm_turns: number
   tool_calls: number
   provider_fallbacks: number
+}
+
+export type AdminRunUsageItem = {
+  run_id: string
+  org_id: string
+  thread_id: string
+  parent_run_id?: string
+  status: string
+  persona_id?: string
+  model?: string
+  provider_kind?: string
+  credential_name?: string
+  agent_config_name?: string
+  duration_ms?: number
+  total_input_tokens?: number
+  total_output_tokens?: number
+  total_cost_usd?: number
+  cache_hit_rate?: number
+  cache_creation_tokens?: number
+  cache_read_tokens?: number
+  cached_tokens?: number
+  credits_used?: number
+  created_at: string
+  completed_at?: string
+  failed_at?: string
+}
+
+export type AdminRunUsageAggregate = {
+  total_input_tokens?: number
+  total_output_tokens?: number
+  total_cost_usd?: number
+  credits_used?: number
 }
 
 export type AdminRunDetail = {
@@ -50,6 +83,8 @@ export type AdminRunDetail = {
   created_by_email?: string
   user_prompt?: string
   events_stats: AdminRunEventsStats
+  children?: AdminRunUsageItem[]
+  total_aggregate?: AdminRunUsageAggregate
 }
 
 export type RunEventRaw = {

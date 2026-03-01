@@ -974,8 +974,19 @@ export interface LocaleStrings {
       next: string
       // detail panel
       sectionOverview: string
+      sectionUsage: string
       sectionConversation: string
       sectionRawEvents: string
+      usageColStage: string
+      usageColModel: string
+      usageColTokens: string
+      usageColCost: string
+      usageColCache: string
+      usageColRun: string
+      usageStageMain: string
+      usageStageFinal: string
+      usageStageChild: string
+      usageTotal: string
       labelUser: string
       labelThread: string
       labelOrg: string

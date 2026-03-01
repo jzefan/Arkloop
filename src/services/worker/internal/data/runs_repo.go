@@ -28,6 +28,35 @@ type Run struct {
 
 type RunsRepository struct{}
 
+// UpdateRunMetadata 写入 runs.model / runs.persona_id，用于列表展示与筛选。
+func (RunsRepository) UpdateRunMetadata(
+	ctx context.Context,
+	tx pgx.Tx,
+	runID uuid.UUID,
+	model string,
+	personaID string,
+) error {
+	if runID == uuid.Nil {
+		return fmt.Errorf("run_id must not be empty")
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs
+		 SET model = $2,
+		     persona_id = $3
+		 WHERE id = $1`,
+		runID,
+		model,
+		personaID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run not found: %s", runID)
+	}
+	return nil
+}
+
 func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*Run, error) {
 	var run Run
 	err := tx.QueryRow(
