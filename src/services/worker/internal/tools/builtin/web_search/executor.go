@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -20,9 +20,10 @@ const (
 	errorTimeout       = "tool.timeout"
 	errorSearchFailed  = "tool.search_failed"
 
-	defaultTimeout  = 10 * time.Second
-	maxResultsLimit = 20
-	maxQueriesLimit = 5
+	defaultTimeout    = 10 * time.Second
+	defaultMaxResults = 5
+	maxResultsLimit   = 20
+	maxQueriesLimit   = 5
 )
 
 var AgentSpec = tools.AgentToolSpec{
@@ -35,7 +36,7 @@ var AgentSpec = tools.AgentToolSpec{
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "web_search",
-	Description: stringPtr("search the internet and return title/link/summary. Use queries for multi-search in one call."),
+	Description: stringPtr(fmt.Sprintf("search the internet and return title/link/summary. Always set max_results (default %d). Use queries for multi-search in one call.", defaultMaxResults)),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -50,9 +51,14 @@ var LlmSpec = llm.ToolSpec{
 				"maxItems":    maxQueriesLimit,
 				"items":       map[string]any{"type": "string"},
 			},
-			"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": maxResultsLimit},
+			"max_results": map[string]any{
+				"type":        "integer",
+				"description": fmt.Sprintf("maximum results per query (default %d)", defaultMaxResults),
+				"default":     defaultMaxResults,
+				"minimum":     1,
+				"maximum":     maxResultsLimit,
+			},
 		},
-		"required": []string{"max_results"},
 		"anyOf": []any{
 			map[string]any{"required": []string{"query"}},
 			map[string]any{"required": []string{"queries"}},
@@ -63,12 +69,12 @@ var LlmSpec = llm.ToolSpec{
 
 type ToolExecutor struct {
 	provider Provider
-	pool     *pgxpool.Pool
+	resolver sharedconfig.Resolver
 	timeout  time.Duration
 }
 
-func NewToolExecutor(pool *pgxpool.Pool) *ToolExecutor {
-	return &ToolExecutor{pool: pool, timeout: defaultTimeout}
+func NewToolExecutor(resolver sharedconfig.Resolver) *ToolExecutor {
+	return &ToolExecutor{resolver: resolver, timeout: defaultTimeout}
 }
 
 func (e *ToolExecutor) Execute(
@@ -91,7 +97,7 @@ func (e *ToolExecutor) Execute(
 
 	provider := e.provider
 	if provider == nil {
-		built, err := e.loadProvider(ctx)
+		built, err := e.loadProvider(ctx, execCtx)
 		if err != nil {
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
@@ -134,25 +140,21 @@ func (e *ToolExecutor) Execute(
 	return tools.ExecutionResult{ResultJSON: payload, DurationMs: durationMs(started)}
 }
 
-// loadProvider 加载配置并构建 Provider：DB 优先，ENV 兜底。
-func (e *ToolExecutor) loadProvider(ctx context.Context) (Provider, error) {
-	if e.pool != nil {
-		dbCfg, ok, err := LoadConfigFromDB(ctx, e.pool)
-		if err != nil {
-			_ = err // DB 查询失败，降级到 ENV
-		} else if ok {
-			return buildProvider(dbCfg)
-		}
+func (e *ToolExecutor) loadProvider(ctx context.Context, execCtx tools.ExecutionContext) (Provider, error) {
+	if e.resolver == nil {
+		return nil, nil
 	}
-	return providerFromEnv()
-}
-
-func providerFromEnv() (Provider, error) {
-	cfg, err := ConfigFromEnv(false)
+	scope := sharedconfig.Scope{OrgID: execCtx.OrgID}
+	m, err := e.resolver.ResolvePrefix(ctx, "web_search.", scope)
 	if err != nil {
 		return nil, err
 	}
-	if cfg == nil {
+
+	cfg, ok, err := configFromSettings(m)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, nil
 	}
 	return buildProvider(cfg)
@@ -175,6 +177,24 @@ func buildProvider(cfg *Config) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("web_search provider not implemented")
 	}
+}
+
+func configFromSettings(m map[string]string) (*Config, bool, error) {
+	raw := strings.TrimSpace(m[settingProvider])
+	if raw == "" {
+		return nil, false, nil
+	}
+	kind, err := parseProviderKind(raw)
+	if err != nil {
+		return nil, false, err
+	}
+
+	cfg := &Config{
+		ProviderKind:   kind,
+		SearxngBaseURL: strings.TrimRight(strings.TrimSpace(m[settingSearxngURL]), "/"),
+		TavilyAPIKey:   strings.TrimSpace(m[settingTavilyKey]),
+	}
+	return cfg, true, nil
 }
 
 func resultsToJSON(results []Result) []map[string]any {
@@ -201,19 +221,26 @@ func parseArgs(args map[string]any) ([]string, int, *tools.ExecutionError) {
 		}
 	}
 
-	rawMax, ok := args["max_results"]
-	maxResults, okInt := rawMax.(int)
-	if !ok || !okInt {
-		if floatVal, ok := rawMax.(float64); ok {
-			maxResults = int(floatVal)
-			okInt = floatVal == float64(maxResults)
-		}
-	}
-	if !okInt {
-		return nil, 0, &tools.ExecutionError{
-			ErrorClass: errorArgsInvalid,
-			Message:    "parameter max_results must be an integer",
-			Details:    map[string]any{"field": "max_results"},
+	maxResults := defaultMaxResults
+	if rawMax, has := args["max_results"]; has && rawMax != nil {
+		switch typed := rawMax.(type) {
+		case int:
+			maxResults = typed
+		case float64:
+			maxResults = int(typed)
+			if typed != float64(maxResults) {
+				return nil, 0, &tools.ExecutionError{
+					ErrorClass: errorArgsInvalid,
+					Message:    "parameter max_results must be an integer",
+					Details:    map[string]any{"field": "max_results"},
+				}
+			}
+		default:
+			return nil, 0, &tools.ExecutionError{
+				ErrorClass: errorArgsInvalid,
+				Message:    "parameter max_results must be an integer",
+				Details:    map[string]any{"field": "max_results"},
+			}
 		}
 	}
 	if maxResults <= 0 || maxResults > maxResultsLimit {

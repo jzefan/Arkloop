@@ -3,28 +3,36 @@ package email
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/queue"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const maxEmailAttempts = 3
 
+const (
+	settingFrom    = "email.from"
+	settingHost    = "email.smtp_host"
+	settingPort    = "email.smtp_port"
+	settingUser    = "email.smtp_user"
+	settingPass    = "email.smtp_pass"
+	settingTLSMode = "email.smtp_tls_mode"
+)
+
 // SendHandler 处理 email.send 类型的 job。
-// 每次发送前从 platform_settings 加载最新 SMTP 配置，不存在时回退到 env 配置。
 type SendHandler struct {
-	pool   *pgxpool.Pool
-	envCfg Config
-	logger *app.JSONLogger
+	resolver sharedconfig.Resolver
+	logger   *app.JSONLogger
 }
 
-func NewSendHandler(pool *pgxpool.Pool, envCfg Config, logger *app.JSONLogger) (*SendHandler, error) {
+func NewSendHandler(resolver sharedconfig.Resolver, logger *app.JSONLogger) (*SendHandler, error) {
 	if logger == nil {
 		logger = app.NewJSONLogger("email", nil)
 	}
-	return &SendHandler{pool: pool, envCfg: envCfg, logger: logger}, nil
+	return &SendHandler{resolver: resolver, logger: logger}, nil
 }
 
 func (h *SendHandler) Handle(ctx context.Context, lease queue.JobLease) error {
@@ -37,15 +45,14 @@ func (h *SendHandler) Handle(ctx context.Context, lease queue.JobLease) error {
 		return nil // 格式错误不重试
 	}
 
-	// 优先从 DB 加载配置，回退到 env
-	cfg := h.envCfg
-	if h.pool != nil {
-		dbCfg, ok, dbErr := LoadConfigFromDB(ctx, h.pool)
-		if dbErr != nil {
-			h.logger.Warn("email config db load failed, using env", fields, map[string]any{"error": dbErr.Error()})
-		} else if ok {
-			cfg = dbCfg
+	cfg, cfgErr := loadEmailConfig(ctx, h.resolver)
+	if cfgErr != nil {
+		h.logger.Error("email config load failed", fields, map[string]any{"error": cfgErr.Error(), "attempts": lease.Attempts})
+		if lease.Attempts+1 >= maxEmailAttempts {
+			h.logger.Error("email max attempts reached, dropping", fields, map[string]any{"to": msg.To})
+			return nil
 		}
+		return fmt.Errorf("email config: %w", cfgErr)
 	}
 
 	if !cfg.Enabled() {
@@ -95,3 +102,36 @@ func parseEmailPayload(raw map[string]any) (Message, error) {
 	return Message{To: to, Subject: subject, HTML: html, Text: text}, nil
 }
 
+func loadEmailConfig(ctx context.Context, resolver sharedconfig.Resolver) (Config, error) {
+	if resolver == nil {
+		return Config{}, nil
+	}
+
+	m, err := resolver.ResolvePrefix(ctx, "email.", sharedconfig.Scope{})
+	if err != nil {
+		return Config{}, err
+	}
+
+	cfg := Config{
+		From:    strings.TrimSpace(m[settingFrom]),
+		Host:    strings.TrimSpace(m[settingHost]),
+		User:    strings.TrimSpace(m[settingUser]),
+		Pass:    strings.TrimSpace(m[settingPass]),
+		Port:    defaultPort,
+		TLSMode: defaultTLSMode,
+	}
+
+	if p := strings.TrimSpace(m[settingPort]); p != "" {
+		if port, err := strconv.Atoi(p); err == nil {
+			cfg.Port = port
+		}
+	}
+	if t := strings.TrimSpace(m[settingTLSMode]); t != "" {
+		cfg.TLSMode = TLSMode(strings.ToLower(t))
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}

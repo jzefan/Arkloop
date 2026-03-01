@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/consumer"
 	"arkloop/services/worker/internal/email"
@@ -220,6 +221,14 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpo
 		return nil, fmt.Errorf("pool must not be nil")
 	}
 
+	configRegistry := sharedconfig.DefaultRegistry()
+	var configCache sharedconfig.Cache
+	cacheTTL := sharedconfig.CacheTTLFromEnv()
+	if rdb != nil && cacheTTL > 0 {
+		configCache = sharedconfig.NewRedisCache(rdb)
+	}
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
+
 	native, err := executor.NewNativeRunEngineV1Handler(pool, directPool, logger, rdb, q, cfg)
 	if err != nil {
 		return nil, err
@@ -232,18 +241,15 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpo
 	}
 	logger.Info("webhook delivery handler enabled", app.LogFields{}, map[string]any{"job_type": queue.WebhookDeliverJobType})
 
-	emailCfg, err := email.LoadConfigFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("email config: %w", err)
-	}
-	emailHandler, err := email.NewSendHandler(pool, emailCfg, logger)
+	emailHandler, err := email.NewSendHandler(configResolver, logger)
 	if err != nil {
 		return nil, err
 	}
-	if emailCfg.Enabled() {
-		logger.Info("email send handler enabled", app.LogFields{}, map[string]any{"job_type": queue.EmailSendJobType, "from": emailCfg.From})
+	from, _ := configResolver.Resolve(context.Background(), "email.from", sharedconfig.Scope{})
+	if strings.TrimSpace(from) != "" {
+		logger.Info("email send handler enabled", app.LogFields{}, map[string]any{"job_type": queue.EmailSendJobType, "from": strings.TrimSpace(from)})
 	} else {
-		logger.Info("email send handler ready (ARKLOOP_EMAIL_FROM not set, will read from DB)", app.LogFields{}, nil)
+		logger.Info("email send handler ready", app.LogFields{}, map[string]any{"job_type": queue.EmailSendJobType})
 	}
 
 	return &dispatchHandler{

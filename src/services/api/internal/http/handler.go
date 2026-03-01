@@ -9,6 +9,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,33 +30,33 @@ func defaultSSEConfig() SSEConfig {
 }
 
 type HandlerConfig struct {
-	Pool       *pgxpool.Pool
-	DirectPool *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer
+	Pool                 *pgxpool.Pool
+	DirectPool           *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer
 	Logger               *observability.JSONLogger
 	SchemaRepository     *data.SchemaRepository
 	TrustIncomingTraceID bool
 	TrustXForwardedFor   bool
 
-	AuthService         *auth.Service
-	RegistrationService *auth.RegistrationService
-	EmailVerifyService  *auth.EmailVerifyService
+	AuthService          *auth.Service
+	RegistrationService  *auth.RegistrationService
+	EmailVerifyService   *auth.EmailVerifyService
 	EmailOTPLoginService *auth.EmailOTPLoginService
-	OrgService          *auth.OrgService
-	OrgMembershipRepo   *data.OrgMembershipRepository
-	ThreadRepo          *data.ThreadRepository
-	ThreadStarRepo      *data.ThreadStarRepository
-	ThreadShareRepo     *data.ThreadShareRepository
-	ThreadReportRepo    *data.ThreadReportRepository
-	MessageRepo         *data.MessageRepository
-	RunEventRepo        *data.RunEventRepository
-	AuditWriter         *audit.Writer
+	OrgService           *auth.OrgService
+	OrgMembershipRepo    *data.OrgMembershipRepository
+	ThreadRepo           *data.ThreadRepository
+	ThreadStarRepo       *data.ThreadStarRepository
+	ThreadShareRepo      *data.ThreadShareRepository
+	ThreadReportRepo     *data.ThreadReportRepository
+	MessageRepo          *data.MessageRepository
+	RunEventRepo         *data.RunEventRepository
+	AuditWriter          *audit.Writer
 
 	LlmCredentialsRepo  *data.LlmCredentialsRepository
 	LlmRoutesRepo       *data.LlmRoutesRepository
 	SecretsRepo         *data.SecretsRepository
 	AsrCredentialsRepo  *data.AsrCredentialsRepository
 	MCPConfigsRepo      *data.MCPConfigsRepository
-	PersonasRepo          *data.PersonasRepository
+	PersonasRepo        *data.PersonasRepository
 	IPRulesRepo         *data.IPRulesRepository
 	APIKeysRepo         *data.APIKeysRepository
 	OrgInvitationsRepo  *data.OrgInvitationsRepository
@@ -103,23 +104,48 @@ type HandlerConfig struct {
 	RunLimiter  *data.RunLimiter
 
 	SSEConfig SSEConfig
+
+	ConfigResolver    sharedconfig.Resolver
+	ConfigInvalidator sharedconfig.Invalidator
+	ConfigRegistry    *sharedconfig.Registry
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
+	registry := cfg.ConfigRegistry
+	if registry == nil {
+		registry = sharedconfig.DefaultRegistry()
+	}
+	resolver := cfg.ConfigResolver
+	if resolver == nil {
+		var cache sharedconfig.Cache
+		cacheTTL := sharedconfig.CacheTTLFromEnv()
+		if cfg.RedisClient != nil && cacheTTL > 0 {
+			cache = sharedconfig.NewRedisCache(cfg.RedisClient)
+		}
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(cfg.Pool), cache, cacheTTL)
+		resolver = fallback
+	}
+	invalidator := cfg.ConfigInvalidator
+	if invalidator == nil {
+		if inv, ok := resolver.(sharedconfig.Invalidator); ok {
+			invalidator = inv
+		}
+	}
+
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(cfg.SchemaRepository, cfg.Logger))
 
-	mux.HandleFunc("GET /v1/auth/captcha-config", captchaConfig(cfg.PlatformSettingsRepo, cfg.TurnstileEnvSiteKey))
-	mux.HandleFunc("/v1/auth/login", login(cfg.AuthService, cfg.AuditWriter, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
+	mux.HandleFunc("GET /v1/auth/captcha-config", captchaConfig(resolver))
+	mux.HandleFunc("/v1/auth/login", login(cfg.AuthService, cfg.AuditWriter, resolver))
 	mux.HandleFunc("/v1/auth/refresh", refreshToken(cfg.AuthService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
+	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.FeatureFlagService, cfg.AuditWriter, resolver))
 	mux.HandleFunc("/v1/auth/registration-mode", registrationMode(cfg.FeatureFlagService))
 	mux.HandleFunc("POST /v1/auth/check", checkUser(cfg.UserCredentialRepo, cfg.UsersRepo))
 	mux.HandleFunc("/v1/auth/email/verify/send", emailVerifySend(cfg.AuthService, cfg.EmailVerifyService))
 	mux.HandleFunc("/v1/auth/email/verify/confirm", emailVerifyConfirm(cfg.EmailVerifyService))
-	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService, cfg.PlatformSettingsRepo, cfg.TurnstileEnvSecretKey, cfg.TurnstileEnvAllowedHost))
+	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService, resolver))
 	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(cfg.EmailOTPLoginService, cfg.AuditWriter))
 	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo, cfg.FeatureFlagService))
 	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
@@ -462,7 +488,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/admin/gateway-config",
-		adminGatewayConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient),
+		adminGatewayConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient, resolver, invalidator),
 	)
 
 	mux.HandleFunc(
@@ -476,20 +502,25 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"/v1/admin/platform-settings/",
-		platformSettingEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient),
+		platformSettingEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient, invalidator),
 	)
 
 	mux.HandleFunc(
 		"/v1/admin/email/status",
-		adminEmailStatus(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PlatformSettingsRepo, cfg.EmailFrom),
+		adminEmailStatus(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, resolver),
 	)
 	mux.HandleFunc(
 		"/v1/admin/email/config",
-		adminEmailConfig(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PlatformSettingsRepo),
+		adminEmailConfig(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PlatformSettingsRepo, resolver, invalidator),
 	)
 	mux.HandleFunc(
 		"/v1/admin/email/test",
-		adminEmailTest(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.JobRepo, cfg.PlatformSettingsRepo, cfg.EmailFrom),
+		adminEmailTest(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.JobRepo, cfg.PlatformSettingsRepo, resolver),
+	)
+
+	mux.HandleFunc(
+		"GET /v1/config/schema",
+		configSchemaEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, registry),
 	)
 
 	mux.HandleFunc(

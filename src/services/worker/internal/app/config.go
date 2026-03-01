@@ -17,10 +17,7 @@ const (
 	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
 	workerCapabilitiesEnv     = "ARKLOOP_WORKER_CAPABILITIES"
 	workerVersionEnv          = "ARKLOOP_WORKER_VERSION"
-
-	llmRetryMaxAttemptsEnv  = "ARKLOOP_LLM_RETRY_MAX_ATTEMPTS"
-	llmRetryBaseDelayMsEnv  = "ARKLOOP_LLM_RETRY_BASE_DELAY_MS"
-	mcpCacheTTLSecondsEnv   = "ARKLOOP_MCP_CACHE_TTL_SECONDS"
+	mcpCacheTTLSecondsEnv     = "ARKLOOP_MCP_CACHE_TTL_SECONDS"
 )
 
 // Config aligns with worker loop behavior.
@@ -33,26 +30,20 @@ type Config struct {
 	Capabilities     []string
 	Version          string
 
-	// LLM 请求重试配置
-	LlmRetryMaxAttempts int
-	LlmRetryBaseDelayMs int
-
 	// MCP 发现结果缓存 TTL（秒），0 表示不缓存
 	MCPCacheTTLSeconds int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Concurrency:         4,
-		PollSeconds:         0.25,
-		LeaseSeconds:        30,
-		HeartbeatSeconds:    10,
-		QueueJobTypes:       []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
-		Capabilities:        []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
-		Version:             "unknown",
-		LlmRetryMaxAttempts: 3,
-		LlmRetryBaseDelayMs: 1000,
-		MCPCacheTTLSeconds:  60,
+		Concurrency:        4,
+		PollSeconds:        0.25,
+		LeaseSeconds:       30,
+		HeartbeatSeconds:   10,
+		QueueJobTypes:      []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
+		Capabilities:       []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
+		Version:            "unknown",
+		MCPCacheTTLSeconds: 60,
 	}
 }
 
@@ -105,22 +96,6 @@ func LoadConfigFromEnv() (Config, error) {
 
 	if raw, ok := lookupEnv(workerVersionEnv); ok {
 		cfg.Version = raw
-	}
-
-	if raw, ok := lookupEnv(llmRetryMaxAttemptsEnv); ok {
-		value, err := parsePositiveInt(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s: %w", llmRetryMaxAttemptsEnv, err)
-		}
-		cfg.LlmRetryMaxAttempts = value
-	}
-
-	if raw, ok := lookupEnv(llmRetryBaseDelayMsEnv); ok {
-		value, err := parsePositiveInt(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s: %w", llmRetryBaseDelayMsEnv, err)
-		}
-		cfg.LlmRetryBaseDelayMs = value
 	}
 
 	if raw, ok := lookupEnv(mcpCacheTTLSecondsEnv); ok {
