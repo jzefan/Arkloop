@@ -124,14 +124,14 @@ export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[120px]"
+      className="overlay-fade-in fixed inset-0 z-50 flex items-start justify-center pt-[120px]"
       style={{ background: 'var(--c-overlay)' }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
       <div
-        className="flex w-full max-w-[520px] flex-col overflow-hidden rounded-xl"
+        className="modal-enter flex w-full max-w-[520px] flex-col overflow-hidden rounded-xl"
         style={{
           background: 'var(--c-bg-menu)',
           border: '1px solid var(--c-border)',
