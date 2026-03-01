@@ -392,10 +392,11 @@ func buildSearchPayload(items []searchJobResult, timeout time.Duration) (map[str
 	seenURL := map[string]struct{}{}
 	successCount := 0
 
-	for _, item := range items {
+	for idx, item := range items {
 		if item.Err != nil {
 			errPayload := searchErrorPayload(item.Query, item.Err, timeout)
 			byQuery = append(byQuery, map[string]any{
+				"query_index":  idx,
 				"query":        item.Query,
 				"result_count": 0,
 				"error":        errPayload,
@@ -406,6 +407,7 @@ func buildSearchPayload(items []searchJobResult, timeout time.Duration) (map[str
 
 		successCount++
 		byQuery = append(byQuery, map[string]any{
+			"query_index":  idx,
 			"query":        item.Query,
 			"result_count": len(item.Results),
 		})
@@ -417,6 +419,7 @@ func buildSearchPayload(items []searchJobResult, timeout time.Duration) (map[str
 				}
 				seenURL[key] = struct{}{}
 			}
+			hit.QueryIndex = idx
 			flatResults = append(flatResults, hit)
 		}
 	}

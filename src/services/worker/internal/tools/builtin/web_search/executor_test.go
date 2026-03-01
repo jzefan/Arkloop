@@ -141,12 +141,28 @@ func TestBuildSearchPayloadSlimByQuery(t *testing.T) {
 		t.Fatalf("buildSearchPayload returned error: %#v", err)
 	}
 
+	results, ok := payload["results"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected results type: %T", payload["results"])
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, item := range results {
+		if item["query_index"] != 0 {
+			t.Fatalf("expected query_index=0, got %#v", item["query_index"])
+		}
+	}
+
 	byQuery, ok := payload["by_query"].([]map[string]any)
 	if !ok {
 		t.Fatalf("unexpected by_query type: %T", payload["by_query"])
 	}
 	if len(byQuery) != 2 {
 		t.Fatalf("expected 2 by_query entries, got %d", len(byQuery))
+	}
+	if byQuery[0]["query_index"] != 0 || byQuery[1]["query_index"] != 1 {
+		t.Fatalf("unexpected query_index in by_query: %#v", byQuery)
 	}
 	if _, has := byQuery[0]["results"]; has {
 		t.Fatalf("by_query should not include results field: %#v", byQuery[0])
