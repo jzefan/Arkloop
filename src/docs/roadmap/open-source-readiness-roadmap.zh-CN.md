@@ -53,6 +53,62 @@ threadMessageLimit(200)、maxInputContentBytes(32KB)、defaultAgentMaxIterations
 
 无压力测试基线、无 CI 流水线、无自动化质量门禁。代码合并完全依赖人工判断。
 
+**P7 -- 开源合规与版权边界不明确**
+
+仓库缺少明确的开源许可证（LICENSE/NOTICE），也未建立第三方依赖许可证清单。当前目录结构同时包含商业/法律文档（`docs/`）和内部工程文档（`src/docs/`），开源边界不清晰，存在误公开或“开源后无法再撤回”的风险。
+
+**P8 -- 仓库卫生与敏感信息泄露风险**
+
+虽然 `.env` 已在 `.gitignore` 中忽略，但尚未建立系统化的 secret 扫描与历史审计流程。开源前若 git 历史中残留密钥/Token/内网地址，将造成不可逆的泄露风险。
+
+**P9 -- 开源治理与贡献入口缺失**
+
+缺少 `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md`、Issue/PR 模板等“社区标准文件”，外部贡献者无法形成可预期的协作闭环；漏洞报告路径不明确，安全响应不可控。
+
+**P10 -- 部署 Profile 与平台依赖不透明**
+
+`compose.yaml` 默认包含需要特权与 KVM 的 Sandbox（Firecracker microVM），在 macOS/Windows 环境下不可用或体验极差；缺少“最小可运行集”的 compose profile 与功能矩阵说明，导致开源后首轮上手失败率高。
+
+**P11 -- 供应链与依赖风险未进入门禁**
+
+CI 只覆盖编译与测试，不包含依赖漏洞扫描、依赖许可扫描、镜像扫描、SBOM 生成与发布签名等供应链基线；开源后维护成本和安全风险会被放大。
+
+**P12 -- Gateway/API 缺少 CORS 中间件**
+
+Gateway 和 API 的全部 Go 代码中不存在任何 CORS 处理逻辑（`Access-Control-Allow-Origin` 无一处出现）。前端（Web/Console）与后端分离部署时，浏览器的跨域请求会被直接拒绝。这不是"贡献者体验"问题，是"项目 clone 下来跑不起来"的问题。需要在 Gateway 层加入可配置的 CORS 中间件，允许的 origin 走 Config Resolver 或 ENV。
+
+**P13 -- Docker 构建缺少 .dockerignore**
+
+五个 Dockerfile 均存在（api、gateway、worker、sandbox、browser），但仓库中没有任何 `.dockerignore` 文件。Docker build context 会包含 `.env`（含真实密钥）、`.git/`（整个历史）、`node_modules/` 等。开源用户按文档 `docker compose up --build` 时可能无意间把密钥打进镜像，且构建时间和镜像体积都会不必要地膨胀。
+
+**P14 -- 测试覆盖率严重不足**
+
+Go：359 个源文件中仅 67 个有对应测试文件（~18.7%）；TypeScript：157 个源文件中仅 7 个有测试文件（~4.5%）。P6 提到了"缺少 CI"，但 CI 是执行层面的问题，测试覆盖率是代码层面的问题。没有测试的核心路径意味着外部贡献者提交 PR 后无法判断是否破坏现有行为，Review 成本极高。
+
+**P15 -- API 文档缺失**
+
+40+ 个 API endpoint（`/v1/auth/*`、`/v1/threads/*`、`/v1/runs/*`、`/v1/admin/*`、`/v1/orgs/*` 等）没有 OpenAPI/Swagger 规范，也没有独立的 API 参考文档。外部开发者必须阅读 Go handler 源码才能理解请求/响应契约、认证方式、错误码。对于开源项目，API 文档是最基本的开发者体验。
+
+**P16 -- 文档仅有中文版本**
+
+所有文档（README、architecture、roadmap、specs、guides）均仅有 `.zh-CN.md` 后缀的中文版。如果开源面向国际社区，至少 `README.md`（根目录）、`CONTRIBUTING.md`、部署指南（deployment.md）需要英文版。如果仅面向中文社区，需要在 README 中明确声明项目语言范围。
+
+**P17 -- 历史文档未同步更新**
+
+`architecture-problems.zh-CN.md` 撰写于系统没有 Redis、没有 Gateway、没有对象存储的阶段，多个章节描述的问题已在后续开发中解决，但文档未更新。开源后外部读者看到"没有 Redis"、"没有 Gateway"、"用户身份残缺"等描述会产生严重误解。需要在开源前更新该文档，标注各项的当前状态（已解决/部分解决/仍存在）。
+
+**P18 -- Skill prompt 中文硬编码**
+
+Skill YAML 中的 `title_summarize.prompt` 直接写了中文相关指令（如 "Keep it under 8 Chinese characters"）。非中文用户使用时会得到不符合预期的标题摘要。如果 Skill 是面向社区可扩展的资产，prompt 的语言应可配置或至少支持按 locale 选择。
+
+**P19 -- 错误码无集中注册与文档**
+
+API 返回的错误码（`invalid_credentials`、`email_not_verified`、`policy_denied`、`budget_exceeded`、`rate_limited` 等）散落在各模块的 Go 代码中，无集中注册、无枚举文档。外部开发者编写客户端时无法预知所有可能的错误类型，只能靠试错或读源码。
+
+**P20 -- API 版本策略未声明**
+
+API 使用 `/v1/` 前缀，但没有文档说明版本兼容性承诺、废弃策略、breaking change 的处理方式。外部集成方需要知道：`/v1/` 内部是否保证向后兼容、何时引入 `/v2/`、废弃端点的通知周期。
+
 ---
 
 ## 1. Track A -- 统一配置体系
@@ -418,9 +474,162 @@ GitHub Actions 配置，触发条件：PR 和 main 分支 push。
 - migration 自动运行
 - seed data 可选注入（管理员账户 + 示例 org）
 
+### G4 -- Gateway CORS 中间件
+
+Gateway 当前缺少 CORS 处理。前端与后端分离部署（几乎所有开发和生产场景）时，浏览器跨域请求会被拦截。
+
+实现要点：
+- 在 Gateway 的中间件链中增加 CORS handler，位于 traceMiddleware 之后、proxy 之前
+- Allowed Origins 走 ENV 配置（`ARKLOOP_CORS_ALLOWED_ORIGINS`），默认 `*`（开发模式），生产环境要求显式声明
+- 处理 preflight（OPTIONS）请求，正确返回 `Access-Control-Allow-Methods`、`Access-Control-Allow-Headers`、`Access-Control-Allow-Credentials`
+- SSE 端点（`/v1/runs/*/events`）需要允许 `text/event-stream` 的 Accept header
+
+### G5 -- .dockerignore
+
+为所有 Dockerfile 所在目录（或仓库根目录）添加 `.dockerignore`，排除：
+
+```
+.env
+.env.*
+!.env.example
+.git
+.github
+.vscode
+.idea
+.DS_Store
+node_modules
+*.test
+*.exe
+.VSCodeCounter
+docs/investor-deep-research.zh-CN.md
+```
+
+防止 Docker build context 包含敏感文件（`.env`）、无关文件（`.git/`、`node_modules/`），同时缩小构建上下文体积。
+
+### G6 -- 核心路径测试补齐
+
+当前测试覆盖率（Go ~18.7%，TypeScript ~4.5%）不足以保障外部贡献的安全性。按风险优先级补齐：
+
+**第一优先级（安全与正确性）**：
+- 认证链路：JWT 签发/验证/刷新/过期、RBAC 权限检查、API Key 验证
+- 配置解析：Resolver 多级 fallback、ENV override、缺失 key 处理
+- 工具安全：URL policy（SSRF 拦截）、Webhook delivery 内网拦截
+- 加密：envelope encrypt/decrypt 对称性、key rotation
+
+**第二优先级（核心业务）**：
+- Pipeline 中间件链：消息加载、Skill 解析、路由选择、Budget 检查
+- SSE 推送：事件序列正确性、断线续传（after_seq）
+- Entitlement 解析：plan -> org -> platform fallback
+
+**第三优先级（集成验证）**：
+- Migration 前进/回滚一致性（已在 G1 中覆盖）
+- compose 全栈冒烟测试（API 健康 + 创建 org + 发起 run）
+
+目标不是 100% 覆盖率，而是"核心路径有测试保护，外部 PR 能通过 CI 判断是否破坏现有行为"。
+
 ---
 
-## 8. 执行优先级与依赖关系
+## 8. Track H -- 开源发布与治理（仓库标准）
+
+**目标**：补齐开源仓库的合规、治理、发布与安全基线，确保“外部用户第一次启动就能跑起来、遇到问题能定位、想贡献能落地”。
+
+### H1 -- 开源边界与仓库卫生
+
+- 明确开源范围：哪些目录/服务属于 OSS core，哪些属于商业交付/内部资料需要移出或替换为占位说明
+- 建立开源前清理清单：密钥/Token、内网域名、私有镜像、测试数据 dump、个人信息
+- 将仓库内“内部工程文档”标识改为对外语境（至少避免首页出现“内部”字样），并明确哪些文档属于实现细节、哪些是对外使用指南
+
+### H2 -- 许可证与第三方依赖合规
+
+- 选择并落地主许可证：根目录增加 `LICENSE`（必要时增加 `NOTICE`）
+- 建立第三方依赖许可证清单：Go modules + pnpm workspace 依赖 + Sandbox rootfs 预装依赖（Python/Node）
+- 明确商标/项目名使用规则（最小化即可：允许/禁止的使用场景），避免后续争议
+
+### H3 -- 社区标准文件与贡献流程
+
+- 根目录补齐社区标准文件：`README.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md`、`SUPPORT.md`
+- 补齐协作入口：Issue 模板、PR 模板、最小复现模板（bug report 必填项）
+- 明确版本兼容承诺（SemVer/破坏性变更策略/弃用周期），避免“每个 PR 都在重新谈规则”
+
+### H4 -- 发布与升级策略
+
+- 发布流程：tag 规范、`CHANGELOG.md` 生成策略、发布产物（Docker 镜像/二进制）清单
+- 升级指南：数据库迁移的前向/回滚能力边界、`UPGRADE.md`（至少覆盖主版本升级）
+
+### H5 -- 安全与供应链基线（接入 CI）
+
+- secret 扫描：在 CI 中对 PR 做密钥/私钥模式扫描（并要求本地 pre-commit 可选）
+- 依赖风险：Go `govulncheck`、Node `pnpm audit`（或等价方案），将高危漏洞作为发布阻塞项
+- 镜像与 SBOM：对 Dockerfile 构建产物做镜像漏洞扫描，并生成 SBOM（用于可追溯性）
+
+### H6 -- 部署 Profile 与功能矩阵
+
+- 提供“最小可运行集”部署：将 Sandbox/Browser/OpenViking 设为可选 profile，保证 macOS/Windows 至少能跑通 API/Gateway/Web/Console
+- 输出功能矩阵：不同 profile 下哪些工具可用、哪些能力会降级（避免用户靠试错理解系统）
+
+### H7 -- API 文档 / OpenAPI Spec
+
+当前 40+ 个 API endpoint 没有机器可读的接口规范。
+
+实现方式（选一）：
+- 从 Go handler 代码生成 OpenAPI 3.0 spec（使用 swaggo/swag 或手工维护 YAML）
+- 将 spec 放在 `src/docs/api/openapi.yaml`，CI 中校验 spec 与代码的一致性
+- 基于 spec 生成静态 API 参考文档（Redoc / Scalar / Stoplight Elements）
+
+最小交付：覆盖 `/v1/auth/*`、`/v1/threads/*`、`/v1/runs/*`、`/v1/orgs/*`、`/v1/me` 五组核心端点。每个端点包含：路径、方法、请求体 schema、响应 schema、认证方式、错误码枚举。
+
+### H8 -- 文档国际化
+
+当前所有文档仅有中文版本。开源前需明确语言策略：
+
+**方案 A（面向国际社区）**：
+- 根目录 `README.md` 提供英文版，`README.zh-CN.md` 为中文版
+- `CONTRIBUTING.md`、`SECURITY.md`、部署指南提供英文版
+- 其余工程文档（architecture、roadmap、specs）保持中文，在英文 README 中注明
+
+**方案 B（仅面向中文社区）**：
+- 在 README 显著位置声明：`This project's documentation is currently available in Chinese (Simplified) only.`
+- 欢迎社区提交翻译 PR
+
+无论选哪个方案，根目录 `README.md` 都需要重写（当前内容仅为架构大纲，缺少项目介绍、快速开始、截图/Demo、技术栈、许可证声明等开源项目标准信息）。
+
+### H9 -- 历史文档清理
+
+`architecture-problems.zh-CN.md` 撰写于早期阶段，多个章节描述的问题已解决（Gateway 已建立、Redis/MinIO 已接入、用户身份已完善、消息已支持 content_json、run 表已补齐生命周期字段、事件表已实现月分区、Teams/Projects 已实现等）。
+
+处理方式：
+- 逐条标注当前状态（已解决 / 部分解决 / 仍存在），附对应的 migration 或 commit 引用
+- 或在文档顶部加上归档声明：说明撰写时间点、当前仓库已不再反映该文档描述的状态，引导读者查看 `architecture-design-v2.zh-CN.md`
+
+### H10 -- 错误码注册与文档
+
+API 返回的错误码散落在各模块中，需要集中治理：
+
+- 在 `src/services/shared/apierr/` 中建立错误码常量注册（已有部分基础）
+- 每个错误码包含：code string、HTTP status、描述、触发场景
+- 从注册表自动导出错误码参考文档，放在 `src/docs/reference/error-codes.zh-CN.md`
+- OpenAPI spec 中引用这些错误码（与 H7 协同）
+
+### H11 -- API 版本策略声明
+
+在 `CONTRIBUTING.md` 或独立文档中声明 API 版本策略：
+
+- `/v1/` 内部保证向后兼容（新增字段不破坏已有客户端）
+- Breaking change 需要提前一个发布周期标记 deprecated
+- 端点废弃通过响应 header（`Deprecation`、`Sunset`）通知客户端
+- 何时考虑 `/v2/`：当 `/v1/` 的兼容性约束阻碍核心架构演进时
+
+### H12 -- Skill prompt 语言配置化
+
+当前 Skill YAML 中的 `title_summarize.prompt` 硬编码了中文相关指令。处理方式：
+
+- `title_summarize.prompt` 支持按 locale 选择（从 thread/org 配置读取用户语言偏好）
+- 默认 Skill YAML 提供中英文两套 prompt 模板
+- 或将 title_summarize prompt 移到 Config Registry（走 Track A），让部署者自行配置
+
+---
+
+## 9. 执行优先级与依赖关系
 
 ```
 Track A（配置体系）—— 最高优先，所有 Track 的地基
@@ -450,6 +659,18 @@ Track G（基础设施）—— 独立，建议与 A 同步启动
   G1（CI）
   G2（压测，依赖 E7 完成后执行更有意义）
   G3（开发环境）
+  G4（CORS 中间件）—— 开源前必须完成，否则项目跑不起来
+  G5（.dockerignore）—— 开源前必须完成
+  G6（测试补齐）—— 依赖 G1，持续推进
+
+Track H（开源发布与治理）—— 与 A/G 并行，发布前必须收敛
+  H1 → H2 → H3 → H4 → H5 → H6
+  H7（API 文档）—— 独立，建议与 H3 并行
+  H8（文档国际化）—— 依赖 H3
+  H9（历史文档清理）—— 独立
+  H10（错误码注册）—— 与 H7 协同
+  H11（API 版本策略）—— 依赖 H3/H7
+  H12（Skill prompt i18n）—— 依赖 Track A
 ```
 
 **建议执行顺序**：
@@ -457,21 +678,25 @@ Track G（基础设施）—— 独立，建议与 A 同步启动
 第一批（并行启动）：
 - Track A（A1-A3）：配置体系核心
 - Track D（D1-D3）：前端共享层
-- Track G（G1, G3）：CI + 开发环境
+- Track G（G1, G3, G4, G5）：CI + 开发环境 + CORS + .dockerignore
+- Track H（H1-H3, H9）：开源边界 + 许可证 + 社区标准文件 + 历史文档清理
 
 第二批（A1-A3 完成后）：
 - Track A（A4-A5）：配置迁移
 - Track B（B1-B3）：系统限制
 - Track C（C1-C4）：Tool Provider
+- Track G（G6）：核心路径测试补齐
+- Track H（H7, H8, H10）：API 文档 + 文档国际化 + 错误码
 
 第三批（按需推进）：
 - Track E 各项（按产品优先级排序）
 - Track F（第一个外部集成需求出现时启动）
 - Track G（G2 压测）
+- Track H（H4-H6, H11, H12）：发布策略/供应链/部署 profile/API 版本策略/Skill i18n（开源发布前必须完成）
 
 ---
 
-## 9. 不变量与决策记录
+## 10. 不变量与决策记录
 
 以下决策在本路线图内固定：
 
@@ -484,3 +709,10 @@ Track G（基础设施）—— 独立，建议与 A 同步启动
 - **旧 roadmap 归档不删除**：三份旧 roadmap 保留作为历史参考，不再新增内容。所有新工作在本文档中追踪。
 - **Browser SSRF 在开源前必须完成**：这是安全底线，不可妥协。
 - **沿用已有决策**：agent-system-roadmap 中第 16 节的所有不变量继续生效（Sandbox 独立服务、Executor 注册表、Memory 降级策略、Model 优先级链、Sub-agent 层级限制、Thinking 渲染协议、Browser Service 独立部署、Tool Provider 双名机制、Lua Executor 选型等）。
+- **开源仓库标准文件齐备**：`LICENSE`、`README.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md` 为开源发布前置条件。
+- **最小可运行集优先**：默认发布的“最小部署 profile”不得依赖 KVM/特权容器；Sandbox 等高依赖能力必须显式启用。
+- **CORS 在开源前必须完成**：没有 CORS 中间件，前后端分离部署无法工作。这是“项目能跑起来”的前提。
+- **.dockerignore 在开源前必须存在**：防止 `.env`、`.git/` 进入镜像。
+- **API 文档覆盖核心端点**：开源发布时至少覆盖 auth、threads、runs、orgs、me 五组端点的 OpenAPI spec。
+- **错误码必须可枚举**：新增错误码必须注册到集中 registry，不允许在 handler 中直接构造未注册的 error code string。
+- **历史文档标注状态而非删除**：`architecture-problems.zh-CN.md` 等历史文档保留但标注各项的当前状态（已解决/仍存在），不做无声明的删除。
