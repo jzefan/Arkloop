@@ -195,7 +195,11 @@ func resolveFromEnv(e Entry) (string, bool) {
 		if !ok {
 			continue
 		}
-		return strings.TrimSpace(raw), true
+		val := strings.TrimSpace(raw)
+		if val == "" {
+			continue
+		}
+		return val, true
 	}
 	return "", false
 }
