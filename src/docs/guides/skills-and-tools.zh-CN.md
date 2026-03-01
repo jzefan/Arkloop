@@ -102,4 +102,5 @@ Phase 1 先落一个最小可跑版本，重点是“可加载、可注入、可
 - `skill_id` 形态：创建 run 时支持 `id` 或 `id@version`；如指定 version，则必须与 `skill.yaml.version` 一致。
 - allowlist 规则：有效 `tool_allowlist` = `ARKLOOP_TOOL_ALLOWLIST`（平台全局）与 `skill.yaml.tool_allowlist` 的交集；skill 不能放大权限。
 - budgets（v1 支持键）：`max_iterations`、`max_output_tokens`、`tool_timeout_ms`、`tool_budget`（透传到 ToolExecutionContext.budget）。
+- `agent.lua` executor：`executor_config.script` 可内联；也可改为 `executor_config.script_file`（相对 `skill.yaml` 目录）以复用独立 Lua 文件。
 - YAML 解析：默认走内置严格子集解析器；如环境安装了 PyYAML，则会优先使用 `yaml.safe_load`。

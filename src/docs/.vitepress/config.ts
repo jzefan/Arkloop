@@ -12,7 +12,7 @@ export default defineConfig({
       { text: 'API 参考', link: '/api/' },
       { text: '架构', link: '/architecture/architecture-design-v2.zh-CN' },
       { text: '规范', link: '/specs/api-and-sse.zh-CN' },
-      { text: 'Roadmap', link: '/roadmap/agent-system-roadmap.zh-CN' },
+      { text: 'Roadmap', link: '/roadmap/open-source-readiness-roadmap.zh-CN' },
     ],
 
     sidebar: {
@@ -106,9 +106,10 @@ export default defineConfig({
         {
           text: 'Roadmap',
           items: [
-            { text: 'Agent System（进行中）', link: '/roadmap/agent-system-roadmap.zh-CN' },
-            { text: '架构重构（已完成）', link: '/roadmap/architecture-refactor-roadmap.zh-CN' },
-            { text: '开发路线（已过时）', link: '/roadmap/development-roadmap.zh-CN' },
+            { text: 'Open Source Readiness', link: '/roadmap/open-source-readiness-roadmap.zh-CN' },
+            { text: 'Agent System（归档）', link: '/roadmap/agent-system-roadmap.zh-CN' },
+            { text: '架构重构（归档）', link: '/roadmap/architecture-refactor-roadmap.zh-CN' },
+            { text: '开发路线（归档）', link: '/roadmap/development-roadmap.zh-CN' },
             { text: 'CLI & ENV 配置（已过时）', link: '/roadmap/cli-and-env-profiles.zh-CN' },
           ],
         },
