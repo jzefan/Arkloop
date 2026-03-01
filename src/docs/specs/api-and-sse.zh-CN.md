@@ -1,166 +1,397 @@
-# 后端 API 与 SSE（Phase 1 规范草案）
+# 后端 API 与 SSE 规范
 
-本文目标：把“可跑通的最小纵切”先定死，避免后续因为流式、审计、多租户与鉴权形态反复返工。
+本文描述 Arkloop API 层的资源模型、端点设计、错误模型与 SSE 事件规范。API 使用 Go 实现，基于 `net/http` 标准库。
 
-范围：API 资源模型、端点建议、错误模型、SSE 事件规范、以及与鉴权/CLI 的配合方式。
+## 1. 核心原则
 
-## 1. 总原则（先写死）
+- **API 只做控制面**：鉴权、资源编排、审计落库、SSE 回放、enqueue job。工具执行在 Worker。
+- **事件是唯一真相**：运行过程通过 `run_events` 表达，SSE 推送 + 落库 + 回放基于同一事件源。
+- **流式优先**：模型输出与工具调用过程统一通过 SSE 推送。
+- **多租户隔离**：所有写操作归属 `org_id`；数据可见性由 RBAC + 成员关系控制。
+- **Fetch 流式鉴权**：SSE 与普通 API 使用同一 `Authorization: Bearer` 机制，Web/CLI 统一。
 
-- API 只做编排：前端/CLI 调用的是 API；工具执行在服务端受控环境（worker 或同进程 executor）。
-- 事件是唯一真相：运行过程的一切都用 `run_events` 表达（推送、回放、审计都基于同一事件）。
-- 流式优先：模型输出与工具调用过程统一通过 SSE 推送。
-- 多租户先占位：所有写操作必须能归属到 `org_id`（租户）、`project_id`（案件/项目，可选但建议早期就有）。
-- 强约束可测试：schema、allowlist、预算、权限、审计字段必须稳定，pytest 重点测这些不变量。
+## 2. 资源模型
 
-## 2. 资源模型（建议）
+### 核心资源
 
-最小集合（Phase 1）：
-- `orgs`：租户/组织
-- `users`：用户（actor）
-- `projects`：项目/案件（会话分组）
-- `threads`：会话容器
-- `messages`：用户/assistant 消息（最终内容或增量片段的归并结果）
-- `runs`：一次 Agent Loop 执行实例（状态机）
-- `run_events`：事件流（SSE 推送 + 审计落库 + 回放）
+| 资源 | 说明 |
+|------|------|
+| `orgs` | 租户边界（数据隔离、计费、审计） |
+| `users` | 用户主体 |
+| `org_memberships` | 组织成员关系与角色 |
+| `teams` | 组织内小组 |
+| `projects` | 项目/协作域（可关联 team） |
+| `threads` | 会话容器（支持软删除） |
+| `messages` | 用户/assistant 消息（`content_json` JSONB） |
+| `runs` | Agent Loop 执行实例（支持 `parent_run_id` 子运行） |
+| `run_events` | 事件流（按月分区，`seq` 单调递增） |
 
-后续再补齐（Phase 2+）：
-- `tools`：ToolSpec 注册表
-- `skills`：SkillSpec/版本资产
-- `context_refs`：引用材料（网页快照/附件/检索片段）
-- `audit_logs` / `usage` / `exports`：企业后台所需
+### 配置资源
 
-## 3. 端点设计（Phase 1 最小纵切）
+| 资源 | 说明 |
+|------|------|
+| `llm_credentials` | LLM 提供商凭证（AES-256-GCM 加密存储） |
+| `llm_routes` | 模型路由规则（credential + model + priority + multiplier） |
+| `asr_credentials` | 语音转文字凭证 |
+| `mcp_configs` | MCP 服务器配置（stdio/HTTP 类型） |
+| `skills` | 技能定义（executor_type + prompt + tool_allowlist） |
+| `agent_configs` | Agent 配置（system_prompt、reasoning_mode、model 路由） |
+| `prompt_templates` | 提示词模板 |
 
-### 3.1 认证与会话
+### 企业资源
 
-建议先做服务端签发 token（便于本地部署与 CLI），同时为后续 OIDC/SSO 留接口。
+| 资源 | 说明 |
+|------|------|
+| `api_keys` | 外部访问密钥（哈希存储） |
+| `ip_rules` | IP 访问规则 |
+| `webhook_endpoints` | Webhook 端点 |
+| `plans` / `subscriptions` | 订阅计划体系 |
+| `credits` / `credit_transactions` | 积分/额度体系 |
+| `entitlement_overrides` | 组织级功能权限覆盖 |
+| `audit_logs` | 审计日志 |
+| `notifications` / `notification_broadcasts` | 通知体系 |
+| `user_memory_snapshots` | 用户记忆快照（OpenViking） |
 
-- `POST /v1/auth/login`
-- `POST /v1/auth/refresh`
-- `POST /v1/auth/logout`
-- `GET /v1/me`
+## 3. 端点设计
 
-### 3.2 项目与会话
+### 3.1 健康检查
 
-- `POST /v1/projects`
-- `GET /v1/projects`
-- `POST /v1/threads`（可选带 `project_id`）
-- `GET /v1/threads?project_id=...`
-- `POST /v1/threads/{thread_id}/messages`（写入用户消息）
-- `GET /v1/threads/{thread_id}/messages`
+- `GET /healthz` -- 存活探针
+- `GET /readyz` -- 就绪探针（含 schema 版本校验）
 
-### 3.3 运行（Run）
+### 3.2 认证与会话
 
-Run 负责把「输入消息 + 上下文引用 + 约束策略」变成一次可审计的执行链路。
+- `POST /v1/auth/register` -- 注册
+- `POST /v1/auth/login` -- 登录
+- `POST /v1/auth/refresh` -- 刷新 token
+- `POST /v1/auth/logout` -- 登出
+- `POST /v1/auth/check` -- 检查认证状态
+- `GET /v1/auth/registration-mode` -- 注册模式查询
+- `GET /v1/auth/captcha-config` -- Captcha 配置（Cloudflare Turnstile）
+- `POST /v1/auth/email/verify/send` -- 发送邮箱验证
+- `POST /v1/auth/email/verify/confirm` -- 确认邮箱验证
+- `POST /v1/auth/email/otp/send` -- 发送 OTP
+- `POST /v1/auth/email/otp/verify` -- 验证 OTP
 
-- `POST /v1/threads/{thread_id}/runs`
-  - 典型入参：`mode`（chat/skill）、`skill_id@version`（可选）、`tool_allowlist`、`budgets`、`model_route`（可选）
-  - Phase 1 已实现：可选入参 `route_id`（用于选择 Provider 路由；由 `ARKLOOP_PROVIDER_ROUTING_JSON` 配置），会写入 `run.started.data.route_id`，并在执行时追加 `run.route.selected` 事件。
-- `GET /v1/threads/{thread_id}/runs?limit=...`
-  - 用于刷新恢复：按 `created_at desc, id desc` 返回该 thread 最近的 runs（至少 `run_id/status/created_at`）。
-- `GET /v1/runs/{run_id}`
-- `POST /v1/runs/{run_id}:cancel`
+### 3.3 用户
 
-### 3.4 事件流（SSE）
+- `GET /v1/me` -- 当前用户信息
+- `GET /v1/me/usage` -- 用量统计
+- `GET /v1/me/usage/daily` -- 每日用量
+- `GET /v1/me/usage/by-model` -- 按模型用量
+- `GET /v1/me/feedback` -- 反馈记录
+- `POST /v1/me/credits` -- 积分操作
+- `GET /v1/me/invite-code` -- 邀请码
+- `POST /v1/me/invite-code/reset` -- 重置邀请码
+- `POST /v1/me/redeem` -- 兑换码核销
 
-- `GET /v1/runs/{run_id}/events`（`Content-Type: text/event-stream`）
+### 3.4 会话与消息
 
-约定：
-- 事件按 `seq` 单调递增，便于断线重连与回放。
-- 支持游标：`?after_seq=123` 或使用 `Last-Event-ID`（二选一，建议游标更直观）。
-- 服务端尽量保证“先落库、后推送”；做不到也要保证“至少可回放”（例如最终补写缺失事件）。
+- `GET /v1/threads` -- 列表
+- `POST /v1/threads` -- 创建（可选 `project_id`、`agent_config_id`）
+- `GET /v1/threads/{id}` -- 详情
+- `PUT /v1/threads/{id}` -- 更新
+- `DELETE /v1/threads/{id}` -- 软删除
+- `GET /v1/threads/search` -- 搜索
+- `GET /v1/threads/starred` -- 收藏列表
+- `GET /v1/threads/{id}/messages` -- 消息列表
+- `POST /v1/threads/{id}/messages` -- 写入用户消息
 
-### 3.5 Review（可选，但建议早占位）
+### 3.5 运行（Run）
 
-如果你在 Phase 1 就要引入“高风险工具/外部发送需要审核”，建议占位端点：
+Run 把「输入消息 + Skill 配置 + 路由策略」变成一次可审计的执行链路。
 
-- `GET /v1/runs/{run_id}/review`
-- `POST /v1/runs/{run_id}/review:approve`
-- `POST /v1/runs/{run_id}/review:reject`
+- `POST /v1/threads/{id}/runs` -- 创建 run
+  - 入参：`skill_id`（可选）、`route_id`（可选）、配置覆盖
+  - API 同一事务内：写 `runs` 行 + 写 `run.started` 事件 + 插入 `jobs`（`run.execute`）
+- `GET /v1/runs` -- 列表
+- `GET /v1/runs/{id}` -- SSE 事件流（`Content-Type: text/event-stream`）
+- `POST /v1/runs/{id}/cancel` -- 取消
+- `POST /v1/runs/{id}/input` -- 提交用户输入（Human-in-the-loop）
+- `POST /v1/runs/{id}/retry` -- 重试
 
-## 4. SSE 事件规范（建议最小集合）
+SSE 约定：
+- 事件按 `seq` 单调递增
+- 支持 `?after_seq=N` 游标断线续传
+- 心跳间隔：15s（`ARKLOOP_SSE_HEARTBEAT_SECONDS`）
+- 批次上限：500（`ARKLOOP_SSE_BATCH_LIMIT`）
+- 传输层：PostgreSQL `LISTEN/NOTIFY`（通过 `ARKLOOP_DATABASE_DIRECT_URL` 直连，绕过 PgBouncer）
 
-事件字段（所有事件共用的 envelope）：
-- `event_id`：全局唯一（uuid/ulid 均可）
-- `run_id`：归属 run
-- `seq`：run 内单调递增序号
-- `ts`：服务端时间戳
-- `type`：事件类型
-- `data`：事件负载（按 type 变化）
+### 3.6 公开分享
 
-事件类型建议：
-- `run.started`
-- `run.completed`
-- `run.failed`（含 `error_class`/`message`）
-- `message.delta`（模型流式增量；`data` 至少包含 `content_delta`、可选 `role`/`channel`）
-- `tool.call`（`tool_name`、`args_hash`、`risk_level`、`required_scopes`、预算预估）
-- `tool.result`（`result_hash`、`duration_ms`、`error_class`、`cost`）
-- `policy.denied`（权限不足/参数非法/高危拦截）
-- `budget.exceeded`
-- `review.requested`
-- `review.decision`
+- `GET /v1/s/{share_id}` -- 公开分享访问
 
-说明：
-- 不追求逐字一致，但必须保证事件序列可解释、可核对、可回放。
-- `tool.call/tool.result` 必须能关联（例如 `tool_call_id`），避免审计断链。
+### 3.7 LLM 凭证与路由
 
-### 4.1 调试事件（可选）
+- `GET/POST /v1/llm-credentials` -- 凭证管理
+- `GET/PUT/DELETE /v1/llm-credentials/{id}`
+- `GET/POST /v1/llm-routes` -- 路由规则管理
+- `GET/PUT/DELETE /v1/llm-routes/{id}`
 
-为排障可选开启以下事件（默认关闭，不应作为业务逻辑依赖）：
-- `llm.request`：一次上游请求的实际 payload（不包含任何 secret header）
-- `llm.response.chunk`：上游流式返回的原始 chunk（raw + 可选 json）
+### 3.8 ASR（语音转文字）
 
-开启方式：设置环境变量 `ARKLOOP_LLM_DEBUG_EVENTS=1`（仅建议本地/测试；这些事件可能包含 messages 明文）。
+- `GET/POST /v1/asr-credentials`
+- `GET/PUT/DELETE /v1/asr-credentials/{id}`
+- `POST /v1/asr/transcribe` -- 转写
 
-## 5. 错误模型（API 层）
+### 3.9 MCP 配置
 
-建议统一错误响应（便于前端与 CLI 处理）：
-- `code`：稳定的机器可读错误码（例如 `auth.invalid_credentials`）
-- `message`：给人看的简短描述
-- `details`：可选（字段校验错误、触发的 policy、trace_id 等）
-- `trace_id`：全链路追踪 ID
+- `GET/POST /v1/mcp-configs`
+- `GET/PUT/DELETE /v1/mcp-configs/{id}`
 
-建议同时在 HTTP Header 返回 `X-Trace-Id`，便于在“非 JSON 场景”（SSE/代理层报错/网关日志）里快速关联。
+### 3.10 Skills 与 Agent 配置
 
-`trace_id` 建议默认由服务端生成；如需要与受信任上游（网关/负载均衡）对齐，可允许透传其 `X-Trace-Id`，但不要信任普通客户端自带的 `trace_id`。
+- `GET/POST /v1/skills`
+- `GET/PUT/DELETE /v1/skills/{id}`
+- `GET/POST /v1/agent-configs`
+- `GET/PUT/DELETE /v1/agent-configs/{id}`
+- `GET/POST /v1/prompt-templates`
+- `GET/PUT/DELETE /v1/prompt-templates/{id}`
 
-建议分类：
-- `auth.*`：鉴权/权限
-- `validation.*`：schema 校验
-- `policy.*`：策略拦截（允许前端展示“为什么被拒绝”）
-- `budget.*`：预算/配额
-- `provider.*`：模型提供商错误（需进一步细分可重试/不可重试）
-- `internal.*`：未知内部错误（尽量不要泄露敏感细节）
+### 3.11 组织与团队
 
-## 6. SSE 与鉴权（需要提前定的现实约束）
+- `GET/POST /v1/orgs`
+- `GET /v1/orgs/me` -- 当前用户所属组织
+- `GET/POST /v1/orgs/{id}`
+- `GET/POST /v1/orgs/{id}/invitations` -- 邀请管理
+- `GET /v1/orgs/{id}/usage` -- 组织用量
+- `GET /v1/orgs/{id}/usage/daily`
+- `GET /v1/orgs/{id}/usage/by-model`
+- `GET/POST /v1/org-invitations`
+- `GET/PUT/DELETE /v1/org-invitations/{id}`
+- `GET/POST /v1/teams`
+- `GET/PUT/DELETE /v1/teams/{id}`
+- `GET/POST /v1/projects`
+- `GET/PUT/DELETE /v1/projects/{id}`
 
-浏览器原生 `EventSource` 不方便携带自定义 Header（常见是没法加 `Authorization`）。
+### 3.12 安全与访问控制
 
-可选策略（Phase 1 建议二选一）：
-- Cookie 会话：SSE 走同源 Cookie（更适配 `EventSource`），配合 CSRF 防护与严格 SameSite 策略。
-- Fetch 流式：不用 `EventSource`，改用 `fetch()` 读取 `text/event-stream`，这样可加 `Authorization: Bearer ...`；前端实现稍复杂但更统一，CLI 也一致。
+- `GET/POST /v1/api-keys`
+- `GET/PUT/DELETE /v1/api-keys/{id}`
+- `GET/POST /v1/ip-rules`
+- `GET/PUT/DELETE /v1/ip-rules/{id}`
 
-当前约定（Phase 1 默认）：
-- 采用 **Fetch 流式 + `Authorization: Bearer ...`**。
-  - 理由：SSE 与普通 API 使用同一鉴权机制；Web/CLI 统一实现；避免 Cookie 会话带来的 CSRF 与同源约束复杂度。
-  - 代价：前端需要实现 SSE 解析与断线重连（建议以 `after_seq` 作为唯一续传游标，避免依赖 `Last-Event-ID` 的浏览器差异）。
+### 3.13 Webhooks
 
-无论选哪种，都建议：
-- `run_events` 本身不包含敏感明文（例如模型 key、系统 prompt 原文）；敏感内容通过服务端权限控制与脱敏策略处理。
+- `GET/POST /v1/webhook-endpoints`
+- `GET/PUT/DELETE /v1/webhook-endpoints/{id}`
 
-## 7. 与 CLI/测试的配合（为什么 SSE-first 更省事）
+### 3.14 订阅与计费
 
-- CLI：`POST runs` 后直接 `GET /runs/{id}/events` 消费事件即可，不需要复杂连接管理。
-- pytest：用同一套事件 schema 做回放断言（工具调用是否在 allowlist、是否被 policy 拦截、是否记录了成本与 trace_id）。
+- `GET/POST /v1/plans`
+- `GET/PUT/DELETE /v1/plans/{id}`
+- `GET/POST /v1/subscriptions`
+- `GET/PUT/DELETE /v1/subscriptions/{id}`
+- `GET/POST /v1/entitlement-overrides`
+- `GET/PUT/DELETE /v1/entitlement-overrides/{id}`
 
-## 8. Phase 1 建议的“最小可跑链路”
+### 3.15 通知与审计
 
-建议把工程推进拆成可验证的纵切：
+- `GET/POST /v1/notifications`
+- `GET/PUT/DELETE /v1/notifications/{id}`
+- `GET /v1/audit-logs`
+- `GET /v1/feature-flags`
+- `GET/PUT/DELETE /v1/feature-flags/{id}`
 
-1) `threads/messages/runs` 的数据模型 + `run_events` 落库
-2) `POST /runs` 创建 run 并写入 `run.started`
-3) SSE 推送事件（先推 `run.started`，再补 `message.delta` 的假数据也可以被测试替换为 stub provider，但不要用虚假业务逻辑糊弄）
-4) 接入 provider stub（录制/重放或纯 mock），让 `message.delta` 真实来自“可控输出源”
-5) 接入第一批低风险 tool（只读类），把 `tool.call/tool.result` 跑通并可审计
+### 3.16 Artifacts
 
-当这条链路稳定后，再扩展到高风险工具与 review 流程。
+- `GET/PUT/DELETE /v1/artifacts/{id}`
+
+### 3.17 管理后台
+
+管理后台端点前缀 `/v1/admin/`，需要平台管理员权限。
+
+**仪表盘与报表：**
+- `GET /v1/admin/dashboard`
+- `GET /v1/admin/runs/{id}`
+- `GET /v1/admin/reports`
+- `GET /v1/admin/usage/daily`
+- `GET /v1/admin/usage/summary`
+- `GET /v1/admin/usage/by-model`
+- `GET /v1/admin/access-log`
+
+**用户管理：**
+- `GET/POST /v1/admin/users`
+- `GET/PUT/DELETE /v1/admin/users/{id}`
+
+**邀请码：**
+- `GET/POST /v1/admin/invite-codes`
+- `GET/PUT/DELETE /v1/admin/invite-codes/{id}`
+
+**推荐体系：**
+- `GET /v1/admin/referrals`
+- `GET /v1/admin/referrals/tree`
+
+**积分管理：**
+- `GET/POST /v1/admin/credits`
+- `POST /v1/admin/credits/adjust`
+- `POST /v1/admin/credits/bulk-adjust`
+- `POST /v1/admin/credits/reset-all`
+
+**兑换码：**
+- `GET/POST /v1/admin/redemption-codes`
+- `GET/PUT/DELETE /v1/admin/redemption-codes/{id}`
+- `POST /v1/admin/redemption-codes/batch`
+
+**通知广播：**
+- `GET/POST /v1/admin/notifications/broadcasts`
+- `GET/PUT/DELETE /v1/admin/notifications/broadcasts/{id}`
+
+**平台配置：**
+- `GET /v1/admin/gateway-config`
+- `PUT /v1/admin/gateway-config/{id}`
+- `GET/POST /v1/admin/platform-settings`
+- `GET/PUT/DELETE /v1/admin/platform-settings/{id}`
+
+**邮件：**
+- `GET /v1/admin/email/status`
+- `GET /v1/admin/email/config`
+- `POST /v1/admin/email/test`
+
+## 4. SSE 事件规范
+
+### 4.1 事件 Envelope
+
+所有事件共用：
+
+| 字段 | 说明 |
+|------|------|
+| `event_id` | 全局唯一 |
+| `run_id` | 归属 run |
+| `seq` | run 内单调递增序号 |
+| `ts` | 服务端时间戳 |
+| `type` | 事件类型 |
+| `data_json` | 事件负载 |
+
+### 4.2 事件类型
+
+**Run 生命周期：**
+
+| 类型 | 说明 |
+|------|------|
+| `run.started` | 运行开始 |
+| `run.completed` | 运行完成 |
+| `run.failed` | 运行失败（含 `error_class`） |
+| `run.cancelled` | 运行被取消 |
+| `run.cancel_requested` | 收到取消信号 |
+
+**Human-in-the-loop：**
+
+| 类型 | 说明 |
+|------|------|
+| `run.input_requested` | 等待用户输入 |
+| `run.input_provided` | 用户已提交输入 |
+
+**消息流：**
+
+| 类型 | 说明 |
+|------|------|
+| `message.delta` | 模型流式增量（`content_delta`、`role`） |
+
+**工具调用：**
+
+| 类型 | 说明 |
+|------|------|
+| `tool.call` | 工具调用发起 |
+| `tool.result` | 工具执行结果 |
+| `tool.denied` | 工具被策略/资源限制拒绝 |
+
+**Agent Loop 内部：**
+
+| 类型 | 说明 |
+|------|------|
+| `run.route.selected` | Provider 路由选定 |
+| `run.segment.start` | 迭代/段开始 |
+| `run.segment.end` | 迭代/段结束 |
+| `run.llm.retry` | LLM 重试 |
+| `run.provider_fallback` | Provider 回退 |
+
+**Lua 执行器扩展：**
+
+| 类型 | 说明 |
+|------|------|
+| `agent.parallel_dispatch` | 并行执行调度 |
+| `agent.parallel_complete` | 并行执行完成 |
+
+**调试事件（`ARKLOOP_LLM_DEBUG_EVENTS=1` 开启，仅限本地/测试）：**
+
+| 类型 | 说明 |
+|------|------|
+| `llm.request` | 上游请求 payload（不含 secret） |
+| `llm.response.chunk` | 上游流式原始 chunk |
+
+### 4.3 关联约束
+
+- `tool.call` / `tool.result` 通过 `tool_call_id` 关联
+- 同一 run 内 `seq` 严格递增
+- 事件先落库（`run_events` 表），再通过 PG `LISTEN/NOTIFY` 推送
+
+## 5. 错误模型
+
+统一错误响应：
+
+```json
+{
+  "code": "auth.invalid_credentials",
+  "message": "...",
+  "details": {},
+  "trace_id": "..."
+}
+```
+
+HTTP Header 同时返回 `X-Trace-Id`。
+
+错误分类：
+
+| 前缀 | 说明 |
+|------|------|
+| `auth.*` | 鉴权/权限 |
+| `validation.*` | schema 校验 |
+| `policy.*` | 策略拦截 |
+| `budget.*` | 预算/配额 |
+| `provider.*` | 模型提供商错误 |
+| `mcp.*` | MCP 协议错误（timeout/disconnected/rpc_error/protocol_error/tool_error） |
+| `internal.*` | 内部错误 |
+
+`trace_id` 由服务端生成；受信任上游（网关）可透传 `X-Trace-Id`（`ARKLOOP_TRUST_INCOMING_TRACE_ID=1`），普通客户端的不可信。
+
+## 6. 中间件栈
+
+请求处理顺序：
+
+1. **TraceMiddleware** -- 生成/验证 trace_id，解析客户端 IP
+2. **RecoverMiddleware** -- panic 恢复与错误日志
+3. **Auth Middleware** -- Token 验证，角色检查
+4. **Entitlement Middleware** -- 配额/功能权限检查
+5. **Audit Logging** -- 写入 `audit_logs` 表
+
+## 7. 配置（API 相关 env）
+
+| 变量 | 说明 |
+|------|------|
+| `ARKLOOP_API_GO_ADDR` | 监听地址（默认 `127.0.0.1:8001`） |
+| `ARKLOOP_DATABASE_URL` | PostgreSQL 连接 |
+| `ARKLOOP_DATABASE_DIRECT_URL` | 直连（SSE LISTEN/NOTIFY，绕过 PgBouncer） |
+| `ARKLOOP_REDIS_URL` | Redis（速率限制、运行并发控制） |
+| `ARKLOOP_AUTH_JWT_SECRET` | JWT 签名密钥 |
+| `ARKLOOP_ENCRYPTION_KEY` | AES-256-GCM 密钥（64 hex） |
+| `ARKLOOP_S3_*` | MinIO/S3 对象存储 |
+| `ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN` | 初始管理员用户名 |
+| `ARKLOOP_TRUST_INCOMING_TRACE_ID` | 信任上游 trace_id |
+| `ARKLOOP_TRUST_X_FORWARDED_FOR` | 信任 X-Forwarded-For |
+| `ARKLOOP_MAX_CONCURRENT_RUNS_PER_ORG` | 组织并发 run 上限（默认 10） |
+| `ARKLOOP_SSE_HEARTBEAT_SECONDS` | SSE 心跳间隔（默认 15） |
+| `ARKLOOP_SSE_BATCH_LIMIT` | SSE 批次上限（默认 500） |
+| `ARKLOOP_RUN_TIMEOUT_MINUTES` | Run 超时（默认 5） |
+| `ARKLOOP_RUN_EVENTS_RETENTION_MONTHS` | 事件分区保留月数（默认 3） |
+| `ARKLOOP_APP_BASE_URL` | 前端地址 |
+| `ARKLOOP_TURNSTILE_*` | Cloudflare Captcha |
+| `ARKLOOP_EMAIL_FROM` | 发件地址 |
+
+## 8. SSE 鉴权
+
+采用 **Fetch 流式 + `Authorization: Bearer`**：
+- SSE 与普通 API 使用同一鉴权机制
+- Web/CLI 统一实现
+- 前端通过 `after_seq` 游标断线重连
+- `run_events` 不包含敏感明文（模型 key、system prompt 原文）
