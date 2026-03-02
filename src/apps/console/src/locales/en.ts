@@ -118,6 +118,7 @@ export const en: LocaleStrings = {
     },
     toolProviders: {
       title: 'Tool Providers',
+      fieldScope: 'Scope',
       colProvider: 'Provider',
       colStatus: 'Status',
       colKeyPrefix: 'Key Prefix',

@@ -51,12 +51,19 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			return next(ctx, rc)
 		}
 
-		providers, err := cache.Get(ctx, rc.Pool, rc.Run.OrgID)
+		platformProviders, err := cache.GetPlatform(ctx, rc.Pool)
 		if err != nil {
-			slog.WarnContext(ctx, "tool provider: load failed, skipping", "org_id", rc.Run.OrgID, "err", err.Error())
-			return next(ctx, rc)
+			slog.WarnContext(ctx, "tool provider: load platform failed, skipping", "err", err.Error())
+			platformProviders = nil
 		}
-		if len(providers) == 0 {
+
+		orgProviders, err := cache.GetOrg(ctx, rc.Pool, rc.Run.OrgID)
+		if err != nil {
+			slog.WarnContext(ctx, "tool provider: load org failed, skipping", "org_id", rc.Run.OrgID, "err", err.Error())
+			orgProviders = nil
+		}
+
+		if len(platformProviders) == 0 && len(orgProviders) == 0 {
 			return next(ctx, rc)
 		}
 
@@ -64,14 +71,16 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			rc.ActiveToolProviderByGroup = map[string]string{}
 		}
 
-		for _, cfg := range providers {
+		apply := func(cfg toolprovider.ActiveProviderConfig, override bool) {
 			groupName := strings.TrimSpace(cfg.GroupName)
 			providerName := strings.TrimSpace(cfg.ProviderName)
 			if groupName == "" || providerName == "" {
-				continue
+				return
 			}
 
 			if _, exists := rc.ActiveToolProviderByGroup[groupName]; !exists {
+				rc.ActiveToolProviderByGroup[groupName] = providerName
+			} else if override {
 				rc.ActiveToolProviderByGroup[groupName] = providerName
 			} else if rc.ActiveToolProviderByGroup[groupName] != providerName {
 				slog.WarnContext(ctx, "tool provider: duplicate active provider", "group_name", groupName, "provider_name", providerName)
@@ -80,6 +89,14 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			if exec != nil {
 				rc.ToolExecutors[providerName] = exec
 			}
+		}
+
+		// platform 兜底先注入，org 覆盖后注入。
+		for _, cfg := range platformProviders {
+			apply(cfg, false)
+		}
+		for _, cfg := range orgProviders {
+			apply(cfg, true)
 		}
 
 		return next(ctx, rc)

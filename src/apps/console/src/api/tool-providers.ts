@@ -1,5 +1,7 @@
 import { apiFetch } from './client'
 
+export type ToolProviderScope = 'org' | 'platform'
+
 export type ToolProviderItem = {
   group_name: string
   provider_name: string
@@ -25,16 +27,23 @@ export type UpdateToolProviderCredentialPayload = {
   base_url?: string
 }
 
-export async function listToolProviders(accessToken: string): Promise<ToolProvidersResponse> {
-  return apiFetch<ToolProvidersResponse>('/v1/tool-providers', { accessToken })
+function withScope(path: string, scope?: ToolProviderScope): string {
+  const cleaned = (scope ?? '').trim()
+  if (!cleaned) return path
+  return `${path}?scope=${encodeURIComponent(cleaned)}`
+}
+
+export async function listToolProviders(accessToken: string, scope?: ToolProviderScope): Promise<ToolProvidersResponse> {
+  return apiFetch<ToolProvidersResponse>(withScope('/v1/tool-providers', scope), { accessToken })
 }
 
 export async function activateToolProvider(
   group: string,
   provider: string,
   accessToken: string,
+  scope?: ToolProviderScope,
 ): Promise<void> {
-  await apiFetch<void>(`/v1/tool-providers/${group}/${provider}/activate`, {
+  await apiFetch<void>(withScope(`/v1/tool-providers/${group}/${provider}/activate`, scope), {
     method: 'PUT',
     accessToken,
   })
@@ -44,8 +53,9 @@ export async function deactivateToolProvider(
   group: string,
   provider: string,
   accessToken: string,
+  scope?: ToolProviderScope,
 ): Promise<void> {
-  await apiFetch<void>(`/v1/tool-providers/${group}/${provider}/deactivate`, {
+  await apiFetch<void>(withScope(`/v1/tool-providers/${group}/${provider}/deactivate`, scope), {
     method: 'PUT',
     accessToken,
   })
@@ -56,8 +66,9 @@ export async function updateToolProviderCredential(
   provider: string,
   payload: UpdateToolProviderCredentialPayload,
   accessToken: string,
+  scope?: ToolProviderScope,
 ): Promise<void> {
-  await apiFetch<void>(`/v1/tool-providers/${group}/${provider}/credential`, {
+  await apiFetch<void>(withScope(`/v1/tool-providers/${group}/${provider}/credential`, scope), {
     method: 'PUT',
     body: JSON.stringify(payload),
     accessToken,
@@ -68,10 +79,10 @@ export async function clearToolProviderCredential(
   group: string,
   provider: string,
   accessToken: string,
+  scope?: ToolProviderScope,
 ): Promise<void> {
-  await apiFetch<void>(`/v1/tool-providers/${group}/${provider}/credential`, {
+  await apiFetch<void>(withScope(`/v1/tool-providers/${group}/${provider}/credential`, scope), {
     method: 'DELETE',
     accessToken,
   })
 }
-

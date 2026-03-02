@@ -137,6 +137,7 @@ export interface LocaleStrings {
     }
     toolProviders: {
       title: string
+      fieldScope: string
       colProvider: string
       colStatus: string
       colKeyPrefix: string
