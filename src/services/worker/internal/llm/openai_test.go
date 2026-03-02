@@ -650,6 +650,54 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_EOFWithoutDone_ToolCalls_Complet
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_UsageOnlyChunkAfterFinishReason_IsCaptured(t *testing.T) {
+	chunk1, _ := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta":         map[string]any{"role": "assistant", "content": ""},
+				"finish_reason": "stop",
+			},
+		},
+	})
+	chunk2, _ := json.Marshal(map[string]any{
+		"choices": []any{},
+		"usage": map[string]any{
+			"prompt_tokens":     12,
+			"completion_tokens": 34,
+		},
+	})
+
+	reader := strings.NewReader(
+		"data: " + string(chunk1) + "\n\n" +
+			"data: " + string(chunk2) + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), reader, "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last, ok := events[len(events)-1].(StreamRunCompleted)
+	if !ok {
+		t.Fatalf("expected StreamRunCompleted as last event, got %T", events[len(events)-1])
+	}
+	if last.Usage == nil || last.Usage.InputTokens == nil || last.Usage.OutputTokens == nil {
+		t.Fatalf("expected usage in completion, got %#v", last.Usage)
+	}
+	if *last.Usage.InputTokens != 12 || *last.Usage.OutputTokens != 34 {
+		t.Fatalf("unexpected usage: %#v", last.Usage)
+	}
+}
+
 func TestOpenAIGateway_Stream_Responses_SSE_ToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
