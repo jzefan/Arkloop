@@ -14,7 +14,20 @@ import {
   writeRefreshTokenToStorage,
   clearRefreshTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, initApiClient } from './api'
+import {
+  readRefreshToken,
+  writeRefreshToken,
+  clearRefreshToken,
+  writeAccessToken,
+} from '@arkloop/shared/storage'
+
+initApiClient({
+  readRefreshToken: () => readRefreshToken('web'),
+  writeRefreshToken: (t) => writeRefreshToken('web', t),
+  clearRefreshToken: () => clearRefreshToken('web'),
+  writeAccessToken,
+})
 
 function App() {
   const [accessToken, setAccessToken] = useState<string | null>(() => readAccessTokenFromStorage())

@@ -1,0 +1,20 @@
+{
+  "name": "@arkloop/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api/client.ts",
+    "./api/types": "./src/api/types.ts",
+    "./storage": "./src/storage/tokens.ts",
+    "./contexts/theme": "./src/contexts/ThemeContext.tsx",
+    "./contexts/locale": "./src/contexts/LocaleContext.tsx"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.5"
+  }
+}

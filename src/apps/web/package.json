@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@arkloop/shared": "workspace:*",
     "framer-motion": "^12.34.3",
     "katex": "^0.16.28",
     "lucide-react": "^0.575.0",
@@ -41,10 +42,5 @@
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
     "vitest": "^3.2.4"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }
