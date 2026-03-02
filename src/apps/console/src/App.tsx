@@ -12,6 +12,7 @@ import { AgentConfigsPage } from './pages/agent-configs/AgentConfigsPage'
 import { PromptTemplatesPage } from './pages/prompt-templates/PromptTemplatesPage'
 import { MCPConfigsPage } from './pages/mcp-configs/MCPConfigsPage'
 import { PersonasPage } from './pages/personas/PersonasPage'
+import { ToolProvidersPage } from './pages/tool-providers/ToolProvidersPage'
 import { APIKeysPage } from './pages/api-keys/APIKeysPage'
 import { IPRulesPage } from './pages/ip-rules/IPRulesPage'
 import { CaptchaPage } from './pages/captcha/CaptchaPage'
@@ -99,6 +100,7 @@ function App() {
         <Route path="agent-configs" element={<AgentConfigsPage />} />
         <Route path="prompt-templates" element={<PromptTemplatesPage />} />
         <Route path="mcp-configs" element={<MCPConfigsPage />} />
+        <Route path="tool-providers" element={<ToolProvidersPage />} />
         <Route path="personas" element={<PersonasPage />} />
         <Route path="asr-credentials" element={<AsrCredentialsPage />} />
         <Route path="title-summarizer" element={<TitleSummarizerPage />} />

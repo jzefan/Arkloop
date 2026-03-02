@@ -276,7 +276,8 @@ CREATE TABLE org_settings (
 
 ### C4 -- Console API + UI（AS-11.4 / AS-11.5）
 - CRUD 接口：列出 Provider Group、激活/停用 Provider、配置凭证
-- Console 页面：Tool Provider 管理（列表 + 配置 + 测试连通性）
+- Console 页面：Tool Provider 管理（列表 + 配置）
+- 测试连通性：未实现
 
 ---
 
