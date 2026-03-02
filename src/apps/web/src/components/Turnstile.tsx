@@ -31,8 +31,10 @@ export function Turnstile({ siteKey, onSuccess, onExpire }: TurnstileProps) {
   // 用 ref 持有 callback，避免 effect 依赖引用变化导致 widget 反复 mount/unmount
   const onSuccessRef = useRef(onSuccess)
   const onExpireRef = useRef(onExpire)
-  onSuccessRef.current = onSuccess
-  onExpireRef.current = onExpire
+  useEffect(() => {
+    onSuccessRef.current = onSuccess
+    onExpireRef.current = onExpire
+  })
 
   useEffect(() => {
     if (!containerRef.current || !siteKey) return

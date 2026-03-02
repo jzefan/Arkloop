@@ -611,14 +611,16 @@ function UserRow({
   const detailRef = useRef<HTMLDivElement>(null)
 
   // 收缩动画期间保留上一次的 detail 内容，防止内容消失导致高度瞬降
-  const lastDetailRef = useRef<AdminUserDetail | null>(null)
-  if (detail !== null) lastDetailRef.current = detail
-  const renderDetail = detail ?? lastDetailRef.current
+  const [cachedDetail, setCachedDetail] = useState<AdminUserDetail | null>(null)
+  useEffect(() => {
+    if (detail !== null) setCachedDetail(detail)
+  }, [detail])
+  const renderDetail = detail ?? cachedDetail
 
   // 动画结束后清除缓存（210ms > 过渡时长 200ms）
   useEffect(() => {
     if (!isExpanded) {
-      const t = setTimeout(() => { lastDetailRef.current = null }, 210)
+      const t = setTimeout(() => { setCachedDetail(null) }, 210)
       return () => clearTimeout(t)
     }
   }, [isExpanded])

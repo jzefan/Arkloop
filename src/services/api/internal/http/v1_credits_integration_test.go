@@ -100,8 +100,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("get credits: %d %s", resp.Code, resp.Body.String())
 		}
 
-		var payload meCreditsResponse
-		payload = decodeJSONBody[meCreditsResponse](t, resp.Body.Bytes())
+		payload := decodeJSONBody[meCreditsResponse](t, resp.Body.Bytes())
 		if payload.Balance != 1000 {
 			t.Fatalf("expected balance 1000, got %d", payload.Balance)
 		}
@@ -153,8 +152,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("adjust: %d %s", resp.Code, resp.Body.String())
 		}
 
-		var payload creditBalanceResponse
-		payload = decodeJSONBody[creditBalanceResponse](t, resp.Body.Bytes())
+		payload := decodeJSONBody[creditBalanceResponse](t, resp.Body.Bytes())
 		if payload.Balance != 1500 {
 			t.Fatalf("expected balance 1500, got %d", payload.Balance)
 		}
@@ -168,8 +166,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("adjust: %d %s", resp.Code, resp.Body.String())
 		}
 
-		var payload creditBalanceResponse
-		payload = decodeJSONBody[creditBalanceResponse](t, resp.Body.Bytes())
+		payload := decodeJSONBody[creditBalanceResponse](t, resp.Body.Bytes())
 		if payload.Balance != 1300 {
 			t.Fatalf("expected balance 1300, got %d", payload.Balance)
 		}

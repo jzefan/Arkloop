@@ -1,6 +1,5 @@
 | key | type | scope | default | sensitive | description |
 | --- | --- | --- | --- | --- | --- |
-| app.base_url | string | platform |  | false | 应用基础 URL，用于邮件中的链接等 |
 | browser.context_max_lifetime_s | int | platform | 1800 | false | Browser Context 最大存活时间（秒） |
 | browser.max_body_bytes | int | platform | 1048576 | false | Browser Service 请求体大小上限（字节） |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
@@ -40,7 +39,6 @@
 | sandbox.idle_timeout_pro_s | int | platform | 300 | false | Sandbox pro tier 空闲超时（秒） |
 | sandbox.idle_timeout_ultra_s | int | platform | 600 | false | Sandbox ultra tier 空闲超时（秒） |
 | sandbox.max_lifetime_s | int | platform | 1800 | false | Sandbox session 最大存活时间（秒） |
-| title_summarizer.agent_config_id | string | platform |  | false | 标题摘要生成器使用的 Agent Config ID |
 | turnstile.allowed_host | string | platform |  | false | Turnstile Allowed Host |
 | turnstile.secret_key | string | platform |  | true | Turnstile Secret Key |
 | turnstile.site_key | string | platform |  | false | Turnstile Site Key |

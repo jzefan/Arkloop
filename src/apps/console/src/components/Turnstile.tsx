@@ -30,8 +30,10 @@ export function Turnstile({ siteKey, onSuccess, onExpire }: TurnstileProps) {
   const widgetIdRef = useRef<string | null>(null)
   const onSuccessRef = useRef(onSuccess)
   const onExpireRef = useRef(onExpire)
-  onSuccessRef.current = onSuccess
-  onExpireRef.current = onExpire
+  useEffect(() => {
+    onSuccessRef.current = onSuccess
+    onExpireRef.current = onExpire
+  })
 
   useEffect(() => {
     const container = containerRef.current
