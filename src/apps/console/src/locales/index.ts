@@ -20,6 +20,7 @@ export interface LocaleStrings {
     runs: string
     auditLogs: string
     credentials: string
+    toolProviders: string
     agentConfigs: string
     promptTemplates: string
     mcpConfigs: string
@@ -133,6 +134,35 @@ export interface LocaleStrings {
       copyTitle: string
       toastCopied: string
       toastCopyFailed: string
+    }
+    toolProviders: {
+      title: string
+      colProvider: string
+      colStatus: string
+      colKeyPrefix: string
+      colBaseUrl: string
+      statusActive: string
+      statusInactive: string
+      statusUnconfigured: string
+      activate: string
+      deactivate: string
+      configure: string
+      clearCredential: string
+      modalTitle: string
+      fieldApiKey: string
+      fieldBaseUrl: string
+      fieldBaseUrlOptional: string
+      currentKeyPrefix: string
+      errApiKeyRequired: string
+      errBaseUrlRequired: string
+      cancel: string
+      save: string
+      clearTitle: string
+      clearMessage: (providerName: string) => string
+      clearConfirm: string
+      toastLoadFailed: string
+      toastUpdated: string
+      toastUpdateFailed: string
     }
     agentConfigs: {
       title: string
