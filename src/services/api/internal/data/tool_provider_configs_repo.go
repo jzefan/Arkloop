@@ -19,7 +19,8 @@ func (r *ToolProviderConfigsRepository) WithTx(tx pgx.Tx) *ToolProviderConfigsRe
 
 type ToolProviderConfig struct {
 	ID           uuid.UUID
-	OrgID        uuid.UUID
+	OrgID        *uuid.UUID // nil = platform scope
+	Scope        string     // "org" | "platform"
 	GroupName    string
 	ProviderName string
 	IsActive     bool
@@ -42,20 +43,34 @@ func NewToolProviderConfigsRepository(db Querier) (*ToolProviderConfigsRepositor
 	return &ToolProviderConfigsRepository{db: db}, nil
 }
 
-func (r *ToolProviderConfigsRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]ToolProviderConfig, error) {
+func (r *ToolProviderConfigsRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]ToolProviderConfig, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return nil, fmt.Errorf("org_id must not be empty")
+	if scope != "org" && scope != "platform" {
+		return nil, fmt.Errorf("scope must be org or platform")
+	}
+	if scope == "org" && orgID == uuid.Nil {
+		return nil, fmt.Errorf("org_id must not be empty for org scope")
 	}
 
-	rows, err := r.db.Query(ctx, `
-		SELECT id, org_id, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
-		FROM tool_provider_configs
-		WHERE org_id = $1
-		ORDER BY group_name ASC, provider_name ASC
-	`, orgID)
+	var rows pgx.Rows
+	var err error
+	if scope == "platform" {
+		rows, err = r.db.Query(ctx, `
+			SELECT id, org_id, scope, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
+			FROM tool_provider_configs
+			WHERE scope = 'platform'
+			ORDER BY group_name ASC, provider_name ASC
+		`)
+	} else {
+		rows, err = r.db.Query(ctx, `
+			SELECT id, org_id, scope, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
+			FROM tool_provider_configs
+			WHERE org_id = $1 AND scope = 'org'
+			ORDER BY group_name ASC, provider_name ASC
+		`, orgID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +82,7 @@ func (r *ToolProviderConfigsRepository) ListByOrg(ctx context.Context, orgID uui
 		if err := rows.Scan(
 			&cfg.ID,
 			&cfg.OrgID,
+			&cfg.Scope,
 			&cfg.GroupName,
 			&cfg.ProviderName,
 			&cfg.IsActive,
@@ -87,6 +103,7 @@ func (r *ToolProviderConfigsRepository) ListByOrg(ctx context.Context, orgID uui
 func (r *ToolProviderConfigsRepository) UpsertConfig(
 	ctx context.Context,
 	orgID uuid.UUID,
+	scope string, // "org" | "platform"
 	groupName string,
 	providerName string,
 	secretID *uuid.UUID,
@@ -97,8 +114,11 @@ func (r *ToolProviderConfigsRepository) UpsertConfig(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return ToolProviderConfig{}, fmt.Errorf("org_id must not be empty")
+	if scope != "org" && scope != "platform" {
+		return ToolProviderConfig{}, fmt.Errorf("scope must be org or platform")
+	}
+	if scope == "org" && orgID == uuid.Nil {
+		return ToolProviderConfig{}, fmt.Errorf("org_id must not be empty for org scope")
 	}
 
 	group := strings.TrimSpace(groupName)
@@ -114,22 +134,49 @@ func (r *ToolProviderConfigsRepository) UpsertConfig(
 		configJSON = []byte("{}")
 	}
 
+	var orgIDParam any
+	if scope == "platform" {
+		orgIDParam = nil
+	} else {
+		orgIDParam = orgID
+	}
+
 	var cfg ToolProviderConfig
-	err := r.db.QueryRow(ctx, `
-		INSERT INTO tool_provider_configs (org_id, group_name, provider_name, secret_id, key_prefix, base_url, config_json)
-		VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '{}'::jsonb))
-		ON CONFLICT (org_id, provider_name)
-		DO UPDATE SET
-			group_name  = EXCLUDED.group_name,
-			secret_id   = COALESCE(EXCLUDED.secret_id, tool_provider_configs.secret_id),
-			key_prefix  = COALESCE(EXCLUDED.key_prefix, tool_provider_configs.key_prefix),
-			base_url    = COALESCE(EXCLUDED.base_url, tool_provider_configs.base_url),
-			config_json = CASE WHEN $7 IS NULL THEN tool_provider_configs.config_json ELSE EXCLUDED.config_json END,
-			updated_at  = now()
-		RETURNING id, org_id, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
-	`, orgID, group, provider, secretID, keyPrefix, baseURL, configJSON).Scan(
+	var row pgx.Row
+	if scope == "platform" {
+		row = r.db.QueryRow(ctx, `
+			INSERT INTO tool_provider_configs (org_id, scope, group_name, provider_name, secret_id, key_prefix, base_url, config_json)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, '{}'::jsonb))
+			ON CONFLICT (provider_name) WHERE scope = 'platform'
+			DO UPDATE SET
+				group_name  = EXCLUDED.group_name,
+				secret_id   = COALESCE(EXCLUDED.secret_id, tool_provider_configs.secret_id),
+				key_prefix  = COALESCE(EXCLUDED.key_prefix, tool_provider_configs.key_prefix),
+				base_url    = COALESCE(EXCLUDED.base_url, tool_provider_configs.base_url),
+				config_json = CASE WHEN $8 IS NULL THEN tool_provider_configs.config_json ELSE EXCLUDED.config_json END,
+				updated_at  = now()
+			RETURNING id, org_id, scope, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
+		`, orgIDParam, scope, group, provider, secretID, keyPrefix, baseURL, configJSON)
+	} else {
+		row = r.db.QueryRow(ctx, `
+			INSERT INTO tool_provider_configs (org_id, scope, group_name, provider_name, secret_id, key_prefix, base_url, config_json)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, '{}'::jsonb))
+			ON CONFLICT (org_id, provider_name) WHERE scope = 'org'
+			DO UPDATE SET
+				group_name  = EXCLUDED.group_name,
+				secret_id   = COALESCE(EXCLUDED.secret_id, tool_provider_configs.secret_id),
+				key_prefix  = COALESCE(EXCLUDED.key_prefix, tool_provider_configs.key_prefix),
+				base_url    = COALESCE(EXCLUDED.base_url, tool_provider_configs.base_url),
+				config_json = CASE WHEN $8 IS NULL THEN tool_provider_configs.config_json ELSE EXCLUDED.config_json END,
+				updated_at  = now()
+			RETURNING id, org_id, scope, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, created_at, updated_at
+		`, orgIDParam, scope, group, provider, secretID, keyPrefix, baseURL, configJSON)
+	}
+
+	err := row.Scan(
 		&cfg.ID,
 		&cfg.OrgID,
+		&cfg.Scope,
 		&cfg.GroupName,
 		&cfg.ProviderName,
 		&cfg.IsActive,
@@ -147,12 +194,15 @@ func (r *ToolProviderConfigsRepository) UpsertConfig(
 }
 
 // Activate 事务内调用：同组全关 + 指定 provider 打开。
-func (r *ToolProviderConfigsRepository) Activate(ctx context.Context, orgID uuid.UUID, groupName string, providerName string) error {
+func (r *ToolProviderConfigsRepository) Activate(ctx context.Context, orgID uuid.UUID, scope string, groupName string, providerName string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if scope != "org" && scope != "platform" {
+		return fmt.Errorf("scope must be org or platform")
+	}
+	if scope == "org" && orgID == uuid.Nil {
+		return fmt.Errorf("org_id must not be empty for org scope")
 	}
 	group := strings.TrimSpace(groupName)
 	provider := strings.TrimSpace(providerName)
@@ -160,18 +210,39 @@ func (r *ToolProviderConfigsRepository) Activate(ctx context.Context, orgID uuid
 		return fmt.Errorf("group_name and provider_name must not be empty")
 	}
 
+	if scope == "platform" {
+		if _, err := r.db.Exec(ctx, `
+			UPDATE tool_provider_configs
+			SET is_active = FALSE, updated_at = now()
+			WHERE scope = 'platform' AND group_name = $1 AND is_active = TRUE
+		`, group); err != nil {
+			return err
+		}
+
+		_, err := r.db.Exec(ctx, `
+			INSERT INTO tool_provider_configs (org_id, scope, group_name, provider_name, is_active)
+			VALUES (NULL, 'platform', $1, $2, TRUE)
+			ON CONFLICT (provider_name) WHERE scope = 'platform'
+			DO UPDATE SET
+				group_name = EXCLUDED.group_name,
+				is_active  = TRUE,
+				updated_at = now()
+		`, group, provider)
+		return err
+	}
+
 	if _, err := r.db.Exec(ctx, `
 		UPDATE tool_provider_configs
 		SET is_active = FALSE, updated_at = now()
-		WHERE org_id = $1 AND group_name = $2 AND is_active = TRUE
+		WHERE org_id = $1 AND scope = 'org' AND group_name = $2 AND is_active = TRUE
 	`, orgID, group); err != nil {
 		return err
 	}
 
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO tool_provider_configs (org_id, group_name, provider_name, is_active)
-		VALUES ($1, $2, $3, TRUE)
-		ON CONFLICT (org_id, provider_name)
+		INSERT INTO tool_provider_configs (org_id, scope, group_name, provider_name, is_active)
+		VALUES ($1, 'org', $2, $3, TRUE)
+		ON CONFLICT (org_id, provider_name) WHERE scope = 'org'
 		DO UPDATE SET
 			group_name = EXCLUDED.group_name,
 			is_active  = TRUE,
@@ -180,12 +251,15 @@ func (r *ToolProviderConfigsRepository) Activate(ctx context.Context, orgID uuid
 	return err
 }
 
-func (r *ToolProviderConfigsRepository) Deactivate(ctx context.Context, orgID uuid.UUID, groupName string, providerName string) error {
+func (r *ToolProviderConfigsRepository) Deactivate(ctx context.Context, orgID uuid.UUID, scope string, groupName string, providerName string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if scope != "org" && scope != "platform" {
+		return fmt.Errorf("scope must be org or platform")
+	}
+	if scope == "org" && orgID == uuid.Nil {
+		return fmt.Errorf("org_id must not be empty for org scope")
 	}
 	group := strings.TrimSpace(groupName)
 	provider := strings.TrimSpace(providerName)
@@ -193,24 +267,50 @@ func (r *ToolProviderConfigsRepository) Deactivate(ctx context.Context, orgID uu
 		return fmt.Errorf("group_name and provider_name must not be empty")
 	}
 
+	if scope == "platform" {
+		_, err := r.db.Exec(ctx, `
+			UPDATE tool_provider_configs
+			SET is_active = FALSE, updated_at = now()
+			WHERE scope = 'platform' AND group_name = $1 AND provider_name = $2
+		`, group, provider)
+		return err
+	}
+
 	_, err := r.db.Exec(ctx, `
 		UPDATE tool_provider_configs
 		SET is_active = FALSE, updated_at = now()
-		WHERE org_id = $1 AND group_name = $2 AND provider_name = $3
+		WHERE org_id = $1 AND scope = 'org' AND group_name = $2 AND provider_name = $3
 	`, orgID, group, provider)
 	return err
 }
 
-func (r *ToolProviderConfigsRepository) ClearCredential(ctx context.Context, orgID uuid.UUID, providerName string) error {
+func (r *ToolProviderConfigsRepository) ClearCredential(ctx context.Context, orgID uuid.UUID, scope string, providerName string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if scope != "org" && scope != "platform" {
+		return fmt.Errorf("scope must be org or platform")
+	}
+	if scope == "org" && orgID == uuid.Nil {
+		return fmt.Errorf("org_id must not be empty for org scope")
 	}
 	provider := strings.TrimSpace(providerName)
 	if provider == "" {
 		return fmt.Errorf("provider_name must not be empty")
+	}
+
+	if scope == "platform" {
+		_, err := r.db.Exec(ctx, `
+			UPDATE tool_provider_configs
+			SET is_active = FALSE,
+			    secret_id = NULL,
+			    key_prefix = NULL,
+			    base_url = NULL,
+			    config_json = '{}'::jsonb,
+			    updated_at = now()
+			WHERE scope = 'platform' AND provider_name = $1
+		`, provider)
+		return err
 	}
 
 	_, err := r.db.Exec(ctx, `
@@ -221,7 +321,7 @@ func (r *ToolProviderConfigsRepository) ClearCredential(ctx context.Context, org
 		    base_url = NULL,
 		    config_json = '{}'::jsonb,
 		    updated_at = now()
-		WHERE org_id = $1 AND provider_name = $2
+		WHERE org_id = $1 AND scope = 'org' AND provider_name = $2
 	`, orgID, provider)
 	return err
 }

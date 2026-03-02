@@ -17,6 +17,7 @@ import {
   deactivateToolProvider,
   updateToolProviderCredential,
   clearToolProviderCredential,
+  type ToolProviderScope,
   type ToolProviderGroup,
   type ToolProviderItem,
 } from '../../api/tool-providers'
@@ -37,6 +38,7 @@ export function ToolProvidersPage() {
   const { t } = useLocale()
   const tc = t.pages.toolProviders
 
+  const [scope, setScope] = useState<ToolProviderScope>('platform')
   const [groups, setGroups] = useState<ToolProviderGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [mutating, setMutating] = useState(false)
@@ -53,14 +55,14 @@ export function ToolProvidersPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const resp = await listToolProviders(accessToken)
+      const resp = await listToolProviders(accessToken, scope)
       setGroups(resp.groups)
     } catch {
       addToast(tc.toastLoadFailed, 'error')
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, tc.toastLoadFailed])
+  }, [accessToken, scope, addToast, tc.toastLoadFailed])
 
   useEffect(() => {
     void fetchAll()
@@ -82,7 +84,7 @@ export function ToolProvidersPage() {
     if (mutating) return
     setMutating(true)
     try {
-      await activateToolProvider(groupName, providerName, accessToken)
+      await activateToolProvider(groupName, providerName, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       await fetchAll()
     } catch {
@@ -90,13 +92,13 @@ export function ToolProvidersPage() {
     } finally {
       setMutating(false)
     }
-  }, [mutating, accessToken, fetchAll, addToast, tc])
+  }, [mutating, accessToken, scope, fetchAll, addToast, tc])
 
   const handleDeactivate = useCallback(async (groupName: string, providerName: string) => {
     if (mutating) return
     setMutating(true)
     try {
-      await deactivateToolProvider(groupName, providerName, accessToken)
+      await deactivateToolProvider(groupName, providerName, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       await fetchAll()
     } catch {
@@ -104,7 +106,7 @@ export function ToolProvidersPage() {
     } finally {
       setMutating(false)
     }
-  }, [mutating, accessToken, fetchAll, addToast, tc])
+  }, [mutating, accessToken, scope, fetchAll, addToast, tc])
 
   const handleSave = useCallback(async () => {
     if (!editTarget) return
@@ -133,7 +135,7 @@ export function ToolProvidersPage() {
     setSaving(true)
     setEditError('')
     try {
-      await updateToolProviderCredential(editTarget.group, editTarget.provider.provider_name, payload, accessToken)
+      await updateToolProviderCredential(editTarget.group, editTarget.provider.provider_name, payload, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       setEditTarget(null)
       await fetchAll()
@@ -142,13 +144,13 @@ export function ToolProvidersPage() {
     } finally {
       setSaving(false)
     }
-  }, [editTarget, apiKey, baseURL, accessToken, fetchAll, addToast, tc])
+  }, [editTarget, apiKey, baseURL, accessToken, scope, fetchAll, addToast, tc])
 
   const handleClear = useCallback(async () => {
     if (!clearTarget) return
     setClearing(true)
     try {
-      await clearToolProviderCredential(clearTarget.group, clearTarget.provider.provider_name, accessToken)
+      await clearToolProviderCredential(clearTarget.group, clearTarget.provider.provider_name, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       setClearTarget(null)
       await fetchAll()
@@ -157,7 +159,7 @@ export function ToolProvidersPage() {
     } finally {
       setClearing(false)
     }
-  }, [clearTarget, accessToken, fetchAll, addToast, tc])
+  }, [clearTarget, accessToken, scope, fetchAll, addToast, tc])
 
   const inputCls =
     'rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none'
@@ -261,7 +263,22 @@ export function ToolProvidersPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={tc.title} />
+      <PageHeader
+        title={tc.title}
+        actions={(
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--c-text-muted)]">{tc.fieldScope}</span>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as ToolProviderScope)}
+              className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] focus:outline-none"
+            >
+              <option value="platform">platform</option>
+              <option value="org">org</option>
+            </select>
+          </div>
+        )}
+      />
 
       <div className="flex flex-1 flex-col gap-5 overflow-auto p-4">
         {groups.map((g) => (
@@ -377,4 +394,3 @@ export function ToolProvidersPage() {
     </div>
   )
 }
-

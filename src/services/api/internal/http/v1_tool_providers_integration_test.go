@@ -178,8 +178,8 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		UPDATE tool_provider_configs
 		SET config_json = '{"keep": true}'::jsonb
-		WHERE org_id = $1 AND provider_name = 'web_search.tavily'
-	`, org.ID); err != nil {
+		WHERE scope = 'platform' AND provider_name = 'web_search.tavily'
+	`); err != nil {
 		t.Fatalf("seed config_json: %v", err)
 	}
 
@@ -194,8 +194,8 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT config_json
 		FROM tool_provider_configs
-		WHERE org_id = $1 AND provider_name = 'web_search.tavily'
-	`, org.ID).Scan(&rawCfg); err != nil {
+		WHERE scope = 'platform' AND provider_name = 'web_search.tavily'
+	`).Scan(&rawCfg); err != nil {
 		t.Fatalf("load config_json: %v", err)
 	}
 	var cfg map[string]any
@@ -254,5 +254,107 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	}
 	if tavily.KeyPrefix != nil {
 		t.Fatalf("expected key_prefix cleared, got %v", *tavily.KeyPrefix)
+	}
+
+	// org scope：org_admin 可配置自身 org，且不会影响 platform scope
+	orgAdmin, err := userRepo.Create(ctx, "org-admin", "org-admin@test.com", "en")
+	if err != nil {
+		t.Fatalf("create org admin user: %v", err)
+	}
+	if _, err := membershipRepo.Create(ctx, org.ID, orgAdmin.ID, auth.RoleOrgAdmin); err != nil {
+		t.Fatalf("create org admin membership: %v", err)
+	}
+	orgToken, err := tokenService.Issue(orgAdmin.ID, org.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("issue org token: %v", err)
+	}
+
+	// org_admin 默认（platform）应 403
+	orgListPlatform := doJSON(handler, nethttp.MethodGet, "/v1/tool-providers", nil, authHeader(orgToken))
+	if orgListPlatform.Code != nethttp.StatusForbidden {
+		t.Fatalf("org list platform: %d %s", orgListPlatform.Code, orgListPlatform.Body.String())
+	}
+
+	// org_admin + scope=org 可访问
+	orgListResp := doJSON(handler, nethttp.MethodGet, "/v1/tool-providers?scope=org", nil, authHeader(orgToken))
+	if orgListResp.Code != nethttp.StatusOK {
+		t.Fatalf("org list: %d %s", orgListResp.Code, orgListResp.Body.String())
+	}
+
+	// 激活 + 配置 key
+	orgAct := doJSON(handler, nethttp.MethodPut, "/v1/tool-providers/web_search/web_search.tavily/activate?scope=org", nil, authHeader(orgToken))
+	if orgAct.Code != nethttp.StatusNoContent {
+		t.Fatalf("org activate tavily: %d %s", orgAct.Code, orgAct.Body.String())
+	}
+	orgKeyPayload := map[string]any{"api_key": "tvly-org-abcdef123456"}
+	orgUpsert := doJSON(handler, nethttp.MethodPut, "/v1/tool-providers/web_search/web_search.tavily/credential?scope=org", orgKeyPayload, authHeader(orgToken))
+	if orgUpsert.Code != nethttp.StatusNoContent {
+		t.Fatalf("org upsert credential: %d %s", orgUpsert.Code, orgUpsert.Body.String())
+	}
+
+	var orgCfgCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM tool_provider_configs
+		WHERE scope = 'org' AND org_id = $1 AND provider_name = 'web_search.tavily'
+	`, org.ID).Scan(&orgCfgCount); err != nil {
+		t.Fatalf("org cfg count: %v", err)
+	}
+	if orgCfgCount != 1 {
+		t.Fatalf("expected 1 org config, got %d", orgCfgCount)
+	}
+
+	// org scope list 应有前缀
+	orgListAfterKey := doJSON(handler, nethttp.MethodGet, "/v1/tool-providers?scope=org", nil, authHeader(orgToken))
+	if orgListAfterKey.Code != nethttp.StatusOK {
+		t.Fatalf("org list after key: %d %s", orgListAfterKey.Code, orgListAfterKey.Body.String())
+	}
+	orgAfterKey := decodeJSONBody[toolProvidersListResponse](t, orgListAfterKey.Body.Bytes())
+	var orgTavilyPrefix *string
+	for _, g := range orgAfterKey.Groups {
+		for _, p := range g.Providers {
+			if p.ProviderName == "web_search.tavily" {
+				orgTavilyPrefix = p.KeyPrefix
+			}
+		}
+	}
+	if orgTavilyPrefix == nil || *orgTavilyPrefix != "tvly-org" {
+		t.Fatalf("unexpected org key prefix: %v", orgTavilyPrefix)
+	}
+
+	// platform scope 不应被 org scope 污染（此前已 clear，key_prefix 应为空）
+	listPlatformAgain := doJSON(handler, nethttp.MethodGet, "/v1/tool-providers", nil, authHeader(token))
+	if listPlatformAgain.Code != nethttp.StatusOK {
+		t.Fatalf("list platform again: %d %s", listPlatformAgain.Code, listPlatformAgain.Body.String())
+	}
+	platformAgain := decodeJSONBody[toolProvidersListResponse](t, listPlatformAgain.Body.Bytes())
+	var platformTavilyPrefix *string
+	for _, g := range platformAgain.Groups {
+		for _, p := range g.Providers {
+			if p.ProviderName == "web_search.tavily" {
+				platformTavilyPrefix = p.KeyPrefix
+			}
+		}
+	}
+	if platformTavilyPrefix != nil {
+		t.Fatalf("expected platform key_prefix nil, got %v", *platformTavilyPrefix)
+	}
+
+	// org scope clear 会删除 org secret + 停用
+	orgClear := doJSON(handler, nethttp.MethodDelete, "/v1/tool-providers/web_search/web_search.tavily/credential?scope=org", nil, authHeader(orgToken))
+	if orgClear.Code != nethttp.StatusNoContent {
+		t.Fatalf("org clear credential: %d %s", orgClear.Code, orgClear.Body.String())
+	}
+
+	var orgSecretCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM secrets
+		WHERE scope = 'org' AND org_id = $1 AND name = 'tool_provider:web_search.tavily'
+	`, org.ID).Scan(&orgSecretCount); err != nil {
+		t.Fatalf("org secret count: %v", err)
+	}
+	if orgSecretCount != 0 {
+		t.Fatalf("expected org secret deleted, got %d", orgSecretCount)
 	}
 }

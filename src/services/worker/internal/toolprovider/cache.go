@@ -3,12 +3,15 @@ package toolprovider
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const platformCacheKey = "platform"
 
 type cacheEntry struct {
 	providers []ActiveProviderConfig
@@ -25,11 +28,15 @@ func NewCache(ttl time.Duration) *Cache {
 }
 
 func (c *Cache) Get(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]ActiveProviderConfig, error) {
+	return c.GetOrg(ctx, pool, orgID)
+}
+
+func (c *Cache) GetOrg(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]ActiveProviderConfig, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if c == nil {
-		return LoadActiveProviders(ctx, pool, orgID)
+		return LoadActiveOrgProviders(ctx, pool, orgID)
 	}
 
 	if c.ttl > 0 {
@@ -41,7 +48,7 @@ func (c *Cache) Get(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([
 		}
 	}
 
-	providers, err := LoadActiveProviders(ctx, pool, orgID)
+	providers, err := LoadActiveOrgProviders(ctx, pool, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,11 +63,54 @@ func (c *Cache) Get(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([
 	return providers, nil
 }
 
+func (c *Cache) GetPlatform(ctx context.Context, pool *pgxpool.Pool) ([]ActiveProviderConfig, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if c == nil {
+		return LoadActivePlatformProviders(ctx, pool)
+	}
+
+	if c.ttl > 0 {
+		if raw, ok := c.entries.Load(platformCacheKey); ok {
+			entry := raw.(cacheEntry)
+			if time.Since(entry.cachedAt) < c.ttl {
+				return entry.providers, nil
+			}
+		}
+	}
+
+	providers, err := LoadActivePlatformProviders(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.ttl > 0 {
+		c.entries.Store(platformCacheKey, cacheEntry{
+			providers: providers,
+			cachedAt:  time.Now(),
+		})
+	}
+
+	return providers, nil
+}
+
 func (c *Cache) Invalidate(orgID uuid.UUID) {
+	c.InvalidateOrg(orgID)
+}
+
+func (c *Cache) InvalidateOrg(orgID uuid.UUID) {
 	if c == nil {
 		return
 	}
 	c.entries.Delete(orgID.String())
+}
+
+func (c *Cache) InvalidatePlatform() {
+	if c == nil {
+		return
+	}
+	c.entries.Delete(platformCacheKey)
 }
 
 func (c *Cache) StartInvalidationListener(ctx context.Context, directPool *pgxpool.Pool) {
@@ -118,10 +168,20 @@ func (c *Cache) listenOnce(ctx context.Context, directPool *pgxpool.Pool) error 
 		if err != nil {
 			return err
 		}
-		orgID, err := uuid.Parse(n.Payload)
+
+		payload := strings.TrimSpace(n.Payload)
+		if payload == "" {
+			continue
+		}
+		if payload == platformCacheKey {
+			c.InvalidatePlatform()
+			continue
+		}
+
+		orgID, err := uuid.Parse(payload)
 		if err != nil {
 			continue
 		}
-		c.Invalidate(orgID)
+		c.InvalidateOrg(orgID)
 	}
 }

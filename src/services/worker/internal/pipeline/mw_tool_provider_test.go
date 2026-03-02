@@ -37,13 +37,15 @@ func TestToolProviderMiddlewareInjectsActiveProvider(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `
 		CREATE TABLE secrets (
 			id uuid PRIMARY KEY,
-			org_id uuid NOT NULL,
+			org_id uuid NULL,
+			scope text NOT NULL DEFAULT 'org',
 			encrypted_value text NOT NULL,
 			key_version int NOT NULL DEFAULT 1
 		);
 		CREATE TABLE tool_provider_configs (
 			id uuid PRIMARY KEY,
-			org_id uuid NOT NULL,
+			org_id uuid NULL,
+			scope text NOT NULL DEFAULT 'org',
 			group_name text NOT NULL,
 			provider_name text NOT NULL,
 			is_active boolean NOT NULL DEFAULT false,
@@ -63,15 +65,15 @@ func TestToolProviderMiddlewareInjectsActiveProvider(t *testing.T) {
 	encrypted := encryptGCM(t, keyBytes, apiKey)
 
 	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO secrets (id, org_id, encrypted_value, key_version)
-		VALUES ($1, $2, $3, 1)
+		INSERT INTO secrets (id, org_id, scope, encrypted_value, key_version)
+		VALUES ($1, $2, 'org', $3, 1)
 	`, secretID, orgID, encrypted); err != nil {
 		t.Fatalf("insert secret: %v", err)
 	}
 
 	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO tool_provider_configs (id, org_id, group_name, provider_name, is_active, secret_id, key_prefix, config_json)
-		VALUES ($1, $2, $3, $4, TRUE, $5, $6, '{}'::jsonb)
+		INSERT INTO tool_provider_configs (id, org_id, scope, group_name, provider_name, is_active, secret_id, key_prefix, config_json)
+		VALUES ($1, $2, 'org', $3, $4, TRUE, $5, $6, '{}'::jsonb)
 	`, uuid.New(), orgID, "web_search", "web_search.tavily", secretID, "tvly-test"); err != nil {
 		t.Fatalf("insert config: %v", err)
 	}

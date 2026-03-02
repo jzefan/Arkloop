@@ -40,7 +40,8 @@ func (e SecretNotFoundError) Error() string {
 // Secret 是内部完整记录，包含密文，仅供 repo 内部使用。
 type Secret struct {
 	ID             uuid.UUID
-	OrgID          uuid.UUID
+	OrgID          *uuid.UUID // nil = platform scope
+	Scope          string     // "org" | "platform"
 	Name           string
 	EncryptedValue string // 密文，不得对外序列化
 	KeyVersion     int
@@ -52,7 +53,8 @@ type Secret struct {
 // SecretMeta 是对外安全的元数据视图，不含密文。
 type SecretMeta struct {
 	ID         uuid.UUID
-	OrgID      uuid.UUID
+	OrgID      *uuid.UUID // nil = platform scope
+	Scope      string     // "org" | "platform"
 	Name       string
 	KeyVersion int
 	CreatedAt  time.Time
@@ -98,11 +100,11 @@ func (r *SecretsRepository) Create(ctx context.Context, orgID uuid.UUID, name, p
 	var s Secret
 	err = r.db.QueryRow(
 		ctx,
-		`INSERT INTO secrets (org_id, name, encrypted_value, key_version)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, org_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
+		`INSERT INTO secrets (org_id, scope, name, encrypted_value, key_version)
+		 VALUES ($1, 'org', $2, $3, $4)
+		 RETURNING id, org_id, scope, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
 		orgID, name, encoded, keyVer,
-	).Scan(&s.ID, &s.OrgID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Secret{}, SecretNameConflictError{Name: name}
@@ -135,16 +137,52 @@ func (r *SecretsRepository) Upsert(ctx context.Context, orgID uuid.UUID, name, p
 	var s Secret
 	err = r.db.QueryRow(
 		ctx,
-		`INSERT INTO secrets (org_id, name, encrypted_value, key_version)
-		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT ON CONSTRAINT uq_secrets_org_name
+		`INSERT INTO secrets (org_id, scope, name, encrypted_value, key_version)
+		 VALUES ($1, 'org', $2, $3, $4)
+		 ON CONFLICT (org_id, name) WHERE scope = 'org'
 		 DO UPDATE SET
 		     encrypted_value = EXCLUDED.encrypted_value,
 		     key_version     = EXCLUDED.key_version,
 		     updated_at      = now()
-		 RETURNING id, org_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
+		 RETURNING id, org_id, scope, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
 		orgID, name, encoded, keyVer,
-	).Scan(&s.ID, &s.OrgID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	if err != nil {
+		return Secret{}, err
+	}
+	return s, nil
+}
+
+// UpsertPlatform 创建或更新 platform scope secret。name 全局唯一。
+func (r *SecretsRepository) UpsertPlatform(ctx context.Context, name, plaintext string) (Secret, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(name) == "" {
+		return Secret{}, fmt.Errorf("name must not be empty")
+	}
+	if plaintext == "" {
+		return Secret{}, fmt.Errorf("plaintext must not be empty")
+	}
+
+	encoded, keyVer, err := r.keyRing.Encrypt([]byte(plaintext))
+	if err != nil {
+		return Secret{}, fmt.Errorf("secrets: encrypt: %w", err)
+	}
+
+	var s Secret
+	err = r.db.QueryRow(
+		ctx,
+		`INSERT INTO secrets (org_id, scope, name, encrypted_value, key_version)
+		 VALUES (NULL, 'platform', $1, $2, $3)
+		 ON CONFLICT (name) WHERE scope = 'platform'
+		 DO UPDATE SET
+		     encrypted_value = EXCLUDED.encrypted_value,
+		     key_version     = EXCLUDED.key_version,
+		     updated_at      = now()
+		 RETURNING id, org_id, scope, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
+		name, encoded, keyVer,
+	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
 		return Secret{}, err
 	}
@@ -166,12 +204,12 @@ func (r *SecretsRepository) GetByName(ctx context.Context, orgID uuid.UUID, name
 	var s Secret
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at
+		`SELECT id, org_id, scope, name, encrypted_value, key_version, created_at, updated_at, rotated_at
 		 FROM secrets
-		 WHERE org_id = $1 AND name = $2
+		 WHERE org_id = $1 AND scope = 'org' AND name = $2
 		 LIMIT 1`,
 		orgID, name,
-	).Scan(&s.ID, &s.OrgID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -193,11 +231,11 @@ func (r *SecretsRepository) DecryptByID(ctx context.Context, id uuid.UUID) (*str
 	var s Secret
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at
+		`SELECT id, org_id, scope, name, encrypted_value, key_version, created_at, updated_at, rotated_at
 		 FROM secrets
 		 WHERE id = $1`,
 		id,
-	).Scan(&s.ID, &s.OrgID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -245,8 +283,31 @@ func (r *SecretsRepository) Delete(ctx context.Context, orgID uuid.UUID, name st
 
 	tag, err := r.db.Exec(
 		ctx,
-		`DELETE FROM secrets WHERE org_id = $1 AND name = $2`,
+		`DELETE FROM secrets WHERE org_id = $1 AND scope = 'org' AND name = $2`,
 		orgID, name,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return SecretNotFoundError{Name: name}
+	}
+	return nil
+}
+
+// DeletePlatform 物理删除 platform scope secret。找不到时返回 SecretNotFoundError。
+func (r *SecretsRepository) DeletePlatform(ctx context.Context, name string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("name must not be empty")
+	}
+
+	tag, err := r.db.Exec(
+		ctx,
+		`DELETE FROM secrets WHERE scope = 'platform' AND name = $1`,
+		name,
 	)
 	if err != nil {
 		return err
@@ -268,9 +329,9 @@ func (r *SecretsRepository) List(ctx context.Context, orgID uuid.UUID) ([]Secret
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, name, key_version, created_at, updated_at, rotated_at
+		`SELECT id, org_id, scope, name, key_version, created_at, updated_at, rotated_at
 		 FROM secrets
-		 WHERE org_id = $1
+		 WHERE org_id = $1 AND scope = 'org'
 		 ORDER BY name ASC`,
 		orgID,
 	)
@@ -283,7 +344,7 @@ func (r *SecretsRepository) List(ctx context.Context, orgID uuid.UUID) ([]Secret
 	for rows.Next() {
 		var m SecretMeta
 		if err := rows.Scan(
-			&m.ID, &m.OrgID, &m.Name,
+			&m.ID, &m.OrgID, &m.Scope, &m.Name,
 			&m.KeyVersion, &m.CreatedAt, &m.UpdatedAt, &m.RotatedAt,
 		); err != nil {
 			return nil, err

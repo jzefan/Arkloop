@@ -157,11 +157,29 @@ func listToolProviders(
 	if !ok {
 		return
 	}
-	if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
 		return
 	}
 
-	configs, err := toolProvidersRepo.ListByOrg(r.Context(), actor.OrgID)
+	orgID := uuid.Nil
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+	}
+
+	configs, err := toolProvidersRepo.ListByScope(r.Context(), orgID, scope)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -241,8 +259,28 @@ func activateToolProvider(
 	if !ok {
 		return
 	}
-	if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
 		return
+	}
+
+	orgID := uuid.Nil
+	notifyPayload := "platform"
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+		notifyPayload = actor.OrgID.String()
 	}
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
@@ -252,7 +290,7 @@ func activateToolProvider(
 	}
 	defer tx.Rollback(r.Context())
 
-	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), actor.OrgID, groupName, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), orgID, scope, groupName, providerName); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			WriteError(w, nethttp.StatusConflict, "tool_provider.active_conflict", "active tool provider conflict", traceID, nil)
@@ -267,7 +305,7 @@ func activateToolProvider(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, actor.OrgID.String())
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -296,16 +334,36 @@ func deactivateToolProvider(
 	if !ok {
 		return
 	}
-	if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
 		return
 	}
 
-	if err := toolProvidersRepo.Deactivate(r.Context(), actor.OrgID, groupName, providerName); err != nil {
+	orgID := uuid.Nil
+	notifyPayload := "platform"
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+		notifyPayload = actor.OrgID.String()
+	}
+
+	if err := toolProvidersRepo.Deactivate(r.Context(), orgID, scope, groupName, providerName); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, actor.OrgID.String())
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -337,8 +395,28 @@ func upsertToolProviderCredential(
 	if !ok {
 		return
 	}
-	if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
 		return
+	}
+
+	orgID := uuid.Nil
+	notifyPayload := "platform"
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+		notifyPayload = actor.OrgID.String()
 	}
 
 	var req upsertToolProviderCredentialRequest
@@ -390,7 +468,15 @@ func upsertToolProviderCredential(
 			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "secrets not configured", traceID, nil)
 			return
 		}
-		secret, err := secretsRepo.WithTx(tx).Upsert(r.Context(), actor.OrgID, secretName, apiKey)
+		var (
+			secret data.Secret
+			err    error
+		)
+		if scope == "platform" {
+			secret, err = secretsRepo.WithTx(tx).UpsertPlatform(r.Context(), secretName, apiKey)
+		} else {
+			secret, err = secretsRepo.WithTx(tx).Upsert(r.Context(), orgID, secretName, apiKey)
+		}
 		if err != nil {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -405,7 +491,7 @@ func upsertToolProviderCredential(
 		baseURLPtr = &baseURL
 	}
 
-	if _, err := txProviders.UpsertConfig(r.Context(), actor.OrgID, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
+	if _, err := txProviders.UpsertConfig(r.Context(), orgID, scope, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -415,7 +501,7 @@ func upsertToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, actor.OrgID.String())
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -449,8 +535,28 @@ func clearToolProviderCredential(
 	if !ok {
 		return
 	}
-	if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
 		return
+	}
+
+	orgID := uuid.Nil
+	notifyPayload := "platform"
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+		notifyPayload = actor.OrgID.String()
 	}
 
 	secretName := "tool_provider:" + providerName
@@ -462,15 +568,21 @@ func clearToolProviderCredential(
 	}
 	defer tx.Rollback(r.Context())
 
-	if err := secretsRepo.WithTx(tx).Delete(r.Context(), actor.OrgID, secretName); err != nil {
+	var delErr error
+	if scope == "platform" {
+		delErr = secretsRepo.WithTx(tx).DeletePlatform(r.Context(), secretName)
+	} else {
+		delErr = secretsRepo.WithTx(tx).Delete(r.Context(), orgID, secretName)
+	}
+	if delErr != nil {
 		var notFound data.SecretNotFoundError
-		if !errors.As(err, &notFound) {
+		if !errors.As(delErr, &notFound) {
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 	}
 
-	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), actor.OrgID, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), orgID, scope, providerName); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -480,7 +592,7 @@ func clearToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, actor.OrgID.String())
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -495,7 +607,7 @@ func findProviderDef(groupName string, providerName string) (toolProviderDefinit
 	return toolProviderDefinition{}, false
 }
 
-func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, pool *pgxpool.Pool, orgID string) {
+func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, pool *pgxpool.Pool, payload string) {
 	db := directPool
 	if db == nil {
 		db = pool
@@ -503,5 +615,5 @@ func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, po
 	if db == nil {
 		return
 	}
-	_, _ = db.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", orgID)
+	_, _ = db.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", payload)
 }

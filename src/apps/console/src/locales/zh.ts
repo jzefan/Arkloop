@@ -118,6 +118,7 @@ export const zh: LocaleStrings = {
     },
     toolProviders: {
       title: '工具提供方',
+      fieldScope: '范围',
       colProvider: '提供方',
       colStatus: '状态',
       colKeyPrefix: 'Key 前缀',
