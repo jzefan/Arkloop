@@ -74,17 +74,6 @@ func (s *EmailOTPLoginService) SetAppBaseURL(envBaseURL string, repo *data.Platf
 	s.settingsRepo = repo
 }
 
-func (s *EmailOTPLoginService) resolveBaseURL(ctx context.Context) string {
-	if s.settingsRepo != nil {
-		if setting, err := s.settingsRepo.Get(ctx, settingAppBaseURL); err == nil && setting != nil {
-			if v := strings.TrimSpace(setting.Value); v != "" {
-				return strings.TrimRight(v, "/")
-			}
-		}
-	}
-	return strings.TrimRight(s.envBaseURL, "/")
-}
-
 // SendLoginOTP 向指定邮箱发送登录 OTP。
 // 若邮箱不存在则静默返回 nil（不暴露用户是否存在）。
 func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) error {

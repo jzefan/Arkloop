@@ -381,13 +381,15 @@ function InviteCodeRow({
   const shortId = code.id.split('-')[0]
   const detailRef = useRef<HTMLDivElement>(null)
 
-  const lastReferralsRef = useRef<Referral[]>([])
-  if (referrals.length > 0) lastReferralsRef.current = referrals
-  const renderReferrals = referrals.length > 0 ? referrals : lastReferralsRef.current
+  const [cachedReferrals, setCachedReferrals] = useState<Referral[]>([])
+  useEffect(() => {
+    if (referrals.length > 0) setCachedReferrals(referrals)
+  }, [referrals])
+  const renderReferrals = referrals.length > 0 ? referrals : cachedReferrals
 
   useEffect(() => {
     if (!isExpanded) {
-      const t = setTimeout(() => { lastReferralsRef.current = [] }, 210)
+      const t = setTimeout(() => { setCachedReferrals([]) }, 210)
       return () => clearTimeout(t)
     }
   }, [isExpanded])

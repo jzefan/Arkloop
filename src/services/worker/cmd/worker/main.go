@@ -54,6 +54,7 @@ func run() error {
 	defer stop()
 
 	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
 	// advisory lock 每个并发 job 持有 1 个连接直到 job 完成，
 	// 加上 pipeline 各阶段并发的 BeginTx，pool 大小必须足够：concurrency * 3 + margin
@@ -89,7 +90,8 @@ func run() error {
 		directPool = pool
 	}
 
-	// cancel 必须在 pool.Close 之前执行，否则 LISTEN goroutine 会卡住 Close
+	// cancel 必须在 pool.Close 之前执行，否则 LISTEN goroutine 会卡住 Close；
+	// 重复调用 cancelRun 是幂等的，上面的 defer 保证 early return 也能 cancel。
 	defer cancelRun()
 
 	// Redis 在 chooseHandler 之前初始化，以便传入 run limiter
