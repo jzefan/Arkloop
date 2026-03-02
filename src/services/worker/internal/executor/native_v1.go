@@ -25,14 +25,17 @@ type NativeRunEngineV1Handler struct {
 	queue  queue.JobQueue
 }
 
-func NewNativeRunEngineV1Handler(pool *pgxpool.Pool, directPool *pgxpool.Pool, logger *app.JSONLogger, rdb *redis.Client, q queue.JobQueue, cfg app.Config) (*NativeRunEngineV1Handler, error) {
+func NewNativeRunEngineV1Handler(ctx context.Context, pool *pgxpool.Pool, directPool *pgxpool.Pool, logger *app.JSONLogger, rdb *redis.Client, q queue.JobQueue, cfg app.Config) (*NativeRunEngineV1Handler, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if logger == nil {
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
-	engine, err := app.ComposeNativeEngine(context.Background(), pool, directPool, rdb, cfg, DefaultExecutorRegistry(), q)
+	engine, err := app.ComposeNativeEngine(ctx, pool, directPool, rdb, cfg, DefaultExecutorRegistry(), q)
 	if err != nil {
 		return nil, err
 	}
@@ -215,5 +218,4 @@ func (p workerPayload) LogFields(lease queue.JobLease) app.LogFields {
 	fields.RunID = stringPtr(p.RunID.String())
 	return fields
 }
-
 

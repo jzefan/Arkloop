@@ -68,7 +68,7 @@ func (c *DiscoveryCache) Invalidate(orgID uuid.UUID) {
 // directPool 必须是直连（不经 PgBouncer），否则 LISTEN 将失效。
 // 连接断开时自动重试，ctx 取消时退出。
 func (c *DiscoveryCache) StartInvalidationListener(ctx context.Context, directPool *pgxpool.Pool) {
-	if directPool == nil {
+	if c == nil || directPool == nil || c.ttl <= 0 {
 		return
 	}
 	go c.runInvalidationListener(ctx, directPool)

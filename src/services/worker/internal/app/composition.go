@@ -16,6 +16,7 @@ import (
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/runengine"
+	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
 	browsertool "arkloop/services/worker/internal/tools/builtin/browser"
@@ -87,6 +88,12 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	discoveryCache := mcp.NewDiscoveryCache(cacheTTL, mcpPool)
 	if directPool != nil {
 		discoveryCache.StartInvalidationListener(ctx, directPool)
+	}
+
+	toolProviderTTL := time.Duration(cfg.ToolProviderCacheTTLSeconds) * time.Second
+	toolProviderCache := toolprovider.NewCache(toolProviderTTL)
+	if directPool != nil {
+		toolProviderCache.StartInvalidationListener(ctx, directPool)
 	}
 
 	baseAllowlistNames := tools.ParseAllowlistNamesFromEnv()
@@ -190,6 +197,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		PersonaRegistryGetter:  watchedPersonas.Get,
 		MCPPool:                mcpPool,
 		MCPDiscoveryCache:      discoveryCache,
+		ToolProviderCache:      toolProviderCache,
 		ExecutorRegistry:       execRegistry,
 		JobQueue:               jobQueue,
 		RunLimiterRDB:          rdb,
