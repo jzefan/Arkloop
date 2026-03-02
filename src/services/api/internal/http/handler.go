@@ -51,25 +51,26 @@ type HandlerConfig struct {
 	RunEventRepo         *data.RunEventRepository
 	AuditWriter          *audit.Writer
 
-	LlmCredentialsRepo  *data.LlmCredentialsRepository
-	LlmRoutesRepo       *data.LlmRoutesRepository
-	SecretsRepo         *data.SecretsRepository
-	AsrCredentialsRepo  *data.AsrCredentialsRepository
-	MCPConfigsRepo      *data.MCPConfigsRepository
-	PersonasRepo        *data.PersonasRepository
-	IPRulesRepo         *data.IPRulesRepository
-	APIKeysRepo         *data.APIKeysRepository
-	OrgInvitationsRepo  *data.OrgInvitationsRepository
-	TeamRepo            *data.TeamRepository
-	ProjectRepo         *data.ProjectRepository
-	WebhookRepo         *data.WebhookEndpointRepository
-	PromptTemplatesRepo *data.PromptTemplateRepository
-	AgentConfigsRepo    *data.AgentConfigRepository
-	PlansRepo           *data.PlanRepository
-	SubscriptionsRepo   *data.SubscriptionRepository
-	EntitlementsRepo    *data.EntitlementsRepository
-	EntitlementService  *entitlement.Service
-	UsageRepo           *data.UsageRepository
+	LlmCredentialsRepo      *data.LlmCredentialsRepository
+	LlmRoutesRepo           *data.LlmRoutesRepository
+	SecretsRepo             *data.SecretsRepository
+	AsrCredentialsRepo      *data.AsrCredentialsRepository
+	MCPConfigsRepo          *data.MCPConfigsRepository
+	ToolProviderConfigsRepo *data.ToolProviderConfigsRepository
+	PersonasRepo            *data.PersonasRepository
+	IPRulesRepo             *data.IPRulesRepository
+	APIKeysRepo             *data.APIKeysRepository
+	OrgInvitationsRepo      *data.OrgInvitationsRepository
+	TeamRepo                *data.TeamRepository
+	ProjectRepo             *data.ProjectRepository
+	WebhookRepo             *data.WebhookEndpointRepository
+	PromptTemplatesRepo     *data.PromptTemplateRepository
+	AgentConfigsRepo        *data.AgentConfigRepository
+	PlansRepo               *data.PlanRepository
+	SubscriptionsRepo       *data.SubscriptionRepository
+	EntitlementsRepo        *data.EntitlementsRepository
+	EntitlementService      *entitlement.Service
+	UsageRepo               *data.UsageRepository
 
 	FeatureFlagsRepo   *data.FeatureFlagRepository
 	FeatureFlagService *featureflag.Service
@@ -226,6 +227,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/mcp-configs/",
 		mcpConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
+	)
+
+	mux.HandleFunc(
+		"/v1/tool-providers",
+		toolProvidersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolProviderConfigsRepo, cfg.SecretsRepo, cfg.Pool, cfg.DirectPool),
+	)
+	mux.HandleFunc(
+		"/v1/tool-providers/",
+		toolProviderEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolProviderConfigsRepo, cfg.SecretsRepo, cfg.Pool, cfg.DirectPool),
 	)
 
 	mux.HandleFunc(
