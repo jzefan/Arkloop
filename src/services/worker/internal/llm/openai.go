@@ -596,6 +596,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 	var streamedUsage *Usage
 	var inThink bool
 	emittedAnyOutput := false
+	finishReasonSeen := false
 
 	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
 		defer func() {
@@ -603,6 +604,9 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				handlerFailed = true
 			}
 		}()
+		if terminalEmitted {
+			return nil
+		}
 		raw, rawTruncated := truncateUTF8(data, openAIMaxDebugChunkBytes)
 		var chunkJSON any
 		if strings.TrimSpace(data) != "" && data != "[DONE]" {
@@ -625,6 +629,9 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		}
 
 		if strings.TrimSpace(data) == "[DONE]" {
+			if terminalEmitted {
+				return nil
+			}
 			calls, err := toolBuffer.Drain()
 			if err != nil {
 				return yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed"))
@@ -689,6 +696,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		if choice.FinishReason != nil {
 			reason := strings.TrimSpace(*choice.FinishReason)
 			if reason != "" {
+				finishReasonSeen = true
 				if strings.EqualFold(reason, "tool_calls") {
 					calls, err := toolBuffer.Drain()
 					if err != nil {
@@ -700,9 +708,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 						}
 					}
 				}
-
-				terminalEmitted = true
-				return yield(StreamRunCompleted{Usage: streamedUsage})
+				// include_usage 会在 finish_reason 之后追加 usage-only chunk（choices 为空），此处不提前结束。
 			}
 		}
 		return nil
@@ -713,6 +719,26 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		}
 		if terminalEmitted {
 			return nil
+		}
+		// 已收到 finish_reason，后续流中断也视为完成（最多丢失 usage）。
+		if finishReasonSeen {
+			calls, drainErr := toolBuffer.Drain()
+			if drainErr != nil {
+				return yield(StreamRunFailed{
+					Error: GatewayError{
+						ErrorClass: ErrorClassProviderRetryable,
+						Message:    "SSE stream ended before tool_calls completed",
+						Details:    map[string]any{"reason": drainErr.Error()},
+					},
+				})
+			}
+			for _, call := range calls {
+				if err := yield(call); err != nil {
+					return err
+				}
+			}
+			terminalEmitted = true
+			return yield(StreamRunCompleted{Usage: streamedUsage})
 		}
 		return yield(StreamRunFailed{
 			Error: GatewayError{
@@ -743,7 +769,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			return err
 		}
 	}
-	if streamedUsage != nil || emittedAnyOutput || len(calls) > 0 {
+	if streamedUsage != nil || emittedAnyOutput || len(calls) > 0 || finishReasonSeen {
 		terminalEmitted = true
 		return yield(StreamRunCompleted{Usage: streamedUsage})
 	}
