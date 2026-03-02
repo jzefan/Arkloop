@@ -1,5 +1,8 @@
 {
-	"dependencies": {
-		"web": "link:src/apps/web"
+	"private": true,
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		]
 	}
 }

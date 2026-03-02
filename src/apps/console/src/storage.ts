@@ -1,72 +1,34 @@
-// 与 web app 共享同一 localStorage key，保证同域登录态共享
-const ACCESS_TOKEN_KEY = 'arkloop:web:access_token'
-const REFRESH_TOKEN_KEY = 'arkloop:console:refresh_token'
+import {
+  readRefreshToken,
+  writeRefreshToken,
+  clearRefreshToken,
+  canUseStorage,
+} from '@arkloop/shared/storage'
+
+export {
+  readAccessToken as readAccessTokenFromStorage,
+  writeAccessToken as writeAccessTokenToStorage,
+  clearAccessToken as clearAccessTokenFromStorage,
+} from '@arkloop/shared/storage'
+
+export function readRefreshTokenFromStorage(): string | null {
+  return readRefreshToken('console')
+}
+
+export function writeRefreshTokenToStorage(token: string): void {
+  writeRefreshToken('console', token)
+}
+
+export function clearRefreshTokenFromStorage(): void {
+  clearRefreshToken('console')
+}
+
 const THEME_KEY = 'arkloop:console:theme'
 
 export type Theme = 'system' | 'light' | 'dark'
 
 function canUseLocalStorage(): boolean {
-  try {
-    return typeof localStorage !== 'undefined'
-  } catch {
-    return false
-  }
-}
-
-export function readAccessTokenFromStorage(): string | null {
-  if (!canUseLocalStorage()) return null
-  try {
-    const raw = localStorage.getItem(ACCESS_TOKEN_KEY)
-    return raw?.trim() ? raw : null
-  } catch {
-    return null
-  }
-}
-
-export function writeAccessTokenToStorage(token: string): void {
-  if (!canUseLocalStorage() || !token.trim()) return
-  try {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token)
-  } catch {
-    // ignore
-  }
-}
-
-export function clearAccessTokenFromStorage(): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-  } catch {
-    // ignore
-  }
-}
-
-export function readRefreshTokenFromStorage(): string | null {
-  if (!canUseLocalStorage()) return null
-  try {
-    const raw = localStorage.getItem(REFRESH_TOKEN_KEY)
-    return raw?.trim() ? raw : null
-  } catch {
-    return null
-  }
-}
-
-export function writeRefreshTokenToStorage(token: string): void {
-  if (!canUseLocalStorage() || !token.trim()) return
-  try {
-    localStorage.setItem(REFRESH_TOKEN_KEY, token)
-  } catch {
-    // ignore
-  }
-}
-
-export function clearRefreshTokenFromStorage(): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-  } catch {
-    // ignore
-  }
+  return canUseStorage()
 }
 
 export function readThemeFromStorage(): Theme {

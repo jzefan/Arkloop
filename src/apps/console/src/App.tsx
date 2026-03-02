@@ -40,7 +40,20 @@ import {
   writeRefreshTokenToStorage,
   clearRefreshTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, initApiClient } from './api'
+import {
+  readRefreshToken,
+  writeRefreshToken,
+  clearRefreshToken,
+  writeAccessToken,
+} from '@arkloop/shared/storage'
+
+initApiClient({
+  readRefreshToken: () => readRefreshToken('console'),
+  writeRefreshToken: (t) => writeRefreshToken('console', t),
+  clearRefreshToken: () => clearRefreshToken('console'),
+  writeAccessToken,
+})
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
