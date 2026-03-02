@@ -24,6 +24,7 @@
   - `ARKLOOP_PROVIDER_ROUTING_JSON`（为空时默认走 stub）
 - Tools：
   - `ARKLOOP_TOOL_ALLOWLIST`（为空时禁用全部工具）
+  - `ARKLOOP_TOOL_PROVIDER_CACHE_TTL_SECONDS`（默认 `60`；0 表示不缓存，每次 run 都查 DB）
 - 调试：
   - `ARKLOOP_LLM_DEBUG_EVENTS=1`：把 `llm.request/llm.response.chunk` 写入 `run_events`
 - MCP（可选）：

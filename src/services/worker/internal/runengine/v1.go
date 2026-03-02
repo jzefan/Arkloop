@@ -3,6 +3,7 @@ package runengine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -14,10 +15,11 @@ import (
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
-	"arkloop/services/worker/internal/personas"
+	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
 
@@ -59,9 +61,10 @@ type EngineV1Deps struct {
 	BaseToolAllowlistNames []string
 
 	PersonaRegistryGetter func() *personas.Registry
-	MCPPool         *mcp.Pool
-	MCPDiscoveryCache *mcp.DiscoveryCache  // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
-	ExecutorRegistry pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
+	MCPPool               *mcp.Pool
+	MCPDiscoveryCache     *mcp.DiscoveryCache // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
+	ToolProviderCache     *toolprovider.Cache
+	ExecutorRegistry      pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
 
 	// JobQueue 可选；非 nil 时启用 SpawnChildRun（AS-3.5.2）
 	JobQueue queue.JobQueue
@@ -101,6 +104,17 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	}
 
 	// 验证 base 工具集可构建
+	resolvedBaseAllowlist, err := pipeline.ResolveProviderAllowlist(baseAllowlistSet, deps.ToolRegistry, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	filteredBaseAllowlist, dropped := pipeline.FilterAllowlistToBoundExecutors(resolvedBaseAllowlist, deps.ToolExecutors)
+	if len(dropped) > 0 {
+		slog.Warn("base tool allowlist dropped unbound executors", "tools", dropped)
+	}
+	baseAllowlistSet = filteredBaseAllowlist
+
 	if _, err := pipeline.BuildDispatchExecutor(deps.ToolRegistry, deps.ToolExecutors, baseAllowlistSet); err != nil {
 		return nil, err
 	}
@@ -146,6 +160,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 			deps.ToolRegistry,
 		),
 		pipeline.NewSpawnAgentMiddleware(),
+		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewAgentConfigMiddleware(deps.DBPool),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMemoryMiddleware(deps.MemoryProvider, deps.DBPool),

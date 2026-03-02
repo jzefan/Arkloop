@@ -53,6 +53,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	runCtx, cancelRun := context.WithCancel(ctx)
+
 	// advisory lock 每个并发 job 持有 1 个连接直到 job 完成，
 	// 加上 pipeline 各阶段并发的 BeginTx，pool 大小必须足够：concurrency * 3 + margin
 	poolMinConns := int32(cfg.Concurrency*3 + 8)
@@ -87,10 +89,13 @@ func run() error {
 		directPool = pool
 	}
 
+	// cancel 必须在 pool.Close 之前执行，否则 LISTEN goroutine 会卡住 Close
+	defer cancelRun()
+
 	// Redis 在 chooseHandler 之前初始化，以便传入 run limiter
 	var rdb *redis.Client
 	if redisURL := lookupRedisURL(); redisURL != "" {
-		rc, err := newRedisClient(ctx, redisURL)
+		rc, err := newRedisClient(runCtx, redisURL)
 		if err != nil {
 			logger.Error("redis connect failed, run limiter and registration disabled", app.LogFields{}, map[string]any{"error": err.Error()})
 		} else {
@@ -110,9 +115,26 @@ func run() error {
 		return err
 	}
 
-	handler, err := chooseHandler(logger, pool, directPool, rdb, queueClient, cfg)
+	handler, err := chooseHandler(runCtx, logger, pool, directPool, rdb, queueClient, cfg)
 	if err != nil {
 		return err
+	}
+
+	var reg *registration.Manager
+	if rdb != nil {
+		reg, err = registration.NewManager(pool, rdb, registration.Config{
+			Version:        cfg.Version,
+			Capabilities:   cfg.Capabilities,
+			MaxConcurrency: cfg.Concurrency,
+		}, logger)
+		if err != nil {
+			return fmt.Errorf("registration: %w", err)
+		}
+		if err := reg.Register(runCtx); err != nil {
+			return fmt.Errorf("register worker: %w", err)
+		}
+		reg.StartHeartbeat(runCtx)
+		handler = &loadAwareHandler{inner: handler, reg: reg}
 	}
 
 	loop, err := consumer.NewLoop(
@@ -132,25 +154,8 @@ func run() error {
 		return err
 	}
 
-	var reg *registration.Manager
-	if rdb != nil {
-		reg, err = registration.NewManager(pool, rdb, registration.Config{
-			Version:        cfg.Version,
-			Capabilities:   cfg.Capabilities,
-			MaxConcurrency: cfg.Concurrency,
-		}, logger)
-		if err != nil {
-			return fmt.Errorf("registration: %w", err)
-		}
-		if err := reg.Register(ctx); err != nil {
-			return fmt.Errorf("register worker: %w", err)
-		}
-		reg.StartHeartbeat(ctx)
-		handler = &loadAwareHandler{inner: handler, reg: reg}
-	}
-
 	logger.Info("worker_go entering consume mode", app.LogFields{}, nil)
-	runErr := loop.Run(ctx)
+	runErr := loop.Run(runCtx)
 
 	if reg != nil {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -213,12 +218,15 @@ func normalizePostgresDSN(raw string) string {
 	return raw
 }
 
-func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, q queue.JobQueue, cfg app.Config) (consumer.Handler, error) {
+func chooseHandler(ctx context.Context, logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, q queue.JobQueue, cfg app.Config) (consumer.Handler, error) {
 	if logger == nil {
 		logger = app.NewJSONLogger("worker_go", nil)
 	}
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	configRegistry := sharedconfig.DefaultRegistry()
@@ -229,7 +237,7 @@ func chooseHandler(logger *app.JSONLogger, pool *pgxpool.Pool, directPool *pgxpo
 	}
 	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
 
-	native, err := executor.NewNativeRunEngineV1Handler(pool, directPool, logger, rdb, q, cfg)
+	native, err := executor.NewNativeRunEngineV1Handler(ctx, pool, directPool, logger, rdb, q, cfg)
 	if err != nil {
 		return nil, err
 	}

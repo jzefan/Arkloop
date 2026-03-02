@@ -10,14 +10,15 @@ import (
 )
 
 const (
-	workerConcurrencyEnv      = "ARKLOOP_WORKER_CONCURRENCY"
-	workerPollSecondsEnv      = "ARKLOOP_WORKER_POLL_SECONDS"
-	workerLeaseSecondsEnv     = "ARKLOOP_WORKER_LEASE_SECONDS"
-	workerHeartbeatSecondsEnv = "ARKLOOP_WORKER_HEARTBEAT_SECONDS"
-	workerQueueJobTypesEnv    = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
-	workerCapabilitiesEnv     = "ARKLOOP_WORKER_CAPABILITIES"
-	workerVersionEnv          = "ARKLOOP_WORKER_VERSION"
-	mcpCacheTTLSecondsEnv     = "ARKLOOP_MCP_CACHE_TTL_SECONDS"
+	workerConcurrencyEnv           = "ARKLOOP_WORKER_CONCURRENCY"
+	workerPollSecondsEnv           = "ARKLOOP_WORKER_POLL_SECONDS"
+	workerLeaseSecondsEnv          = "ARKLOOP_WORKER_LEASE_SECONDS"
+	workerHeartbeatSecondsEnv      = "ARKLOOP_WORKER_HEARTBEAT_SECONDS"
+	workerQueueJobTypesEnv         = "ARKLOOP_WORKER_QUEUE_JOB_TYPES"
+	workerCapabilitiesEnv          = "ARKLOOP_WORKER_CAPABILITIES"
+	workerVersionEnv               = "ARKLOOP_WORKER_VERSION"
+	mcpCacheTTLSecondsEnv          = "ARKLOOP_MCP_CACHE_TTL_SECONDS"
+	toolProviderCacheTTLSecondsEnv = "ARKLOOP_TOOL_PROVIDER_CACHE_TTL_SECONDS"
 )
 
 // Config aligns with worker loop behavior.
@@ -32,18 +33,22 @@ type Config struct {
 
 	// MCP 发现结果缓存 TTL（秒），0 表示不缓存
 	MCPCacheTTLSeconds int
+
+	// Tool Provider 配置缓存 TTL（秒），0 表示不缓存
+	ToolProviderCacheTTLSeconds int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Concurrency:        4,
-		PollSeconds:        0.25,
-		LeaseSeconds:       30,
-		HeartbeatSeconds:   10,
-		QueueJobTypes:      []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
-		Capabilities:       []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
-		Version:            "unknown",
-		MCPCacheTTLSeconds: 60,
+		Concurrency:                 4,
+		PollSeconds:                 0.25,
+		LeaseSeconds:                30,
+		HeartbeatSeconds:            10,
+		QueueJobTypes:               []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
+		Capabilities:                []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
+		Version:                     "unknown",
+		MCPCacheTTLSeconds:          60,
+		ToolProviderCacheTTLSeconds: 60,
 	}
 }
 
@@ -107,6 +112,17 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: must be >= 0", mcpCacheTTLSecondsEnv)
 		}
 		cfg.MCPCacheTTLSeconds = value
+	}
+
+	if raw, ok := lookupEnv(toolProviderCacheTTLSecondsEnv); ok {
+		value, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be an integer", toolProviderCacheTTLSecondsEnv)
+		}
+		if value < 0 {
+			return Config{}, fmt.Errorf("%s: must be >= 0", toolProviderCacheTTLSecondsEnv)
+		}
+		cfg.ToolProviderCacheTTLSeconds = value
 	}
 
 	if err := cfg.Validate(); err != nil {

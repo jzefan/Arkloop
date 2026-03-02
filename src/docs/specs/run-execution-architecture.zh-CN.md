@@ -116,8 +116,8 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 
 | 工具 | 说明 |
 |------|------|
-| `web_search` | 搜索 API |
-| `web_fetch` | HTTP 抓取（含渲染） |
+| `web_search` | 搜索（执行后端可由 Console 的 Tool Providers 配置覆盖） |
+| `web_fetch` | 抓取（执行后端可由 Console 的 Tool Providers 配置覆盖） |
 | `sandbox` | 代码执行（Firecracker 微虚拟机） |
 | `browser` | 浏览器自动化（Playwright） |
 | `spawn_agent` | 生成子 Agent run |
@@ -131,6 +131,8 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 - **Denylist**：Persona 级 `tool_denylist`
 - LLM 只能看到白名单内的工具
 - 每个工具执行有超时控制（`tool_timeout_ms`）
+
+补充：`web_search` / `web_fetch` 是 Tool Group 名（LLM 只会看到 group）。Worker 内部会解析到具体 Provider（例如 `web_search.tavily`、`web_fetch.jina`），每个 org 可在 Console 中为每个 group 激活一个 Provider 并配置凭证。
 
 ### 7.3 MCP 工具
 
