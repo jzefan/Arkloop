@@ -4,7 +4,7 @@
 商业/法律相关文档请放在仓库根目录的 `docs/`。
 
 文档按主题拆分在子目录中：
-- `src/docs/guides/`：上手指南、工具说明
+- `src/docs/guide/`：上手指南、部署说明
 - `src/docs/specs/`：规范与契约（API/SSE、日志、数据等）
 - `src/docs/roadmap/`：路线图与阶段计划
 
@@ -225,11 +225,12 @@ Prompt 拼装与模型调用必须在服务端（或受控网关）完成。
 
 ## 11. 进一步阅读（工程文档）
 
-- 后端 API 与 SSE（Phase 1 规范草案）：`src/docs/specs/api-and-sse.zh-CN.md`
-- 项目开发路线（从 0 到可用）：`src/docs/roadmap/development-roadmap.zh-CN.md`
-- Go 重构路线（Worker 先行，薄片设计）：`src/docs/roadmap/golang-worker-first-refactor-plan.zh-CN.md`
-- Go 重构路线（Backend / API 迁移，薄片设计）：`src/docs/roadmap/golang-backend-refactor-plan.zh-CN.md`
-- Tools 与 Personas 规范：`src/docs/guides/personas-and-tools.zh-CN.md`
-- Go 测试策略：`src/docs/specs/testing-and-pytest.zh-CN.md`
+- 本地启动：`src/docs/guide/index.md`
+- 部署指南：`src/docs/guide/deployment.md`
+- 后端 API 与 SSE：`src/docs/specs/api-and-sse.zh-CN.md`
+- Run 执行架构：`src/docs/specs/run-execution-architecture.zh-CN.md`
 - 日志与可观测性：`src/docs/specs/logging-and-observability.zh-CN.md`
 - 数据库架构与数据模型：`src/docs/specs/database-architecture.zh-CN.md`
+- 开源准备度路线图：`src/docs/roadmap/open-source-readiness-roadmap.zh-CN.md`
+- Agent System 路线图：`src/docs/roadmap/agent-system-roadmap.zh-CN.md`
+- 历史重构记录：`src/docs/roadmap/architecture-refactor-roadmap.zh-CN.md`

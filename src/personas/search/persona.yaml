@@ -8,7 +8,7 @@ executor_type: agent.lua
 executor_config:
   script_file: agent.lua
 budgets:
-  max_iterations: 100
+  max_iterations: 99900
   max_output_tokens: 8192
 title_summarize:
   prompt: "Keep it under 5 Chinese characters. Extract the search intent."

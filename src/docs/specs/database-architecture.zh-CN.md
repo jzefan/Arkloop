@@ -2,7 +2,7 @@
 
 本文描述 Arkloop 的数据库边界、核心表与权限/审计/计费的架构约束。生产形态以 PostgreSQL 为唯一目标后端。
 
-迁移工具：Goose（嵌入 `src/services/api/internal/migrate/migrations/`，74 个迁移文件）。
+迁移工具：Goose（嵌入 `src/services/api/internal/migrate/migrations/`，80 个迁移文件）。
 
 ## 1. 术语
 
@@ -10,6 +10,11 @@
 - 数据隔离边界（权限、导出、删除、保留策略）
 - 审计边界（日志归属与追责范围）
 - 计费与配额边界（预算、倍率、用量报表）
+
+`platform` 是**部署实例的全局作用域**：
+- 平台级默认配置与平台级凭证（用于“新 org 无配置也可运行”）
+- 由 `platform_admin` 管理，不属于任何 org
+- org 级配置只做覆盖，不应承担“全局默认”的职责
 
 ## 2. 顶层结构：`org / team / project`
 
@@ -131,7 +136,7 @@
 | 列 | 说明 |
 |----|------|
 | `id` | PK |
-| `org_id` | FK -> orgs（可选，platform 级别为 NULL） |
+| `org_id` | FK -> orgs（当前为 org 级资源） |
 | `provider` | 提供商标识 |
 | `name` | 显示名称 |
 | `secret_id` | FK -> secrets（加密存储） |
@@ -156,6 +161,78 @@
 ### 5.3 `secrets`（通用加密存储）
 
 AES-256-GCM 加密，密钥由 `ARKLOOP_ENCRYPTION_KEY` 提供。
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs（org scope 必填；platform scope 为 NULL） |
+| `scope` | `org` / `platform` |
+| `name` | 逻辑键（同 scope 内唯一） |
+| `encrypted_value` | 密文（base64） |
+| `key_version` | 加密版本 |
+| `rotated_at` | 轮换时间（可选） |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
+
+约束：
+- `scope='org'`：`(org_id, name)` 唯一
+- `scope='platform'`：`name` 全局唯一
+
+`secrets` 用途：
+- LLM / ASR 等凭证的 API Key
+- Tool Providers 的 API Key
+
+当前：Config Registry 标记为 `Sensitive=true` 的配置项，在 API 返回时会被 mask；值仍写入 `platform_settings/org_settings`（不加密）。
+
+### 5.4 `platform_settings` / `org_settings`（统一配置：Config Resolver）
+
+用于 Track A 的 Config Resolver（key-value 配置），支持平台默认 + org 覆盖。
+
+#### `platform_settings`
+
+| 列 | 说明 |
+|----|------|
+| `key` | PK |
+| `value` | 配置值（非敏感） |
+| `updated_at` | 更新时间 |
+
+#### `org_settings`
+
+| 列 | 说明 |
+|----|------|
+| `org_id` | FK -> orgs |
+| `key` | 配置键 |
+| `value` | 配置值（非敏感） |
+| `updated_at` | 更新时间 |
+
+Resolver 的优先级链（从高到低）：
+1) ENV override（部署层强制覆盖）
+2) `org_settings`
+3) `platform_settings`
+4) Registry 默认值
+
+### 5.5 `tool_provider_configs`（工具后端激活与凭证关联）
+
+用于 `web_search` / `web_fetch` 等 Tool Group 的后端选择、凭证与 base_url 配置。
+
+| 列 | 说明 |
+|----|------|
+| `id` | PK |
+| `org_id` | FK -> orgs（org scope 必填；platform scope 为 NULL） |
+| `scope` | `org` / `platform` |
+| `group_name` | Tool Group 名（LLM 看到的工具名，如 `web_search`） |
+| `provider_name` | Provider 名（内部工具名，如 `web_search.tavily`） |
+| `is_active` | 是否激活（每 scope + group 最多一个 active） |
+| `secret_id` | FK -> secrets（API Key，加密存储） |
+| `key_prefix` | 密钥前缀（用于 Console 展示） |
+| `base_url` | 自定义 endpoint（SearXNG / 自部署 Firecrawl 等） |
+| `config_json` | 非敏感参数（JSONB） |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
+
+解析链：
+- org scope active provider 优先
+- 无 org 配置时回落 platform scope active provider
 
 ## 6. Personas 与 Agent 配置
 
