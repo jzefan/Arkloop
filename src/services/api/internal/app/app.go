@@ -190,24 +190,25 @@ func (a *Application) Run(ctx context.Context) error {
 		runEventRepo     *data.RunEventRepository
 		auditRepo        *data.AuditLogRepository
 
-		secretsRepo         *data.SecretsRepository
-		llmCredRepo         *data.LlmCredentialsRepository
-		llmRoutesRepo       *data.LlmRoutesRepository
-		mcpConfigsRepo      *data.MCPConfigsRepository
-		personasRepo        *data.PersonasRepository
-		ipRulesRepo         *data.IPRulesRepository
-		apiKeysRepo         *data.APIKeysRepository
-		orgInvitationsRepo  *data.OrgInvitationsRepository
-		teamRepo            *data.TeamRepository
-		projectRepo         *data.ProjectRepository
-		webhookRepo         *data.WebhookEndpointRepository
-		promptTemplatesRepo *data.PromptTemplateRepository
-		agentConfigsRepo    *data.AgentConfigRepository
-		plansRepo           *data.PlanRepository
-		subscriptionsRepo   *data.SubscriptionRepository
-		entitlementsRepo    *data.EntitlementsRepository
-		entitlementSvc      *entitlement.Service
-		usageRepo           *data.UsageRepository
+		secretsRepo             *data.SecretsRepository
+		llmCredRepo             *data.LlmCredentialsRepository
+		llmRoutesRepo           *data.LlmRoutesRepository
+		mcpConfigsRepo          *data.MCPConfigsRepository
+		toolProviderConfigsRepo *data.ToolProviderConfigsRepository
+		personasRepo            *data.PersonasRepository
+		ipRulesRepo             *data.IPRulesRepository
+		apiKeysRepo             *data.APIKeysRepository
+		orgInvitationsRepo      *data.OrgInvitationsRepository
+		teamRepo                *data.TeamRepository
+		projectRepo             *data.ProjectRepository
+		webhookRepo             *data.WebhookEndpointRepository
+		promptTemplatesRepo     *data.PromptTemplateRepository
+		agentConfigsRepo        *data.AgentConfigRepository
+		plansRepo               *data.PlanRepository
+		subscriptionsRepo       *data.SubscriptionRepository
+		entitlementsRepo        *data.EntitlementsRepository
+		entitlementSvc          *entitlement.Service
+		usageRepo               *data.UsageRepository
 
 		featureFlagsRepo *data.FeatureFlagRepository
 		featureFlagSvc   *featureflag.Service
@@ -294,6 +295,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		mcpConfigsRepo, err = data.NewMCPConfigsRepository(pool)
+		if err != nil {
+			return err
+		}
+		toolProviderConfigsRepo, err = data.NewToolProviderConfigsRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -530,6 +535,7 @@ func (a *Application) Run(ctx context.Context) error {
 			LlmRoutesRepo:           llmRoutesRepo,
 			SecretsRepo:             secretsRepo,
 			MCPConfigsRepo:          mcpConfigsRepo,
+			ToolProviderConfigsRepo: toolProviderConfigsRepo,
 			PersonasRepo:            personasRepo,
 			IPRulesRepo:             ipRulesRepo,
 			APIKeysRepo:             apiKeysRepo,
