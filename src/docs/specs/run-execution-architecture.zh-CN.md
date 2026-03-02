@@ -65,17 +65,19 @@ Worker 使用中间件链模式处理 run，顺序执行：
 
 | 序号 | 中间件 | 职责 |
 |------|--------|------|
-| 1 | `mw_input_loader` | 加载 run 输入与上下文 |
-| 2 | `mw_routing` | Provider 路由决策 |
-| 3 | `mw_persona_resolution` | 从配置/请求解析 Persona |
-| 4 | `mw_agent_config` | 加载 Agent 配置 |
-| 5 | `mw_tool_build` | 构建工具执行器分发器 |
-| 6 | `mw_mcp_discovery` | 发现 MCP 工具 |
-| 7 | `mw_memory` | 加载/保存记忆快照（OpenViking） |
-| 8 | `mw_entitlement` | 检查配额/功能权限 |
-| 9 | `mw_cancel_guard` | 处理取消信号 |
-| 10 | `mw_title_summarizer` | 生成会话标题 |
-| 11 | `handler_agent_loop` | 主 Agent Loop（LLM 调用 + 工具执行） |
+| 1 | `mw_input_loader` | 加载 run 输入与线程消息 |
+| 2 | `mw_cancel_guard` | 处理取消信号（提前失败） |
+| 3 | `mw_entitlement` | 检查配额/功能权限（例如 runs/tokens quota） |
+| 4 | `mw_mcp_discovery` | 发现 MCP 工具（org 级 + 缓存） |
+| 5 | `mw_spawn_agent` | 按需注入 `spawn_agent` 工具（父子 run） |
+| 6 | `mw_tool_provider` | 注入 Tool Provider（org 覆盖 platform）并绑定 executor |
+| 7 | `mw_agent_config` | 解析 Agent 配置（thread→project→org→platform） |
+| 8 | `mw_persona_resolution` | 解析 persona_id、system prompt 与 persona 配置 |
+| 9 | `mw_memory` | 注入长期记忆（可选） |
+| 10 | `mw_routing` | LLM Provider 路由决策、构建 Gateway |
+| 11 | `mw_title_summarizer` | 生成会话标题（可选） |
+| 12 | `mw_tool_build` | 构建 ToolSpecs 与工具分发器（按 allowlist 过滤） |
+| 13 | `handler_agent_loop` | 主 Agent Loop（LLM 调用 + 工具执行） |
 
 ## 5. 执行器类型
 
@@ -132,7 +134,14 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 - LLM 只能看到白名单内的工具
 - 每个工具执行有超时控制（`tool_timeout_ms`）
 
-补充：`web_search` / `web_fetch` 是 Tool Group 名（LLM 只会看到 group）。Worker 内部会解析到具体 Provider（例如 `web_search.tavily`、`web_fetch.jina`），每个 org 可在 Console 中为每个 group 激活一个 Provider 并配置凭证。
+补充：`web_search` / `web_fetch` 是 Tool Group 名（LLM 只会看到 group）。Worker 运行时会解析到具体 Provider（例如 `web_search.tavily`、`web_fetch.jina`），解析优先级为：
+
+1) org scope 激活的 provider（DB `tool_provider_configs.scope='org'`）  
+2) platform scope 激活的 provider（DB `tool_provider_configs.scope='platform'`）  
+3) legacy group executor（Config Resolver 的 `web_search.*` / `web_fetch.*`，支持 env override）  
+4) 否则返回 `tool.not_configured`
+
+说明：Tool Provider 的激活/凭证通过 Console 的 Tool Providers 配置页（`/v1/tool-providers`）管理。platform scope 用于全局默认；org scope 用于租户覆盖。
 
 ### 7.3 MCP 工具
 
@@ -147,7 +156,7 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 - 检查 run 请求中的 `route_id`
 - 验证路由存在、凭证可访问、BYOK 是否启用
 - 输出：`SelectedProviderRoute` 或 `ProviderRouteDenied`（`policy.route_not_found`、`policy.byok_disabled`）
-- 凭证作用域：platform（全局）/ org（组织级）
+- 无 DB 路由配置时，Worker 可回退到环境变量静态路由（开发/自托管场景）
 
 支持的 LLM 提供商：
 - OpenAI（及兼容 API）
@@ -218,6 +227,7 @@ Worker 启动时向 `worker_registrations` 表注册能力与版本。
 | `ARKLOOP_LLM_RETRY_MAX_ATTEMPTS` | LLM 重试次数（默认 3） |
 | `ARKLOOP_LLM_RETRY_BASE_DELAY_MS` | 重试基础延迟（默认 1000） |
 | `ARKLOOP_MCP_CACHE_TTL_SECONDS` | MCP 发现缓存 TTL（默认 60） |
+| `ARKLOOP_TOOL_PROVIDER_CACHE_TTL_SECONDS` | Tool Provider 缓存 TTL（默认 60） |
 | `ARKLOOP_LLM_DEBUG_EVENTS` | 调试事件开关 |
 | `ARKLOOP_SANDBOX_BASE_URL` | Sandbox 服务地址 |
 | `ARKLOOP_BROWSER_BASE_URL` | Browser 服务地址 |

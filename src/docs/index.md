@@ -22,7 +22,7 @@ features:
     link: /guide/
   - title: 架构文档
     details: 系统架构设计、技术规范与数据模型。
-    link: /architecture/architecture-design-v2.zh-CN
+    link: /specs/run-execution-architecture.zh-CN
   - title: Roadmap
     details: Agent System 路线图及历史重构记录。
     link: /roadmap/agent-system-roadmap.zh-CN

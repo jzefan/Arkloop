@@ -254,7 +254,7 @@ CREATE TABLE org_settings (
 
 ## 3. Track C -- Tool Provider 管理（AS-11）
 
-**目标**：同名工具支持多后端注册，per-org 激活指定 Provider，Console 可管理凭证和配置。
+**目标**：同名工具支持多后端注册，支持 platform 默认 + per-org 覆盖激活 Provider，Console 可管理凭证和配置。
 
 此 Track 对应 agent-system-roadmap 中 AS-11 的完整设计，已有详细薄片，不再重复。关键里程碑：
 
@@ -266,13 +266,15 @@ CREATE TABLE org_settings (
 
 ### C2 -- DB Schema + per-org 激活（AS-11.2）
 - 新建 `tool_provider_configs` 表
-- 同 org + group_name 最多一条 is_active = true
+- 增加 `scope`（`platform` / `org`）
+- 同 scope + group_name 最多一条 is_active = true
 - 敏感值走 `secrets` 表加密存储
 
 ### C3 -- Worker Pipeline 注入（AS-11.3）
 - 新建 `mw_tool_provider.go`
 - MCPDiscovery 之后、ToolBuild 之前插入
-- 从 DB 读取 org 激活的 Provider，覆盖默认 executor
+- 从 DB 读取 org 激活的 Provider，缺失时回落到 platform 激活的 Provider
+- 覆盖默认 executor
 
 ### C4 -- Console API + UI（AS-11.4 / AS-11.5）
 - CRUD 接口：列出 Provider Group、激活/停用 Provider、配置凭证
@@ -298,6 +300,9 @@ src/apps/shared/
 │   │   └── types.ts      # LoginResponse、MeResponse 等共享类型
 │   ├── storage/
 │   │   └── tokens.ts     # access/refresh token 读写
+│   ├── contexts/
+│   │   ├── ThemeContext.tsx   # 主题切换 context + useTheme hook
+│   │   └── LocaleContext.tsx  # 语言切换 context + useLocale hook
 │   ├── hooks/
 │   │   └── useAuth.ts    # 认证状态 hook（如适用）
 │   └── index.ts
@@ -311,13 +316,22 @@ src/apps/shared/
 | apiFetch | `src/apps/web/src/api.ts` | `src/apps/console/src/api/client.ts` | `@arkloop/shared/api/client` |
 | 类型定义 | `src/apps/web/src/api.ts` | `src/apps/console/src/api/*.ts` | `@arkloop/shared/api/types` |
 | Token 管理 | `src/apps/web/src/storage.ts` | `src/apps/console/src/storage.ts` | `@arkloop/shared/storage/tokens` |
-| Theme 类型 | `src/apps/web/src/contexts/ThemeContext.tsx` | `src/apps/console/src/contexts/ThemeContext.tsx` | `@arkloop/shared/theme` |
+| ThemeContext | `src/apps/web/src/contexts/ThemeContext.tsx` | `src/apps/console/src/contexts/ThemeContext.tsx` | `@arkloop/shared/contexts/ThemeContext` |
+| LocaleContext | `src/apps/web/src/contexts/LocaleContext.tsx` | `src/apps/console/src/contexts/LocaleContext.tsx` | `@arkloop/shared/contexts/LocaleContext` |
 
 迁移原则：只迁移已确认重复的代码，不做预设抽象。Web 和 Console 各自 import `@arkloop/shared` 替换本地实现。
 
-### D3 -- pnpm workspace 配置
+Token key 约束：Web 和 Console 的 access_token 使用相同 localStorage key（`arkloop:web:access_token`），这是有意为之的同域登录态共享。refresh_token key 不同（`arkloop:web:refresh_token` vs `arkloop:console:refresh_token`）。共享 storage 模块必须保留此差异——`readAccessToken` / `writeAccessToken` 共用同一 key，`readRefreshToken` / `writeRefreshToken` 接受 app 标识参数以区分 key 前缀。
 
-根目录 `pnpm-workspace.yaml` 已存在，补充 shared 包声明：
+LocaleContext 说明：两端的 `LocaleContext.tsx` 代码逐字节相同（35 行），但 `LocaleStrings` 接口和 locale 数据（`locales/`）完全不同（Web ~200 key，Console ~1070 key）。共享的是 Context 骨架和 `useLocale` hook，不是 locale 数据本身。各端继续维护自己的 `locales/` 目录，通过泛型或 re-export 注入各自的 `LocaleStrings` 类型。
+
+### D3 -- pnpm workspace 建立
+
+当前状态：根目录不存在 `pnpm-workspace.yaml`（仅 `src/docs/pnpm-workspace.yaml` 存在，内容为 `ignoredBuiltDependencies`，非 workspace 配置）。Web 和 Console 各自持有独立的 `pnpm-lock.yaml`，是两个完全独立的项目。根目录 `package.json` 仅有 `"web": "link:src/apps/web"`。
+
+迁移步骤：
+
+1. 根目录创建 `pnpm-workspace.yaml`：
 ```yaml
 packages:
   - src/apps/shared
@@ -325,12 +339,20 @@ packages:
   - src/apps/console
 ```
 
-Web 和 Console 的 `package.json` 添加：
+2. 删除 `src/apps/web/pnpm-lock.yaml` 和 `src/apps/console/pnpm-lock.yaml`，在根目录执行 `pnpm install` 生成统一 lockfile。
+
+3. 更新根目录 `package.json`，移除 `"web": "link:src/apps/web"`（workspace 自动处理包引用）。
+
+4. Web 和 Console 的 `package.json` 添加：
 ```json
 "dependencies": {
   "@arkloop/shared": "workspace:*"
 }
 ```
+
+5. 检查各端 Vite 配置（`vite.config.ts`），确认 workspace 内部包的 resolve 和 optimizeDeps 不需要额外调整（pnpm workspace + Vite 通常开箱即用，但 monorepo symlink 场景下偶尔需要 `optimizeDeps.include` 或 `resolve.preserveSymlinks`）。
+
+6. 检查各端 `tsconfig.json`，确认 `@arkloop/shared` 的类型解析正确（可能需要 `references` 或 `paths` 配置）。
 
 ---
 
@@ -643,7 +665,7 @@ Track C（Tool Provider）—— 独立，可与 A 并行
   C1 → C2 → C3 → C4
 
 Track D（前端共享）—— 独立，可与 A/C 并行
-  D1 → D2 → D3
+  D3（workspace 搭建）→ D1（shared package）→ D2（代码迁移）
 
 Track E（Agent System 未完成）—— 各项独立
   E1（Persona 路由绑定）

@@ -75,6 +75,18 @@ docker compose ps
 ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN=admin
 ```
 
+## Tool Providers（可选）
+
+`web_search` / `web_fetch` 等工具需要配置后端 Provider 与凭证。
+
+推荐方式（SaaS / 自托管通用）：
+- 用 bootstrap 的 `platform_admin` 登录 Console
+- 在 Tool Providers 中使用 `scope=platform` 配置一次作为全局默认
+- 如需单个租户自定义，再用 `scope=org` 覆盖
+
+兼容方式（仅用于本地快速跑通）：
+- 直接用环境变量配置 legacy `web_search.*` / `web_fetch.*`（例如 `ARKLOOP_WEB_SEARCH_PROVIDER`、`ARKLOOP_WEB_SEARCH_TAVILY_API_KEY`）
+
 ## 查看日志
 
 ```bash
