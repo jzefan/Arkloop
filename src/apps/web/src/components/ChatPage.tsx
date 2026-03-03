@@ -12,6 +12,7 @@ import { ShareModal } from './ShareModal'
 import { ReportModal } from './ReportModal'
 import { NotificationBell } from './NotificationBell'
 import { SourcesPanel } from './SourcesPanel'
+import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
 import { buildMessageThinkingFromRunEvents, selectFreshRunEvents } from '../runEventProcessing'
@@ -80,6 +81,7 @@ type OutletContext = {
   onTogglePrivateMode: () => void
   privateThreadIds: Set<string>
   onSetPendingIncognito: (v: boolean) => void
+  onRightPanelChange?: (open: boolean) => void
 }
 
 type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
@@ -153,7 +155,7 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
 }
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -201,6 +203,9 @@ export function ChatPage() {
   const [messageSearchStepsMap, setMessageSearchStepsMap] = useState<Map<string, MessageSearchStepRef[]>>(new Map())
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
+  // 代码执行侧边面板
+  const [codePanelExecution, setCodePanelExecution] = useState<CodeExecution | null>(null)
+  const lastCodePanelRef = useRef<CodeExecution | null>(null)
   // 关闭动画期间保留上一次的数据
   const lastPanelSourcesRef = useRef<WebSource[] | undefined>(undefined)
   const lastPanelQueryRef = useRef<string | undefined>(undefined)
@@ -1220,9 +1225,25 @@ export function ChatPage() {
   // 保留最近一次数据，使关闭时面板内容在过渡动画期间仍可见
   if (sourcePanelSources) lastPanelSourcesRef.current = sourcePanelSources
   if (sourcePanelUserQuery !== undefined) lastPanelQueryRef.current = sourcePanelUserQuery
+  if (codePanelExecution) lastCodePanelRef.current = codePanelExecution
   const panelDisplaySources = sourcePanelSources ?? lastPanelSourcesRef.current
   const panelDisplayQuery = sourcePanelUserQuery ?? lastPanelQueryRef.current
-  const isPanelOpen = !!(sourcePanelSources && sourcePanelSources.length > 0)
+  const codePanelDisplay = codePanelExecution ?? lastCodePanelRef.current
+  const isSourcePanelOpen = !!(sourcePanelSources && sourcePanelSources.length > 0)
+  const isCodePanelOpen = !!codePanelExecution
+  const isPanelOpen = isSourcePanelOpen || isCodePanelOpen
+
+  const openCodePanel = useCallback((ce: CodeExecution) => {
+    setCodePanelExecution((prev) => {
+      if (prev?.id === ce.id) {
+        onRightPanelChange?.(false)
+        return null
+      }
+      setSourcePanelMessageId(null)
+      onRightPanelChange?.(true)
+      return ce
+    })
+  }, [onRightPanelChange])
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -1310,7 +1331,7 @@ export function ChatPage() {
                   {msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
                       {messageCodeExecutionsMap.get(msg.id)!.map((ce) => (
-                        <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                        <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
                       ))}
                     </div>
                   )}
@@ -1346,7 +1367,14 @@ export function ChatPage() {
                     accessToken={accessToken}
                     onShowSources={
                       msg.role === 'assistant' && canShowSources
-                        ? () => setSourcePanelMessageId((prev) => prev === msg.id ? null : msg.id)
+                        ? () => {
+                            setCodePanelExecution(null)
+                            setSourcePanelMessageId((prev) => {
+                              const next = prev === msg.id ? null : msg.id
+                              onRightPanelChange?.(next !== null)
+                              return next
+                            })
+                          }
                         : undefined
                     }
                   />
@@ -1377,6 +1405,7 @@ export function ChatPage() {
                   content={seg.content}
                   isStreaming={seg.isStreaming}
                   codeExecutions={seg.codeExecutions}
+                  onOpenCodeExecution={openCodePanel}
                 />
               ))}
 
@@ -1396,7 +1425,7 @@ export function ChatPage() {
               {topLevelCodeExecutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {topLevelCodeExecutions.map((ce) => (
-                    <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                    <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
                   ))}
                 </div>
               )}
@@ -1548,22 +1577,30 @@ export function ChatPage() {
       </div>
 
         </div>
-        {/* sources 侧边面板 - width 过渡驱动整体布局动画 */}
+        {/* 右侧面板 - width 过渡驱动整体布局动画 */}
         <div
           style={{
-            width: (sourcePanelSources && sourcePanelSources.length > 0) ? '420px' : '0px',
+            width: isPanelOpen ? '420px' : '0px',
             overflow: 'hidden',
             flexShrink: 0,
             transition: 'width 280ms cubic-bezier(0.16,1,0.3,1)',
-            borderLeft: panelDisplaySources ? '0.5px solid var(--c-border-subtle)' : 'none',
+            borderLeft: (panelDisplaySources || codePanelDisplay) ? '0.5px solid var(--c-border-subtle)' : 'none',
           }}
         >
-          {panelDisplaySources && panelDisplaySources.length > 0 && (
+          {isSourcePanelOpen && panelDisplaySources && panelDisplaySources.length > 0 && (
             <div style={{ width: '420px', height: '100%' }}>
               <SourcesPanel
                 sources={panelDisplaySources}
                 userQuery={panelDisplayQuery}
-                onClose={() => setSourcePanelMessageId(null)}
+                onClose={() => { setSourcePanelMessageId(null); onRightPanelChange?.(false) }}
+              />
+            </div>
+          )}
+          {isCodePanelOpen && codePanelDisplay && (
+            <div style={{ width: '420px', height: '100%' }}>
+              <CodeExecutionPanel
+                execution={codePanelDisplay}
+                onClose={() => { setCodePanelExecution(null); onRightPanelChange?.(false) }}
               />
             </div>
           )}

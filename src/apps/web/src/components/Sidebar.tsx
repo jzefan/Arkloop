@@ -38,6 +38,7 @@ type Props = {
   isSearchMode: boolean
   onThreadTitleUpdated: (threadId: string, title: string) => void
   onThreadDeleted: (threadId: string) => void
+  narrow?: boolean
 }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
@@ -60,6 +61,7 @@ export function Sidebar({
   isSearchMode,
   onThreadTitleUpdated,
   onThreadDeleted,
+  narrow,
 }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -171,13 +173,14 @@ export function Sidebar({
     <aside
       className={[
         'flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)] transition-all duration-300',
-        collapsed ? 'w-0' : 'w-[304px]',
+        collapsed ? 'w-0' : narrow ? 'w-[240px]' : 'w-[304px]',
       ].join(' ')}
       style={collapsed ? undefined : { borderRight: '0.5px solid rgba(0,0,0,0.16)' }}
     >
       <div
         className={[
-          'flex min-h-0 min-w-[304px] flex-1 flex-col transition-opacity',
+          'flex min-h-0 flex-1 flex-col transition-opacity',
+          narrow ? 'min-w-[240px]' : 'min-w-[304px]',
           collapsed ? 'opacity-0 duration-100' : 'opacity-100 delay-150 duration-200',
         ].join(' ')}
       >

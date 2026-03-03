@@ -350,27 +350,10 @@ const mdComponents: Components = {
     return <CodeBlockWrapper>{children}</CodeBlockWrapper>
   },
 
-  code: ({ className, children }) => {
-    // block code (inside pre) - pass className through for hljs
-    if (className?.includes('language-')) {
-      return <code className={className}>{children}</code>
-    }
-    return (
-      <code
-        style={{
-          background: 'var(--c-md-inline-code-bg, var(--c-bg-deep))',
-          borderRadius: '4px',
-          padding: '1px 5px',
-          fontSize: '0.875em',
-          fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
-          color: 'var(--c-text-secondary)',
-          border: '0.5px solid var(--c-border-subtle)',
-        }}
-      >
-        {children}
-      </code>
-    )
-  },
+  // 内联/块级区分通过 CSS .md-content :not(pre) > code 处理
+  code: ({ className, children }) => (
+    <code className={className}>{children}</code>
+  ),
 
   p: ({ children }) => (
     <p style={{ color: 'var(--c-text-primary)', fontSize: '16px', lineHeight: 1.6, letterSpacing: '0.16px', margin: '0 0 1em' }}>
@@ -490,7 +473,7 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
   return (
     <ArtifactsContext.Provider value={artifactsValue}>
       <WebSourcesContext.Provider value={webSources ?? []}>
-        <div style={{ maxWidth: '100%' }}>
+        <div className="md-content" style={{ maxWidth: '100%' }}>
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}
