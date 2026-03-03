@@ -149,19 +149,17 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		anthropicVersion = *advancedCfg.Version
 	}
 
-	if g.cfg.EmitDebugEvents {
-		baseURL := g.cfg.BaseURL
-		path := "/messages"
-		if err := yield(StreamLlmRequest{
-			LlmCallID:    llmCallID,
-			ProviderKind: "anthropic",
-			APIMode:      "messages",
-			BaseURL:      &baseURL,
-			Path:         &path,
-			PayloadJSON:  payload,
-		}); err != nil {
-			return err
-		}
+	baseURL := g.cfg.BaseURL
+	path := "/messages"
+	if err := yield(StreamLlmRequest{
+		LlmCallID:    llmCallID,
+		ProviderKind: "anthropic",
+		APIMode:      "messages",
+		BaseURL:      &baseURL,
+		Path:         &path,
+		PayloadJSON:  payload,
+	}); err != nil {
+		return err
 	}
 
 	encoded, err := json.Marshal(payload)

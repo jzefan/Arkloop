@@ -18,18 +18,22 @@ export type LlmTurn = {
     resultJSON?: Record<string, unknown>
     errorClass?: string
   }>
+  model?: string
+  systemPrompt?: string
+  toolCount?: number
+  toolNames?: string[]
+  messageCount?: number
+  temperature?: number
+  maxOutputTokens?: number
 }
 
 /** 从 run_events 数组重建轮次列表 */
 export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
-  const hasLlmRequest = events.some((e) => e.type === 'llm.request')
-  return hasLlmRequest
-    ? buildTurnsFromDebugEvents(events)
-    : buildTurnsFromBasicEvents(events)
+  return buildTurnsFromLlmRequests(events)
 }
 
-/** EmitDebugEvents=true：从 llm.request 精确重建 */
-function buildTurnsFromDebugEvents(events: RunEventRaw[]): LlmTurn[] {
+/** 从 llm.request 事件精确重建轮次 */
+function buildTurnsFromLlmRequests(events: RunEventRaw[]): LlmTurn[] {
   const turns: LlmTurn[] = []
   let current: LlmTurn | null = null
   const assistantChunks: string[] = []
@@ -52,6 +56,13 @@ function buildTurnsFromDebugEvents(events: RunEventRaw[]): LlmTurn[] {
           break
         }
       }
+
+      // 提取 LLM 请求元数据
+      const systemMsg = messages.find((m) => m.role === 'system')
+      const systemPrompt = systemMsg ? extractMessageText(systemMsg) : undefined
+      const tools = Array.isArray(payload?.tools) ? (payload.tools as Array<Record<string, unknown>>) : []
+      const toolNames = tools.map((t) => String(t.name ?? t.function?.name ?? '')).filter(Boolean)
+
       current = {
         llmCallId: String(d.llm_call_id ?? ''),
         providerKind: String(d.provider_kind ?? ''),
@@ -59,6 +70,17 @@ function buildTurnsFromDebugEvents(events: RunEventRaw[]): LlmTurn[] {
         userInput,
         assistantText: '',
         toolCalls: [],
+        model: payload?.model != null ? String(payload.model) : undefined,
+        systemPrompt,
+        toolCount: tools.length > 0 ? tools.length : undefined,
+        toolNames: toolNames.length > 0 ? toolNames : undefined,
+        messageCount: messages.length > 0 ? messages.length : undefined,
+        temperature: typeof payload?.temperature === 'number' ? payload.temperature : undefined,
+        maxOutputTokens: typeof payload?.max_tokens === 'number'
+          ? payload.max_tokens
+          : typeof payload?.max_output_tokens === 'number'
+            ? payload.max_output_tokens
+            : undefined,
       }
       turns.push(current)
     } else if (ev.type === 'message.delta' && current) {
@@ -93,97 +115,6 @@ function buildTurnsFromDebugEvents(events: RunEventRaw[]): LlmTurn[] {
 
   if (current && assistantChunks.length > 0) {
     current.assistantText = assistantChunks.join('')
-  }
-
-  mergeTurnResults(turns, resultMap)
-  return turns
-}
-
-/** EmitDebugEvents=false：从 message.delta / tool.* 重建（无 payload，无精确 call ID） */
-function buildTurnsFromBasicEvents(events: RunEventRaw[]): LlmTurn[] {
-  // 先提取 provider 信息（来自 run.route.selected）
-  let providerKind = ''
-  for (const ev of events) {
-    if (ev.type === 'run.route.selected') {
-      providerKind = String((ev.data as Record<string, unknown>).provider_kind ?? '')
-      break
-    }
-  }
-
-  const turns: LlmTurn[] = []
-  const resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }> = {}
-
-  type Phase = 'llm' | 'tools'
-  let phase: Phase = 'llm'
-  let current: LlmTurn | null = null
-  const chunks: string[] = []
-  let turnIndex = 0
-
-  for (const ev of events) {
-    switch (ev.type) {
-      case 'message.delta': {
-        const d = ev.data as Record<string, unknown>
-        // 跳过非 assistant role
-        if (d.role !== undefined && d.role !== null && d.role !== 'assistant') break
-
-        if (phase === 'tools') {
-          // tool results 之后遇到新 message.delta → 新轮次
-          if (current) current.assistantText = chunks.join('')
-          chunks.length = 0
-          phase = 'llm'
-          current = { llmCallId: `turn-${turnIndex++}`, providerKind, apiMode: '', assistantText: '', toolCalls: [] }
-          turns.push(current)
-        }
-
-        if (current === null) {
-          current = { llmCallId: `turn-${turnIndex++}`, providerKind, apiMode: '', assistantText: '', toolCalls: [] }
-          turns.push(current)
-        }
-        chunks.push(String(d.content_delta ?? ''))
-        break
-      }
-
-      case 'tool.call': {
-        if (current) {
-          const d = ev.data as Record<string, unknown>
-          current.toolCalls.push({
-            toolCallId: String(d.tool_call_id ?? ''),
-            toolName: String(d.tool_name ?? ev.tool_name ?? ''),
-            argsJSON: (d.arguments as Record<string, unknown>) ?? {},
-          })
-        }
-        break
-      }
-
-      case 'tool.result': {
-        const d = ev.data as Record<string, unknown>
-        resultMap[String(d.tool_call_id ?? '')] = {
-          resultJSON: d.result as Record<string, unknown> | undefined,
-          errorClass: ev.error_class,
-        }
-        phase = 'tools'
-        break
-      }
-
-      case 'run.completed':
-      case 'run.failed': {
-        if (current) {
-          if (chunks.length > 0) current.assistantText = chunks.join('')
-          chunks.length = 0
-          const usage = (ev.data as Record<string, unknown>).usage as Record<string, unknown> | undefined
-          if (usage) {
-            current.inputTokens = usage.input_tokens as number | undefined
-            current.outputTokens = usage.output_tokens as number | undefined
-          }
-        }
-        current = null
-        break
-      }
-    }
-  }
-
-  if (current && chunks.length > 0) {
-    current.assistantText = chunks.join('')
   }
 
   mergeTurnResults(turns, resultMap)
@@ -296,6 +227,7 @@ export function TurnView({ turn, index }: TurnViewProps) {
         <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono font-medium text-[var(--c-text-secondary)]">
           Turn {index + 1}
         </span>
+        {turn.model && <span className="font-medium text-[var(--c-text-secondary)]">{turn.model}</span>}
         <span>{turn.providerKind}</span>
         {turn.apiMode && <span className="opacity-60">· {turn.apiMode}</span>}
         {tokenLabel && (
@@ -303,11 +235,61 @@ export function TurnView({ turn, index }: TurnViewProps) {
         )}
       </div>
 
+      {/* 元数据标签行 */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {turn.toolCount != null && (
+          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--c-text-muted)]">
+            {turn.toolCount} tools
+          </span>
+        )}
+        {turn.messageCount != null && (
+          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--c-text-muted)]">
+            {turn.messageCount} msgs
+          </span>
+        )}
+        {turn.temperature != null && (
+          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--c-text-muted)]">
+            temp {turn.temperature}
+          </span>
+        )}
+        {turn.maxOutputTokens != null && (
+          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--c-text-muted)]">
+            max {turn.maxOutputTokens}
+          </span>
+        )}
+      </div>
+
+      {/* System Prompt */}
+      {turn.systemPrompt && (
+        <CollapseBlock
+          label="System"
+          preview={turn.systemPrompt.slice(0, 80) + (turn.systemPrompt.length > 80 ? '...' : '')}
+        >
+          <PreText text={turn.systemPrompt} />
+        </CollapseBlock>
+      )}
+
+      {/* Tools 列表 */}
+      {turn.toolNames && turn.toolNames.length > 0 && (
+        <CollapseBlock
+          label={`Tools (${turn.toolNames.length})`}
+          preview={turn.toolNames.slice(0, 5).join(', ') + (turn.toolNames.length > 5 ? ', ...' : '')}
+        >
+          <div className="flex flex-wrap gap-1">
+            {turn.toolNames.map((name) => (
+              <span key={name} className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--c-text-secondary)]">
+                {name}
+              </span>
+            ))}
+          </div>
+        </CollapseBlock>
+      )}
+
       {/* 本轮输入（折叠，预览截断 80 字） */}
       {turn.userInput != null && (
         <CollapseBlock
           label="Input"
-          preview={turn.userInput.slice(0, 80) + (turn.userInput.length > 80 ? '…' : '')}
+          preview={turn.userInput.slice(0, 80) + (turn.userInput.length > 80 ? '...' : '')}
         >
           <PreText text={turn.userInput} />
         </CollapseBlock>
@@ -346,7 +328,7 @@ export function TurnView({ turn, index }: TurnViewProps) {
       {turn.assistantText && (
         <CollapseBlock
           label="Assistant"
-          preview={turn.assistantText.slice(0, 80) + (turn.assistantText.length > 80 ? '…' : '')}
+          preview={turn.assistantText.slice(0, 80) + (turn.assistantText.length > 80 ? '...' : '')}
         >
           <PreText text={turn.assistantText} />
         </CollapseBlock>
