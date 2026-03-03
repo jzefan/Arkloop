@@ -81,13 +81,23 @@ func main() {
 }
 
 func run() error {
-	l, err := vsock.Listen(listenPort, nil)
-	if err != nil {
-		return fmt.Errorf("vsock listen :%d: %w", listenPort, err)
+	var l net.Listener
+	var err error
+
+	if os.Getenv("SANDBOX_AGENT_LISTEN") == "tcp" {
+		l, err = net.Listen("tcp", fmt.Sprintf(":%d", listenPort))
+		if err != nil {
+			return fmt.Errorf("tcp listen :%d: %w", listenPort, err)
+		}
+		fmt.Fprintf(os.Stderr, "sandbox-agent listening on tcp port %d\n", listenPort)
+	} else {
+		l, err = vsock.Listen(listenPort, nil)
+		if err != nil {
+			return fmt.Errorf("vsock listen :%d: %w", listenPort, err)
+		}
+		fmt.Fprintf(os.Stderr, "sandbox-agent listening on vsock port %d\n", listenPort)
 	}
 	defer l.Close()
-
-	fmt.Fprintf(os.Stderr, "sandbox-agent listening on vsock port %d\n", listenPort)
 
 	for {
 		conn, err := l.Accept()

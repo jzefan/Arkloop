@@ -7,8 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"arkloop/services/sandbox/internal/firecracker"
 )
 
 // PoolStats 是 VMPool 的运行时统计。
@@ -67,7 +65,7 @@ type createResult struct {
 
 // GetOrCreate 返回已有 Session；若不存在则从 VMPool 获取一个 VM 并绑定。
 func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier string) (*Session, error) {
-	if err := firecracker.ValidTier(tier); err != nil {
+	if err := ValidTier(tier); err != nil {
 		return nil, err
 	}
 

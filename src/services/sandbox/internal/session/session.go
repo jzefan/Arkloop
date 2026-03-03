@@ -51,14 +51,19 @@ type agentResponse struct {
 	Error     string                `json:"error,omitempty"`
 }
 
-// Session 对应一个 Firecracker microVM 的执行上下文。
+// Dialer 抽象与 Guest Agent 的连接建立。
+// Firecracker 使用 vsock，Docker 使用 TCP。
+type Dialer func(ctx context.Context) (net.Conn, error)
+
+// Session 对应一个隔离执行环境（Firecracker microVM 或 Docker 容器）的执行上下文。
 type Session struct {
 	ID        string
 	Tier      string
-	VsockPath string    // Firecracker vsock UDS 路径
-	AgentPort uint32    // Guest Agent 的 vsock 端口号
 	CreatedAt time.Time
-	SocketDir string    // microVM socket 目录的实际路径（用于清理）
+	SocketDir string // 关联资源目录的实际路径（用于清理）
+
+	// 与 Guest Agent 建立连接的方式，由具体 Pool 实现注入
+	Dial Dialer
 
 	// 超时管理
 	LastActiveAt time.Time
@@ -121,7 +126,7 @@ func (s *Session) StopTimers() {
 	}
 }
 
-// Exec 在 Session 关联的 microVM Guest Agent 中执行代码。
+// Exec 在 Session 关联的隔离环境 Guest Agent 中执行代码。
 func (s *Session) Exec(ctx context.Context, job ExecJob) (*ExecResult, error) {
 	s.TouchActivity()
 
@@ -130,10 +135,10 @@ func (s *Session) Exec(ctx context.Context, job ExecJob) (*ExecResult, error) {
 		timeout = 30 * time.Second
 	}
 
-	execCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second) // +5s for vsock overhead
+	execCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
 
-	conn, err := s.connectToAgent(execCtx)
+	conn, err := s.Dial(execCtx)
 	if err != nil {
 		return nil, fmt.Errorf("connect to agent: %w", err)
 	}
@@ -153,12 +158,12 @@ func (s *Session) Exec(ctx context.Context, job ExecJob) (*ExecResult, error) {
 	return &result, nil
 }
 
-// FetchArtifacts 通过 vsock 请求 guest agent 返回输出目录中的文件。
+// FetchArtifacts 请求 guest agent 返回输出目录中的文件。
 func (s *Session) FetchArtifacts(ctx context.Context) (*FetchArtifactsResult, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	conn, err := s.connectToAgent(fetchCtx)
+	conn, err := s.Dial(fetchCtx)
 	if err != nil {
 		return nil, fmt.Errorf("connect to agent: %w", err)
 	}
@@ -184,35 +189,44 @@ func (s *Session) FetchArtifacts(ctx context.Context) (*FetchArtifactsResult, er
 	return resp.Artifacts, nil
 }
 
-// connectToAgent 通过 Firecracker vsock 握手协议建立 HOST→GUEST 连接。
+// NewVsockDialer 创建 Firecracker vsock 连接的 Dialer。
 //
-// Firecracker vsock 握手：
-//   HOST: CONNECT {port}\n
-//   GUEST: OK {ephemeral_port}\n
-func (s *Session) connectToAgent(ctx context.Context) (net.Conn, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", s.VsockPath)
-	if err != nil {
-		return nil, err
-	}
+// Firecracker vsock 握手协议：
+//
+//	HOST: CONNECT {port}\n
+//	GUEST: OK {ephemeral_port}\n
+func NewVsockDialer(vsockPath string, agentPort uint32) Dialer {
+	return func(ctx context.Context) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", vsockPath)
+		if err != nil {
+			return nil, err
+		}
 
-	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", s.AgentPort); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("vsock handshake write: %w", err)
-	}
+		if _, err := fmt.Fprintf(conn, "CONNECT %d\n", agentPort); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("vsock handshake write: %w", err)
+		}
 
-	reader := bufio.NewReaderSize(conn, 64)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("vsock handshake read: %w", err)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(line), "OK") {
-		conn.Close()
-		return nil, fmt.Errorf("vsock handshake failed: %q", line)
-	}
+		reader := bufio.NewReaderSize(conn, 64)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("vsock handshake read: %w", err)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(line), "OK") {
+			conn.Close()
+			return nil, fmt.Errorf("vsock handshake failed: %q", line)
+		}
 
-	// reader 可能已缓冲部分数据；包装成可读写 conn
-	return &vsockConn{Conn: conn, reader: reader}, nil
+		return &vsockConn{Conn: conn, reader: reader}, nil
+	}
+}
+
+// NewTCPDialer 创建 TCP 连接的 Dialer（用于 Docker 后端）。
+func NewTCPDialer(addr string) Dialer {
+	return func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
 }
 
 // vsockConn 将 bufio.Reader（握手后可能有缓冲）和原始 Conn 合并为 net.Conn。
