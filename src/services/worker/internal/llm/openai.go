@@ -145,19 +145,17 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		}
 	}
 
-	if g.cfg.EmitDebugEvents {
-		baseURL := g.cfg.BaseURL
-		path := "/chat/completions"
-		if err := yield(StreamLlmRequest{
-			LlmCallID:    llmCallID,
-			ProviderKind: "openai",
-			APIMode:      "chat_completions",
-			BaseURL:      &baseURL,
-			Path:         &path,
-			PayloadJSON:  payload,
-		}); err != nil {
-			return err
-		}
+	baseURL := g.cfg.BaseURL
+	path := "/chat/completions"
+	if err := yield(StreamLlmRequest{
+		LlmCallID:    llmCallID,
+		ProviderKind: "openai",
+		APIMode:      "chat_completions",
+		BaseURL:      &baseURL,
+		Path:         &path,
+		PayloadJSON:  payload,
+	}); err != nil {
+		return err
 	}
 
 	encoded, err := json.Marshal(payload)
@@ -339,19 +337,17 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		}
 	}
 
-	if g.cfg.EmitDebugEvents {
-		baseURL := g.cfg.BaseURL
-		path := "/responses"
-		if err := yield(StreamLlmRequest{
-			LlmCallID:    llmCallID,
-			ProviderKind: "openai",
-			APIMode:      "responses",
-			BaseURL:      &baseURL,
-			Path:         &path,
-			PayloadJSON:  payload,
-		}); err != nil {
-			return err
-		}
+	baseURL := g.cfg.BaseURL
+	path := "/responses"
+	if err := yield(StreamLlmRequest{
+		LlmCallID:    llmCallID,
+		ProviderKind: "openai",
+		APIMode:      "responses",
+		BaseURL:      &baseURL,
+		Path:         &path,
+		PayloadJSON:  payload,
+	}); err != nil {
+		return err
 	}
 
 	encoded, err := json.Marshal(payload)

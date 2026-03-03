@@ -461,32 +461,6 @@ func summarizeRunEvents(events []data.RunEvent) (
 			stats.ProviderFallbacks++
 		}
 	}
-	// EmitDebugEvents=false 时 llm.request 不存在，通过 message.delta / tool.result 状态机推断轮次
-	if stats.LlmTurns == 0 {
-		type phase int
-		const (
-			phaseIdle  phase = iota
-			phaseInLLM       // 正在接收 LLM 输出
-			phaseInTools     // 工具执行中，等待下一轮 LLM
-		)
-		p := phaseIdle
-		for _, ev := range events {
-			switch ev.Type {
-			case "message.delta":
-				if p == phaseIdle {
-					stats.LlmTurns++
-					p = phaseInLLM
-				} else if p == phaseInTools {
-					stats.LlmTurns++
-					p = phaseInLLM
-				}
-			case "tool.result":
-				if p == phaseInLLM {
-					p = phaseInTools
-				}
-			}
-		}
-	}
 	return stats, routeModel, providerKind, credentialID, credentialName, agentConfigName
 }
 

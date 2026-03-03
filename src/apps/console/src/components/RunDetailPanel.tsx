@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { X, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react'
 import type { GlobalRun, AdminRunDetail, AdminRunUsageItem, AdminRunUsageAggregate, RunEventRaw } from '../api/runs'
 import { getAdminRunDetail, fetchRunEventsOnce } from '../api/runs'
 import { TurnView, buildTurns } from './TurnView'
@@ -104,12 +104,24 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
   const [detailLoading, setDetailLoading] = useState(false)
   const [events, setEvents] = useState<RunEventRaw[] | null>(null)
   const [eventsLoading, setEventsLoading] = useState(false)
+  const [navStack, setNavStack] = useState<GlobalRun[]>([])
   const { t } = useLocale()
   const rt = t.pages.runs
 
+  // 当前正在查看的 run（可能是子 run）
+  const [activeRun, setActiveRun] = useState<GlobalRun | null>(null)
+
+  // 外部 run prop 变化时，重置导航栈
+  useEffect(() => {
+    setActiveRun(run)
+    setNavStack([])
+  }, [run])
+
+  const currentRun = activeRun
+
   // 面板打开时加载 summary
   useEffect(() => {
-    if (!run) {
+    if (!currentRun) {
       setDetail(null)
       setEvents(null)
       return
@@ -117,21 +129,39 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
     setDetail(null)
     setEvents(null)
     setDetailLoading(true)
-    getAdminRunDetail(run.run_id, accessToken)
+    getAdminRunDetail(currentRun.run_id, accessToken)
       .then(setDetail)
       .catch(() => {/* 静默，面板仍可展示列表数据 */})
       .finally(() => setDetailLoading(false))
-  }, [run, accessToken])
+  }, [currentRun, accessToken])
 
   // Conversation 展开时懒加载事件流
   const loadEvents = useCallback(() => {
-    if (!run || events !== null) return
+    if (!currentRun || events !== null) return
     setEventsLoading(true)
-    fetchRunEventsOnce(run.run_id, accessToken)
+    fetchRunEventsOnce(currentRun.run_id, accessToken)
       .then(setEvents)
       .catch(() => setEvents([]))
       .finally(() => setEventsLoading(false))
-  }, [run, events, accessToken])
+  }, [currentRun, events, accessToken])
+
+  // 导航到子 Run
+  const navigateToChild = useCallback((child: GlobalRun) => {
+    if (!currentRun) return
+    setNavStack((prev) => [...prev, currentRun])
+    setActiveRun(child)
+  }, [currentRun])
+
+  // 返回上一级
+  const navigateBack = useCallback(() => {
+    setNavStack((prev) => {
+      if (prev.length === 0) return prev
+      const next = [...prev]
+      const parent = next.pop()!
+      setActiveRun(parent)
+      return next
+    })
+  }, [])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() },
@@ -144,6 +174,8 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
 
   if (!run) return null
 
+  // currentRun 可能是子 run，所有渲染基于 currentRun
+  const r = currentRun ?? run
   const d = detail
   const turns = events ? buildTurns(events) : []
 
@@ -165,25 +197,25 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
   const usageAggregate = d?.total_aggregate
 
   const selfUsageItem: AdminRunUsageItem = {
-    run_id: run.run_id,
-    org_id: run.org_id,
-    thread_id: run.thread_id,
-    parent_run_id: run.parent_run_id,
-    status: run.status,
-    persona_id: d?.persona_id ?? run.persona_id,
-    model: d?.model ?? run.model,
+    run_id: r.run_id,
+    org_id: r.org_id,
+    thread_id: r.thread_id,
+    parent_run_id: r.parent_run_id,
+    status: r.status,
+    persona_id: d?.persona_id ?? r.persona_id,
+    model: d?.model ?? r.model,
     provider_kind: d?.provider_kind,
     credential_name: d?.credential_name,
     agent_config_name: d?.agent_config_name,
-    duration_ms: d?.duration_ms ?? run.duration_ms,
-    total_input_tokens: d?.total_input_tokens ?? run.total_input_tokens,
-    total_output_tokens: d?.total_output_tokens ?? run.total_output_tokens,
-    total_cost_usd: d?.total_cost_usd ?? run.total_cost_usd,
-    cache_hit_rate: run.cache_hit_rate,
-    credits_used: run.credits_used,
-    created_at: run.created_at,
-    completed_at: d?.completed_at ?? run.completed_at,
-    failed_at: d?.failed_at ?? run.failed_at,
+    duration_ms: d?.duration_ms ?? r.duration_ms,
+    total_input_tokens: d?.total_input_tokens ?? r.total_input_tokens,
+    total_output_tokens: d?.total_output_tokens ?? r.total_output_tokens,
+    total_cost_usd: d?.total_cost_usd ?? r.total_cost_usd,
+    cache_hit_rate: r.cache_hit_rate,
+    credits_used: r.credits_used,
+    created_at: r.created_at,
+    completed_at: d?.completed_at ?? r.completed_at,
+    failed_at: d?.failed_at ?? r.failed_at,
   }
 
   return createPortal(
@@ -195,16 +227,31 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
       />
       {/* 侧边栏 */}
       <div className="fixed inset-y-0 right-0 z-50 flex w-[500px] max-w-full flex-col border-l border-[var(--c-border)] bg-[var(--c-bg-deep2)] shadow-2xl">
+        {/* 面包屑导航（存在导航栈时显示） */}
+        {navStack.length > 0 && (
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--c-border-console)] px-4 py-2 text-xs">
+            <button
+              onClick={navigateBack}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
+            >
+              <ArrowLeft size={12} />
+              <span className="font-mono">{navStack[navStack.length - 1].run_id.slice(0, 8)}</span>
+            </button>
+            <span className="text-[var(--c-text-muted)]">/</span>
+            <span className="font-mono text-[var(--c-text-secondary)]">{r.run_id.slice(0, 8)}</span>
+          </div>
+        )}
+
         {/* 顶部标题栏 */}
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--c-border-console)] px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-[var(--c-text-muted)]" title={run.run_id}>
-              {run.run_id.slice(0, 12)}…
+            <span className="font-mono text-xs text-[var(--c-text-muted)]" title={r.run_id}>
+              {r.run_id.slice(0, 12)}...
             </span>
-            <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
-            {(d?.duration_ms ?? run.duration_ms) != null && (
+            <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+            {(d?.duration_ms ?? r.duration_ms) != null && (
               <span className="text-xs text-[var(--c-text-muted)]">
-                {formatDuration(d?.duration_ms ?? run.duration_ms)}
+                {formatDuration(d?.duration_ms ?? r.duration_ms)}
               </span>
             )}
           </div>
@@ -225,44 +272,44 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
             <div className="divide-y divide-[var(--c-border-console)]">
               <div className="pb-2">
                 <MetaRow label={rt.labelUser} value={
-                  (d?.created_by_user_name ?? run.created_by_user_name)
-                    ? `${d?.created_by_user_name ?? run.created_by_user_name}${(d?.created_by_email ?? run.created_by_email) ? `  ·  ${d?.created_by_email ?? run.created_by_email}` : ''}`
-                    : (d?.created_by_user_id ?? run.created_by_user_id)
+                  (d?.created_by_user_name ?? r.created_by_user_name)
+                    ? `${d?.created_by_user_name ?? r.created_by_user_name}${(d?.created_by_email ?? r.created_by_email) ? `  ·  ${d?.created_by_email ?? r.created_by_email}` : ''}`
+                    : (d?.created_by_user_id ?? r.created_by_user_id)
                 } />
-                <MetaRow label={rt.labelThread} value={run.thread_id} mono />
-                <MetaRow label={rt.labelOrg} value={run.org_id} mono />
-                <MetaRow label={rt.labelPersona} value={d?.persona_id ?? run.persona_id} />
+                <MetaRow label={rt.labelThread} value={r.thread_id} mono />
+                <MetaRow label={rt.labelOrg} value={r.org_id} mono />
+                <MetaRow label={rt.labelPersona} value={d?.persona_id ?? r.persona_id} />
               </div>
               <div className="pt-2">
                 <MetaRow label={rt.labelAgentConfig} value={d?.agent_config_name} />
                 <MetaRow label={rt.labelCredential} value={d?.credential_name} />
-                <MetaRow label={rt.labelModel} value={d?.model ?? run.model} />
+                <MetaRow label={rt.labelModel} value={d?.model ?? r.model} />
                 <MetaRow
                   label={rt.labelTokens}
                   value={
-                    (d?.total_input_tokens ?? run.total_input_tokens) != null
-                      ? `${d?.total_input_tokens ?? run.total_input_tokens} in / ${d?.total_output_tokens ?? run.total_output_tokens ?? 0} out`
+                    (d?.total_input_tokens ?? r.total_input_tokens) != null
+                      ? `${d?.total_input_tokens ?? r.total_input_tokens} in / ${d?.total_output_tokens ?? r.total_output_tokens ?? 0} out`
                       : undefined
                   }
                 />
-                <MetaRow label={rt.labelCost} value={formatCost(d?.total_cost_usd ?? run.total_cost_usd)} />
-                {run.credits_used != null && (
-                  <MetaRow label={rt.labelCreditsUsed} value={String(run.credits_used)} />
+                <MetaRow label={rt.labelCost} value={formatCost(d?.total_cost_usd ?? r.total_cost_usd)} />
+                {r.credits_used != null && (
+                  <MetaRow label={rt.labelCreditsUsed} value={String(r.credits_used)} />
                 )}
-                {run.cache_hit_rate != null && (
+                {r.cache_hit_rate != null && (
                   <MetaRow
                     label={rt.labelCacheHit}
-                    value={`${(run.cache_hit_rate * 100).toFixed(0)}%`}
+                    value={`${(r.cache_hit_rate * 100).toFixed(0)}%`}
                   />
                 )}
               </div>
               <div className="pt-2">
-                <MetaRow label={rt.labelCreated} value={new Date(run.created_at).toLocaleString()} />
-                {(d?.completed_at ?? run.completed_at) && (
-                  <MetaRow label={rt.labelCompleted} value={new Date((d?.completed_at ?? run.completed_at)!).toLocaleString()} />
+                <MetaRow label={rt.labelCreated} value={new Date(r.created_at).toLocaleString()} />
+                {(d?.completed_at ?? r.completed_at) && (
+                  <MetaRow label={rt.labelCompleted} value={new Date((d?.completed_at ?? r.completed_at)!).toLocaleString()} />
                 )}
-                {(d?.failed_at ?? run.failed_at) && (
-                  <MetaRow label={rt.labelFailedAt} value={new Date((d?.failed_at ?? run.failed_at)!).toLocaleString()} />
+                {(d?.failed_at ?? r.failed_at) && (
+                  <MetaRow label={rt.labelFailedAt} value={new Date((d?.failed_at ?? r.failed_at)!).toLocaleString()} />
                 )}
               </div>
             </div>
@@ -279,7 +326,7 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
                 self={selfUsageItem}
                 children={usageChildren}
                 aggregate={usageAggregate}
-                onOpenRun={onOpenRun}
+                onOpenRun={navigateToChild}
               />
             </Section>
           )}
@@ -323,11 +370,7 @@ export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) 
               <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.noEvents}</p>
             )}
             {events && events.length > 0 && (
-              <div className="space-y-1">
-                {events.map((ev) => (
-                  <RawEventRow key={ev.seq} event={ev} />
-                ))}
-              </div>
+              <RawEventsSectionContent events={events} />
             )}
           </Section>
         </div>
@@ -553,6 +596,191 @@ function RawEventRow({ event }: RawEventRowProps) {
           </pre>
         </div>
       )}
+    </div>
+  )
+}
+
+// ---- Raw Events 过滤与 Delta 合并 ----
+
+const EVENT_CATEGORIES: Record<string, string[]> = {
+  LLM:       ['llm.request', 'run.route.selected', 'run.provider_fallback', 'run.llm.retry'],
+  Tools:     ['tool.call', 'tool.result', 'tool.denied'],
+  Lifecycle: ['run.started', 'run.completed', 'run.failed', 'run.cancelled', 'run.cancel_requested'],
+  Streaming: ['message.delta', 'llm.response.chunk', 'run.segment.start', 'run.segment.end'],
+  Input:     ['run.input_requested', 'run.input_provided'],
+}
+
+function categoryOf(type: string): string {
+  for (const [cat, types] of Object.entries(EVENT_CATEGORIES)) {
+    if (types.includes(type)) return cat
+  }
+  return 'Other'
+}
+
+type DeltaGroup = {
+  kind: 'delta_group'
+  events: RunEventRaw[]
+  mergedText: string
+  seqStart: number
+  seqEnd: number
+}
+
+type RawEventItem = { kind: 'single'; event: RunEventRaw } | DeltaGroup
+
+function groupAndFilterEvents(
+  events: RunEventRaw[],
+  enabledCategories: Set<string>,
+): RawEventItem[] {
+  const filtered = events.filter((ev) => enabledCategories.has(categoryOf(ev.type)))
+  const items: RawEventItem[] = []
+  let deltaBuffer: RunEventRaw[] = []
+
+  const flushDeltas = () => {
+    if (deltaBuffer.length === 0) return
+    if (deltaBuffer.length === 1) {
+      items.push({ kind: 'single', event: deltaBuffer[0] })
+    } else {
+      const merged = deltaBuffer
+        .map((e) => String((e.data as Record<string, unknown>).content_delta ?? ''))
+        .join('')
+      items.push({
+        kind: 'delta_group',
+        events: deltaBuffer,
+        mergedText: merged,
+        seqStart: deltaBuffer[0].seq,
+        seqEnd: deltaBuffer[deltaBuffer.length - 1].seq,
+      })
+    }
+    deltaBuffer = []
+  }
+
+  for (const ev of filtered) {
+    if (ev.type === 'message.delta' || ev.type === 'llm.response.chunk') {
+      deltaBuffer.push(ev)
+    } else {
+      flushDeltas()
+      items.push({ kind: 'single', event: ev })
+    }
+  }
+  flushDeltas()
+  return items
+}
+
+function DeltaGroupRow({ group }: { group: DeltaGroup }) {
+  const [open, setOpen] = useState(false)
+  const preview = group.mergedText.slice(0, 80) + (group.mergedText.length > 80 ? '...' : '')
+
+  return (
+    <div className="rounded border border-[var(--c-border)] overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[var(--c-bg-sub)]"
+      >
+        <span className="w-6 shrink-0 text-right font-mono text-xs text-[var(--c-text-muted)]">
+          {group.seqStart}..{group.seqEnd}
+        </span>
+        <span className="text-xs font-medium text-[var(--c-text-secondary)]">
+          message.delta x{group.events.length}
+        </span>
+        {!open && (
+          <span className="ml-1 truncate text-xs text-[var(--c-text-muted)]">{preview}</span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-2">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--c-text-secondary)]">
+            {group.mergedText}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type FilterChipProps = {
+  label: string
+  count: number
+  active: boolean
+  onToggle: () => void
+}
+
+function FilterChip({ label, count, active, onToggle }: FilterChipProps) {
+  return (
+    <button
+      onClick={onToggle}
+      className={[
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors',
+        active
+          ? 'bg-[var(--c-text-secondary)] text-[var(--c-bg-deep2)]'
+          : 'bg-[var(--c-bg-sub)] text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]',
+      ].join(' ')}
+    >
+      {label}
+      <span className="tabular-nums">{count}</span>
+    </button>
+  )
+}
+
+type RawEventsSectionContentProps = {
+  events: RunEventRaw[]
+}
+
+function RawEventsSectionContent({ events }: RawEventsSectionContentProps) {
+  const [enabled, setEnabled] = useState<Set<string>>(() => {
+    const all = new Set(Object.keys(EVENT_CATEGORIES))
+    all.add('Other')
+    all.delete('Streaming')
+    return all
+  })
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const ev of events) {
+      const cat = categoryOf(ev.type)
+      counts[cat] = (counts[cat] ?? 0) + 1
+    }
+    return counts
+  }, [events])
+
+  const toggle = useCallback((cat: string) => {
+    setEnabled((prev) => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }, [])
+
+  const items = useMemo(() => groupAndFilterEvents(events, enabled), [events, enabled])
+
+  const categories = [...Object.keys(EVENT_CATEGORIES)]
+  if (categoryCounts['Other']) categories.push('Other')
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1">
+        {categories.map((cat) => (
+          <FilterChip
+            key={cat}
+            label={cat}
+            count={categoryCounts[cat] ?? 0}
+            active={enabled.has(cat)}
+            onToggle={() => toggle(cat)}
+          />
+        ))}
+      </div>
+      <div className="space-y-1">
+        {items.map((item) =>
+          item.kind === 'delta_group' ? (
+            <DeltaGroupRow key={`dg-${item.seqStart}`} group={item} />
+          ) : (
+            <RawEventRow key={item.event.seq} event={item.event} />
+          ),
+        )}
+        {items.length === 0 && (
+          <p className="py-2 text-xs text-[var(--c-text-muted)]">--</p>
+        )}
+      </div>
     </div>
   )
 }
