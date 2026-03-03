@@ -66,7 +66,7 @@ func RunGatewayRatelimit(ctx context.Context, cfg GatewayConfig) report.Scenario
 		return result
 	}
 
-	u, err := httpx.JoinURL(cfg.BaseURL, "/healthz")
+	u, err := httpx.JoinURL(cfg.BaseURL, "/benchz")
 	if err != nil {
 		result.Errors = append(result.Errors, "config.invalid_base_url")
 		return result

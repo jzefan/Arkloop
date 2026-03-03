@@ -166,7 +166,9 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthz)
+	if a.config.EnableBenchz {
+		mux.HandleFunc("/benchz", healthz)
+	}
 	mux.Handle("/", p)
 
 	var (
@@ -237,6 +239,9 @@ func (a *Application) Run(ctx context.Context) error {
 	inner = clientip.Middleware(a.buildResolver(), inner)
 
 	handler := recoverMiddleware(inner, a.logger)
+	root := http.NewServeMux()
+	root.HandleFunc("/healthz", healthz)
+	root.Handle("/", handler)
 
 	listener, err := net.Listen("tcp", a.config.Addr)
 	if err != nil {
@@ -251,7 +256,7 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 
 	server := &http.Server{
-		Handler:           handler,
+		Handler:           root,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
