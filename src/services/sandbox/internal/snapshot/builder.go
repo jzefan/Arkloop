@@ -97,8 +97,7 @@ func (b *Builder) Build(ctx context.Context, tmpl template.Template) error {
 	s := &session.Session{
 		ID:        "builder-" + tmpl.ID,
 		Tier:      tmpl.Tier,
-		VsockPath: vsockPath,
-		AgentPort: b.guestAgentPort,
+		Dial:      session.NewVsockDialer(vsockPath, b.guestAgentPort),
 		CreatedAt: time.Now(),
 	}
 	bootTimeout := time.Duration(b.bootTimeoutSeconds) * time.Second

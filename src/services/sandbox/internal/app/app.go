@@ -89,9 +89,9 @@ return err
 defer func() { _ = listener.Close() }()
 
 a.logger.Info("sandbox started", logging.LogFields{}, map[string]any{
-"addr":            a.config.Addr,
-"firecracker_bin": a.config.FirecrackerBin,
-"max_sessions":    a.config.MaxSessions,
+"addr":         a.config.Addr,
+"provider":     a.config.Provider,
+"max_sessions": a.config.MaxSessions,
 })
 
 server := &http.Server{

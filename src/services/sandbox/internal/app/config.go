@@ -17,6 +17,7 @@ import (
 
 const (
 	sandboxAddrEnv        = "ARKLOOP_SANDBOX_ADDR"
+	providerEnv           = "ARKLOOP_SANDBOX_PROVIDER"
 	firecrackerBinEnv     = "ARKLOOP_FIRECRACKER_BIN"
 	kernelImagePathEnv    = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
 	rootfsPathEnv         = "ARKLOOP_SANDBOX_ROOTFS"
@@ -28,6 +29,7 @@ const (
 	s3AccessKeyEnv        = "ARKLOOP_S3_ACCESS_KEY"
 	s3SecretKeyEnv        = "ARKLOOP_S3_SECRET_KEY"
 	templatesPathEnv      = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	dockerImageEnv        = "ARKLOOP_SANDBOX_DOCKER_IMAGE"
 
 	warmLiteEnv          = "ARKLOOP_SANDBOX_WARM_LITE"
 	warmProEnv           = "ARKLOOP_SANDBOX_WARM_PRO"
@@ -40,8 +42,15 @@ const (
 	maxLifetimeEnv       = "ARKLOOP_SANDBOX_MAX_LIFETIME"
 )
 
+// Provider 标识 sandbox 后端类型。
+const (
+	ProviderFirecracker = "firecracker"
+	ProviderDocker      = "docker"
+)
+
 type Config struct {
 	Addr               string
+	Provider           string // "firecracker" | "docker"
 	FirecrackerBin     string
 	KernelImagePath    string
 	RootfsPath         string
@@ -53,6 +62,7 @@ type Config struct {
 	S3AccessKey        string
 	S3SecretKey        string
 	TemplatesPath      string
+	DockerImage        string // Docker 后端使用的 sandbox-agent 镜像
 
 	// Warm pool: 各 tier 的预热 VM 数量
 	WarmLite  int
@@ -75,6 +85,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Addr:               "0.0.0.0:8002",
+		Provider:           ProviderFirecracker,
 		FirecrackerBin:     "/usr/bin/firecracker",
 		KernelImagePath:    "/opt/sandbox/vmlinux",
 		RootfsPath:         "/opt/sandbox/rootfs.ext4",
@@ -83,6 +94,7 @@ func DefaultConfig() Config {
 		GuestAgentPort:     8080,
 		MaxSessions:        50,
 		TemplatesPath:      "/opt/sandbox/templates.json",
+		DockerImage:        "arkloop/sandbox-agent:latest",
 
 		WarmLite:              3,
 		WarmPro:               2,
@@ -101,6 +113,9 @@ func LoadConfigFromEnv() (Config, error) {
 
 	if raw := strings.TrimSpace(os.Getenv(sandboxAddrEnv)); raw != "" {
 		cfg.Addr = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(providerEnv)); raw != "" {
+		cfg.Provider = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv(firecrackerBinEnv)); raw != "" {
 		cfg.FirecrackerBin = raw
@@ -146,6 +161,9 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if raw := strings.TrimSpace(os.Getenv(templatesPathEnv)); raw != "" {
 		cfg.TemplatesPath = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(dockerImageEnv)); raw != "" {
+		cfg.DockerImage = raw
 	}
 
 	// warm pool
@@ -226,6 +244,18 @@ func LoadConfigFromEnv() (Config, error) {
 					return v
 				}
 
+				overrideString := func(key string) string {
+					raw, err := resolver.Resolve(ctx, key, sharedconfig.Scope{})
+					if err != nil {
+						return ""
+					}
+					return strings.TrimSpace(raw)
+				}
+
+				if v := overrideString("sandbox.provider"); v != "" {
+					cfg.Provider = v
+				}
+
 				if v := overrideInt("sandbox.idle_timeout_lite_s"); v > 0 {
 					cfg.IdleTimeoutLite = v
 				}
@@ -250,6 +280,11 @@ func LoadConfigFromEnv() (Config, error) {
 func (c Config) Validate() error {
 	if _, err := net.ResolveTCPAddr("tcp", c.Addr); err != nil {
 		return fmt.Errorf("addr invalid: %w", err)
+	}
+	switch c.Provider {
+	case ProviderFirecracker, ProviderDocker:
+	default:
+		return fmt.Errorf("provider must be %q or %q", ProviderFirecracker, ProviderDocker)
 	}
 	if c.BootTimeoutSeconds <= 0 {
 		return fmt.Errorf("boot_timeout_seconds must be positive")

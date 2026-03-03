@@ -1,0 +1,26 @@
+# sandbox-agent 容器镜像
+# 用于 Docker sandbox 后端，容器内运行 sandbox-agent 以 TCP 模式监听。
+#
+# 构建：
+#   docker build -f Dockerfile.agent -t arkloop/sandbox-agent:latest ../..
+#   (从 src/services/sandbox/ 目录执行)
+FROM golang:1.26-alpine AS builder
+WORKDIR /workspace
+COPY src/services/sandbox/go.mod src/services/sandbox/go.sum src/services/sandbox/
+COPY src/services/shared/go.mod src/services/shared/go.sum src/services/shared/
+RUN printf 'go 1.26.0\nuse (\n\t./src/services/sandbox\n\t./src/services/shared\n)\n' > go.work
+RUN go mod download
+COPY src/services/sandbox src/services/sandbox
+COPY src/services/shared src/services/shared
+RUN GOOS=linux CGO_ENABLED=0 \
+    go build -ldflags="-s -w" -o /sandbox-agent ./src/services/sandbox/agent
+
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates bash coreutils && \
+    rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /tmp/output
+COPY --from=builder /sandbox-agent /usr/local/bin/sandbox-agent
+ENV SANDBOX_AGENT_LISTEN=tcp
+EXPOSE 8080
+ENTRYPOINT ["sandbox-agent"]

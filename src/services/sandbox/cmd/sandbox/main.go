@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
 	"arkloop/services/sandbox/internal/app"
+	dockerpool "arkloop/services/sandbox/internal/docker"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/pool"
@@ -35,19 +37,9 @@ func run() error {
 
 	logger := logging.NewJSONLogger("sandbox", os.Stdout)
 
-	// 可选依赖：MinIO 快照存储 + Template 注册表
-	var snapshotStore storage.SnapshotStore
+	// 可选依赖：S3 artifact 存储
 	var artifactStore *objectstore.Store
-	var registry *template.Registry
-
 	if cfg.S3Endpoint != "" {
-		cacheDir := cfg.SocketBaseDir + "/_snapshots"
-		store, err := storage.NewMinIOStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cacheDir)
-		if err != nil {
-			return err
-		}
-		snapshotStore = store
-
 		aStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.ArtifactBucket, "")
 		if err != nil {
 			return err
@@ -56,15 +48,59 @@ func run() error {
 		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
+	var vmPool session.VMPool
+
+	switch cfg.Provider {
+	case app.ProviderFirecracker:
+		vmPool, err = buildFirecrackerPool(cfg, logger)
+	case app.ProviderDocker:
+		vmPool, err = buildDockerPool(cfg, logger)
+	default:
+		err = fmt.Errorf("unknown provider: %s", cfg.Provider)
+	}
+	if err != nil {
+		return err
+	}
+
+	mgr := session.NewManager(session.ManagerConfig{
+		MaxSessions:        cfg.MaxSessions,
+		Pool:               vmPool,
+		IdleTimeoutLite:    cfg.IdleTimeoutLite,
+		IdleTimeoutPro:     cfg.IdleTimeoutPro,
+		IdleTimeoutUltra:   cfg.IdleTimeoutUltra,
+		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
+	})
+
+	handler := sandboxhttp.NewHandler(mgr, artifactStore, logger)
+
+	application, err := app.NewApplication(cfg, logger, mgr)
+	if err != nil {
+		return err
+	}
+	return application.Run(context.Background(), handler)
+}
+
+func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
+	var snapshotStore storage.SnapshotStore
+	var registry *template.Registry
+
+	if cfg.S3Endpoint != "" {
+		cacheDir := cfg.SocketBaseDir + "/_snapshots"
+		store, err := storage.NewMinIOStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cacheDir)
+		if err != nil {
+			return nil, err
+		}
+		snapshotStore = store
+	}
+
 	if cfg.TemplatesPath != "" {
 		reg, err := template.LoadFromFile(cfg.TemplatesPath)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		registry = reg
 	}
 
-	// 启动时自动检查并构建缺失快照
 	if snapshotStore != nil && registry != nil {
 		builder := snapshot.NewBuilder(
 			cfg.FirecrackerBin,
@@ -81,7 +117,6 @@ func run() error {
 		ensureCancel()
 	}
 
-	// 创建 WarmPool
 	warmPool := pool.New(pool.Config{
 		WarmSizes:             cfg.WarmSizes(),
 		RefillIntervalSeconds: cfg.RefillIntervalSeconds,
@@ -98,20 +133,29 @@ func run() error {
 	})
 	warmPool.Start()
 
-	mgr := session.NewManager(session.ManagerConfig{
-		MaxSessions:        cfg.MaxSessions,
-		Pool:               warmPool,
-		IdleTimeoutLite:    cfg.IdleTimeoutLite,
-		IdleTimeoutPro:     cfg.IdleTimeoutPro,
-		IdleTimeoutUltra:   cfg.IdleTimeoutUltra,
-		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
+	return warmPool, nil
+}
+
+func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
+	dp, err := dockerpool.New(dockerpool.Config{
+		WarmSizes:             cfg.WarmSizes(),
+		RefillIntervalSeconds: cfg.RefillIntervalSeconds,
+		MaxRefillConcurrency:  cfg.RefillConcurrency,
+		Image:                 cfg.DockerImage,
+		GuestAgentPort:        cfg.GuestAgentPort,
+		SocketBaseDir:         cfg.SocketBaseDir,
+		Logger:                logger,
 	})
-
-	handler := sandboxhttp.NewHandler(mgr, artifactStore, logger)
-
-	application, err := app.NewApplication(cfg, logger, mgr)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return application.Run(context.Background(), handler)
+
+	ensureCtx, ensureCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer ensureCancel()
+	if err := dp.EnsureImage(ensureCtx); err != nil {
+		return nil, err
+	}
+
+	dp.Start()
+	return dp, nil
 }

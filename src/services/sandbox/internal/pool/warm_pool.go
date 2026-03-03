@@ -284,8 +284,7 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 	s := &session.Session{
 		ID:        id,
 		Tier:      tier,
-		VsockPath: vsockPath,
-		AgentPort: p.cfg.GuestAgentPort,
+		Dial:      session.NewVsockDialer(vsockPath, p.cfg.GuestAgentPort),
 		CreatedAt: time.Now(),
 		SocketDir: socketDir,
 	}
@@ -353,8 +352,7 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 	s := &session.Session{
 		ID:        id,
 		Tier:      tier,
-		VsockPath: vsockPath,
-		AgentPort: p.cfg.GuestAgentPort,
+		Dial:      session.NewVsockDialer(vsockPath, p.cfg.GuestAgentPort),
 		CreatedAt: time.Now(),
 		SocketDir: socketDir,
 	}
