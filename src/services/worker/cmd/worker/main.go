@@ -78,7 +78,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("direct pool config: %w", err)
 		}
-		dpCfg.MaxConns = int32(cfg.Concurrency + 2)
+		dpCfg.MaxConns = 8
 		dp, err := pgxpool.NewWithConfig(ctx, dpCfg)
 		if err != nil {
 			return fmt.Errorf("direct pool: %w", err)
