@@ -894,6 +894,7 @@ GitHub Actions 配置，触发条件：PR 和 main 分支 push。
 
 已落地：
 - 脚本：`tests/bench/`（`go run ./tests/bench/cmd/bench baseline`）
+- 专用环境：`compose.bench.yaml`（端口按标准 +5，避免影响日常开发 compose；Worker 默认走 stub，不依赖外部模型）
 - 基线结果：`docs/benchmark/baseline-2026-03-03.json`
 - OpenViking 场景默认不进 baseline suite（需显式开启）
 
