@@ -10,16 +10,15 @@ export type CodeExecution = {
   exitCode?: number
 }
 
-export function CodeExecutionCard({ language, code, output, exitCode }: {
+export function CodeExecutionCard({ language, code, output, exitCode, onOpen }: {
   language: 'python' | 'shell'
   code?: string
   output?: string
   exitCode?: number
+  onOpen?: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
   const isPython = language === 'python'
   const hasDetail = !!(code || output)
-  const failed = exitCode != null && exitCode !== 0
 
   return (
     <div
@@ -28,13 +27,12 @@ export function CodeExecutionCard({ language, code, output, exitCode }: {
         border: '0.5px solid var(--c-border-subtle)',
         background: 'var(--c-bg-page)',
         width: 'fit-content',
-        minWidth: expanded ? '100%' : undefined,
         maxWidth: '100%',
       }}
     >
       <button
         type="button"
-        onClick={() => hasDetail && setExpanded((p) => !p)}
+        onClick={() => hasDetail && onOpen?.()}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -42,7 +40,7 @@ export function CodeExecutionCard({ language, code, output, exitCode }: {
           padding: '8px 12px',
           background: 'none',
           border: 'none',
-          cursor: hasDetail ? 'pointer' : 'default',
+          cursor: hasDetail && onOpen ? 'pointer' : 'default',
           width: '100%',
         }}
       >
@@ -51,7 +49,7 @@ export function CodeExecutionCard({ language, code, output, exitCode }: {
             width: '34px',
             height: '34px',
             borderRadius: '7px',
-            background: isPython ? '#0e9f8e' : '#6366f1',
+            background: 'var(--c-bg-plus)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -59,59 +57,19 @@ export function CodeExecutionCard({ language, code, output, exitCode }: {
           }}
         >
           {isPython
-            ? <Code2 size={17} color="#fff" strokeWidth={2} />
-            : <Terminal size={17} color="#fff" strokeWidth={2} />
+            ? <Code2 size={17} color="var(--c-text-secondary)" strokeWidth={2} />
+            : <Terminal size={17} color="var(--c-text-secondary)" strokeWidth={2} />
           }
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', textAlign: 'left' }}>
-          <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--c-text-primary)', lineHeight: '16px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--c-text-secondary)', lineHeight: '16px' }}>
             {isPython ? 'Python' : 'Shell'}
           </span>
           <span style={{ fontSize: '11px', color: 'var(--c-text-muted)', lineHeight: '14px' }}>
             Code
           </span>
         </div>
-        {hasDetail && (
-          <div style={{ marginLeft: 'auto', color: 'var(--c-text-muted)', flexShrink: 0 }}>
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </div>
-        )}
       </button>
-
-      {expanded && hasDetail && (
-        <div style={{ borderTop: '0.5px solid var(--c-border-subtle)', padding: '8px 12px 10px', overflow: 'auto' }}>
-          {code && (
-            <MarkdownRenderer
-              content={'```' + (isPython ? 'python' : 'bash') + '\n' + code + '\n```'}
-              disableMath
-            />
-          )}
-          {output && (
-            <div style={{ marginTop: code ? '8px' : '0' }}>
-              <div style={{ fontSize: '11px', color: 'var(--c-text-muted)', marginBottom: '4px', fontWeight: 500 }}>
-                {failed ? 'stderr' : 'stdout'}
-              </div>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  background: 'var(--c-bg-deep)',
-                  color: failed ? '#ef4444' : 'var(--c-text-secondary)',
-                  fontSize: '12px',
-                  lineHeight: '1.5',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  maxHeight: '300px',
-                  overflow: 'auto',
-                }}
-              >
-                {output}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -123,9 +81,10 @@ type Props = {
   content: string
   isStreaming?: boolean
   codeExecutions?: CodeExecution[]
+  onOpenCodeExecution?: (ce: CodeExecution) => void
 }
 
-export function ThinkingBlock({ label, mode, content, isStreaming, codeExecutions }: Props) {
+export function ThinkingBlock({ label, mode, content, isStreaming, codeExecutions, onOpenCodeExecution }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   if (mode === 'hidden') return null
@@ -137,7 +96,7 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
         {codeExecutions && codeExecutions.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
             {codeExecutions.map((ce) => (
-              <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+              <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
             ))}
           </div>
         )}
@@ -194,7 +153,7 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
           {codeExecutions && codeExecutions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
               {codeExecutions.map((ce) => (
-                <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
               ))}
             </div>
           )}

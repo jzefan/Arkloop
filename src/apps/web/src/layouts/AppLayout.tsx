@@ -42,6 +42,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const [isPrivateMode, setIsPrivateMode] = useState(false)
   const [pendingIncognitoMode, setPendingIncognitoMode] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [isSearchMode, setIsSearchMode] = useState(false)
   // ref 用于在 popstate 回调里读取最新值，避免闭包过期
   const isSearchModeRef = useRef(false)
@@ -229,6 +230,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         isSearchMode={isSearchMode}
         onThreadTitleUpdated={handleThreadTitleUpdated}
         onThreadDeleted={handleThreadDeleted}
+        narrow={rightPanelOpen}
       />
 
       {settingsOpen && (
@@ -248,7 +250,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
         )}

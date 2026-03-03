@@ -7,7 +7,7 @@ button:not(:disabled) {
 
 :root {
   color-scheme: dark;
-  --c-bg-page: #262624;
+  --c-bg-page: #1E1D1C;
   --c-bg-sidebar: #242422;
   --c-bg-deep: #141413;
   --c-bg-sub: #1e1e1c;
@@ -53,6 +53,8 @@ button:not(:disabled) {
   --c-error-text: #fca5a5;
   --c-error-subtext: rgba(248, 113, 113, 0.70);
   --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.32);
+  --c-code-panel-bg: #141413;
+  --c-code-panel-output-bg: rgba(255, 255, 255, 0.04);
 }
 
 @media (prefers-color-scheme: light) {
@@ -104,6 +106,8 @@ button:not(:disabled) {
     --c-error-text: #b91c1c;
     --c-error-subtext: #ef4444;
     --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    --c-code-panel-bg: #F6F4F2;
+    --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
   }
 }
 
@@ -155,6 +159,8 @@ button:not(:disabled) {
   --c-error-text: #b91c1c;
   --c-error-subtext: #ef4444;
   --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  --c-code-panel-bg: #F6F4F2;
+  --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
 }
 
 .md-table-wrap {
@@ -292,6 +298,17 @@ button:not(:disabled) {
 
 /* KaTeX 主题适配 */
 .katex { color: var(--c-text-primary); }
+
+/* markdown 内联 code 样式 (非 pre 内的 code) */
+.md-content :not(pre) > code {
+  background: var(--c-md-inline-code-bg, var(--c-bg-deep));
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.875em;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--c-text-secondary);
+  border: 0.5px solid var(--c-border-subtle);
+}
 .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
