@@ -140,7 +140,11 @@ type gatewayPhaseStats struct {
 	AttemptedJobs    int64
 }
 
-func runGatewayPhase(ctx context.Context, client *http.Client, url string, qps int, workers int, duration time.Duration) (gatewayPhaseStats, []string) {
+func runGatewayPhase(ctx context.Context, client *http.Client, url string, qps int, workers int, duration time.Duration, headers ...map[string]string) (gatewayPhaseStats, []string) {
+	var extraHeaders map[string]string
+	if len(headers) > 0 {
+		extraHeaders = headers[0]
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -175,6 +179,9 @@ func runGatewayPhase(ctx context.Context, client *http.Client, url string, qps i
 			for range jobs {
 				start := time.Now()
 				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+				for k, v := range extraHeaders {
+					req.Header.Set(k, v)
+				}
 				resp, err := client.Do(req)
 				latMs := float64(time.Since(start).Nanoseconds()) / 1e6
 				if err != nil {

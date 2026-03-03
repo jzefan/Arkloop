@@ -13,6 +13,7 @@ import (
 	"arkloop/tests/bench/internal/httpx"
 	"arkloop/tests/bench/internal/report"
 	"arkloop/tests/bench/internal/scenarios"
+	"arkloop/tests/bench/internal/seed"
 )
 
 const (
@@ -246,6 +247,8 @@ func runBaseline(args []string) {
 func runGateway(args []string) {
 	fs := flag.NewFlagSet("gateway", flag.ExitOnError)
 	gateway, _, _, _, _, _, _, out := commonFlags(fs)
+	jwtSecret := fs.String("jwt-secret", "", "JWT signing secret (enables gateway_jwt scenario)")
+	redisURL := fs.String("redis-url", "", "gateway Redis URL (enables gateway_apikey scenario)")
 	fs.Parse(args)
 
 	ctx := context.Background()
@@ -260,8 +263,55 @@ func runGateway(args []string) {
 		writeReportAndExit(rep, *out)
 	}
 
+	// 无认证场景（始终运行）
 	rep.Results = append(rep.Results, scenarios.RunGatewayRatelimit(ctx, scenarios.DefaultGatewayConfig(targets.GatewayBaseURL)))
-	rep.OverallPass = rep.Results[0].Pass
+
+	secret := strings.TrimSpace(*jwtSecret)
+	if secret == "" {
+		secret = strings.TrimSpace(os.Getenv("ARKLOOP_AUTH_JWT_SECRET"))
+	}
+
+	// JWT 认证场景
+	if secret != "" {
+		const benchOrgID = "00000000-0000-4000-8000-000000000001"
+		const benchUserID = "00000000-0000-4000-8000-000000000002"
+		token, err := seed.MakeJWT(secret, benchOrgID, benchUserID, 10*time.Minute)
+		if err != nil {
+			rep.Results = append(rep.Results, tokenRequiredResult("gateway_jwt", "jwt.sign.error"))
+		} else {
+			rep.Results = append(rep.Results, scenarios.RunGatewayAuth(ctx, scenarios.DefaultGatewayJWTConfig(targets.GatewayBaseURL, token)))
+		}
+	}
+
+	// API Key 认证场景
+	rURL := strings.TrimSpace(*redisURL)
+	if rURL == "" {
+		rURL = strings.TrimSpace(os.Getenv("ARKLOOP_GATEWAY_REDIS_URL"))
+	}
+	if rURL != "" && secret != "" {
+		const benchAPIKey = "ak-bench-00000000000000000000000000000001"
+		const benchOrgID = "00000000-0000-4000-8000-000000000001"
+
+		rdb, err := seed.ConnectRedis(ctx, rURL)
+		if err != nil {
+			rep.Results = append(rep.Results, tokenRequiredResult("gateway_apikey", "redis.connect.error"))
+		} else {
+			defer rdb.Close()
+			if err := seed.SeedAPIKey(ctx, rdb, benchAPIKey, benchOrgID); err != nil {
+				rep.Results = append(rep.Results, tokenRequiredResult("gateway_apikey", "redis.seed.error"))
+			} else {
+				defer seed.CleanupAPIKey(ctx, rdb, benchAPIKey)
+				rep.Results = append(rep.Results, scenarios.RunGatewayAuth(ctx, scenarios.DefaultGatewayAPIKeyConfig(targets.GatewayBaseURL, benchAPIKey)))
+			}
+		}
+	}
+
+	rep.OverallPass = true
+	for _, r := range rep.Results {
+		if !r.Pass {
+			rep.OverallPass = false
+		}
+	}
 	writeReportAndExit(rep, *out)
 }
 
