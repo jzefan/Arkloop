@@ -101,6 +101,7 @@ go run ./tests/bench/cmd/bench browser \
 - 输出为 JSON，`overall_pass=false` 时进程退出码为 1
 - `results[].pass` 是单项结论
 - `results[].stats` 包含指标与采样结果（例如 `latency_ms`、`retention`、`run_completion_ms`）
+- `gateway_ratelimit` 默认请求 Gateway 的 `/benchz`（完整中间件链路）；`/healthz` 仅用于存活探针
 - `api_crud.stats.pg_stat_activity_max_total` / `api_crud.stats.pg_stat_activity_max_active`：压测期间 DB 连接数峰值（需要 `DATABASE_URL` 或 `-db-dsn`）
 - `worker_runs.stats.pg_stat_activity_max_total` / `worker_runs.stats.pg_stat_activity_max_active`：同上
 - `*.stats.net_error_kinds`：网络错误类型聚合（便于区分超时/拒绝/重置等）
@@ -118,6 +119,7 @@ OpenViking 的压测默认不在 baseline suite 中执行，避免触发外部 e
 ## Troubleshooting
 
 - `gateway.not_ready` / `api.not_ready` / `openviking.not_ready`：服务未就绪（检查对应服务 `/healthz` 或 OpenViking `/health`）
+- `gateway_ratelimit` 返回 404：确认 Gateway 已启用 `/benchz`（bench compose 默认设置 `ARKLOOP_GATEWAY_ENABLE_BENCHZ=true`），并可直接 `curl http://127.0.0.1:8005/benchz` 验证
 - `browser.not_ready`：仅在 `bench browser` 时出现（检查 browser `/healthz`，或确认已开启 tools profile）
 - `auth.register.code.auth.invite_code_required`：注册模式为 invite_only（需要配置 `registration.open=true` 或提供邀请码/显式 token）
 - `worker_runs.runs_create_failed` 很高：通常是 `limit.concurrent_runs` 太低或 Worker 未消费队列

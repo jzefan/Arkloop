@@ -17,6 +17,7 @@ const (
 	gatewayUpstreamEnv = "ARKLOOP_GATEWAY_UPSTREAM"
 	redisURLEnv        = "ARKLOOP_REDIS_URL"
 	jwtSecretEnv       = "ARKLOOP_AUTH_JWT_SECRET"
+	enableBenchzEnv    = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
 
 	// IP 透传模式：direct | cloudflare | trusted_proxy
 	ipModeEnv = "ARKLOOP_GATEWAY_IP_MODE"
@@ -39,16 +40,17 @@ type IPMode string
 
 const (
 	IPModeDirect       IPMode = "direct"        // 直连：只信任 RemoteAddr
-	IPModeCloudflare   IPMode = "cloudflare"     // Cloudflare 前置：读 CF-Connecting-IP
-	IPModeTrustedProxy IPMode = "trusted_proxy"  // 通用可信代理：读 XFF 最左端
+	IPModeCloudflare   IPMode = "cloudflare"    // Cloudflare 前置：读 CF-Connecting-IP
+	IPModeTrustedProxy IPMode = "trusted_proxy" // 通用可信代理：读 XFF 最左端
 )
 
 type Config struct {
-	Addr      string
-	Upstream  string
-	RedisURL  string
-	JWTSecret string
-	RateLimit ratelimit.Config
+	Addr         string
+	Upstream     string
+	RedisURL     string
+	JWTSecret    string
+	RateLimit    ratelimit.Config
+	EnableBenchz bool
 
 	IPMode              IPMode
 	TrustedCIDRs        []string // CIDR 字符串列表
@@ -82,6 +84,14 @@ func LoadConfigFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("ratelimit config: %w", err)
 	}
 	cfg.RateLimit = rlCfg
+
+	if raw := strings.TrimSpace(os.Getenv(enableBenchzEnv)); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be a boolean", enableBenchzEnv)
+		}
+		cfg.EnableBenchz = v
+	}
 
 	if raw := strings.TrimSpace(os.Getenv(ipModeEnv)); raw != "" {
 		cfg.IPMode = IPMode(raw)
