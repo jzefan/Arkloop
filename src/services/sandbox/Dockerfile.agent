@@ -17,8 +17,13 @@ RUN GOOS=linux CGO_ENABLED=0 \
 
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates bash coreutils && \
+    ca-certificates bash coreutils gcc g++ && \
     rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir \
+    numpy pandas matplotlib scipy sympy \
+    requests pillow httpx beautifulsoup4 lxml \
+    pyyaml toml jsonschema pydantic \
+    tabulate rich
 RUN mkdir -p /tmp/output
 COPY --from=builder /sandbox-agent /usr/local/bin/sandbox-agent
 ENV SANDBOX_AGENT_LISTEN=tcp
