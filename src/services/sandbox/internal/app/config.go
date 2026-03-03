@@ -15,31 +15,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// 部署级别的 ENV（文件路径、地址、凭证 -- 不进 registry，不能从 console 改）
 const (
-	sandboxAddrEnv        = "ARKLOOP_SANDBOX_ADDR"
-	providerEnv           = "ARKLOOP_SANDBOX_PROVIDER"
-	firecrackerBinEnv     = "ARKLOOP_FIRECRACKER_BIN"
-	kernelImagePathEnv    = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
-	rootfsPathEnv         = "ARKLOOP_SANDBOX_ROOTFS"
-	socketBaseDirEnv      = "ARKLOOP_SANDBOX_SOCKET_DIR"
-	bootTimeoutSecondsEnv = "ARKLOOP_SANDBOX_BOOT_TIMEOUT_SECONDS"
-	guestAgentPortEnv     = "ARKLOOP_SANDBOX_AGENT_PORT"
-	maxSessionsEnv        = "ARKLOOP_SANDBOX_MAX_SESSIONS"
-	s3EndpointEnv         = "ARKLOOP_S3_ENDPOINT"
-	s3AccessKeyEnv        = "ARKLOOP_S3_ACCESS_KEY"
-	s3SecretKeyEnv        = "ARKLOOP_S3_SECRET_KEY"
-	templatesPathEnv      = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
-	dockerImageEnv        = "ARKLOOP_SANDBOX_DOCKER_IMAGE"
-
-	warmLiteEnv          = "ARKLOOP_SANDBOX_WARM_LITE"
-	warmProEnv           = "ARKLOOP_SANDBOX_WARM_PRO"
-	warmUltraEnv         = "ARKLOOP_SANDBOX_WARM_ULTRA"
-	refillIntervalEnv    = "ARKLOOP_SANDBOX_REFILL_INTERVAL"
-	refillConcurrencyEnv = "ARKLOOP_SANDBOX_REFILL_CONCURRENCY"
-	idleTimeoutLiteEnv   = "ARKLOOP_SANDBOX_IDLE_TIMEOUT_LITE"
-	idleTimeoutProEnv    = "ARKLOOP_SANDBOX_IDLE_TIMEOUT_PRO"
-	idleTimeoutUltraEnv  = "ARKLOOP_SANDBOX_IDLE_TIMEOUT_ULTRA"
-	maxLifetimeEnv       = "ARKLOOP_SANDBOX_MAX_LIFETIME"
+	sandboxAddrEnv     = "ARKLOOP_SANDBOX_ADDR"
+	firecrackerBinEnv  = "ARKLOOP_FIRECRACKER_BIN"
+	kernelImagePathEnv = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	rootfsPathEnv      = "ARKLOOP_SANDBOX_ROOTFS"
+	socketBaseDirEnv   = "ARKLOOP_SANDBOX_SOCKET_DIR"
+	templatesPathEnv   = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	s3EndpointEnv      = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv     = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv     = "ARKLOOP_S3_SECRET_KEY"
 )
 
 // Provider 标识 sandbox 后端类型。
@@ -111,11 +97,9 @@ func DefaultConfig() Config {
 func LoadConfigFromEnv() (Config, error) {
 	cfg := DefaultConfig()
 
+	// --- 部署级 ENV（不进 registry）---
 	if raw := strings.TrimSpace(os.Getenv(sandboxAddrEnv)); raw != "" {
 		cfg.Addr = raw
-	}
-	if raw := strings.TrimSpace(os.Getenv(providerEnv)); raw != "" {
-		cfg.Provider = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv(firecrackerBinEnv)); raw != "" {
 		cfg.FirecrackerBin = raw
@@ -129,26 +113,8 @@ func LoadConfigFromEnv() (Config, error) {
 	if raw := strings.TrimSpace(os.Getenv(socketBaseDirEnv)); raw != "" {
 		cfg.SocketBaseDir = raw
 	}
-	if raw := strings.TrimSpace(os.Getenv(bootTimeoutSecondsEnv)); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || v <= 0 {
-			return Config{}, fmt.Errorf("%s: must be a positive integer", bootTimeoutSecondsEnv)
-		}
-		cfg.BootTimeoutSeconds = v
-	}
-	if raw := strings.TrimSpace(os.Getenv(guestAgentPortEnv)); raw != "" {
-		v, err := strconv.ParseUint(raw, 10, 32)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s: must be a valid port number", guestAgentPortEnv)
-		}
-		cfg.GuestAgentPort = uint32(v)
-	}
-	if raw := strings.TrimSpace(os.Getenv(maxSessionsEnv)); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || v <= 0 {
-			return Config{}, fmt.Errorf("%s: must be a positive integer", maxSessionsEnv)
-		}
-		cfg.MaxSessions = v
+	if raw := strings.TrimSpace(os.Getenv(templatesPathEnv)); raw != "" {
+		cfg.TemplatesPath = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv(s3EndpointEnv)); raw != "" {
 		cfg.S3Endpoint = raw
@@ -159,63 +125,15 @@ func LoadConfigFromEnv() (Config, error) {
 	if raw := strings.TrimSpace(os.Getenv(s3SecretKeyEnv)); raw != "" {
 		cfg.S3SecretKey = raw
 	}
-	if raw := strings.TrimSpace(os.Getenv(templatesPathEnv)); raw != "" {
-		cfg.TemplatesPath = raw
-	}
-	if raw := strings.TrimSpace(os.Getenv(dockerImageEnv)); raw != "" {
-		cfg.DockerImage = raw
-	}
 
-	// warm pool
-	if v, err := envPositiveInt(warmLiteEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.WarmLite = v
-	}
-	if v, err := envPositiveInt(warmProEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.WarmPro = v
-	}
-	if v, err := envPositiveInt(warmUltraEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.WarmUltra = v
-	}
-	if v, err := envPositiveInt(refillIntervalEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.RefillIntervalSeconds = v
-	}
-	if v, err := envPositiveInt(refillConcurrencyEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.RefillConcurrency = v
-	}
-
-	// session timeout
-	if v, err := envPositiveInt(idleTimeoutLiteEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.IdleTimeoutLite = v
-	}
-	if v, err := envPositiveInt(idleTimeoutProEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.IdleTimeoutPro = v
-	}
-	if v, err := envPositiveInt(idleTimeoutUltraEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.IdleTimeoutUltra = v
-	}
-	if v, err := envPositiveInt(maxLifetimeEnv); err != nil {
-		return Config{}, err
-	} else if v > 0 {
-		cfg.MaxLifetimeSeconds = v
-	}
-
+	// --- Registry 级配置（优先级：ENV > DB > Default）---
+	// 尝试连接数据库以构建 Resolver；连不上则退化为纯 ENV + Default
 	dbURL := strings.TrimSpace(os.Getenv("ARKLOOP_DATABASE_URL"))
+	registry := sharedconfig.DefaultRegistry()
+
+	var resolver *sharedconfig.ResolverImpl
+	var dbPool *pgxpool.Pool
+
 	if dbURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -225,53 +143,83 @@ func LoadConfigFromEnv() (Config, error) {
 			writeConfigWarn("platform_settings_parse_failed", err)
 		} else {
 			poolCfg.MaxConns = 2
-			dbPool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+			dbPool, err = pgxpool.NewWithConfig(ctx, poolCfg)
 			if err != nil {
 				writeConfigWarn("platform_settings_connect_failed", err)
-			} else {
-				registry := sharedconfig.DefaultRegistry()
-				resolver, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(dbPool), nil, 0)
-
-				overrideInt := func(key string) int {
-					raw, err := resolver.Resolve(ctx, key, sharedconfig.Scope{})
-					if err != nil {
-						return 0
-					}
-					v, err := strconv.Atoi(strings.TrimSpace(raw))
-					if err != nil || v <= 0 {
-						return 0
-					}
-					return v
-				}
-
-				overrideString := func(key string) string {
-					raw, err := resolver.Resolve(ctx, key, sharedconfig.Scope{})
-					if err != nil {
-						return ""
-					}
-					return strings.TrimSpace(raw)
-				}
-
-				if v := overrideString("sandbox.provider"); v != "" {
-					cfg.Provider = v
-				}
-
-				if v := overrideInt("sandbox.idle_timeout_lite_s"); v > 0 {
-					cfg.IdleTimeoutLite = v
-				}
-				if v := overrideInt("sandbox.idle_timeout_pro_s"); v > 0 {
-					cfg.IdleTimeoutPro = v
-				}
-				if v := overrideInt("sandbox.idle_timeout_ultra_s"); v > 0 {
-					cfg.IdleTimeoutUltra = v
-				}
-				if v := overrideInt("sandbox.max_lifetime_s"); v > 0 {
-					cfg.MaxLifetimeSeconds = v
-				}
-
-				dbPool.Close()
 			}
 		}
+	}
+
+	if dbPool != nil {
+		resolver, _ = sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(dbPool), nil, 0)
+		defer dbPool.Close()
+	} else {
+		resolver, _ = sharedconfig.NewResolver(registry, nil, nil, 0)
+	}
+
+	ctx := context.Background()
+	scope := sharedconfig.Scope{}
+
+	resolveStr := func(key string) string {
+		raw, err := resolver.Resolve(ctx, key, scope)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(raw)
+	}
+	resolveInt := func(key string) int {
+		raw := resolveStr(key)
+		if raw == "" {
+			return 0
+		}
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return 0
+		}
+		return v
+	}
+
+	if v := resolveStr("sandbox.provider"); v != "" {
+		cfg.Provider = v
+	}
+	if v := resolveStr("sandbox.docker_image"); v != "" {
+		cfg.DockerImage = v
+	}
+	if v := resolveInt("sandbox.max_sessions"); v > 0 {
+		cfg.MaxSessions = v
+	}
+	if v := resolveInt("sandbox.agent_port"); v > 0 {
+		cfg.GuestAgentPort = uint32(v)
+	}
+	if v := resolveInt("sandbox.boot_timeout_s"); v > 0 {
+		cfg.BootTimeoutSeconds = v
+	}
+	if v := resolveInt("sandbox.warm_lite"); v > 0 {
+		cfg.WarmLite = v
+	}
+	if v := resolveInt("sandbox.warm_pro"); v > 0 {
+		cfg.WarmPro = v
+	}
+	if v := resolveInt("sandbox.warm_ultra"); v > 0 {
+		cfg.WarmUltra = v
+	}
+	if v := resolveInt("sandbox.refill_interval_s"); v > 0 {
+		cfg.RefillIntervalSeconds = v
+	}
+	if v := resolveInt("sandbox.refill_concurrency"); v > 0 {
+		cfg.RefillConcurrency = v
+	}
+	if v := resolveInt("sandbox.idle_timeout_lite_s"); v > 0 {
+		cfg.IdleTimeoutLite = v
+	}
+	if v := resolveInt("sandbox.idle_timeout_pro_s"); v > 0 {
+		cfg.IdleTimeoutPro = v
+	}
+	if v := resolveInt("sandbox.idle_timeout_ultra_s"); v > 0 {
+		cfg.IdleTimeoutUltra = v
+	}
+	if v := resolveInt("sandbox.max_lifetime_s"); v > 0 {
+		cfg.MaxLifetimeSeconds = v
 	}
 
 	return cfg, cfg.Validate()
@@ -323,19 +271,6 @@ func (c Config) IdleTimeoutSeconds(tier string) int {
 	default:
 		return c.IdleTimeoutLite
 	}
-}
-
-// envPositiveInt 从 ENV 读取正整数。未设置返回 0, nil；格式错误返回错误。
-func envPositiveInt(key string) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return 0, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		return 0, fmt.Errorf("%s: must be a positive integer", key)
-	}
-	return v, nil
 }
 
 func writeConfigWarn(event string, err error) {

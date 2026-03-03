@@ -49,6 +49,7 @@ export interface LocaleStrings {
     asrCredentials: string
     email: string
     titleSummarizer: string
+    sandboxConfig: string
     reports: string
   }
   // settings
@@ -912,9 +913,24 @@ export interface LocaleStrings {
       toastDeleteFailed: string
       toastDefaultFailed: string
     }
-    captcha: {
+    sandboxConfig: {
       title: string
-      statusTitle: string
+      sectionProvider: string
+      sectionPool: string
+      sectionTimeout: string
+      fieldProvider: string
+      fieldDockerImage: string
+      fieldMaxSessions: string
+      fieldBootTimeout: string
+      fieldRefillInterval: string
+      fieldRefillConcurrency: string
+      fieldMaxLifetime: string
+      save: string
+      toastSaved: string
+      toastLoadFailed: string
+      toastSaveFailed: string
+    }
+    captcha: {
       statusConfigured: string
       statusNotConfigured: string
       sourceDb: string

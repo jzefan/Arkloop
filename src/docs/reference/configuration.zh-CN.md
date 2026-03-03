@@ -35,10 +35,20 @@
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |
 | quota.runs_per_month | int | both | 999999 | false | 每月 run 数量配额 |
 | quota.tokens_per_month | int | both | 1000000 | false | 每月 token 配额 |
+| sandbox.agent_port | int | platform | 8080 | false | Sandbox Agent 监听端口 |
+| sandbox.boot_timeout_s | int | platform | 30 | false | VM/容器启动超时（秒） |
+| sandbox.docker_image | string | platform | arkloop/sandbox-agent:latest | false | Docker 后端使用的 sandbox-agent 镜像 |
 | sandbox.idle_timeout_lite_s | int | platform | 180 | false | Sandbox lite tier 空闲超时（秒） |
 | sandbox.idle_timeout_pro_s | int | platform | 300 | false | Sandbox pro tier 空闲超时（秒） |
 | sandbox.idle_timeout_ultra_s | int | platform | 600 | false | Sandbox ultra tier 空闲超时（秒） |
 | sandbox.max_lifetime_s | int | platform | 1800 | false | Sandbox session 最大存活时间（秒） |
+| sandbox.max_sessions | int | platform | 50 | false | Sandbox 最大并发 session 数 |
+| sandbox.provider | string | platform | firecracker | false | Sandbox 后端类型：firecracker / docker |
+| sandbox.refill_concurrency | int | platform | 2 | false | 预热补充最大并发数 |
+| sandbox.refill_interval_s | int | platform | 5 | false | 预热补充检查间隔（秒） |
+| sandbox.warm_lite | int | platform | 3 | false | lite tier 预热实例数 |
+| sandbox.warm_pro | int | platform | 2 | false | pro tier 预热实例数 |
+| sandbox.warm_ultra | int | platform | 1 | false | ultra tier 预热实例数 |
 | turnstile.allowed_host | string | platform |  | false | Turnstile Allowed Host |
 | turnstile.secret_key | string | platform |  | true | Turnstile Secret Key |
 | turnstile.site_key | string | platform |  | false | Turnstile Site Key |
