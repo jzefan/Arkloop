@@ -1,5 +1,4 @@
 local OUTPUT_PERSONA_ID = "search-output"
-local OUTPUT_AGENT_NAME = "sub-haiku-4.5"
 
 local system_prompt = context.get("system_prompt") or ""
 local messages_json = context.get("messages")
@@ -17,57 +16,11 @@ if loop_err ~= nil then
   return
 end
 
-context.emit("search.hybrid.route.selected", {
-  persona_id = OUTPUT_PERSONA_ID,
-  agent_name = OUTPUT_AGENT_NAME,
-  stage = "final_output",
-})
+local child_output, child_err = agent.run(OUTPUT_PERSONA_ID, cot_text)
+if child_err ~= nil then
+  error(child_err)
+end
 
-local last_user_message = context.get("last_user_message") or ""
-local final_system_prompt = system_prompt .. [[
-
-<final_output_guard>
-此阶段没有工具可用，只能输出自然语言的最终答案：
-- 严禁输出任何工具协议文本（包括 `<function_calls>`、`<invoke>`、`tool_call_id`、工具参数 JSON 等）
-- 严禁编造或猜测引用 ID；只使用检索草稿中已出现的引用
-- 不要复述检索草稿的内部格式与指令痕迹，只整理成对用户有用的回答
-</final_output_guard>
-]]
-local final_messages = {
-  {
-    role = "user",
-    content = "用户问题：\n" .. last_user_message .. "\n\n检索草稿/要点（用于整理最终回答；不要复述内部协议文本，不要新增工具调用痕迹）：\n" .. cot_text
-  }
-}
-
-local child_input = final_messages[1].content
-local child_output, child_err = agent.run(OUTPUT_PERSONA_ID, child_input)
-if child_err == nil and child_output ~= nil and child_output ~= "" then
+if child_output ~= nil and child_output ~= "" then
   context.set_output(child_output)
-  return
-end
-
-local reason = child_err or "unknown"
-context.emit("search.hybrid.route.fallback", {
-  persona_id = OUTPUT_PERSONA_ID,
-  agent_name = OUTPUT_AGENT_NAME,
-  stage = "final_output",
-  reason = reason,
-})
-
-local _, stream_err = agent.stream_agent(OUTPUT_AGENT_NAME, final_system_prompt, final_messages)
-if stream_err == nil then
-  return
-end
-
-if string.find(stream_err, "stream_terminal_failed:", 1, true) == 1 then
-  return
-end
-
-local _, fallback_err = agent.stream(final_system_prompt, final_messages)
-if fallback_err ~= nil then
-  if string.find(fallback_err, "stream_terminal_failed:", 1, true) == 1 then
-    return
-  end
-  error(fallback_err)
 end

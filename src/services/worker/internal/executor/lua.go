@@ -1201,6 +1201,16 @@ func (rt *luaRuntime) runAgentLoop(
 				capturedChunks = append(capturedChunks, text)
 			}
 			return nil
+		case "tool.result":
+			if capturePlainText {
+				if result, ok := ev.DataJSON["result"]; ok {
+					toolName, _ := ev.DataJSON["tool_name"].(string)
+					if resultBytes, err := json.Marshal(result); err == nil {
+						capturedChunks = append(capturedChunks, fmt.Sprintf("\n[tool_result: %s]\n%s\n[/tool_result]\n", toolName, string(resultBytes)))
+					}
+				}
+			}
+			return rt.yield(ev)
 		default:
 			return rt.yield(ev)
 		}
