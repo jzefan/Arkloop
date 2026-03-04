@@ -146,7 +146,8 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
     status: 'done',
     queries: step.queries ? [...step.queries] : undefined,
   }))
-  if (!normalized.some((step) => step.kind === 'reviewing')) {
+  const hasSearch = normalized.some((step) => step.kind === 'searching')
+  if (hasSearch && !normalized.some((step) => step.kind === 'reviewing')) {
     normalized.push({ id: 'reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' })
   }
   if (!normalized.some((step) => step.kind === 'finished')) {
@@ -223,6 +224,8 @@ export function ChatPage() {
   // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
   const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
   const searchStepsRef = useRef<SearchStep[]>([])
+  const [liveTimelineExiting, setLiveTimelineExiting] = useState(false)
+  const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const applySearchSteps = useCallback((updater: (prev: SearchStep[]) => SearchStep[]) => {
     setSearchSteps((prev) => {
       const next = updater(prev)
@@ -749,6 +752,12 @@ export function ChatPage() {
         activeSegmentIdRef.current = null
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
+        // 让 live SearchTimeline 平滑收起而非瞬间消失
+        if (searchStepsRef.current.length > 0) {
+          setLiveTimelineExiting(true)
+          clearTimeout(liveTimelineExitTimerRef.current)
+          liveTimelineExitTimerRef.current = setTimeout(() => setLiveTimelineExiting(false), 500)
+        }
         setQueuedDraft(null)
         setAwaitingInput(false)
         setCheckInDraft('')
@@ -1266,8 +1275,11 @@ export function ChatPage() {
     const segmentSteps = searchSteps.length === 0
       ? segments.filter(s => s.mode !== 'hidden').length
       : 0
-    return timelineSteps + segmentSteps
-  }, [searchSteps, segments])
+    const codeExecSteps = timelineSteps === 0 && segmentSteps === 0
+      ? topLevelCodeExecutions.length
+      : 0
+    return timelineSteps + segmentSteps + codeExecSteps
+  }, [searchSteps, segments, topLevelCodeExecutions])
 
   const copHeaderLabel = !assistantDraft
     ? 'Thinking'
@@ -1348,7 +1360,7 @@ export function ChatPage() {
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
                   {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
-                  {timelineSteps.length > 0 && (
+                  {(timelineSteps.length > 0 || (msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id))) && (
                     <div style={{ marginBottom: '12px' }}>
                       <SearchTimeline
                         steps={timelineSteps}
@@ -1357,14 +1369,6 @@ export function ChatPage() {
                         codeExecutions={msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined}
                         onOpenCodeExecution={openCodePanel}
                       />
-                    </div>
-                  )}
-                  {/* 无 COP 时，代码执行卡片独立渲染 */}
-                  {msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id) && timelineSteps.length === 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
-                      {messageCodeExecutionsMap.get(msg.id)!.map((ce) => (
-                        <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
-                      ))}
                     </div>
                   )}
                   <MessageBubble
@@ -1419,7 +1423,7 @@ export function ChatPage() {
               })}
 
               {/* 流式 COP 状态指示：Thinking / XX steps completed */}
-              {isStreaming && searchSteps.length === 0 && (segments.length > 0 || !assistantDraft) && (
+              {isStreaming && searchSteps.length === 0 && topLevelCodeExecutions.length === 0 && (segments.length > 0 || !assistantDraft) && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1470,15 +1474,15 @@ export function ChatPage() {
               )}
 
               {/* 流式期间的 live 时间轴 */}
-              {isStreaming && searchSteps.length > 0 && (
+              {(isStreaming || liveTimelineExiting) && searchSteps.length > 0 && (
                 <SearchTimeline
                   steps={searchSteps}
                   sources={currentRunSourcesRef.current}
-                  isComplete={false}
+                  isComplete={liveTimelineExiting && !isStreaming}
                   codeExecutions={topLevelCodeExecutions.length > 0 ? topLevelCodeExecutions : undefined}
                   onOpenCodeExecution={openCodePanel}
-                  headerOverride={copHeaderLabel}
-                  shimmer={!assistantDraft}
+                  headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
+                  shimmer={!liveTimelineExiting && !assistantDraft}
                 />
               )}
 
@@ -1506,8 +1510,8 @@ export function ChatPage() {
                 />
               )}
 
-              {/* 无 COP 时，顶层代码执行卡片独立渲染 */}
-              {topLevelCodeExecutions.length > 0 && !(isStreaming && searchSteps.length > 0) && (
+              {/* 无 COP 时，顶层代码执行卡片独立渲染（仅流式结束后、run.completed 前的短暂窗口） */}
+              {!isStreaming && topLevelCodeExecutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {topLevelCodeExecutions.map((ce) => (
                     <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />

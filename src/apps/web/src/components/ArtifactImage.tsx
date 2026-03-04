@@ -1,5 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { X, Download, ExternalLink } from 'lucide-react'
 import type { ArtifactRef } from '../storage'
+
+const ANIM_MS = 120
 
 function apiBaseUrl(): string {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
@@ -15,7 +18,9 @@ export function ArtifactImage({ artifact, accessToken }: Props) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [expanded, setExpanded] = useState(false)
+  const [visible, setVisible] = useState(false)
+  const [show, setShow] = useState(false)
+  const closingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -44,17 +49,56 @@ export function ArtifactImage({ artifact, accessToken }: Props) {
     }
   }, [artifact.key, accessToken])
 
-  // 释放 blob URL
   useEffect(() => {
     return () => {
       if (blobUrl) URL.revokeObjectURL(blobUrl)
     }
   }, [blobUrl])
 
-  const handleClose = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation()
-    setExpanded(false)
+  useEffect(() => {
+    return () => {
+      if (closingTimer.current) clearTimeout(closingTimer.current)
+    }
   }, [])
+
+  const openLightbox = useCallback(() => {
+    if (closingTimer.current) clearTimeout(closingTimer.current)
+    setVisible(true)
+    requestAnimationFrame(() => requestAnimationFrame(() => setShow(true)))
+  }, [])
+
+  const closeLightbox = useCallback(() => {
+    setShow(false)
+    closingTimer.current = setTimeout(() => setVisible(false), ANIM_MS)
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [visible, closeLightbox])
+
+  const handleOverlayClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) closeLightbox()
+    },
+    [closeLightbox],
+  )
+
+  const handleDownload = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!blobUrl) return
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = artifact.filename
+      a.click()
+    },
+    [blobUrl, artifact.filename],
+  )
 
   if (error) return null
   if (loading) {
@@ -76,6 +120,8 @@ export function ArtifactImage({ artifact, accessToken }: Props) {
     )
   }
 
+  const transition = `all ${ANIM_MS}ms ease-out`
+
   return (
     <>
       <div
@@ -89,39 +135,143 @@ export function ArtifactImage({ artifact, accessToken }: Props) {
         <img
           src={blobUrl!}
           alt={artifact.filename}
-          onClick={() => setExpanded(true)}
+          draggable={false}
+          onClick={openLightbox}
           style={{
             maxWidth: '100%',
             display: 'block',
             borderRadius: '6px',
-            cursor: 'pointer',
-            transition: 'opacity 150ms',
+            cursor: 'default',
           }}
         />
       </div>
-      {expanded && (
+      {visible && (
         <div
-          onClick={handleClose}
+          onClick={handleOverlayClick}
           style={{
             position: 'fixed',
             inset: 0,
             zIndex: 9999,
-            background: 'rgba(0,0,0,0.75)',
+            background: show ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+            backdropFilter: show ? 'blur(12px)' : 'blur(0px)',
+            WebkitBackdropFilter: show ? 'blur(12px)' : 'blur(0px)',
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: 'zoom-out',
+            cursor: 'default',
+            transition,
           }}
         >
+          <button
+            onClick={closeLightbox}
+            className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-deep)]"
+            style={{
+              position: 'absolute',
+              top: 16,
+              right: 16,
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--c-text-muted)',
+              cursor: 'pointer',
+              opacity: show ? 1 : 0,
+              transition,
+            }}
+          >
+            <X size={16} />
+          </button>
+
           <img
             src={blobUrl!}
             alt={artifact.filename}
+            draggable={false}
             style={{
               maxWidth: '90vw',
-              maxHeight: '90vh',
+              maxHeight: 'calc(90vh - 64px)',
               borderRadius: '8px',
+              transform: show ? 'scale(1)' : 'scale(0.94)',
+              opacity: show ? 1 : 0,
+              transition,
             }}
           />
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              marginTop: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              cursor: 'default',
+              transform: show ? 'translateY(0)' : 'translateY(6px)',
+              opacity: show ? 1 : 0,
+              transition,
+            }}
+          >
+            <a
+              href={blobUrl!}
+              target="_blank"
+              rel="noopener noreferrer"
+              draggable={false}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 14px',
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-sub)',
+                color: 'var(--c-text-primary)',
+                fontSize: 14,
+                textDecoration: 'none',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              onMouseEnter={(e) => {
+                ;(e.currentTarget as HTMLAnchorElement).style.background = 'var(--c-bg-deep)'
+              }}
+              onMouseLeave={(e) => {
+                ;(e.currentTarget as HTMLAnchorElement).style.background = 'var(--c-bg-sub)'
+              }}
+            >
+              <span
+                style={{
+                  maxWidth: 220,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {artifact.filename}
+              </span>
+              <ExternalLink size={14} style={{ color: 'var(--c-text-icon)', flexShrink: 0 }} />
+            </a>
+            <button
+              onClick={handleDownload}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-sub)',
+                color: 'var(--c-text-icon)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              onMouseEnter={(e) => {
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
+              }}
+              onMouseLeave={(e) => {
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)'
+              }}
+            >
+              <Download size={16} />
+            </button>
+          </div>
         </div>
       )}
     </>

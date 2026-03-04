@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
 import type { WebSource } from '../storage'
@@ -55,7 +55,6 @@ function QueryPill({ text }: { text: string }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '5px',
         padding: '2px 8px',
         borderRadius: '8px',
         background: 'var(--c-bg-menu)',
@@ -63,10 +62,20 @@ function QueryPill({ text }: { text: string }) {
         fontSize: '12px',
         color: 'var(--c-text-secondary)',
         lineHeight: '18px',
+        overflow: 'hidden',
       }}
     >
-      <Search size={11} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
-      {text}
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '5px',
+          animation: 'timeline-slide-in 0.3s ease-out both',
+        }}
+      >
+        <Search size={11} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
+        {text}
+      </span>
     </span>
   )
 }
@@ -123,30 +132,42 @@ function SourceItem({ source }: { source: WebSource }) {
   )
 }
 
+const DOT_TOP = 5
+const DOT_SIZE = 8
+
 export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, headerOverride, shimmer }: Props) {
   const [collapsed, setCollapsed] = useState(() => isComplete)
+  const prevIsCompleteRef = useRef(isComplete)
+  useEffect(() => {
+    if (isComplete && !prevIsCompleteRef.current) {
+      const timer = setTimeout(() => setCollapsed(true), 80)
+      prevIsCompleteRef.current = isComplete
+      return () => clearTimeout(timer)
+    }
+    prevIsCompleteRef.current = isComplete
+  }, [isComplete])
 
-  if (steps.length === 0) return null
+  const codeExecCount = codeExecutions?.length ?? 0
+  if (steps.length === 0 && codeExecCount === 0) return null
 
   const stepsExcludingFinished = steps.filter(s => s.kind !== 'finished').length
+  const effectiveStepCount = stepsExcludingFinished || codeExecCount
 
   const autoLabel = isComplete
     ? sources.length > 0
       ? `Reviewed ${sources.length} sources`
-      : stepsExcludingFinished > 0
-        ? `${stepsExcludingFinished} steps completed`
+      : effectiveStepCount > 0
+        ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
         : 'Completed'
-    : steps[steps.length - 1]?.label || 'Searching...'
+    : steps.length > 0
+      ? (steps[steps.length - 1]?.label || 'Searching...')
+      : 'Thinking'
 
   const headerLabel = headerOverride ?? autoLabel
+  const dottedStepCount = steps.filter(s => s.kind !== 'searching').length
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
-      style={{ maxWidth: '663px' }}
-    >
+    <div style={{ maxWidth: '663px' }}>
       <button
         type="button"
         onClick={() => setCollapsed((p) => !p)}
@@ -191,24 +212,27 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: '24px', paddingTop: '2px', paddingBottom: '2px' }}>
-              {/* 连贯实线 */}
-              <div
-                style={{
-                  position: 'absolute',
-                  left: '8px',
-                  top: '12px',
-                  bottom: '10px',
-                  width: '1.5px',
-                  background: 'var(--c-border-subtle)',
-                }}
-              />
+            <div style={{ position: 'relative', paddingLeft: steps.length > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+              {dottedStepCount >= 2 && (
+                <div
+                  key={`tl-${dottedStepCount}`}
+                  style={{
+                    position: 'absolute',
+                    left: '8px',
+                    top: '12px',
+                    bottom: '10px',
+                    width: '1.5px',
+                    background: 'var(--c-border-subtle)',
+                    transformOrigin: 'top',
+                    animation: 'timeline-line-grow 0.35s cubic-bezier(0.4, 0, 0.2, 1) both',
+                  }}
+                />
+              )}
 
               <AnimatePresence initial={false}>
               {steps.map((step, idx) => {
                 const isLast = idx === steps.length - 1
                 const hasDot = step.kind !== 'searching'
-
                 const dotColor =
                   step.status === 'active'
                     ? 'var(--c-text-secondary)'
@@ -219,7 +243,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                 return (
                   <Fragment key={step.id}>
                     {step.kind === 'finished' && codeExecutions && codeExecutions.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '14px', position: 'relative' }}>
                         {codeExecutions.map((ce) => (
                           <CodeExecutionCard
                             key={ce.id}
@@ -233,20 +257,21 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                       </div>
                     )}
                     <motion.div
-                      initial={{ opacity: 0, x: -10 }}
+                      initial={{ opacity: 0, x: -6 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.22, ease: 'easeOut' }}
                       style={{ position: 'relative', paddingBottom: isLast ? 0 : '14px' }}
                     >
+
                     {hasDot && (
                       <div
                         style={{
                           position: 'absolute',
                           left: '-19px',
-                          top: '5px',
-                          width: '8px',
-                          height: '8px',
+                          top: `${DOT_TOP}px`,
+                          width: `${DOT_SIZE}px`,
+                          height: `${DOT_SIZE}px`,
                           borderRadius: '50%',
                           background: dotColor,
                           border: '2px solid var(--c-bg-page)',
@@ -294,11 +319,20 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                           background: 'var(--c-bg-menu)',
                           maxHeight: '240px',
                           overflowY: 'auto',
+                          overflow: 'hidden',
                           padding: '4px',
                         }}
                       >
                         {sources.map((s, i) => (
-                          <SourceItem key={`${s.url}-${i}`} source={s} />
+                          <div
+                            key={`${s.url}-${i}`}
+                            style={{
+                              animation: 'timeline-slide-in 0.25s ease-out both',
+                              animationDelay: `${i * 0.03}s`,
+                            }}
+                          >
+                            <SourceItem source={s} />
+                          </div>
                         ))}
                       </div>
                     )}
@@ -327,6 +361,6 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   )
 }
