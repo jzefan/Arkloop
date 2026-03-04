@@ -29,3 +29,5 @@ config/openviking/ov.conf
 # VitePress build output
 src/docs/.vitepress/dist
 src/docs/.vitepress/cache
+
+temp
