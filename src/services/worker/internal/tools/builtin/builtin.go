@@ -37,7 +37,7 @@ func LlmSpecs() []llm.ToolSpec {
 		SearchPlanningTitleLlmSpec,
 		websearch.LlmSpec,
 		webfetch.LlmSpec,
-		spawnagent.LlmSpec,
+		// spawn_agent 由 NewSpawnAgentMiddleware 按需动态注入，不在此处静态注册
 		summarizethread.LlmSpec,
 	}
 }

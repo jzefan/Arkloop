@@ -161,6 +161,16 @@ export type ThreadResponse = {
   parent_thread_id?: string | null
 }
 
+export async function getThread(
+  accessToken: string,
+  threadId: string,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'GET',
+    accessToken,
+  })
+}
+
 export async function createThread(
   accessToken: string,
   req?: CreateThreadRequest,
