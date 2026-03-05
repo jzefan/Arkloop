@@ -219,7 +219,10 @@ func login(authService *auth.Service, auditWriter *audit.Writer, resolver shared
 			}
 			var unverified auth.EmailNotVerifiedError
 			if errors.As(err, &unverified) {
-				WriteError(w, nethttp.StatusUnauthorized, "auth.email_not_verified", "invalid credentials", traceID, nil)
+				if auditWriter != nil {
+					auditWriter.WriteLoginFailed(r.Context(), traceID, body.Login)
+				}
+				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_credentials", "invalid credentials", traceID, nil)
 				return
 			}
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)

@@ -240,3 +240,37 @@ func TestMiddleware_InvalidJWT_FallsBackToIP(t *testing.T) {
 		t.Fatalf("unexpected key: %s", ml.lastKey)
 	}
 }
+
+func TestMiddleware_LimiterError_AuthenticatedAPIKey_FailClosed(t *testing.T) {
+	ml := &mockLimiter{err: io.ErrUnexpectedEOF}
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret, 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Authorization", "Bearer ak-test-key-12345")
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("authenticated request with limiter error should fail closed (503), got %d", rec.Code)
+	}
+}
+
+func TestMiddleware_LimiterError_AuthenticatedJWT_FailClosed(t *testing.T) {
+	ml := &mockLimiter{err: io.ErrUnexpectedEOF}
+	orgID := uuid.New()
+	token := makeJWT(t, orgID)
+
+	h := NewRateLimitMiddleware(okHandler(), ml, testJWTSecret, 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/threads", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("authenticated JWT request with limiter error should fail closed (503), got %d", rec.Code)
+	}
+}
