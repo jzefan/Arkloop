@@ -28,7 +28,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-const gatewayConfigRedisKey = "arkloop:gateway:config"
+const (
+	gatewayConfigRedisKey            = "arkloop:gateway:config"
+	gatewayMaxRequestBodyBytes int64 = 32 << 20 // 32 MiB
+	gatewayReadTimeout               = 2 * time.Minute
+)
 
 // gatewayDynamicConfig 是可以从 Redis 动态加载的配置，覆盖 env 默认值。
 type gatewayDynamicConfig struct {
@@ -242,6 +246,7 @@ func (a *Application) Run(ctx context.Context) error {
 	inner = clientip.Middleware(a.buildResolver(), inner)
 
 	handler := recoverMiddleware(inner, a.logger)
+	handler = limitRequestBodyMiddleware(gatewayMaxRequestBodyBytes, handler)
 	root := http.NewServeMux()
 	root.HandleFunc("/healthz", healthz)
 	root.Handle("/", handler)
@@ -261,6 +266,7 @@ func (a *Application) Run(ctx context.Context) error {
 	server := &http.Server{
 		Handler:           root,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       gatewayReadTimeout,
 	}
 
 	errCh := make(chan error, 1)

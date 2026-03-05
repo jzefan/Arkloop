@@ -165,6 +165,22 @@ func recoverMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
 	})
 }
 
+func limitRequestBodyMiddleware(maxBytes int64, next http.Handler) http.Handler {
+	if maxBytes <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxBytes {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"code":"http.request_too_large","message":"request body too large"}`))
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func newTraceID() string {
 	hi := nextTrace64()
 	lo := nextTrace64()

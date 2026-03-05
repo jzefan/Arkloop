@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -34,6 +36,17 @@ func New(cfg Config) (*Proxy, error) {
 
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.FlushInterval = -1
+	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"code":"http.request_too_large","message":"request body too large"}`))
+			return
+		}
+		log.Printf("http: proxy error: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
 
 	original := rp.Director
 	rp.Director = func(req *http.Request) {
