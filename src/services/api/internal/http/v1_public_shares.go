@@ -13,8 +13,6 @@ import (
 
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -23,9 +21,9 @@ const (
 )
 
 type sharedThreadResponse struct {
-	RequiresPassword bool                   `json:"requires_password"`
-	Thread           *sharedThreadInfo      `json:"thread,omitempty"`
-	Messages         []sharedMessageItem    `json:"messages,omitempty"`
+	RequiresPassword bool                `json:"requires_password"`
+	Thread           *sharedThreadInfo   `json:"thread,omitempty"`
+	Messages         []sharedMessageItem `json:"messages,omitempty"`
 }
 
 type sharedThreadInfo struct {
@@ -136,10 +134,12 @@ func handleShareGet(
 		return
 	}
 
-	// 按快照数量限制消息
-	limit := share.SnapshotMessageCount
-	if limit <= 0 {
-		limit = 1
+	limit := 10000
+	if !share.LiveUpdate {
+		limit = share.SnapshotMessageCount
+		if limit <= 0 {
+			limit = 1
+		}
 	}
 	messages, err := messageRepo.ListByThread(r.Context(), thread.OrgID, thread.ID, limit)
 	if err != nil {
@@ -200,12 +200,12 @@ func handleShareVerify(
 		return
 	}
 
-	if share.AccessType != "password" || share.PasswordHash == nil {
+	if share.AccessType != "password" || share.Password == nil {
 		WriteError(w, nethttp.StatusBadRequest, "shares.not_password_protected", "share is not password protected", traceID, nil)
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(*share.PasswordHash), []byte(body.Password)); err != nil {
+	if *share.Password != body.Password {
 		WriteError(w, nethttp.StatusForbidden, "shares.wrong_password", "incorrect password", traceID, nil)
 		return
 	}

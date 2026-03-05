@@ -12,19 +12,23 @@ import (
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type createShareRequest struct {
 	AccessType string  `json:"access_type"` // "public" | "password"
 	Password   *string `json:"password"`
+	LiveUpdate *bool   `json:"live_update"`
 }
 
 type shareResponse struct {
-	Token      string `json:"token"`
-	URL        string `json:"url"`
-	AccessType string `json:"access_type"`
-	CreatedAt  string `json:"created_at"`
+	ID                string  `json:"id"`
+	Token             string  `json:"token"`
+	URL               string  `json:"url"`
+	AccessType        string  `json:"access_type"`
+	Password          *string `json:"password,omitempty"`
+	LiveUpdate        bool    `json:"live_update"`
+	SnapshotTurnCount int     `json:"snapshot_turn_count"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 func handleThreadShare(
@@ -38,9 +42,9 @@ func handleThreadShare(
 ) {
 	switch r.Method {
 	case nethttp.MethodPost:
-		createOrUpdateShare(w, r, traceID, actor, thread, threadShareRepo, messageRepo)
+		createShare(w, r, traceID, actor, thread, threadShareRepo, messageRepo)
 	case nethttp.MethodGet:
-		getShareInfo(w, r, traceID, actor, thread, threadShareRepo)
+		listShares(w, r, traceID, actor, thread, threadShareRepo)
 	case nethttp.MethodDelete:
 		deleteShare(w, r, traceID, actor, thread, threadShareRepo)
 	default:
@@ -48,7 +52,7 @@ func handleThreadShare(
 	}
 }
 
-func createOrUpdateShare(
+func createShare(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
 	traceID string,
@@ -86,7 +90,6 @@ func createOrUpdateShare(
 		}
 	}
 
-	// 统计当前消息数作为快照基准
 	messages, err := messageRepo.ListByThread(r.Context(), thread.OrgID, thread.ID, 10000)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -94,25 +97,33 @@ func createOrUpdateShare(
 	}
 	snapshotCount := len(messages)
 
+	turnCount := 0
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			turnCount++
+		}
+	}
+
+	liveUpdate := false
+	if body.LiveUpdate != nil {
+		liveUpdate = *body.LiveUpdate
+	}
+
 	token, err := data.GenerateShareToken()
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	var passwordHash *string
+	var password *string
 	if body.AccessType == "password" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
-		if err != nil {
-			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		h := string(hash)
-		passwordHash = &h
+		p := strings.TrimSpace(*body.Password)
+		password = &p
 	}
 
-	share, err := threadShareRepo.Upsert(
-		r.Context(), thread.ID, token, body.AccessType, passwordHash, snapshotCount, actor.UserID,
+	share, err := threadShareRepo.Create(
+		r.Context(), thread.ID, token, body.AccessType, password,
+		snapshotCount, liveUpdate, turnCount, actor.UserID,
 	)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -120,14 +131,18 @@ func createOrUpdateShare(
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, shareResponse{
-		Token:      share.Token,
-		URL:        "/s/" + share.Token,
-		AccessType: share.AccessType,
-		CreatedAt:  share.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                share.ID.String(),
+		Token:             share.Token,
+		URL:               "/s/" + share.Token,
+		AccessType:        share.AccessType,
+		Password:          share.Password,
+		LiveUpdate:        share.LiveUpdate,
+		SnapshotTurnCount: share.SnapshotTurnCount,
+		CreatedAt:         share.CreatedAt.UTC().Format(time.RFC3339Nano),
 	})
 }
 
-func getShareInfo(
+func listShares(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
 	traceID string,
@@ -140,22 +155,27 @@ func getShareInfo(
 		return
 	}
 
-	share, err := threadShareRepo.GetByThreadID(r.Context(), thread.ID)
+	shares, err := threadShareRepo.ListByThreadID(r.Context(), thread.ID)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-	if share == nil {
-		WriteError(w, nethttp.StatusNotFound, "shares.not_found", "no share link exists", traceID, nil)
-		return
+
+	resp := make([]shareResponse, 0, len(shares))
+	for _, s := range shares {
+		resp = append(resp, shareResponse{
+			ID:                s.ID.String(),
+			Token:             s.Token,
+			URL:               "/s/" + s.Token,
+			AccessType:        s.AccessType,
+			Password:          s.Password,
+			LiveUpdate:        s.LiveUpdate,
+			SnapshotTurnCount: s.SnapshotTurnCount,
+			CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
 	}
 
-	writeJSON(w, traceID, nethttp.StatusOK, shareResponse{
-		Token:      share.Token,
-		URL:        "/s/" + share.Token,
-		AccessType: share.AccessType,
-		CreatedAt:  share.CreatedAt.UTC().Format(time.RFC3339Nano),
-	})
+	writeJSON(w, traceID, nethttp.StatusOK, resp)
 }
 
 func deleteShare(
@@ -171,7 +191,18 @@ func deleteShare(
 		return
 	}
 
-	deleted, err := threadShareRepo.DeleteByThreadID(r.Context(), thread.ID)
+	shareIDStr := r.URL.Query().Get("id")
+	if shareIDStr == "" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "share id is required", traceID, nil)
+		return
+	}
+	shareID, err := uuid.Parse(shareIDStr)
+	if err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid share id", traceID, nil)
+		return
+	}
+
+	deleted, err := threadShareRepo.DeleteByID(r.Context(), shareID)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

@@ -171,6 +171,11 @@ export interface LocaleStrings {
   shareRevokeConfirm: string
   shareCurrentLink: string
   shareNoLink: string
+  shareLiveUpdate: string
+  shareFrozen: string
+  shareTurnCount: (n: number) => string
+  shareCreateNew: string
+  shareListEmpty: string
   // share page
   sharePageLogin: string
   sharePageRegister: string
