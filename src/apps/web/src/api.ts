@@ -655,9 +655,13 @@ export async function transcribeAudio(
 // Share API
 
 export type ShareResponse = {
+  id: string
   token: string
   url: string
   access_type: 'public' | 'password'
+  password?: string
+  live_update: boolean
+  snapshot_turn_count: number
   created_at: string
 }
 
@@ -666,19 +670,20 @@ export async function createThreadShare(
   threadId: string,
   accessType: 'public' | 'password',
   password?: string,
+  liveUpdate?: boolean,
 ): Promise<ShareResponse> {
   return await apiFetch<ShareResponse>(`/v1/threads/${threadId}:share`, {
     method: 'POST',
     accessToken,
-    body: JSON.stringify({ access_type: accessType, password }),
+    body: JSON.stringify({ access_type: accessType, password, live_update: liveUpdate }),
   })
 }
 
-export async function getThreadShare(
+export async function listThreadShares(
   accessToken: string,
   threadId: string,
-): Promise<ShareResponse> {
-  return await apiFetch<ShareResponse>(`/v1/threads/${threadId}:share`, {
+): Promise<ShareResponse[]> {
+  return await apiFetch<ShareResponse[]>(`/v1/threads/${threadId}:share`, {
     method: 'GET',
     accessToken,
   })
@@ -687,8 +692,9 @@ export async function getThreadShare(
 export async function deleteThreadShare(
   accessToken: string,
   threadId: string,
+  shareId: string,
 ): Promise<void> {
-  await apiFetch<void>(`/v1/threads/${threadId}:share`, {
+  await apiFetch<void>(`/v1/threads/${threadId}:share?id=${shareId}`, {
     method: 'DELETE',
     accessToken,
   })

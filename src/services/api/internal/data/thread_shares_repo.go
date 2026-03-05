@@ -20,8 +20,10 @@ type ThreadShare struct {
 	ThreadID             uuid.UUID
 	Token                string
 	AccessType           string // "public" | "password"
-	PasswordHash         *string
+	Password             *string
 	SnapshotMessageCount int
+	LiveUpdate           bool
+	SnapshotTurnCount    int
 	CreatedByUserID      uuid.UUID
 	CreatedAt            time.Time
 }
@@ -51,14 +53,15 @@ func GenerateShareToken() (string, error) {
 	return string(buf), nil
 }
 
-// Upsert 创建或替换 thread 的分享链接（一个 thread 只有一个 share）
-func (r *ThreadShareRepository) Upsert(
+func (r *ThreadShareRepository) Create(
 	ctx context.Context,
 	threadID uuid.UUID,
 	token string,
 	accessType string,
-	passwordHash *string,
+	password *string,
 	snapshotMessageCount int,
+	liveUpdate bool,
+	snapshotTurnCount int,
 	createdByUserID uuid.UUID,
 ) (*ThreadShare, error) {
 	if ctx == nil {
@@ -77,19 +80,14 @@ func (r *ThreadShareRepository) Upsert(
 	var share ThreadShare
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO thread_shares (thread_id, token, access_type, password_hash, snapshot_message_count, created_by_user_id)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (thread_id) DO UPDATE
-		   SET token = EXCLUDED.token,
-		       access_type = EXCLUDED.access_type,
-		       password_hash = EXCLUDED.password_hash,
-		       snapshot_message_count = EXCLUDED.snapshot_message_count,
-		       created_at = now()
-		 RETURNING id, thread_id, token, access_type, password_hash, snapshot_message_count, created_by_user_id, created_at`,
-		threadID, token, accessType, passwordHash, snapshotMessageCount, createdByUserID,
+		`INSERT INTO thread_shares (thread_id, token, access_type, password, snapshot_message_count, live_update, snapshot_turn_count, created_by_user_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING id, thread_id, token, access_type, password, snapshot_message_count, live_update, snapshot_turn_count, created_by_user_id, created_at`,
+		threadID, token, accessType, password, snapshotMessageCount, liveUpdate, snapshotTurnCount, createdByUserID,
 	).Scan(
 		&share.ID, &share.ThreadID, &share.Token, &share.AccessType,
-		&share.PasswordHash, &share.SnapshotMessageCount, &share.CreatedByUserID, &share.CreatedAt,
+		&share.Password, &share.SnapshotMessageCount, &share.LiveUpdate, &share.SnapshotTurnCount,
+		&share.CreatedByUserID, &share.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -97,7 +95,7 @@ func (r *ThreadShareRepository) Upsert(
 	return &share, nil
 }
 
-func (r *ThreadShareRepository) GetByThreadID(ctx context.Context, threadID uuid.UUID) (*ThreadShare, error) {
+func (r *ThreadShareRepository) ListByThreadID(ctx context.Context, threadID uuid.UUID) ([]*ThreadShare, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -105,24 +103,32 @@ func (r *ThreadShareRepository) GetByThreadID(ctx context.Context, threadID uuid
 		return nil, fmt.Errorf("thread_id must not be empty")
 	}
 
-	var share ThreadShare
-	err := r.db.QueryRow(
+	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, thread_id, token, access_type, password_hash, snapshot_message_count, created_by_user_id, created_at
+		`SELECT id, thread_id, token, access_type, password, snapshot_message_count, live_update, snapshot_turn_count, created_by_user_id, created_at
 		 FROM thread_shares
-		 WHERE thread_id = $1`,
+		 WHERE thread_id = $1
+		 ORDER BY created_at DESC`,
 		threadID,
-	).Scan(
-		&share.ID, &share.ThreadID, &share.Token, &share.AccessType,
-		&share.PasswordHash, &share.SnapshotMessageCount, &share.CreatedByUserID, &share.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	return &share, nil
+	defer rows.Close()
+
+	var shares []*ThreadShare
+	for rows.Next() {
+		var s ThreadShare
+		if err := rows.Scan(
+			&s.ID, &s.ThreadID, &s.Token, &s.AccessType,
+			&s.Password, &s.SnapshotMessageCount, &s.LiveUpdate, &s.SnapshotTurnCount,
+			&s.CreatedByUserID, &s.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		shares = append(shares, &s)
+	}
+	return shares, rows.Err()
 }
 
 func (r *ThreadShareRepository) GetByToken(ctx context.Context, token string) (*ThreadShare, error) {
@@ -136,13 +142,14 @@ func (r *ThreadShareRepository) GetByToken(ctx context.Context, token string) (*
 	var share ThreadShare
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, thread_id, token, access_type, password_hash, snapshot_message_count, created_by_user_id, created_at
+		`SELECT id, thread_id, token, access_type, password, snapshot_message_count, live_update, snapshot_turn_count, created_by_user_id, created_at
 		 FROM thread_shares
 		 WHERE token = $1`,
 		token,
 	).Scan(
 		&share.ID, &share.ThreadID, &share.Token, &share.AccessType,
-		&share.PasswordHash, &share.SnapshotMessageCount, &share.CreatedByUserID, &share.CreatedAt,
+		&share.Password, &share.SnapshotMessageCount, &share.LiveUpdate, &share.SnapshotTurnCount,
+		&share.CreatedByUserID, &share.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -153,15 +160,15 @@ func (r *ThreadShareRepository) GetByToken(ctx context.Context, token string) (*
 	return &share, nil
 }
 
-func (r *ThreadShareRepository) DeleteByThreadID(ctx context.Context, threadID uuid.UUID) (bool, error) {
+func (r *ThreadShareRepository) DeleteByID(ctx context.Context, id uuid.UUID) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if threadID == uuid.Nil {
-		return false, fmt.Errorf("thread_id must not be empty")
+	if id == uuid.Nil {
+		return false, fmt.Errorf("id must not be empty")
 	}
 
-	tag, err := r.db.Exec(ctx, `DELETE FROM thread_shares WHERE thread_id = $1`, threadID)
+	tag, err := r.db.Exec(ctx, `DELETE FROM thread_shares WHERE id = $1`, id)
 	if err != nil {
 		return false, err
 	}
