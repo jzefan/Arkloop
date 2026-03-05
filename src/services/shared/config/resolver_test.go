@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,5 +247,28 @@ func TestCacheAndInvalidate(t *testing.T) {
 	_, _ = resolver.Resolve(context.Background(), "k", Scope{})
 	if store.platformCalls != 2 {
 		t.Fatalf("expected 2 platform calls after invalidate, got %d", store.platformCalls)
+	}
+}
+
+func TestResolveUnregisteredKeyReturnsError(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Register(Entry{
+		Key:     "known.key",
+		Type:    TypeString,
+		Default: "v",
+		Scope:   ScopePlatform,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	store := &stubStore{platform: map[string]string{}}
+	resolver, _ := NewResolver(reg, store, nil, 0)
+
+	_, err := resolver.Resolve(context.Background(), "unknown.key", Scope{})
+	if err == nil {
+		t.Fatalf("expected error for unregistered key, got nil")
+	}
+	if !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("error should mention 'not registered', got: %v", err)
 	}
 }
