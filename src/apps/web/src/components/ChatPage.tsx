@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type FormEvent } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Glasses, Loader2, Paperclip, Share2, X, Zap } from 'lucide-react'
@@ -225,7 +225,7 @@ export function ChatPage() {
   const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
   const searchStepsRef = useRef<SearchStep[]>([])
   const [liveTimelineExiting, setLiveTimelineExiting] = useState(false)
-  const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const applySearchSteps = useCallback((updater: (prev: SearchStep[]) => SearchStep[]) => {
     setSearchSteps((prev) => {
       const next = updater(prev)
@@ -989,7 +989,7 @@ export function ChatPage() {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleSend = async (e: FormEvent<HTMLFormElement>, tier: SelectedTier) => {
+  const handleSend = async (e: React.FormEvent<HTMLFormElement>, tier: SelectedTier) => {
     e.preventDefault()
     if (sending || !threadId) return
 
