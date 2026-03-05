@@ -71,7 +71,7 @@ POST /v1/auth/register
 |------|------|------|------|
 | `login` | `string` | Yes | Username |
 | `password` | `string` | Yes | Password |
-| `email` | `string` | No | Email |
+| `email` | `string` | Yes | Email |
 | `invite_code` | `string` | Conditional | Required in invitation-only mode |
 | `locale` | `string` | No | Language preference |
 | `cf_turnstile_token` | `string` | Conditional | Required when Turnstile is enabled |

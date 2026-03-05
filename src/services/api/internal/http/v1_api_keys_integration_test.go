@@ -97,7 +97,7 @@ func buildAPIKeyHandler(t *testing.T) (nethttp.Handler, *data.APIKeysRepository,
 
 	// 注册一个测试用户并获取 JWT token
 	regResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"},
 		nil,
 	)
 	if regResp.Code != nethttp.StatusCreated {
@@ -294,7 +294,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	})
 
 	regResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd", "email": "bob@test.com"},
 		nil,
 	)
 	if regResp.Code != nethttp.StatusCreated {

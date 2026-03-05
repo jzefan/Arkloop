@@ -71,7 +71,7 @@ POST /v1/auth/register
 |------|------|------|------|
 | `login` | `string` | 是 | 用户名 |
 | `password` | `string` | 是 | 密码 |
-| `email` | `string` | 否 | 邮箱 |
+| `email` | `string` | 是 | 邮箱 |
 | `invite_code` | `string` | 条件 | 邀请制模式下必填 |
 | `locale` | `string` | 否 | 语言偏好 |
 | `cf_turnstile_token` | `string` | 条件 | 启用 Turnstile 时必填 |

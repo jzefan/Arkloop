@@ -82,6 +82,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	adminReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
 		"login":    "admin_reports@test.com",
 		"password": "adminpass123",
+		"email":    "admin_reports@test.com",
 	}, nil)
 	if adminReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register admin: %d body=%s", adminReg.Code, adminReg.Body.String())
@@ -104,6 +105,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	aliceReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
 		"login":    "alice_report@test.com",
 		"password": "alicepass123",
+		"email":    "alice_report@test.com",
 	}, nil)
 	if aliceReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d body=%s", aliceReg.Code, aliceReg.Body.String())
@@ -114,6 +116,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	bobReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
 		"login":    "bob_report@test.com",
 		"password": "bobpass12345",
+		"email":    "bob_report@test.com",
 	}, nil)
 	if bobReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register bob: %d body=%s", bobReg.Code, bobReg.Body.String())
