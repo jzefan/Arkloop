@@ -530,9 +530,14 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 	}
 }
 
+// maxJSONBodySize 限制 JSON 请求体最大 1 MiB，防止大 payload DoS。
+const maxJSONBodySize = 1 << 20
+
 func decodeJSON(r *nethttp.Request, dst any) error {
-	decoder := json.NewDecoder(r.Body)
+	reader := nethttp.MaxBytesReader(nil, r.Body, maxJSONBodySize)
+	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
 	return decoder.Decode(dst)
 }
 
