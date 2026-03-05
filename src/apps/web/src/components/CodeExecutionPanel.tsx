@@ -8,6 +8,25 @@ import type { CodeExecution } from './ThinkingBlock'
 hljs.registerLanguage('python', python)
 hljs.registerLanguage('bash', bash)
 
+function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '"':
+        return '&quot;'
+      case '\'':
+        return '&#39;'
+      default:
+        return ch
+    }
+  })
+}
+
 type Props = {
   execution: CodeExecution
   onClose: () => void
@@ -20,9 +39,12 @@ export function CodeExecutionPanel({ execution, onClose }: Props) {
   const highlightedCode = useMemo(() => {
     if (!execution.code) return ''
     try {
-      return hljs.highlight(execution.code, { language: isPython ? 'python' : 'bash' }).value
+      return hljs.highlight(execution.code, {
+        language: isPython ? 'python' : 'bash',
+        ignoreIllegals: true,
+      }).value
     } catch {
-      return execution.code
+      return escapeHtml(execution.code)
     }
   }, [execution.code, isPython])
 
