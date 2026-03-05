@@ -106,6 +106,13 @@ func (s *RegistrationService) SetEmailVerifyService(svc *EmailVerifyService) {
 	s.emailVerifySvc = svc
 }
 
+func (s *RegistrationService) RefreshTokenTTLSeconds() int {
+	if s == nil || s.tokenService == nil {
+		return 0
+	}
+	return s.tokenService.RefreshTokenTTLSeconds()
+}
+
 func (s *RegistrationService) Register(
 	ctx context.Context,
 	login string,

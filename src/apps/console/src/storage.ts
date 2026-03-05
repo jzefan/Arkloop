@@ -1,7 +1,4 @@
 import {
-  readRefreshToken,
-  writeRefreshToken,
-  clearRefreshToken,
   canUseStorage,
 } from '@arkloop/shared/storage'
 
@@ -10,18 +7,6 @@ export {
   writeAccessToken as writeAccessTokenToStorage,
   clearAccessToken as clearAccessTokenFromStorage,
 } from '@arkloop/shared/storage'
-
-export function readRefreshTokenFromStorage(): string | null {
-  return readRefreshToken('console')
-}
-
-export function writeRefreshTokenToStorage(token: string): void {
-  writeRefreshToken('console', token)
-}
-
-export function clearRefreshTokenFromStorage(): void {
-  clearRefreshToken('console')
-}
 
 const THEME_KEY = 'arkloop:console:theme'
 

@@ -853,6 +853,8 @@ export const zh: LocaleStrings = {
       toastSaveFailed: '保存失败',
     },
     captcha: {
+      title: 'Captcha',
+      statusTitle: '状态',
       statusConfigured: '已配置',
       statusNotConfigured: '未配置',
       sourceDb: 'Console 配置',

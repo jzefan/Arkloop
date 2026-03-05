@@ -6,68 +6,37 @@ function canUseLocalStorage(): boolean {
   }
 }
 
-export type AppId = 'web' | 'console'
+const LEGACY_ACCESS_TOKEN_KEY = 'arkloop:web:access_token'
+const LEGACY_REFRESH_TOKEN_WEB_KEY = 'arkloop:web:refresh_token'
+const LEGACY_REFRESH_TOKEN_CONSOLE_KEY = 'arkloop:console:refresh_token'
 
-const ACCESS_TOKEN_KEY = 'arkloop:web:access_token'
+let accessToken: string | null = null
 
-function refreshTokenKey(app: AppId): string {
-  return `arkloop:${app}:refresh_token`
+function clearLegacyTokens(): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
+    localStorage.removeItem(LEGACY_REFRESH_TOKEN_WEB_KEY)
+    localStorage.removeItem(LEGACY_REFRESH_TOKEN_CONSOLE_KEY)
+  } catch {
+    // ignore
+  }
 }
 
+clearLegacyTokens()
+
 export function readAccessToken(): string | null {
-  if (!canUseLocalStorage()) return null
-  try {
-    const raw = localStorage.getItem(ACCESS_TOKEN_KEY)
-    return raw?.trim() ? raw : null
-  } catch {
-    return null
-  }
+  return accessToken?.trim() ? accessToken : null
 }
 
 export function writeAccessToken(token: string): void {
-  if (!canUseLocalStorage() || !token.trim()) return
-  try {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token)
-  } catch {
-    // ignore
-  }
+  const trimmed = token.trim()
+  if (!trimmed) return
+  accessToken = trimmed
 }
 
 export function clearAccessToken(): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-  } catch {
-    // ignore
-  }
-}
-
-export function readRefreshToken(app: AppId): string | null {
-  if (!canUseLocalStorage()) return null
-  try {
-    const raw = localStorage.getItem(refreshTokenKey(app))
-    return raw?.trim() ? raw : null
-  } catch {
-    return null
-  }
-}
-
-export function writeRefreshToken(app: AppId, token: string): void {
-  if (!canUseLocalStorage() || !token.trim()) return
-  try {
-    localStorage.setItem(refreshTokenKey(app), token)
-  } catch {
-    // ignore
-  }
-}
-
-export function clearRefreshToken(app: AppId): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.removeItem(refreshTokenKey(app))
-  } catch {
-    // ignore
-  }
+  accessToken = null
 }
 
 export function canUseStorage(): boolean {

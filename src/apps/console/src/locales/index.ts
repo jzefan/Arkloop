@@ -946,6 +946,8 @@ export interface LocaleStrings {
       toastSaveFailed: string
     }
     captcha: {
+      title: string
+      statusTitle: string
       statusConfigured: string
       statusNotConfigured: string
       sourceDb: string

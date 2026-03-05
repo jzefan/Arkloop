@@ -4,7 +4,6 @@ export {
   isApiError,
   apiFetch,
   refreshAccessToken,
-  initApiClient,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
   apiBaseUrl,
@@ -19,12 +18,8 @@ export {
   readAccessToken,
   writeAccessToken,
   clearAccessToken,
-  readRefreshToken,
-  writeRefreshToken,
-  clearRefreshToken,
   canUseStorage,
 } from './storage/tokens'
-export type { AppId } from './storage/tokens'
 
 export { ThemeProvider, useTheme } from './contexts/ThemeContext'
 export type { Theme } from './contexts/ThemeContext'

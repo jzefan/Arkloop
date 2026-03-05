@@ -14,7 +14,6 @@ export type CaptchaConfigResponse = {
 export type LoginResponse = {
   token_type: string
   access_token: string
-  refresh_token: string
 }
 
 export type MeResponse = {

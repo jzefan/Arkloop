@@ -55,7 +55,7 @@ function Reveal({ active, children }: { active: boolean; children: React.ReactNo
 
 type Phase = 'identity' | 'password' | 'otp-email' | 'otp-code' | 'register'
 
-type Props = { onLoggedIn: (accessToken: string, refreshToken: string) => void }
+type Props = { onLoggedIn: (accessToken: string) => void }
 
 const isEmailStr = (v: string) => v.includes('@')
 const TRANSITION = '0.42s cubic-bezier(0.4,0,0.2,1)'
@@ -256,7 +256,7 @@ export function AuthPage({ onLoggedIn }: Props) {
       setSubmitting(true)
       try {
         const resp = await login({ login: identity.trim(), password, cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined })
-        onLoggedIn(resp.access_token, resp.refresh_token)
+        onLoggedIn(resp.access_token)
       } catch (err) {
         setTurnstileToken('')
         if (isApiError(err) && err.code === 'auth.email_not_verified') { switchToOtp(); return }
@@ -287,7 +287,7 @@ export function AuthPage({ onLoggedIn }: Props) {
       setOtpSubmitting(true)
       try {
         const resp = await verifyEmailOTP(email, code)
-        onLoggedIn(resp.access_token, resp.refresh_token)
+        onLoggedIn(resp.access_token)
       } catch (err) {
         setError(normalizeError(err, t.requestFailed))
       } finally {
@@ -307,7 +307,7 @@ export function AuthPage({ onLoggedIn }: Props) {
           cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined,
           ...(regInviteCode.trim() ? { invite_code: regInviteCode.trim() } : {}),
         })
-        onLoggedIn(resp.access_token, resp.refresh_token)
+        onLoggedIn(resp.access_token)
       } catch (err) {
         setTurnstileToken('')
         setError(normalizeError(err, t.requestFailed))

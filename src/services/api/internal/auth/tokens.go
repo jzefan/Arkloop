@@ -70,6 +70,13 @@ func NewJwtAccessTokenService(secret string, ttlSeconds int, refreshTokenTTLSeco
 	}, nil
 }
 
+func (s *JwtAccessTokenService) RefreshTokenTTLSeconds() int {
+	if s == nil {
+		return 0
+	}
+	return s.refreshTokenTTLSeconds
+}
+
 func (s *JwtAccessTokenService) Issue(userID uuid.UUID, orgID uuid.UUID, now time.Time) (string, error) {
 	if userID == uuid.Nil {
 		return "", errors.New("user_id must not be nil")

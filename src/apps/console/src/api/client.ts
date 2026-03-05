@@ -3,7 +3,6 @@ export {
   ApiError,
   isApiError,
   apiFetch,
-  initApiClient,
   refreshAccessToken,
   setUnauthenticatedHandler,
   setAccessTokenHandler,

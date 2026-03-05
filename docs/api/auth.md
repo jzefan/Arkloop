@@ -82,11 +82,12 @@ POST /v1/auth/register
 {
   "user_id": "...",
   "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "Bearer",
+  "token_type": "bearer",
   "warning": null
 }
 ```
+
+成功时服务端会通过 `Set-Cookie` 下发 Refresh Token（HttpOnly Cookie：`arkloop_refresh_token`）。
 
 ---
 
@@ -109,10 +110,11 @@ POST /v1/auth/login
 ```json
 {
   "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "Bearer"
+  "token_type": "bearer"
 }
 ```
+
+成功时服务端会通过 `Set-Cookie` 下发 Refresh Token（HttpOnly Cookie：`arkloop_refresh_token`）。
 
 ---
 
@@ -122,13 +124,11 @@ POST /v1/auth/login
 POST /v1/auth/refresh
 ```
 
-**请求体**
+**说明**
 
-| 字段 | 类型 | 必填 |
-|------|------|------|
-| `refresh_token` | `string` | 是 |
+无需请求体。服务端从 HttpOnly Cookie `arkloop_refresh_token` 读取 Refresh Token 并轮换。
 
-**响应** — 同登录响应格式。
+**响应** — 同登录响应格式（仅含 `access_token`、`token_type`），同时会更新 Refresh Token Cookie。
 
 ---
 
@@ -138,7 +138,7 @@ POST /v1/auth/refresh
 POST /v1/auth/logout
 ```
 
-需携带 Bearer Token。使当前 Token 失效。
+需携带 Bearer Token。使当前 Token 失效，并清理 Refresh Token Cookie。
 
 **响应**
 
@@ -200,4 +200,4 @@ POST /v1/auth/email/otp/verify
 | `email` | `string` | 是 |
 | `otp` | `string` | 是 |
 
-**响应** — 同登录响应格式（含 `access_token`、`refresh_token`）。
+**响应** — 同登录响应格式（含 `access_token`、`token_type`），同时会更新 Refresh Token Cookie。
