@@ -80,6 +80,22 @@ describe('selectFreshRunEvents', () => {
     expect(result.fresh.map((item) => item.seq)).toEqual([2])
     expect(result.nextProcessedCount).toBe(2)
   })
+
+  it('processedCount 超过 events.length 时重置为 0', () => {
+    const events = [
+      makeRunEvent({ runId: 'run_1', seq: 1, type: 'run.started' }),
+      makeRunEvent({ runId: 'run_1', seq: 2, type: 'message.delta' }),
+    ]
+
+    const result = selectFreshRunEvents({
+      events,
+      activeRunId: 'run_1',
+      processedCount: 999,
+    })
+
+    expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
+    expect(result.nextProcessedCount).toBe(2)
+  })
 })
 
 describe('buildMessageThinkingFromRunEvents', () => {
@@ -161,6 +177,122 @@ describe('buildMessageThinkingFromRunEvents', () => {
         runId: 'run_1',
         seq: 2,
         type: 'run.completed',
+      }),
+    ]
+
+    const snapshot = buildMessageThinkingFromRunEvents(events)
+    expect(snapshot).toBeNull()
+  })
+
+  it('segment.start 缺少 segment_id 时跳过', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'run.segment.start',
+        data: { kind: 'planning_round', display: { mode: 'collapsed', label: 'NoID' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'message.delta',
+        data: { role: 'assistant', content_delta: 'orphaned delta' },
+      }),
+    ]
+
+    const snapshot = buildMessageThinkingFromRunEvents(events)
+    expect(snapshot).toBeNull()
+  })
+
+  it('非 assistant role 的 message.delta 被过滤', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'run.segment.start',
+        data: { segment_id: 'seg_1', kind: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'message.delta',
+        data: { role: 'user', content_delta: 'user message' },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 3,
+        type: 'message.delta',
+        data: { role: 'assistant', content_delta: 'valid' },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 4,
+        type: 'run.segment.end',
+        data: { segment_id: 'seg_1' },
+      }),
+    ]
+
+    const snapshot = buildMessageThinkingFromRunEvents(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot?.segments[0].content).toBe('valid')
+  })
+
+  it('空 content_delta 被过滤', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'message.delta',
+        data: { role: 'assistant', channel: 'thinking', content_delta: '' },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'message.delta',
+        data: { role: 'assistant', channel: 'thinking', content_delta: 'real' },
+      }),
+    ]
+
+    const snapshot = buildMessageThinkingFromRunEvents(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot?.thinkingText).toBe('real')
+  })
+
+  it('segment.end 的 segment_id 不匹配当前活跃 segment 时不关闭', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'run.segment.start',
+        data: { segment_id: 'seg_1', kind: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'run.segment.end',
+        data: { segment_id: 'seg_wrong' },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 3,
+        type: 'message.delta',
+        data: { role: 'assistant', content_delta: 'still in seg_1' },
+      }),
+    ]
+
+    const snapshot = buildMessageThinkingFromRunEvents(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot?.segments).toHaveLength(1)
+    expect(snapshot?.segments[0].content).toBe('still in seg_1')
+  })
+
+  it('content_delta 非 string 类型被过滤', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'message.delta',
+        data: { role: 'assistant', channel: 'thinking', content_delta: 123 },
       }),
     ]
 
