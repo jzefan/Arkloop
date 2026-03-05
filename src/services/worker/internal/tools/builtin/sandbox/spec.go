@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	CodeExecuteSpec = tools.AgentToolSpec{
-		Name:        "code_execute",
+	PythonExecuteSpec = tools.AgentToolSpec{
+		Name:        "python_execute",
 		Version:     "1",
 		Description: "execute Python code in isolated sandbox and return output",
 		RiskLevel:   tools.RiskLevelHigh,
@@ -24,8 +24,8 @@ var (
 	}
 )
 
-var CodeExecuteLlmSpec = llm.ToolSpec{
-	Name:        "code_execute",
+var PythonExecuteLlmSpec = llm.ToolSpec{
+	Name:        "python_execute",
 	Description: stringPtr("execute Python code in an isolated sandbox environment. Pre-installed libraries include numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, etc. For charts and visualizations, prefer Plotly (plotly.express or plotly.graph_objects) over matplotlib. Use fig.write_image() for PNG output (kaleido is pre-installed). Only fall back to fig.write_html() if write_image fails. Do not set pio.renderers or attempt to open a browser. To produce output files (images, CSVs, HTML, etc.), write them to /tmp/output/. Files there are automatically uploaded; the tool result includes an artifacts array with each file's key, filename, size and mime_type. To display an artifact in your response, reference it using the key from the artifacts array: use ![alt](artifact:<key>) for images/SVG, or [label](artifact:<key>) for other files. NEVER use /tmp/output/ paths as links."),
 	JSONSchema: map[string]any{
 		"type": "object",
@@ -54,14 +54,14 @@ var ShellExecuteLlmSpec = llm.ToolSpec{
 
 func AgentSpecs() []tools.AgentToolSpec {
 	return []tools.AgentToolSpec{
-		CodeExecuteSpec,
+		PythonExecuteSpec,
 		ShellExecuteSpec,
 	}
 }
 
 func LlmSpecs() []llm.ToolSpec {
 	return []llm.ToolSpec{
-		CodeExecuteLlmSpec,
+		PythonExecuteLlmSpec,
 		ShellExecuteLlmSpec,
 	}
 }

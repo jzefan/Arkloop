@@ -147,7 +147,7 @@ func TestBillingExecutor_NoOrgID(t *testing.T) {
 	billing := NewBillingExecutor(inner, nil, nil, BillingConfig{BaseFee: 1, RatePerSecond: 0.5})
 
 	// OrgID 为 nil 时不扣费，直接返回原始结果
-	result := billing.Execute(context.Background(), "code_execute", nil, tools.ExecutionContext{
+	result := billing.Execute(context.Background(), "python_execute", nil, tools.ExecutionContext{
 		RunID: uuid.New(),
 	}, "")
 
@@ -172,7 +172,7 @@ func TestBillingExecutor_PassesThroughResult(t *testing.T) {
 	billing := NewBillingExecutor(inner, nil, nil, BillingConfig{BaseFee: 1, RatePerSecond: 0.5})
 
 	orgID := uuid.New()
-	result := billing.Execute(context.Background(), "code_execute", nil, tools.ExecutionContext{
+	result := billing.Execute(context.Background(), "python_execute", nil, tools.ExecutionContext{
 		RunID: uuid.New(),
 		OrgID: &orgID,
 	}, "")
