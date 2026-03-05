@@ -7,7 +7,8 @@ import (
 )
 
 // TrustedProxy 适用于任意 CDN 或内部负载均衡器前置的场景。
-// 仅当 RemoteAddr 属于 TrustedCIDRs 时，取 X-Forwarded-For 链最左端的 IP（即原始客户端 IP）。
+// 仅当 RemoteAddr 属于 TrustedCIDRs 时，使用 rightmost-trusted 策略解析客户端 IP：
+// 从 XFF 链右端向左遍历，跳过属于 TrustedCIDRs 的代理 IP，取第一个非可信 IP。
 // 否则降级为 RemoteAddr。
 type TrustedProxy struct {
 	TrustedCIDRs []*net.IPNet
@@ -25,10 +26,16 @@ func (t *TrustedProxy) RealIP(r *http.Request) string {
 		return remoteIP
 	}
 
-	// XFF 格式："client, proxy1, proxy2"，最左端为原始客户端 IP。
-	first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-	if parsed := net.ParseIP(first); parsed != nil {
-		return parsed.String()
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			continue
+		}
+		if !inCIDRList(parsed.String(), t.TrustedCIDRs) {
+			return parsed.String()
+		}
 	}
 
 	return remoteIP

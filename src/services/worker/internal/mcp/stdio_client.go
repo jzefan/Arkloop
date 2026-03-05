@@ -192,6 +192,8 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 	return nil
 }
 
+// buildServerEnv 仅传递 ServerConfig.Env 中显式声明的条目，永不继承父进程环境变量。
+// exec.Cmd.Env = nil 会导致子进程继承全部父进程环境，make 保证返回非 nil 切片。
 func buildServerEnv(server ServerConfig) []string {
 	env := make([]string, 0, len(server.Env))
 	for key, value := range server.Env {

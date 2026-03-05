@@ -14,13 +14,12 @@ func TestPoolBorrowRebuildsOnStdioDisconnect(t *testing.T) {
 	t.Setenv(mcpConfigFileEnv, configPath)
 
 	server := ServerConfig{
-		ServerID:         "demo",
-		Transport:        "stdio",
-		Command:          os.Args[0],
-		Args:             []string{"-test.run", "^TestMcpServerProcess$"},
-		InheritParentEnv: true,
-		Env:              map[string]string{testMcpServerEnv: "1"},
-		CallTimeoutMs:    1000,
+		ServerID:      "demo",
+		Transport:     "stdio",
+		Command:       os.Args[0],
+		Args:          []string{"-test.run", "^TestMcpServerProcess$"},
+		Env:           map[string]string{testMcpServerEnv: "1"},
+		CallTimeoutMs: 1000,
 	}
 
 	pool := NewPool()
@@ -88,13 +87,12 @@ func TestPoolBorrowRebuildsOnStdioDisconnect(t *testing.T) {
 // TestStdioClientIsHealthy 验证 IsHealthy 在各状态下的返回值。
 func TestStdioClientIsHealthy(t *testing.T) {
 	server := ServerConfig{
-		ServerID:         "demo",
-		Transport:        "stdio",
-		Command:          os.Args[0],
-		Args:             []string{"-test.run", "^TestMcpServerProcess$"},
-		InheritParentEnv: true,
-		Env:              map[string]string{testMcpServerEnv: "1"},
-		CallTimeoutMs:    1000,
+		ServerID:      "demo",
+		Transport:     "stdio",
+		Command:       os.Args[0],
+		Args:          []string{"-test.run", "^TestMcpServerProcess$"},
+		Env:           map[string]string{testMcpServerEnv: "1"},
+		CallTimeoutMs: 1000,
 	}
 
 	ctx := context.Background()

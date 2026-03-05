@@ -248,12 +248,11 @@ func writeTestMcpConfig(t *testing.T, overrides map[string]any) string {
 	payload := map[string]any{
 		"mcpServers": map[string]any{
 			"demo": map[string]any{
-				"transport":        "stdio",
-				"command":          os.Args[0],
-				"args":             []any{"-test.run", "^TestMcpServerProcess$"},
-				"inheritParentEnv": true,
-				"env":              map[string]any{testMcpServerEnv: "1"},
-				"callTimeoutMs":    200,
+				"transport":     "stdio",
+				"command":       os.Args[0],
+				"args":          []any{"-test.run", "^TestMcpServerProcess$"},
+				"env":           map[string]any{testMcpServerEnv: "1"},
+				"callTimeoutMs": 200,
 			},
 		},
 	}
@@ -272,4 +271,3 @@ func writeTestMcpConfig(t *testing.T, overrides map[string]any) string {
 	}
 	return path
 }
-
