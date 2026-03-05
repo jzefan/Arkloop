@@ -1,8 +1,10 @@
 package http
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net"
 	"strings"
 	"time"
@@ -217,7 +219,7 @@ func login(authService *auth.Service, auditWriter *audit.Writer, resolver shared
 			}
 			var unverified auth.EmailNotVerifiedError
 			if errors.As(err, &unverified) {
-				WriteError(w, nethttp.StatusForbidden, "auth.email_not_verified", "email not verified", traceID, nil)
+				WriteError(w, nethttp.StatusUnauthorized, "auth.email_not_verified", "invalid credentials", traceID, nil)
 				return
 			}
 			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -818,21 +820,24 @@ func checkUser(credentialRepo *data.UserCredentialRepository, usersRepo *data.Us
 		body.Login = strings.TrimSpace(body.Login)
 
 		var maskedEmail string
-		exists := false
 
 		if cred, err := credentialRepo.GetByLogin(r.Context(), body.Login); err == nil && cred != nil {
-			exists = true
 			if user, err := usersRepo.GetByID(r.Context(), cred.UserID); err == nil && user != nil && user.Email != nil && *user.Email != "" {
 				maskedEmail = maskEmail(*user.Email)
 			}
-		}
-		if !exists {
-			if cred, err := credentialRepo.GetByUserEmail(r.Context(), body.Login); err == nil && cred != nil {
-				exists = true
+		} else if cred, err := credentialRepo.GetByUserEmail(r.Context(), body.Login); err == nil && cred != nil {
+			maskedEmail = maskEmail(body.Login)
+		} else {
+			// 用户不存在时生成占位 masked email，防止通过响应差异枚举用户
+			if strings.Contains(body.Login, "@") {
 				maskedEmail = maskEmail(body.Login)
 			}
 		}
 
-		writeJSON(w, traceID, nethttp.StatusOK, checkUserResponse{Exists: exists, MaskedEmail: maskedEmail})
+		// 随机延时 50-150ms，防止时序攻击
+		jitter, _ := rand.Int(rand.Reader, big.NewInt(100))
+		time.Sleep(time.Duration(50+jitter.Int64()) * time.Millisecond)
+
+		writeJSON(w, traceID, nethttp.StatusOK, checkUserResponse{Exists: true, MaskedEmail: maskedEmail})
 	}
 }
