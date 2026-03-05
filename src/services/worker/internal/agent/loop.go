@@ -603,6 +603,10 @@ func toolResultDedupKey(toolName string, args map[string]any, result llm.StreamT
 	if strings.TrimSpace(toolName) == "" || args == nil {
 		return "", "", false
 	}
+
+	if result.Error != nil {
+		return "", "", false
+	}
 	argsHash, err := stablejson.Sha256(args)
 	if err != nil || strings.TrimSpace(argsHash) == "" {
 		return "", "", false
@@ -615,12 +619,6 @@ func toolResultDedupKey(toolName string, args map[string]any, result llm.StreamT
 
 	sigPayload := map[string]any{
 		"result": normalizedResult,
-	}
-	if result.Error != nil {
-		sigPayload["error_class"] = result.Error.ErrorClass
-		if strings.TrimSpace(result.Error.Message) != "" {
-			sigPayload["error_message"] = result.Error.Message
-		}
 	}
 	sig, sigErr := stablejson.Sha256(sigPayload)
 	if sigErr != nil || strings.TrimSpace(sig) == "" {
