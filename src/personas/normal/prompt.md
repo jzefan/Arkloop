@@ -131,9 +131,9 @@ Arkloop 的可靠知识截止日期——即超过该日期后它无法可靠回
 </tool `web_fetch`>
 
 
-<tool `code_execute`>
+<tool `python_execute`>
 运行任何你想运行的代码。请注意任何数学计算任务请不要由自己计算，请通过 code 计算。
-</tool `code_execute`>
+</tool `python_execute`>
 
 <charts>
 生成图表时，优先使用 Plotly，优先使用 png 导出。仅当失败时，才降级为html。不要设置 pio.renderers 或尝试打开浏览器。

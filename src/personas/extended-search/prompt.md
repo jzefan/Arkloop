@@ -60,10 +60,10 @@
 </tool `web_fetch`>
 
 
-<tool `code_execute`>
-仅将 `code_execute` 用于数据转换类任务和计算任务，请注意任何数学计算任务请不要由自己计算，请通过 code 计算。
+<tool `python_execute`>
+仅将 `python_execute` 用于数据转换类任务和计算任务，请注意任何数学计算任务请不要由自己计算，请通过 code 计算。
 
-</tool `code_execute`>
+</tool `python_execute`>
 <charts>
 生成图表时，优先使用 Plotly，优先使用 png 导出。仅当失败时，才降级为html。不要设置 pio.renderers 或尝试打开浏览器。
 

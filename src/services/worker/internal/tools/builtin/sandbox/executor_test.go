@@ -19,7 +19,7 @@ func testContext() tools.ExecutionContext {
 	}
 }
 
-func TestCodeExecute_Success(t *testing.T) {
+func TestPythonExecute_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/exec" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -61,7 +61,7 @@ func TestCodeExecute_Success(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "test-token")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "print('hello')"},
 		testContext(),
 		"",
@@ -117,11 +117,11 @@ func TestShellExecute_Success(t *testing.T) {
 	}
 }
 
-func TestCodeExecute_MissingCode(t *testing.T) {
+func TestPythonExecute_MissingCode(t *testing.T) {
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{},
 		testContext(),
 		"",
@@ -149,7 +149,7 @@ func TestNotConfigured(t *testing.T) {
 	exec := NewToolExecutor("", "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "x"},
 		testContext(),
 		"",
@@ -187,7 +187,7 @@ func TestHTTPError_ServerError(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "import sys; sys.exit(1)"},
 		testContext(),
 		"",
@@ -209,7 +209,7 @@ func TestHTTPError_ServiceUnavailable(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "x"},
 		testContext(),
 		"",
@@ -233,7 +233,7 @@ func TestHTTPError_Timeout(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "import time; time.sleep(999)"},
 		testContext(),
 		"",
@@ -258,7 +258,7 @@ func TestNonZeroExitCode_NotError(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "1/0"},
 		testContext(),
 		"",
@@ -293,7 +293,7 @@ func TestOutputTruncation(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "print('x'*40960)"},
 		testContext(),
 		"",
@@ -328,7 +328,7 @@ func TestTierFromBudget(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "x=1"},
 		ctx,
 		"",
@@ -356,7 +356,7 @@ func TestTimeoutMs_Propagation(t *testing.T) {
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "x=1", "timeout_ms": float64(60000)},
 		testContext(),
 		"",
@@ -383,7 +383,7 @@ func TestClientTimeout(t *testing.T) {
 
 	result := exec.Execute(
 		t.Context(),
-		"code_execute",
+		"python_execute",
 		map[string]any{"code": "x=1"},
 		testContext(),
 		"",
@@ -415,7 +415,7 @@ func TestOrgID_Propagation(t *testing.T) {
 	}
 
 	exec := NewToolExecutor(server.URL, "")
-	result := exec.Execute(t.Context(), "code_execute", map[string]any{"code": "x=1"}, ctx, "")
+	result := exec.Execute(t.Context(), "python_execute", map[string]any{"code": "x=1"}, ctx, "")
 
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
@@ -436,7 +436,7 @@ func TestNoAuthHeader_WhenTokenEmpty(t *testing.T) {
 	defer server.Close()
 
 	exec := NewToolExecutor(server.URL, "")
-	result := exec.Execute(t.Context(), "code_execute", map[string]any{"code": "x=1"}, testContext(), "")
+	result := exec.Execute(t.Context(), "python_execute", map[string]any{"code": "x=1"}, testContext(), "")
 
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)

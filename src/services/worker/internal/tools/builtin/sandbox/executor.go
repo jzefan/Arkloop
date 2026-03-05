@@ -80,7 +80,7 @@ func (e *ToolExecutor) Execute(
 
 	var language, code string
 	switch toolName {
-	case "code_execute":
+	case "python_execute":
 		language = "python"
 		code, _ = args["code"].(string)
 		if code == "" {
