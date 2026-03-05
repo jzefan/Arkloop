@@ -375,6 +375,68 @@ func TestAgentLoopDedupToolResultMessageInjection(t *testing.T) {
 	}
 }
 
+func TestAgentLoopDoesNotDedupErrorToolResultMessageInjection(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
+
+	gateway := &dupToolCallCaptureGateway{
+		// echo tool 会对全空白参数返回 args_invalid
+		text: " ",
+	}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:         uuid.New(),
+			TraceID:       "trace",
+			InputJSON:     map[string]any{},
+			MaxIterations: 4,
+			ToolExecutor:  executor,
+			CancelSignal:  func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	if len(gateway.requests) < 3 {
+		t.Fatalf("expected at least 3 llm requests, got %d", len(gateway.requests))
+	}
+	third := gateway.requests[2]
+
+	toolMsgs := []llm.Message{}
+	for _, msg := range third.Messages {
+		if msg.Role == "tool" {
+			toolMsgs = append(toolMsgs, msg)
+		}
+	}
+	if len(toolMsgs) != 2 {
+		t.Fatalf("expected 2 tool messages in third request, got %d", len(toolMsgs))
+	}
+
+	second := toolMsgs[1].Content[0].Text
+	if strings.Contains(second, "same_args_as_previous") {
+		t.Fatalf("expected error tool message not to be deduped, got %q", second)
+	}
+	if !strings.Contains(second, "tool.args_invalid") {
+		t.Fatalf("expected args_invalid error to be present, got %q", second)
+	}
+}
+
 type scriptedGateway struct {
 	calls int
 }
