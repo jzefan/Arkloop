@@ -49,12 +49,19 @@ func NewRateLimitMiddleware(next http.Handler, limiter Limiter, jwtSecret string
 			ctx, cancel = context.WithTimeout(ctx, redisTimeout)
 		}
 
-		key := rateLimitKeyFromRequest(ctx, r, parser, secretBytes, redisClient)
+		rl := rateLimitKeyFromRequest(ctx, r, parser, secretBytes, redisClient)
 
-		result, err := limiter.Consume(ctx, key)
+		result, err := limiter.Consume(ctx, rl.key)
 		cancel()
 		if err != nil {
-			// Redis 不可用时放行，避免限流器故障阻断所有流量
+			if rl.authenticated {
+				// 已认证请求 + Redis 故障 = fail-close，防止降级到共享 IP bucket
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"code":"ratelimit.unavailable","message":"rate limit service temporarily unavailable"}`))
+				return
+			}
+			// 匿名请求 fail-open，避免限流器故障阻断所有流量
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -69,25 +76,38 @@ func NewRateLimitMiddleware(next http.Handler, limiter Limiter, jwtSecret string
 	})
 }
 
+// rateLimitResult 包含限流 key 及请求是否携带了认证凭据。
+type rateLimitResult struct {
+	key           string
+	authenticated bool // 请求是否携带了认证凭据（JWT 或 API Key）
+}
+
 // rateLimitKeyFromRequest 提取限流 key。
-// 优先从 JWT 或 API Key（Redis 缓存）取 org_id；失败时降级到客户端 IP。
-func rateLimitKeyFromRequest(ctx context.Context, r *http.Request, parser *jwt.Parser, secret []byte, rdb *redis.Client) string {
+// 优先从 JWT 或 API Key（Redis 缓存）取 org_id；匿名请求按客户端 IP 限流。
+// 已认证但 org 提取失败时，仍标记为 authenticated 以便中间件 fail-close。
+func rateLimitKeyFromRequest(ctx context.Context, r *http.Request, parser *jwt.Parser, secret []byte, rdb *redis.Client) rateLimitResult {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	bearer, ok := strings.CutPrefix(auth, "Bearer ")
 
 	// API Key 路径：通过 identity 包查缓存
 	if ok && strings.HasPrefix(bearer, "ak-") {
 		if orgStr := identity.ExtractOrgID(ctx, auth, rdb, secret); orgStr != "" {
-			return rateLimitOrgKeyPrefix + orgStr
+			return rateLimitResult{key: rateLimitOrgKeyPrefix + orgStr, authenticated: true}
 		}
-		return rateLimitIPKeyPrefix + clientIP(r)
+		// 有 API Key 但无法解析 org（Redis 故障等），标记为已认证
+		return rateLimitResult{key: rateLimitIPKeyPrefix + clientIP(r), authenticated: true}
 	}
 
 	// JWT 路径：带签名验证
-	if orgID := extractOrgIDFromBearer(r, parser, secret); orgID != uuid.Nil {
-		return rateLimitOrgKeyPrefix + orgID.String()
+	if ok && bearer != "" {
+		if orgID := extractOrgIDFromBearer(r, parser, secret); orgID != uuid.Nil {
+			return rateLimitResult{key: rateLimitOrgKeyPrefix + orgID.String(), authenticated: true}
+		}
+		// 有 Bearer token 但签名无效或 org 缺失，视为匿名
+		return rateLimitResult{key: rateLimitIPKeyPrefix + clientIP(r), authenticated: false}
 	}
-	return rateLimitIPKeyPrefix + clientIP(r)
+
+	return rateLimitResult{key: rateLimitIPKeyPrefix + clientIP(r), authenticated: false}
 }
 
 // extractOrgIDFromBearer 验证 Bearer JWT 并提取 org claim。
