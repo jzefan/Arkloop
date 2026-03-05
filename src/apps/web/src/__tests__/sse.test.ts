@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseSSEChunk } from '../sse'
+import { parseSSEChunk, SSEApiError } from '../sse'
 
 describe('parseSSEChunk', () => {
   it('解析单个完整事件', () => {
@@ -66,7 +66,6 @@ describe('parseSSEChunk', () => {
   })
 
   it('处理 data 后有空格的情况', () => {
-    // SSE 规范：冒号后的第一个空格应被忽略
     const input = 'data: {"key": "value"}\n\n'
     const { events } = parseSSEChunk(input)
 
@@ -105,16 +104,13 @@ describe('parseSSEChunk', () => {
   })
 
   it('处理分块接收的场景', () => {
-    // 模拟网络分块
     const chunk1 = 'data: {"seq":'
     const chunk2 = '1}\n\ndata: {"seq":2}\n\n'
 
-    // 第一块
     const result1 = parseSSEChunk(chunk1)
     expect(result1.events).toHaveLength(0)
     expect(result1.remaining).toBe('data: {"seq":')
 
-    // 第二块（拼接 remaining）
     const result2 = parseSSEChunk(result1.remaining + chunk2)
     expect(result2.events).toHaveLength(2)
     expect(result2.events[0].data).toBe('{"seq":1}')
@@ -140,5 +136,43 @@ describe('parseSSEChunk', () => {
     const result2 = parseSSEChunk(result1.remaining + chunk2)
     expect(result2.events).toHaveLength(1)
     expect(result2.events[0].data).toBe('{"seq":1}')
+  })
+})
+
+describe('SSEApiError', () => {
+  it('status/code/traceId/details 正确赋值', () => {
+    const err = new SSEApiError({
+      status: 429,
+      message: 'rate limited',
+      code: 'rate_limit_exceeded',
+      traceId: 'trace-abc',
+      details: { retry_after: 30 },
+    })
+
+    expect(err.status).toBe(429)
+    expect(err.message).toBe('rate limited')
+    expect(err.code).toBe('rate_limit_exceeded')
+    expect(err.traceId).toBe('trace-abc')
+    expect(err.details).toEqual({ retry_after: 30 })
+    expect(err.name).toBe('SSEApiError')
+    expect(err).toBeInstanceOf(Error)
+  })
+
+  it('可选字段缺省为 undefined', () => {
+    const err = new SSEApiError({
+      status: 500,
+      message: 'internal error',
+    })
+
+    expect(err.status).toBe(500)
+    expect(err.code).toBeUndefined()
+    expect(err.traceId).toBeUndefined()
+    expect(err.details).toBeUndefined()
+  })
+
+  it('instanceof Error 可被 catch 捕获', () => {
+    const err = new SSEApiError({ status: 400, message: 'bad request' })
+    expect(err instanceof Error).toBe(true)
+    expect(err instanceof SSEApiError).toBe(true)
   })
 })
