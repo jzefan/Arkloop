@@ -89,7 +89,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"},
 		nil,
 	)
 	if registerResp.Code != nethttp.StatusCreated {
@@ -121,7 +121,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd", "email": "bob@test.com"},
 		nil,
 	)
 	if otherRegister.Code != nethttp.StatusCreated {
@@ -191,14 +191,14 @@ func TestThreadListActiveRunID(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
-		ThreadRepo:          threadRepo,
-		RunEventRepo:        runRepo,
-		AuditWriter:         auditWriter,
+		Pool:                 pool,
+		Logger:               logger,
+		AuthService:          authService,
+		RegistrationService:  registrationService,
+		OrgMembershipRepo:    membershipRepo,
+		ThreadRepo:           threadRepo,
+		RunEventRepo:         runRepo,
+		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,
 	})
 
@@ -206,7 +206,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice2", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice2", "password": "pwdpwdpwd", "email": "alice2@test.com"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {

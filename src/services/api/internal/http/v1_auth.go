@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -136,10 +137,10 @@ type registerRequest struct {
 }
 
 type registerResponse struct {
-	UserID       string  `json:"user_id"`
-	AccessToken  string  `json:"access_token"`
-	TokenType    string  `json:"token_type"`
-	Warning      *string `json:"warning,omitempty"`
+	UserID      string  `json:"user_id"`
+	AccessToken string  `json:"access_token"`
+	TokenType   string  `json:"token_type"`
+	Warning     *string `json:"warning,omitempty"`
 }
 
 type registrationModeResponse struct {
@@ -382,7 +383,7 @@ func register(
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if body.Email == "" || len(body.Email) > 256 || !strings.Contains(body.Email, "@") {
+		if body.Email == "" || len(body.Email) > 256 || !isValidEmail(body.Email) {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "email is required and must be valid", traceID, nil)
 			return
 		}
@@ -429,9 +430,9 @@ func register(
 		}
 
 		resp := registerResponse{
-			UserID:       created.UserID.String(),
-			AccessToken:  created.AccessToken,
-			TokenType:    "bearer",
+			UserID:      created.UserID.String(),
+			AccessToken: created.AccessToken,
+			TokenType:   "bearer",
 		}
 		if created.Warning != "" {
 			resp.Warning = &created.Warning
@@ -542,6 +543,21 @@ func decodeJSON(r *nethttp.Request, dst any) error {
 	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(dst)
+}
+
+func isValidEmail(value string) bool {
+	if strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	addr, err := mail.ParseAddress(trimmed)
+	if err != nil || addr == nil {
+		return false
+	}
+	return addr.Address == trimmed
 }
 
 func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload any) {
@@ -793,7 +809,7 @@ func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, resolver sharedcon
 			return
 		}
 		body.Email = strings.TrimSpace(body.Email)
-		if body.Email == "" || !strings.Contains(body.Email, "@") {
+		if body.Email == "" || len(body.Email) > 256 || !isValidEmail(body.Email) {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "valid email is required", traceID, nil)
 			return
 		}

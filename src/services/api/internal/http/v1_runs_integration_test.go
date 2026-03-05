@@ -99,7 +99,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
@@ -166,7 +166,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":        "search",
+			"persona_id":      "search",
 			"output_route_id": "final-output-route",
 		},
 		aliceHeaders,
@@ -252,7 +252,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":         "search",
+			"persona_id":       "search",
 			"output_model_key": "gpt5",
 		},
 		aliceHeaders,
@@ -286,7 +286,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":         "search",
+			"persona_id":       "search",
 			"output_model_key": "gpt5",
 			"output_route_id":  "manual-final-route",
 		},
@@ -321,7 +321,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":         "search",
+			"persona_id":       "search",
 			"output_model_key": "claude4",
 		},
 		aliceHeaders,
@@ -356,7 +356,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":         "search",
+			"persona_id":       "search",
 			"output_model_key": "gemini3",
 		},
 		aliceHeaders,
@@ -391,7 +391,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		nethttp.MethodPost,
 		"/v1/threads/"+threadPayload.ID+"/runs",
 		map[string]any{
-			"persona_id":         "search",
+			"persona_id":       "search",
 			"output_model_key": "gemini3",
 		},
 		aliceHeaders,
@@ -537,7 +537,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd", "email": "bob@test.com"},
 		nil,
 	)
 	if bobRegister.Code != nethttp.StatusCreated {
@@ -641,7 +641,7 @@ func TestStreamRunEvents(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice_sse", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice_sse", "password": "pwdpwdpwd", "email": "alice_sse@test.com"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
@@ -723,7 +723,7 @@ func TestStreamRunEvents(t *testing.T) {
 			handler,
 			nethttp.MethodPost,
 			"/v1/auth/register",
-			map[string]any{"login": "bob_sse", "password": "pwdpwdpwd"},
+			map[string]any{"login": "bob_sse", "password": "pwdpwdpwd", "email": "bob_sse@test.com"},
 			nil,
 		)
 		if bobRegister.Code != nethttp.StatusCreated {
@@ -840,7 +840,7 @@ func TestListGlobalRuns(t *testing.T) {
 
 	// alice 注册并创建 thread + run
 	aliceReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice_gr", "password": "pwdpwdpwd"}, nil)
+		map[string]any{"login": "alice_gr", "password": "pwdpwdpwd", "email": "alice_gr@test.com"}, nil)
 	if aliceReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d body=%s", aliceReg.Code, aliceReg.Body.String())
 	}
@@ -869,7 +869,7 @@ func TestListGlobalRuns(t *testing.T) {
 
 	// bob 注册（不同 org）
 	bobReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "bob_gr", "password": "pwdpwdpwd"}, nil)
+		map[string]any{"login": "bob_gr", "password": "pwdpwdpwd", "email": "bob_gr@test.com"}, nil)
 	if bobReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register bob: %d body=%s", bobReg.Code, bobReg.Body.String())
 	}

@@ -82,7 +82,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		AuditWriter:         auditWriter,
 	})
 
-	registerBody := map[string]any{"login": "alice", "password": "pwdpwdpwd"}
+	registerBody := map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"}
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", registerBody, nil)
 	if registerResp.Code != nethttp.StatusCreated {
 		t.Fatalf("unexpected register status: %d body=%s", registerResp.Code, registerResp.Body.String())
@@ -216,7 +216,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 
 	// register
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "carol", "password": "pwdpwdpwd"}, nil)
+		map[string]any{"login": "carol", "password": "pwdpwdpwd", "email": "carol@test.com"}, nil)
 	if registerResp.Code != nethttp.StatusCreated {
 		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
 	}

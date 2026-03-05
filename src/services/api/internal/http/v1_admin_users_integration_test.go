@@ -80,7 +80,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 
 	// 注册管理员用户
 	adminReg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "admin@test.com", "password": "adminpass123"}, nil)
+		map[string]any{"login": "admin@test.com", "password": "adminpass123", "email": "admin@test.com"}, nil)
 	if adminReg.Code != nethttp.StatusCreated {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
@@ -102,14 +102,14 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 
 	// 注册普通用户
 	regAlice := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "alice@test.com", "password": "alicepass123"}, nil)
+		map[string]any{"login": "alice@test.com", "password": "alicepass123", "email": "alice@test.com"}, nil)
 	if regAlice.Code != nethttp.StatusCreated {
 		t.Fatalf("register alice: %d %s", regAlice.Code, regAlice.Body.String())
 	}
 	alicePayload := decodeJSONBody[registerResponse](t, regAlice.Body.Bytes())
 
 	regBob := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "bob@test.com", "password": "bobpass12345"}, nil)
+		map[string]any{"login": "bob@test.com", "password": "bobpass12345", "email": "bob@test.com"}, nil)
 	if regBob.Code != nethttp.StatusCreated {
 		t.Fatalf("register bob: %d %s", regBob.Code, regBob.Body.String())
 	}

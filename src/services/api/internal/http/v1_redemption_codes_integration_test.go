@@ -92,7 +92,7 @@ func TestRedemptionCodesIntegration(t *testing.T) {
 
 	// 注册普通用户
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "redeem_user@test.com", "password": "testpass123"}, nil)
+		map[string]any{"login": "redeem_user@test.com", "password": "testpass123", "email": "redeem_user@test.com"}, nil)
 	if registerResp.Code != nethttp.StatusCreated {
 		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestRedemptionCodesIntegration(t *testing.T) {
 
 	// 注册管理员
 	adminResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
-		map[string]any{"login": "redeem_admin@test.com", "password": "adminpass123"}, nil)
+		map[string]any{"login": "redeem_admin@test.com", "password": "adminpass123", "email": "redeem_admin@test.com"}, nil)
 	if adminResp.Code != nethttp.StatusCreated {
 		t.Fatalf("register admin: %d %s", adminResp.Code, adminResp.Body.String())
 	}

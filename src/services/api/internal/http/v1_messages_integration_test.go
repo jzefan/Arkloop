@@ -92,7 +92,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwdpwdpwd"},
+		map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"},
 		nil,
 	)
 	if aliceRegister.Code != nethttp.StatusCreated {
@@ -138,7 +138,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		handler,
 		nethttp.MethodPost,
 		"/v1/auth/register",
-		map[string]any{"login": "bob", "password": "pwdpwdpwd"},
+		map[string]any{"login": "bob", "password": "pwdpwdpwd", "email": "bob@test.com"},
 		nil,
 	)
 	if bobRegister.Code != nethttp.StatusCreated {
@@ -175,4 +175,3 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		t.Fatalf("unexpected denied list audit count: %d", deniedListCount)
 	}
 }
-
