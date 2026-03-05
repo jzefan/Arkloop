@@ -16,9 +16,8 @@ func TestUpFromScratch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	// 45 migrations (00001..00045)
-	if len(results) != 45 {
-		t.Fatalf("expected 45 migrations, got %d", len(results))
+	if int64(len(results)) != ExpectedVersion {
+		t.Fatalf("expected %d migrations, got %d", ExpectedVersion, len(results))
 	}
 
 	version, err := CurrentVersion(ctx, db.DSN)
@@ -67,8 +66,7 @@ func TestDownOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("current version: %v", err)
 	}
-	// DownOne 从 45 回退到 44
-	const prevVersion int64 = 44
+	prevVersion := ExpectedVersion - 1
 	if version != prevVersion {
 		t.Fatalf("expected version %d, got %d", prevVersion, version)
 	}
