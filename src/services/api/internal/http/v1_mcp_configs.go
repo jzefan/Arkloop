@@ -17,16 +17,16 @@ import (
 )
 
 type createMCPConfigRequest struct {
-	Name             string          `json:"name"`
-	Transport        string          `json:"transport"`
-	URL              *string         `json:"url"`
-	BearerToken      *string         `json:"bearer_token"`
-	Command          *string         `json:"command"`
-	Args             []string        `json:"args"`
-	Cwd              *string         `json:"cwd"`
+	Name             string            `json:"name"`
+	Transport        string            `json:"transport"`
+	URL              *string           `json:"url"`
+	BearerToken      *string           `json:"bearer_token"`
+	Command          *string           `json:"command"`
+	Args             []string          `json:"args"`
+	Cwd              *string           `json:"cwd"`
 	Env              map[string]string `json:"env"`
-	InheritParentEnv bool            `json:"inherit_parent_env"`
-	CallTimeoutMs    *int            `json:"call_timeout_ms"`
+	InheritParentEnv bool              `json:"inherit_parent_env"`
+	CallTimeoutMs    *int              `json:"call_timeout_ms"`
 }
 
 type patchMCPConfigRequest struct {
@@ -38,20 +38,20 @@ type patchMCPConfigRequest struct {
 }
 
 type mcpConfigResponse struct {
-	ID               string          `json:"id"`
-	OrgID            string          `json:"org_id"`
-	Name             string          `json:"name"`
-	Transport        string          `json:"transport"`
-	URL              *string         `json:"url,omitempty"`
-	HasAuth          bool            `json:"has_auth"`
-	Command          *string         `json:"command,omitempty"`
-	Args             []string        `json:"args,omitempty"`
-	Cwd              *string         `json:"cwd,omitempty"`
-	InheritParentEnv bool            `json:"inherit_parent_env"`
-	CallTimeoutMs    int             `json:"call_timeout_ms"`
-	IsActive         bool            `json:"is_active"`
-	CreatedAt        string          `json:"created_at"`
-	UpdatedAt        string          `json:"updated_at"`
+	ID               string   `json:"id"`
+	OrgID            string   `json:"org_id"`
+	Name             string   `json:"name"`
+	Transport        string   `json:"transport"`
+	URL              *string  `json:"url,omitempty"`
+	HasAuth          bool     `json:"has_auth"`
+	Command          *string  `json:"command,omitempty"`
+	Args             []string `json:"args,omitempty"`
+	Cwd              *string  `json:"cwd,omitempty"`
+	InheritParentEnv bool     `json:"inherit_parent_env"`
+	CallTimeoutMs    int      `json:"call_timeout_ms"`
+	IsActive         bool     `json:"is_active"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
 }
 
 var validMCPTransports = map[string]bool{
@@ -459,7 +459,7 @@ func toMCPConfigResponse(cfg data.MCPConfig) mcpConfigResponse {
 		Command:          cfg.Command,
 		Args:             args,
 		Cwd:              cfg.CwdPath,
-		InheritParentEnv: cfg.InheritParentEnv,
+		InheritParentEnv: false,
 		CallTimeoutMs:    cfg.CallTimeoutMs,
 		IsActive:         cfg.IsActive,
 		CreatedAt:        cfg.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),

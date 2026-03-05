@@ -20,12 +20,12 @@ const mcpConfigFileEnv = "ARKLOOP_MCP_CONFIG_FILE"
 const defaultCallTimeoutMs = 10000
 
 type ServerConfig struct {
-	ServerID         string
-	OrgID            string   // 用于 pool 隔离；全局（env 加载）工具为空字符串
-	Transport        string   // stdio / http_sse / streamable_http
+	ServerID  string
+	OrgID     string // 用于 pool 隔离；全局（env 加载）工具为空字符串
+	Transport string // stdio / http_sse / streamable_http
 	// HTTP 传输字段
-	URL              string
-	BearerToken      *string
+	URL         string
+	BearerToken *string
 	// stdio 传输字段
 	Command          string
 	Args             []string
@@ -33,7 +33,7 @@ type ServerConfig struct {
 	Env              map[string]string
 	InheritParentEnv bool
 	// 通用
-	CallTimeoutMs    int
+	CallTimeoutMs int
 }
 
 type Config struct {
@@ -209,26 +209,13 @@ func parseServerConfig(serverID string, payload map[string]any) (ServerConfig, e
 		}
 	}
 
-	inherit := false
-	rawInherit := payload["inheritParentEnv"]
-	if rawInherit == nil {
-		rawInherit = payload["inherit_parent_env"]
-	}
-	if rawInherit != nil {
-		value, ok := rawInherit.(bool)
-		if !ok {
-			return ServerConfig{}, fmt.Errorf("MCP server %q inheritParentEnv must be a bool", cleanedID)
-		}
-		inherit = value
-	}
-
 	return ServerConfig{
 		ServerID:         cleanedID,
 		Command:          command,
 		Args:             args,
 		Cwd:              cwd,
 		Env:              env,
-		InheritParentEnv: inherit,
+		InheritParentEnv: false,
 		CallTimeoutMs:    timeout,
 		Transport:        transport,
 	}, nil
@@ -330,7 +317,7 @@ func LoadConfigFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) 
 			server.Args = args
 
 			server.Cwd = rd.cwd
-			server.InheritParentEnv = rd.inheritParentEnv
+			server.InheritParentEnv = false
 
 			env := map[string]string{}
 			if len(rd.envJSON) > 0 {
