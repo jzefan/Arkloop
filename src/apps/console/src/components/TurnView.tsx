@@ -39,6 +39,16 @@ function buildTurnsFromLlmRequests(events: RunEventRaw[]): LlmTurn[] {
   const assistantChunks: string[] = []
   const resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }> = {}
 
+  const extractToolName = (tool: Record<string, unknown>): string => {
+    if (typeof tool.name === 'string') return tool.name
+    const fn = tool.function
+    if (fn && typeof fn === 'object') {
+      const name = (fn as Record<string, unknown>).name
+      if (typeof name === 'string') return name
+    }
+    return ''
+  }
+
   for (const ev of events) {
     if (ev.type === 'llm.request') {
       if (current) {
@@ -61,7 +71,7 @@ function buildTurnsFromLlmRequests(events: RunEventRaw[]): LlmTurn[] {
       const systemMsg = messages.find((m) => m.role === 'system')
       const systemPrompt = systemMsg ? extractMessageText(systemMsg) : undefined
       const tools = Array.isArray(payload?.tools) ? (payload.tools as Array<Record<string, unknown>>) : []
-      const toolNames = tools.map((t) => String(t.name ?? t.function?.name ?? '')).filter(Boolean)
+      const toolNames = tools.map(extractToolName).filter(Boolean)
 
       current = {
         llmCallId: String(d.llm_call_id ?? ''),

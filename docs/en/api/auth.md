@@ -82,11 +82,12 @@ POST /v1/auth/register
 {
   "user_id": "...",
   "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "Bearer",
+  "token_type": "bearer",
   "warning": null
 }
 ```
+
+On success, the server issues the Refresh Token via `Set-Cookie` (HttpOnly cookie: `arkloop_refresh_token`).
 
 ---
 
@@ -109,10 +110,11 @@ POST /v1/auth/login
 ```json
 {
   "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "Bearer"
+  "token_type": "bearer"
 }
 ```
+
+On success, the server issues the Refresh Token via `Set-Cookie` (HttpOnly cookie: `arkloop_refresh_token`).
 
 ---
 
@@ -122,13 +124,11 @@ POST /v1/auth/login
 POST /v1/auth/refresh
 ```
 
-**Request Body**
+**Notes**
 
-| Field | Type | Required |
-|------|------|------|
-| `refresh_token` | `string` | Yes |
+No request body is required. The server reads and rotates the Refresh Token from the HttpOnly cookie `arkloop_refresh_token`.
 
-**Response** — Same format as login response.
+**Response** — Same format as login response (only `access_token`, `token_type`), and the Refresh Token cookie will be updated.
 
 ---
 
@@ -138,7 +138,7 @@ POST /v1/auth/refresh
 POST /v1/auth/logout
 ```
 
-Requires Bearer Token. Invalidate the current token.
+Requires Bearer Token. Invalidates the current token and clears the Refresh Token cookie.
 
 **Response**
 
@@ -200,4 +200,4 @@ POST /v1/auth/email/otp/verify
 | `email` | `string` | Yes |
 | `otp` | `string` | Yes |
 
-**Response** — Same format as login response (includes `access_token`, `refresh_token`).
+**Response** — Same format as login response (includes `access_token`, `token_type`), and the Refresh Token cookie will be updated.

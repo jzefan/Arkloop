@@ -63,7 +63,7 @@ This document describes the resource model, endpoint design, error model, and SS
 
 - `POST /v1/auth/register` -- Register
 - `POST /v1/auth/login` -- Login
-- `POST /v1/auth/refresh` -- Refresh token
+- `POST /v1/auth/refresh` -- Refresh token (via HttpOnly cookie)
 - `POST /v1/auth/logout` -- Logout
 - `POST /v1/auth/check` -- Check authentication status
 - `GET /v1/auth/registration-mode` -- Query registration mode

@@ -18,6 +18,7 @@ Authorization: Bearer <access_token>
 ```
 
 Tokens are obtained via [`POST /v1/auth/login`](./auth#login). After expiration, use the Refresh Token to obtain a new token ([`POST /v1/auth/refresh`](./auth#refresh-token)).
+After login, the Refresh Token is stored in an HttpOnly cookie by the server; the front-end refreshes the Access Token by calling the refresh endpoint.
 
 API Key authentication is also supported for some endpoints:
 

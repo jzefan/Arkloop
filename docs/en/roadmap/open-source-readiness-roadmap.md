@@ -43,7 +43,7 @@ Hardcoded backend switching logic for web_search (Tavily/SearXNG) and web_fetch 
 
 **P4 -- Completely Fragmented Frontend Code**
 
-Web and Console share zero code. `apiFetch` logic and type definitions (LoginResponse, Theme, etc.) are implemented and maintained separately in each, with no shared package. The only "sharing" is the use of the same string for the `localStorage` `access_token` key.
+Web and Console now share basic building blocks via `@arkloop/shared` (e.g., `apiFetch`, token logic), but page/component/locale implementations still diverge heavily, increasing maintenance cost.
 
 **P5 -- Opaque System Limits**
 
@@ -321,7 +321,7 @@ src/apps/shared/
 
 Migration Principle: Only migrate code confirmed as duplicate; avoid preemptive abstraction. Web and Console each import `@arkloop/shared` to replace local implementations.
 
-Token key constraints: Web and Console use the same `localStorage` key for `access_token` (`arkloop:web:access_token`) for intentional cross-domain session sharing. `refresh_token` keys differ (`arkloop:web:refresh_token` vs `arkloop:console:refresh_token`). The shared storage module must preserve this difference—`readAccessToken` / `writeAccessToken` share a key, while `readRefreshToken` / `writeRefreshToken` accept an app identifier parameter to distinguish key prefixes.
+Token storage constraints: Refresh Token is stored in an HttpOnly cookie (`arkloop_refresh_token`), and Access Token is kept in memory only. The shared storage module only provides in-memory access token read/write, and clears legacy `localStorage` keys at startup (`arkloop:web:access_token` / `arkloop:*:refresh_token`).
 
 LocaleContext Note: `LocaleContext.tsx` code is identical (35 lines), but `LocaleStrings` interfaces and locale data (`locales/`) differ completely (Web ~200 keys, Console ~1070 keys). Sharing applies to the Context skeleton and `useLocale` hook, not the locale data itself. Each app continues maintaining its `locales/` directory, injecting its own `LocaleStrings` type via generics or re-export.
 
@@ -665,7 +665,7 @@ Federated Login Flow:
 1. User visits `/v1/auth/sso/{provider}` -> Core calls `AuthCodeURL()` -> Redirect to IdP.
 2. IdP callbacks `/v1/auth/sso/{provider}/callback?code=xxx` -> Core calls `ExchangeToken()`.
 3. Core finds or creates local user after obtaining `ExternalIdentity` (`external_identities` table association).
-4. Core signs access_token + refresh_token via existing JWT logic; subsequent requests follow standard JWT verification.
+4. Core signs the access_token via existing JWT logic, and issues/rotates the refresh token via the HttpOnly cookie `arkloop_refresh_token`; subsequent requests follow standard JWT verification.
 
 OSS Default Implementation: SSO endpoint returns 404 if no external AuthProvider is registered. Existing username/password + Email OTP login remains unaffected.
 

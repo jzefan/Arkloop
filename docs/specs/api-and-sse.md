@@ -63,7 +63,7 @@
 
 - `POST /v1/auth/register` -- 注册
 - `POST /v1/auth/login` -- 登录
-- `POST /v1/auth/refresh` -- 刷新 token
+- `POST /v1/auth/refresh` -- 刷新 token（基于 HttpOnly cookie）
 - `POST /v1/auth/logout` -- 登出
 - `POST /v1/auth/check` -- 检查认证状态
 - `GET /v1/auth/registration-mode` -- 注册模式查询

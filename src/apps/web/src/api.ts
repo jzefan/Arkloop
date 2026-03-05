@@ -3,7 +3,6 @@ export {
   ApiError,
   isApiError,
   apiFetch,
-  initApiClient,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
   refreshAccessToken,
@@ -36,7 +35,6 @@ export type RegisterResponse = {
   user_id: string
   token_type: string
   access_token: string
-  refresh_token: string
   warning?: string
 }
 

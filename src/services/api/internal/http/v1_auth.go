@@ -26,6 +26,9 @@ const (
 	settingTurnstileSecretKey   = "turnstile.secret_key"
 	settingTurnstileSiteKey     = "turnstile.site_key"
 	settingTurnstileAllowedHost = "turnstile.allowed_host"
+
+	refreshTokenCookieName = "arkloop_refresh_token"
+	refreshTokenCookiePath = "/v1/auth"
 )
 
 // verifyTurnstileToken performs Turnstile validation if a secret key is configured.
@@ -115,9 +118,8 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
 }
 
 type logoutResponse struct {
@@ -136,7 +138,6 @@ type registerRequest struct {
 type registerResponse struct {
 	UserID       string  `json:"user_id"`
 	AccessToken  string  `json:"access_token"`
-	RefreshToken string  `json:"refresh_token"`
 	TokenType    string  `json:"token_type"`
 	Warning      *string `json:"warning,omitempty"`
 }
@@ -233,10 +234,10 @@ func login(authService *auth.Service, auditWriter *audit.Writer, resolver shared
 			auditWriter.WriteLoginSucceeded(r.Context(), traceID, issued.UserID, body.Login)
 		}
 
+		setRefreshTokenCookie(w, r, issued.RefreshToken, authService.RefreshTokenTTLSeconds())
 		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
-			AccessToken:  issued.AccessToken,
-			RefreshToken: issued.RefreshToken,
-			TokenType:    "bearer",
+			AccessToken: issued.AccessToken,
+			TokenType:   "bearer",
 		})
 	}
 }
@@ -258,23 +259,21 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 			return
 		}
 
-		var body refreshTokenRequest
-		if err := decodeJSON(r, &body); err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
-			return
-		}
-		if strings.TrimSpace(body.RefreshToken) == "" {
+		refreshToken, ok := readRefreshTokenFromRequest(r)
+		if !ok {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "refresh_token is required", traceID, nil)
 			return
 		}
 
-		issued, err := authService.ConsumeRefreshToken(r.Context(), body.RefreshToken)
+		issued, err := authService.ConsumeRefreshToken(r.Context(), refreshToken)
 		if err != nil {
 			switch err.(type) {
 			case auth.TokenInvalidError, auth.UserNotFoundError:
+				clearRefreshTokenCookie(w, r)
 				WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
 				return
 			case auth.SuspendedUserError:
+				clearRefreshTokenCookie(w, r)
 				WriteError(w, nethttp.StatusForbidden, "auth.user_suspended", "account suspended", traceID, nil)
 				return
 			default:
@@ -287,10 +286,10 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 			auditWriter.WriteTokenRefreshed(r.Context(), traceID, issued.UserID)
 		}
 
+		setRefreshTokenCookie(w, r, issued.RefreshToken, authService.RefreshTokenTTLSeconds())
 		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
-			AccessToken:  issued.AccessToken,
-			RefreshToken: issued.RefreshToken,
-			TokenType:    "bearer",
+			AccessToken: issued.AccessToken,
+			TokenType:   "bearer",
 		})
 	}
 }
@@ -322,6 +321,7 @@ func logout(authService *auth.Service, auditWriter *audit.Writer) func(nethttp.R
 			auditWriter.WriteLogout(r.Context(), traceID, user.ID)
 		}
 
+		clearRefreshTokenCookie(w, r)
 		writeJSON(w, traceID, nethttp.StatusOK, logoutResponse{OK: true})
 	}
 }
@@ -431,12 +431,12 @@ func register(
 		resp := registerResponse{
 			UserID:       created.UserID.String(),
 			AccessToken:  created.AccessToken,
-			RefreshToken: created.RefreshToken,
 			TokenType:    "bearer",
 		}
 		if created.Warning != "" {
 			resp.Warning = &created.Warning
 		}
+		setRefreshTokenCookie(w, r, created.RefreshToken, registrationService.RefreshTokenTTLSeconds())
 		writeJSON(w, traceID, nethttp.StatusCreated, resp)
 	}
 }
@@ -554,6 +554,76 @@ func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
 	_, _ = w.Write(raw)
+}
+
+func isSecureCookieRequest(r *nethttp.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+func setRefreshTokenCookie(w nethttp.ResponseWriter, r *nethttp.Request, token string, ttlSeconds int) {
+	if w == nil || r == nil {
+		return
+	}
+	token = strings.TrimSpace(token)
+	if token == "" || ttlSeconds <= 0 {
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Duration(ttlSeconds) * time.Second)
+	nethttp.SetCookie(w, &nethttp.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    token,
+		Path:     refreshTokenCookiePath,
+		HttpOnly: true,
+		SameSite: nethttp.SameSiteLaxMode,
+		Secure:   isSecureCookieRequest(r),
+		Expires:  expiresAt,
+		MaxAge:   ttlSeconds,
+	})
+}
+
+func clearRefreshTokenCookie(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if w == nil || r == nil {
+		return
+	}
+	nethttp.SetCookie(w, &nethttp.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    "",
+		Path:     refreshTokenCookiePath,
+		HttpOnly: true,
+		SameSite: nethttp.SameSiteLaxMode,
+		Secure:   isSecureCookieRequest(r),
+		Expires:  time.Unix(0, 0).UTC(),
+		MaxAge:   -1,
+	})
+}
+
+func readRefreshTokenFromRequest(r *nethttp.Request) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+
+	if cookie, err := r.Cookie(refreshTokenCookieName); err == nil {
+		if token := strings.TrimSpace(cookie.Value); token != "" {
+			return token, true
+		}
+	}
+
+	// 兼容旧客户端：从请求体读取 refresh_token。
+	var body refreshTokenRequest
+	if err := decodeJSON(r, &body); err != nil {
+		return "", false
+	}
+	if token := strings.TrimSpace(body.RefreshToken); token != "" {
+		return token, true
+	}
+	return "", false
 }
 
 func parseBearerToken(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (string, bool) {
@@ -783,10 +853,10 @@ func emailOTPVerify(otpLoginService *auth.EmailOTPLoginService, auditWriter *aud
 			auditWriter.WriteLoginSucceeded(r.Context(), traceID, issued.UserID, body.Email)
 		}
 
+		setRefreshTokenCookie(w, r, issued.RefreshToken, otpLoginService.RefreshTokenTTLSeconds())
 		writeJSON(w, traceID, nethttp.StatusOK, loginResponse{
-			AccessToken:  issued.AccessToken,
-			RefreshToken: issued.RefreshToken,
-			TokenType:    "bearer",
+			AccessToken: issued.AccessToken,
+			TokenType:   "bearer",
 		})
 	}
 }

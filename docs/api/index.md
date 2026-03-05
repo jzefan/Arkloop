@@ -18,6 +18,7 @@ Authorization: Bearer <access_token>
 ```
 
 Token 通过 [`POST /v1/auth/login`](./auth#登录) 获取。过期后使用 Refresh Token 换取新 Token（[`POST /v1/auth/refresh`](./auth#刷新-token)）。
+登录后 Refresh Token 由服务端写入 HttpOnly Cookie；前端通过调用刷新接口获取新的 Access Token。
 
 也可使用 API Key 认证（部分端点支持）：
 

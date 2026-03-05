@@ -106,6 +106,13 @@ func (s *Service) SetFlagService(svc *featureflag.Service) {
 	s.flagService = svc
 }
 
+func (s *Service) RefreshTokenTTLSeconds() int {
+	if s == nil || s.tokenService == nil {
+		return 0
+	}
+	return s.tokenService.RefreshTokenTTLSeconds()
+}
+
 func (s *Service) IssueAccessToken(ctx context.Context, login string, password string) (IssuedTokenPair, error) {
 	credential, err := s.credentialRepo.GetByLogin(ctx, login)
 	if err != nil {

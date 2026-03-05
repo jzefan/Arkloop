@@ -36,26 +36,10 @@ import { MemoryConfigPage } from './pages/memory-config/MemoryConfigPage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
 import {
-  readAccessTokenFromStorage,
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
-  writeRefreshTokenToStorage,
-  clearRefreshTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, initApiClient } from './api'
-import {
-  readRefreshToken,
-  writeRefreshToken,
-  clearRefreshToken,
-  writeAccessToken,
-} from '@arkloop/shared/storage'
-
-initApiClient({
-  readRefreshToken: () => readRefreshToken('console'),
-  writeRefreshToken: (t) => writeRefreshToken('console', t),
-  clearRefreshToken: () => clearRefreshToken('console'),
-  writeAccessToken,
-})
+import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -69,31 +53,41 @@ function PlaceholderPage({ title }: { title: string }) {
 }
 
 function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(() => readAccessTokenFromStorage())
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
     setUnauthenticatedHandler(() => {
       clearAccessTokenFromStorage()
-      clearRefreshTokenFromStorage()
       setAccessToken(null)
     })
     setAccessTokenHandler((token: string) => {
       writeAccessTokenToStorage(token)
       setAccessToken(token)
     })
+
+    refreshAccessToken()
+      .then((resp) => {
+        writeAccessTokenToStorage(resp.access_token)
+        setAccessToken(resp.access_token)
+      })
+      .catch(() => {})
+      .finally(() => {
+        setAuthChecked(true)
+      })
   }, [])
 
-  const handleLoggedIn = useCallback((token: string, refreshToken: string) => {
+  const handleLoggedIn = useCallback((token: string) => {
     writeAccessTokenToStorage(token)
-    writeRefreshTokenToStorage(refreshToken)
     setAccessToken(token)
   }, [])
 
   const handleLoggedOut = useCallback(() => {
     clearAccessTokenFromStorage()
-    clearRefreshTokenFromStorage()
     setAccessToken(null)
   }, [])
+
+  if (!authChecked) return null
 
   if (!accessToken) {
     return <AuthPage onLoggedIn={handleLoggedIn} />

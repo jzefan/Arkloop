@@ -74,6 +74,13 @@ func (s *EmailOTPLoginService) SetAppBaseURL(envBaseURL string, repo *data.Platf
 	s.settingsRepo = repo
 }
 
+func (s *EmailOTPLoginService) RefreshTokenTTLSeconds() int {
+	if s == nil || s.tokenService == nil {
+		return 0
+	}
+	return s.tokenService.RefreshTokenTTLSeconds()
+}
+
 // SendLoginOTP 向指定邮箱发送登录 OTP。
 // 若邮箱不存在则静默返回 nil（不暴露用户是否存在）。
 func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) error {

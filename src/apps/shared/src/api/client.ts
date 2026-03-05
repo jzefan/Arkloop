@@ -35,21 +35,9 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError
 }
 
-type TokenIO = {
-  readRefreshToken: () => string | null
-  writeRefreshToken: (token: string) => void
-  clearRefreshToken: () => void
-  writeAccessToken: (token: string) => void
-}
-
-let tokenIO: TokenIO | null = null
 let refreshPromise: Promise<string> | null = null
 let unauthenticatedHandler: (() => void) | null = null
 let accessTokenHandler: ((token: string) => void) | null = null
-
-export function initApiClient(io: TokenIO): void {
-  tokenIO = io
-}
 
 export function setUnauthenticatedHandler(fn: () => void): void {
   unauthenticatedHandler = fn
@@ -71,10 +59,9 @@ export function buildUrl(path: string): string {
   return `${base}${path}`
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<LoginResponse> {
+export async function refreshAccessToken(): Promise<LoginResponse> {
   return await apiFetch<LoginResponse>('/v1/auth/refresh', {
     method: 'POST',
-    body: JSON.stringify({ refresh_token: refreshToken }),
     _isRetry: true,
   })
 }
@@ -83,13 +70,7 @@ async function silentRefresh(): Promise<string> {
   if (refreshPromise) return refreshPromise
 
   refreshPromise = (async () => {
-    if (!tokenIO) throw new Error('api client not initialized')
-    const refreshToken = tokenIO.readRefreshToken()
-    if (!refreshToken) throw new Error('no refresh token')
-
-    const resp = await refreshAccessToken(refreshToken)
-    tokenIO.writeAccessToken(resp.access_token)
-    tokenIO.writeRefreshToken(resp.refresh_token)
+    const resp = await refreshAccessToken()
     accessTokenHandler?.(resp.access_token)
     return resp.access_token
   })().finally(() => {
@@ -124,7 +105,8 @@ export async function apiFetch<T>(
     headers.set('Authorization', `Bearer ${init.accessToken}`)
   }
 
-  const response = await fetch(buildUrl(path), { ...init, headers })
+  const credentials = init?.credentials ?? 'include'
+  const response = await fetch(buildUrl(path), { ...init, headers, credentials })
   if (response.ok) {
     if (response.status === 204 || response.headers.get('content-length') === '0') {
       return undefined as T
@@ -137,7 +119,6 @@ export async function apiFetch<T>(
       const newToken = await silentRefresh()
       return await apiFetch<T>(path, { ...init, accessToken: newToken, _isRetry: true })
     } catch {
-      tokenIO?.clearRefreshToken()
       unauthenticatedHandler?.()
     }
   }

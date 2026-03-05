@@ -1,7 +1,4 @@
 import {
-  readRefreshToken,
-  writeRefreshToken,
-  clearRefreshToken,
   canUseStorage,
 } from '@arkloop/shared/storage'
 
@@ -10,18 +7,6 @@ export {
   writeAccessToken as writeAccessTokenToStorage,
   clearAccessToken as clearAccessTokenFromStorage,
 } from '@arkloop/shared/storage'
-
-export function readRefreshTokenFromStorage(): string | null {
-  return readRefreshToken('web')
-}
-
-export function writeRefreshTokenToStorage(token: string): void {
-  writeRefreshToken('web', token)
-}
-
-export function clearRefreshTokenFromStorage(): void {
-  clearRefreshToken('web')
-}
 
 const ACTIVE_THREAD_ID_KEY = 'arkloop:web:active_thread_id'
 const LOCALE_KEY = 'arkloop:web:locale'

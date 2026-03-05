@@ -8,34 +8,18 @@ import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
 import {
   clearActiveThreadIdInStorage,
-  readAccessTokenFromStorage,
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
-  writeRefreshTokenToStorage,
-  clearRefreshTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, initApiClient } from './api'
-import {
-  readRefreshToken,
-  writeRefreshToken,
-  clearRefreshToken,
-  writeAccessToken,
-} from '@arkloop/shared/storage'
-
-initApiClient({
-  readRefreshToken: () => readRefreshToken('web'),
-  writeRefreshToken: (t) => writeRefreshToken('web', t),
-  clearRefreshToken: () => clearRefreshToken('web'),
-  writeAccessToken,
-})
+import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
 
 function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(() => readAccessTokenFromStorage())
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
     setUnauthenticatedHandler(() => {
       clearAccessTokenFromStorage()
-      clearRefreshTokenFromStorage()
       clearActiveThreadIdInStorage()
       setAccessToken(null)
     })
@@ -43,19 +27,27 @@ function App() {
       writeAccessTokenToStorage(token)
       setAccessToken(token)
     })
+
+    refreshAccessToken()
+      .then((resp) => {
+        writeAccessTokenToStorage(resp.access_token)
+        setAccessToken(resp.access_token)
+      })
+      .catch(() => {})
+      .finally(() => {
+        setAuthChecked(true)
+      })
   }, [])
 
-  const handleLoggedIn = useCallback((token: string, refreshToken: string) => {
+  const handleLoggedIn = useCallback((token: string) => {
     clearActiveThreadIdInStorage()
     writeAccessTokenToStorage(token)
-    writeRefreshTokenToStorage(refreshToken)
     setAccessToken(token)
     // accessToken 变化后路由树切换，/login 自动 redirect 到 /
   }, [])
 
   const handleLoggedOut = useCallback(() => {
     clearAccessTokenFromStorage()
-    clearRefreshTokenFromStorage()
     clearActiveThreadIdInStorage()
     setAccessToken(null)
   }, [])
@@ -64,7 +56,9 @@ function App() {
     <Routes>
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route path="/s/:token" element={<SharePage />} />
-      {!accessToken ? (
+      {!authChecked ? (
+        <Route path="*" element={<div />} />
+      ) : !accessToken ? (
         <>
           <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />
           <Route path="/register" element={<Navigate to="/login" replace />} />

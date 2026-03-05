@@ -96,10 +96,9 @@ type Props = {
   run: GlobalRun | null
   accessToken: string
   onClose: () => void
-  onOpenRun?: (run: GlobalRun) => void
 }
 
-export function RunDetailPanel({ run, accessToken, onClose, onOpenRun }: Props) {
+export function RunDetailPanel({ run, accessToken, onClose }: Props) {
   const [detail, setDetail] = useState<AdminRunDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [events, setEvents] = useState<RunEventRaw[] | null>(null)
