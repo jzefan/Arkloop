@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,15 +27,21 @@ type HTTPClient struct {
 	closed     bool
 }
 
-func NewHTTPClient(server ServerConfig) *HTTPClient {
+func NewHTTPClient(server ServerConfig) (*HTTPClient, error) {
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: invalid server url: %w", err)
+	}
+	if err := validateURL(u); err != nil {
+		return nil, fmt.Errorf("mcp: server url blocked: %w", err)
+	}
+
 	client := &HTTPClient{
-		server: server,
-		httpClient: &http.Client{
-			Timeout: 0, // 由调用方通过 context deadline 控制
-		},
+		server:     server,
+		httpClient: newSafeHTTPClient(),
 	}
 	client.nextID.Store(1)
-	return client
+	return client, nil
 }
 
 func (c *HTTPClient) Close() error {

@@ -46,7 +46,11 @@ func (p *Pool) Borrow(ctx context.Context, server ServerConfig) (Client, error) 
 	case "stdio", "":
 		client = NewStdioClient(server)
 	case "http_sse", "streamable_http":
-		client = NewHTTPClient(server)
+		var err error
+		client, err = NewHTTPClient(server)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("mcp: unsupported transport: %s", server.Transport)
 	}
