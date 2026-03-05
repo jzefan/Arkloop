@@ -53,9 +53,12 @@ export function ArtifactHtmlPreview({ artifact, accessToken }: Props) {
   // 通过 postMessage 监听 iframe 内容高度
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === 'arkloop-iframe-resize' && typeof e.data.height === 'number' && iframeRef.current) {
-        iframeRef.current.style.height = `${e.data.height}px`
-      }
+      const iframe = iframeRef.current
+      if (!iframe) return
+      if (e.source !== iframe.contentWindow) return
+      if (e.data?.type !== 'arkloop-iframe-resize') return
+      if (typeof e.data.height !== 'number') return
+      iframe.style.height = `${e.data.height}px`
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
