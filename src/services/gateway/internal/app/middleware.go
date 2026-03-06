@@ -53,7 +53,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rdb *goredis.Client, redisTimeout time.Duration, jwtSecret []byte) http.Handler {
+func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rdb *goredis.Client, redisTimeout time.Duration, jwtSecret []byte, trustIncomingTraceID bool) http.Handler {
 	var logWriter *accesslog.Writer
 	if rdb != nil {
 		logWriter = accesslog.NewWriter(rdb)
@@ -63,9 +63,12 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 		start := time.Now()
 
 		traceID := newTraceID()
-		if incoming := normalizeTraceID(r.Header.Get(traceIDHeader)); incoming != "" {
-			traceID = incoming
+		if trustIncomingTraceID {
+			if incoming := normalizeTraceID(r.Header.Get(traceIDHeader)); incoming != "" {
+				traceID = incoming
+			}
 		}
+		r.Header.Set(traceIDHeader, traceID)
 
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		recorder.Header().Set(traceIDHeader, traceID)

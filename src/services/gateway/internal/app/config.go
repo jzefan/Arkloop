@@ -21,6 +21,7 @@ const (
 	jwtSecretEnv       = "ARKLOOP_AUTH_JWT_SECRET"
 	enableBenchzEnv    = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
 	redisTimeoutMsEnv  = "ARKLOOP_GATEWAY_REDIS_TIMEOUT_MS"
+	trustTraceIDEnv    = "ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID"
 
 	// IP 透传模式：direct | cloudflare | trusted_proxy
 	ipModeEnv = "ARKLOOP_GATEWAY_IP_MODE"
@@ -50,13 +51,14 @@ const (
 )
 
 type Config struct {
-	Addr         string
-	Upstream     string
-	RedisURL     string
-	RedisTimeout time.Duration
-	JWTSecret    string
-	RateLimit    ratelimit.Config
-	EnableBenchz bool
+	Addr                 string
+	Upstream             string
+	RedisURL             string
+	RedisTimeout         time.Duration
+	JWTSecret            string
+	RateLimit            ratelimit.Config
+	EnableBenchz         bool
+	TrustIncomingTraceID bool
 
 	IPMode              IPMode
 	TrustedCIDRs        []string // CIDR 字符串列表
@@ -101,6 +103,14 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: must be a boolean", enableBenchzEnv)
 		}
 		cfg.EnableBenchz = v
+	}
+
+	if raw := strings.TrimSpace(os.Getenv(trustTraceIDEnv)); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be a boolean", trustTraceIDEnv)
+		}
+		cfg.TrustIncomingTraceID = v
 	}
 
 	if raw := strings.TrimSpace(os.Getenv(ipModeEnv)); raw != "" {
