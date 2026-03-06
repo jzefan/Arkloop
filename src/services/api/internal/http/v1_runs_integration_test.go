@@ -489,8 +489,30 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected list runs status: %d body=%s", listRuns.Code, listRuns.Body.String())
 	}
 	listPayload := decodeJSONBody[[]threadRunResponse](t, listRuns.Body.Bytes())
-	if len(listPayload) != 1 || listPayload[0].RunID != runPayload.RunID || listPayload[0].Status != "running" {
-		t.Fatalf("unexpected list payload: %#v", listPayload)
+	expectedRuns := map[string]struct{}{
+		runPayload.RunID:                      {},
+		runWithOutputRoute.RunID:              {},
+		runWithOutputModel.RunID:              {},
+		runWithBothOutput.RunID:               {},
+		runWithOutputModelFromAgentName.RunID: {},
+		runWithOutputModelEnv.RunID:           {},
+		runWithOutputModelNoMapping.RunID:     {},
+	}
+	if len(listPayload) != len(expectedRuns) {
+		t.Fatalf("unexpected list size: got=%d want=%d payload=%#v", len(listPayload), len(expectedRuns), listPayload)
+	}
+	for _, item := range listPayload {
+		if item.Status != "running" {
+			t.Fatalf("unexpected run status: %#v", item)
+		}
+		delete(expectedRuns, item.RunID)
+	}
+	if len(expectedRuns) != 0 {
+		missing := make([]string, 0, len(expectedRuns))
+		for id := range expectedRuns {
+			missing = append(missing, id)
+		}
+		t.Fatalf("list payload missing runs: %#v payload=%#v", missing, listPayload)
 	}
 
 	getRunResp := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID, nil, aliceHeaders)

@@ -42,8 +42,28 @@ func setupUsageTestRepo(t *testing.T) (*UsageRepository, *OrgRepository, context
 
 func insertUsageAt(t *testing.T, repo *UsageRepository, ctx context.Context, orgID uuid.UUID, model string, input, output int64, costUSD float64, at time.Time) {
 	t.Helper()
-	runID := uuid.New()
+
+	threadID := uuid.New()
 	_, err := repo.db.Exec(ctx,
+		`INSERT INTO threads (id, org_id, title)
+		 VALUES ($1, $2, $3)`,
+		threadID, orgID, "usage-test",
+	)
+	if err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+
+	runID := uuid.New()
+	_, err = repo.db.Exec(ctx,
+		`INSERT INTO runs (id, org_id, thread_id)
+		 VALUES ($1, $2, $3)`,
+		runID, orgID, threadID,
+	)
+	if err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+
+	_, err = repo.db.Exec(ctx,
 		`INSERT INTO usage_records (org_id, run_id, model, input_tokens, output_tokens, cost_usd, recorded_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		orgID, runID, model, input, output, costUSD, at,

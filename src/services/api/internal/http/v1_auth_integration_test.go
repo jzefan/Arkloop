@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	nethttp "net/http"
@@ -112,7 +113,9 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		t.Fatalf("unexpected login payload: %#v", loginPayload)
 	}
 
-	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, authHeader(loginPayload.AccessToken))
+	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, map[string]string{
+		"Cookie": refreshTokenCookieHeader(t, loginResp),
+	})
 	if refreshResp.Code != nethttp.StatusOK {
 		t.Fatalf("unexpected refresh status: %d body=%s", refreshResp.Code, refreshResp.Body.String())
 	}
@@ -254,7 +257,9 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	}
 
 	// refresh tokenB to get tokenC (refresh also goes through AuthenticateUser)
-	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, authHeader(tokenB))
+	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, map[string]string{
+		"Cookie": refreshTokenCookieHeader(t, reLoginResp),
+	})
 	if refreshResp.Code != nethttp.StatusOK {
 		t.Fatalf("refresh tokenB: %d %s", refreshResp.Code, refreshResp.Body.String())
 	}
@@ -328,6 +333,18 @@ func assertErrorEnvelope(t *testing.T, recorder *httptest.ResponseRecorder, stat
 
 func authHeader(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+func refreshTokenCookieHeader(t *testing.T, resp *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	for _, cookie := range resp.Result().Cookies() {
+		if cookie.Name == refreshTokenCookieName && strings.TrimSpace(cookie.Value) != "" {
+			return cookie.Name + "=" + cookie.Value
+		}
+	}
+	t.Fatalf("missing %s cookie", refreshTokenCookieName)
+	return ""
 }
 
 func countAuditActions(ctx context.Context, db data.Querier) (map[string]int, error) {
