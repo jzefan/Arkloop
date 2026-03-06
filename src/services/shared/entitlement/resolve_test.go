@@ -229,3 +229,65 @@ func TestResolveFromDB_NilReceiver(t *testing.T) {
 		t.Fatalf("错误信息不匹配: %v", err)
 	}
 }
+
+func TestEntitlementCacheSigningEnabled(t *testing.T) {
+	t.Setenv("ARKLOOP_AUTH_JWT_SECRET", "short")
+	if EntitlementCacheSigningEnabled() {
+		t.Fatal("secret 过短时不应启用签名")
+	}
+
+	t.Setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+	if !EntitlementCacheSigningEnabled() {
+		t.Fatal("secret 足够长时应启用签名")
+	}
+}
+
+func TestComputeEntitlementCacheSignature_Deterministic(t *testing.T) {
+	t.Setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+
+	sig1, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:org:key", "int:123")
+	if !ok || sig1 == "" {
+		t.Fatalf("ComputeEntitlementCacheSignature failed: ok=%v sig=%q", ok, sig1)
+	}
+
+	sig2, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:org:key", "int:123")
+	if !ok || sig2 == "" {
+		t.Fatalf("ComputeEntitlementCacheSignature failed: ok=%v sig=%q", ok, sig2)
+	}
+
+	if sig1 != sig2 {
+		t.Fatalf("同输入应得到稳定签名: %q != %q", sig1, sig2)
+	}
+}
+
+func TestComputeEntitlementCacheSignature_BindsCacheKey(t *testing.T) {
+	t.Setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+
+	sig1, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:orgA:key", "int:123")
+	if !ok {
+		t.Fatal("sig1 ok=false")
+	}
+	sig2, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:orgB:key", "int:123")
+	if !ok {
+		t.Fatal("sig2 ok=false")
+	}
+	if sig1 == sig2 {
+		t.Fatalf("不同 cacheKey 不应得到相同签名: %q", sig1)
+	}
+}
+
+func TestComputeEntitlementCacheSignature_DifferentValueDifferentSignature(t *testing.T) {
+	t.Setenv("ARKLOOP_AUTH_JWT_SECRET", "test-secret-should-be-long-enough-32chars")
+
+	sig1, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:org:key", "int:123")
+	if !ok {
+		t.Fatal("sig1 ok=false")
+	}
+	sig2, ok := ComputeEntitlementCacheSignature("arkloop:entitlement:org:key", "int:124")
+	if !ok {
+		t.Fatal("sig2 ok=false")
+	}
+	if sig1 == sig2 {
+		t.Fatalf("不同 rawValue 不应得到相同签名: %q", sig1)
+	}
+}

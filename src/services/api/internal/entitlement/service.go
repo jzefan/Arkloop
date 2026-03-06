@@ -2,12 +2,14 @@ package entitlement
 
 import (
 	"context"
+	"crypto/hmac"
 	"fmt"
 	"strconv"
 	"time"
 
 	"arkloop/services/api/internal/data"
 	sharedconfig "arkloop/services/shared/config"
+	sharedent "arkloop/services/shared/entitlement"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -137,11 +139,33 @@ func (s *Service) resolveFromDB(ctx context.Context, orgID uuid.UUID, key string
 }
 
 func (s *Service) getFromCache(ctx context.Context, orgID uuid.UUID, key string) (*EntitlementValue, error) {
+	if !sharedent.EntitlementCacheSigningEnabled() {
+		return nil, redis.Nil
+	}
+
 	cacheKey := cachePrefix + orgID.String() + ":" + key
-	raw, err := s.rdb.Get(ctx, cacheKey).Result()
+	sigKey := cacheKey + sharedent.EntitlementCacheSignatureSuffix
+	items, err := s.rdb.MGet(ctx, cacheKey, sigKey).Result()
 	if err != nil {
 		return nil, err
 	}
+	if len(items) != 2 {
+		return nil, fmt.Errorf("invalid cache mget result")
+	}
+
+	raw, ok := items[0].(string)
+	sig, sigOK := items[1].(string)
+	if !ok || !sigOK || raw == "" || sig == "" {
+		_ = s.rdb.Del(ctx, cacheKey, sigKey).Err()
+		return nil, redis.Nil
+	}
+
+	expected, ok := sharedent.ComputeEntitlementCacheSignature(cacheKey, raw)
+	if !ok || !hmac.Equal([]byte(sig), []byte(expected)) {
+		_ = s.rdb.Del(ctx, cacheKey, sigKey).Err()
+		return nil, redis.Nil
+	}
+
 	// 缓存格式: "type:value"
 	for i := 0; i < len(raw); i++ {
 		if raw[i] == ':' {
@@ -151,13 +175,26 @@ func (s *Service) getFromCache(ctx context.Context, orgID uuid.UUID, key string)
 			}, nil
 		}
 	}
+
+	_ = s.rdb.Del(ctx, cacheKey, sigKey).Err()
 	return nil, fmt.Errorf("invalid cache format")
 }
 
 func (s *Service) setCache(ctx context.Context, orgID uuid.UUID, key string, val EntitlementValue) {
 	cacheKey := cachePrefix + orgID.String() + ":" + key
 	encoded := val.Type + ":" + val.Raw
-	_ = s.rdb.Set(ctx, cacheKey, encoded, cacheTTL).Err()
+	if !sharedent.EntitlementCacheSigningEnabled() {
+		return
+	}
+	sig, ok := sharedent.ComputeEntitlementCacheSignature(cacheKey, encoded)
+	if !ok {
+		return
+	}
+
+	pipe := s.rdb.Pipeline()
+	pipe.Set(ctx, cacheKey, encoded, cacheTTL)
+	pipe.Set(ctx, cacheKey+sharedent.EntitlementCacheSignatureSuffix, sig, cacheTTL)
+	_, _ = pipe.Exec(ctx)
 }
 
 // InvalidateCache 删除指定 org + key 的缓存，用于 override 变更后立即生效。
@@ -165,8 +202,11 @@ func (s *Service) InvalidateCache(ctx context.Context, orgID uuid.UUID, key stri
 	if s.rdb == nil {
 		return
 	}
+	if !sharedent.EntitlementCacheSigningEnabled() {
+		return
+	}
 	cacheKey := cachePrefix + orgID.String() + ":" + key
-	_ = s.rdb.Del(ctx, cacheKey).Err()
+	_ = s.rdb.Del(ctx, cacheKey, cacheKey+sharedent.EntitlementCacheSignatureSuffix).Err()
 }
 
 func entitlementTypeForKey(key string, registry *sharedconfig.Registry) string {
