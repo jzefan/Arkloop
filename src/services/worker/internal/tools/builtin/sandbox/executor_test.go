@@ -14,18 +14,23 @@ import (
 )
 
 func testContext() tools.ExecutionContext {
-	return tools.ExecutionContext{
-		RunID: uuid.New(),
-	}
+	return tools.ExecutionContext{RunID: uuid.New()}
+}
+
+func testContextWithRun(runID uuid.UUID) tools.ExecutionContext {
+	return tools.ExecutionContext{RunID: runID}
+}
+
+func testContextWithOrg(runID uuid.UUID, orgID uuid.UUID) tools.ExecutionContext {
+	return tools.ExecutionContext{RunID: runID, OrgID: &orgID}
 }
 
 func TestPythonExecute_Success(t *testing.T) {
+	fixedRunID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/exec" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-
-		// 验证 auth header
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-token" {
 			t.Errorf("expected Authorization=Bearer test-token, got %s", auth)
 		}
@@ -40,8 +45,8 @@ func TestPythonExecute_Success(t *testing.T) {
 		if body.Code != "print('hello')" {
 			t.Errorf("unexpected code: %s", body.Code)
 		}
-		if body.SessionID == "" {
-			t.Error("session_id should not be empty")
+		if body.SessionID != fixedRunID.String() {
+			t.Errorf("expected session_id=%s, got %s", fixedRunID.String(), body.SessionID)
 		}
 		if body.Tier != "lite" {
 			t.Errorf("expected tier=lite, got %s", body.Tier)
@@ -63,7 +68,7 @@ func TestPythonExecute_Success(t *testing.T) {
 		t.Context(),
 		"python_execute",
 		map[string]any{"code": "print('hello')"},
-		testContext(),
+		testContextWithRun(fixedRunID),
 		"",
 	)
 
@@ -78,24 +83,89 @@ func TestPythonExecute_Success(t *testing.T) {
 	}
 }
 
-func TestShellExecute_Success(t *testing.T) {
+func TestShellExecute_OpenUsesShellEndpoint(t *testing.T) {
+	runID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body execRequest
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/shell/open" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer shell-token" {
+			t.Fatalf("unexpected auth header: %s", auth)
+		}
+		if got := r.Header.Get("X-Org-ID"); got != orgID.String() {
+			t.Fatalf("unexpected org header: %s", got)
+		}
+
+		var body shellRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body.Language != "shell" {
-			t.Errorf("expected language=shell, got %s", body.Language)
+		if body.SessionID != shellSessionID(runID.String()) {
+			t.Fatalf("unexpected session id: %s", body.SessionID)
 		}
-		if body.Code != "ls -la" {
-			t.Errorf("unexpected code: %s", body.Code)
+		if body.OrgID != orgID.String() {
+			t.Fatalf("unexpected org id: %s", body.OrgID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execResponse{
-			Stdout:     "total 0\n",
-			ExitCode:   0,
-			DurationMs: 10,
+		json.NewEncoder(w).Encode(shellResponse{
+			SessionID: body.SessionID,
+			Status:    "idle",
+			Cwd:       "/workspace",
+			Cursor:    3,
+		})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "shell-token")
+	result := exec.Execute(
+		t.Context(),
+		"shell_execute",
+		map[string]any{"action": "open"},
+		testContextWithOrg(runID, orgID),
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if result.ResultJSON["status"] != "idle" {
+		t.Fatalf("unexpected status: %v", result.ResultJSON["status"])
+	}
+	if result.ResultJSON["cwd"] != "/workspace" {
+		t.Fatalf("unexpected cwd: %v", result.ResultJSON["cwd"])
+	}
+	if result.ResultJSON["cursor"] != uint64(3) {
+		t.Fatalf("unexpected cursor: %v", result.ResultJSON["cursor"])
+	}
+}
+
+func TestShellExecute_CommandFallbackToExec(t *testing.T) {
+	runID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/shell/exec" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		var body shellRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.SessionID != shellSessionID(runID.String()) {
+			t.Fatalf("unexpected session id: %s", body.SessionID)
+		}
+		if body.Command != "ls -la" {
+			t.Fatalf("unexpected command: %s", body.Command)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shellResponse{
+			Status:   "idle",
+			Cwd:      "/workspace",
+			Output:   "total 0\n",
+			Cursor:   8,
+			Running:  false,
+			TimedOut: false,
 		})
 	}))
 	defer server.Close()
@@ -105,6 +175,47 @@ func TestShellExecute_Success(t *testing.T) {
 		t.Context(),
 		"shell_execute",
 		map[string]any{"command": "ls -la"},
+		testContextWithRun(runID),
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if result.ResultJSON["output"] != "total 0\n" {
+		t.Fatalf("unexpected output: %v", result.ResultJSON["output"])
+	}
+	if result.ResultJSON["running"] != false {
+		t.Fatalf("unexpected running: %v", result.ResultJSON["running"])
+	}
+}
+
+func TestShellExecute_ReadUsesCursor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/shell/read" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body shellRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.Cursor != 42 {
+			t.Fatalf("unexpected cursor: %d", body.Cursor)
+		}
+		if body.YieldTimeMs != 1500 {
+			t.Fatalf("unexpected yield_time_ms: %d", body.YieldTimeMs)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shellResponse{Status: "running", Cwd: "/workspace", Cursor: 64, Running: true})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"shell_execute",
+		map[string]any{"action": "read", "cursor": float64(42), "yield_time_ms": float64(1500)},
 		testContext(),
 		"",
 	)
@@ -112,8 +223,99 @@ func TestShellExecute_Success(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	if result.ResultJSON["stdout"] != "total 0\n" {
-		t.Errorf("unexpected stdout: %v", result.ResultJSON["stdout"])
+	if result.ResultJSON["running"] != true {
+		t.Fatalf("unexpected running: %v", result.ResultJSON["running"])
+	}
+}
+
+func TestShellExecute_SignalDefaultsToSIGINT(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/shell/signal" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body shellRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.Signal != shellSignalINT {
+			t.Fatalf("unexpected signal: %s", body.Signal)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shellResponse{Status: "idle", Cwd: "/workspace", Cursor: 9})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(t.Context(), "shell_execute", map[string]any{"action": "signal"}, testContext(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+}
+
+func TestShellExecute_CloseUsesDelete(t *testing.T) {
+	runID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	orgID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		expectedPath := "/v1/shell/session/" + shellSessionID(runID.String())
+		if r.URL.Path != expectedPath {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Org-ID"); got != orgID.String() {
+			t.Fatalf("unexpected org header: %s", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"shell_execute",
+		map[string]any{"action": "close"},
+		testContextWithOrg(runID, orgID),
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if result.ResultJSON["status"] != "closed" {
+		t.Fatalf("unexpected status: %v", result.ResultJSON["status"])
+	}
+}
+
+func TestShellExecute_SharedDefaultSessionAcrossCalls(t *testing.T) {
+	runID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body shellRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		got = append(got, body.SessionID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shellResponse{Status: "idle", Cwd: "/workspace", Cursor: 1})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	ctx := testContextWithRun(runID)
+	first := exec.Execute(t.Context(), "shell_execute", map[string]any{"action": "open"}, ctx, "")
+	second := exec.Execute(t.Context(), "shell_execute", map[string]any{"action": "read", "cursor": float64(1)}, ctx, "")
+
+	if first.Error != nil || second.Error != nil {
+		t.Fatalf("unexpected errors: first=%+v second=%+v", first.Error, second.Error)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(got))
+	}
+	for _, sessionID := range got {
+		if sessionID != shellSessionID(runID.String()) {
+			t.Fatalf("unexpected session id: %s", sessionID)
+		}
 	}
 }
 
@@ -131,12 +333,26 @@ func TestPythonExecute_MissingCode(t *testing.T) {
 	}
 }
 
-func TestShellExecute_MissingCommand(t *testing.T) {
+func TestShellExecute_MissingAction(t *testing.T) {
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(
 		t.Context(),
 		"shell_execute",
 		map[string]any{},
+		testContext(),
+		"",
+	)
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got: %+v", result.Error)
+	}
+}
+
+func TestShellExecute_MissingInputForWrite(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
+	result := exec.Execute(
+		t.Context(),
+		"shell_execute",
+		map[string]any{"action": "write"},
 		testContext(),
 		"",
 	)
@@ -264,7 +480,6 @@ func TestNonZeroExitCode_NotError(t *testing.T) {
 		"",
 	)
 
-	// exit_code != 0 应该返回正常结果，让 agent 看到 stderr 调试
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
@@ -378,7 +593,6 @@ func TestClientTimeout(t *testing.T) {
 	defer server.Close()
 
 	exec := NewToolExecutor(server.URL, "")
-	// 使用极短的 HTTP client timeout 触发超时
 	exec.client.Timeout = 100 * time.Millisecond
 
 	result := exec.Execute(
@@ -391,7 +605,6 @@ func TestClientTimeout(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("expected timeout error")
 	}
-	// 客户端超时可能是 sandbox_timeout 或 sandbox_unavailable
 	if result.Error.ErrorClass != errorSandboxTimeout && result.Error.ErrorClass != errorSandboxUnavailable {
 		t.Fatalf("expected timeout or unavailable, got: %s", result.Error.ErrorClass)
 	}

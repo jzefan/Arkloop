@@ -15,6 +15,21 @@ func CleanupSession(baseURL, authToken, sessionID, orgID string) {
 		return
 	}
 
+	for _, id := range cleanupSessionIDs(sessionID) {
+		deleteSession(baseURL, authToken, id, orgID)
+	}
+}
+
+func cleanupSessionIDs(runSessionID string) []string {
+	ids := []string{runSessionID}
+	shellID := shellSessionID(runSessionID)
+	if shellID != runSessionID {
+		ids = append(ids, shellID)
+	}
+	return ids
+}
+
+func deleteSession(baseURL, authToken, sessionID, orgID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
