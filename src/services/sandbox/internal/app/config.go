@@ -19,15 +19,16 @@ import (
 const (
 	sandboxAddrEnv      = "ARKLOOP_SANDBOX_ADDR"
 	sandboxAuthTokenEnv = "ARKLOOP_SANDBOX_AUTH_TOKEN"
+	sessionStateTTLEnv  = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
 	dockerNetworkEnv    = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
 	firecrackerBinEnv   = "ARKLOOP_FIRECRACKER_BIN"
-	kernelImagePathEnv = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
-	rootfsPathEnv      = "ARKLOOP_SANDBOX_ROOTFS"
-	socketBaseDirEnv   = "ARKLOOP_SANDBOX_SOCKET_DIR"
-	templatesPathEnv   = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
-	s3EndpointEnv      = "ARKLOOP_S3_ENDPOINT"
-	s3AccessKeyEnv     = "ARKLOOP_S3_ACCESS_KEY"
-	s3SecretKeyEnv     = "ARKLOOP_S3_SECRET_KEY"
+	kernelImagePathEnv  = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	rootfsPathEnv       = "ARKLOOP_SANDBOX_ROOTFS"
+	socketBaseDirEnv    = "ARKLOOP_SANDBOX_SOCKET_DIR"
+	templatesPathEnv    = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	s3EndpointEnv       = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv      = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv      = "ARKLOOP_S3_SECRET_KEY"
 )
 
 // Provider 标识 sandbox 后端类型。
@@ -37,22 +38,23 @@ const (
 )
 
 type Config struct {
-	Addr               string
-	AuthToken          string // 服务间认证 Bearer token，空则跳过校验（仅限开发环境）
-	Provider           string // "firecracker" | "docker"
-	FirecrackerBin     string
-	KernelImagePath    string
-	RootfsPath         string
-	SocketBaseDir      string
-	BootTimeoutSeconds int
-	GuestAgentPort     uint32
-	MaxSessions        int
-	S3Endpoint         string
-	S3AccessKey        string
-	S3SecretKey        string
-	TemplatesPath      string
-	DockerImage        string // Docker 后端使用的 sandbox-agent 镜像
-	DockerNetwork      string // agent 容器加入的 Docker 网络（compose 桥接网络）
+	Addr                string
+	AuthToken           string // 服务间认证 Bearer token，空则跳过校验（仅限开发环境）
+	Provider            string // "firecracker" | "docker"
+	FirecrackerBin      string
+	KernelImagePath     string
+	RootfsPath          string
+	SocketBaseDir       string
+	BootTimeoutSeconds  int
+	GuestAgentPort      uint32
+	MaxSessions         int
+	S3Endpoint          string
+	S3AccessKey         string
+	S3SecretKey         string
+	SessionStateTTLDays int
+	TemplatesPath       string
+	DockerImage         string // Docker 后端使用的 sandbox-agent 镜像
+	DockerNetwork       string // agent 容器加入的 Docker 网络（compose 桥接网络）
 
 	// Warm pool: 各 tier 的预热 VM 数量
 	WarmLite  int
@@ -74,18 +76,19 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:               "0.0.0.0:8002",
-		Provider:           ProviderFirecracker,
-		FirecrackerBin:     "/usr/bin/firecracker",
-		KernelImagePath:    "/opt/sandbox/vmlinux",
-		RootfsPath:         "/opt/sandbox/rootfs.ext4",
-		SocketBaseDir:      "/run/sandbox",
-		BootTimeoutSeconds: 30,
-		GuestAgentPort:     8080,
-		MaxSessions:        50,
-		TemplatesPath:      "/opt/sandbox/templates.json",
-		DockerImage:        "arkloop/sandbox-agent:latest",
-		DockerNetwork:      "",
+		Addr:                "0.0.0.0:8002",
+		Provider:            ProviderFirecracker,
+		FirecrackerBin:      "/usr/bin/firecracker",
+		KernelImagePath:     "/opt/sandbox/vmlinux",
+		RootfsPath:          "/opt/sandbox/rootfs.ext4",
+		SocketBaseDir:       "/run/sandbox",
+		BootTimeoutSeconds:  30,
+		GuestAgentPort:      8080,
+		MaxSessions:         50,
+		SessionStateTTLDays: 7,
+		TemplatesPath:       "/opt/sandbox/templates.json",
+		DockerImage:         "arkloop/sandbox-agent:latest",
+		DockerNetwork:       "",
 
 		WarmLite:              3,
 		WarmPro:               2,
@@ -107,6 +110,13 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.Addr = raw
 	}
 	cfg.AuthToken = strings.TrimSpace(os.Getenv(sandboxAuthTokenEnv))
+	if raw, ok := os.LookupEnv(sessionStateTTLEnv); ok {
+		value, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || value < 0 {
+			return cfg, fmt.Errorf("session_state_ttl_days must be zero or positive")
+		}
+		cfg.SessionStateTTLDays = value
+	}
 	if raw := strings.TrimSpace(os.Getenv(dockerNetworkEnv)); raw != "" {
 		cfg.DockerNetwork = raw
 	}
@@ -257,6 +267,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxLifetimeSeconds <= 0 {
 		return fmt.Errorf("max_lifetime must be positive")
+	}
+	if c.SessionStateTTLDays < 0 {
+		return fmt.Errorf("session_state_ttl_days must be zero or positive")
 	}
 	return nil
 }

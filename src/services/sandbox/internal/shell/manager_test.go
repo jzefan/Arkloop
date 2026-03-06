@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"sync"
@@ -150,7 +151,7 @@ func TestManagerRestoreFromCheckpointOnReopen(t *testing.T) {
 		t.Fatalf("get entry failed: %v", err)
 	}
 	entry.mu.Lock()
-	entry.artifactSeen = map[string]artifactVersion{"report.txt": {Size: 3, Data: "abc"}}
+	entry.artifactSeen = map[string]artifactVersion{"report.txt": {Size: 3, Data: base64.StdEncoding.EncodeToString([]byte("abc"))}}
 	entry.mu.Unlock()
 	if err := shellMgr.Close(context.Background(), "sess-1", "org-a"); err != nil {
 		t.Fatalf("close failed: %v", err)
@@ -177,8 +178,246 @@ func TestManagerRestoreFromCheckpointOnReopen(t *testing.T) {
 	if restoredEntry.commandSeq != 1 || restoredEntry.uploadedSeq != 1 {
 		t.Fatalf("unexpected restored seq: command=%d uploaded=%d", restoredEntry.commandSeq, restoredEntry.uploadedSeq)
 	}
-	if restoredEntry.artifactSeen["report.txt"].Data != "abc" {
+	if restoredEntry.artifactSeen["report.txt"].SHA256 == "" {
 		t.Fatalf("unexpected restored artifacts: %#v", restoredEntry.artifactSeen)
+	}
+	if restoredEntry.artifactSeen["report.txt"].Data != "" {
+		t.Fatalf("legacy artifact data should be cleared: %#v", restoredEntry.artifactSeen)
+	}
+}
+
+func TestManagerArtifactsUseDefaultSessionKeyShape(t *testing.T) {
+	agent := &fakeAgent{
+		actionHandler: completedShellAction,
+		fetchArtifactsHandler: func() (*session.FetchArtifactsResult, error) {
+			return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{{Filename: "report.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("hello"))}}}, nil
+		},
+	}
+	store := newFakeArtifactStore()
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, store, nil, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-1/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	resp, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-1/shell/default", OrgID: "org-a", Command: "echo ok"})
+	if err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	if len(resp.Artifacts) != 1 {
+		t.Fatalf("expected one artifact, got %#v", resp.Artifacts)
+	}
+	if got := resp.Artifacts[0].Key; got != "org-a/run-1/shell/default/1/report.txt" {
+		t.Fatalf("unexpected artifact key: %s", got)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("expected one upload, got %d", len(store.puts))
+	}
+}
+
+func TestManagerArtifactsSkipUnchangedContent(t *testing.T) {
+	artifact := session.ArtifactEntry{Filename: "report.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("same"))}
+	agent := &fakeAgent{
+		actionHandler: completedShellAction,
+		fetchArtifactsHandler: func() (*session.FetchArtifactsResult, error) {
+			return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{artifact}}, nil
+		},
+	}
+	store := newFakeArtifactStore()
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, store, nil, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-2/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	first, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-2/shell/default", OrgID: "org-a", Command: "echo one"})
+	if err != nil {
+		t.Fatalf("first exec failed: %v", err)
+	}
+	second, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-2/shell/default", OrgID: "org-a", Command: "echo two"})
+	if err != nil {
+		t.Fatalf("second exec failed: %v", err)
+	}
+	if len(first.Artifacts) != 1 {
+		t.Fatalf("expected first exec to upload artifact, got %#v", first.Artifacts)
+	}
+	if len(second.Artifacts) != 0 {
+		t.Fatalf("expected no new artifacts, got %#v", second.Artifacts)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("expected one upload, got %d", len(store.puts))
+	}
+}
+
+func TestManagerArtifactsUploadChangedContentWithNewSequence(t *testing.T) {
+	call := 0
+	agent := &fakeAgent{
+		actionHandler: completedShellAction,
+		fetchArtifactsHandler: func() (*session.FetchArtifactsResult, error) {
+			call++
+			content := "first"
+			if call > 1 {
+				content = "second"
+			}
+			return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{{Filename: "report.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte(content))}}}, nil
+		},
+	}
+	store := newFakeArtifactStore()
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, store, nil, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-3/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	if _, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-3/shell/default", OrgID: "org-a", Command: "echo one"}); err != nil {
+		t.Fatalf("first exec failed: %v", err)
+	}
+	if _, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-3/shell/default", OrgID: "org-a", Command: "echo two"}); err != nil {
+		t.Fatalf("second exec failed: %v", err)
+	}
+	if len(store.puts) != 2 {
+		t.Fatalf("expected two uploads, got %d", len(store.puts))
+	}
+	if store.puts[0].Key != "org-a/run-3/shell/default/1/report.txt" {
+		t.Fatalf("unexpected first key: %s", store.puts[0].Key)
+	}
+	if store.puts[1].Key != "org-a/run-3/shell/default/2/report.txt" {
+		t.Fatalf("unexpected second key: %s", store.puts[1].Key)
+	}
+}
+
+func TestManagerArtifactsRetryFailedUploadsOnRead(t *testing.T) {
+	agent := &fakeAgent{
+		actionHandler: completedShellAction,
+		fetchArtifactsHandler: func() (*session.FetchArtifactsResult, error) {
+			return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{
+				{Filename: "a.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("aaa"))},
+				{Filename: "b.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("bbb"))},
+			}}, nil
+		},
+	}
+	store := newFakeArtifactStore()
+	store.failKeys["org-a/run-4/shell/default/1/b.txt"] = 1
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, store, nil, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-4/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	first, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-4/shell/default", OrgID: "org-a", Command: "echo one"})
+	if err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	if len(first.Artifacts) != 1 || first.Artifacts[0].Filename != "a.txt" {
+		t.Fatalf("unexpected first artifacts: %#v", first.Artifacts)
+	}
+	entry, err := shellMgr.getExistingEntry("run-4/shell/default", "org-a")
+	if err != nil {
+		t.Fatalf("get entry failed: %v", err)
+	}
+	entry.mu.Lock()
+	if entry.uploadedSeq != 0 {
+		entry.mu.Unlock()
+		t.Fatalf("expected uploaded seq to stay pending, got %d", entry.uploadedSeq)
+	}
+	entry.mu.Unlock()
+
+	second, err := shellMgr.Read(context.Background(), Request{SessionID: "run-4/shell/default", OrgID: "org-a"})
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if len(second.Artifacts) != 1 || second.Artifacts[0].Filename != "b.txt" {
+		t.Fatalf("unexpected retried artifacts: %#v", second.Artifacts)
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.uploadedSeq != 1 {
+		t.Fatalf("expected uploaded seq 1, got %d", entry.uploadedSeq)
+	}
+	if len(store.puts) != 2 {
+		t.Fatalf("expected two successful uploads, got %d", len(store.puts))
+	}
+	if store.countKey("org-a/run-4/shell/default/1/a.txt") != 1 {
+		t.Fatalf("artifact a.txt should upload once, puts=%#v", store.puts)
+	}
+	if store.countKey("org-a/run-4/shell/default/1/b.txt") != 1 {
+		t.Fatalf("artifact b.txt should upload once successfully, puts=%#v", store.puts)
+	}
+}
+
+func TestManagerCheckpointManifestSkipsRawArtifactDataAndRestoresSequence(t *testing.T) {
+	archive := base64.StdEncoding.EncodeToString([]byte("archive"))
+	call := 0
+	agent := &fakeAgent{
+		actionHandler: func(req AgentRequest) AgentResponse {
+			switch req.Action {
+			case "shell_checkpoint_export":
+				return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}, Archive: archive}}
+			case "shell_restore_import":
+				return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{}}
+			default:
+				return completedShellAction(req)
+			}
+		},
+		fetchArtifactsHandler: func() (*session.FetchArtifactsResult, error) {
+			call++
+			content := "first"
+			if call > 1 {
+				content = "second"
+			}
+			return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{{Filename: "report.txt", MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte(content))}}}, nil
+		},
+	}
+	store := newFakeArtifactStore()
+	state := newMemoryStateStore()
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, store, state, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-5/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	if _, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-5/shell/default", OrgID: "org-a", Command: "echo one"}); err != nil {
+		t.Fatalf("first exec failed: %v", err)
+	}
+	if err := shellMgr.Close(context.Background(), "run-5/shell/default", "org-a"); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	pointerBytes, err := state.Get(context.Background(), latestPointerKey("org-a", "run-5/shell/default"))
+	if err != nil {
+		t.Fatalf("load pointer failed: %v", err)
+	}
+	var pointer latestCheckpointPointer
+	if err := json.Unmarshal(pointerBytes, &pointer); err != nil {
+		t.Fatalf("decode pointer failed: %v", err)
+	}
+	manifestBytes, err := state.Get(context.Background(), checkpointManifestKey("org-a", "run-5/shell/default", pointer.Revision))
+	if err != nil {
+		t.Fatalf("load manifest failed: %v", err)
+	}
+	if jsonContains(manifestBytes, "data") {
+		t.Fatalf("manifest should not persist raw artifact data: %s", string(manifestBytes))
+	}
+	if !jsonContains(manifestBytes, "sha256") {
+		t.Fatalf("manifest should persist artifact hash: %s", string(manifestBytes))
+	}
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "run-5/shell/default", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("reopen failed: %v", err)
+	}
+	if _, err := shellMgr.Exec(context.Background(), Request{SessionID: "run-5/shell/default", OrgID: "org-a", Command: "echo two"}); err != nil {
+		t.Fatalf("second exec failed: %v", err)
+	}
+	if len(store.puts) != 2 {
+		t.Fatalf("expected two uploads, got %d", len(store.puts))
+	}
+	if store.puts[1].Key != "org-a/run-5/shell/default/2/report.txt" {
+		t.Fatalf("unexpected restored sequence key: %s", store.puts[1].Key)
 	}
 }
 
@@ -234,12 +473,13 @@ func (p *fakePool) Stats() session.PoolStats { return session.PoolStats{} }
 func (p *fakePool) Drain(_ context.Context)  {}
 
 type fakeAgent struct {
-	mu            sync.Mutex
-	actionHandler func(req AgentRequest) AgentResponse
-	execHandler   func(job session.ExecJob) session.ExecResult
-	lastOpenEnv   map[string]string
-	lastOpenCwd   string
-	restoreCalls  int
+	mu                    sync.Mutex
+	actionHandler         func(req AgentRequest) AgentResponse
+	fetchArtifactsHandler func() (*session.FetchArtifactsResult, error)
+	execHandler           func(job session.ExecJob) session.ExecResult
+	lastOpenEnv           map[string]string
+	lastOpenCwd           string
+	restoreCalls          int
 }
 
 func (a *fakeAgent) Dial(_ context.Context) (net.Conn, error) {
@@ -251,6 +491,23 @@ func (a *fakeAgent) Dial(_ context.Context) (net.Conn, error) {
 			return
 		}
 		if _, ok := envelope["action"]; ok {
+			var action struct {
+				Action string `json:"action"`
+			}
+			if err := json.Unmarshal(mustJSON(tolerateEnvelope(envelope)), &action); err != nil {
+				return
+			}
+			if action.Action == "fetch_artifacts" {
+				result, fetchErr := a.handleFetchArtifacts()
+				resp := map[string]any{"action": action.Action}
+				if fetchErr != nil {
+					resp["error"] = fetchErr.Error()
+				} else {
+					resp["artifacts"] = result
+				}
+				_ = json.NewEncoder(server).Encode(resp)
+				return
+			}
 			var actionReq AgentRequest
 			if err := json.Unmarshal(mustJSON(tolerateEnvelope(envelope)), &actionReq); err != nil {
 				return
@@ -296,6 +553,25 @@ func (a *fakeAgent) handleExec(job session.ExecJob) session.ExecResult {
 	return session.ExecResult{ExitCode: 0}
 }
 
+func (a *fakeAgent) handleFetchArtifacts() (*session.FetchArtifactsResult, error) {
+	a.mu.Lock()
+	handler := a.fetchArtifactsHandler
+	a.mu.Unlock()
+	if handler != nil {
+		return handler()
+	}
+	return &session.FetchArtifactsResult{Artifacts: []session.ArtifactEntry{}}, nil
+}
+
+func completedShellAction(req AgentRequest) AgentResponse {
+	code := 0
+	cwd := "/workspace"
+	if req.Shell != nil && req.Shell.Cwd != "" {
+		cwd = req.Shell.Cwd
+	}
+	return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: cwd, Cursor: 1, ExitCode: &code}}
+}
+
 func idleShellResponse(req AgentRequest) AgentResponse {
 	cwd := "/workspace"
 	if req.Shell != nil && req.Shell.Cwd != "" {
@@ -322,6 +598,74 @@ func tolerateEnvelope(envelope map[string]json.RawMessage) map[string]json.RawMe
 func mustJSON(value any) []byte {
 	data, _ := json.Marshal(value)
 	return data
+}
+
+type fakeArtifactStore struct {
+	mu       sync.Mutex
+	puts     []artifactPut
+	failKeys map[string]int
+}
+
+type artifactPut struct {
+	Key         string
+	Data        []byte
+	ContentType string
+}
+
+func newFakeArtifactStore() *fakeArtifactStore {
+	return &fakeArtifactStore{failKeys: make(map[string]int)}
+}
+
+func (s *fakeArtifactStore) PutWithContentType(_ context.Context, key string, data []byte, contentType string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if remaining := s.failKeys[key]; remaining > 0 {
+		s.failKeys[key] = remaining - 1
+		return errors.New("upload failed")
+	}
+	s.puts = append(s.puts, artifactPut{Key: key, Data: append([]byte(nil), data...), ContentType: contentType})
+	return nil
+}
+
+func (s *fakeArtifactStore) countKey(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, put := range s.puts {
+		if put.Key == key {
+			count++
+		}
+	}
+	return count
+}
+
+func jsonContains(data []byte, key string) bool {
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return false
+	}
+	return containsJSONKey(payload, key)
+}
+
+func containsJSONKey(value any, key string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		if _, ok := typed[key]; ok {
+			return true
+		}
+		for _, nested := range typed {
+			if containsJSONKey(nested, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if containsJSONKey(nested, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type memoryStateStore struct {

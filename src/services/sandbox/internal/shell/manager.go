@@ -408,6 +408,7 @@ func cloneArtifactSeen(source map[string]artifactVersion) map[string]artifactVer
 	for key, value := range source {
 		clone[key] = value
 	}
+	normalizeArtifactVersions(clone)
 	return clone
 }
 
@@ -530,10 +531,12 @@ func (m *Manager) attachArtifacts(ctx context.Context, sessionID string, entry *
 	if entry.commandSeq == 0 || entry.uploadedSeq >= entry.commandSeq {
 		return
 	}
-	refs, nextKnown := collectArtifacts(ctx, entry.compute, sessionID, entry.commandSeq, m.artifactStore, entry.artifactSeen, m.logger)
-	entry.uploadedSeq = entry.commandSeq
-	entry.artifactSeen = nextKnown
-	resp.Artifacts = refs
+	upload := collectArtifacts(ctx, entry.compute, sessionID, entry.commandSeq, m.artifactStore, entry.artifactSeen, m.logger)
+	entry.artifactSeen = upload.NextKnown
+	if upload.CanAdvanceSeq {
+		entry.uploadedSeq = entry.commandSeq
+	}
+	resp.Artifacts = upload.Refs
 	if resp.Artifacts == nil {
 		resp.Artifacts = []ArtifactRef{}
 	}

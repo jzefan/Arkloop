@@ -188,6 +188,36 @@ func (o *Store) GetWithContentType(ctx context.Context, key string) ([]byte, str
 	return data, contentType, nil
 }
 
+func (o *Store) SetLifecycleExpirationDays(ctx context.Context, days int) error {
+	if days <= 0 {
+		return nil
+	}
+	config := expirationLifecycleConfiguration(days)
+	_, err := o.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+		Bucket:                 aws.String(o.bucket),
+		LifecycleConfiguration: config,
+	})
+	if err != nil {
+		return fmt.Errorf("put lifecycle configuration for bucket %q: %w", o.bucket, err)
+	}
+	return nil
+}
+
+func expirationLifecycleConfiguration(days int) *types.BucketLifecycleConfiguration {
+	return &types.BucketLifecycleConfiguration{
+		Rules: []types.LifecycleRule{
+			{
+				ID:     aws.String("expire-after-days"),
+				Status: types.ExpirationStatusEnabled,
+				Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
+				Expiration: &types.LifecycleExpiration{
+					Days: aws.Int32(int32(days)),
+				},
+			},
+		},
+	}
+}
+
 // Delete 删除对象。
 func (o *Store) Delete(ctx context.Context, key string) error {
 	_, err := o.client.DeleteObject(ctx, &s3.DeleteObjectInput{
