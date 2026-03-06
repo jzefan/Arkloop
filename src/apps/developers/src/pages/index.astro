@@ -1,0 +1,53 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { getHomeCards } from '@/lib/navigation';
+
+const cards = getHomeCards('zh');
+---
+
+<BaseLayout title="Arkloop Developers" description="Arkloop 开发者门户，包含工程文档、API 参考与研究文章。" locale="zh" pathname="/" alternatePath="/en">
+  <section class="hero-grid">
+    <div class="hero-panel">
+      <p class="hero-kicker">Developer Portal</p>
+      <h1 class="hero-title">Arkloop 开发者站</h1>
+      <p class="hero-copy">高密度承载文档、API、Research 与开发资源。统一顶栏、统一主题、统一搜索入口。</p>
+      <div class="hero-actions">
+        <a class="primary-button" href="/docs/guide">快速开始</a>
+        <a class="secondary-button" href="/api">查看 API</a>
+      </div>
+    </div>
+    <div class="hero-panel hero-panel-code">
+      <div>
+        <p class="hero-kicker">Quickstart</p>
+        <h2 class="home-card-title">Developer quickstart</h2>
+        <p class="hero-copy">几分钟内启动 Arkloop API、Worker 与前端应用。</p>
+      </div>
+      <div class="snippet-shell">
+        <div class="snippet-header">
+          <span>bash</span>
+          <span>local setup</span>
+        </div>
+        <pre><code>cp .env.example .env
+
+docker compose up -d
+
+cd src/services/api &amp;&amp; go run ./cmd/api
+cd src/services/worker &amp;&amp; go run ./cmd/worker
+cd src/apps/web &amp;&amp; pnpm dev</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <p class="section-kicker">Explore</p>
+    <div class="card-grid">
+      {cards.map((card) => (
+        <a class="home-card" href={card.href}>
+          <div class="home-card-visual"></div>
+          <h2 class="home-card-title">{card.title}</h2>
+          <p>{card.description}</p>
+        </a>
+      ))}
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,52 @@
+---
+import { getSectionFromPath, getTopNavigation, type Locale } from '@/lib/navigation';
+
+interface Props {
+  locale: Locale;
+  pathname: string;
+  alternatePath?: string | null;
+  hideLocaleSwitch?: boolean;
+}
+
+const { locale, pathname, alternatePath = null, hideLocaleSwitch = false } = Astro.props;
+const navItems = getTopNavigation(locale);
+const activeSection = getSectionFromPath(pathname);
+const homeHref = locale === 'en' ? '/en' : '/';
+const localeLabel = locale === 'en' ? '中文' : 'EN';
+---
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href={homeHref}>
+      <span class="brand-text">Arkloop Developers</span>
+    </a>
+
+    <nav class="topnav" aria-label="Primary">
+      {navItems.map((item) => (
+        <a
+          href={item.href}
+          class:list={['nav-link', activeSection === item.id && 'nav-link-active']}
+        >
+          {item.label}
+        </a>
+      ))}
+    </nav>
+
+    <div class="topbar-actions">
+      <button class="search-trigger" type="button" data-search-open>
+        <span>Search</span>
+        <kbd>⌘K</kbd>
+      </button>
+      <a class="ghost-link" href="https://github.com/qqqqqf-q/Arkloop" target="_blank" rel="noreferrer">
+        GitHub
+      </a>
+      {!hideLocaleSwitch && alternatePath && (
+        <a class="ghost-link" href={alternatePath}>{localeLabel}</a>
+      )}
+      <button class="icon-button" type="button" data-theme-toggle aria-label="切换主题">
+        <span class="theme-label theme-label-light">Light</span>
+        <span class="theme-label theme-label-dark">Dark</span>
+      </button>
+    </div>
+  </div>
+</header>

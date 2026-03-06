@@ -1,0 +1,31 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { getResearchCollection } from '@/lib/content';
+
+const posts = await getResearchCollection();
+---
+
+<BaseLayout title="Research" description="Arkloop runtime and system research." locale="zh" pathname="/research" hideLocaleSwitch={true}>
+  <section class="research-panel">
+    <p class="section-kicker">Research</p>
+    <h1 class="page-title">Arkloop Research</h1>
+    <p class="page-copy">聚焦 Arkloop 运行时、Agent Loop、线程模型和系统设计取舍。</p>
+  </section>
+
+  <section class="section-block research-list">
+    {posts.map((post) => (
+      <a class="research-card" href={`/research/${post.slug}`}>
+        <div class="research-card-head">
+          <div>
+            <p class="research-meta">{post.data.date.toISOString().slice(0, 10)}</p>
+            <h2>{post.data.title}</h2>
+          </div>
+          <div class="research-tags">
+            {post.data.tags?.map((tag) => <span class="research-tag">{tag}</span>)}
+          </div>
+        </div>
+        <p>{post.data.description}</p>
+      </a>
+    ))}
+  </section>
+</BaseLayout>

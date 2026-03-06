@@ -2,3 +2,4 @@ packages:
   - src/apps/shared
   - src/apps/web
   - src/apps/console
+  - src/apps/developers
