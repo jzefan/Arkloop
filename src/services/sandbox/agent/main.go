@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	shellapi "arkloop/services/sandbox/internal/shell"
+
 	"github.com/mdlayher/vsock"
 )
 
@@ -103,16 +105,19 @@ type ExecResult struct {
 
 // AgentRequest 是 v2 协议的请求格式，通过 action 字段区分操作类型。
 type AgentRequest struct {
-	Action  string   `json:"action"` // "exec" | "fetch_artifacts"
-	ExecJob *ExecJob `json:"exec_job,omitempty"`
+	Action  string                      `json:"action"`
+	ExecJob *ExecJob                    `json:"exec_job,omitempty"`
+	Shell   *shellapi.AgentShellRequest `json:"shell,omitempty"`
 }
 
 // AgentResponse 是 v2 协议的统一响应。
 type AgentResponse struct {
-	Action    string                `json:"action"`
-	Exec      *ExecResult           `json:"exec,omitempty"`
-	Artifacts *FetchArtifactsResult `json:"artifacts,omitempty"`
-	Error     string                `json:"error,omitempty"`
+	Action    string                       `json:"action"`
+	Exec      *ExecResult                  `json:"exec,omitempty"`
+	Artifacts *FetchArtifactsResult        `json:"artifacts,omitempty"`
+	Shell     *shellapi.AgentShellResponse `json:"shell,omitempty"`
+	Code      string                       `json:"code,omitempty"`
+	Error     string                       `json:"error,omitempty"`
 }
 
 type ArtifactEntry struct {
@@ -126,6 +131,8 @@ type FetchArtifactsResult struct {
 	Artifacts []ArtifactEntry `json:"artifacts"`
 	Truncated bool            `json:"truncated"`
 }
+
+var shellController = NewShellController()
 
 func main() {
 	if err := run(); err != nil {
@@ -206,9 +213,40 @@ func handleV2(conn net.Conn, req AgentRequest) {
 		result := fetchArtifacts()
 		writeJSON(conn, AgentResponse{Action: "fetch_artifacts", Artifacts: &result})
 
+	case "shell_open":
+		result, code, errMsg := shellController.Open(derefShell(req.Shell))
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
+	case "shell_exec":
+		result, code, errMsg := shellController.Exec(derefShell(req.Shell))
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
+	case "shell_read":
+		result, code, errMsg := shellController.Read(derefShell(req.Shell))
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
+	case "shell_write":
+		result, code, errMsg := shellController.Write(derefShell(req.Shell))
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
+	case "shell_signal":
+		result, code, errMsg := shellController.Signal(derefShell(req.Shell))
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
+	case "shell_close":
+		result, code, errMsg := shellController.Close()
+		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
+
 	default:
 		writeJSON(conn, AgentResponse{Action: req.Action, Error: fmt.Sprintf("unknown action: %s", req.Action)})
 	}
+}
+
+func derefShell(req *shellapi.AgentShellRequest) shellapi.AgentShellRequest {
+	if req == nil {
+		return shellapi.AgentShellRequest{}
+	}
+	return *req
 }
 
 func ensureOutputDir() {

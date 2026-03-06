@@ -58,7 +58,7 @@ COPY src/services/sandbox/rootfs/init /sbin/init
 COPY src/services/sandbox/rootfs/chart_prelude.py /usr/local/share/arkloop/chart_prelude.py
 RUN chmod +x /sbin/init /usr/local/bin/sandbox-agent
 
-RUN mkdir -p /tmp/output /run
+RUN mkdir -p /tmp/output /run /workspace
 RUN rm -rf /var/cache/* /root/.cache /tmp/*.tar*
 
 # -- Stage 3: ext4 打包 --
@@ -70,7 +70,7 @@ COPY --from=rootfs / /rootfs/
 
 RUN rm -f /rootfs/.dockerenv && \
     : > /rootfs/etc/hostname && \
-    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/run /rootfs/tmp/output
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/run /rootfs/tmp/output /rootfs/workspace
 
 RUN truncate -s 2G /python3.12.ext4 && \
     mkfs.ext4 -d /rootfs -L rootfs /python3.12.ext4

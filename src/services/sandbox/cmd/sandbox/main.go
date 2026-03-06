@@ -12,6 +12,7 @@ import (
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/pool"
 	"arkloop/services/sandbox/internal/session"
+	"arkloop/services/sandbox/internal/shell"
 	"arkloop/services/sandbox/internal/snapshot"
 	"arkloop/services/sandbox/internal/storage"
 	"arkloop/services/sandbox/internal/template"
@@ -70,8 +71,9 @@ func run() error {
 		IdleTimeoutUltra:   cfg.IdleTimeoutUltra,
 		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
 	})
+	shellMgr := shell.NewManager(mgr, artifactStore, logger)
 
-	handler := sandboxhttp.NewHandler(mgr, artifactStore, logger, cfg.AuthToken)
+	handler := sandboxhttp.NewHandler(mgr, shellMgr, artifactStore, logger, cfg.AuthToken)
 
 	if cfg.AuthToken == "" {
 		logger.Warn("ARKLOOP_SANDBOX_AUTH_TOKEN not set, auth disabled", logging.LogFields{}, nil)

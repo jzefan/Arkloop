@@ -10,7 +10,7 @@ mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /tmp
 mount -t tmpfs tmpfs /run
 
-mkdir -p /tmp/output /tmp/matplotlib
+mkdir -p /tmp/output /tmp/matplotlib /workspace
 hostname sandbox
 
 exec /usr/local/bin/sandbox-agent
