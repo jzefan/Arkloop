@@ -10,6 +10,15 @@ export const en: LocaleStrings = {
     runs: 'Runs',
     settings: 'Settings',
   },
+  dashboard: {
+    title: 'Dashboard',
+    runsTotal: 'Total Runs',
+    runsToday: 'Runs Today',
+    inputTokens: 'Input Tokens',
+    outputTokens: 'Output Tokens',
+    tokenUsage30d: 'Token Usage (30 Days)',
+    refresh: 'Refresh',
+  },
   common: {
     save: 'Save',
     cancel: 'Cancel',
