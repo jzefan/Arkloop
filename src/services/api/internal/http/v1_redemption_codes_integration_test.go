@@ -127,7 +127,7 @@ func TestRedemptionCodesIntegration(t *testing.T) {
 				"count":    10,
 				"type":     "credit",
 				"value":    "100",
-				"max_uses": 1,
+				"max_uses": 2,
 				"batch_id": "test_batch_01",
 			}, authHeader(adminToken))
 		if resp.Code != nethttp.StatusCreated {

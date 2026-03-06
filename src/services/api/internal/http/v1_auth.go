@@ -335,8 +335,9 @@ func registrationMode(flagService *featureflag.Service) func(nethttp.ResponseWri
 		}
 
 		traceID := observability.TraceIDFromContext(r.Context())
-		mode := "invite_only"
+		mode := "open"
 		if flagService != nil {
+			mode = "invite_only"
 			open, err := flagService.IsGloballyEnabled(r.Context(), "registration.open")
 			if err == nil && open {
 				mode = "open"
@@ -393,7 +394,7 @@ func register(
 		}
 
 		// 注册模式检查
-		openRegistration := false
+		openRegistration := flagService == nil
 		if flagService != nil {
 			open, err := flagService.IsGloballyEnabled(r.Context(), "registration.open")
 			if err == nil {

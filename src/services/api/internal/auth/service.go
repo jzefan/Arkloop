@@ -154,11 +154,9 @@ func (s *Service) IssueAccessToken(ctx context.Context, login string, password s
 		return IssuedTokenPair{}, SuspendedUserError{UserID: credential.UserID, Status: user.Status}
 	}
 
-	// fail-close: 邮箱未验证时，flag 查询失败或 flagService 不可用一律拒绝登录
-	if user.EmailVerifiedAt == nil {
-		if s.flagService == nil {
-			return IssuedTokenPair{}, EmailNotVerifiedError{UserID: user.ID}
-		}
+	// 邮箱未验证时，仅在显式开启 auth.require_email_verification 时拒绝登录。
+	// flagService 不可用时默认允许登录，避免 feature flags 基线阻断核心链路。
+	if user.EmailVerifiedAt == nil && s.flagService != nil {
 		required, err := s.flagService.IsGloballyEnabled(ctx, "auth.require_email_verification")
 		if err != nil || required {
 			return IssuedTokenPair{}, EmailNotVerifiedError{UserID: user.ID}

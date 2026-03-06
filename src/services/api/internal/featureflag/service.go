@@ -107,7 +107,10 @@ func (s *Service) IsGloballyEnabled(ctx context.Context, flagKey string) (bool, 
 		return false, fmt.Errorf("featureflag.IsGloballyEnabled: %w", err)
 	}
 	if flag == nil {
-		return false, fmt.Errorf("featureflag: unknown flag %q", flagKey)
+		if s.rdb != nil {
+			s.setGlobalCache(ctx, flagKey, false)
+		}
+		return false, nil
 	}
 
 	if s.rdb != nil {
@@ -150,4 +153,3 @@ func (s *Service) InvalidateCache(ctx context.Context, orgID uuid.UUID, flagKey 
 	cacheKey := cachePrefix + orgID.String() + ":" + flagKey
 	_ = s.rdb.Del(ctx, cacheKey).Err()
 }
-

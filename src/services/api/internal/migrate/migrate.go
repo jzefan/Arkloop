@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
+	"strconv"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -14,7 +17,7 @@ import (
 //go:embed migrations/*.sql
 var embedFS embed.FS
 
-const ExpectedVersion int64 = 82
+var ExpectedVersion int64 = expectedVersionFromEmbeddedMigrations()
 
 func migrationsFS() fs.FS {
 	sub, err := fs.Sub(embedFS, "migrations")
@@ -22,6 +25,39 @@ func migrationsFS() fs.FS {
 		panic(fmt.Sprintf("migrate: embedded sub-fs: %v", err))
 	}
 	return sub
+}
+
+func expectedVersionFromEmbeddedMigrations() int64 {
+	entries, err := fs.ReadDir(migrationsFS(), ".")
+	if err != nil {
+		panic(fmt.Sprintf("migrate: read embedded migrations: %v", err))
+	}
+
+	var max int64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+
+		base := strings.TrimSuffix(name, ".sql")
+		prefix, _, _ := strings.Cut(base, "_")
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil {
+			panic(fmt.Sprintf("migrate: invalid migration filename %q", name))
+		}
+		if version > max {
+			max = version
+		}
+	}
+
+	if max <= 0 {
+		panic("migrate: embedded migrations empty")
+	}
+	return max
 }
 
 func openDB(dsn string) (*sql.DB, error) {
@@ -96,6 +132,9 @@ func DownAll(ctx context.Context, dsn string) (int, error) {
 	for {
 		result, err := provider.Down(ctx)
 		if err != nil {
+			if errors.Is(err, goose.ErrNoNextVersion) {
+				break
+			}
 			return count, fmt.Errorf("migrate: down all at step %d: %w", count+1, err)
 		}
 		if result == nil {
