@@ -201,7 +201,6 @@ export function AgentsPage() {
           display_name: form.name.trim(),
           prompt_md: form.systemPrompt.trim(),
           tool_allowlist: form.tools,
-          is_active: form.isActive,
           preferred_credential: form.model.trim(),
           executor_type: 'agent.simple',
         }, accessToken)

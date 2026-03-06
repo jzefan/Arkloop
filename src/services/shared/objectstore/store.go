@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,9 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 const ArtifactBucket = "sandbox-artifacts"
+const SessionStateBucket = "sandbox-session-state"
 
 // Store 封装 S3 兼容存储客户端，绑定到单个 bucket。
 // 支持 MinIO、AWS S3、GCS（S3 兼容模式）等。
@@ -195,4 +198,23 @@ func (o *Store) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("delete object %q: %w", key, err)
 	}
 	return nil
+}
+
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		code := strings.TrimSpace(apiErr.ErrorCode())
+		switch code {
+		case "NoSuchKey", "NotFound", "NoSuchBucket", "404":
+			return true
+		}
+	}
+	var notFound *types.NotFound
+	return errors.As(err, &notFound)
 }

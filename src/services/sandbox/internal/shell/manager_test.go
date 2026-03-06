@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"os"
@@ -13,14 +14,10 @@ import (
 )
 
 func TestManagerOpen_IdempotentReuse(t *testing.T) {
-	agent := &fakeAgent{
-		handler: func(req AgentRequest) AgentResponse {
-			return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace", Cursor: 0}}
-		},
-	}
+	agent := &fakeAgent{}
 	pool := &fakePool{agent: agent}
 	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
-	shellMgr := NewManager(mgr, nil, logging.NewJSONLogger("test", nil))
+	shellMgr := NewManager(mgr, nil, nil, logging.NewJSONLogger("test", nil))
 
 	for range 2 {
 		resp, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"})
@@ -38,21 +35,17 @@ func TestManagerOpen_IdempotentReuse(t *testing.T) {
 }
 
 func TestManagerExec_Busy(t *testing.T) {
-	agent := &fakeAgent{
-		handler: func(req AgentRequest) AgentResponse {
-			switch req.Action {
-			case "shell_open":
-				return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace", Cursor: 0}}
-			case "shell_exec":
-				return AgentResponse{Action: req.Action, Code: CodeSessionBusy, Error: "shell session is busy"}
-			default:
-				return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace", Cursor: 0}}
-			}
-		},
-	}
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		switch req.Action {
+		case "shell_exec":
+			return AgentResponse{Action: req.Action, Code: CodeSessionBusy, Error: "shell session is busy"}
+		default:
+			return idleShellResponse(req)
+		}
+	}}
 	pool := &fakePool{agent: agent}
 	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
-	shellMgr := NewManager(mgr, nil, logging.NewJSONLogger("test", nil))
+	shellMgr := NewManager(mgr, nil, nil, logging.NewJSONLogger("test", nil))
 
 	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
 		t.Fatalf("open failed: %v", err)
@@ -68,14 +61,10 @@ func TestManagerExec_Busy(t *testing.T) {
 }
 
 func TestManagerOrgMismatch(t *testing.T) {
-	agent := &fakeAgent{
-		handler: func(req AgentRequest) AgentResponse {
-			return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace", Cursor: 0}}
-		},
-	}
+	agent := &fakeAgent{}
 	pool := &fakePool{agent: agent}
 	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
-	shellMgr := NewManager(mgr, nil, logging.NewJSONLogger("test", nil))
+	shellMgr := NewManager(mgr, nil, nil, logging.NewJSONLogger("test", nil))
 
 	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
 		t.Fatalf("open failed: %v", err)
@@ -91,20 +80,125 @@ func TestManagerOrgMismatch(t *testing.T) {
 }
 
 func TestManagerClose_ReclaimsComputeSession(t *testing.T) {
-	agent := &fakeAgent{
-		handler: func(req AgentRequest) AgentResponse {
-			return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace", Cursor: 0}}
-		},
-	}
+	agent := &fakeAgent{}
 	pool := &fakePool{agent: agent}
 	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
-	shellMgr := NewManager(mgr, nil, logging.NewJSONLogger("test", nil))
+	shellMgr := NewManager(mgr, nil, nil, logging.NewJSONLogger("test", nil))
 
 	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
 		t.Fatalf("open failed: %v", err)
 	}
 	if err := shellMgr.Close(context.Background(), "sess-1", "org-a"); err != nil {
 		t.Fatalf("close failed: %v", err)
+	}
+	if pool.destroyCount != 1 {
+		t.Fatalf("expected destroy once, got %d", pool.destroyCount)
+	}
+}
+
+func TestManagerClose_CheckpointFailureKeepsComputeSession(t *testing.T) {
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		if req.Action == "shell_checkpoint_export" {
+			return AgentResponse{Action: req.Action, Error: "checkpoint failed"}
+		}
+		return idleShellResponse(req)
+	}}
+	pool := &fakePool{agent: agent}
+	state := newMemoryStateStore()
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, nil, state, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	if err := shellMgr.Close(context.Background(), "sess-1", "org-a"); err == nil {
+		t.Fatal("expected close failure")
+	}
+	if pool.destroyCount != 0 {
+		t.Fatalf("expected compute session to stay alive, got destroy count %d", pool.destroyCount)
+	}
+}
+
+func TestManagerRestoreFromCheckpointOnReopen(t *testing.T) {
+	archive := base64.StdEncoding.EncodeToString([]byte("archive"))
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		switch req.Action {
+		case "shell_checkpoint_export":
+			return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}, Archive: archive}}
+		case "shell_restore_import":
+			return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{}}
+		case "shell_exec":
+			code := 0
+			return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: "/workspace/demo", Cursor: 1, ExitCode: &code}}
+		default:
+			return idleShellResponse(req)
+		}
+	}}
+	pool := &fakePool{agent: agent}
+	state := newMemoryStateStore()
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, nil, state, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	if _, err := shellMgr.Exec(context.Background(), Request{SessionID: "sess-1", OrgID: "org-a", Command: "echo ok"}); err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	entry, err := shellMgr.getExistingEntry("sess-1", "org-a")
+	if err != nil {
+		t.Fatalf("get entry failed: %v", err)
+	}
+	entry.mu.Lock()
+	entry.artifactSeen = map[string]artifactVersion{"report.txt": {Size: 3, Data: "abc"}}
+	entry.mu.Unlock()
+	if err := shellMgr.Close(context.Background(), "sess-1", "org-a"); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("reopen failed: %v", err)
+	}
+	if agent.restoreCalls != 1 {
+		t.Fatalf("expected one restore call, got %d", agent.restoreCalls)
+	}
+	if agent.lastOpenCwd != "/workspace/demo" {
+		t.Fatalf("unexpected restored cwd: %s", agent.lastOpenCwd)
+	}
+	if agent.lastOpenEnv["FOO"] != "bar" {
+		t.Fatalf("unexpected restored env: %#v", agent.lastOpenEnv)
+	}
+	restoredEntry, err := shellMgr.getExistingEntry("sess-1", "org-a")
+	if err != nil {
+		t.Fatalf("restored entry missing: %v", err)
+	}
+	restoredEntry.mu.Lock()
+	defer restoredEntry.mu.Unlock()
+	if restoredEntry.commandSeq != 1 || restoredEntry.uploadedSeq != 1 {
+		t.Fatalf("unexpected restored seq: command=%d uploaded=%d", restoredEntry.commandSeq, restoredEntry.uploadedSeq)
+	}
+	if restoredEntry.artifactSeen["report.txt"].Data != "abc" {
+		t.Fatalf("unexpected restored artifacts: %#v", restoredEntry.artifactSeen)
+	}
+}
+
+func TestManagerReclaimIgnoresCheckpointFailure(t *testing.T) {
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		if req.Action == "shell_checkpoint_export" {
+			return AgentResponse{Action: req.Action, Error: "checkpoint failed"}
+		}
+		return idleShellResponse(req)
+	}}
+	pool := &fakePool{agent: agent}
+	state := newMemoryStateStore()
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, nil, state, logging.NewJSONLogger("test", nil))
+
+	if _, err := shellMgr.Open(context.Background(), Request{SessionID: "sess-1", Tier: "lite", OrgID: "org-a"}); err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+	if err := mgr.DeleteWithOptions(context.Background(), "sess-1", "org-a", session.DeleteOptions{Reason: session.DeleteReasonIdleTimeout, IgnoreHookError: true}); err != nil {
+		t.Fatalf("delete with hook ignore failed: %v", err)
 	}
 	if pool.destroyCount != 1 {
 		t.Fatalf("expected destroy once, got %d", pool.destroyCount)
@@ -140,18 +234,118 @@ func (p *fakePool) Stats() session.PoolStats { return session.PoolStats{} }
 func (p *fakePool) Drain(_ context.Context)  {}
 
 type fakeAgent struct {
-	handler func(req AgentRequest) AgentResponse
+	mu            sync.Mutex
+	actionHandler func(req AgentRequest) AgentResponse
+	execHandler   func(job session.ExecJob) session.ExecResult
+	lastOpenEnv   map[string]string
+	lastOpenCwd   string
+	restoreCalls  int
 }
 
 func (a *fakeAgent) Dial(_ context.Context) (net.Conn, error) {
 	client, server := net.Pipe()
 	go func() {
 		defer server.Close()
-		var req AgentRequest
-		if err := json.NewDecoder(server).Decode(&req); err != nil {
+		var envelope map[string]json.RawMessage
+		if err := json.NewDecoder(server).Decode(&envelope); err != nil {
 			return
 		}
-		_ = json.NewEncoder(server).Encode(a.handler(req))
+		if _, ok := envelope["action"]; ok {
+			var actionReq AgentRequest
+			if err := json.Unmarshal(mustJSON(tolerateEnvelope(envelope)), &actionReq); err != nil {
+				return
+			}
+			_ = json.NewEncoder(server).Encode(a.handleAction(actionReq))
+			return
+		}
+		if _, ok := envelope["language"]; ok {
+			var execReq session.ExecJob
+			if err := json.Unmarshal(mustJSON(tolerateEnvelope(envelope)), &execReq); err != nil {
+				return
+			}
+			_ = json.NewEncoder(server).Encode(a.handleExec(execReq))
+		}
 	}()
 	return client, nil
+}
+
+func (a *fakeAgent) handleAction(req AgentRequest) AgentResponse {
+	a.mu.Lock()
+	if req.Action == "shell_open" {
+		a.lastOpenCwd = req.Shell.Cwd
+		a.lastOpenEnv = cloneMap(req.Shell.Env)
+	}
+	if req.Action == "shell_restore_import" {
+		a.restoreCalls++
+	}
+	custom := a.actionHandler
+	a.mu.Unlock()
+	if custom != nil {
+		return custom(req)
+	}
+	return idleShellResponse(req)
+}
+
+func (a *fakeAgent) handleExec(job session.ExecJob) session.ExecResult {
+	a.mu.Lock()
+	custom := a.execHandler
+	a.mu.Unlock()
+	if custom != nil {
+		return custom(job)
+	}
+	return session.ExecResult{ExitCode: 0}
+}
+
+func idleShellResponse(req AgentRequest) AgentResponse {
+	cwd := "/workspace"
+	if req.Shell != nil && req.Shell.Cwd != "" {
+		cwd = req.Shell.Cwd
+	}
+	return AgentResponse{Action: req.Action, Shell: &AgentShellResponse{Status: StatusIdle, Cwd: cwd, Cursor: 0}}
+}
+
+func cloneMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return map[string]string{}
+	}
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
+}
+
+func tolerateEnvelope(envelope map[string]json.RawMessage) map[string]json.RawMessage {
+	return envelope
+}
+
+func mustJSON(value any) []byte {
+	data, _ := json.Marshal(value)
+	return data
+}
+
+type memoryStateStore struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newMemoryStateStore() *memoryStateStore {
+	return &memoryStateStore{data: make(map[string][]byte)}
+}
+
+func (s *memoryStateStore) Put(_ context.Context, key string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[key] = append([]byte(nil), data...)
+	return nil
+}
+
+func (s *memoryStateStore) Get(_ context.Context, key string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.data[key]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return append([]byte(nil), data...), nil
 }

@@ -40,12 +40,18 @@ func run() error {
 
 	// 可选依赖：S3 artifact 存储
 	var artifactStore *objectstore.Store
+	var stateStore *objectstore.Store
 	if cfg.S3Endpoint != "" {
 		aStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.ArtifactBucket, "")
 		if err != nil {
 			return err
 		}
 		artifactStore = aStore
+		sStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.SessionStateBucket, "")
+		if err != nil {
+			return err
+		}
+		stateStore = sStore
 		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
@@ -71,7 +77,7 @@ func run() error {
 		IdleTimeoutUltra:   cfg.IdleTimeoutUltra,
 		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
 	})
-	shellMgr := shell.NewManager(mgr, artifactStore, logger)
+	shellMgr := shell.NewManager(mgr, artifactStore, stateStore, logger)
 
 	handler := sandboxhttp.NewHandler(mgr, shellMgr, artifactStore, logger, cfg.AuthToken)
 

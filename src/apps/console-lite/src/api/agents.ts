@@ -26,7 +26,6 @@ export type CreatePersonaRequest = {
   description?: string
   prompt_md: string
   tool_allowlist?: string[]
-  is_active?: boolean
   preferred_credential?: string
   executor_type?: string
 }
