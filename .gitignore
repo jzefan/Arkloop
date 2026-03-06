@@ -32,3 +32,5 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 
 temp
+src/apps/developers/dist
+src/apps/developers/.astro

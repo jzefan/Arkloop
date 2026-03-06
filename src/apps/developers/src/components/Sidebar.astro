@@ -1,0 +1,33 @@
+---
+import type { SidebarGroup } from '@/lib/navigation';
+
+interface Props {
+  groups: SidebarGroup[];
+  pathname: string;
+  title: string;
+}
+
+const { groups, pathname, title } = Astro.props;
+---
+
+<aside class="sidebar-shell">
+  <div class="sidebar-sticky">
+    <div class="sidebar-header">
+      <p class="sidebar-kicker">Explore</p>
+      <h2>{title}</h2>
+    </div>
+
+    {groups.map((group) => (
+      <section class="sidebar-group">
+        <h3>{group.label}</h3>
+        <div class="sidebar-links">
+          {group.items.map((item) => (
+            <a href={item.href} class:list={['sidebar-link', pathname === item.href && 'sidebar-link-active']}>
+              {item.label}
+            </a>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</aside>
