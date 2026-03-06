@@ -13,6 +13,15 @@ export interface LocaleStrings {
     runs: string
     settings: string
   }
+  dashboard: {
+    title: string
+    runsTotal: string
+    runsToday: string
+    inputTokens: string
+    outputTokens: string
+    tokenUsage30d: string
+    refresh: string
+  }
   common: {
     save: string
     cancel: string

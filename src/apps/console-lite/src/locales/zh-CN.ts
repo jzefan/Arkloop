@@ -10,6 +10,15 @@ export const zhCN: LocaleStrings = {
     runs: '运行记录',
     settings: '设置',
   },
+  dashboard: {
+    title: '仪表盘',
+    runsTotal: '总运行次数',
+    runsToday: '今日运行',
+    inputTokens: '输入 Tokens',
+    outputTokens: '输出 Tokens',
+    tokenUsage30d: '近 30 天 Token 用量',
+    refresh: '刷新',
+  },
   common: {
     save: '保存',
     cancel: '取消',
