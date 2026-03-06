@@ -22,6 +22,25 @@ export interface LocaleStrings {
     tokenUsage30d: string
     refresh: string
   }
+  agents: {
+    title: string
+    newAgent: string
+    editAgent: string
+    name: string
+    model: string
+    systemPrompt: string
+    tools: string
+    setDefault: string
+    active: string
+    advanced: string
+    temperature: string
+    maxOutputTokens: string
+    reasoningMode: string
+    reasoningDisabled: string
+    reasoningEnabled: string
+    deleteConfirm: string
+    noAgents: string
+  }
   common: {
     save: string
     cancel: string
