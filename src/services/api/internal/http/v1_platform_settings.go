@@ -10,6 +10,7 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
 	sharedconfig "arkloop/services/shared/config"
+	sharedent "arkloop/services/shared/entitlement"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -191,6 +192,9 @@ func invalidateEntitlementCacheByKey(ctx context.Context, rdb *redis.Client, key
 	if rdb == nil {
 		return
 	}
+	if !sharedent.EntitlementCacheSigningEnabled() {
+		return
+	}
 	pattern := "arkloop:entitlement:*:" + key
 	var cursor uint64
 	for {
@@ -199,7 +203,11 @@ func invalidateEntitlementCacheByKey(ctx context.Context, rdb *redis.Client, key
 			return
 		}
 		if len(keys) > 0 {
-			_ = rdb.Del(ctx, keys...).Err()
+			toDelete := make([]string, 0, len(keys)*2)
+			for _, k := range keys {
+				toDelete = append(toDelete, k, k+sharedent.EntitlementCacheSignatureSuffix)
+			}
+			_ = rdb.Del(ctx, toDelete...).Err()
 		}
 		cursor = next
 		if cursor == 0 {

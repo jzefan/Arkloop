@@ -2,6 +2,7 @@ package entitlement
 
 import (
 	"context"
+	"crypto/hmac"
 	"fmt"
 	"strconv"
 	"time"
@@ -189,22 +190,66 @@ func (r *Resolver) resolveFromDB(ctx context.Context, orgID uuid.UUID, key strin
 
 // fromCache 从 Redis 读取缓存值。缓存格式与 API entitlement.Service 一致："type:value"。
 func fromCache(ctx context.Context, rdb *redis.Client, orgID uuid.UUID, key string) (string, bool) {
-	raw, err := rdb.Get(ctx, cachePrefix+orgID.String()+":"+key).Result()
+	if rdb == nil {
+		return "", false
+	}
+	if !EntitlementCacheSigningEnabled() {
+		return "", false
+	}
+
+	cacheKey := cachePrefix + orgID.String() + ":" + key
+	sigKey := cacheKey + EntitlementCacheSignatureSuffix
+	items, err := rdb.MGet(ctx, cacheKey, sigKey).Result()
 	if err != nil {
 		return "", false
 	}
+	if len(items) != 2 {
+		return "", false
+	}
+
+	raw, ok := items[0].(string)
+	sig, sigOK := items[1].(string)
+	if !ok || !sigOK || raw == "" || sig == "" {
+		_ = rdb.Del(ctx, cacheKey, sigKey).Err()
+		return "", false
+	}
+
+	expected, ok := ComputeEntitlementCacheSignature(cacheKey, raw)
+	if !ok || !hmac.Equal([]byte(sig), []byte(expected)) {
+		_ = rdb.Del(ctx, cacheKey, sigKey).Err()
+		return "", false
+	}
+
 	// 格式 "type:value"，取第一个 ':' 后的内容
 	for i := 0; i < len(raw); i++ {
 		if raw[i] == ':' {
 			return raw[i+1:], true
 		}
 	}
+	_ = rdb.Del(ctx, cacheKey, sigKey).Err()
 	return "", false
 }
 
 func writeCache(ctx context.Context, rdb *redis.Client, registry *sharedconfig.Registry, orgID uuid.UUID, key, val string) {
+	if rdb == nil {
+		return
+	}
+	if !EntitlementCacheSigningEnabled() {
+		return
+	}
+
+	cacheKey := cachePrefix + orgID.String() + ":" + key
 	typ := cacheTypeForKey(key, registry)
-	_ = rdb.Set(ctx, cachePrefix+orgID.String()+":"+key, typ+":"+val, cacheTTL).Err()
+	raw := typ + ":" + val
+	sig, ok := ComputeEntitlementCacheSignature(cacheKey, raw)
+	if !ok {
+		return
+	}
+
+	pipe := rdb.Pipeline()
+	pipe.Set(ctx, cacheKey, raw, cacheTTL)
+	pipe.Set(ctx, cacheKey+EntitlementCacheSignatureSuffix, sig, cacheTTL)
+	_, _ = pipe.Exec(ctx)
 }
 
 // ResolveDeductionPolicy 解析 credit.deduction_policy 权益，fail-open：
