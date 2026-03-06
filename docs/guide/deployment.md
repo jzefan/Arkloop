@@ -184,11 +184,17 @@ macOS / Windows (WSL2) / 无 KVM 环境，使用 Docker 容器隔离：
 # 构建 sandbox-agent 镜像
 docker build -f src/services/sandbox/Dockerfile.agent -t arkloop/sandbox-agent:latest .
 
+# 指定用户态 Docker socket
+export ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH=/run/user/1000/docker.sock
+
 # 启动
 docker compose --profile docker-sandbox up -d sandbox-docker
 ```
 
-Docker 模式下 `sandbox-docker` 使用 host 网络（agent 容器端口绑定在宿主机 127.0.0.1）。
+Linux 推荐使用 rootless Docker 的用户态 socket。
+macOS / Windows Docker Desktop 请改为各自用户目录下的 socket 路径，不再使用系统级 `/var/run/docker.sock`。
+
+`sandbox-docker` 自身运行在 Compose 网络中，派生出的 `sandbox-agent` 容器接入内部 `arkloop_sandbox_agent` 网络，不使用 host 网络。
 
 ### 本地开发（直接运行）
 
@@ -198,6 +204,7 @@ go build -o sandbox-bin ./cmd/sandbox
 
 # Docker 模式
 ARKLOOP_SANDBOX_PROVIDER=docker \
+DOCKER_HOST=unix:///run/user/1000/docker.sock \
 ARKLOOP_SANDBOX_SOCKET_DIR=/tmp/sandbox \
 ARKLOOP_SANDBOX_TEMPLATES_PATH="" \
 ./sandbox-bin
@@ -231,6 +238,7 @@ ARKLOOP_SANDBOX_TEMPLATES_PATH="" \
 | `ARKLOOP_SANDBOX_ROOTFS` | `/opt/sandbox/rootfs.ext4` | rootfs 路径 |
 | `ARKLOOP_SANDBOX_SOCKET_DIR` | `/run/sandbox` | 临时文件目录 |
 | `ARKLOOP_SANDBOX_TEMPLATES_PATH` | `/opt/sandbox/templates.json` | 模板文件路径 |
+| `ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH` | - | `docker-sandbox` profile 必填，宿主机用户态 Docker socket 路径 |
 
 ## 本地开发模式
 

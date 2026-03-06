@@ -81,6 +81,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
 	})
 
 	registerBody := map[string]any{"login": "alice", "password": "pwdpwdpwd", "email": "alice@test.com"}
@@ -145,6 +146,91 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 			t.Fatalf("unexpected audit count: action=%s count=%d actions=%#v", action, actions[action], actions)
 		}
 	}
+}
+
+func TestAuthMeRequiresMembership(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_auth_me_membership")
+
+	ctx := context.Background()
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+
+	handler := NewHandler(HandlerConfig{
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
+	})
+
+	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
+		map[string]any{"login": "membershipless", "password": "pwdpwdpwd", "email": "membershipless@test.com"}, nil)
+	if registerResp.Code != nethttp.StatusCreated {
+		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	registerPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
+
+	_, err = pool.Exec(ctx, `DELETE FROM org_memberships m
+		USING orgs o
+		WHERE m.org_id = o.id
+		  AND m.user_id = $1::uuid
+		  AND o.type = 'personal'`, registerPayload.UserID)
+	if err != nil {
+		t.Fatalf("delete personal membership: %v", err)
+	}
+
+	meResp := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(registerPayload.AccessToken))
+	assertErrorEnvelope(t, meResp, nethttp.StatusForbidden, "auth.no_org_membership")
 }
 
 // TestAuthLogoutThenReLoginNewTokenStillValid verifies that a new token obtained
@@ -215,6 +301,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
 	})
 
 	// register
