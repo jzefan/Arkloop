@@ -240,7 +240,7 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	// trace 在 clientip 内层，可以从 context 读到 IP
-	inner = traceMiddleware(inner, a.logger, geo, rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret))
+	inner = traceMiddleware(inner, a.logger, geo, rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret), a.config.TrustIncomingTraceID)
 
 	// clientip 中间件：最外层（recover 之后），将真实 IP 写入 context
 	inner = clientip.Middleware(a.buildResolver(), inner)

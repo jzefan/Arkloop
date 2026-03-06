@@ -306,6 +306,7 @@ ARKLOOP_GATEWAY_UPSTREAM=http://host.docker.internal:8001 docker compose up -d g
 |------|--------|------|
 | `ARKLOOP_GATEWAY_UPSTREAM` | `http://api:8001` | Upstream API address |
 | `ARKLOOP_GATEWAY_PORT` | `8000` | Host port mapping |
+| `ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID` | `0` | Whether to trust upstream `X-Trace-Id` |
 | `ARKLOOP_RATELIMIT_CAPACITY` | `60` | Rate limit bucket capacity |
 | `ARKLOOP_RATELIMIT_RATE_PER_MINUTE` | `60` | Replenishment rate per minute |
 
