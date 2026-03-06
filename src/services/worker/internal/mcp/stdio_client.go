@@ -16,6 +16,7 @@ import (
 const (
 	rpcVersion             = "2.0"
 	defaultProtocolVersion = "2025-06-18"
+	maxStderrLineBytes     = 1024
 )
 
 type Tool struct {
@@ -71,6 +72,7 @@ type StdioClient struct {
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
 	stdout       io.ReadCloser
+	stderr       io.ReadCloser
 	closed       bool
 	disconnected bool // 子进程意外退出后由 handleDisconnect 设置
 	nextID       int64
@@ -101,6 +103,7 @@ func (c *StdioClient) Close() error {
 	cmd := c.cmd
 	stdin := c.stdin
 	stdout := c.stdout
+	stderr := c.stderr
 	pending := c.pending
 	c.pending = map[int64]chan map[string]any{}
 	c.mu.Unlock()
@@ -114,6 +117,9 @@ func (c *StdioClient) Close() error {
 	}
 	if stdout != nil {
 		_ = stdout.Close()
+	}
+	if stderr != nil {
+		_ = stderr.Close()
 	}
 
 	if cmd != nil && cmd.Process != nil {
@@ -169,11 +175,17 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 		_ = stdin.Close()
 		return err
 	}
-	cmd.Stderr = os.Stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		return err
+	}
 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
+		_ = stderr.Close()
 		return err
 	}
 
@@ -186,9 +198,11 @@ func (c *StdioClient) ensureStarted(ctx context.Context) error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stdout = stdout
+	c.stderr = stderr
 	c.mu.Unlock()
 
 	go c.readLoop(stdout)
+	go c.stderrLoop(server, stderr)
 	return nil
 }
 
@@ -241,6 +255,80 @@ func (c *StdioClient) readLoop(stdout io.Reader) {
 	}
 }
 
+func (c *StdioClient) stderrLoop(server ServerConfig, stderr io.Reader) {
+	reader := bufio.NewReader(stderr)
+	for {
+		line, err := readLimitedLine(reader, maxStderrLineBytes)
+		if err != nil {
+			return
+		}
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		writeMcpStderrLog(server, trimmed)
+	}
+}
+
+func readLimitedLine(reader *bufio.Reader, limit int) (string, error) {
+	if limit <= 0 {
+		limit = maxStderrLineBytes
+	}
+	buf := make([]byte, 0, limit)
+	for {
+		part, isPrefix, err := reader.ReadLine()
+		if err != nil {
+			return "", err
+		}
+		if len(buf) < limit {
+			remaining := limit - len(buf)
+			if len(part) > remaining {
+				buf = append(buf, part[:remaining]...)
+			} else {
+				buf = append(buf, part...)
+			}
+		}
+		if !isPrefix {
+			break
+		}
+	}
+	return string(buf), nil
+}
+
+func writeMcpStderrLog(server ServerConfig, line string) {
+	orgID := any(nil)
+	if strings.TrimSpace(server.OrgID) != "" {
+		orgID = server.OrgID
+	}
+
+	record := map[string]any{
+		"ts":        formatTimestamp(time.Now()),
+		"level":     "warn",
+		"msg":       "mcp.stderr",
+		"component": "mcp_stderr",
+		"server_id": server.ServerID,
+		"org_id":    orgID,
+		"line":      strings.ToValidUTF8(line, "�"),
+	}
+
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		encoded = []byte(`{"level":"error","msg":"mcp.stderr.marshal_failed","component":"mcp_stderr"}`)
+	}
+	encoded = append(encoded, '\n')
+	_, _ = os.Stdout.Write(encoded)
+}
+
+func formatTimestamp(now time.Time) string {
+	utc := now.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+	if len(utc) >= 6 && utc[len(utc)-6:] == "+00:00" {
+		return utc[:len(utc)-6] + "Z"
+	}
+	return utc
+}
+
 func (c *StdioClient) handleDisconnect() {
 	c.mu.Lock()
 	if c.closed {
@@ -250,11 +338,13 @@ func (c *StdioClient) handleDisconnect() {
 	cmd := c.cmd
 	stdin := c.stdin
 	stdout := c.stdout
+	stderr := c.stderr
 	pending := c.pending
 	c.pending = map[int64]chan map[string]any{}
 	c.cmd = nil
 	c.stdin = nil
 	c.stdout = nil
+	c.stderr = nil
 	c.initialized = false
 	c.disconnected = true
 	c.mu.Unlock()
@@ -268,6 +358,9 @@ func (c *StdioClient) handleDisconnect() {
 	}
 	if stdout != nil {
 		_ = stdout.Close()
+	}
+	if stderr != nil {
+		_ = stderr.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()

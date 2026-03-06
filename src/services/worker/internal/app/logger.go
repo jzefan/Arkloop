@@ -72,8 +72,7 @@ func (l *JSONLogger) log(level string, msg string, fields LogFields, extra map[s
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = l.writer.Write(payload)
-	_, _ = l.writer.Write([]byte("\n"))
+	_, _ = l.writer.Write(append(payload, '\n'))
 }
 
 func formatTimestamp(now time.Time) string {

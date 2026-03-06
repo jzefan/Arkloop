@@ -47,6 +47,9 @@ func TestPoolBorrowRebuildsOnStdioDisconnect(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected subprocess to be running")
 	}
+	if cmd.Stderr == os.Stderr {
+		t.Fatal("expected subprocess stderr to be isolated from os.Stderr")
+	}
 
 	// Kill 子进程，触发 readLoop → handleDisconnect → disconnected=true
 	if err := cmd.Process.Kill(); err != nil {
