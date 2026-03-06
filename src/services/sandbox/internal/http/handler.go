@@ -8,16 +8,23 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	"arkloop/services/sandbox/internal/shell"
 	"arkloop/services/shared/objectstore"
 )
 
 // NewHandler 注册所有路由并返回 HTTP handler。
-func NewHandler(mgr *session.Manager, artifactStore *objectstore.Store, logger *logging.JSONLogger, authToken string) http.Handler {
+func NewHandler(mgr *session.Manager, shellSvc shell.Service, artifactStore *objectstore.Store, logger *logging.JSONLogger, authToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz(mgr))
 	mux.HandleFunc("GET /v1/stats", stats(mgr))
 	mux.HandleFunc("POST /v1/exec", handleExec(mgr, artifactStore, logger))
-	mux.HandleFunc("DELETE /v1/sessions/", handleDeleteSession(mgr, logger))
+	mux.HandleFunc("POST /v1/shell/open", handleShellOpen(shellSvc, logger))
+	mux.HandleFunc("POST /v1/shell/exec", handleShellExec(shellSvc, logger))
+	mux.HandleFunc("POST /v1/shell/read", handleShellRead(shellSvc, logger))
+	mux.HandleFunc("POST /v1/shell/write", handleShellWrite(shellSvc, logger))
+	mux.HandleFunc("POST /v1/shell/signal", handleShellSignal(shellSvc, logger))
+	mux.HandleFunc("DELETE /v1/shell/session/", handleShellClose(shellSvc, logger))
+	mux.HandleFunc("DELETE /v1/sessions/", handleDeleteSession(mgr, shellSvc, logger))
 	return recoverMiddleware(authMiddleware(mux, authToken, logger), logger)
 }
 
@@ -53,11 +60,11 @@ func stats(mgr *session.Manager) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"active_sessions":        mgr.ActiveCount(),
-			"sessions_by_tier":       mgr.SessionsByTier(),
-			"warm_pool":              warmPool,
-			"total_created":          poolStats.TotalCreated,
-			"total_destroyed":        poolStats.TotalDestroyed,
+			"active_sessions":         mgr.ActiveCount(),
+			"sessions_by_tier":        mgr.SessionsByTier(),
+			"warm_pool":               warmPool,
+			"total_created":           poolStats.TotalCreated,
+			"total_destroyed":         poolStats.TotalDestroyed,
 			"total_timeout_reclaimed": mgr.TotalReclaimed(),
 		})
 	}

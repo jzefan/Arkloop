@@ -6,9 +6,10 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	"arkloop/services/sandbox/internal/shell"
 )
 
-func handleDeleteSession(mgr *session.Manager, logger *logging.JSONLogger) http.HandlerFunc {
+func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, logger *logging.JSONLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 路由: DELETE /v1/sessions/{id}
 		id := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
@@ -19,6 +20,15 @@ func handleDeleteSession(mgr *session.Manager, logger *logging.JSONLogger) http.
 		}
 
 		orgID := strings.TrimSpace(r.Header.Get("X-Org-ID"))
+		if shellSvc != nil {
+			if err := shellSvc.Close(r.Context(), id, orgID); err == nil {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			} else if shellErr, ok := err.(*shell.Error); ok && shellErr.Code == shell.CodeOrgMismatch {
+				writeError(w, http.StatusForbidden, shellErr.Code, shellErr.Message)
+				return
+			}
+		}
 
 		if err := mgr.Delete(r.Context(), id, orgID); err != nil {
 			if strings.Contains(err.Error(), "org mismatch") {
