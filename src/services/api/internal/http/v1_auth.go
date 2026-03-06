@@ -458,7 +458,21 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				return
 			}
 
-			var permissions []string
+			if membershipRepo == nil {
+				WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+				return
+			}
+
+			membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID)
+			if err != nil {
+				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if membership == nil {
+				WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
+				return
+			}
+
 			emailVerifyRequired := false
 			if flagService != nil {
 				emailVerifyRequired, _ = flagService.IsGloballyEnabled(r.Context(), "auth.require_email_verification")
@@ -469,6 +483,9 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				EmailVerified:             user.EmailVerifiedAt != nil,
 				EmailVerificationRequired: emailVerifyRequired,
 				CreatedAt:                 user.CreatedAt.UTC().Format(time.RFC3339Nano),
+				OrgID:                     membership.OrgID.String(),
+				Role:                      membership.Role,
+				Permissions:               auth.PermissionsForRole(membership.Role),
 			}
 
 			if credentialRepo != nil {
@@ -477,23 +494,11 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				}
 			}
 
-			if membershipRepo != nil {
-				if membership, err := membershipRepo.GetDefaultForUser(r.Context(), user.ID); err == nil && membership != nil {
-					permissions = auth.PermissionsForRole(membership.Role)
-					resp.OrgID = membership.OrgID.String()
-					resp.Role = membership.Role
-
-					if orgRepo != nil {
-						if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
-							resp.OrgName = org.Name
-						}
-					}
+			if orgRepo != nil {
+				if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
+					resp.OrgName = org.Name
 				}
 			}
-			if permissions == nil {
-				permissions = []string{}
-			}
-			resp.Permissions = permissions
 
 			writeJSON(w, traceID, nethttp.StatusOK, resp)
 

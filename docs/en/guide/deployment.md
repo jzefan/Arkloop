@@ -184,11 +184,17 @@ macOS / Windows (WSL2) / No KVM environment, using Docker container isolation:
 # Build sandbox-agent image
 docker build -f src/services/sandbox/Dockerfile.agent -t arkloop/sandbox-agent:latest .
 
+# Point to a user-scoped Docker socket
+export ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH=/run/user/1000/docker.sock
+
 # Start
 docker compose --profile docker-sandbox up -d sandbox-docker
 ```
 
-In Docker mode, `sandbox-docker` uses host networking (agent container ports bind to 127.0.0.1 on the host).
+On Linux, prefer the rootless Docker user socket.
+On macOS / Windows Docker Desktop, use the socket under the user's home directory instead of the system-level `/var/run/docker.sock`.
+
+`sandbox-docker` itself stays on the Compose networks, while spawned `sandbox-agent` containers join the internal `arkloop_sandbox_agent` network. Host networking is not used.
 
 ### Local Development (Direct Run)
 
@@ -198,6 +204,7 @@ go build -o sandbox-bin ./cmd/sandbox
 
 # Docker Mode
 ARKLOOP_SANDBOX_PROVIDER=docker \
+DOCKER_HOST=unix:///run/user/1000/docker.sock \
 ARKLOOP_SANDBOX_SOCKET_DIR=/tmp/sandbox \
 ARKLOOP_SANDBOX_TEMPLATES_PATH="" \
 ./sandbox-bin
@@ -231,6 +238,7 @@ Deployment-level parameters (ENV only, not in Console):
 | `ARKLOOP_SANDBOX_ROOTFS` | `/opt/sandbox/rootfs.ext4` | rootfs path |
 | `ARKLOOP_SANDBOX_SOCKET_DIR` | `/run/sandbox` | Temp file directory |
 | `ARKLOOP_SANDBOX_TEMPLATES_PATH` | `/opt/sandbox/templates.json` | Template file path |
+| `ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH` | - | Required for the `docker-sandbox` profile; path to the host user-scoped Docker socket |
 
 ## Local Development Mode
 
