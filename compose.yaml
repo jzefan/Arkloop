@@ -248,7 +248,10 @@ services:
     restart: unless-stopped
     devices:
       - /dev/kvm:/dev/kvm
-    privileged: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     profiles:
       - firecracker
     environment:

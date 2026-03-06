@@ -174,6 +174,8 @@ docker compose --profile firecracker up -d sandbox
 
 Requires `/dev/kvm` device and Firecracker binary.
 
+Run it with least privilege; `privileged` is no longer required.
+
 ### Docker Mode
 
 macOS / Windows (WSL2) / No KVM environment, using Docker container isolation:
