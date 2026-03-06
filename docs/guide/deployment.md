@@ -174,6 +174,8 @@ docker compose --profile firecracker up -d sandbox
 
 需要 `/dev/kvm` 设备和 Firecracker 二进制。
 
+推荐保持最小权限运行，不再要求 `privileged`。
+
 ### Docker 模式
 
 macOS / Windows (WSL2) / 无 KVM 环境，使用 Docker 容器隔离：

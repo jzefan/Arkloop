@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"arkloop/services/gateway/internal/clientip"
 	"arkloop/services/gateway/internal/geoip"
@@ -47,7 +46,7 @@ type Application struct {
 	config Config
 	logger *JSONLogger
 	// dynamicCfg 原子指针，30s 轮询刷新
-	dynamicCfg unsafe.Pointer
+	dynamicCfg atomic.Pointer[gatewayDynamicConfig]
 }
 
 func NewApplication(config Config, logger *JSONLogger) (*Application, error) {
@@ -60,7 +59,7 @@ func NewApplication(config Config, logger *JSONLogger) (*Application, error) {
 	app := &Application{config: config, logger: logger}
 	// 初始化为空配置（不覆盖 env 值）
 	empty := &gatewayDynamicConfig{}
-	atomic.StorePointer(&app.dynamicCfg, unsafe.Pointer(empty))
+	app.dynamicCfg.Store(empty)
 	return app, nil
 }
 
@@ -76,11 +75,11 @@ func (a *Application) loadDynamicConfig(ctx context.Context, rdb *goredis.Client
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return
 	}
-	atomic.StorePointer(&a.dynamicCfg, unsafe.Pointer(&cfg))
+	a.dynamicCfg.Store(&cfg)
 }
 
 func (a *Application) getDynamicConfig() *gatewayDynamicConfig {
-	return (*gatewayDynamicConfig)(atomic.LoadPointer(&a.dynamicCfg))
+	return a.dynamicCfg.Load()
 }
 
 // effectiveIPMode 动态配置优先，env 兜底。
