@@ -40,6 +40,8 @@ export interface LocaleStrings {
     reasoningEnabled: string
     deleteConfirm: string
     noAgents: string
+    overview: string
+    persona: string
   }
   common: {
     save: string

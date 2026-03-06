@@ -37,6 +37,8 @@ export const en: LocaleStrings = {
     reasoningEnabled: 'Enabled',
     deleteConfirm: 'Are you sure you want to delete this agent?',
     noAgents: 'No agents yet',
+    overview: 'Overview',
+    persona: 'Persona',
   },
   common: {
     save: 'Save',
