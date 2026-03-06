@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -97,6 +98,7 @@ func loadLatestCheckpoint(ctx context.Context, store stateStore, orgID, sessionI
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return nil, nil, fmt.Errorf("decode checkpoint manifest: %w", err)
 	}
+	normalizeArtifactVersions(manifest.ArtifactSeen)
 	if manifest.Version != shellStateVersion {
 		return nil, nil, fmt.Errorf("unsupported checkpoint version: %d", manifest.Version)
 	}
@@ -108,4 +110,18 @@ func loadLatestCheckpoint(ctx context.Context, store stateStore, orgID, sessionI
 		return nil, nil, err
 	}
 	return &manifest, archive, nil
+}
+
+func normalizeArtifactVersions(versions map[string]artifactVersion) {
+	for name, version := range versions {
+		if version.SHA256 == "" && strings.TrimSpace(version.Data) != "" {
+			if decoded, err := base64.StdEncoding.DecodeString(version.Data); err == nil {
+				normalized := newArtifactVersion(decoded, version.MimeType)
+				version.Size = normalized.Size
+				version.SHA256 = normalized.SHA256
+			}
+		}
+		version.Data = ""
+		versions[name] = version
+	}
 }

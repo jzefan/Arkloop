@@ -240,6 +240,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 
 	mux.HandleFunc(
+		"/v1/tool-catalog",
+		toolCatalogEntry(cfg.AuthService, cfg.OrgMembershipRepo),
+	)
+	mux.HandleFunc(
 		"/v1/tool-providers",
 		toolProvidersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolProviderConfigsRepo, cfg.SecretsRepo, cfg.Pool, cfg.DirectPool),
 	)

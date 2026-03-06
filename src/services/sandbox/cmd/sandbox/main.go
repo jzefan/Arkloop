@@ -19,6 +19,10 @@ import (
 	"arkloop/services/shared/objectstore"
 )
 
+type stateLifecycleStore interface {
+	SetLifecycleExpirationDays(ctx context.Context, days int) error
+}
+
 func main() {
 	if err := run(); err != nil {
 		_, _ = os.Stderr.WriteString(err.Error() + "\n")
@@ -49,6 +53,9 @@ func run() error {
 		artifactStore = aStore
 		sStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.SessionStateBucket, "")
 		if err != nil {
+			return err
+		}
+		if err := applyStateStoreLifecycle(context.Background(), cfg, sStore); err != nil {
 			return err
 		}
 		stateStore = sStore
@@ -90,6 +97,16 @@ func run() error {
 		return err
 	}
 	return application.Run(context.Background(), handler)
+}
+
+func applyStateStoreLifecycle(ctx context.Context, cfg app.Config, store stateLifecycleStore) error {
+	if store == nil || cfg.SessionStateTTLDays == 0 {
+		return nil
+	}
+	if err := store.SetLifecycleExpirationDays(ctx, cfg.SessionStateTTLDays); err != nil {
+		return fmt.Errorf("configure session state lifecycle: %w", err)
+	}
+	return nil
 }
 
 func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
