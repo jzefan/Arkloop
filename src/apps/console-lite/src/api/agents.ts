@@ -196,3 +196,24 @@ export async function listToolProviders(
     { accessToken },
   )
 }
+
+// -- Tool Catalog (available tool groups for agent allowlist) --
+
+export type ToolCatalogItem = {
+  name: string
+  description: string
+}
+
+export type ToolCatalogGroup = {
+  group: string
+  tools: ToolCatalogItem[]
+}
+
+export async function listToolCatalog(
+  accessToken: string,
+): Promise<{ groups: ToolCatalogGroup[] }> {
+  return apiFetch<{ groups: ToolCatalogGroup[] }>(
+    '/v1/tool-catalog',
+    { accessToken },
+  )
+}

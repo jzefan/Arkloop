@@ -18,11 +18,11 @@ import {
   updateAgentConfig,
   deleteAgentConfig,
   listLlmCredentials,
-  listToolProviders,
+  listToolCatalog,
   type Persona,
   type AgentConfig,
   type LlmCredential,
-  type ToolProviderItem,
+  type ToolCatalogGroup,
 } from '../api/agents'
 
 // -- types --
@@ -134,7 +134,7 @@ export function AgentsPage() {
   // data
   const [agents, setAgents] = useState<AgentView[]>([])
   const [credentials, setCredentials] = useState<LlmCredential[]>([])
-  const [activeTools, setActiveTools] = useState<ToolProviderItem[]>([])
+  const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [loading, setLoading] = useState(false)
 
   // detail view
@@ -158,11 +158,11 @@ export function AgentsPage() {
   const load = useCallback(async (): Promise<AgentView[]> => {
     setLoading(true)
     try {
-      const [personas, configs, creds, toolsResp] = await Promise.all([
+      const [personas, configs, creds, catalogResp] = await Promise.all([
         listPersonas(accessToken),
         listAgentConfigs(accessToken),
         listLlmCredentials(accessToken),
-        listToolProviders(accessToken),
+        listToolCatalog(accessToken),
       ])
 
       const personaMap = new Map(personas.map((p) => [p.id, p]))
@@ -173,14 +173,7 @@ export function AgentsPage() {
 
       setAgents(joined)
       setCredentials(creds)
-
-      const tools: ToolProviderItem[] = []
-      for (const g of toolsResp.groups) {
-        for (const p of g.providers) {
-          if (p.is_active) tools.push(p)
-        }
-      }
-      setActiveTools(tools)
+      setCatalogGroups(catalogResp.groups)
       return joined
     } catch (err) {
       addToast(isApiError(err) ? err.message : t.requestFailed, 'error')
@@ -205,12 +198,19 @@ export function AgentsPage() {
     setForm(null)
   }, [])
 
+  const allCatalogToolNames = useMemo(
+    () => catalogGroups.flatMap((g) => g.tools.map((t) => t.name)),
+    [catalogGroups],
+  )
+
   // -- create --
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim() || !createModel.trim()) return
     setCreating(true)
     try {
+      const defaultTools = allCatalogToolNames
+
       const persona = await createPersona({
         persona_key: `${slugify(createName)}-${Date.now()}`,
         version: '1.0',
@@ -218,6 +218,7 @@ export function AgentsPage() {
         prompt_md: createName.trim(),
         preferred_credential: createModel.trim(),
         executor_type: 'agent.simple',
+        tool_allowlist: defaultTools,
       }, accessToken)
 
       const config = await createAgentConfig({
@@ -225,7 +226,8 @@ export function AgentsPage() {
         name: createName.trim(),
         model: createModel.trim(),
         persona_id: persona.id,
-        tool_policy: 'none',
+        tool_policy: 'allowlist',
+        tool_allowlist: defaultTools,
         prompt_cache_control: 'none',
         reasoning_mode: 'disabled',
         content_filter_level: '',
@@ -241,7 +243,7 @@ export function AgentsPage() {
     } finally {
       setCreating(false)
     }
-  }, [createName, createModel, accessToken, addToast, t.requestFailed, load, selectAgent])
+  }, [createName, createModel, accessToken, addToast, t.requestFailed, load, selectAgent, allCatalogToolNames])
 
   // -- save --
 
@@ -519,19 +521,23 @@ export function AgentsPage() {
               {/* -- Tools tab -- */}
               {tab === 'tools' && (
                 <>
-                  {activeTools.length > 0 ? (
-                    <div className="flex flex-col gap-3">
-                      {activeTools.map((tool) => {
-                        const key = `${tool.group_name}.${tool.provider_name}`
-                        return (
-                          <CheckboxField
-                            key={key}
-                            checked={form.tools.includes(key)}
-                            onChange={() => toggleTool(key)}
-                            label={`${tool.provider_name}`}
-                          />
-                        )
-                      })}
+                  {catalogGroups.length > 0 ? (
+                    <div className="flex flex-col gap-4">
+                      {catalogGroups.map((group) => (
+                        <div key={group.group} className="flex flex-col gap-2">
+                          <span className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+                            {group.group}
+                          </span>
+                          {group.tools.map((tool) => (
+                            <CheckboxField
+                              key={tool.name}
+                              checked={form.tools.includes(tool.name)}
+                              onChange={() => toggleTool(tool.name)}
+                              label={tool.name}
+                            />
+                          ))}
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <p className="text-sm text-[var(--c-text-muted)]">--</p>
