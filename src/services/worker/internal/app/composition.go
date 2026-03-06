@@ -100,6 +100,13 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		toolProviderCache.StartInvalidationListener(ctx, directPool)
 	}
 
+	listenPool := directPool
+	if listenPool == nil {
+		listenPool = pool
+	}
+	runControlHub := pipeline.NewRunControlHub()
+	runControlHub.Start(ctx, listenPool)
+
 	baseAllowlistNames := tools.ParseAllowlistNamesFromEnv()
 
 	ovCfg := openviking.Config{}
@@ -216,6 +223,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		Router:                 router,
 		DBPool:                 pool,
 		DirectDBPool:           directPool,
+		RunControlHub:          runControlHub,
 		StubGateway:            stubGateway,
 		EmitDebugEvents:        stubCfg.EmitDebugEvents,
 		ConfigResolver:         configResolver,

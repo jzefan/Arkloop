@@ -49,6 +49,7 @@ type EngineV1Deps struct {
 	Router          *routing.ProviderRouter
 	DBPool          *pgxpool.Pool
 	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
+	RunControlHub   *pipeline.RunControlHub
 	StubGateway     llm.Gateway
 	EmitDebugEvents bool
 	RunLimiterRDB   *redis.Client
@@ -149,7 +150,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	}
 
 	middlewares := []pipeline.RunMiddleware{
-		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo),
+		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub),
 		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMCPDiscoveryMiddleware(

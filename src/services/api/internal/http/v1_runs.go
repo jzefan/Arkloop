@@ -20,6 +20,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/observability"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/pgnotify"
 	"arkloop/services/shared/runlimit"
 
 	"github.com/google/uuid"
@@ -819,7 +820,7 @@ func cancelRun(
 		}
 
 		// 通知 worker 立即中断，失败可忽略（worker 有 DB 兜底检查）
-		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, '')", "run_cancel_"+run.ID.String())
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
 
 		if auditWriter != nil {
 			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.OrgID, actor.UserID, run.ID)
@@ -925,7 +926,7 @@ func submitRunInput(
 		}
 
 		// 唤醒 Worker 侧的 WaitForInput LISTEN goroutine
-		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, '')", "run_input_"+run.ID.String())
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, run.ID.String())
 
 		writeJSON(w, traceID, nethttp.StatusOK, submitInputResponse{OK: true})
 	}

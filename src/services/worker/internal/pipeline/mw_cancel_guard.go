@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -25,6 +26,7 @@ var (
 func NewCancelGuardMiddleware(
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
+	hub *RunControlHub,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		pool := rc.Pool
@@ -50,66 +52,48 @@ func NewCancelGuardMiddleware(
 			return nil
 		}
 
-		// LISTEN/NOTIFY 桥接：直连 pool 由 Execute 保证非 nil
-		listenConn, err := rc.DirectPool.Acquire(ctx)
-		if err != nil {
-			return err
-		}
-		channel := fmt.Sprintf(`"run_cancel_%s"`, run.ID.String())
-		if _, err := listenConn.Exec(ctx, "LISTEN "+channel); err != nil {
-			listenConn.Release()
-			return err
-		}
 		execCtx, cancelExec := context.WithCancel(ctx)
+
+		cancelWake := (<-chan struct{})(nil)
+		inputWake := (<-chan struct{})(nil)
+		unsubscribe := func() {}
+		if hub != nil {
+			var unsubscribeFn func()
+			cancelWake, inputWake, unsubscribeFn = hub.Subscribe(run.ID)
+			unsubscribe = unsubscribeFn
+		}
+
 		listenDone := make(chan struct{})
 		go func() {
-			defer func() {
-				listenConn.Release()
-				close(listenDone)
-			}()
-			if err := listenConn.Conn().PgConn().WaitForNotification(execCtx); err == nil {
+			defer close(listenDone)
+			select {
+			case <-cancelWake:
 				cancelExec()
+			case <-execCtx.Done():
 			}
 		}()
 
 		rc.CancelFunc = cancelExec
 		rc.ListenDone = listenDone
 
-		// 设置 WaitForInput：LISTEN run_input_{runID}，收到通知后查 DB 拿内容
-		inputCh := make(chan string, 1)
-		if inputConn, err := rc.DirectPool.Acquire(execCtx); err == nil {
-			inputChannel := fmt.Sprintf(`"run_input_%s"`, run.ID.String())
-			if _, err := inputConn.Exec(execCtx, "LISTEN "+inputChannel); err != nil {
-				inputConn.Release()
-			} else {
-				go func() {
-					defer inputConn.Release()
-					var lastSeq int64
-					for {
-						if err := inputConn.Conn().PgConn().WaitForNotification(execCtx); err != nil {
-							return
-						}
-						content, seq, ok := fetchLatestInput(execCtx, pool, run.ID, lastSeq)
-						if !ok {
-							continue
-						}
-						lastSeq = seq
-						select {
-						case inputCh <- content:
-						case <-execCtx.Done():
-							return
-						}
-					}
-				}()
-			}
-		}
-
+		var lastSeq int64
 		rc.WaitForInput = func(ctx context.Context) (string, bool) {
-			select {
-			case text := <-inputCh:
-				return text, true
-			case <-ctx.Done():
-				return "", false
+			for {
+				content, seq, ok := fetchLatestInput(ctx, pool, run.ID, lastSeq)
+				if ok {
+					lastSeq = seq
+					return content, true
+				}
+
+				timer := time.NewTimer(2 * time.Second)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return "", false
+				case <-inputWake:
+					timer.Stop()
+				case <-timer.C:
+				}
 			}
 		}
 
@@ -117,6 +101,7 @@ func NewCancelGuardMiddleware(
 		defer func() {
 			cancelExec()
 			<-listenDone
+			unsubscribe()
 		}()
 
 		return next(execCtx, rc)

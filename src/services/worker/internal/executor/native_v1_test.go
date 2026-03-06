@@ -18,11 +18,16 @@ func TestNativeRunEngineV1HandlerWritesEventsAndMessage(t *testing.T) {
 	t.Setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
 
 	db := testutil.SetupPostgresDatabase(t, "arkloop_wg07")
-	pool, err := pgxpool.New(context.Background(), db.DSN)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool, err := pgxpool.New(ctx, db.DSN)
 	if err != nil {
+		cancel()
 		t.Fatalf("pgxpool.New failed: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	t.Cleanup(cancel)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
@@ -34,7 +39,7 @@ func TestNativeRunEngineV1HandlerWritesEventsAndMessage(t *testing.T) {
 		t.Fatalf("seed run failed: %v", err)
 	}
 
-	handler, err := NewNativeRunEngineV1Handler(context.Background(), pool, nil, nil, nil, nil, app.DefaultConfig())
+	handler, err := NewNativeRunEngineV1Handler(ctx, pool, nil, nil, nil, nil, app.DefaultConfig())
 	if err != nil {
 		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
 	}
@@ -48,7 +53,7 @@ func TestNativeRunEngineV1HandlerWritesEventsAndMessage(t *testing.T) {
 		LeaseToken:  uuid.New(),
 	}
 
-	if err := handler.Handle(context.Background(), lease); err != nil {
+	if err := handler.Handle(ctx, lease); err != nil {
 		t.Fatalf("handler.Handle failed: %v", err)
 	}
 
@@ -92,11 +97,16 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 	t.Setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
 
 	db := testutil.SetupPostgresDatabase(t, "arkloop_wg07_cancel")
-	pool, err := pgxpool.New(context.Background(), db.DSN)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool, err := pgxpool.New(ctx, db.DSN)
 	if err != nil {
+		cancel()
 		t.Fatalf("pgxpool.New failed: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	t.Cleanup(cancel)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
@@ -111,7 +121,7 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 		t.Fatalf("seed cancel_requested failed: %v", err)
 	}
 
-	handler, err := NewNativeRunEngineV1Handler(context.Background(), pool, nil, nil, nil, nil, app.DefaultConfig())
+	handler, err := NewNativeRunEngineV1Handler(ctx, pool, nil, nil, nil, nil, app.DefaultConfig())
 	if err != nil {
 		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
 	}
@@ -125,7 +135,7 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 		LeaseToken:  uuid.New(),
 	}
 
-	if err := handler.Handle(context.Background(), lease); err != nil {
+	if err := handler.Handle(ctx, lease); err != nil {
 		t.Fatalf("handler.Handle failed: %v", err)
 	}
 
@@ -147,6 +157,76 @@ func TestNativeRunEngineV1HandlerCancelsWhenRequested(t *testing.T) {
 
 	if hasMessages(t, pool, threadID) {
 		t.Fatalf("expected no messages inserted")
+	}
+}
+
+func TestNativeRunEngineV1HandlerCompletesWithTinyDirectPool(t *testing.T) {
+	t.Setenv("ARKLOOP_STUB_AGENT_DELTA_COUNT", "2")
+	t.Setenv("ARKLOOP_STUB_AGENT_DELTA_INTERVAL_SECONDS", "0")
+
+	db := testutil.SetupPostgresDatabase(t, "arkloop_wg07_tiny_direct_pool")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		cancel()
+		t.Fatalf("pgxpool.New failed: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	directCfg, err := pgxpool.ParseConfig(db.DSN)
+	if err != nil {
+		cancel()
+		t.Fatalf("pgxpool.ParseConfig failed: %v", err)
+	}
+	directCfg.MaxConns = 1
+	directPool, err := pgxpool.NewWithConfig(ctx, directCfg)
+	if err != nil {
+		cancel()
+		t.Fatalf("pgxpool.NewWithConfig failed: %v", err)
+	}
+	t.Cleanup(directPool.Close)
+	t.Cleanup(cancel)
+
+	orgID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	jobID := uuid.New()
+	traceID := "0123456789abcdef0123456789abcdef"
+
+	if err := seedRunStarted(t, pool, orgID, threadID, runID, map[string]any{"route_id": "default"}); err != nil {
+		t.Fatalf("seed run failed: %v", err)
+	}
+
+	cfg := app.DefaultConfig()
+	cfg.MCPCacheTTLSeconds = 0
+	cfg.ToolProviderCacheTTLSeconds = 0
+
+	handler, err := NewNativeRunEngineV1Handler(ctx, pool, directPool, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
+	}
+
+	lease := queue.JobLease{
+		JobID:       jobID,
+		JobType:     queue.RunExecuteJobType,
+		PayloadJSON: workerPayloadJSON(jobID, orgID, runID, traceID),
+		Attempts:    1,
+		LeasedUntil: time.Now().Add(time.Minute),
+		LeaseToken:  uuid.New(),
+	}
+
+	if err := handler.Handle(ctx, lease); err != nil {
+		t.Fatalf("handler.Handle failed: %v", err)
+	}
+
+	seqTypes := readSeqTypes(t, pool, runID)
+	if len(seqTypes) == 0 {
+		t.Fatalf("expected events written")
+	}
+	if seqTypes[len(seqTypes)-1].Type != "run.completed" {
+		t.Fatalf("expected run.completed, got %s", seqTypes[len(seqTypes)-1].Type)
 	}
 }
 
