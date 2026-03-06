@@ -27,6 +27,9 @@ func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, logger *l
 			} else if shellErr, ok := err.(*shell.Error); ok && shellErr.Code == shell.CodeOrgMismatch {
 				writeError(w, http.StatusForbidden, shellErr.Code, shellErr.Message)
 				return
+			} else if shellErr, ok := err.(*shell.Error); ok && shellErr.Code != shell.CodeSessionNotFound {
+				writeError(w, http.StatusConflict, shellErr.Code, shellErr.Message)
+				return
 			}
 		}
 

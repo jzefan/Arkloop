@@ -22,11 +22,17 @@ import (
 
 const (
 	defaultShellCwd       = "/workspace"
+	defaultShellHome      = "/home/arkloop"
+	defaultShellTempDir   = "/tmp/arkloop"
+	defaultShellPath      = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	defaultShellLang      = "C.UTF-8"
 	defaultControlTimeout = 5000
 	timeoutKillDelay      = 2 * time.Second
 )
 
 var shellWorkspaceDir = defaultShellCwd
+var shellHomeDir = defaultShellHome
+var shellTempDir = defaultShellTempDir
 
 type ShellController struct {
 	mu       sync.Mutex
@@ -62,7 +68,7 @@ func NewShellController() *ShellController {
 }
 
 func (c *ShellController) Open(req shellapi.AgentShellRequest) (*shellapi.AgentShellResponse, string, string) {
-	if err := c.ensureStarted(); err != nil {
+	if err := c.ensureStarted(req); err != nil {
 		return nil, shellapi.CodeSessionNotFound, err.Error()
 	}
 	if strings.TrimSpace(req.Cwd) != "" {
@@ -89,7 +95,7 @@ func (c *ShellController) Exec(req shellapi.AgentShellRequest) (*shellapi.AgentS
 	if command == "" {
 		return nil, shellapi.CodeSessionNotFound, "command is required"
 	}
-	if err := c.ensureStarted(); err != nil {
+	if err := c.ensureStarted(shellapi.AgentShellRequest{}); err != nil {
 		return nil, shellapi.CodeSessionNotFound, err.Error()
 	}
 	startCursor, err := c.startCommand(command, req.Cwd, shellapi.NormalizeTimeoutMs(req.TimeoutMs), false)
@@ -151,25 +157,20 @@ func (c *ShellController) Close() (*shellapi.AgentShellResponse, string, string)
 	return resp, "", ""
 }
 
-func (c *ShellController) ensureStarted() error {
+func (c *ShellController) ensureStarted(req shellapi.AgentShellRequest) error {
 	c.mu.Lock()
 	if c.status != shellapi.StatusClosed && c.cmd != nil && c.ptyFile != nil {
 		c.mu.Unlock()
 		return nil
 	}
-	if err := os.MkdirAll(shellWorkspaceDir, 0o755); err != nil {
+	if err := ensureShellBaseDirs(); err != nil {
 		c.mu.Unlock()
 		return err
 	}
 	shellPath, args := resolveShellCommand()
 	cmd := exec.Command(shellPath, args...)
 	cmd.Dir = shellWorkspaceDir
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm-256color",
-		"PS1=",
-		"PROMPT_COMMAND=",
-		"BASH_SILENCE_DEPRECATION_WARNING=1",
-	)
+	cmd.Env = buildShellEnv(req.Env)
 	file, err := pty.Start(cmd)
 	if err != nil {
 		c.mu.Unlock()
@@ -194,7 +195,12 @@ func (c *ShellController) ensureStarted() error {
 	go c.readLoop(file)
 	c.mu.Unlock()
 
-	initCommand := "export PS1='' PROMPT_COMMAND=\nstty -echo\nmkdir -p /tmp/output " + shellQuote(shellWorkspaceDir)
+	initCommand := "export PS1='' PROMPT_COMMAND= BASH_SILENCE_DEPRECATION_WARNING=1 HOME=" + shellQuote(shellHomeDir) +
+		" PATH=" + shellQuote(defaultShellPath) +
+		" LANG=" + shellQuote(defaultShellLang) +
+		" TERM='xterm-256color' TMPDIR=" + shellQuote(shellTempDir) +
+		" HISTFILE=" + shellQuote(shellHomeDir+"/.bash_history") +
+		"\nstty -echo\nmkdir -p /tmp/output " + shellQuote(shellWorkspaceDir) + " " + shellQuote(shellHomeDir) + " " + shellQuote(shellTempDir)
 	_, err = c.runControlCommand(initCommand, shellWorkspaceDir, defaultControlTimeout)
 	return err
 }

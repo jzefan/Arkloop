@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	"arkloop/services/shared/objectstore"
 )
 
 type Service interface {
@@ -26,6 +28,7 @@ type Service interface {
 type Manager struct {
 	compute       *session.Manager
 	artifactStore artifactStore
+	stateStore    stateStore
 	logger        *logging.JSONLogger
 
 	mu       sync.Mutex
@@ -54,13 +57,18 @@ func (e *transportError) Unwrap() error {
 	return e.err
 }
 
-func NewManager(compute *session.Manager, store artifactStore, logger *logging.JSONLogger) *Manager {
-	return &Manager{
+func NewManager(compute *session.Manager, artifactStore artifactStore, stateStore stateStore, logger *logging.JSONLogger) *Manager {
+	mgr := &Manager{
 		compute:       compute,
-		artifactStore: store,
+		artifactStore: artifactStore,
+		stateStore:    stateStore,
 		logger:        logger,
 		sessions:      make(map[string]*managedSession),
 	}
+	if compute != nil {
+		compute.SetBeforeDelete(mgr.beforeComputeDelete)
+	}
+	return mgr
 }
 
 func (m *Manager) Open(ctx context.Context, req Request) (*Response, error) {
@@ -76,7 +84,7 @@ func (m *Manager) Open(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	if entry.compute != nil {
-		result, err := m.invoke(ctx, entry, "shell_open", req)
+		result, err := m.invoke(ctx, entry, "shell_open", req, nil)
 		if err == nil {
 			return m.toResponse(req.SessionID, entry, result), nil
 		}
@@ -103,11 +111,12 @@ func (m *Manager) Open(ctx context.Context, req Request) (*Response, error) {
 	if entry.artifactSeen == nil {
 		entry.artifactSeen = make(map[string]artifactVersion)
 	}
+	openReq, envSnapshot := m.prepareOpenRequest(ctx, req, entry)
 
-	result, err := m.invoke(ctx, entry, "shell_open", req)
+	result, err := m.invoke(ctx, entry, "shell_open", openReq, envSnapshot)
 	if err != nil {
 		m.dropEntry(req.SessionID, entry)
-		_ = m.compute.Delete(ctx, req.SessionID, req.OrgID)
+		_ = m.compute.DeleteSkipHook(ctx, req.SessionID, req.OrgID)
 		if _, ok := err.(*transportError); ok && !created {
 			return nil, notFoundError()
 		}
@@ -132,7 +141,7 @@ func (m *Manager) Exec(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	entry.commandSeq++
-	result, err := m.invoke(ctx, entry, "shell_exec", req)
+	result, err := m.invoke(ctx, entry, "shell_exec", req, nil)
 	if err != nil {
 		if _, ok := err.(*transportError); ok {
 			m.dropEntry(req.SessionID, entry)
@@ -158,7 +167,7 @@ func (m *Manager) Read(ctx context.Context, req Request) (*Response, error) {
 		return nil, err
 	}
 
-	result, err := m.invoke(ctx, entry, "shell_read", req)
+	result, err := m.invoke(ctx, entry, "shell_read", req, nil)
 	if err != nil {
 		if _, ok := err.(*transportError); ok {
 			m.dropEntry(req.SessionID, entry)
@@ -183,7 +192,7 @@ func (m *Manager) Write(ctx context.Context, req Request) (*Response, error) {
 		return nil, err
 	}
 
-	result, err := m.invoke(ctx, entry, "shell_write", req)
+	result, err := m.invoke(ctx, entry, "shell_write", req, nil)
 	if err != nil {
 		if _, ok := err.(*transportError); ok {
 			m.dropEntry(req.SessionID, entry)
@@ -208,7 +217,7 @@ func (m *Manager) Signal(ctx context.Context, req Request) (*Response, error) {
 		return nil, err
 	}
 
-	result, err := m.invoke(ctx, entry, "shell_signal", req)
+	result, err := m.invoke(ctx, entry, "shell_signal", req, nil)
 	if err != nil {
 		if _, ok := err.(*transportError); ok {
 			m.dropEntry(req.SessionID, entry)
@@ -227,7 +236,6 @@ func (m *Manager) Close(ctx context.Context, sessionID, orgID string) error {
 	if err != nil {
 		return err
 	}
-	m.dropEntry(sessionID, entry)
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
@@ -237,21 +245,17 @@ func (m *Manager) Close(ctx context.Context, sessionID, orgID string) error {
 	if entry.compute == nil {
 		return notFoundError()
 	}
-
-	_, shellErr := m.invoke(ctx, entry, "shell_close", Request{SessionID: sessionID})
-	deleteErr := m.compute.Delete(ctx, sessionID, orgID)
+	if err := m.checkpointLocked(ctx, sessionID, entry); err != nil {
+		return err
+	}
+	deleteErr := m.compute.DeleteSkipHook(ctx, sessionID, orgID)
 	if deleteErr != nil && strings.Contains(deleteErr.Error(), "org mismatch") {
 		return orgMismatchError()
-	}
-	if shellErr != nil {
-		if _, ok := shellErr.(*transportError); ok && deleteErr == nil {
-			return nil
-		}
-		return shellErr
 	}
 	if deleteErr != nil {
 		return notFoundError()
 	}
+	m.dropEntry(sessionID, entry)
 	return nil
 }
 
@@ -294,7 +298,124 @@ func (m *Manager) dropEntry(sessionID string, entry *managedSession) {
 	}
 }
 
-func (m *Manager) invoke(ctx context.Context, entry *managedSession, action string, req Request) (*AgentShellResponse, error) {
+func (m *Manager) prepareOpenRequest(ctx context.Context, req Request, entry *managedSession) (Request, map[string]string) {
+	openReq := req
+	if entry.compute == nil || m.stateStore == nil {
+		return openReq, nil
+	}
+	manifest, archive, err := loadLatestCheckpoint(ctx, m.stateStore, entry.orgID, req.SessionID)
+	if err != nil {
+		if objectstore.IsNotFound(err) {
+			return openReq, nil
+		}
+		m.logger.Warn("shell checkpoint load failed", logging.LogFields{SessionID: &req.SessionID}, map[string]any{"error": err.Error()})
+		return openReq, nil
+	}
+	if _, err := m.invokeCheckpoint(ctx, entry, "shell_restore_import", AgentCheckpointRequest{Archive: base64.StdEncoding.EncodeToString(archive)}); err != nil {
+		m.logger.Warn("shell checkpoint restore failed", logging.LogFields{SessionID: &req.SessionID}, map[string]any{"error": err.Error(), "revision": manifest.Revision})
+		return openReq, nil
+	}
+	entry.commandSeq = manifest.LastCommandSeq
+	entry.uploadedSeq = manifest.UploadedSeq
+	entry.artifactSeen = cloneArtifactSeen(manifest.ArtifactSeen)
+	openReq.Cwd = m.resolveOpenCwd(ctx, req.SessionID, entry.compute, req.Cwd, manifest.Cwd)
+	return openReq, manifest.EnvSnapshot
+}
+
+func (m *Manager) checkpointLocked(ctx context.Context, sessionID string, entry *managedSession) error {
+	if entry.compute == nil || m.stateStore == nil {
+		return nil
+	}
+	checkpoint, err := m.invokeCheckpoint(ctx, entry, "shell_checkpoint_export", AgentCheckpointRequest{})
+	if err != nil {
+		return fmt.Errorf("checkpoint export: %w", err)
+	}
+	archive, err := base64.StdEncoding.DecodeString(checkpoint.Archive)
+	if err != nil {
+		return fmt.Errorf("decode checkpoint archive: %w", err)
+	}
+	now := time.Now().UTC()
+	manifest := checkpointManifest{
+		Version:        shellStateVersion,
+		Revision:       nextCheckpointRevision(now),
+		OrgID:          entry.orgID,
+		SessionID:      sessionID,
+		Cwd:            strings.TrimSpace(checkpoint.Cwd),
+		EnvSnapshot:    checkpoint.Env,
+		LastCommandSeq: entry.commandSeq,
+		UploadedSeq:    entry.uploadedSeq,
+		ArtifactSeen:   cloneArtifactSeen(entry.artifactSeen),
+		CreatedAt:      now.Format(time.RFC3339Nano),
+	}
+	if manifest.Cwd == "" {
+		manifest.Cwd = defaultRestoreCwd
+	}
+	if err := saveCheckpoint(ctx, m.stateStore, manifest, archive); err != nil {
+		return err
+	}
+	m.logger.Info("shell checkpoint stored", logging.LogFields{SessionID: &sessionID}, map[string]any{"revision": manifest.Revision})
+	return nil
+}
+
+func (m *Manager) beforeComputeDelete(ctx context.Context, sn *session.Session, reason session.DeleteReason) error {
+	if sn == nil {
+		return nil
+	}
+	m.mu.Lock()
+	entry := m.sessions[sn.ID]
+	m.mu.Unlock()
+	if entry == nil {
+		return nil
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.compute == nil {
+		return nil
+	}
+	err := m.checkpointLocked(ctx, sn.ID, entry)
+	if err == nil {
+		entry.compute = nil
+		return nil
+	}
+	m.logger.Warn("shell checkpoint before delete failed", logging.LogFields{SessionID: &sn.ID}, map[string]any{"error": err.Error(), "reason": string(reason)})
+	return err
+}
+
+func (m *Manager) resolveOpenCwd(ctx context.Context, sessionID string, sn *session.Session, requested, restored string) string {
+	candidate := strings.TrimSpace(requested)
+	if candidate == "" {
+		candidate = strings.TrimSpace(restored)
+	}
+	if candidate == "" {
+		return defaultRestoreCwd
+	}
+	if sn == nil {
+		return candidate
+	}
+	result, err := sn.Exec(ctx, session.ExecJob{Language: "shell", Code: "[ -d " + shellQuote(candidate) + " ]", TimeoutMs: 5000})
+	if err == nil && result != nil && result.ExitCode == 0 {
+		return candidate
+	}
+	m.logger.Warn("shell cwd fallback", logging.LogFields{SessionID: &sessionID}, map[string]any{"cwd": candidate})
+	return defaultRestoreCwd
+}
+
+func cloneArtifactSeen(source map[string]artifactVersion) map[string]artifactVersion {
+	if len(source) == 0 {
+		return make(map[string]artifactVersion)
+	}
+	clone := make(map[string]artifactVersion, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func (m *Manager) invoke(ctx context.Context, entry *managedSession, action string, req Request, shellEnv map[string]string) (*AgentShellResponse, error) {
 	if entry.compute == nil {
 		return nil, notFoundError()
 	}
@@ -320,6 +441,7 @@ func (m *Manager) invoke(ctx context.Context, entry *managedSession, action stri
 			Cursor:      req.Cursor,
 			TimeoutMs:   req.TimeoutMs,
 			YieldTimeMs: req.YieldTimeMs,
+			Env:         shellEnv,
 		},
 	}
 	if err := json.NewEncoder(conn).Encode(env); err != nil {
@@ -355,6 +477,50 @@ func (m *Manager) invoke(ctx context.Context, entry *managedSession, action stri
 		return nil, &transportError{err: fmt.Errorf("shell response missing body")}
 	}
 	return resp.Shell, nil
+}
+
+func (m *Manager) invokeCheckpoint(ctx context.Context, entry *managedSession, action string, checkpointReq AgentCheckpointRequest) (*AgentCheckpointResponse, error) {
+	if entry.compute == nil {
+		return nil, notFoundError()
+	}
+	entry.compute.TouchActivity()
+	callTimeout := 2 * time.Minute
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+
+	conn, err := entry.compute.Dial(ctx)
+	if err != nil {
+		return nil, &transportError{err: fmt.Errorf("connect to agent: %w", err)}
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(callTimeout))
+
+	req := AgentRequest{Action: action, Checkpoint: &checkpointReq}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, &transportError{err: fmt.Errorf("send checkpoint request: %w", err)}
+	}
+	respBody, err := io.ReadAll(conn)
+	if err != nil {
+		return nil, &transportError{err: fmt.Errorf("read checkpoint response: %w", err)}
+	}
+	var resp AgentResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, &transportError{err: fmt.Errorf("decode checkpoint response: %w", err)}
+	}
+	if resp.Error != "" {
+		switch resp.Code {
+		case CodeSessionBusy:
+			return nil, busyError()
+		case CodeSessionNotFound:
+			return nil, notFoundError()
+		default:
+			return nil, errors.New(resp.Error)
+		}
+	}
+	if resp.Checkpoint == nil {
+		return nil, &transportError{err: fmt.Errorf("checkpoint response missing body")}
+	}
+	return resp.Checkpoint, nil
 }
 
 func (m *Manager) attachArtifacts(ctx context.Context, sessionID string, entry *managedSession, result *AgentShellResponse, resp *Response) {

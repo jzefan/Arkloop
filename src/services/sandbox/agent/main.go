@@ -105,19 +105,21 @@ type ExecResult struct {
 
 // AgentRequest 是 v2 协议的请求格式，通过 action 字段区分操作类型。
 type AgentRequest struct {
-	Action  string                      `json:"action"`
-	ExecJob *ExecJob                    `json:"exec_job,omitempty"`
-	Shell   *shellapi.AgentShellRequest `json:"shell,omitempty"`
+	Action     string                           `json:"action"`
+	ExecJob    *ExecJob                         `json:"exec_job,omitempty"`
+	Shell      *shellapi.AgentShellRequest      `json:"shell,omitempty"`
+	Checkpoint *shellapi.AgentCheckpointRequest `json:"checkpoint,omitempty"`
 }
 
 // AgentResponse 是 v2 协议的统一响应。
 type AgentResponse struct {
-	Action    string                       `json:"action"`
-	Exec      *ExecResult                  `json:"exec,omitempty"`
-	Artifacts *FetchArtifactsResult        `json:"artifacts,omitempty"`
-	Shell     *shellapi.AgentShellResponse `json:"shell,omitempty"`
-	Code      string                       `json:"code,omitempty"`
-	Error     string                       `json:"error,omitempty"`
+	Action     string                            `json:"action"`
+	Exec       *ExecResult                       `json:"exec,omitempty"`
+	Artifacts  *FetchArtifactsResult             `json:"artifacts,omitempty"`
+	Shell      *shellapi.AgentShellResponse      `json:"shell,omitempty"`
+	Checkpoint *shellapi.AgentCheckpointResponse `json:"checkpoint,omitempty"`
+	Code       string                            `json:"code,omitempty"`
+	Error      string                            `json:"error,omitempty"`
 }
 
 type ArtifactEntry struct {
@@ -237,6 +239,14 @@ func handleV2(conn net.Conn, req AgentRequest) {
 		result, code, errMsg := shellController.Close()
 		writeJSON(conn, AgentResponse{Action: req.Action, Shell: result, Code: code, Error: errMsg})
 
+	case "shell_checkpoint_export":
+		result, code, errMsg := shellController.CheckpointExport()
+		writeJSON(conn, AgentResponse{Action: req.Action, Checkpoint: result, Code: code, Error: errMsg})
+
+	case "shell_restore_import":
+		result, code, errMsg := shellController.RestoreImport(derefCheckpoint(req.Checkpoint))
+		writeJSON(conn, AgentResponse{Action: req.Action, Checkpoint: result, Code: code, Error: errMsg})
+
 	default:
 		writeJSON(conn, AgentResponse{Action: req.Action, Error: fmt.Sprintf("unknown action: %s", req.Action)})
 	}
@@ -245,6 +255,13 @@ func handleV2(conn net.Conn, req AgentRequest) {
 func derefShell(req *shellapi.AgentShellRequest) shellapi.AgentShellRequest {
 	if req == nil {
 		return shellapi.AgentShellRequest{}
+	}
+	return *req
+}
+
+func derefCheckpoint(req *shellapi.AgentCheckpointRequest) shellapi.AgentCheckpointRequest {
+	if req == nil {
+		return shellapi.AgentCheckpointRequest{}
 	}
 	return *req
 }

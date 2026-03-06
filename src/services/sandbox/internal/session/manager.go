@@ -26,6 +26,23 @@ type VMPool interface {
 	Drain(ctx context.Context)
 }
 
+type BeforeDeleteFunc func(ctx context.Context, sn *Session, reason DeleteReason) error
+
+type DeleteReason string
+
+const (
+	DeleteReasonExplicit    DeleteReason = "explicit"
+	DeleteReasonIdleTimeout DeleteReason = "idle_timeout"
+	DeleteReasonMaxLifetime DeleteReason = "max_lifetime"
+	DeleteReasonShutdown    DeleteReason = "shutdown"
+)
+
+type DeleteOptions struct {
+	Reason           DeleteReason
+	SkipBeforeDelete bool
+	IgnoreHookError  bool
+}
+
 // ManagerConfig 持有 Manager 所需的外部配置。
 type ManagerConfig struct {
 	MaxSessions        int
@@ -34,6 +51,7 @@ type ManagerConfig struct {
 	IdleTimeoutPro     int
 	IdleTimeoutUltra   int
 	MaxLifetimeSeconds int
+	BeforeDelete       BeforeDeleteFunc
 }
 
 // Manager 线程安全地管理所有活跃 Session（microVM 实例）。
@@ -56,6 +74,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 		sessions: make(map[string]*Session),
 		procs:    make(map[string]*os.Process),
 	}
+}
+
+func (m *Manager) SetBeforeDelete(fn BeforeDeleteFunc) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.BeforeDelete = fn
 }
 
 type createResult struct {
@@ -143,7 +167,18 @@ func (m *Manager) acquireAndBind(ctx context.Context, sessionID, tier, orgID str
 
 // Delete 停止并销毁指定 Session 的 microVM。
 // orgID 非空时校验归属，不匹配则拒绝。
-func (m *Manager) Delete(_ context.Context, sessionID, orgID string) error {
+func (m *Manager) Delete(ctx context.Context, sessionID, orgID string) error {
+	return m.DeleteWithOptions(ctx, sessionID, orgID, DeleteOptions{Reason: DeleteReasonExplicit})
+}
+
+func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, orgID string, opts DeleteOptions) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if opts.Reason == "" {
+		opts.Reason = DeleteReasonExplicit
+	}
+
 	m.mu.Lock()
 	s, ok := m.sessions[sessionID]
 	proc := m.procs[sessionID]
@@ -160,10 +195,23 @@ func (m *Manager) Delete(_ context.Context, sessionID, orgID string) error {
 	if !ok {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
+	if !opts.SkipBeforeDelete && m.cfg.BeforeDelete != nil {
+		if err := m.cfg.BeforeDelete(ctx, s, opts.Reason); err != nil && !opts.IgnoreHookError {
+			m.mu.Lock()
+			m.sessions[sessionID] = s
+			m.procs[sessionID] = proc
+			m.mu.Unlock()
+			return err
+		}
+	}
 
 	s.StopTimers()
 	m.cfg.Pool.DestroyVM(proc, s.SocketDir)
 	return nil
+}
+
+func (m *Manager) DeleteSkipHook(ctx context.Context, sessionID, orgID string) error {
+	return m.DeleteWithOptions(ctx, sessionID, orgID, DeleteOptions{Reason: DeleteReasonExplicit, SkipBeforeDelete: true})
 }
 
 // CloseAll 终止所有活跃 Session。服务关闭时调用。
@@ -176,7 +224,7 @@ func (m *Manager) CloseAll(ctx context.Context) {
 	m.mu.Unlock()
 
 	for _, id := range ids {
-		_ = m.Delete(ctx, id, "")
+		_ = m.DeleteWithOptions(ctx, id, "", DeleteOptions{Reason: DeleteReasonShutdown, IgnoreHookError: true})
 	}
 }
 
@@ -218,8 +266,12 @@ func (m *Manager) DrainPool(ctx context.Context) {
 	m.cfg.Pool.Drain(ctx)
 }
 
-func (m *Manager) onSessionExpired(sessionID string) {
-	if err := m.Delete(context.Background(), sessionID, ""); err == nil {
+func (m *Manager) onSessionExpired(sessionID string, reason ExpiryReason) {
+	deleteReason := DeleteReasonIdleTimeout
+	if reason == ExpiryReasonMaxLifetime {
+		deleteReason = DeleteReasonMaxLifetime
+	}
+	if err := m.DeleteWithOptions(context.Background(), sessionID, "", DeleteOptions{Reason: deleteReason, IgnoreHookError: true}); err == nil {
 		m.totalReclaimed.Add(1)
 	}
 }
@@ -254,5 +306,3 @@ func WaitForAgent(ctx context.Context, s *Session, timeout time.Duration) error 
 	}
 	return fmt.Errorf("agent not ready within %s", timeout)
 }
-
-

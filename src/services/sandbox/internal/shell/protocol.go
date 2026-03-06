@@ -48,25 +48,38 @@ type Response struct {
 }
 
 type AgentRequest struct {
-	Action string             `json:"action"`
-	Shell  *AgentShellRequest `json:"shell,omitempty"`
+	Action     string                  `json:"action"`
+	Shell      *AgentShellRequest      `json:"shell,omitempty"`
+	Checkpoint *AgentCheckpointRequest `json:"checkpoint,omitempty"`
 }
 
 type AgentShellRequest struct {
-	Cwd         string `json:"cwd,omitempty"`
-	Command     string `json:"command,omitempty"`
-	Input       string `json:"input,omitempty"`
-	Signal      string `json:"signal,omitempty"`
-	Cursor      uint64 `json:"cursor,omitempty"`
-	TimeoutMs   int    `json:"timeout_ms,omitempty"`
-	YieldTimeMs int    `json:"yield_time_ms,omitempty"`
+	Cwd         string            `json:"cwd,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Input       string            `json:"input,omitempty"`
+	Signal      string            `json:"signal,omitempty"`
+	Cursor      uint64            `json:"cursor,omitempty"`
+	TimeoutMs   int               `json:"timeout_ms,omitempty"`
+	YieldTimeMs int               `json:"yield_time_ms,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+}
+
+type AgentCheckpointRequest struct {
+	Archive string `json:"archive,omitempty"`
+}
+
+type AgentCheckpointResponse struct {
+	Cwd     string            `json:"cwd,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Archive string            `json:"archive,omitempty"`
 }
 
 type AgentResponse struct {
-	Action string              `json:"action"`
-	Shell  *AgentShellResponse `json:"shell,omitempty"`
-	Code   string              `json:"code,omitempty"`
-	Error  string              `json:"error,omitempty"`
+	Action     string                   `json:"action"`
+	Shell      *AgentShellResponse      `json:"shell,omitempty"`
+	Checkpoint *AgentCheckpointResponse `json:"checkpoint,omitempty"`
+	Code       string                   `json:"code,omitempty"`
+	Error      string                   `json:"error,omitempty"`
 }
 
 type AgentShellResponse struct {

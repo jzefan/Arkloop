@@ -13,7 +13,7 @@ import (
 
 // ExecJob 是发送给 Guest Agent 的执行任务。
 type ExecJob struct {
-	Language  string `json:"language"`   // "python" | "shell"
+	Language  string `json:"language"` // "python" | "shell"
 	Code      string `json:"code"`
 	TimeoutMs int    `json:"timeout_ms"`
 }
@@ -74,12 +74,19 @@ type Session struct {
 	timerMu       sync.Mutex
 	idleTimer     *time.Timer
 	lifetimeTimer *time.Timer
-	onExpired     func(string) // callback: session ID -> 由 Manager 设置
+	onExpired     func(string, ExpiryReason) // callback: session ID -> 由 Manager 设置
 }
+
+type ExpiryReason string
+
+const (
+	ExpiryReasonIdleTimeout ExpiryReason = "idle_timeout"
+	ExpiryReasonMaxLifetime ExpiryReason = "max_lifetime"
+)
 
 // StartTimers 启动空闲超时和最大存活 timer。
 // onExpired 在 timer 触发时被调用（在独立 goroutine 中）。
-func (s *Session) StartTimers(onExpired func(string)) {
+func (s *Session) StartTimers(onExpired func(string, ExpiryReason)) {
 	s.timerMu.Lock()
 	defer s.timerMu.Unlock()
 
@@ -88,12 +95,12 @@ func (s *Session) StartTimers(onExpired func(string)) {
 
 	if s.MaxLifetime > 0 {
 		s.lifetimeTimer = time.AfterFunc(s.MaxLifetime, func() {
-			s.onExpired(s.ID)
+			s.onExpired(s.ID, ExpiryReasonMaxLifetime)
 		})
 	}
 	if s.IdleTimeout > 0 {
 		s.idleTimer = time.AfterFunc(s.IdleTimeout, func() {
-			s.onExpired(s.ID)
+			s.onExpired(s.ID, ExpiryReasonIdleTimeout)
 		})
 	}
 }
@@ -107,7 +114,7 @@ func (s *Session) TouchActivity() {
 	if s.idleTimer != nil && s.IdleTimeout > 0 {
 		s.idleTimer.Stop()
 		s.idleTimer = time.AfterFunc(s.IdleTimeout, func() {
-			s.onExpired(s.ID)
+			s.onExpired(s.ID, ExpiryReasonIdleTimeout)
 		})
 	}
 }
