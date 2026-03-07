@@ -11,6 +11,3 @@ title_summarize:
   prompt: "Keep it under 10 Chinese characters. Capture the task goal."
   max_tokens: 20
 agent_config: openrouter-oss-120b-groq
-user_selectable: true
-selector_name: Normal
-selector_order: 1

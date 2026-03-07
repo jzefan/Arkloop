@@ -309,16 +309,6 @@ export function PersonasPage() {
         ),
     },
     {
-      key: 'user_selectable',
-      header: tc.colUserSelectable,
-      render: (row) =>
-        row.user_selectable ? (
-          <Badge variant="success">on</Badge>
-        ) : (
-          <Badge variant="neutral">off</Badge>
-        ),
-    },
-    {
       key: 'created_at',
       header: tc.colCreatedAt,
       render: (row) => (

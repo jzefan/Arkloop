@@ -279,7 +279,6 @@ export const zh: LocaleStrings = {
       colDisplayName: '显示名称',
       colVersion: '版本',
       colActive: '启用',
-      colUserSelectable: '可选',
       colCreatedAt: '创建时间',
       empty: '暂无人格',
       modalTitleCreate: '添加人格',
