@@ -25,7 +25,26 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
-const defaultAgentNetworkName = "arkloop_sandbox_agent"
+const defaultAgentEgressNetworkName = "arkloop_sandbox_agent_egress"
+
+func dockerInternalNetworkName(egress string) string {
+	egress = strings.TrimSpace(egress)
+	if egress == "" {
+		return "arkloop_sandbox_agent_internal"
+	}
+	if strings.HasSuffix(egress, "_egress") {
+		return strings.TrimSuffix(egress, "_egress") + "_internal"
+	}
+	return egress + "_internal"
+}
+
+func dockerEgressNetworkName(configured string) string {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return defaultAgentEgressNetworkName
+	}
+	return configured
+}
 
 // Config 持有 DockerPool 运行所需的参数。
 type Config struct {
@@ -78,13 +97,15 @@ func New(cfg Config) (*Pool, error) {
 		return nil, fmt.Errorf("docker daemon unreachable: %w", err)
 	}
 
-	networkName := strings.TrimSpace(cfg.NetworkName)
-	if networkName == "" {
-		networkName = defaultAgentNetworkName
-	}
+	egressNetworkName := dockerEgressNetworkName(cfg.NetworkName)
+	internalNetworkName := dockerInternalNetworkName(egressNetworkName)
 	ensureCtx, ensureCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer ensureCancel()
-	if err := ensureNetworkExists(ensureCtx, cli, networkName, !cfg.AllowEgress); err != nil {
+	if err := ensureNetworkExists(ensureCtx, cli, egressNetworkName, false); err != nil {
+		cli.Close()
+		return nil, err
+	}
+	if err := ensureNetworkExists(ensureCtx, cli, internalNetworkName, true); err != nil {
 		cli.Close()
 		return nil, err
 	}
@@ -110,7 +131,7 @@ func ensureNetworkExists(ctx context.Context, cli *client.Client, name string, i
 	inspected, err := cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err == nil {
 		if inspected.Internal != internal {
-			return fmt.Errorf("docker network %s internal=%t, expected internal=%t; recreate the network or change ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS", name, inspected.Internal, internal)
+			return fmt.Errorf("docker network %s internal=%t, expected internal=%t; recreate the network or change ARKLOOP_SANDBOX_ALLOW_EGRESS", name, inspected.Internal, internal)
 		}
 		return nil
 	}
@@ -299,11 +320,12 @@ func buildCreatePlan(cfg Config, tier string) createPlan {
 	agentPort := strconv.FormatUint(uint64(cfg.GuestAgentPort), 10)
 	exposedPort := nat.Port(agentPort + "/tcp")
 
-	dialByContainerIP := cfg.NetworkName != ""
-	attachNetworkName := cfg.NetworkName
-	if attachNetworkName == "" {
-		attachNetworkName = defaultAgentNetworkName
+	egressNetworkName := dockerEgressNetworkName(cfg.NetworkName)
+	attachNetworkName := dockerInternalNetworkName(egressNetworkName)
+	if cfg.AllowEgress {
+		attachNetworkName = egressNetworkName
 	}
+	dialByContainerIP := attachNetworkName != ""
 
 	containerCfg := &container.Config{
 		Image: cfg.Image,

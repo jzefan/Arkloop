@@ -1878,7 +1878,7 @@ PTY 本质上是共享交互资源，不是普通无状态工具。
 
 最小需要：
 
-- `sandbox.docker_allow_egress`
+- `sandbox.allow_egress`
 - 后续可扩展同类策略到 Firecracker backend
 - 再向上叠加：
   - 域名 allowlist

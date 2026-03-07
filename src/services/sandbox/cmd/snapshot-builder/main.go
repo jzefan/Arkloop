@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"arkloop/services/sandbox/internal/app"
+	"arkloop/services/sandbox/internal/firecracker"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/snapshot"
 	"arkloop/services/sandbox/internal/storage"
@@ -68,6 +70,10 @@ func runCreate(cfg app.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	networkManager, err := initNetworkManager(cfg)
+	if err != nil {
+		return err
+	}
 
 	builder := snapshot.NewBuilder(
 		cfg.FirecrackerBin,
@@ -75,6 +81,7 @@ func runCreate(cfg app.Config, args []string) error {
 		cfg.BootTimeoutSeconds,
 		cfg.GuestAgentPort,
 		store,
+		networkManager,
 		logger,
 	)
 
@@ -140,6 +147,32 @@ func initDeps(cfg app.Config) (storage.SnapshotStore, *template.Registry, *loggi
 	}
 
 	return store, registry, logger, nil
+}
+
+func initNetworkManager(cfg app.Config) (*firecracker.NetworkManager, error) {
+	manager, err := firecracker.NewNetworkManager(firecracker.NetworkConfig{
+		AllowEgress:     cfg.AllowEgress,
+		EgressInterface: cfg.FirecrackerEgressInterface,
+		TapPrefix:       cfg.FirecrackerTapPrefix,
+		AddressPoolCIDR: cfg.FirecrackerTapCIDR,
+		Nameservers:     cfg.FirecrackerDNS,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := manager.ValidateHost(ctx); err != nil {
+		return nil, err
+	}
+	version, err := firecracker.DetectVersion(ctx, cfg.FirecrackerBin)
+	if err != nil {
+		return nil, err
+	}
+	if version.Less(firecracker.MinSnapshotTapPatchVersion) {
+		return nil, fmt.Errorf("firecracker version must be >= %d.%d.%d for snapshot network restore", firecracker.MinSnapshotTapPatchVersion.Major, firecracker.MinSnapshotTapPatchVersion.Minor, firecracker.MinSnapshotTapPatchVersion.Patch)
+	}
+	return manager, nil
 }
 
 func printUsage() {

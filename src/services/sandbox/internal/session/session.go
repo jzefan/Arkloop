@@ -41,7 +41,8 @@ type FetchArtifactsResult struct {
 
 // agentRequest 是 v2 协议的请求格式。
 type agentRequest struct {
-	Action string `json:"action"`
+	Action  string               `json:"action"`
+	Network *GuestNetworkRequest `json:"network,omitempty"`
 }
 
 // agentResponse 是 v2 协议的响应格式。
@@ -49,6 +50,13 @@ type agentResponse struct {
 	Action    string                `json:"action"`
 	Artifacts *FetchArtifactsResult `json:"artifacts,omitempty"`
 	Error     string                `json:"error,omitempty"`
+}
+
+type GuestNetworkRequest struct {
+	Interface   string   `json:"interface"`
+	GuestCIDR   string   `json:"guest_cidr"`
+	Gateway     string   `json:"gateway"`
+	Nameservers []string `json:"nameservers,omitempty"`
 }
 
 // Dialer 抽象与 Guest Agent 的连接建立。
@@ -195,6 +203,33 @@ func (s *Session) FetchArtifacts(ctx context.Context) (*FetchArtifactsResult, er
 		return &FetchArtifactsResult{Artifacts: []ArtifactEntry{}}, nil
 	}
 	return resp.Artifacts, nil
+}
+
+func (s *Session) ConfigureGuestNetwork(ctx context.Context, req GuestNetworkRequest) error {
+	configureCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	conn, err := s.Dial(configureCtx)
+	if err != nil {
+		return fmt.Errorf("connect to agent: %w", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+
+	payload := agentRequest{Action: "configure_guest_network", Network: &req}
+	if err := json.NewEncoder(conn).Encode(payload); err != nil {
+		return fmt.Errorf("send configure_guest_network request: %w", err)
+	}
+
+	var resp agentResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return fmt.Errorf("read configure_guest_network response: %w", err)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("agent error: %s", resp.Error)
+	}
+	return nil
 }
 
 // NewVsockDialer 创建 Firecracker vsock 连接的 Dialer。

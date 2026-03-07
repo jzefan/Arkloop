@@ -36,15 +36,15 @@ func TestLoadConfigFromEnvSessionStateTTLDaysRejectNegative(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigDockerAllowEgress(t *testing.T) {
+func TestDefaultConfigAllowEgress(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.DockerAllowEgress {
-		t.Fatal("docker egress should default to disabled")
+	if !cfg.AllowEgress {
+		t.Fatal("allow_egress should default to enabled")
 	}
 }
 
-func TestLoadConfigFromEnvDockerAllowEgress(t *testing.T) {
-	t.Setenv("ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS", "true")
+func TestLoadConfigFromEnvAllowEgress(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ALLOW_EGRESS", "false")
 	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
 	unsetSandboxConfigRegistryEnv(t)
 
@@ -52,18 +52,32 @@ func TestLoadConfigFromEnvDockerAllowEgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config failed: %v", err)
 	}
-	if !cfg.DockerAllowEgress {
-		t.Fatal("expected docker egress to be enabled")
+	if cfg.AllowEgress {
+		t.Fatal("expected allow_egress to be disabled")
 	}
 }
 
-func TestLoadConfigFromEnvDockerAllowEgressRejectInvalid(t *testing.T) {
-	t.Setenv("ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS", "maybe")
+func TestLoadConfigFromEnvAllowEgressRejectInvalid(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ALLOW_EGRESS", "maybe")
 	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
 	unsetSandboxConfigRegistryEnv(t)
 
 	if _, err := LoadConfigFromEnv(); err == nil {
-		t.Fatal("expected docker egress validation error")
+		t.Fatal("expected allow_egress validation error")
+	}
+}
+
+func TestLoadConfigFromEnvFirecrackerDNS(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
+	t.Setenv("ARKLOOP_SANDBOX_FIRECRACKER_DNS", "1.1.1.1, 8.8.8.8")
+	unsetSandboxConfigRegistryEnv(t)
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.FirecrackerDNS) != 2 {
+		t.Fatalf("unexpected dns list: %#v", cfg.FirecrackerDNS)
 	}
 }
 

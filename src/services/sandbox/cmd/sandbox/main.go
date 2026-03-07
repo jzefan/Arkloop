@@ -8,6 +8,7 @@ import (
 
 	"arkloop/services/sandbox/internal/app"
 	dockerpool "arkloop/services/sandbox/internal/docker"
+	"arkloop/services/sandbox/internal/firecracker"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/pool"
@@ -130,6 +131,29 @@ func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.V
 		registry = reg
 	}
 
+	networkManager, err := firecracker.NewNetworkManager(firecracker.NetworkConfig{
+		AllowEgress:     cfg.AllowEgress,
+		EgressInterface: cfg.FirecrackerEgressInterface,
+		TapPrefix:       cfg.FirecrackerTapPrefix,
+		AddressPoolCIDR: cfg.FirecrackerTapCIDR,
+		Nameservers:     cfg.FirecrackerDNS,
+	})
+	if err != nil {
+		return nil, err
+	}
+	validateCtx, validateCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer validateCancel()
+	if err := networkManager.ValidateHost(validateCtx); err != nil {
+		return nil, err
+	}
+	version, err := firecracker.DetectVersion(validateCtx, cfg.FirecrackerBin)
+	if err != nil {
+		return nil, err
+	}
+	if version.Less(firecracker.MinSnapshotTapPatchVersion) {
+		return nil, fmt.Errorf("firecracker version must be >= %d.%d.%d for snapshot network restore", firecracker.MinSnapshotTapPatchVersion.Major, firecracker.MinSnapshotTapPatchVersion.Minor, firecracker.MinSnapshotTapPatchVersion.Patch)
+	}
+
 	if snapshotStore != nil && registry != nil {
 		builder := snapshot.NewBuilder(
 			cfg.FirecrackerBin,
@@ -137,6 +161,7 @@ func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.V
 			cfg.BootTimeoutSeconds,
 			cfg.GuestAgentPort,
 			snapshotStore,
+			networkManager,
 			logger,
 		)
 		ensureCtx, ensureCancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -158,6 +183,7 @@ func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.V
 		GuestAgentPort:        cfg.GuestAgentPort,
 		SnapshotStore:         snapshotStore,
 		Registry:              registry,
+		NetworkManager:        networkManager,
 		Logger:                logger,
 	})
 	warmPool.Start()
@@ -171,7 +197,7 @@ func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool
 		RefillIntervalSeconds: cfg.RefillIntervalSeconds,
 		MaxRefillConcurrency:  cfg.RefillConcurrency,
 		Image:                 cfg.DockerImage,
-		AllowEgress:           cfg.DockerAllowEgress,
+		AllowEgress:           cfg.AllowEgress,
 		NetworkName:           cfg.DockerNetwork,
 		GuestAgentPort:        cfg.GuestAgentPort,
 		SocketBaseDir:         cfg.SocketBaseDir,

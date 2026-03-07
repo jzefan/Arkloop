@@ -928,6 +928,7 @@ export interface LocaleStrings {
       sectionTimeout: string
       fieldBaseUrl: string
       fieldProvider: string
+      fieldAllowEgress: string
       fieldDockerImage: string
       fieldMaxSessions: string
       fieldBootTimeout: string

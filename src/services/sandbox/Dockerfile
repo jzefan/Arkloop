@@ -18,7 +18,7 @@ RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
     go build -ldflags="-s -w" -o /sandbox-agent ./src/services/sandbox/agent
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata wget
+RUN apk add --no-cache ca-certificates tzdata wget iproute2 iptables
 COPY --from=builder /sandbox       /usr/local/bin/sandbox
 COPY --from=builder /sandbox-agent /usr/local/share/arkloop/sandbox/sandbox-agent
 ENV ARKLOOP_SANDBOX_ADDR=0.0.0.0:8002

@@ -1,36 +1,21 @@
 package main
 
 import (
-	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
 
 func ensureShellBaseDirs() error {
-	for _, dir := range []string{shellWorkspaceDir, shellHomeDir, shellTempDir, artifactOutputDir, "/tmp/matplotlib"} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create shell dir %s: %w", dir, err)
-		}
-	}
-	return nil
+	return ensureWorkloadBaseDirs()
 }
 
 func buildShellEnv(snapshot map[string]string) []string {
-	env := map[string]string{
-		"HOME":                             shellHomeDir,
-		"PATH":                             defaultShellPath,
-		"LANG":                             defaultShellLang,
-		"TERM":                             "xterm-256color",
-		"TMPDIR":                           shellTempDir,
-		"MPLCONFIGDIR":                     "/tmp/matplotlib",
-		"HISTFILE":                         shellHomeDir + "/.bash_history",
-		"USER":                             "arkloop",
-		"LOGNAME":                          "arkloop",
-		"PS1":                              "",
-		"PROMPT_COMMAND":                   "",
-		"BASH_SILENCE_DEPRECATION_WARNING": "1",
-	}
+	env := baseWorkloadEnv()
+	env["TERM"] = "xterm-256color"
+	env["HISTFILE"] = shellHomeDir + "/.bash_history"
+	env["PS1"] = ""
+	env["PROMPT_COMMAND"] = ""
+	env["BASH_SILENCE_DEPRECATION_WARNING"] = "1"
 	for key, value := range snapshot {
 		key = strings.TrimSpace(key)
 		if key == "" || strings.ContainsRune(key, '=') {

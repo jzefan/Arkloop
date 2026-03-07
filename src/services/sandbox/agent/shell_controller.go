@@ -21,20 +21,11 @@ import (
 )
 
 const (
-	defaultShellCwd       = "/workspace"
-	defaultShellHome      = "/home/arkloop"
-	defaultShellTempDir   = "/tmp/arkloop"
-	defaultShellPath      = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	defaultShellLang      = "C.UTF-8"
 	defaultControlTimeout = 5000
 	quietOutputWindow     = 100 * time.Millisecond
 	trailingOutputGrace   = 100 * time.Millisecond
 	timeoutKillDelay      = 2 * time.Second
 )
-
-var shellWorkspaceDir = defaultShellCwd
-var shellHomeDir = defaultShellHome
-var shellTempDir = defaultShellTempDir
 
 type ShellController struct {
 	mu            sync.Mutex
@@ -137,7 +128,7 @@ func (c *ShellController) ensureStarted(req shellapi.AgentExecCommandRequest) er
 	}
 	shellPath, args := resolveShellCommand()
 	cmd := exec.Command(shellPath, args...)
-	cmd.Dir = shellWorkspaceDir
+	prepareWorkloadCmd(cmd, shellWorkspaceDir, req.Env)
 	cmd.Env = buildShellEnv(req.Env)
 	file, err := pty.Start(cmd)
 	if err != nil {
@@ -164,8 +155,8 @@ func (c *ShellController) ensureStarted(req shellapi.AgentExecCommandRequest) er
 	c.mu.Unlock()
 
 	initCommand := "export PS1='' PROMPT_COMMAND= BASH_SILENCE_DEPRECATION_WARNING=1 HOME=" + shellQuote(shellHomeDir) +
-		" PATH=" + shellQuote(defaultShellPath) +
-		" LANG=" + shellQuote(defaultShellLang) +
+		" PATH=" + shellQuote(defaultWorkloadPath) +
+		" LANG=" + shellQuote(defaultWorkloadLang) +
 		" TERM='xterm-256color' TMPDIR=" + shellQuote(shellTempDir) +
 		" HISTFILE=" + shellQuote(shellHomeDir+"/.bash_history") +
 		"\nstty -echo\nmkdir -p /tmp/output " + shellQuote(shellWorkspaceDir) + " " + shellQuote(shellHomeDir) + " " + shellQuote(shellTempDir)

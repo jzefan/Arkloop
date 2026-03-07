@@ -22,6 +22,7 @@ type Builder struct {
 	bootTimeoutSeconds int
 	guestAgentPort     uint32
 	store              storage.SnapshotStore
+	networkManager     *firecracker.NetworkManager
 	logger             *logging.JSONLogger
 }
 
@@ -31,6 +32,7 @@ func NewBuilder(
 	bootTimeoutSeconds int,
 	guestAgentPort uint32,
 	store storage.SnapshotStore,
+	networkManager *firecracker.NetworkManager,
 	logger *logging.JSONLogger,
 ) *Builder {
 	return &Builder{
@@ -39,6 +41,7 @@ func NewBuilder(
 		bootTimeoutSeconds: bootTimeoutSeconds,
 		guestAgentPort:     guestAgentPort,
 		store:              store,
+		networkManager:     networkManager,
 		logger:             logger,
 	}
 }
@@ -65,9 +68,15 @@ func (b *Builder) Build(ctx context.Context, tmpl template.Template) error {
 
 	apiSocket := filepath.Join(buildDir, "api.sock")
 	vsockPath := filepath.Join(buildDir, "vsock.sock")
+	guestNetwork, err := b.networkManager.Setup(ctx, buildDir)
+	if err != nil {
+		return fmt.Errorf("setup firecracker network: %w", err)
+	}
+	defer func() {
+		_ = b.networkManager.Release(context.Background(), buildDir)
+	}()
 
 	// 启动 Firecracker 进程
-	var err error
 	proc, err = startProcess(b.firecrackerBin, apiSocket)
 	if err != nil {
 		return fmt.Errorf("start firecracker: %w", err)
@@ -86,6 +95,7 @@ func (b *Builder) Build(ctx context.Context, tmpl template.Template) error {
 		firecracker.BootSource{KernelImagePath: tmpl.KernelImagePath, BootArgs: firecracker.KernelArgs},
 		firecracker.Drive{DriveID: "rootfs", PathOnHost: tmpl.RootfsPath, IsRootDevice: true, IsReadOnly: true},
 		firecracker.VsockDevice{GuestCID: 3, UDSPath: vsockPath},
+		&firecracker.NetworkInterface{IfaceID: guestNetwork.InterfaceID, HostDevName: guestNetwork.HostDevice, GuestMAC: guestNetwork.GuestMAC},
 	); err != nil {
 		return fmt.Errorf("configure microvm: %w", err)
 	}
@@ -103,6 +113,14 @@ func (b *Builder) Build(ctx context.Context, tmpl template.Template) error {
 	bootTimeout := time.Duration(b.bootTimeoutSeconds) * time.Second
 	if err := session.WaitForAgent(ctx, s, bootTimeout); err != nil {
 		return fmt.Errorf("guest agent not ready: %w", err)
+	}
+	if err := s.ConfigureGuestNetwork(ctx, session.GuestNetworkRequest{
+		Interface:   guestNetwork.InterfaceName,
+		GuestCIDR:   guestNetwork.GuestCIDR,
+		Gateway:     guestNetwork.Gateway,
+		Nameservers: guestNetwork.Nameservers,
+	}); err != nil {
+		return fmt.Errorf("configure guest network: %w", err)
 	}
 
 	// 暂停 VM 后打快照

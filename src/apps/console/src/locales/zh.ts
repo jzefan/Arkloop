@@ -835,6 +835,7 @@ export const zh: LocaleStrings = {
       sectionTimeout: 'Session Timeout',
       fieldBaseUrl: 'Base URL',
       fieldProvider: 'Provider',
+      fieldAllowEgress: 'Allow Egress',
       fieldDockerImage: 'Docker Image',
       fieldMaxSessions: 'Max Sessions',
       fieldBootTimeout: 'Boot Timeout (s)',

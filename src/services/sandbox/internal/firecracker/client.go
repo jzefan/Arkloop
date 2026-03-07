@@ -56,8 +56,18 @@ type VsockDevice struct {
 	UDSPath  string `json:"uds_path"`
 }
 
+type NetworkInterface struct {
+	IfaceID     string `json:"iface_id"`
+	HostDevName string `json:"host_dev_name"`
+	GuestMAC    string `json:"guest_mac,omitempty"`
+}
+
+type NetworkInterfaceUpdate struct {
+	HostDevName string `json:"host_dev_name"`
+}
+
 // Configure 依次设置 machine-config、boot-source、rootfs drive、vsock 设备。
-func (c *Client) Configure(ctx context.Context, mc MachineConfig, bs BootSource, drv Drive, vsock VsockDevice) error {
+func (c *Client) Configure(ctx context.Context, mc MachineConfig, bs BootSource, drv Drive, vsock VsockDevice, network *NetworkInterface) error {
 	if err := c.put(ctx, "/machine-config", mc); err != nil {
 		return fmt.Errorf("machine-config: %w", err)
 	}
@@ -69,6 +79,11 @@ func (c *Client) Configure(ctx context.Context, mc MachineConfig, bs BootSource,
 	}
 	if err := c.put(ctx, "/vsock", vsock); err != nil {
 		return fmt.Errorf("vsock: %w", err)
+	}
+	if network != nil {
+		if err := c.put(ctx, "/network-interfaces/"+network.IfaceID, network); err != nil {
+			return fmt.Errorf("network-interfaces/%s: %w", network.IfaceID, err)
+		}
 	}
 	return nil
 }
@@ -142,6 +157,13 @@ func (c *Client) LoadSnapshot(ctx context.Context, snapshotPath, memBackendPath 
 	}
 	if err := c.put(ctx, "/snapshot/load", req); err != nil {
 		return fmt.Errorf("load snapshot: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) UpdateNetworkInterface(ctx context.Context, ifaceID string, update NetworkInterfaceUpdate) error {
+	if err := c.patch(ctx, "/network-interfaces/"+ifaceID, update); err != nil {
+		return fmt.Errorf("update network interface %s: %w", ifaceID, err)
 	}
 	return nil
 }

@@ -225,6 +225,7 @@ Runtime parameters are configured via Console > Configuration > Sandbox page (wr
 | Config Key | Env Var | Default | Description |
 |---|---|---|---|
 | `sandbox.provider` | `ARKLOOP_SANDBOX_PROVIDER` | `firecracker` | Backend type |
+| `sandbox.allow_egress` | `ARKLOOP_SANDBOX_ALLOW_EGRESS` | `true` | Whether Sandbox backends may access the public network |
 | `sandbox.docker_image` | `ARKLOOP_SANDBOX_DOCKER_IMAGE` | `arkloop/sandbox-agent:latest` | Docker agent image |
 | `sandbox.max_sessions` | `ARKLOOP_SANDBOX_MAX_SESSIONS` | `50` | Max concurrent sessions |
 | `sandbox.boot_timeout_s` | `ARKLOOP_SANDBOX_BOOT_TIMEOUT_S` | `30` | Boot timeout (seconds) |
@@ -246,6 +247,10 @@ Deployment-level parameters (ENV only, not in Console):
 | `ARKLOOP_SANDBOX_ROOTFS` | `/opt/sandbox/rootfs.ext4` | rootfs path |
 | `ARKLOOP_SANDBOX_SOCKET_DIR` | `/run/sandbox` | Temp file directory |
 | `ARKLOOP_SANDBOX_TEMPLATES_PATH` | `/opt/sandbox/templates.json` | Template file path |
+| `ARKLOOP_SANDBOX_EGRESS_INTERFACE` | `eth0` | Firecracker NAT uplink interface |
+| `ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX` | `arktap` | Firecracker TAP name prefix |
+| `ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR` | `172.29.0.0/16` | Firecracker TAP address pool |
+| `ARKLOOP_SANDBOX_FIRECRACKER_DNS` | `1.1.1.1,8.8.8.8` | Firecracker guest DNS servers |
 | `ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH` | - | Required for the `docker-sandbox` profile; path to the host user-scoped Docker socket |
 
 ## Local Development Mode

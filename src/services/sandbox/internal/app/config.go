@@ -20,13 +20,17 @@ const (
 	sandboxAddrEnv       = "ARKLOOP_SANDBOX_ADDR"
 	sandboxAuthTokenEnv  = "ARKLOOP_SANDBOX_AUTH_TOKEN"
 	sessionStateTTLEnv   = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
-	dockerAllowEgressEnv = "ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS"
+	allowEgressEnv       = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
 	dockerNetworkEnv     = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
 	firecrackerBinEnv    = "ARKLOOP_FIRECRACKER_BIN"
 	kernelImagePathEnv   = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
 	rootfsPathEnv        = "ARKLOOP_SANDBOX_ROOTFS"
 	socketBaseDirEnv     = "ARKLOOP_SANDBOX_SOCKET_DIR"
 	templatesPathEnv     = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	firecrackerIfaceEnv  = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
+	firecrackerTapEnv    = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
+	firecrackerCIDREnv   = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
+	firecrackerDNSEnv    = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
 	s3EndpointEnv        = "ARKLOOP_S3_ENDPOINT"
 	s3AccessKeyEnv       = "ARKLOOP_S3_ACCESS_KEY"
 	s3SecretKeyEnv       = "ARKLOOP_S3_SECRET_KEY"
@@ -55,8 +59,12 @@ type Config struct {
 	SessionStateTTLDays int
 	TemplatesPath       string
 	DockerImage         string // Docker 后端使用的 sandbox-agent 镜像
-	DockerAllowEgress   bool
+	AllowEgress         bool
 	DockerNetwork       string // agent 容器加入的 Docker 网络（compose 桥接网络）
+	FirecrackerEgressInterface string
+	FirecrackerTapPrefix       string
+	FirecrackerTapCIDR         string
+	FirecrackerDNS             []string
 
 	// Warm pool: 各 tier 的预热 VM 数量
 	WarmLite  int
@@ -90,8 +98,12 @@ func DefaultConfig() Config {
 		SessionStateTTLDays: 7,
 		TemplatesPath:       "/opt/sandbox/templates.json",
 		DockerImage:         "arkloop/sandbox-agent:latest",
-		DockerAllowEgress:   false,
-		DockerNetwork:       "",
+		AllowEgress:         true,
+		DockerNetwork:       "arkloop_sandbox_agent_egress",
+		FirecrackerEgressInterface: "eth0",
+		FirecrackerTapPrefix:       "arktap",
+		FirecrackerTapCIDR:         "172.29.0.0/16",
+		FirecrackerDNS:             []string{"1.1.1.1", "8.8.8.8"},
 
 		WarmLite:              3,
 		WarmPro:               2,
@@ -120,15 +132,27 @@ func LoadConfigFromEnv() (Config, error) {
 		}
 		cfg.SessionStateTTLDays = value
 	}
-	if raw, ok := os.LookupEnv(dockerAllowEgressEnv); ok {
+	if raw, ok := os.LookupEnv(allowEgressEnv); ok {
 		value, err := strconv.ParseBool(strings.TrimSpace(raw))
 		if err != nil {
-			return cfg, fmt.Errorf("docker_allow_egress must be true/false")
+			return cfg, fmt.Errorf("allow_egress must be true/false")
 		}
-		cfg.DockerAllowEgress = value
+		cfg.AllowEgress = value
 	}
 	if raw := strings.TrimSpace(os.Getenv(dockerNetworkEnv)); raw != "" {
 		cfg.DockerNetwork = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(firecrackerIfaceEnv)); raw != "" {
+		cfg.FirecrackerEgressInterface = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(firecrackerTapEnv)); raw != "" {
+		cfg.FirecrackerTapPrefix = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(firecrackerCIDREnv)); raw != "" {
+		cfg.FirecrackerTapCIDR = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(firecrackerDNSEnv)); raw != "" {
+		cfg.FirecrackerDNS = splitCSV(raw)
 	}
 	if raw := strings.TrimSpace(os.Getenv(firecrackerBinEnv)); raw != "" {
 		cfg.FirecrackerBin = raw
@@ -225,8 +249,8 @@ func LoadConfigFromEnv() (Config, error) {
 	if v := resolveStr("sandbox.docker_image"); v != "" {
 		cfg.DockerImage = v
 	}
-	if v := resolveBool("sandbox.docker_allow_egress"); v != nil {
-		cfg.DockerAllowEgress = *v
+	if v := resolveBool("sandbox.allow_egress"); v != nil {
+		cfg.AllowEgress = *v
 	}
 	if v := resolveInt("sandbox.max_sessions"); v > 0 {
 		cfg.MaxSessions = v
@@ -295,6 +319,26 @@ func (c Config) Validate() error {
 	if c.SessionStateTTLDays < 0 {
 		return fmt.Errorf("session_state_ttl_days must be zero or positive")
 	}
+	if strings.TrimSpace(c.DockerNetwork) == "" {
+		return fmt.Errorf("docker_network must not be empty")
+	}
+	if strings.TrimSpace(c.FirecrackerEgressInterface) == "" {
+		return fmt.Errorf("firecracker_egress_interface must not be empty")
+	}
+	if strings.TrimSpace(c.FirecrackerTapPrefix) == "" {
+		return fmt.Errorf("firecracker_tap_prefix must not be empty")
+	}
+	if len(c.FirecrackerTapPrefix) > 10 {
+		return fmt.Errorf("firecracker_tap_prefix must be 10 chars or shorter")
+	}
+	if _, _, err := net.ParseCIDR(c.FirecrackerTapCIDR); err != nil {
+		return fmt.Errorf("firecracker_tap_cidr invalid: %w", err)
+	}
+	for _, ns := range c.FirecrackerDNS {
+		if net.ParseIP(strings.TrimSpace(ns)) == nil {
+			return fmt.Errorf("firecracker_dns contains invalid ip %q", ns)
+		}
+	}
 	return nil
 }
 
@@ -317,6 +361,19 @@ func (c Config) IdleTimeoutSeconds(tier string) int {
 	default:
 		return c.IdleTimeoutLite
 	}
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		result = append(result, part)
+	}
+	return result
 }
 
 func writeConfigWarn(event string, err error) {

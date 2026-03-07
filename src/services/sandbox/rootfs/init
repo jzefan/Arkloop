@@ -11,6 +11,7 @@ mount -t tmpfs tmpfs /tmp
 mount -t tmpfs tmpfs /run
 
 mkdir -p /tmp/output /tmp/arkloop /tmp/matplotlib /workspace /home/arkloop
+chown 1000:1000 /tmp/output /tmp/arkloop /tmp/matplotlib /workspace /home/arkloop
 hostname sandbox
 
 exec /usr/local/bin/sandbox-agent

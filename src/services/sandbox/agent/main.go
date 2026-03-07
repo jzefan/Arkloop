@@ -110,6 +110,7 @@ type AgentRequest struct {
 	ExecCommand *shellapi.AgentExecCommandRequest `json:"exec_command,omitempty"`
 	WriteStdin  *shellapi.AgentWriteStdinRequest  `json:"write_stdin,omitempty"`
 	Checkpoint  *shellapi.AgentCheckpointRequest  `json:"checkpoint,omitempty"`
+	Network     *GuestNetworkRequest              `json:"network,omitempty"`
 }
 
 // AgentResponse 是 v2 协议的统一响应。
@@ -237,6 +238,17 @@ func handleV2(conn net.Conn, req AgentRequest) {
 		result, code, errMsg := shellController.RestoreImport(derefCheckpoint(req.Checkpoint))
 		writeJSON(conn, AgentResponse{Action: req.Action, Checkpoint: result, Code: code, Error: errMsg})
 
+	case "configure_guest_network":
+		if req.Network == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "network is required"})
+			return
+		}
+		if err := configureGuestNetwork(*req.Network); err != nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: err.Error()})
+			return
+		}
+		writeJSON(conn, AgentResponse{Action: req.Action})
+
 	default:
 		writeJSON(conn, AgentResponse{Action: req.Action, Error: fmt.Sprintf("unknown action: %s", req.Action)})
 	}
@@ -264,7 +276,7 @@ func derefCheckpoint(req *shellapi.AgentCheckpointRequest) shellapi.AgentCheckpo
 }
 
 func ensureOutputDir() {
-	_ = os.MkdirAll(artifactOutputDir, 0o755)
+	_ = ensureWorkloadBaseDirs()
 }
 
 func executeJob(job ExecJob) ExecResult {
@@ -289,6 +301,7 @@ func executeJob(job ExecJob) ExecResult {
 	default:
 		return ExecResult{Stderr: fmt.Sprintf("unsupported language: %q", job.Language), ExitCode: 1}
 	}
+	prepareWorkloadCmd(cmd, shellWorkspaceDir, nil)
 
 	stdout := newLimitedBuffer(maxStdoutBytes)
 	stderr := newLimitedBuffer(maxStderrBytes)
@@ -316,10 +329,6 @@ func executeJob(job ExecJob) ExecResult {
 	}
 }
 
-const python3Bin = "/usr/local/bin/python3"
-const chartPreludePath = "/usr/local/share/arkloop/chart_prelude.py"
-const chartPreludeStmt = "try:\n exec(open('" + chartPreludePath + "').read())\nexcept FileNotFoundError:\n pass\n"
-
 func needsChartPrelude(code string) bool {
 	lower := strings.ToLower(code)
 	return strings.Contains(lower, "plotly") || strings.Contains(lower, "matplotlib")
@@ -331,13 +340,18 @@ func buildPythonCmd(ctx context.Context, code string) *exec.Cmd {
 		code = chartPreludeStmt + code
 	}
 
-	f, err := os.CreateTemp("", "exec-*.py")
+	if err := ensureWorkloadBaseDirs(); err != nil {
+		return exec.CommandContext(ctx, python3Bin, "-c", code)
+	}
+
+	f, err := os.CreateTemp(shellTempDir, "exec-*.py")
 	if err != nil {
 		// 降级为 -c 模式
 		return exec.CommandContext(ctx, python3Bin, "-c", code)
 	}
 	_, _ = f.WriteString(code)
 	_ = f.Close()
+	_ = chownIfPossible(f.Name())
 
 	cmd := exec.CommandContext(ctx, python3Bin, f.Name())
 	// 执行后清理临时文件
