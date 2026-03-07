@@ -202,7 +202,7 @@ docker compose --profile docker-sandbox up -d sandbox-docker
 Linux 推荐使用 rootless Docker 的用户态 socket。
 macOS / Windows Docker Desktop 请改为各自用户目录下的 socket 路径，不再使用系统级 `/var/run/docker.sock`。
 
-`sandbox-docker` 自身运行在 Compose 网络中，派生出的 `sandbox-agent` 容器接入专用 `arkloop_sandbox_agent_egress` 网络，不使用 host 网络。该网络默认允许外网访问，方便 `git clone`、`curl`、依赖下载等开发任务；如需关闭外网，可设置 `ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS=false` 并重建网络。
+`sandbox-docker` 自身运行在 Compose 网络中，派生出的 `sandbox-agent` 容器按策略接入专用网络，不使用 host 网络。启用外网时使用 `arkloop_sandbox_agent_egress`，禁用外网时使用 `arkloop_sandbox_agent_internal`；如需切换，可设置 `ARKLOOP_SANDBOX_ALLOW_EGRESS` 并重建网络。
 
 Docker backend 镜像内置常用开发命令，包括 `git`、`curl`、`wget`、`jq`、`grep`、`rg`、`find`、`tar`、`zip`、`unzip`、`sqlite3`、`ssh`、`make` 等，保证终端型任务和仓库分析任务可直接运行。
 
@@ -227,8 +227,8 @@ ARKLOOP_SANDBOX_TEMPLATES_PATH="" \
 | 配置项 Key | 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
 | `sandbox.provider` | `ARKLOOP_SANDBOX_PROVIDER` | `firecracker` | 后端类型 |
+| `sandbox.allow_egress` | `ARKLOOP_SANDBOX_ALLOW_EGRESS` | `true` | Sandbox backend 是否允许访问外网 |
 | `sandbox.docker_image` | `ARKLOOP_SANDBOX_DOCKER_IMAGE` | `arkloop/sandbox-agent:latest` | Docker agent 镜像 |
-| `sandbox.docker_allow_egress` | `ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS` | `false` | Docker backend 是否允许派生容器访问外网 |
 | `sandbox.max_sessions` | `ARKLOOP_SANDBOX_MAX_SESSIONS` | `50` | 最大并发 session |
 | `sandbox.boot_timeout_s` | `ARKLOOP_SANDBOX_BOOT_TIMEOUT_S` | `30` | 启动超时（秒） |
 | `sandbox.warm_lite` | `ARKLOOP_SANDBOX_WARM_LITE` | `3` | lite 预热数 |
@@ -249,6 +249,10 @@ ARKLOOP_SANDBOX_TEMPLATES_PATH="" \
 | `ARKLOOP_SANDBOX_ROOTFS` | `/opt/sandbox/rootfs.ext4` | rootfs 路径 |
 | `ARKLOOP_SANDBOX_SOCKET_DIR` | `/run/sandbox` | 临时文件目录 |
 | `ARKLOOP_SANDBOX_TEMPLATES_PATH` | `/opt/sandbox/templates.json` | 模板文件路径 |
+| `ARKLOOP_SANDBOX_EGRESS_INTERFACE` | `eth0` | Firecracker NAT 出口网卡 |
+| `ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX` | `arktap` | Firecracker TAP 前缀 |
+| `ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR` | `172.29.0.0/16` | Firecracker TAP 地址池 |
+| `ARKLOOP_SANDBOX_FIRECRACKER_DNS` | `1.1.1.1,8.8.8.8` | Firecracker guest DNS 列表 |
 | `ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH` | - | `docker-sandbox` profile 必填，宿主机用户态 Docker socket 路径 |
 
 ## 本地开发模式

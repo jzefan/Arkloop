@@ -45,6 +45,7 @@
 | sandbox.boot_timeout_s | int | platform | 30 | false | VM/container boot timeout (seconds) |
 | sandbox.credit_base_fee | int | platform | 1 | false | Fixed credit deduction per sandbox call to cover cold start/scheduling overhead |
 | sandbox.credit_rate_per_second | number | platform | 0.5 | false | Credit rate per second of sandbox execution duration |
+| sandbox.allow_egress | bool | platform | true | false | Whether Sandbox backends may access the public network |
 | sandbox.docker_image | string | platform | arkloop/sandbox-agent:latest | false | sandbox-agent image used by the Docker backend |
 | sandbox.idle_timeout_lite_s | int | platform | 180 | false | Idle timeout for Sandbox lite tier (seconds) |
 | sandbox.idle_timeout_pro_s | int | platform | 300 | false | Idle timeout for Sandbox pro tier (seconds) |

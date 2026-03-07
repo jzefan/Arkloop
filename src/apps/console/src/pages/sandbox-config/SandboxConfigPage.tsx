@@ -11,6 +11,7 @@ import { getPlatformSetting, setPlatformSetting } from '../../api/platform-setti
 const KEYS = {
   baseUrl:           'sandbox.base_url',
   provider:          'sandbox.provider',
+  allowEgress:       'sandbox.allow_egress',
   dockerImage:       'sandbox.docker_image',
   maxSessions:       'sandbox.max_sessions',
   agentPort:         'sandbox.agent_port',
@@ -31,6 +32,7 @@ type FormState = Record<keyof typeof KEYS, string>
 const DEFAULTS: FormState = {
   baseUrl: '',
   provider: 'firecracker',
+  allowEgress: 'true',
   dockerImage: 'arkloop/sandbox-agent:latest',
   maxSessions: '50',
   agentPort: '8080',
@@ -143,6 +145,13 @@ export function SandboxConfigPage() {
                     onChange={set('baseUrl')}
                     placeholder="http://sandbox:8002"
                   />
+                </div>
+                <div>
+                  <label className={labelCls}>{tc.fieldAllowEgress}</label>
+                  <select value={form.allowEgress} onChange={set('allowEgress')} className={inputCls}>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
                 </div>
                 {form.provider === 'docker' && (
                   <div>

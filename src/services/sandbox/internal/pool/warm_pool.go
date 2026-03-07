@@ -35,6 +35,7 @@ type Config struct {
 	GuestAgentPort     uint32
 	SnapshotStore      storage.SnapshotStore
 	Registry           *template.Registry
+	NetworkManager     *firecracker.NetworkManager
 	Logger             *logging.JSONLogger
 }
 
@@ -149,6 +150,9 @@ func (p *WarmPool) DestroyVM(proc *os.Process, socketDir string) {
 		_ = proc.Kill()
 		_, _ = proc.Wait()
 	}
+	if p.cfg.NetworkManager != nil && socketDir != "" {
+		_ = p.cfg.NetworkManager.Release(context.Background(), socketDir)
+	}
 	if socketDir != "" {
 		_ = os.RemoveAll(socketDir)
 	}
@@ -251,9 +255,15 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 
 	apiSocket := filepath.Join(socketDir, "api.sock")
 	vsockPath := filepath.Join(socketDir, "vsock.sock")
+	guestNetwork, err := p.cfg.NetworkManager.Setup(ctx, socketDir)
+	if err != nil {
+		_ = os.RemoveAll(socketDir)
+		return nil, fmt.Errorf("setup network: %w", err)
+	}
 
 	memPath, diskPath, err := p.cfg.SnapshotStore.Download(ctx, tmpl.ID)
 	if err != nil {
+		_ = p.cfg.NetworkManager.Release(context.Background(), socketDir)
 		_ = os.RemoveAll(socketDir)
 		return nil, fmt.Errorf("download snapshot: %w", err)
 	}
@@ -267,6 +277,7 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 	cleanup := func() {
 		_ = proc.Kill()
 		_, _ = proc.Wait()
+		_ = p.cfg.NetworkManager.Release(context.Background(), socketDir)
 		_ = os.RemoveAll(socketDir)
 	}
 
@@ -276,9 +287,17 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 	}
 
 	client := firecracker.NewClient(apiSocket)
-	if err := client.LoadSnapshot(ctx, diskPath, memPath, true); err != nil {
+	if err := client.LoadSnapshot(ctx, diskPath, memPath, false); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+	if err := client.UpdateNetworkInterface(ctx, guestNetwork.InterfaceID, firecracker.NetworkInterfaceUpdate{HostDevName: guestNetwork.HostDevice}); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("update snapshot network interface: %w", err)
+	}
+	if err := client.Resume(ctx); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("resume snapshot vm: %w", err)
 	}
 
 	s := &session.Session{
@@ -293,6 +312,15 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 	if err := session.WaitForAgent(ctx, s, snapshotAgentTimeout); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("guest agent not ready after snapshot restore: %w", err)
+	}
+	if err := s.ConfigureGuestNetwork(ctx, session.GuestNetworkRequest{
+		Interface:   guestNetwork.InterfaceName,
+		GuestCIDR:   guestNetwork.GuestCIDR,
+		Gateway:     guestNetwork.Gateway,
+		Nameservers: guestNetwork.Nameservers,
+	}); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("configure guest network after snapshot restore: %w", err)
 	}
 
 	p.totalCreated.Add(1)
@@ -315,9 +343,15 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 
 	apiSocket := filepath.Join(socketDir, "api.sock")
 	vsockPath := filepath.Join(socketDir, "vsock.sock")
+	guestNetwork, err := p.cfg.NetworkManager.Setup(ctx, socketDir)
+	if err != nil {
+		_ = os.RemoveAll(socketDir)
+		return nil, fmt.Errorf("setup network: %w", err)
+	}
 
 	proc, err := p.startFirecracker(apiSocket)
 	if err != nil {
+		_ = p.cfg.NetworkManager.Release(context.Background(), socketDir)
 		_ = os.RemoveAll(socketDir)
 		return nil, fmt.Errorf("start firecracker: %w", err)
 	}
@@ -325,6 +359,7 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 	cleanup := func() {
 		_ = proc.Kill()
 		_, _ = proc.Wait()
+		_ = p.cfg.NetworkManager.Release(context.Background(), socketDir)
 		_ = os.RemoveAll(socketDir)
 	}
 
@@ -340,6 +375,7 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 		firecracker.BootSource{KernelImagePath: kernelPath, BootArgs: firecracker.KernelArgs},
 		firecracker.Drive{DriveID: "rootfs", PathOnHost: rootfsPath, IsRootDevice: true, IsReadOnly: true},
 		firecracker.VsockDevice{GuestCID: 3, UDSPath: vsockPath},
+		&firecracker.NetworkInterface{IfaceID: guestNetwork.InterfaceID, HostDevName: guestNetwork.HostDevice, GuestMAC: guestNetwork.GuestMAC},
 	); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("configure microvm: %w", err)
@@ -361,6 +397,15 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 	if err := session.WaitForAgent(ctx, s, bootTimeout); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("guest agent not ready: %w", err)
+	}
+	if err := s.ConfigureGuestNetwork(ctx, session.GuestNetworkRequest{
+		Interface:   guestNetwork.InterfaceName,
+		GuestCIDR:   guestNetwork.GuestCIDR,
+		Gateway:     guestNetwork.Gateway,
+		Nameservers: guestNetwork.Nameservers,
+	}); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("configure guest network: %w", err)
 	}
 
 	p.totalCreated.Add(1)

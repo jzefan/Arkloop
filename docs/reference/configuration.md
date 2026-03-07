@@ -38,6 +38,7 @@
 | quota.runs_per_month | int | both | 999999 | false | 每月 run 数量配额 |
 | quota.tokens_per_month | int | both | 1000000 | false | 每月 token 配额 |
 | sandbox.agent_port | int | platform | 8080 | false | Sandbox Agent 监听端口 |
+| sandbox.allow_egress | bool | platform | true | false | Sandbox backend 是否允许访问外网 |
 | sandbox.base_url | string | platform |  | false | Sandbox Service 地址，Worker 通过此 URL 调用 Sandbox；为空则不注册 sandbox 工具 |
 | sandbox.boot_timeout_s | int | platform | 30 | false | VM/容器启动超时（秒） |
 | sandbox.credit_base_fee | int | platform | 1 | false | 每次 sandbox 调用的固定积分扣减，覆盖冷启动/调度开销 |

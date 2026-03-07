@@ -24,9 +24,9 @@ func bindShellDirs(t *testing.T, workspace string) {
 	shellHomeDir = home
 	shellTempDir = temp
 	t.Cleanup(func() {
-		shellWorkspaceDir = defaultShellCwd
-		shellHomeDir = defaultShellHome
-		shellTempDir = defaultShellTempDir
+		shellWorkspaceDir = defaultWorkloadCwd
+		shellHomeDir = defaultWorkloadHome
+		shellTempDir = defaultWorkloadTmp
 	})
 }
 
@@ -310,11 +310,17 @@ func TestShellControllerDebugSnapshotShowsTranscriptTruncation(t *testing.T) {
 	if !resp.Running {
 		t.Fatalf("expected command to keep running, got %#v", resp)
 	}
-	time.Sleep(500 * time.Millisecond)
-
-	debug, code, msg := controller.DebugSnapshot()
-	if code != "" {
-		t.Fatalf("debug snapshot failed: %s %s", code, msg)
+	var debug *shellapi.AgentDebugResponse
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		debug, code, msg = controller.DebugSnapshot()
+		if code != "" {
+			t.Fatalf("debug snapshot failed: %s %s", code, msg)
+		}
+		if debug.PendingOutputTruncated || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if !debug.PendingOutputTruncated {
 		t.Fatalf("expected pending truncation flag, got %#v", debug)

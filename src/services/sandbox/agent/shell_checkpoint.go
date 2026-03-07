@@ -299,6 +299,11 @@ func restoreCheckpointArchive(roots []checkpointRoot, archive []byte) error {
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
+			for _, root := range roots {
+				if err := chownTreeIfPossible(root.HostPath); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		if err != nil {

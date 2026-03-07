@@ -205,6 +205,15 @@ func RegisterTrackB(r *Registry) error {
 			Scope:       ScopePlatform,
 		},
 		{
+			Key:         "sandbox.allow_egress",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "Sandbox backend 是否允许访问外网",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+			EnvKeys:     []string{"ARKLOOP_SANDBOX_ALLOW_EGRESS"},
+		},
+		{
 			Key:         "sandbox.docker_image",
 			Type:        TypeString,
 			Default:     "arkloop/sandbox-agent:latest",

@@ -238,20 +238,30 @@ services:
     restart: unless-stopped
     devices:
       - /dev/kvm:/dev/kvm
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+    sysctls:
+      net.ipv4.ip_forward: "1"
     profiles:
       - firecracker
     environment:
       ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_SANDBOX_ADDR: "0.0.0.0:8002"
       ARKLOOP_SANDBOX_PROVIDER: "firecracker"
+      ARKLOOP_SANDBOX_ALLOW_EGRESS: "${ARKLOOP_SANDBOX_ALLOW_EGRESS:-true}"
       ARKLOOP_FIRECRACKER_BIN: "${ARKLOOP_FIRECRACKER_BIN:-/usr/bin/firecracker}"
       ARKLOOP_SANDBOX_KERNEL_IMAGE: "${ARKLOOP_SANDBOX_KERNEL_IMAGE:-/opt/sandbox/vmlinux}"
       ARKLOOP_SANDBOX_ROOTFS: "${ARKLOOP_SANDBOX_ROOTFS:-/opt/sandbox/rootfs.ext4}"
       ARKLOOP_SANDBOX_SOCKET_DIR: "/run/sandbox"
+      ARKLOOP_SANDBOX_EGRESS_INTERFACE: "${ARKLOOP_SANDBOX_EGRESS_INTERFACE:-eth0}"
+      ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX: "${ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX:-arktap}"
+      ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR: "${ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR:-172.29.0.0/16}"
+      ARKLOOP_SANDBOX_FIRECRACKER_DNS: "${ARKLOOP_SANDBOX_FIRECRACKER_DNS:-1.1.1.1,8.8.8.8}"
       ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
       ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT:-http://minio:9000}"
       ARKLOOP_S3_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-minioadmin}"
@@ -286,8 +296,8 @@ services:
       ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_SANDBOX_ADDR: "0.0.0.0:8002"
       ARKLOOP_SANDBOX_PROVIDER: "docker"
+      ARKLOOP_SANDBOX_ALLOW_EGRESS: "${ARKLOOP_SANDBOX_ALLOW_EGRESS:-true}"
       ARKLOOP_SANDBOX_DOCKER_IMAGE: "${ARKLOOP_SANDBOX_DOCKER_IMAGE:-arkloop/sandbox-agent:latest}"
-      ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS: "${ARKLOOP_SANDBOX_DOCKER_ALLOW_EGRESS:-true}"
       ARKLOOP_SANDBOX_DOCKER_NETWORK: "arkloop_sandbox_agent_egress"
       ARKLOOP_SANDBOX_SOCKET_DIR: "/run/sandbox"
       ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
@@ -299,6 +309,7 @@ services:
     networks:
       - default
       - sandbox_agent_egress
+      - sandbox_agent_internal
     volumes:
       - ${ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH:?请在 .env 中设置 ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH}:/run/docker-host.sock
       - sandbox_sockets:/run/sandbox
@@ -336,3 +347,6 @@ volumes:
 networks:
   sandbox_agent_egress:
     name: arkloop_sandbox_agent_egress
+  sandbox_agent_internal:
+    name: arkloop_sandbox_agent_internal
+    internal: true
