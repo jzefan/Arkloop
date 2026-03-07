@@ -37,6 +37,7 @@ import {
   listMessages,
   listRunEvents,
   listThreadRuns,
+  createThreadShare,
   isApiError,
   type MessageResponse,
   type ThreadResponse,
@@ -219,6 +220,8 @@ export function ChatPage() {
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [sharingMessageId, setSharingMessageId] = useState<string | null>(null)
+  const [sharedMessageId, setSharedMessageId] = useState<string | null>(null)
   const [pendingIncognito, setPendingIncognito] = useState(false)
 
   // web 引用来源：messageId -> WebSource[]
@@ -1412,8 +1415,25 @@ export function ChatPage() {
                     }
                     onShare={
                       msg.role === 'assistant' && !isStreaming && !sending && threadId && !privateThreadIds.has(threadId)
-                        ? () => setShareModalOpen(true)
+                        ? () => {
+                            if (sharingMessageId) return
+                            setSharingMessageId(msg.id)
+                            createThreadShare(accessToken, threadId, 'public')
+                              .then((share) => {
+                                const url = `${window.location.origin}/s/${share.token}`
+                                void navigator.clipboard.writeText(url)
+                                setSharingMessageId(null)
+                                setSharedMessageId(msg.id)
+                                setTimeout(() => setSharedMessageId(null), 1500)
+                              })
+                              .catch(() => {
+                                setSharingMessageId(null)
+                              })
+                          }
                         : undefined
+                    }
+                    shareState={
+                      sharingMessageId === msg.id ? 'sharing' : sharedMessageId === msg.id ? 'shared' : 'idle'
                     }
                     onReport={
                       msg.role === 'assistant' && !isStreaming && !sending && threadId

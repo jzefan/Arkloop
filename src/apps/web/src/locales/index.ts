@@ -177,6 +177,7 @@ export interface LocaleStrings {
   shareTurnCount: (n: number) => string
   shareCreateNew: string
   shareListEmpty: string
+  shareLinkCopied: string
   // share page
   sharePageLogin: string
   sharePageRegister: string
