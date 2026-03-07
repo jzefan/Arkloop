@@ -1,53 +1,48 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
-import { getHomeCards } from '@/lib/navigation';
-
-const cards = getHomeCards('zh');
 ---
 
 <BaseLayout title="Arkloop Developers" description="Arkloop 开发者门户，包含工程文档、API 参考与研究文章。" locale="zh" pathname="/" alternatePath="/en">
-  <section class="hero-grid">
-    <div class="hero-panel">
-      <p class="hero-kicker">Developer Portal</p>
-      <h1 class="hero-title">Arkloop 开发者站</h1>
-      <p class="hero-copy">高密度承载文档、API、Research 与开发资源。统一顶栏、统一主题、统一搜索入口。</p>
-      <div class="hero-actions">
+  <div class="home-shell">
+    <section class="home-landing">
+      <h1 class="home-title">Arkloop 开发者站</h1>
+      <p class="home-tagline">开源 AI Agent 平台，集自主执行、智能搜索与沙箱运行时于一体。</p>
+      <div class="home-actions">
         <a class="primary-button" href="/docs/guide">快速开始</a>
         <a class="secondary-button" href="/api">查看 API</a>
       </div>
-    </div>
-    <div class="hero-panel hero-panel-code">
-      <div>
-        <p class="hero-kicker">Quickstart</p>
-        <h2 class="home-card-title">Developer quickstart</h2>
-        <p class="hero-copy">几分钟内启动 Arkloop API、Worker 与前端应用。</p>
+      <nav class="home-aux-links">
+        <a href="/research">Research</a>
+        <span class="home-aux-sep">/</span>
+        <a href="/docs/guide">Docs</a>
+      </nav>
+    </section>
+
+    <section class="home-features">
+      <div class="home-feature">
+        <h3 class="home-feature-title">Agent Loop</h3>
+        <p class="home-feature-desc">多步自主执行，支持规划、推理与工具编排。跨会话持久化记忆。</p>
       </div>
-      <div class="snippet-shell">
-        <div class="snippet-header">
-          <span>bash</span>
-          <span>local setup</span>
-        </div>
-        <pre><code>cp .env.example .env
-
-docker compose up -d
-
-cd src/services/api &amp;&amp; go run ./cmd/api
-cd src/services/worker &amp;&amp; go run ./cmd/worker
-cd src/apps/web &amp;&amp; pnpm dev</code></pre>
+      <div class="home-feature">
+        <h3 class="home-feature-title">Multi-Model</h3>
+        <p class="home-feature-desc">集成 OpenAI、Anthropic 及任何兼容接口。基于优先级的路由，自动处理限流。</p>
       </div>
-    </div>
-  </section>
-
-  <section class="section-block">
-    <p class="section-kicker">Explore</p>
-    <div class="card-grid">
-      {cards.map((card) => (
-        <a class="home-card" href={card.href}>
-          <div class="home-card-visual"></div>
-          <h2 class="home-card-title">{card.title}</h2>
-          <p>{card.description}</p>
-        </a>
-      ))}
-    </div>
-  </section>
+      <div class="home-feature">
+        <h3 class="home-feature-title">沙箱执行</h3>
+        <p class="home-feature-desc">Firecracker 微虚拟机或 Docker 隔离环境。Python、数据分析、图表生成，严格资源限制。</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">浏览器自动化</h3>
+        <p class="home-feature-desc">无头浏览器作为原生 Agent 工具。基于 Playwright 的网页交互、数据提取与截图。</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">自定义 Personas</h3>
+        <p class="home-feature-desc">专用 Agent 配置：独立提示词、工具集与行为层级。支持 Lua 自定义执行器。</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">REST + SSE API</h3>
+        <p class="home-feature-desc">40+ 端点覆盖线程、运行、Personas 与模型供应商。单调事件序、游标续传。</p>
+      </div>
+    </section>
+  </div>
 </BaseLayout>
