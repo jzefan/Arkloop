@@ -138,6 +138,32 @@ func TestManagerClose_ReclaimsComputeSession(t *testing.T) {
 	}
 }
 
+func TestManagerExecCommand_RecreatesSessionAfterClose(t *testing.T) {
+	agent := &fakeAgent{}
+	pool := &fakePool{agent: agent}
+	mgr := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	shellMgr := NewManager(mgr, nil, nil, logging.NewJSONLogger("test", nil))
+
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err := shellMgr.ExecCommand(context.Background(), ExecCommandRequest{SessionID: "sess-1", Tier: "lite", OrgID: "org-a", Command: "pwd"})
+		if err != nil {
+			t.Fatalf("exec_command attempt %d failed: %v", attempt+1, err)
+		}
+		if resp.Status != StatusIdle {
+			t.Fatalf("expected idle response, got %#v", resp)
+		}
+		if attempt == 0 {
+			if err := shellMgr.Close(context.Background(), "sess-1", "org-a"); err != nil {
+				t.Fatalf("close failed: %v", err)
+			}
+		}
+	}
+
+	if pool.acquireCount != 2 {
+		t.Fatalf("expected session to be reacquired after close, got %d", pool.acquireCount)
+	}
+}
+
 func TestManagerClose_CheckpointFailureKeepsComputeSession(t *testing.T) {
 	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
 		if req.Action == "shell_checkpoint_export" {
