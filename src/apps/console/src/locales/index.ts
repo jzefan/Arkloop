@@ -49,6 +49,7 @@ export interface LocaleStrings {
     asrCredentials: string
     email: string
     titleSummarizer: string
+    tools: string
     sandboxConfig: string
     memoryConfig: string
     executionGovernance: string
@@ -184,6 +185,52 @@ export interface LocaleStrings {
       toastLoadFailed: string
       toastUpdated: string
       toastUpdateFailed: string
+    }
+    tools: {
+      title: string
+      sectionProvider: string
+      sectionConfig: string
+      sectionToolDescriptions: string
+      fieldScope: string
+      statusActive: string
+      statusInactive: string
+      statusUnconfigured: string
+      activate: string
+      deactivate: string
+      configure: string
+      clearCredential: string
+      modalTitle: string
+      fieldApiKey: string
+      fieldBaseUrl: string
+      fieldBaseUrlOptional: string
+      currentKeyPrefix: string
+      errApiKeyRequired: string
+      errBaseUrlRequired: string
+      cancel: string
+      save: string
+      clearTitle: string
+      clearMessage: (providerName: string) => string
+      clearConfirm: string
+      editDescription: string
+      resetDescription: string
+      resetDescriptionConfirm: string
+      descriptionPlaceholder: string
+      fieldAllowEgress: string
+      fieldDockerImage: string
+      fieldMaxSessions: string
+      fieldBootTimeout: string
+      fieldRefillInterval: string
+      fieldRefillConcurrency: string
+      fieldMaxLifetime: string
+      sectionPool: string
+      sectionTimeout: string
+      fieldCostPerCommit: string
+      fieldCostPerCommitHint: string
+      toastLoadFailed: string
+      toastUpdated: string
+      toastUpdateFailed: string
+      toastSaved: string
+      toastSaveFailed: string
     }
     agentConfigs: {
       title: string

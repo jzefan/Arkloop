@@ -109,15 +109,25 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	baseAllowlistNames := tools.ParseAllowlistNamesFromEnv()
 
-	ovCfg := openviking.Config{}
-	if configResolver != nil {
-		m, err := configResolver.ResolvePrefix(ctx, "openviking.", sharedconfig.Scope{})
-		if err != nil {
-			slog.WarnContext(ctx, "memory: config load failed, skipping", "err", err.Error())
-		} else {
-			ovCfg = openviking.Config{
-				BaseURL:    strings.TrimSpace(m["openviking.base_url"]),
-				RootAPIKey: strings.TrimSpace(m["openviking.root_api_key"]),
+	// 加载 platform 级 tool_provider_configs，用于 sandbox/memory 配置
+	// 解析优先级: env (显式设置) -> tool_provider_configs DB
+	platformProviders, err := toolprovider.LoadActivePlatformProviders(ctx, pool)
+	if err != nil {
+		slog.WarnContext(ctx, "tool_provider_configs: platform load failed", "err", err.Error())
+	}
+
+	// -- Memory (OpenViking) --
+	ovCfg := openviking.Config{
+		BaseURL:    strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL")),
+		RootAPIKey: strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY")),
+	}
+	if ovCfg.BaseURL == "" {
+		if p := findActiveProvider(platformProviders, "memory"); p != nil {
+			if p.BaseURL != nil {
+				ovCfg.BaseURL = strings.TrimSpace(*p.BaseURL)
+			}
+			if p.APIKeyValue != nil {
+				ovCfg.RootAPIKey = strings.TrimSpace(*p.APIKeyValue)
 			}
 		}
 	}
@@ -148,8 +158,13 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		slog.InfoContext(ctx, "browser: tools registered", "base_url", browserBaseURL)
 	}
 
-	sandboxBaseURL, _ := configResolver.Resolve(ctx, "sandbox.base_url", sharedconfig.Scope{})
-	sandboxBaseURL = strings.TrimRight(strings.TrimSpace(sandboxBaseURL), "/")
+	// -- Sandbox --
+	sandboxBaseURL := sandboxtool.BaseURLFromEnv()
+	if sandboxBaseURL == "" {
+		if p := findActiveProvider(platformProviders, "sandbox"); p != nil && p.BaseURL != nil {
+			sandboxBaseURL = strings.TrimRight(strings.TrimSpace(*p.BaseURL), "/")
+		}
+	}
 	if sandboxBaseURL != "" {
 		sandboxAuthToken := sandboxtool.AuthTokenFromEnv()
 		var sandboxExec tools.Executor = sandboxtool.NewToolExecutor(sandboxBaseURL, sandboxAuthToken)
@@ -274,4 +289,13 @@ func resolveSandboxBillingConfig(ctx context.Context, resolver sharedconfig.Reso
 		}
 	}
 	return cfg
+}
+
+func findActiveProvider(providers []toolprovider.ActiveProviderConfig, groupName string) *toolprovider.ActiveProviderConfig {
+	for i := range providers {
+		if providers[i].GroupName == groupName {
+			return &providers[i]
+		}
+	}
+	return nil
 }

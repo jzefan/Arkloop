@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import type { ToolCatalogGroup } from './tool-catalog'
 
 export type ToolProviderScope = 'org' | 'platform'
 
@@ -11,6 +12,7 @@ export type ToolProviderItem = {
   requires_api_key: boolean
   requires_base_url: boolean
   configured: boolean
+  config_json?: Record<string, unknown>
 }
 
 export type ToolProviderGroup = {
@@ -20,6 +22,11 @@ export type ToolProviderGroup = {
 
 export type ToolProvidersResponse = {
   groups: ToolProviderGroup[]
+}
+
+export type ToolProvidersAndCatalogResponse = {
+  providerGroups: ToolProviderGroup[]
+  catalogGroups: ToolCatalogGroup[]
 }
 
 export type UpdateToolProviderCredentialPayload = {
@@ -85,4 +92,32 @@ export async function clearToolProviderCredential(
     method: 'DELETE',
     accessToken,
   })
+}
+
+export async function updateToolProviderConfig(
+  group: string,
+  provider: string,
+  configJSON: Record<string, unknown>,
+  accessToken: string,
+  scope?: ToolProviderScope,
+): Promise<void> {
+  await apiFetch<void>(withScope(`/v1/tool-providers/${group}/${provider}/config`, scope), {
+    method: 'PUT',
+    body: JSON.stringify(configJSON),
+    accessToken,
+  })
+}
+
+export async function loadToolProvidersAndCatalog(
+  accessToken: string,
+  scope?: ToolProviderScope,
+): Promise<ToolProvidersAndCatalogResponse> {
+  const [providers, catalog] = await Promise.all([
+    listToolProviders(accessToken, scope),
+    apiFetch<{ groups: ToolCatalogGroup[] }>(withScope('/v1/tool-catalog', scope), { accessToken }),
+  ])
+  return {
+    providerGroups: providers.groups,
+    catalogGroups: catalog.groups,
+  }
 }

@@ -9,7 +9,6 @@ export interface LocaleStrings {
     agents: string
     models: string
     tools: string
-    memory: string
     runs: string
     settings: string
   }
@@ -45,6 +44,50 @@ export interface LocaleStrings {
     builtIn: string
     platformDefault: string
     hybrid: string
+  }
+  tools: {
+    title: string
+    sectionProvider: string
+    sectionConfig: string
+    sectionPool: string
+    sectionTimeout: string
+    sectionToolDescriptions: string
+    statusActive: string
+    statusInactive: string
+    statusUnconfigured: string
+    activate: string
+    deactivate: string
+    configure: string
+    clearCredential: string
+    clearTitle: string
+    clearMessage: (providerName: string) => string
+    clearConfirm: string
+    modalTitle: string
+    fieldApiKey: string
+    fieldBaseUrl: string
+    fieldBaseUrlOptional: string
+    currentKeyPrefix: string
+    errApiKeyRequired: string
+    errBaseUrlRequired: string
+    fieldAllowEgress: string
+    fieldDockerImage: string
+    fieldMaxSessions: string
+    fieldBootTimeout: string
+    fieldRefillInterval: string
+    fieldRefillConcurrency: string
+    fieldMaxLifetime: string
+    fieldCostPerCommit: string
+    fieldCostPerCommitHint: string
+    editDescription: string
+    resetDescription: string
+    descriptionPlaceholder: string
+    save: string
+    cancel: string
+    toastUpdated: string
+    toastUpdateFailed: string
+    toastSaved: string
+    toastSaveFailed: string
+    toastLoadFailed: string
   }
   common: {
     save: string

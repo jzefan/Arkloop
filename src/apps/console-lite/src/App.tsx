@@ -6,7 +6,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { ToolsPage } from './pages/ToolsPage'
-import { MemoryPage } from './pages/MemoryPage'
 import { RunsPage } from './pages/RunsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import {
@@ -68,7 +67,7 @@ function App() {
         <Route path="agents" element={<AgentsPage />} />
         <Route path="models" element={<ModelsPage />} />
         <Route path="tools" element={<ToolsPage />} />
-        <Route path="memory" element={<MemoryPage />} />
+        <Route path="memory" element={<Navigate to="/tools" replace />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

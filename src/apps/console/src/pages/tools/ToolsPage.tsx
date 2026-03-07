@@ -3,13 +3,15 @@ import { useOutletContext } from 'react-router-dom'
 import {
   Loader2, Save, CheckCircle2, Ban, Pencil, Trash2, RotateCcw,
 } from 'lucide-react'
-import type { LiteOutletContext } from '../layouts/LiteLayout'
-import { PageHeader } from '../components/PageHeader'
-import { Modal } from '../components/Modal'
-import { FormField } from '../components/FormField'
-import { ConfirmDialog } from '../components/ConfirmDialog'
-import { useToast } from '../components/useToast'
-import { useLocale } from '../contexts/LocaleContext'
+import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
+import { PageHeader } from '../../components/PageHeader'
+import { Badge } from '../../components/Badge'
+import { Modal } from '../../components/Modal'
+import { FormField } from '../../components/FormField'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { useToast } from '../../components/useToast'
+import { useLocale } from '../../contexts/LocaleContext'
+import { isApiError } from '../../api'
 import {
   loadToolProvidersAndCatalog,
   activateToolProvider,
@@ -17,14 +19,14 @@ import {
   updateToolProviderCredential,
   clearToolProviderCredential,
   updateToolProviderConfig,
-  updateToolDescription,
-  deleteToolDescription,
+  type ToolProviderScope,
   type ToolProviderGroup,
   type ToolProviderItem,
-  type ToolCatalogGroup,
-  type ToolCatalogItem,
-} from '../api/tool-providers'
+} from '../../api/tool-providers'
+import type { ToolCatalogGroup, ToolCatalogItem } from '../../api/tool-catalog'
+import { updateToolDescription, deleteToolDescription } from '../../api/tool-catalog'
 
+// sandbox provider default config
 const SANDBOX_DEFAULTS: Record<string, string> = {
   allow_egress: 'true',
   image: 'arkloop/sandbox-agent:latest',
@@ -42,6 +44,7 @@ const SANDBOX_DEFAULTS: Record<string, string> = {
   'timeout.max_lifetime_s': '1800',
 }
 
+// memory provider default config
 const MEMORY_DEFAULTS: Record<string, string> = {
   cost_per_commit: '0',
 }
@@ -74,30 +77,35 @@ function flatSet(obj: Record<string, unknown>, dotPath: string, value: string): 
 }
 
 export function ToolsPage() {
-  const { accessToken } = useOutletContext<LiteOutletContext>()
+  const { accessToken } = useOutletContext<ConsoleOutletContext>()
   const { addToast } = useToast()
   const { t } = useLocale()
-  const tc = t.tools
+  const tc = t.pages.tools
 
+  const [scope, setScope] = useState<ToolProviderScope>('platform')
   const [providerGroups, setProviderGroups] = useState<ToolProviderGroup[]>([])
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [mutating, setMutating] = useState(false)
 
+  // credential edit modal
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [baseURL, setBaseURL] = useState('')
   const [editError, setEditError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // clear credential dialog
   const [clearTarget, setClearTarget] = useState<EditTarget | null>(null)
   const [clearing, setClearing] = useState(false)
 
+  // config form (sandbox/memory config_json)
   const [configForm, setConfigForm] = useState<Record<string, string>>({})
   const [configSaved, setConfigSaved] = useState<Record<string, string>>({})
   const [configSaving, setConfigSaving] = useState(false)
 
+  // description edit
   const [descEdit, setDescEdit] = useState<DescEditTarget | null>(null)
   const [descText, setDescText] = useState('')
   const [descSaving, setDescSaving] = useState(false)
@@ -107,7 +115,7 @@ export function ToolsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await loadToolProvidersAndCatalog(accessToken)
+      const data = await loadToolProvidersAndCatalog(accessToken, scope)
       setProviderGroups(data.providerGroups)
       setCatalogGroups(data.catalogGroups)
       if (firstLoadRef.current && data.providerGroups.length > 0) {
@@ -119,10 +127,11 @@ export function ToolsPage() {
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, tc.toastLoadFailed])
+  }, [accessToken, scope, addToast, tc.toastLoadFailed])
 
   useEffect(() => { void fetchAll() }, [fetchAll])
 
+  // load config form when selected group or provider data changes
   useEffect(() => {
     const grp = providerGroups.find((g) => g.group_name === selectedGroup)
     if (!grp) return
@@ -152,7 +161,7 @@ export function ToolsPage() {
     if (mutating) return
     setMutating(true)
     try {
-      await activateToolProvider(groupName, providerName, accessToken)
+      await activateToolProvider(groupName, providerName, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       await fetchAll()
     } catch {
@@ -160,13 +169,13 @@ export function ToolsPage() {
     } finally {
       setMutating(false)
     }
-  }, [mutating, accessToken, fetchAll, addToast, tc])
+  }, [mutating, accessToken, scope, fetchAll, addToast, tc])
 
   const handleDeactivate = useCallback(async (groupName: string, providerName: string) => {
     if (mutating) return
     setMutating(true)
     try {
-      await deactivateToolProvider(groupName, providerName, accessToken)
+      await deactivateToolProvider(groupName, providerName, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       await fetchAll()
     } catch {
@@ -174,7 +183,7 @@ export function ToolsPage() {
     } finally {
       setMutating(false)
     }
-  }, [mutating, accessToken, fetchAll, addToast, tc])
+  }, [mutating, accessToken, scope, fetchAll, addToast, tc])
 
   const openEdit = useCallback((group: string, provider: ToolProviderItem) => {
     setEditTarget({ group, provider })
@@ -208,22 +217,22 @@ export function ToolsPage() {
     setSaving(true)
     setEditError('')
     try {
-      await updateToolProviderCredential(editTarget.group, editTarget.provider.provider_name, payload, accessToken)
+      await updateToolProviderCredential(editTarget.group, editTarget.provider.provider_name, payload, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       setEditTarget(null)
       await fetchAll()
-    } catch {
-      addToast(tc.toastUpdateFailed, 'error')
+    } catch (err) {
+      setEditError(isApiError(err) ? err.message : tc.toastUpdateFailed)
     } finally {
       setSaving(false)
     }
-  }, [editTarget, apiKey, baseURL, accessToken, fetchAll, addToast, tc])
+  }, [editTarget, apiKey, baseURL, accessToken, scope, fetchAll, addToast, tc])
 
   const handleClear = useCallback(async () => {
     if (!clearTarget) return
     setClearing(true)
     try {
-      await clearToolProviderCredential(clearTarget.group, clearTarget.provider.provider_name, accessToken)
+      await clearToolProviderCredential(clearTarget.group, clearTarget.provider.provider_name, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       setClearTarget(null)
       await fetchAll()
@@ -232,7 +241,7 @@ export function ToolsPage() {
     } finally {
       setClearing(false)
     }
-  }, [clearTarget, accessToken, fetchAll, addToast, tc])
+  }, [clearTarget, accessToken, scope, fetchAll, addToast, tc])
 
   const handleSaveConfig = useCallback(async () => {
     if (!activeProvider || !hasConfig) return
@@ -242,7 +251,7 @@ export function ToolsPage() {
       for (const [k, v] of Object.entries(configForm)) {
         configJSON = flatSet(configJSON, k, v)
       }
-      await updateToolProviderConfig(selectedGroup, activeProvider.provider_name, configJSON, accessToken)
+      await updateToolProviderConfig(selectedGroup, activeProvider.provider_name, configJSON, accessToken, scope)
       setConfigSaved({ ...configForm })
       addToast(tc.toastSaved, 'success')
     } catch {
@@ -250,13 +259,13 @@ export function ToolsPage() {
     } finally {
       setConfigSaving(false)
     }
-  }, [activeProvider, hasConfig, configForm, selectedGroup, accessToken, addToast, tc])
+  }, [activeProvider, hasConfig, configForm, selectedGroup, accessToken, scope, addToast, tc])
 
   const handleSaveDescription = useCallback(async () => {
     if (!descEdit) return
     setDescSaving(true)
     try {
-      await updateToolDescription(descEdit.toolName, descText, accessToken)
+      await updateToolDescription(descEdit.toolName, descText, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       setDescEdit(null)
       await fetchAll()
@@ -265,17 +274,17 @@ export function ToolsPage() {
     } finally {
       setDescSaving(false)
     }
-  }, [descEdit, descText, accessToken, fetchAll, addToast, tc])
+  }, [descEdit, descText, accessToken, scope, fetchAll, addToast, tc])
 
   const handleResetDescription = useCallback(async (toolName: string) => {
     try {
-      await deleteToolDescription(toolName, accessToken)
+      await deleteToolDescription(toolName, accessToken, scope)
       addToast(tc.toastUpdated, 'success')
       await fetchAll()
     } catch {
       addToast(tc.toastUpdateFailed, 'error')
     }
-  }, [accessToken, fetchAll, addToast, tc])
+  }, [accessToken, scope, fetchAll, addToast, tc])
 
   const inputCls =
     'w-full rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none focus:border-[var(--c-border-focus)]'
@@ -289,7 +298,22 @@ export function ToolsPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader title={tc.title} />
+      <PageHeader
+        title={tc.title}
+        actions={(
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--c-text-muted)]">{tc.fieldScope}</span>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as ToolProviderScope)}
+              className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] focus:outline-none"
+            >
+              <option value="platform">platform</option>
+              <option value="org">org</option>
+            </select>
+          </div>
+        )}
+      />
 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
@@ -298,7 +322,7 @@ export function ToolsPage() {
       ) : (
         <div className="flex flex-1 overflow-hidden">
           {/* Left: group list */}
-          <div className="w-[160px] shrink-0 overflow-y-auto border-r border-[var(--c-border-console)] p-2">
+          <div className="w-[180px] shrink-0 overflow-y-auto border-r border-[var(--c-border-console)] p-2">
             <div className="flex flex-col gap-[3px]">
               {providerGroups.map((g) => {
                 const active = g.group_name === selectedGroup
@@ -337,14 +361,17 @@ export function ToolsPage() {
                           <span className="font-mono text-xs text-[var(--c-text-primary)]">{p.provider_name}</span>
                           <div className="flex items-center gap-1.5">
                             {p.is_active ? (
-                              <span className="rounded-full bg-[var(--c-status-success-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-status-success-text)]">{tc.statusActive}</span>
+                              <Badge variant="success">{tc.statusActive}</Badge>
                             ) : (
-                              <span className="rounded-full bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]">{tc.statusInactive}</span>
+                              <Badge variant="neutral">{tc.statusInactive}</Badge>
                             )}
                             {p.is_active && !p.configured && (
-                              <span className="rounded-full bg-[var(--c-status-warning-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-status-warning-text)]">{tc.statusUnconfigured}</span>
+                              <Badge variant="warning">{tc.statusUnconfigured}</Badge>
                             )}
                           </div>
+                          {p.base_url && (
+                            <span className="font-mono text-[10px] text-[var(--c-text-muted)]">{p.base_url}</span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1">
                           {!p.is_active ? (
@@ -576,6 +603,7 @@ export function ToolsPage() {
   )
 }
 
+// Sandbox-specific config form
 function SandboxConfigSection({
   form, onChange, inputCls, labelCls, sectionCls, tc, providerName,
 }: {
@@ -677,6 +705,7 @@ function SandboxConfigSection({
   )
 }
 
+// Tool description row
 function ToolDescriptionRow({
   tool, tc, onEdit, onReset,
 }: {

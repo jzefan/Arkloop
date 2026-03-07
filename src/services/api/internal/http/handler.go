@@ -55,26 +55,27 @@ type HandlerConfig struct {
 	RunEventRepo         *data.RunEventRepository
 	AuditWriter          *audit.Writer
 
-	LlmCredentialsRepo      *data.LlmCredentialsRepository
-	LlmRoutesRepo           *data.LlmRoutesRepository
-	SecretsRepo             *data.SecretsRepository
-	AsrCredentialsRepo      *data.AsrCredentialsRepository
-	MCPConfigsRepo          *data.MCPConfigsRepository
-	ToolProviderConfigsRepo *data.ToolProviderConfigsRepository
-	PersonasRepo            *data.PersonasRepository
-	IPRulesRepo             *data.IPRulesRepository
-	APIKeysRepo             *data.APIKeysRepository
-	OrgInvitationsRepo      *data.OrgInvitationsRepository
-	TeamRepo                *data.TeamRepository
-	ProjectRepo             *data.ProjectRepository
-	WebhookRepo             *data.WebhookEndpointRepository
-	PromptTemplatesRepo     *data.PromptTemplateRepository
-	AgentConfigsRepo        *data.AgentConfigRepository
-	PlansRepo               *data.PlanRepository
-	SubscriptionsRepo       *data.SubscriptionRepository
-	EntitlementsRepo        *data.EntitlementsRepository
-	EntitlementService      *entitlement.Service
-	UsageRepo               *data.UsageRepository
+	LlmCredentialsRepo           *data.LlmCredentialsRepository
+	LlmRoutesRepo                *data.LlmRoutesRepository
+	SecretsRepo                  *data.SecretsRepository
+	AsrCredentialsRepo           *data.AsrCredentialsRepository
+	MCPConfigsRepo               *data.MCPConfigsRepository
+	ToolProviderConfigsRepo      *data.ToolProviderConfigsRepository
+	ToolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
+	PersonasRepo                 *data.PersonasRepository
+	IPRulesRepo                  *data.IPRulesRepository
+	APIKeysRepo                  *data.APIKeysRepository
+	OrgInvitationsRepo           *data.OrgInvitationsRepository
+	TeamRepo                     *data.TeamRepository
+	ProjectRepo                  *data.ProjectRepository
+	WebhookRepo                  *data.WebhookEndpointRepository
+	PromptTemplatesRepo          *data.PromptTemplateRepository
+	AgentConfigsRepo             *data.AgentConfigRepository
+	PlansRepo                    *data.PlanRepository
+	SubscriptionsRepo            *data.SubscriptionRepository
+	EntitlementsRepo             *data.EntitlementsRepository
+	EntitlementService           *entitlement.Service
+	UsageRepo                    *data.UsageRepository
 
 	FeatureFlagsRepo   *data.FeatureFlagRepository
 	FeatureFlagService *featureflag.Service
@@ -244,7 +245,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/tool-catalog",
-		toolCatalogEntry(cfg.AuthService, cfg.OrgMembershipRepo),
+		toolCatalogEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolDescriptionOverridesRepo),
+	)
+	mux.HandleFunc(
+		"/v1/tool-catalog/",
+		toolCatalogItemEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolDescriptionOverridesRepo),
 	)
 	mux.HandleFunc(
 		"/v1/tool-providers",
