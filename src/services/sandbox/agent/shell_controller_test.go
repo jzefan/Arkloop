@@ -134,6 +134,87 @@ func TestShellControllerWriteStdinInteractive(t *testing.T) {
 	}
 }
 
+func TestShellControllerExecCommandReturnsPromptBeforeDeadline(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewShellController()
+	defer closeController(controller)
+
+	warmup, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{Command: "printf ready", YieldTimeMs: 500, TimeoutMs: 5000})
+	_ = drainShellOutput(t, controller, warmup, code, msg)
+
+	started := time.Now()
+	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
+		Command:     "python3 -c \"import sys,time; sys.stdout.write('name: '); sys.stdout.flush(); time.sleep(2)\"",
+		YieldTimeMs: 1000,
+		TimeoutMs:   5000,
+	})
+	if code != "" {
+		t.Fatalf("exec_command failed: %s %s", code, msg)
+	}
+	if !resp.Running {
+		t.Fatalf("expected command to keep running, got %#v", resp)
+	}
+	if elapsed := time.Since(started); elapsed >= 700*time.Millisecond {
+		t.Fatalf("prompt should return before deadline, got %v", elapsed)
+	}
+	if !strings.Contains(resp.Output, "name: ") {
+		t.Fatalf("expected prompt output, got %q", resp.Output)
+	}
+}
+
+func TestShellControllerExecCommandCoalescesShortCommandOutput(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewShellController()
+	defer closeController(controller)
+
+	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
+		Command:     "printf 'first\n'; sleep 0.05; printf 'second\n'",
+		YieldTimeMs: 600,
+		TimeoutMs:   5000,
+	})
+	if code != "" {
+		t.Fatalf("exec_command failed: %s %s", code, msg)
+	}
+	if resp.Running {
+		t.Fatalf("expected short command to finish in first response, got %#v", resp)
+	}
+	if !strings.Contains(resp.Output, "first") || !strings.Contains(resp.Output, "second") {
+		t.Fatalf("expected coalesced output, got %q", resp.Output)
+	}
+
+	again, code, msg := controller.WriteStdin(shellapi.AgentWriteStdinRequest{YieldTimeMs: 50})
+	if code != "" {
+		t.Fatalf("poll failed: %s %s", code, msg)
+	}
+	if again.Output != "" {
+		t.Fatalf("expected drained output after first response, got %q", again.Output)
+	}
+}
+
+func TestShellControllerExecCommandCollectsTrailingOutputBeforeReturn(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewShellController()
+	defer closeController(controller)
+
+	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
+		Command:     "python3 -c \"import sys,time; sys.stdout.write('head\\n'); sys.stdout.flush(); time.sleep(0.05); sys.stdout.write('tail\\n'); sys.stdout.flush()\"",
+		YieldTimeMs: 600,
+		TimeoutMs:   5000,
+	})
+	if code != "" {
+		t.Fatalf("exec_command failed: %s %s", code, msg)
+	}
+	if resp.Running {
+		t.Fatalf("expected trailing output to be merged before return, got %#v", resp)
+	}
+	if !strings.Contains(resp.Output, "head") || !strings.Contains(resp.Output, "tail") {
+		t.Fatalf("expected trailing output in first response, got %q", resp.Output)
+	}
+}
+
 func TestShellControllerDebugSnapshotKeepsTranscriptAfterDrain(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)

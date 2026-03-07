@@ -27,6 +27,8 @@ const (
 	defaultShellPath      = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	defaultShellLang      = "C.UTF-8"
 	defaultControlTimeout = 5000
+	quietOutputWindow     = 100 * time.Millisecond
+	trailingOutputGrace   = 100 * time.Millisecond
 	timeoutKillDelay      = 2 * time.Second
 )
 
@@ -59,6 +61,12 @@ type shellCommand struct {
 	suppress    bool
 	timer       *time.Timer
 	timedOut    bool
+}
+
+type deliverySnapshot struct {
+	response   *shellapi.AgentSessionResponse
+	nextCursor uint64
+	endCursor  uint64
 }
 
 func NewShellController() *ShellController {
@@ -188,7 +196,7 @@ func (c *ShellController) runControlCommand(command, cwd string, timeoutMs int) 
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 	for {
 		c.mu.Lock()
-		resp, _ := c.snapshotLocked(startCursor)
+		resp := c.snapshotLocked(startCursor).response
 		if !resp.Running {
 			c.mu.Unlock()
 			return resp, nil
@@ -249,63 +257,91 @@ func (c *ShellController) startCommand(command, cwd string, timeoutMs int, suppr
 }
 
 func (c *ShellController) waitForDelivery(yieldTimeMs int) (*shellapi.AgentSessionResponse, string, string) {
+	deadline := time.Now().Add(time.Duration(shellapi.NormalizeYieldTimeMs(yieldTimeMs)) * time.Millisecond)
 	c.mu.Lock()
-	resp, nextCursor := c.snapshotLocked(c.pendingCursor)
+	snapshot := c.snapshotLocked(c.pendingCursor)
 	ch := c.updateCh
-	shouldWait := resp.Running && resp.Output == ""
-	if !shouldWait && nextCursor > c.pendingCursor {
-		c.pendingCursor = nextCursor
-	}
-	c.mu.Unlock()
+	shouldWait := snapshot.response.Running && snapshot.response.Output == ""
 	if !shouldWait {
+		if snapshot.nextCursor > c.pendingCursor {
+			c.pendingCursor = snapshot.nextCursor
+		}
+		resp := snapshot.response
+		c.mu.Unlock()
 		return resp, "", ""
 	}
-	return c.waitWithCursor(yieldTimeMs, ch)
+	cursor := c.pendingCursor
+	observedEnd := snapshot.endCursor
+	c.mu.Unlock()
+	return c.waitWithCursor(deadline, ch, cursor, observedEnd)
 }
 
-func (c *ShellController) waitWithCursor(yieldTimeMs int, initial <-chan struct{}) (*shellapi.AgentSessionResponse, string, string) {
-	deadline := time.Now().Add(time.Duration(shellapi.NormalizeYieldTimeMs(yieldTimeMs)) * time.Millisecond)
+func (c *ShellController) waitWithCursor(deadline time.Time, initial <-chan struct{}, cursor, observedEnd uint64) (*shellapi.AgentSessionResponse, string, string) {
 	ch := initial
+	var lastOutputAt time.Time
+	var exitObservedAt time.Time
 	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			c.mu.Lock()
-			resp, nextCursor := c.snapshotLocked(c.pendingCursor)
-			if nextCursor > c.pendingCursor {
-				c.pendingCursor = nextCursor
+		waitFor := time.Until(deadline)
+		if !exitObservedAt.IsZero() {
+			graceUntil := exitObservedAt.Add(trailingOutputGrace)
+			if !lastOutputAt.IsZero() && lastOutputAt.After(exitObservedAt) {
+				graceUntil = lastOutputAt.Add(trailingOutputGrace)
 			}
-			c.mu.Unlock()
-			return resp, "", ""
+			remainingGrace := time.Until(graceUntil)
+			if remainingGrace <= 0 {
+				return c.finishDelivery(cursor)
+			}
+			if remainingGrace < waitFor {
+				waitFor = remainingGrace
+			}
+		} else if !lastOutputAt.IsZero() {
+			quietUntil := lastOutputAt.Add(quietOutputWindow)
+			remainingQuiet := time.Until(quietUntil)
+			if remainingQuiet <= 0 {
+				return c.finishDelivery(cursor)
+			}
+			if remainingQuiet < waitFor {
+				waitFor = remainingQuiet
+			}
+		}
+		if waitFor <= 0 {
+			return c.finishDelivery(cursor)
 		}
 		select {
 		case <-ch:
+			now := time.Now()
 			c.mu.Lock()
-			resp, nextCursor := c.snapshotLocked(c.pendingCursor)
-			if resp.Output != "" || !resp.Running || resp.Status == shellapi.StatusClosed {
-				if nextCursor > c.pendingCursor {
-					c.pendingCursor = nextCursor
-				}
-				c.mu.Unlock()
-				return resp, "", ""
+			snapshot := c.snapshotLocked(cursor)
+			if snapshot.endCursor > observedEnd {
+				observedEnd = snapshot.endCursor
+				lastOutputAt = now
+			}
+			if !snapshot.response.Running || snapshot.response.Status == shellapi.StatusClosed {
+				exitObservedAt = now
 			}
 			ch = c.updateCh
 			c.mu.Unlock()
-		case <-time.After(remaining):
-			c.mu.Lock()
-			resp, nextCursor := c.snapshotLocked(c.pendingCursor)
-			if nextCursor > c.pendingCursor {
-				c.pendingCursor = nextCursor
-			}
-			c.mu.Unlock()
-			return resp, "", ""
+		case <-time.After(waitFor):
+			return c.finishDelivery(cursor)
 		}
 	}
 }
 
-func (c *ShellController) snapshotLocked(cursor uint64) (*shellapi.AgentSessionResponse, uint64) {
+func (c *ShellController) finishDelivery(cursor uint64) (*shellapi.AgentSessionResponse, string, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	snapshot := c.snapshotLocked(cursor)
+	if snapshot.nextCursor > c.pendingCursor {
+		c.pendingCursor = snapshot.nextCursor
+	}
+	return snapshot.response, "", ""
+}
+
+func (c *ShellController) snapshotLocked(cursor uint64) deliverySnapshot {
+	endCursor := c.pendingOutput.EndCursor()
 	chunk, nextCursor, truncated, ok := c.pendingOutput.ReadFrom(cursor, shellapi.ReadChunkBytes)
 	if !ok {
-		nextCursor = c.pendingOutput.EndCursor()
+		nextCursor = endCursor
 	}
 	resp := &shellapi.AgentSessionResponse{
 		Status:    c.status,
@@ -319,7 +355,7 @@ func (c *ShellController) snapshotLocked(cursor uint64) (*shellapi.AgentSessionR
 	if resp.Status == "" {
 		resp.Status = shellapi.StatusIdle
 	}
-	return resp, nextCursor
+	return deliverySnapshot{response: resp, nextCursor: nextCursor, endCursor: endCursor}
 }
 
 func (c *ShellController) debugSnapshotLocked() *shellapi.AgentDebugResponse {
@@ -466,10 +502,12 @@ func (c *ShellController) processCurrentLocked() {
 	if !current.startSeen {
 		idx := strings.Index(raw, current.beginMarker)
 		if idx == -1 {
-			keep := len(current.beginMarker)
-			if len(raw) > keep {
-				current.raw = raw[len(raw)-keep:]
+			keep := trailingMarkerPrefixLen(raw, current.beginMarker)
+			if keep == 0 {
+				current.raw = ""
+				return
 			}
+			current.raw = raw[len(raw)-keep:]
 			return
 		}
 		raw = raw[idx+len(current.beginMarker):]
@@ -484,11 +522,8 @@ func (c *ShellController) processCurrentLocked() {
 	for {
 		idx := strings.Index(raw, current.endPrefix)
 		if idx == -1 {
-			keep := len(current.endPrefix)
+			keep := trailingMarkerPrefixLen(raw, current.endPrefix)
 			safeLen := len(raw) - keep
-			if safeLen < 0 {
-				safeLen = 0
-			}
 			c.appendOutputLocked(raw[:safeLen], current.suppress)
 			current.raw = raw[safeLen:]
 			return
@@ -511,6 +546,19 @@ func (c *ShellController) processCurrentLocked() {
 		}
 		return
 	}
+}
+
+func trailingMarkerPrefixLen(text, marker string) int {
+	limit := len(text)
+	if len(marker) < limit {
+		limit = len(marker)
+	}
+	for size := limit; size > 0; size-- {
+		if strings.HasPrefix(marker, text[len(text)-size:]) {
+			return size
+		}
+	}
+	return 0
 }
 
 func (c *ShellController) finishCommandLocked(current *shellCommand, line string) {

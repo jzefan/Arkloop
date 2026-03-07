@@ -47,7 +47,7 @@ var PythonExecuteLlmSpec = llm.ToolSpec{
 
 var ExecCommandLlmSpec = llm.ToolSpec{
 	Name:        "exec_command",
-	Description: stringPtr("run a command in the default persistent shell session inside the isolated sandbox. The session is reused automatically inside the same run, so do not pass session_id. Use this tool to start shell work. For long-running commands, call exec_command first, then keep using write_stdin with the returned session_id. Write files meant for the final answer to /tmp/output/ so they appear in artifacts."),
+	Description: stringPtr("run a command in the default persistent shell session inside the isolated sandbox. The session is reused automatically inside the same run, so do not pass session_id. Short commands usually finish in this first response. Only switch to write_stdin when the result still shows running=true or when you need to send stdin. Write files meant for the final answer to /tmp/output/ so they appear in artifacts."),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -79,7 +79,7 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 
 var WriteStdinLlmSpec = llm.ToolSpec{
 	Name:        "write_stdin",
-	Description: stringPtr("send stdin to, or poll output from, a running shell session. Pass the session_id returned by exec_command. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output."),
+	Description: stringPtr("send stdin to, or poll output from, a running shell session. Pass the session_id returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output."),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
