@@ -1,53 +1,48 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
-import { getHomeCards } from '@/lib/navigation';
-
-const cards = getHomeCards('en');
 ---
 
 <BaseLayout title="Arkloop Developers" description="Arkloop developer portal for docs, API reference, and research." locale="en" pathname="/en" alternatePath="/">
-  <section class="hero-grid">
-    <div class="hero-panel">
-      <p class="hero-kicker">Developer Portal</p>
-      <h1 class="hero-title">Arkloop Developers</h1>
-      <p class="hero-copy">A high-density home for documentation, API reference, research, and developer resources under one shared shell.</p>
-      <div class="hero-actions">
+  <div class="home-shell">
+    <section class="home-landing">
+      <h1 class="home-title">Arkloop Developers</h1>
+      <p class="home-tagline">Open-source AI agent platform with autonomous execution, intelligent search, and sandboxed runtime.</p>
+      <div class="home-actions">
         <a class="primary-button" href="/en/docs/guide">Get started</a>
         <a class="secondary-button" href="/en/api">View API</a>
       </div>
-    </div>
-    <div class="hero-panel hero-panel-code">
-      <div>
-        <p class="hero-kicker">Quickstart</p>
-        <h2 class="home-card-title">Developer quickstart</h2>
-        <p class="hero-copy">Bring up Arkloop infrastructure, the API service, the worker, and the web frontend.</p>
+      <nav class="home-aux-links">
+        <a href="/research">Research</a>
+        <span class="home-aux-sep">/</span>
+        <a href="/en/docs/guide">Docs</a>
+      </nav>
+    </section>
+
+    <section class="home-features">
+      <div class="home-feature">
+        <h3 class="home-feature-title">Agent Loop</h3>
+        <p class="home-feature-desc">Multi-step autonomous execution with planning, reasoning, and tool orchestration. Persistent memory across conversations.</p>
       </div>
-      <div class="snippet-shell">
-        <div class="snippet-header">
-          <span>bash</span>
-          <span>local setup</span>
-        </div>
-        <pre><code>cp .env.example .env
-
-docker compose up -d
-
-cd src/services/api &amp;&amp; go run ./cmd/api
-cd src/services/worker &amp;&amp; go run ./cmd/worker
-cd src/apps/web &amp;&amp; pnpm dev</code></pre>
+      <div class="home-feature">
+        <h3 class="home-feature-title">Multi-Model</h3>
+        <p class="home-feature-desc">Integrates OpenAI, Anthropic, and any compatible provider. Priority-based routing with rate limit handling.</p>
       </div>
-    </div>
-  </section>
-
-  <section class="section-block">
-    <p class="section-kicker">Explore</p>
-    <div class="card-grid">
-      {cards.map((card) => (
-        <a class="home-card" href={card.href}>
-          <div class="home-card-visual"></div>
-          <h2 class="home-card-title">{card.title}</h2>
-          <p>{card.description}</p>
-        </a>
-      ))}
-    </div>
-  </section>
+      <div class="home-feature">
+        <h3 class="home-feature-title">Sandboxed Execution</h3>
+        <p class="home-feature-desc">Isolated environments via Firecracker microVMs or Docker. Python, data analysis, chart generation with strict resource limits.</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">Browser Automation</h3>
+        <p class="home-feature-desc">Headless browser control as a native agent tool. Web interaction, data extraction, and screenshot capture via Playwright.</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">Custom Personas</h3>
+        <p class="home-feature-desc">Specialized agent configs with distinct prompts, tool sets, and behavioral tiers. Supports Lua-based custom executors.</p>
+      </div>
+      <div class="home-feature">
+        <h3 class="home-feature-title">REST + SSE API</h3>
+        <p class="home-feature-desc">40+ endpoints covering threads, runs, personas, and providers. Monotonic event ordering with cursor-based continuation.</p>
+      </div>
+    </section>
+  </div>
 </BaseLayout>
