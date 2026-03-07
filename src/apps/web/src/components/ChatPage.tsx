@@ -16,7 +16,14 @@ import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
-import { buildMessageThinkingFromRunEvents, selectFreshRunEvents } from '../runEventProcessing'
+import {
+  applyCodeExecutionToolCall,
+  applyCodeExecutionToolResult,
+  buildMessageCodeExecutionsFromRunEvents,
+  buildMessageThinkingFromRunEvents,
+  selectFreshRunEvents,
+  shouldReplayMessageCodeExecutions,
+} from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
 import {
   createMessage,
@@ -156,6 +163,29 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
     normalized.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
   }
   return normalized
+}
+
+function matchCodeExecutionTarget(
+  current: Pick<CodeExecution, 'id' | 'sessionId'>,
+  target: Pick<CodeExecution, 'id' | 'sessionId'>,
+): boolean {
+  if (current.sessionId && target.sessionId) {
+    return current.sessionId === target.sessionId
+  }
+  return current.id === target.id
+}
+
+function patchCodeExecutionList(
+  executions: CodeExecution[],
+  target: CodeExecution,
+): { next: CodeExecution[]; matched: boolean } {
+  let matched = false
+  const next = executions.map((execution) => {
+    if (!matchCodeExecutionTarget(execution, target)) return execution
+    matched = true
+    return { ...execution, ...target }
+  })
+  return { next, matched }
 }
 
 export function ChatPage() {
@@ -373,16 +403,25 @@ export function ChatPage() {
           }
         }
 
-        // 服务端回放：若本地无思考缓存，则回放最新 run 的事件重建
+        // 服务端回放：补齐最新一轮的 thinking / 代码执行缓存
         const latest = runs[0]
         const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
-        if (latest && latest.status !== 'running' && lastAssistant && !thinkingMap.has(lastAssistant.id)) {
+        const replayThinkingNeeded = !!(lastAssistant && !thinkingMap.has(lastAssistant.id))
+        const replayCodeExecNeeded = !!(lastAssistant && shouldReplayMessageCodeExecutions(codeExecMap.get(lastAssistant.id)))
+        if (latest && latest.status !== 'running' && lastAssistant && (replayThinkingNeeded || replayCodeExecNeeded)) {
           try {
             const replayEvents = await listRunEvents(accessToken, latest.run_id, { follow: false })
-            const thinking = buildMessageThinkingFromRunEvents(replayEvents)
-            if (thinking) {
-              thinkingMap.set(lastAssistant.id, thinking)
-              writeMessageThinking(lastAssistant.id, thinking)
+            if (replayThinkingNeeded) {
+              const thinking = buildMessageThinkingFromRunEvents(replayEvents)
+              if (thinking) {
+                thinkingMap.set(lastAssistant.id, thinking)
+                writeMessageThinking(lastAssistant.id, thinking)
+              }
+            }
+            if (replayCodeExecNeeded) {
+              const replayExecs = buildMessageCodeExecutionsFromRunEvents(replayEvents)
+              codeExecMap.set(lastAssistant.id, replayExecs)
+              writeMessageCodeExecutions(lastAssistant.id, replayExecs)
             }
           } catch {
             // 回放失败不影响主流程
@@ -598,16 +637,10 @@ export function ChatPage() {
         const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
         const llmName = typeof obj.llm_name === 'string' ? obj.llm_name : undefined
-        if (toolName === 'python_execute' || toolName === 'exec_command') {
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
-          const language: CodeExecution['language'] = toolName === 'python_execute' ? 'python' : 'shell'
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const code = typeof args?.code === 'string' ? args.code
-            : typeof args?.command === 'string' ? args.command
-            : undefined
-          const entry: CodeExecution = { id: callId, language, code }
-          // ref 同步记录，不受 React 批处理影响
-          currentRunCodeExecutionsRef.current = [...currentRunCodeExecutionsRef.current, entry]
+        const codeExecutionCall = applyCodeExecutionToolCall(currentRunCodeExecutionsRef.current, event)
+        if (codeExecutionCall.appended) {
+          const entry: CodeExecution = codeExecutionCall.appended
+          currentRunCodeExecutionsRef.current = codeExecutionCall.nextExecutions
           const activeSeg = activeSegmentIdRef.current
           // 搜索段内的代码执行路由到 topLevel，由 SearchTimeline 统一渲染
           const isSearchSeg = activeSeg && searchStepsRef.current.some((s) => s.id === activeSeg)
@@ -707,27 +740,21 @@ export function ChatPage() {
               currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
             }
           }
-          // 将 stdout/exitCode 回填到对应的 code execution 记录
-          const resultCallId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
-          const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
-          const stdout = typeof result?.stdout === 'string' ? result.stdout : ''
-          const stderr = typeof result?.stderr === 'string' ? result.stderr : ''
-          const fallbackOutput = typeof result?.output === 'string' ? result.output : ''
-          const rawOutput = exitCode != null && exitCode !== 0
-            ? (stderr || stdout || fallbackOutput)
-            : (stdout || fallbackOutput)
-          const output = rawOutput || undefined
-          if (resultCallId && (output || exitCode != null)) {
-            const patchExec = (exec: CodeExecution): CodeExecution =>
-              exec.id === resultCallId ? { ...exec, output, exitCode } : exec
-            currentRunCodeExecutionsRef.current = currentRunCodeExecutionsRef.current.map(patchExec)
-            setTopLevelCodeExecutions((prev) => prev.map(patchExec))
-            setSegments((prev) =>
-              prev.map((s) => ({
-                ...s,
-                codeExecutions: s.codeExecutions.map(patchExec),
-              })),
-            )
+          const codeExecutionResult = applyCodeExecutionToolResult(currentRunCodeExecutionsRef.current, event)
+          if (codeExecutionResult.updated) {
+            currentRunCodeExecutionsRef.current = codeExecutionResult.nextExecutions
+            const target: CodeExecution = codeExecutionResult.updated
+            if (codeExecutionResult.appended) {
+              setTopLevelCodeExecutions((prev) => [...prev, target])
+            } else {
+              setTopLevelCodeExecutions((prev) => patchCodeExecutionList(prev, target).next)
+              setSegments((prev) =>
+                prev.map((segment) => ({
+                  ...segment,
+                  codeExecutions: patchCodeExecutionList(segment.codeExecutions, target).next,
+                })),
+              )
+            }
           }
         }
         continue
@@ -790,10 +817,8 @@ export function ChatPage() {
               writeMessageArtifacts(lastAssistant.id, runArtifacts)
               setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
             }
-            if (runCodeExecs.length > 0) {
-              writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
-              setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
-            }
+            writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
+            setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
             if (runThinking) {
               writeMessageThinking(lastAssistant.id, runThinking)
               setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
@@ -918,10 +943,8 @@ export function ChatPage() {
           writeMessageArtifacts(lastAssistant.id, runArtifacts)
           setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
         }
-        if (runCodeExecs.length > 0) {
-          writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
-          setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
-        }
+        writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
+        setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
         if (runThinking) {
           writeMessageThinking(lastAssistant.id, runThinking)
           setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
@@ -1353,17 +1376,19 @@ export function ChatPage() {
                   : undefined
                 const timelineSteps = timeline?.steps ?? []
                 const timelineSources = timeline?.sources ?? (resolvedSources ?? [])
+                const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
+                const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
 
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
                   {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
-                  {(timelineSteps.length > 0 || (msg.role === 'assistant' && messageCodeExecutionsMap.has(msg.id))) && (
+                  {(timelineSteps.length > 0 || hasMessageCodeExecutions) && (
                     <div style={{ marginBottom: '12px' }}>
                       <SearchTimeline
                         steps={timelineSteps}
                         sources={timelineSources}
                         isComplete
-                        codeExecutions={msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined}
+                        codeExecutions={messageCodeExecutions}
                         onOpenCodeExecution={openCodePanel}
                       />
                     </div>
