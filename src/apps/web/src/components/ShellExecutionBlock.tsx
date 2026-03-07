@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Check, X as XIcon, Loader2 } from 'lucide-react'
 import { useLocale } from '../contexts/LocaleContext'
 
@@ -23,57 +24,66 @@ function resolveStatus(exitCode: number | undefined, isStreaming: boolean): Stat
   return 'success'
 }
 
+const expandTransition = { duration: 0.25, ease: [0.4, 0, 0.2, 1] as const }
+
 export function ShellExecutionBlock({ code, output, exitCode, isStreaming = false }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const { t } = useLocale()
 
   const status = resolveStatus(exitCode, isStreaming)
   const preview = extractCommandPreview(code)
-  const expandable = !!(code || output)
+  const expandable = !!(code || output || status === 'running')
 
   return (
     <div
       style={{
-        borderRadius: '7px',
-        border: '0.5px solid var(--c-border-subtle)',
-        background: 'var(--c-bg-page)',
+        display: 'flex',
+        flexDirection: 'column',
         width: 'fit-content',
         maxWidth: '100%',
       }}
     >
-      {/* header */}
       <button
         type="button"
         onClick={() => expandable && setExpanded((p) => !p)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        title={code?.trim() || undefined}
         style={{
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          gap: '6px',
-          padding: '6px 10px',
-          background: 'none',
+          gap: '5px',
+          padding: '6px 10px 6px 7px',
+          borderRadius: '6px',
+          background: expanded || hovered ? 'var(--c-bg-sub)' : 'transparent',
           border: 'none',
           cursor: expandable ? 'pointer' : 'default',
-          width: '100%',
+          width: 'fit-content',
+          maxWidth: '100%',
+          transition: 'background 160ms ease',
         }}
       >
-        <ChevronRight
-          size={13}
-          color="var(--c-text-muted)"
-          strokeWidth={2}
-          style={{
-            flexShrink: 0,
-            transition: 'transform 200ms ease',
-            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-          }}
-        />
+        <motion.div
+          animate={{ rotate: expanded ? 90 : 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          style={{ display: 'flex', flexShrink: 0 }}
+        >
+          <ChevronRight
+            size={13}
+            color={hovered || expanded ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'}
+            strokeWidth={2}
+          />
+        </motion.div>
         <span
           style={{
-            fontSize: '12px',
-            color: 'var(--c-text-secondary)',
+            fontSize: '11px',
+            color: expanded ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
             fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
+            lineHeight: '16px',
           }}
         >
           {preview || t.shellRan}
@@ -81,46 +91,71 @@ export function ShellExecutionBlock({ code, output, exitCode, isStreaming = fals
         <StatusBadge status={status} />
       </button>
 
-      {/* collapsible body */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateRows: expanded ? '1fr' : '0fr',
-          transition: 'grid-template-rows 200ms ease',
-        }}
-      >
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '0 10px 8px' }}>
-            {output && output.trim() ? (
-              <pre
-                style={{
-                  margin: 0,
-                  color: status === 'failed' ? '#ef4444' : 'var(--c-text-tertiary)',
-                  fontSize: '11px',
-                  lineHeight: '1.5',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  maxHeight: '240px',
-                  overflowY: 'auto',
-                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-                }}
-              >
-                {output}
-              </pre>
-            ) : status !== 'running' ? (
-              <span
-                style={{
-                  fontSize: '11px',
-                  color: 'var(--c-text-muted)',
-                  fontStyle: 'italic',
-                }}
-              >
-                {t.shellNoOutput}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={expandTransition}
+            style={{ overflow: 'hidden' }}
+          >
+            <div
+              style={{
+                marginLeft: '18px',
+                marginTop: '1px',
+                borderRadius: '6px',
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-page)',
+                padding: '3px 8px',
+                maxWidth: 'min(100%, 720px)',
+              }}
+            >
+              {output && output.trim() ? (
+                <pre
+                  style={{
+                    margin: 0,
+                    color: status === 'failed' ? '#ef4444' : 'var(--c-text-tertiary)',
+                    fontSize: '10.5px',
+                    lineHeight: '1.4',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '240px',
+                    overflowY: 'auto',
+                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+                  }}
+                >
+                  {output.trimEnd()}
+                </pre>
+              ) : status === 'running' ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: '20px',
+                    padding: '2px 0',
+                  }}
+                >
+                  <Loader2 size={12} className="animate-spin" style={{ color: 'var(--c-text-muted)' }} />
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'block',
+                    fontSize: '10.5px',
+                    lineHeight: '13px',
+                    color: 'var(--c-text-muted)',
+                    fontStyle: 'italic',
+                  }}
+                >
+                  {t.shellNoOutput}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -130,22 +165,22 @@ function StatusBadge({ status }: { status: Status }) {
 
   if (status === 'running') {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
-        <Loader2 size={11} className="animate-spin" />
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: '10px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
+        <Loader2 size={10} className="animate-spin" />
       </span>
     )
   }
   if (status === 'failed') {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: '#ef4444', flexShrink: 0 }}>
-        <XIcon size={11} strokeWidth={2.5} />
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: '10px', color: '#ef4444', flexShrink: 0 }}>
+        <XIcon size={10} strokeWidth={2.5} />
         {t.shellFailed}
       </span>
     )
   }
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
-      <Check size={11} strokeWidth={2.5} />
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: '10px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
+      <Check size={10} strokeWidth={2.5} />
       {t.shellSuccess}
     </span>
   )

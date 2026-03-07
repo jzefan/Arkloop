@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Code2, Terminal } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ChevronRight, Loader2, Code2, Terminal } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
 
@@ -136,34 +137,48 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
       >
         {isStreaming ? (
           <Loader2 size={13} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
-        ) : expanded ? (
-          <ChevronDown size={13} style={{ flexShrink: 0 }} />
         ) : (
-          <ChevronRight size={13} style={{ flexShrink: 0 }} />
+          <motion.div
+            animate={{ rotate: expanded ? 90 : 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            style={{ display: 'flex', flexShrink: 0 }}
+          >
+            <ChevronRight size={13} />
+          </motion.div>
         )}
         <span style={{ textAlign: 'left' }}>{label}</span>
       </button>
 
-      {expanded && (content || (codeExecutions && codeExecutions.length > 0)) && (
-        <div
-          style={{
-            padding: '0 12px 10px',
-            borderTop: '0.5px solid var(--c-border-subtle)',
-            paddingTop: '8px',
-          }}
-        >
-          {content && <MarkdownRenderer content={content} disableMath />}
-          {codeExecutions && codeExecutions.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
-              {codeExecutions.map((ce) =>
-                ce.language === 'shell'
-                  ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
-                  : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
+      <AnimatePresence initial={false}>
+        {expanded && (content || (codeExecutions && codeExecutions.length > 0)) && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div
+              style={{
+                padding: '0 12px 10px',
+                borderTop: '0.5px solid var(--c-border-subtle)',
+                paddingTop: '8px',
+              }}
+            >
+              {content && <MarkdownRenderer content={content} disableMath />}
+              {codeExecutions && codeExecutions.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
+                  {codeExecutions.map((ce) =>
+                    ce.language === 'shell'
+                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
+                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
