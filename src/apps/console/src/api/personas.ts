@@ -16,6 +16,9 @@ export type Persona = {
   preferred_credential?: string
   executor_type: string
   executor_config: Record<string, unknown>
+  user_selectable?: boolean
+  selector_name?: string
+  selector_order?: number
 }
 
 export type CreatePersonaRequest = {

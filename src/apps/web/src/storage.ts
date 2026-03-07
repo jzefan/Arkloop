@@ -126,27 +126,48 @@ export function writeThemeToStorage(theme: Theme): void {
 
 export type SelectedTier = 'Normal' | 'Search'
 
-export function readSelectedTierFromStorage(): SelectedTier {
-  if (!canUseLocalStorage()) return 'Normal'
+export const SEARCH_PERSONA_KEY = 'extended-search'
+
+const DEFAULT_PERSONA_KEY = 'normal'
+
+export function readSelectedPersonaKeyFromStorage(): string {
+  if (!canUseLocalStorage()) return DEFAULT_PERSONA_KEY
   try {
     const raw = localStorage.getItem(SELECTED_TIER_KEY)
-    if (raw === 'Normal' || raw === 'Search') return raw
-    // 兼容旧值迁移
-    if (raw === 'Ultra') return 'Normal'
-    if (raw === 'Extended Search') return 'Search'
-    return 'Normal'
+    if (!raw) return DEFAULT_PERSONA_KEY
+    if (raw === 'Normal' || raw === 'Ultra') return migrate(DEFAULT_PERSONA_KEY)
+    if (raw === 'Search' || raw === 'Extended Search') return migrate(SEARCH_PERSONA_KEY)
+    return raw
   } catch {
-    return 'Normal'
+    return DEFAULT_PERSONA_KEY
+  }
+
+  function migrate(key: string): string {
+    try { localStorage.setItem(SELECTED_TIER_KEY, key) } catch { /* ignore */ }
+    return key
   }
 }
 
-export function writeSelectedTierToStorage(tier: SelectedTier): void {
+export function writeSelectedPersonaKeyToStorage(key: string): void {
   if (!canUseLocalStorage()) return
   try {
-    localStorage.setItem(SELECTED_TIER_KEY, tier)
+    localStorage.setItem(SELECTED_TIER_KEY, key)
   } catch {
     // 忽略存储失败
   }
+}
+
+/** @deprecated use readSelectedPersonaKeyFromStorage */
+export function readSelectedTierFromStorage(): SelectedTier {
+  const key = readSelectedPersonaKeyFromStorage()
+  if (key === SEARCH_PERSONA_KEY) return 'Search'
+  return 'Normal'
+}
+
+/** @deprecated use writeSelectedPersonaKeyToStorage */
+export function writeSelectedTierToStorage(tier: SelectedTier): void {
+  const key = tier === 'Search' ? SEARCH_PERSONA_KEY : DEFAULT_PERSONA_KEY
+  writeSelectedPersonaKeyToStorage(key)
 }
 
 export type WebSource = {

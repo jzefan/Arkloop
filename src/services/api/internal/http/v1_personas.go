@@ -56,6 +56,9 @@ type personaResponse struct {
 	ExecutorType        string          `json:"executor_type"`
 	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 	Source              string          `json:"source"`
+	UserSelectable      bool            `json:"user_selectable"`
+	SelectorName        *string         `json:"selector_name,omitempty"`
+	SelectorOrder       *int            `json:"selector_order,omitempty"`
 }
 
 func personasEntry(
@@ -363,6 +366,11 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 		description = &trimmed
 	}
 
+	var selectorName *string
+	if trimmed := strings.TrimSpace(s.SelectorName); trimmed != "" {
+		selectorName = &trimmed
+	}
+
 	return personaResponse{
 		ID:                 "builtin:" + s.ID + ":" + s.Version,
 		OrgID:              nil,
@@ -378,5 +386,8 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 		ExecutorType:       executorType,
 		ExecutorConfigJSON: executorConfig,
 		Source:             "builtin",
+		UserSelectable:     s.UserSelectable,
+		SelectorName:       selectorName,
+		SelectorOrder:      s.SelectorOrder,
 	}
 }

@@ -279,6 +279,7 @@ export const en: LocaleStrings = {
       colDisplayName: 'Display Name',
       colVersion: 'Version',
       colActive: 'Active',
+      colUserSelectable: 'Selectable',
       colCreatedAt: 'Created At',
       empty: 'No personas',
       modalTitleCreate: 'Add Persona',

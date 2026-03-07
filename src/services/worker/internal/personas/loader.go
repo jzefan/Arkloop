@@ -167,6 +167,10 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		return Definition{}, fmt.Errorf("prompt.md must not be empty: %s", promptPath)
 	}
 
+	userSelectable, _ := asBool(obj["user_selectable"])
+	selectorName := asOptionalString(obj["selector_name"])
+	selectorOrder, _ := asOptionalPositiveInt(obj["selector_order"], "selector_order")
+
 	return Definition{
 		ID:                  personaID,
 		Version:             version,
@@ -181,6 +185,9 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		PreferredCredential: preferredCredential,
 		AgentConfigName:     agentConfigName,
 		TitleSummarizer:     titleSummarizer,
+		UserSelectable:      userSelectable,
+		SelectorName:        selectorName,
+		SelectorOrder:       selectorOrder,
 	}, nil
 }
 
@@ -535,6 +542,17 @@ func asOptionalFloat64(value any, label string) (*float64, error) {
 		return nil, fmt.Errorf("%s must be a number", label)
 	}
 	return &f, nil
+}
+
+func asBool(value any) (bool, error) {
+	if value == nil {
+		return false, nil
+	}
+	b, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("expected bool, got %T", value)
+	}
+	return b, nil
 }
 
 const defaultTitleSummarizeMaxTokens = 20
