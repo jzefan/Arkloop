@@ -59,6 +59,12 @@ type Props = { onLoggedIn: (accessToken: string) => void }
 
 const isEmailStr = (v: string) => v.includes('@')
 const TRANSITION = '0.42s cubic-bezier(0.4,0,0.2,1)'
+const passwordEncoder = new TextEncoder()
+
+function registerPasswordMeetsPolicy(password: string): boolean {
+	const passwordBytes = passwordEncoder.encode(password).length
+	return passwordBytes >= 8 && passwordBytes <= 72 && /\p{L}/u.test(password) && /\p{N}/u.test(password)
+}
 
 const inputCls = 'w-full rounded-[10px] bg-[var(--c-bg-input)] text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)]'
 const inputStyle = {
@@ -327,7 +333,7 @@ export function AuthPage({ onLoggedIn }: Props) {
     if (phase === 'otp-email') return otpEmail.trim().length > 0 && captchaOk
     if (phase === 'otp-code') return otpEmail.trim().length > 0 && otpCode.length === 6
     if (phase === 'register') {
-      if (!regLogin.trim() || !regEmail.trim() || regPassword.length < 8) return false
+      if (!regLogin.trim() || !regEmail.trim() || !registerPasswordMeetsPolicy(regPassword)) return false
       if (inviteRequired && !regInviteCode.trim()) return false
       return captchaOk
     }
@@ -565,6 +571,7 @@ export function AuthPage({ onLoggedIn }: Props) {
                       <EyeIcon open={showPassword} />
                     </button>
                   </div>
+                  <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', marginTop: '6px', paddingLeft: '2px' }}>{t.registerPasswordHint}</div>
                 </div>
                 <div>
                   <label style={labelStyle}>{inviteRequired ? t.enterInviteCode : t.enterInviteCodeOptional}</label>

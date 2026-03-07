@@ -11,13 +11,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"mime"
 	"net"
+	nethttp "net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -367,7 +370,16 @@ func writeJSON(conn net.Conn, v any) {
 }
 
 func fetchArtifacts() FetchArtifactsResult {
-	entries, err := os.ReadDir(artifactOutputDir)
+	return fetchArtifactsFromDir(artifactOutputDir)
+}
+
+func fetchArtifactsFromDir(dir string) FetchArtifactsResult {
+	resolvedDir := dir
+	if evalDir, err := filepath.EvalSymlinks(dir); err == nil {
+		resolvedDir = evalDir
+	}
+
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return FetchArtifactsResult{}
 	}
@@ -409,13 +421,13 @@ func fetchArtifacts() FetchArtifactsResult {
 			break
 		}
 
-		fullPath := filepath.Join(artifactOutputDir, safeName)
+		fullPath := filepath.Join(dir, safeName)
 		// 校验解析后的路径仍在 output 目录内
 		resolved, err := filepath.EvalSymlinks(fullPath)
 		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(resolved, artifactOutputDir) {
+		if !isWithinDir(resolvedDir, resolved) {
 			continue
 		}
 
@@ -424,7 +436,7 @@ func fetchArtifacts() FetchArtifactsResult {
 			continue
 		}
 
-		mimeType := detectMimeType(safeName)
+		mimeType := detectMimeType(data)
 		artifacts = append(artifacts, ArtifactEntry{
 			Filename: safeName,
 			Size:     int64(len(data)),
@@ -440,6 +452,19 @@ func fetchArtifacts() FetchArtifactsResult {
 	return FetchArtifactsResult{Artifacts: artifacts, Truncated: truncated}
 }
 
+func isWithinDir(dir string, path string) bool {
+	cleanDir := filepath.Clean(dir)
+	cleanPath := filepath.Clean(path)
+	rel, err := filepath.Rel(cleanDir, cleanPath)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return !strings.HasPrefix(rel, "..") && rel != ""
+}
+
 func readFileLimited(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -449,14 +474,37 @@ func readFileLimited(path string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, limit+1))
 }
 
-func detectMimeType(filename string) string {
-	ext := filepath.Ext(filename)
-	if ext == "" {
+func detectMimeType(data []byte) string {
+	if len(data) == 0 {
 		return "application/octet-stream"
 	}
-	mimeType := mime.TypeByExtension(ext)
+	if isSVGContent(data) {
+		return "image/svg+xml"
+	}
+	mimeType := nethttp.DetectContentType(data)
+	if parsed, _, err := mime.ParseMediaType(mimeType); err == nil && parsed != "" {
+		mimeType = parsed
+	}
 	if mimeType == "" {
 		return "application/octet-stream"
 	}
 	return mimeType
+}
+
+func isSVGContent(data []byte) bool {
+	trimmed := bytes.TrimLeft(data, "\ufeff\t\n\f\r ")
+	if len(trimmed) == 0 {
+		return false
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(trimmed))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			return strings.EqualFold(element.Name.Local, "svg")
+		}
+	}
 }
