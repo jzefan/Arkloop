@@ -320,6 +320,7 @@ export interface LocaleStrings {
       colDisplayName: string
       colVersion: string
       colActive: string
+      colUserSelectable: string
       colCreatedAt: string
       // empty state
       empty: string

@@ -21,6 +21,9 @@ type RepoPersona struct {
 	ExecutorType    string            `yaml:"executor_type"`
 	ExecutorConfig  map[string]any    `yaml:"executor_config"`
 	PromptMD        string            `yaml:"-"`
+	UserSelectable  bool              `yaml:"user_selectable"`
+	SelectorName    string            `yaml:"selector_name"`
+	SelectorOrder   *int              `yaml:"selector_order"`
 }
 
 // LoadFromDir 扫描指定目录下的所有 persona 子目录，读取 persona.yaml 和 prompt.md。
