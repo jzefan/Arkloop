@@ -144,7 +144,7 @@ export function CodeExecutionPanel({ execution, onClose }: Props) {
                 overflow: 'auto',
               }}
             >
-              {execution.output}
+              {execution.output.trimEnd()}
             </pre>
           </div>
         )}

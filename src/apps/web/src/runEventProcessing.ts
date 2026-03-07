@@ -16,6 +16,11 @@ type CodeExecutionToolResultPatch = {
   appended?: CodeExecutionRef
 }
 
+type CodeExecutionListPatch = {
+  next: CodeExecutionRef[]
+  matched: boolean
+}
+
 function pickToolName(data: unknown): string {
   if (!data || typeof data !== 'object') return ''
   const raw = (data as { tool_name?: unknown }).tool_name
@@ -231,6 +236,19 @@ export function buildMessageCodeExecutionsFromRunEvents(events: RunEvent[]): Cod
     }
   }
   return executions
+}
+
+export function patchCodeExecutionList(
+  executions: CodeExecutionRef[],
+  target: CodeExecutionRef,
+): CodeExecutionListPatch {
+  let matched = false
+  const next = executions.map((execution) => {
+    if (execution.id !== target.id) return execution
+    matched = true
+    return { ...execution, ...target }
+  })
+  return { next, matched }
 }
 
 export function shouldReplayMessageCodeExecutions(executions: CodeExecutionRef[] | null | undefined): boolean {

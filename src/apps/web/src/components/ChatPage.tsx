@@ -20,6 +20,7 @@ import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
   buildMessageCodeExecutionsFromRunEvents,
+  patchCodeExecutionList,
   buildMessageThinkingFromRunEvents,
   selectFreshRunEvents,
   shouldReplayMessageCodeExecutions,
@@ -164,29 +165,6 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
     normalized.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
   }
   return normalized
-}
-
-function matchCodeExecutionTarget(
-  current: Pick<CodeExecution, 'id' | 'sessionId'>,
-  target: Pick<CodeExecution, 'id' | 'sessionId'>,
-): boolean {
-  if (current.sessionId && target.sessionId) {
-    return current.sessionId === target.sessionId
-  }
-  return current.id === target.id
-}
-
-function patchCodeExecutionList(
-  executions: CodeExecution[],
-  target: CodeExecution,
-): { next: CodeExecution[]; matched: boolean } {
-  let matched = false
-  const next = executions.map((execution) => {
-    if (!matchCodeExecutionTarget(execution, target)) return execution
-    matched = true
-    return { ...execution, ...target }
-  })
-  return { next, matched }
 }
 
 export function ChatPage() {
@@ -976,6 +954,12 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, assistantDraft, segments])
 
+  // COP 代码执行列表：新 item 添加时自动滚动到底部
+  useEffect(() => {
+    const el = copCodeExecScrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [topLevelCodeExecutions.length])
+
   // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
   const scrollToBottom = useCallback(() => {
     isAtBottomRef.current = true
@@ -1523,7 +1507,7 @@ export function ChatPage() {
                     </div>
                   )}
                   {dedupedTopLevelCodeExecutions.length > 0 && (
-                    <div style={{ paddingLeft: '24px', paddingTop: '6px' }}>
+                    <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', maxHeight: '60vh', overflowY: 'auto' }}>
                       {dedupedTopLevelCodeExecutions.map((ce, idx) => {
                         const isLast = idx === dedupedTopLevelCodeExecutions.length - 1
                         const showTimeline = dedupedTopLevelCodeExecutions.length >= 2

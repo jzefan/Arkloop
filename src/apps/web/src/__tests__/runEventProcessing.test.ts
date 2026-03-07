@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMessageCodeExecutionsFromRunEvents,
   buildMessageThinkingFromRunEvents,
+  patchCodeExecutionList,
   selectFreshRunEvents,
   shouldReplayMessageCodeExecutions,
 } from '../runEventProcessing'
@@ -260,6 +261,53 @@ describe('shouldReplayMessageCodeExecutions', () => {
       output: 'Linux',
       sessionId: 'sess_1',
     }])).toBe(false)
+  })
+})
+
+describe('patchCodeExecutionList', () => {
+  it('同一 shell session 下更新后续命令时，不应覆盖之前的命令', () => {
+    const executions = [
+      {
+        id: 'call_exec_1',
+        language: 'shell' as const,
+        code: 'pwd',
+        output: '/tmp',
+        sessionId: 'sess_1',
+      },
+      {
+        id: 'call_exec_2',
+        language: 'shell' as const,
+        code: 'ls',
+        sessionId: 'sess_1',
+      },
+    ]
+
+    const result = patchCodeExecutionList(executions, {
+      id: 'call_exec_2',
+      language: 'shell',
+      code: 'ls',
+      output: 'a.txt',
+      exitCode: 0,
+      sessionId: 'sess_1',
+    })
+
+    expect(result.next).toEqual([
+      {
+        id: 'call_exec_1',
+        language: 'shell',
+        code: 'pwd',
+        output: '/tmp',
+        sessionId: 'sess_1',
+      },
+      {
+        id: 'call_exec_2',
+        language: 'shell',
+        code: 'ls',
+        output: 'a.txt',
+        exitCode: 0,
+        sessionId: 'sess_1',
+      },
+    ])
   })
 })
 
