@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Loader2, Code2, Terminal } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { ShellExecutionBlock } from './ShellExecutionBlock'
 
 export type CodeExecution = {
   id: string
@@ -94,9 +95,11 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
         <MarkdownRenderer content={content} disableMath />
         {codeExecutions && codeExecutions.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
-            {codeExecutions.map((ce) => (
-              <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
-            ))}
+            {codeExecutions.map((ce) =>
+              ce.language === 'shell'
+                ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
+                : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
+            )}
           </div>
         )}
       </div>
@@ -151,9 +154,11 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
           {content && <MarkdownRenderer content={content} disableMath />}
           {codeExecutions && codeExecutions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
-              {codeExecutions.map((ce) => (
-                <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
-              ))}
+              {codeExecutions.map((ce) =>
+                ce.language === 'shell'
+                  ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
+                  : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => onOpenCodeExecution?.(ce)} />
+              )}
             </div>
           )}
         </div>

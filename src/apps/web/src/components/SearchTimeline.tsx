@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
 import type { WebSource } from '../storage'
 import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
+import { ShellExecutionBlock } from './ShellExecutionBlock'
 
 export type SearchStep = {
   id: string
@@ -244,16 +245,18 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                   <Fragment key={step.id}>
                     {step.kind === 'finished' && codeExecutions && codeExecutions.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '14px', position: 'relative' }}>
-                        {codeExecutions.map((ce) => (
-                          <CodeExecutionCard
-                            key={ce.id}
-                            language={ce.language}
-                            code={ce.code}
-                            output={ce.output}
-                            exitCode={ce.exitCode}
-                            onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
-                          />
-                        ))}
+                        {codeExecutions.map((ce) =>
+                          ce.language === 'shell'
+                            ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
+                            : <CodeExecutionCard
+                                key={ce.id}
+                                language={ce.language}
+                                code={ce.code}
+                                output={ce.output}
+                                exitCode={ce.exitCode}
+                                onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
+                              />
+                        )}
                       </div>
                     )}
                     <motion.div
@@ -345,16 +348,18 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
               {/* 有 finished 步骤时不在底部渲染，已在步骤循环内处理 */}
               {codeExecutions && codeExecutions.length > 0 && !steps.some((s) => s.kind === 'finished') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px' }}>
-                  {codeExecutions.map((ce) => (
-                    <CodeExecutionCard
-                      key={ce.id}
-                      language={ce.language}
-                      code={ce.code}
-                      output={ce.output}
-                      exitCode={ce.exitCode}
-                      onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
-                    />
-                  ))}
+                  {codeExecutions.map((ce) =>
+                    ce.language === 'shell'
+                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
+                      : <CodeExecutionCard
+                          key={ce.id}
+                          language={ce.language}
+                          code={ce.code}
+                          output={ce.output}
+                          exitCode={ce.exitCode}
+                          onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
+                        />
+                  )}
                 </div>
               )}
             </div>

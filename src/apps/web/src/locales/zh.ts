@@ -193,4 +193,9 @@ export const zh: LocaleStrings = {
   reportSubmitting: '提交中...',
   reportCancel: '取消',
   reportSuccess: '举报已提交',
+  // shell execution
+  shellRan: '已运行命令',
+  shellRanCommand: '已运行命令',
+  shellSuccess: '成功',
+  shellFailed: '失败',
 }

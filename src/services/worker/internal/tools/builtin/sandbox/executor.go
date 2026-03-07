@@ -272,6 +272,7 @@ func (e *ToolExecutor) executeExecSessionRequest(
 		"session_id":  result.SessionID,
 		"status":      result.Status,
 		"cwd":         result.Cwd,
+		"stdout":      output,
 		"output":      output,
 		"running":     result.Running,
 		"timed_out":   result.TimedOut,

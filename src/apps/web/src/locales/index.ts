@@ -201,6 +201,11 @@ export interface LocaleStrings {
   reportSubmitting: string
   reportCancel: string
   reportSuccess: string
+  // shell execution
+  shellRan: string
+  shellRanCommand: string
+  shellSuccess: string
+  shellFailed: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }
