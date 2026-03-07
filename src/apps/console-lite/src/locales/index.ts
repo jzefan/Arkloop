@@ -45,6 +45,50 @@ export interface LocaleStrings {
     platformDefault: string
     hybrid: string
   }
+  models: {
+    title: string
+    searchProvider: string
+    addProvider: string
+    addProviderTitle: string
+    editModel: string
+    name: string
+    apiKey: string
+    baseUrl: string
+    clientType: string
+    clientTypeOpenaiResponse: string
+    clientTypeOpenaiChat: string
+    clientTypeAnthropic: string
+    saveChanges: string
+    deleteProvider: string
+    deleteProviderConfirm: (name: string) => string
+    modelsSection: string
+    addModel: string
+    importModels: string
+    importModelsTitle: string
+    importModelsLoading: string
+    importModelsEmpty: string
+    importModelsError: string
+    importSelected: string
+    modelName: string
+    tags: string
+    addTag: string
+    setDefault: string
+    deleteModel: string
+    deleteModelConfirm: (model: string) => string
+    modelSettings: string
+    currentKeyPrefix: string
+    errNameRequired: string
+    errApiKeyRequired: string
+    errModelRequired: string
+    errProviderRequired: string
+    noProviders: string
+    toastCreated: string
+    toastUpdated: string
+    toastDeleted: string
+    toastFailed: string
+    toastLoadFailed: string
+    toastImported: string
+  }
   tools: {
     title: string
     sectionProvider: string

@@ -19,3 +19,18 @@ export type {
   ToolProviderItem,
   ToolProviderGroup,
 } from './agents'
+export {
+  listLlmProviders,
+  createLlmProvider,
+  updateLlmProvider,
+  deleteLlmProvider,
+  createProviderModel,
+  updateProviderModel,
+  deleteProviderModel,
+  listAvailableModels,
+} from './llm-providers'
+export type {
+  LlmProvider,
+  LlmProviderModel,
+  AvailableModel,
+} from './llm-providers'
