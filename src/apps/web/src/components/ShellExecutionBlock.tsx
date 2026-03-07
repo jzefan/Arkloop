@@ -91,7 +91,7 @@ export function ShellExecutionBlock({ code, output, exitCode, isStreaming = fals
       >
         <div style={{ overflow: 'hidden' }}>
           <div style={{ padding: '0 10px 8px' }}>
-            {output ? (
+            {output && output.trim() ? (
               <pre
                 style={{
                   margin: 0,
@@ -107,20 +107,16 @@ export function ShellExecutionBlock({ code, output, exitCode, isStreaming = fals
               >
                 {output}
               </pre>
-            ) : code ? (
-              <pre
+            ) : status !== 'running' ? (
+              <span
                 style={{
-                  margin: 0,
-                  color: 'var(--c-text-tertiary)',
                   fontSize: '11px',
-                  lineHeight: '1.5',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+                  color: 'var(--c-text-muted)',
+                  fontStyle: 'italic',
                 }}
               >
-                {code}
-              </pre>
+                {t.shellNoOutput}
+              </span>
             ) : null}
           </div>
         </div>
@@ -134,21 +130,21 @@ function StatusBadge({ status }: { status: Status }) {
 
   if (status === 'running') {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0, marginLeft: 'auto' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
         <Loader2 size={11} className="animate-spin" />
       </span>
     )
   }
   if (status === 'failed') {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: '#ef4444', flexShrink: 0, marginLeft: 'auto' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: '#ef4444', flexShrink: 0 }}>
         <XIcon size={11} strokeWidth={2.5} />
         {t.shellFailed}
       </span>
     )
   }
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0, marginLeft: 'auto' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
       <Check size={11} strokeWidth={2.5} />
       {t.shellSuccess}
     </span>

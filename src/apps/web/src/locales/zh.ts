@@ -200,4 +200,5 @@ export const zh: LocaleStrings = {
   shellRanCommand: '已运行命令',
   shellSuccess: '成功',
   shellFailed: '失败',
+  shellNoOutput: '无输出',
 }

@@ -275,6 +275,7 @@ export function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const copCodeExecScrollRef = useRef<HTMLDivElement>(null)
   const lastUserMsgRef = useRef<HTMLDivElement>(null)
   const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
@@ -647,7 +648,7 @@ export function ChatPage() {
           const activeSeg = activeSegmentIdRef.current
           // 搜索段内的代码执行路由到 topLevel，由 SearchTimeline 统一渲染
           const isSearchSeg = activeSeg && searchStepsRef.current.some((s) => s.id === activeSeg)
-          if (activeSeg && !isSearchSeg) {
+          if (SHOW_EXPLICIT_THINKING && activeSeg && !isSearchSeg) {
             setSegments((prev) =>
               prev.map((s) =>
                 s.segmentId === activeSeg
@@ -1293,16 +1294,25 @@ export function ChatPage() {
   }, [onRightPanelChange])
 
   // COP step 计数：timeline 中所有非 finished 的点
+  const dedupedTopLevelCodeExecutions = useMemo(() => {
+    const seen = new Set<string>()
+    return topLevelCodeExecutions.filter((ce) => {
+      if (seen.has(ce.id)) return false
+      seen.add(ce.id)
+      return true
+    })
+  }, [topLevelCodeExecutions])
+
   const copStepCount = useMemo(() => {
     const timelineSteps = searchSteps.filter(s => s.kind !== 'finished').length
     const segmentSteps = searchSteps.length === 0
       ? segments.filter(s => s.mode !== 'hidden').length
       : 0
     const codeExecSteps = timelineSteps === 0 && segmentSteps === 0
-      ? topLevelCodeExecutions.length
+      ? dedupedTopLevelCodeExecutions.length
       : 0
     return timelineSteps + segmentSteps + codeExecSteps
-  }, [searchSteps, segments, topLevelCodeExecutions])
+  }, [searchSteps, segments, dedupedTopLevelCodeExecutions])
 
   const copHeaderLabel = !assistantDraft
     ? 'Thinking'
@@ -1465,7 +1475,7 @@ export function ChatPage() {
               })}
 
               {/* 流式 COP 状态指示：Thinking / XX steps completed */}
-              {isStreaming && searchSteps.length === 0 && topLevelCodeExecutions.length === 0 && (segments.length > 0 || !assistantDraft) && (
+              {isStreaming && searchSteps.length === 0 && (segments.length > 0 || dedupedTopLevelCodeExecutions.length > 0 || !assistantDraft) && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1512,6 +1522,60 @@ export function ChatPage() {
                       ))}
                     </div>
                   )}
+                  {dedupedTopLevelCodeExecutions.length > 0 && (
+                    <div style={{ paddingLeft: '24px', paddingTop: '6px' }}>
+                      {dedupedTopLevelCodeExecutions.map((ce, idx) => {
+                        const isLast = idx === dedupedTopLevelCodeExecutions.length - 1
+                        const showTimeline = dedupedTopLevelCodeExecutions.length >= 2
+                        return (
+                          <motion.div
+                            key={ce.id}
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.25, ease: 'easeOut' }}
+                            style={{
+                              position: 'relative',
+                              paddingBottom: isLast ? 0 : '8px',
+                            }}
+                          >
+                            {showTimeline && !isLast && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  left: '-15.75px',
+                                  top: '13px',
+                                  bottom: '-13px',
+                                  width: '1.5px',
+                                  background: 'var(--c-border-subtle)',
+                                }}
+                              />
+                            )}
+                            {showTimeline && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  left: '-19px',
+                                  top: '9px',
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  background: ce.exitCode != null
+                                    ? ce.exitCode === 0 ? 'var(--c-border-subtle)' : '#ef4444'
+                                    : 'var(--c-text-secondary)',
+                                  border: '2px solid var(--c-bg-page)',
+                                  zIndex: 1,
+                                }}
+                              />
+                            )}
+                            {ce.language === 'shell'
+                              ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
+                              : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
+                            }
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -1521,7 +1585,7 @@ export function ChatPage() {
                   steps={searchSteps}
                   sources={currentRunSourcesRef.current}
                   isComplete={liveTimelineExiting && !isStreaming}
-                  codeExecutions={topLevelCodeExecutions.length > 0 ? topLevelCodeExecutions : undefined}
+                  codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
                   onOpenCodeExecution={openCodePanel}
                   headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
                   shimmer={!liveTimelineExiting && !assistantDraft}
@@ -1553,9 +1617,9 @@ export function ChatPage() {
               )}
 
               {/* 无 COP 时，顶层代码执行卡片独立渲染（仅流式结束后、run.completed 前的短暂窗口） */}
-              {!isStreaming && topLevelCodeExecutions.length > 0 && (
+              {!isStreaming && dedupedTopLevelCodeExecutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {topLevelCodeExecutions.map((ce) =>
+                  {dedupedTopLevelCodeExecutions.map((ce) =>
                     ce.language === 'shell'
                       ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
                       : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />

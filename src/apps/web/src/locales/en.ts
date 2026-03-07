@@ -200,4 +200,5 @@ export const en: LocaleStrings = {
   shellRanCommand: 'Ran command',
   shellSuccess: 'Success',
   shellFailed: 'Failed',
+  shellNoOutput: 'No output',
 }
