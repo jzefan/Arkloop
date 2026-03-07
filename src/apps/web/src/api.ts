@@ -542,34 +542,6 @@ export async function redeemCode(
   })
 }
 
-// Personas API
-
-export type PersonaResponse = {
-  persona_key: string
-  display_name: string
-  user_selectable: boolean
-  selector_name?: string
-  selector_order?: number
-}
-
-export type SelectablePersona = {
-  persona_key: string
-  selector_name: string
-  selector_order: number
-}
-
-export async function listSelectablePersonas(accessToken: string): Promise<SelectablePersona[]> {
-  const all = await apiFetch<PersonaResponse[]>('/v1/personas', { method: 'GET', accessToken })
-  return all
-    .filter(p => p.user_selectable)
-    .map(p => ({
-      persona_key: p.persona_key,
-      selector_name: p.selector_name ?? p.display_name,
-      selector_order: p.selector_order ?? 99,
-    }))
-    .sort((a, b) => a.selector_order - b.selector_order)
-}
-
 // Invite Code API
 
 export type InviteCodeResponse = {

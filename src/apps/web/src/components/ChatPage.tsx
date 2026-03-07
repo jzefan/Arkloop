@@ -34,7 +34,7 @@ import {
   type ThreadResponse,
 } from '../api'
 import {
-  SEARCH_PERSONA_KEY,
+  type SelectedTier,
   isSearchThreadId,
   readMessageSources,
   writeMessageSources,
@@ -989,7 +989,7 @@ export function ChatPage() {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleSend = async (e: React.FormEvent<HTMLFormElement>, personaKey: string) => {
+  const handleSend = async (e: React.FormEvent<HTMLFormElement>, tier: SelectedTier) => {
     e.preventDefault()
     if (sending || !threadId) return
 
@@ -1025,7 +1025,10 @@ export function ChatPage() {
         if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
         onThreadCreated(forked)
         await createMessage(accessToken, forked.id, { content })
-        const run = await createRun(accessToken, forked.id, personaKey)
+        const tierToPersonaId: Record<SelectedTier, string> = {
+          Normal: 'normal', Search: 'extended-search',
+        }
+        const run = await createRun(accessToken, forked.id, tierToPersonaId[tier])
         setDraft('')
         setAttachments([])
         navigate(`/t/${forked.id}`, {
@@ -1042,7 +1045,11 @@ export function ChatPage() {
       setAttachments([])
       setAssistantDraft('')
 
-      const run = await createRun(accessToken, threadId, personaKey)
+      const tierToPersonaId: Record<SelectedTier, string> = {
+        Normal: 'normal',
+        Search: 'extended-search',
+      }
+      const run = await createRun(accessToken, threadId, tierToPersonaId[tier])
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -1642,7 +1649,7 @@ export function ChatPage() {
           accessToken={accessToken}
           onAsrError={handleAsrError}
           searchMode={isSearchThread}
-          onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
+          onTierChange={(tier) => setIsSearchThread(tier === 'Search')}
         />
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>
           Arkloop is AI and can make mistakes. Please double-check responses.

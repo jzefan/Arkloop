@@ -34,9 +34,6 @@ type Definition struct {
 	PreferredCredential *string     // 偏好凭证名称，nil 表示不绑定
 	AgentConfigName  *string        // 显式绑定 AgentConfig 名称，nil 则走继承链
 	TitleSummarizer  *TitleSummarizerConfig // nil 表示此 persona 不自动生成标题
-	UserSelectable   bool
-	SelectorName     *string
-	SelectorOrder    *int
 }
 
 type Registry struct {

@@ -1,9 +1,9 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
-import { transcribeAudio, listSelectablePersonas, type SelectablePersona } from '../api'
+import { transcribeAudio } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
-import { readSelectedPersonaKeyFromStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY } from '../storage'
+import { readSelectedTierFromStorage, writeSelectedTierToStorage, type SelectedTier } from '../storage'
 
 export type Attachment = {
   id: string
@@ -13,11 +13,10 @@ export type Attachment = {
   encoding: 'text' | 'base64'
 }
 
-
 type Props = {
   value: string
   onChange: (val: string) => void
-  onSubmit: (e: FormEvent<HTMLFormElement>, personaKey: string) => void
+  onSubmit: (e: FormEvent<HTMLFormElement>, tier: SelectedTier) => void
   onCancel?: () => void
   placeholder?: string
   disabled?: boolean
@@ -30,7 +29,7 @@ type Props = {
   onAttachFiles?: (files: File[]) => void
   accessToken?: string
   onAsrError?: (error: unknown) => void
-  onPersonaChange?: (personaKey: string) => void
+  onTierChange?: (tier: SelectedTier) => void
 }
 function hasTransferFiles(dataTransfer?: DataTransfer | null): boolean {
   if (!dataTransfer) return false
@@ -90,7 +89,7 @@ export function ChatInput({
   onAttachFiles,
   accessToken,
   onAsrError,
-  onPersonaChange,
+  onTierChange,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -120,8 +119,7 @@ export function ChatInput({
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
-  const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[] | null>(null)
-  const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
+  const [selectedTier, setSelectedTier] = useState<SelectedTier>(readSelectedTierFromStorage)
   const [tierHovered, setTierHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -129,17 +127,6 @@ export function ChatInput({
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(BAR_COUNT).fill(0))
   const [isFileDragging, setIsFileDragging] = useState(false)
-
-  useEffect(() => {
-    if (!accessToken) return
-    let cancelled = false
-    listSelectablePersonas(accessToken).then((personas) => {
-      if (!cancelled && personas.length > 0) setSelectablePersonas(personas)
-    }).catch((err) => {
-      console.warn('[ChatInput] persona list fetch failed:', err)
-    })
-    return () => { cancelled = true }
-  }, [accessToken])
 
   // cleanup on unmount
   useEffect(() => {
@@ -255,11 +242,11 @@ export function ChatInput({
   }, [])
 
 
-  // 进入 search 模式时同步 persona 状态
+  // 进入 search 模式时同步 tier 状态
   useEffect(() => {
     if (searchMode) {
-      setSelectedPersonaKey(SEARCH_PERSONA_KEY)
-      writeSelectedPersonaKeyToStorage(SEARCH_PERSONA_KEY)
+      setSelectedTier('Search')
+      writeSelectedTierToStorage('Search')
     }
   }, [searchMode])
 
@@ -402,23 +389,19 @@ export function ChatInput({
     e.preventDefault()
   }
 
-  const personasLoaded = selectablePersonas !== null && selectablePersonas.length > 0
-
-  const cyclePersona = () => {
-    if (!selectablePersonas || selectablePersonas.length === 0) return
-    const idx = selectablePersonas.findIndex(p => p.persona_key === selectedPersonaKey)
-    const next = selectablePersonas[(idx + 1) % selectablePersonas.length]
-    if (!next) return
-    setSelectedPersonaKey(next.persona_key)
-    writeSelectedPersonaKeyToStorage(next.persona_key)
-    onPersonaChange?.(next.persona_key)
+  const cycleTier = () => {
+    const order: SelectedTier[] = ['Normal', 'Search']
+    const next = order[(order.indexOf(selectedTier) + 1) % order.length]
+    setSelectedTier(next)
+    writeSelectedTierToStorage(next)
+    onTierChange?.(next)
   }
 
-  const handlePersonaSelect = (personaKey: string) => {
-    setSelectedPersonaKey(personaKey)
-    writeSelectedPersonaKeyToStorage(personaKey)
+  const handleTierSelect = (tier: SelectedTier) => {
+    setSelectedTier(tier)
+    writeSelectedTierToStorage(tier)
     setTierMenuOpen(false)
-    onPersonaChange?.(personaKey)
+    onTierChange?.(tier)
   }
 
   return (
@@ -535,7 +518,7 @@ export function ChatInput({
           }
         }}
       >
-      <form onSubmit={(e) => onSubmit(e, selectedPersonaKey)}>
+      <form onSubmit={(e) => onSubmit(e, selectedTier)}>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -620,7 +603,7 @@ export function ChatInput({
             {/* tier 按钮 */}
             <button
               type="button"
-              onClick={cyclePersona}
+              onClick={cycleTier}
               onMouseEnter={() => setTierHovered(true)}
               onMouseLeave={() => setTierHovered(false)}
               className="relative top-px flex h-8 items-center rounded-lg font-semibold"
@@ -631,23 +614,23 @@ export function ChatInput({
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
                 cursor: 'pointer',
-                background: selectedPersonaKey === SEARCH_PERSONA_KEY
+                width: selectedTier === 'Search' ? '68px' : '68px',
+                background: selectedTier === 'Search'
                   ? 'var(--c-pro-bg)'
                   : tierHovered ? 'var(--c-bg-deep)' : 'transparent',
-                color: selectedPersonaKey === SEARCH_PERSONA_KEY
+                color: selectedTier === 'Search'
                   ? '#4691F6'
                   : 'var(--c-text-secondary)',
-                opacity: selectedPersonaKey === SEARCH_PERSONA_KEY
+                opacity: selectedTier === 'Search'
                   ? 1 : tierHovered ? 1 : 0.7,
                 fontSize: '14px',
-                transition: 'background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
+                transition: 'width 0.22s ease, background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
               }}
             >
-              {selectablePersonas?.find(p => p.persona_key === selectedPersonaKey)?.selector_name ?? selectedPersonaKey}
+              {selectedTier}
             </button>
 
-            {/* chevron: API 加载完成后显示 */}
-            {personasLoaded && (
+            {/* chevron：始终可见，searchMode 下打开下拉可切换其他 tier */}
             <button
               ref={chevronBtnRef}
               type="button"
@@ -656,9 +639,8 @@ export function ChatInput({
             >
               <ChevronDown size={16} />
             </button>
-            )}
 
-            {tierMenuOpen && personasLoaded && (
+            {tierMenuOpen && (
               <div
                 ref={tierMenuRef}
                 className={`absolute right-0 z-50 ${variant === 'welcome' ? 'dropdown-menu' : 'dropdown-menu-up'}`}
@@ -675,14 +657,14 @@ export function ChatInput({
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {selectablePersonas!.map((persona) => {
-                    const isBlue = persona.persona_key === SEARCH_PERSONA_KEY
-                    const isSelected = selectedPersonaKey === persona.persona_key
+                  {(['Normal', 'Search'] as const).map((tier) => {
+                    const isBlue = tier === 'Search'
+                    const isSelected = selectedTier === tier
                     return (
                       <button
-                        key={persona.persona_key}
+                        key={tier}
                         type="button"
-                        onClick={() => handlePersonaSelect(persona.persona_key)}
+                        onClick={() => handleTierSelect(tier)}
                         className="flex w-full items-center px-3 py-2 text-sm transition-colors duration-100"
                         style={{
                           borderRadius: '8px',
@@ -693,7 +675,7 @@ export function ChatInput({
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--c-bg-deep)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--c-bg-menu)')}
                       >
-                        {persona.selector_name}
+                        {tier}
                       </button>
                     )
                   })}

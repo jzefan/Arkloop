@@ -5,7 +5,7 @@ import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
 import { createThread, createMessage, createRun, isApiError, type ThreadResponse, type MeResponse } from '../api'
-import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY } from '../storage'
+import { writeActiveThreadIdToStorage, addSearchThreadId, type SelectedTier } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 
 function normalizeError(error: unknown, fallback: string): AppError {
@@ -230,7 +230,7 @@ export function WelcomePage() {
     setError(normalizeError(err, t.requestFailed))
   }, [onLoggedOut, t.requestFailed])
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>, tier: SelectedTier) => {
     e.preventDefault()
     const text = draft.trim()
     if ((!text && attachments.length === 0) || sending) return
@@ -250,12 +250,17 @@ export function WelcomePage() {
         : text
 
       await createMessage(accessToken, thread.id, { content })
-      const run = await createRun(accessToken, thread.id, personaKey)
+      const tierToPersonaId: Record<SelectedTier, string> = {
+        Normal: 'normal',
+        Search: 'extended-search',
+      }
+      const personaId = tierToPersonaId[tier]
+      const run = await createRun(accessToken, thread.id, personaId)
 
-      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
+      if (personaId === 'extended-search') addSearchThreadId(thread.id)
       writeActiveThreadIdToStorage(thread.id)
       onThreadCreated(thread)
-      navigate(`/t/${thread.id}`, { state: { initialRunId: run.run_id, isSearch: personaKey === SEARCH_PERSONA_KEY } })
+      navigate(`/t/${thread.id}`, { state: { initialRunId: run.run_id, isSearch: personaId === 'extended-search' } })
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -382,7 +387,7 @@ export function WelcomePage() {
             onAttachFiles={handleAttachFiles}
             accessToken={accessToken}
             onAsrError={handleAsrError}
-            onPersonaChange={(personaKey) => { if (personaKey === SEARCH_PERSONA_KEY && !isSearchMode) onEnterSearchMode(); else if (personaKey !== SEARCH_PERSONA_KEY && isSearchMode) onExitSearchMode() }}
+            onTierChange={(tier) => { if (tier === 'Search' && !isSearchMode) onEnterSearchMode(); else if (tier !== 'Search' && isSearchMode) onExitSearchMode() }}
           />
           {/* incognito note: 平滑展开/收起 */}
           <div

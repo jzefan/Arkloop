@@ -14,6 +14,3 @@ budgets:
 title_summarize:
   prompt: "Keep it under 5 Chinese characters. Extract the search intent."
   max_tokens: 10
-user_selectable: true
-selector_name: Search
-selector_order: 2
