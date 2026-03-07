@@ -202,6 +202,56 @@ func (r *EntitlementsRepository) ListOverridesByOrg(ctx context.Context, orgID u
 	return items, rows.Err()
 }
 
+func (r *EntitlementsRepository) GetOverrideByOrgAndKey(
+	ctx context.Context,
+	orgID uuid.UUID,
+	key string,
+) (*OrgEntitlementOverride, error) {
+	var o OrgEntitlementOverride
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, org_id, key, value, value_type, reason, expires_at, created_by_user_id, created_at
+		 FROM org_entitlement_overrides
+		 WHERE org_id = $1 AND key = $2`,
+		orgID, key,
+	).Scan(
+		&o.ID, &o.OrgID, &o.Key, &o.Value, &o.ValueType,
+		&o.Reason, &o.ExpiresAt, &o.CreatedByUserID, &o.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("entitlements.GetOverrideByOrgAndKey: %w", err)
+	}
+	return &o, nil
+}
+
+func (r *EntitlementsRepository) GetOverrideByID(
+	ctx context.Context,
+	id uuid.UUID,
+	orgID uuid.UUID,
+) (*OrgEntitlementOverride, error) {
+	var o OrgEntitlementOverride
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, org_id, key, value, value_type, reason, expires_at, created_by_user_id, created_at
+		 FROM org_entitlement_overrides
+		 WHERE id = $1 AND org_id = $2`,
+		id, orgID,
+	).Scan(
+		&o.ID, &o.OrgID, &o.Key, &o.Value, &o.ValueType,
+		&o.Reason, &o.ExpiresAt, &o.CreatedByUserID, &o.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("entitlements.GetOverrideByID: %w", err)
+	}
+	return &o, nil
+}
+
 // GetOverride 查询 org 下指定 key 的未过期 override。
 func (r *EntitlementsRepository) GetOverride(ctx context.Context, orgID uuid.UUID, key string) (*OrgEntitlementOverride, error) {
 	var o OrgEntitlementOverride

@@ -373,20 +373,20 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/entitlement-overrides",
-		entitlementOverridesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo),
+		entitlementOverridesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 	mux.HandleFunc(
 		"/v1/entitlement-overrides/",
-		entitlementOverrideEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo),
+		entitlementOverrideEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 
 	mux.HandleFunc(
 		"/v1/feature-flags",
-		featureFlagsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.APIKeysRepo),
+		featureFlagsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 	mux.HandleFunc(
 		"/v1/feature-flags/",
-		featureFlagEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.FeatureFlagService, cfg.APIKeysRepo),
+		featureFlagEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.FeatureFlagService, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 
 	mux.HandleFunc(
@@ -481,15 +481,15 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"/v1/admin/credits/adjust",
-		adminCreditsAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+		adminCreditsAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 	mux.HandleFunc(
 		"/v1/admin/credits/bulk-adjust",
-		adminCreditsBulkAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+		adminCreditsBulkAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 	mux.HandleFunc(
 		"/v1/admin/credits/reset-all",
-		adminCreditsResetAll(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
+		adminCreditsResetAll(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
 	)
 	mux.HandleFunc(
 		"/v1/admin/credits",

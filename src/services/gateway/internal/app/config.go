@@ -14,24 +14,19 @@ import (
 )
 
 const (
-	gatewayAddrEnv     = "ARKLOOP_GATEWAY_ADDR"
-	gatewayUpstreamEnv = "ARKLOOP_GATEWAY_UPSTREAM"
-	redisURLEnv        = "ARKLOOP_REDIS_URL"
-	gatewayRedisURLEnv = "ARKLOOP_GATEWAY_REDIS_URL"
-	jwtSecretEnv       = "ARKLOOP_AUTH_JWT_SECRET"
-	enableBenchzEnv    = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
-	redisTimeoutMsEnv  = "ARKLOOP_GATEWAY_REDIS_TIMEOUT_MS"
-	trustTraceIDEnv    = "ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID"
-
-	// IP 透传模式：direct | cloudflare | trusted_proxy
-	ipModeEnv = "ARKLOOP_GATEWAY_IP_MODE"
-	// 逗号分隔的可信代理 CIDR 列表，cloudflare/trusted_proxy 模式使用
-	trustedCIDRsEnv = "ARKLOOP_GATEWAY_TRUSTED_CIDRS"
-	// MaxMind GeoLite2 数据库文件路径，留空则禁用 GeoIP
-	geoIPDBPathEnv = "ARKLOOP_GEOIP_DB_PATH"
-	// MaxMind License Key，配置后自动下载和每日更新 GeoLite2 数据库
-	geoIPLicenseKeyEnv = "ARKLOOP_GEOIP_LICENSE_KEY"
-	// 风险评分拒绝阈值（0-100），0 表示只记录不拒绝
+	gatewayAddrEnv         = "ARKLOOP_GATEWAY_ADDR"
+	gatewayUpstreamEnv     = "ARKLOOP_GATEWAY_UPSTREAM"
+	redisURLEnv            = "ARKLOOP_REDIS_URL"
+	gatewayRedisURLEnv     = "ARKLOOP_GATEWAY_REDIS_URL"
+	jwtSecretEnv           = "ARKLOOP_AUTH_JWT_SECRET"
+	enableBenchzEnv        = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
+	redisTimeoutMsEnv      = "ARKLOOP_GATEWAY_REDIS_TIMEOUT_MS"
+	trustTraceIDEnv        = "ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID"
+	corsAllowedOriginsEnv  = "ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS"
+	ipModeEnv              = "ARKLOOP_GATEWAY_IP_MODE"
+	trustedCIDRsEnv        = "ARKLOOP_GATEWAY_TRUSTED_CIDRS"
+	geoIPDBPathEnv         = "ARKLOOP_GEOIP_DB_PATH"
+	geoIPLicenseKeyEnv     = "ARKLOOP_GEOIP_LICENSE_KEY"
 	riskRejectThresholdEnv = "ARKLOOP_GATEWAY_RISK_REJECT_THRESHOLD"
 
 	defaultAddr       = "0.0.0.0:8000"
@@ -41,13 +36,17 @@ const (
 	defaultRedisTimeoutMs = 10
 )
 
-// IPMode 定义 Gateway 的 IP 来源信任策略。
+var defaultCORSAllowedOrigins = []string{
+	"http://localhost:5173",
+	"http://localhost:5174",
+}
+
 type IPMode string
 
 const (
-	IPModeDirect       IPMode = "direct"        // 直连：只信任 RemoteAddr
-	IPModeCloudflare   IPMode = "cloudflare"    // Cloudflare 前置：读 CF-Connecting-IP
-	IPModeTrustedProxy IPMode = "trusted_proxy" // 通用可信代理：读 XFF 最左端
+	IPModeDirect       IPMode = "direct"
+	IPModeCloudflare   IPMode = "cloudflare"
+	IPModeTrustedProxy IPMode = "trusted_proxy"
 )
 
 type Config struct {
@@ -60,19 +59,21 @@ type Config struct {
 	EnableBenchz         bool
 	TrustIncomingTraceID bool
 
+	CORSAllowedOrigins  []string
 	IPMode              IPMode
-	TrustedCIDRs        []string // CIDR 字符串列表
+	TrustedCIDRs        []string
 	GeoIPDBPath         string
 	GeoIPLicenseKey     string
-	RiskRejectThreshold int // 0 = 禁用拒绝
+	RiskRejectThreshold int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:         defaultAddr,
-		Upstream:     defaultUpstream,
-		RateLimit:    ratelimit.DefaultConfig(),
-		RedisTimeout: defaultRedisTimeoutMs * time.Millisecond,
+		Addr:               defaultAddr,
+		Upstream:           defaultUpstream,
+		RateLimit:          ratelimit.DefaultConfig(),
+		RedisTimeout:       defaultRedisTimeoutMs * time.Millisecond,
+		CORSAllowedOrigins: append([]string(nil), defaultCORSAllowedOrigins...),
 	}
 }
 
@@ -113,22 +114,18 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.TrustIncomingTraceID = v
 	}
 
+	if raw := strings.TrimSpace(os.Getenv(corsAllowedOriginsEnv)); raw != "" {
+		cfg.CORSAllowedOrigins = splitCSV(raw)
+	}
 	if raw := strings.TrimSpace(os.Getenv(ipModeEnv)); raw != "" {
 		cfg.IPMode = IPMode(raw)
 	}
-
 	if raw := strings.TrimSpace(os.Getenv(trustedCIDRsEnv)); raw != "" {
-		for _, part := range strings.Split(raw, ",") {
-			if s := strings.TrimSpace(part); s != "" {
-				cfg.TrustedCIDRs = append(cfg.TrustedCIDRs, s)
-			}
-		}
+		cfg.TrustedCIDRs = splitCSV(raw)
 	}
 
 	cfg.GeoIPDBPath = strings.TrimSpace(os.Getenv(geoIPDBPathEnv))
 	cfg.GeoIPLicenseKey = strings.TrimSpace(os.Getenv(geoIPLicenseKeyEnv))
-
-	// 有 license key 但没指定 db path 时，使用默认路径
 	if cfg.GeoIPLicenseKey != "" && cfg.GeoIPDBPath == "" {
 		cfg.GeoIPDBPath = filepath.Join(defaultGeoIPDBDir, "GeoLite2-City.mmdb")
 	}
@@ -177,5 +174,25 @@ func (c Config) Validate() error {
 		return fmt.Errorf("ip_mode must be one of: direct, cloudflare, trusted_proxy")
 	}
 
+	for _, origin := range c.CORSAllowedOrigins {
+		if origin == "*" {
+			return fmt.Errorf("cors_allowed_origins must not contain *")
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("invalid cors origin: %s", origin)
+		}
+	}
+
 	return nil
+}
+
+func splitCSV(raw string) []string {
+	items := make([]string, 0)
+	for _, part := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(part); value != "" {
+			items = append(items, value)
+		}
+	}
+	return items
 }
