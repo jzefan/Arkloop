@@ -1,9 +1,13 @@
 import { apiFetch } from './client'
 
+export type ToolDescriptionSource = 'default' | 'platform' | 'org'
+
 export type ToolCatalogItem = {
   name: string
-  description: string
+  label: string
+  llm_description: string
   has_override: boolean
+  description_source: ToolDescriptionSource
 }
 
 export type ToolCatalogGroup = {

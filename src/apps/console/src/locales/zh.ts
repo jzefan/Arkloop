@@ -189,6 +189,7 @@ export const zh: LocaleStrings = {
       statusActive: '启用',
       statusInactive: '停用',
       statusUnconfigured: '未配置',
+      statusInheritedPlatform: '继承平台',
       activate: '激活',
       deactivate: '停用',
       configure: '配置',

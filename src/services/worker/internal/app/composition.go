@@ -11,6 +11,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/memory/openviking"
@@ -211,6 +212,14 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	watchedPersonas := personas.NewWatchedRegistry(personasRoot, initialPersonaRegistry)
 	watchedPersonas.Watch(ctx)
 
+	var toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
+	if pool != nil {
+		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(pool)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	llmRetryMaxAttempts := 3
 	llmRetryBaseDelayMs := 1000
 	if configResolver != nil {
@@ -232,27 +241,28 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	}
 
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
-		Router:                 router,
-		DBPool:                 pool,
-		DirectDBPool:           directPool,
-		RunControlHub:          runControlHub,
-		StubGateway:            stubGateway,
-		EmitDebugEvents:        stubCfg.EmitDebugEvents,
-		ConfigResolver:         configResolver,
-		ToolRegistry:           toolRegistry,
-		ToolExecutors:          executors,
-		AllLlmToolSpecs:        allLlmSpecs,
-		BaseToolAllowlistNames: baseAllowlistNames,
-		PersonaRegistryGetter:  watchedPersonas.Get,
-		MCPPool:                mcpPool,
-		MCPDiscoveryCache:      discoveryCache,
-		ToolProviderCache:      toolProviderCache,
-		ExecutorRegistry:       execRegistry,
-		JobQueue:               jobQueue,
-		RunLimiterRDB:          rdb,
-		LlmRetryMaxAttempts:    llmRetryMaxAttempts,
-		LlmRetryBaseDelayMs:    llmRetryBaseDelayMs,
-		MemoryProvider:         memoryProvider,
+		Router:                       router,
+		DBPool:                       pool,
+		DirectDBPool:                 directPool,
+		RunControlHub:                runControlHub,
+		StubGateway:                  stubGateway,
+		EmitDebugEvents:              stubCfg.EmitDebugEvents,
+		ConfigResolver:               configResolver,
+		ToolRegistry:                 toolRegistry,
+		ToolExecutors:                executors,
+		AllLlmToolSpecs:              allLlmSpecs,
+		BaseToolAllowlistNames:       baseAllowlistNames,
+		PersonaRegistryGetter:        watchedPersonas.Get,
+		MCPPool:                      mcpPool,
+		MCPDiscoveryCache:            discoveryCache,
+		ToolProviderCache:            toolProviderCache,
+		ToolDescriptionOverridesRepo: toolDescriptionOverridesRepo,
+		ExecutorRegistry:             execRegistry,
+		JobQueue:                     jobQueue,
+		RunLimiterRDB:                rdb,
+		LlmRetryMaxAttempts:          llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs:          llmRetryBaseDelayMs,
+		MemoryProvider:               memoryProvider,
 	})
 }
 

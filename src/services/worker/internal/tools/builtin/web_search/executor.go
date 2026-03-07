@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -22,9 +23,9 @@ const (
 	errorSearchFailed  = "tool.search_failed"
 
 	defaultTimeout    = 10 * time.Second
-	defaultMaxResults = 5
-	maxResultsLimit   = 20
-	maxQueriesLimit   = 5
+	defaultMaxResults = sharedtoolmeta.WebSearchDefaultMaxResults
+	maxResultsLimit   = sharedtoolmeta.WebSearchMaxResultsLimit
+	maxQueriesLimit   = sharedtoolmeta.WebSearchMaxQueriesLimit
 )
 
 var AgentSpec = tools.AgentToolSpec{
@@ -55,7 +56,7 @@ var AgentSpecTavily = tools.AgentToolSpec{
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "web_search",
-	Description: stringPtr(fmt.Sprintf("search the internet and return title, link, and summary for each result. Use the queries array to run up to %d independent searches in a single call; fall back to the scalar query field only when you have a single question. Set max_results per query (default %d, max %d). When formulating queries: (1) decompose a complex question into independent keyword-based queries that together cover the full question with minimal overlap; (2) if a query is vague, rewrite it into a well-defined search by adding context from the conversation; (3) when the timing of an event is uncertain, use neutral phrasing such as 'latest news' or 'updates' instead of assuming a result already exists (good: 'Argentina Elections latest news'; bad: 'Argentina Elections results').", maxQueriesLimit, defaultMaxResults, maxResultsLimit)),
+	Description: stringPtr(sharedtoolmeta.Must("web_search").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

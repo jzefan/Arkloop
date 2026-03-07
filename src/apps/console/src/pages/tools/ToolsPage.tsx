@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
   Loader2, Save, CheckCircle2, Ban, Pencil, Trash2, RotateCcw,
@@ -50,7 +50,7 @@ const MEMORY_DEFAULTS: Record<string, string> = {
 }
 
 type EditTarget = { group: string; provider: ToolProviderItem }
-type DescEditTarget = { toolName: string; description: string }
+type DescEditTarget = { toolName: string; label: string; description: string }
 
 function flatGet(obj: Record<string, unknown>, dotPath: string): string {
   const parts = dotPath.split('.')
@@ -110,7 +110,6 @@ export function ToolsPage() {
   const [descText, setDescText] = useState('')
   const [descSaving, setDescSaving] = useState(false)
 
-  const firstLoadRef = useRef(true)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -118,10 +117,6 @@ export function ToolsPage() {
       const data = await loadToolProvidersAndCatalog(accessToken, scope)
       setProviderGroups(data.providerGroups)
       setCatalogGroups(data.catalogGroups)
-      if (firstLoadRef.current && data.providerGroups.length > 0) {
-        setSelectedGroup(data.providerGroups[0].group_name)
-        firstLoadRef.current = false
-      }
     } catch {
       addToast(tc.toastLoadFailed, 'error')
     } finally {
@@ -131,10 +126,24 @@ export function ToolsPage() {
 
   useEffect(() => { void fetchAll() }, [fetchAll])
 
+  useEffect(() => {
+    if (catalogGroups.length === 0) {
+      setSelectedGroup('')
+      return
+    }
+    if (!catalogGroups.some((group) => group.group === selectedGroup)) {
+      setSelectedGroup(catalogGroups[0].group)
+    }
+  }, [catalogGroups, selectedGroup])
+
   // load config form when selected group or provider data changes
   useEffect(() => {
     const grp = providerGroups.find((g) => g.group_name === selectedGroup)
-    if (!grp) return
+    if (!grp) {
+      setConfigForm({})
+      setConfigSaved({})
+      return
+    }
     const active = grp.providers.find((p) => p.is_active)
     if (!active) {
       setConfigForm({})
@@ -324,12 +333,12 @@ export function ToolsPage() {
           {/* Left: group list */}
           <div className="w-[180px] shrink-0 overflow-y-auto border-r border-[var(--c-border-console)] p-2">
             <div className="flex flex-col gap-[3px]">
-              {providerGroups.map((g) => {
-                const active = g.group_name === selectedGroup
+              {catalogGroups.map((g) => {
+                const active = g.group === selectedGroup
                 return (
                   <button
-                    key={g.group_name}
-                    onClick={() => setSelectedGroup(g.group_name)}
+                    key={g.group}
+                    onClick={() => setSelectedGroup(g.group)}
                     className={[
                       'flex h-[30px] items-center rounded-[5px] px-3 text-sm font-medium transition-colors',
                       active
@@ -337,7 +346,7 @@ export function ToolsPage() {
                         : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]',
                     ].join(' ')}
                   >
-                    {g.group_name}
+                    {g.group}
                   </button>
                 )
               })}
@@ -473,8 +482,8 @@ export function ToolsPage() {
                         tool={tool}
                         tc={tc}
                         onEdit={() => {
-                          setDescEdit({ toolName: tool.name, description: tool.description })
-                          setDescText(tool.description)
+                          setDescEdit({ toolName: tool.name, label: tool.label, description: tool.llm_description })
+                          setDescText(tool.llm_description)
                         }}
                         onReset={() => handleResetDescription(tool.name)}
                       />
@@ -569,14 +578,14 @@ export function ToolsPage() {
       <Modal
         open={!!descEdit}
         onClose={() => { if (!descSaving) setDescEdit(null) }}
-        title={descEdit ? descEdit.toolName : ''}
+        title={descEdit ? descEdit.label : ''}
       >
         {descEdit && (
           <div className="flex flex-col gap-4">
             <textarea
               value={descText}
               onChange={(e) => setDescText(e.target.value)}
-              rows={4}
+              rows={12}
               className="w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-2 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none"
               placeholder={tc.descriptionPlaceholder}
             />
@@ -710,15 +719,21 @@ function ToolDescriptionRow({
   tool, tc, onEdit, onReset,
 }: {
   tool: ToolCatalogItem
-  tc: { editDescription: string; resetDescription: string }
+  tc: { editDescription: string; resetDescription: string; statusInheritedPlatform: string }
   onEdit: () => void
   onReset: () => void
 }) {
   return (
     <div className="flex items-start justify-between gap-2 rounded-md border border-[var(--c-border-console)] px-3 py-2">
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-[var(--c-text-primary)]">{tool.name}</p>
-        <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{tool.description}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-medium text-[var(--c-text-primary)]">{tool.label}</p>
+          {!tool.has_override && tool.description_source === 'platform' && (
+            <Badge variant="neutral">{tc.statusInheritedPlatform}</Badge>
+          )}
+        </div>
+        <p className="mt-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">{tool.name}</p>
+        <p className="mt-1 line-clamp-3 text-xs text-[var(--c-text-muted)]">{tool.llm_description}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <button

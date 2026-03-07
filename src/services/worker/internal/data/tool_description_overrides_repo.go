@@ -1,0 +1,63 @@
+package data
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+type ToolDescriptionOverride struct {
+	OrgID       uuid.UUID
+	Scope       string
+	ToolName    string
+	Description string
+	UpdatedAt   time.Time
+}
+
+type toolDescriptionOverrideQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+type ToolDescriptionOverridesRepository struct {
+	db toolDescriptionOverrideQuerier
+}
+
+func NewToolDescriptionOverridesRepository(db toolDescriptionOverrideQuerier) (*ToolDescriptionOverridesRepository, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	return &ToolDescriptionOverridesRepository{db: db}, nil
+}
+
+func (r *ToolDescriptionOverridesRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]ToolDescriptionOverride, error) {
+	if scope != "org" && scope != "platform" {
+		return nil, fmt.Errorf("scope must be org or platform")
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT org_id, scope, tool_name, description, updated_at
+		FROM tool_description_overrides
+		WHERE org_id = $1 AND scope = $2
+		ORDER BY tool_name ASC
+	`, orgID, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ToolDescriptionOverride, 0)
+	for rows.Next() {
+		var override ToolDescriptionOverride
+		if err := rows.Scan(&override.OrgID, &override.Scope, &override.ToolName, &override.Description, &override.UpdatedAt); err != nil {
+			return nil, err
+		}
+		override.ToolName = strings.TrimSpace(override.ToolName)
+		override.Description = strings.TrimSpace(override.Description)
+		out = append(out, override)
+	}
+	return out, rows.Err()
+}

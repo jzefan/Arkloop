@@ -44,6 +44,11 @@ export interface LocaleStrings {
     builtIn: string
     platformDefault: string
     hybrid: string
+    toolsSelected: (selected: number, total: number) => string
+    enableAllTools: string
+    clearAllTools: string
+    groupEnableAll: string
+    groupClearAll: string
   }
   models: {
     title: string

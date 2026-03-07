@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -25,7 +26,7 @@ var TimelineTitleAgentSpec = tools.AgentToolSpec{
 
 var TimelineTitleLlmSpec = llm.ToolSpec{
 	Name:        "timeline_title",
-	Description: stringPtr("UI metadata tool that sets a short label shown in the user-facing thinking timeline. Call this tool in parallel with your first tool call of each round (include it in the same tool_use batch). Also call it when you are only thinking without other tools, to describe what you are considering. The label parameter must be a single-line plain-text phrase (no quotes, no Markdown, no numbering) in the same language as the user's input. Keep it concise: 8-16 characters for Chinese, <=8 words for English. You may prefix with stage words such as 'Searching for ...', 'Analyzing ...', 'Reviewing ...', etc. Call this tool as often as possible to keep the timeline informative."),
+	Description: stringPtr(sharedtoolmeta.Must("timeline_title").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -105,4 +106,3 @@ func truncateRunes(s string, maxRunes int) string {
 	runes := []rune(s)
 	return string(runes[:maxRunes-3]) + "..."
 }
-

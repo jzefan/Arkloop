@@ -1,4 +1,7 @@
 import { apiFetch } from './client'
+import type { ToolCatalogGroup } from './tool-providers'
+
+export type { ToolCatalogGroup, ToolCatalogItem } from './tool-providers'
 
 export type LiteAgent = {
   id: string
@@ -78,18 +81,8 @@ export async function deleteLiteAgent(
   })
 }
 
-export type ToolCatalogItem = {
-  name: string
-  description: string
-}
-
-export type ToolCatalogGroup = {
-  group: string
-  tools: ToolCatalogItem[]
-}
-
 export async function listToolCatalog(
   accessToken: string,
 ): Promise<{ groups: ToolCatalogGroup[] }> {
-  return apiFetch<{ groups: ToolCatalogGroup[] }>('/v1/tool-catalog', { accessToken })
+  return apiFetch<{ groups: ToolCatalogGroup[] }>('/v1/tool-catalog?scope=platform', { accessToken })
 }

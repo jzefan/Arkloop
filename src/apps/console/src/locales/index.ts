@@ -208,6 +208,7 @@ export interface LocaleStrings {
       statusActive: string
       statusInactive: string
       statusUnconfigured: string
+      statusInheritedPlatform: string
       activate: string
       deactivate: string
       configure: string

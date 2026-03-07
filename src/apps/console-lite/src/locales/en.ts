@@ -41,6 +41,11 @@ export const en: LocaleStrings = {
     builtIn: 'Built-in',
     platformDefault: 'Platform Default',
     hybrid: 'Hybrid',
+    toolsSelected: (selected: number, total: number) => `${selected}/${total} selected`,
+    enableAllTools: 'Enable all',
+    clearAllTools: 'Clear all',
+    groupEnableAll: 'Enable group',
+    groupClearAll: 'Clear group',
   },
   models: {
     title: 'Models',
