@@ -2,7 +2,9 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	nethttp "net/http"
 	"testing"
 
 	"arkloop/services/api/internal/audit"
@@ -11,13 +13,11 @@ import (
 	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 
-	nethttp "net/http"
-
 	"github.com/google/uuid"
 )
 
-func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
-	db := setupTestDatabase(t, "api_go_personas_http")
+func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_personas")
 	ctx := context.Background()
 
 	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
@@ -50,19 +50,19 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 	}
 	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
-		t.Fatalf("new refresh token repo: %v", err)
+		t.Fatalf("new refresh repo: %v", err)
 	}
 	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(pool)
-	if err != nil {
-		t.Fatalf("new personas repo: %v", err)
-	}
 	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(pool)
+	if err != nil {
+		t.Fatalf("new personas repo: %v", err)
 	}
 
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -76,6 +76,7 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -84,51 +85,42 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
-				ID:              "builtin-only",
-				Version:         "1",
-				Title:           "Builtin Only",
-				PromptMD:        "builtin prompt",
-				Budgets:         map[string]any{"max_output_tokens": 64},
-				UserSelectable:  true,
-				SelectorName:    "Builtin",
-				SelectorOrder:   intPtr(3),
-				AgentConfigName: "builtin-default",
+				ID:                 "builtin-only",
+				Version:            "1",
+				Title:              "Builtin Only",
+				UserSelectable:     true,
+				SelectorName:       "Builtin",
+				SelectorOrder:      intPtrPersonaLocal(3),
+				Model:              "builtin-cred^gpt-builtin",
+				ReasoningMode:      "low",
+				PromptCacheControl: "none",
+				ToolAllowlist:      []string{"web.search"},
+				ToolDenylist:       []string{"exec_command"},
+				Budgets:            map[string]any{"max_output_tokens": 2048},
+				PromptMD:           "builtin prompt",
 			},
 			{
-				ID:              "hybrid-bound",
-				Version:         "1",
-				Title:           "Hybrid Bound",
-				PromptMD:        "hybrid bound prompt",
-				ExecutorType:    "agent.lua",
-				AgentConfigName: "lua-default",
-			},
-			{
-				ID:           "hybrid-default",
-				Version:      "1",
-				Title:        "Hybrid Default",
-				PromptMD:     "hybrid default prompt",
-				ExecutorType: "agent.lua",
-			},
-			{
-				ID:       "shadowed",
-				Version:  "1",
-				Title:    "Builtin Shadowed",
-				PromptMD: "builtin shadowed prompt",
+				ID:                 "shadowed",
+				Version:            "1",
+				Title:              "Builtin Shadowed",
+				Model:              "builtin-shadow^model",
+				ReasoningMode:      "auto",
+				PromptCacheControl: "none",
+				PromptMD:           "shadowed builtin prompt",
 			},
 		},
 	})
 
-	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
-		"login":    "persona-owner",
-		"password": "pwdpwdpwd",
-		"email":    "persona-owner@test.com",
+	reg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "personas-user@test.com",
+		"password": "personapass123",
+		"email":    "personas-user@test.com",
 	}, nil)
-	if registerResp.Code != nethttp.StatusCreated {
-		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
+	if reg.Code != nethttp.StatusCreated {
+		t.Fatalf("register: %d %s", reg.Code, reg.Body.String())
 	}
-	accessToken := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes()).AccessToken
-	headers := authHeader(accessToken)
-
+	regBody := decodeJSONBody[registerResponse](t, reg.Body.Bytes())
+	headers := authHeader(regBody.AccessToken)
 	meResp := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, headers)
 	if meResp.Code != nethttp.StatusOK {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
@@ -136,150 +128,190 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
 	orgID := uuid.MustParse(me.OrgID)
 
-	if _, err := personasRepo.Create(ctx, orgID, "custom-only", "1", "Custom Only", nil, "custom prompt", nil, nil, nil, "agent.simple", nil); err != nil {
-		t.Fatalf("create custom-only persona: %v", err)
-	}
-	if _, err := personasRepo.Create(ctx, orgID, "shadowed", "1", "Custom Shadowed", nil, "custom shadowed prompt", nil, nil, nil, "agent.simple", nil); err != nil {
+	ghostID := insertGlobalPersonaHTTP(t, ctx, pool, "ghost", "Ghost Persona")
+
+	_, err = personasRepo.Create(
+		ctx,
+		orgID,
+		"shadowed",
+		"1",
+		"Custom Shadowed",
+		nil,
+		"custom shadowed prompt",
+		nil,
+		nil,
+		json.RawMessage(`{"max_output_tokens":512}`),
+		nil,
+		strPtrPersonaLocal("custom-shadow^model"),
+		"high",
+		"system_prompt",
+		"agent.simple",
+		nil,
+	)
+	if err != nil {
 		t.Fatalf("create shadowed persona: %v", err)
 	}
-	customBoundID := insertOrgPersonaHTTP(t, ctx, pool, orgID, "custom-bound", "Custom Bound", strPtr("custom-default"))
-	ghostID := insertGlobalPersonaHTTP(t, ctx, pool, "ghost", "Ghost Persona")
+	_, err = personasRepo.Create(
+		ctx,
+		orgID,
+		"custom-only",
+		"1",
+		"Custom Only",
+		nil,
+		"custom only prompt",
+		[]string{"web.search"},
+		[]string{"exec_command"},
+		json.RawMessage(`{"temperature":0.3}`),
+		strPtrPersonaLocal("cred-custom"),
+		strPtrPersonaLocal("custom-only^gpt-4.1-mini"),
+		"high",
+		"system_prompt",
+		"agent.simple",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create custom-only persona: %v", err)
+	}
+
+	createResp := doJSON(handler, nethttp.MethodPost, "/v1/personas", map[string]any{
+		"persona_key":          "api-created",
+		"version":              "1",
+		"display_name":         "API Created",
+		"prompt_md":            "api created prompt",
+		"tool_allowlist":       []string{"web.search"},
+		"tool_denylist":        []string{"exec_command"},
+		"budgets":              map[string]any{"max_output_tokens": 1024, "top_p": 0.9},
+		"preferred_credential": "cred-api",
+		"model":                "api-cred^gpt-5-mini",
+		"reasoning_mode":       "medium",
+		"prompt_cache_control": "system_prompt",
+		"executor_type":        "agent.simple",
+	}, headers)
+	if createResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create persona: %d %s", createResp.Code, createResp.Body.String())
+	}
+	created := decodeJSONBody[personaResponse](t, createResp.Body.Bytes())
+	if created.Model == nil || *created.Model != "api-cred^gpt-5-mini" {
+		t.Fatalf("unexpected created model: %#v", created.Model)
+	}
+	if created.ReasoningMode != "medium" {
+		t.Fatalf("unexpected created reasoning_mode: %q", created.ReasoningMode)
+	}
+	if created.PromptCacheControl != "system_prompt" {
+		t.Fatalf("unexpected created prompt_cache_control: %q", created.PromptCacheControl)
+	}
+	if len(created.ToolDenylist) != 1 || created.ToolDenylist[0] != "exec_command" {
+		t.Fatalf("unexpected created tool_denylist: %#v", created.ToolDenylist)
+	}
 
 	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas", nil, headers)
 	if listResp.Code != nethttp.StatusOK {
 		t.Fatalf("list personas: %d %s", listResp.Code, listResp.Body.String())
 	}
-	list := decodeJSONBody[[]personaResponse](t, listResp.Body.Bytes())
-	if len(list) != 6 {
-		t.Fatalf("expected 6 personas, got %d body=%s", len(list), listResp.Body.String())
+	body := decodeJSONBody[[]personaResponse](t, listResp.Body.Bytes())
+	if len(body) != 4 {
+		t.Fatalf("unexpected persona count: %d", len(body))
 	}
 
-	byKey := make(map[string]personaResponse, len(list))
-	for _, persona := range list {
+	byKey := make(map[string]personaResponse, len(body))
+	for _, persona := range body {
 		byKey[persona.PersonaKey] = persona
 	}
-
 	if _, exists := byKey["ghost"]; exists {
 		t.Fatal("expected ghost persona hidden from list")
 	}
-	builtinOnly, exists := byKey["builtin-only"]
-	if !exists {
+
+	builtinOnly, ok := byKey["builtin-only"]
+	if !ok {
 		t.Fatal("expected builtin-only persona in list")
 	}
 	if builtinOnly.Source != "builtin" {
-		t.Fatalf("expected builtin source, got %q", builtinOnly.Source)
+		t.Fatalf("unexpected builtin source: %q", builtinOnly.Source)
 	}
-	if builtinOnly.ID != "builtin:builtin-only:1" {
-		t.Fatalf("unexpected builtin id: %q", builtinOnly.ID)
+	if builtinOnly.Model == nil || *builtinOnly.Model != "builtin-cred^gpt-builtin" {
+		t.Fatalf("unexpected builtin model: %#v", builtinOnly.Model)
 	}
-	if builtinOnly.CreatedAt != "" {
-		t.Fatalf("expected empty created_at for builtin persona, got %q", builtinOnly.CreatedAt)
+	if builtinOnly.ReasoningMode != "low" {
+		t.Fatalf("unexpected builtin reasoning_mode: %q", builtinOnly.ReasoningMode)
 	}
-	if builtinOnly.OrgID != nil {
-		t.Fatalf("expected nil org_id for builtin persona, got %v", *builtinOnly.OrgID)
+	if builtinOnly.PromptCacheControl != "none" {
+		t.Fatalf("unexpected builtin prompt_cache_control: %q", builtinOnly.PromptCacheControl)
 	}
-	if !builtinOnly.UserSelectable {
-		t.Fatal("expected builtin persona selectable")
-	}
-	if builtinOnly.SelectorName == nil || *builtinOnly.SelectorName != "Builtin" {
-		t.Fatalf("unexpected selector_name: %#v", builtinOnly.SelectorName)
-	}
-	if builtinOnly.SelectorOrder == nil || *builtinOnly.SelectorOrder != 3 {
-		t.Fatalf("unexpected selector_order: %#v", builtinOnly.SelectorOrder)
-	}
-	if builtinOnly.AgentConfigName == nil || *builtinOnly.AgentConfigName != "builtin-default" {
-		t.Fatalf("unexpected builtin agent_config_name: %#v", builtinOnly.AgentConfigName)
+	if len(builtinOnly.ToolDenylist) != 1 || builtinOnly.ToolDenylist[0] != "exec_command" {
+		t.Fatalf("unexpected builtin tool_denylist: %#v", builtinOnly.ToolDenylist)
 	}
 
-	hybridBound, exists := byKey["hybrid-bound"]
-	if !exists {
-		t.Fatal("expected hybrid-bound persona in list")
+	shadowed, ok := byKey["shadowed"]
+	if !ok {
+		t.Fatal("expected shadowed persona in list")
 	}
-	if hybridBound.Source != "builtin" {
-		t.Fatalf("expected builtin hybrid-bound source, got %q", hybridBound.Source)
-	}
-	if hybridBound.ExecutorType != "agent.lua" {
-		t.Fatalf("unexpected hybrid-bound executor_type: %q", hybridBound.ExecutorType)
-	}
-	if hybridBound.AgentConfigName == nil || *hybridBound.AgentConfigName != "lua-default" {
-		t.Fatalf("unexpected hybrid-bound agent_config_name: %#v", hybridBound.AgentConfigName)
-	}
-
-	hybridDefault, exists := byKey["hybrid-default"]
-	if !exists {
-		t.Fatal("expected hybrid-default persona in list")
-	}
-	if hybridDefault.Source != "builtin" {
-		t.Fatalf("expected builtin hybrid-default source, got %q", hybridDefault.Source)
-	}
-	if hybridDefault.ExecutorType != "agent.lua" {
-		t.Fatalf("unexpected hybrid-default executor_type: %q", hybridDefault.ExecutorType)
-	}
-	if hybridDefault.AgentConfigName != nil {
-		t.Fatalf("expected nil hybrid-default agent_config_name, got %#v", hybridDefault.AgentConfigName)
-	}
-
-	shadowed := byKey["shadowed"]
 	if shadowed.Source != "custom" {
 		t.Fatalf("expected custom shadowed persona, got %q", shadowed.Source)
 	}
-	if shadowed.DisplayName != "Custom Shadowed" {
-		t.Fatalf("expected custom display name, got %q", shadowed.DisplayName)
+	if shadowed.Model == nil || *shadowed.Model != "custom-shadow^model" {
+		t.Fatalf("unexpected shadowed model: %#v", shadowed.Model)
 	}
-	if shadowed.AgentConfigName != nil {
-		t.Fatalf("expected nil shadowed agent_config_name, got %#v", shadowed.AgentConfigName)
+	if shadowed.PromptCacheControl != "system_prompt" {
+		t.Fatalf("unexpected shadowed prompt_cache_control: %q", shadowed.PromptCacheControl)
 	}
 
-	customOnly := byKey["custom-only"]
+	customOnly, ok := byKey["custom-only"]
+	if !ok {
+		t.Fatal("expected custom-only persona in list")
+	}
 	if customOnly.Source != "custom" {
-		t.Fatalf("expected custom-only source, got %q", customOnly.Source)
+		t.Fatalf("unexpected custom-only source: %q", customOnly.Source)
 	}
-	if customOnly.UserSelectable {
-		t.Fatal("expected custom persona not selectable")
+	if customOnly.PreferredCredential == nil || *customOnly.PreferredCredential != "cred-custom" {
+		t.Fatalf("unexpected custom-only preferred_credential: %#v", customOnly.PreferredCredential)
 	}
-	if customOnly.SelectorName != nil {
-		t.Fatalf("expected nil selector_name for custom persona, got %#v", customOnly.SelectorName)
+	if customOnly.Model == nil || *customOnly.Model != "custom-only^gpt-4.1-mini" {
+		t.Fatalf("unexpected custom-only model: %#v", customOnly.Model)
 	}
-	if customOnly.SelectorOrder != nil {
-		t.Fatalf("expected nil selector_order for custom persona, got %#v", customOnly.SelectorOrder)
+	if customOnly.ReasoningMode != "high" {
+		t.Fatalf("unexpected custom-only reasoning_mode: %q", customOnly.ReasoningMode)
 	}
-	if customOnly.AgentConfigName != nil {
-		t.Fatalf("expected nil custom-only agent_config_name, got %#v", customOnly.AgentConfigName)
+	if customOnly.PromptCacheControl != "system_prompt" {
+		t.Fatalf("unexpected custom-only prompt_cache_control: %q", customOnly.PromptCacheControl)
 	}
-	if customOnly.CreatedAt == "" {
-		t.Fatal("expected created_at on custom-only persona")
-	}
-
-	customBound := byKey["custom-bound"]
-	if customBound.Source != "custom" {
-		t.Fatalf("expected custom-bound source, got %q", customBound.Source)
-	}
-	if customBound.UserSelectable {
-		t.Fatal("expected custom-bound persona not selectable")
-	}
-	if customBound.SelectorName != nil {
-		t.Fatalf("expected nil selector_name for custom-bound persona, got %#v", customBound.SelectorName)
-	}
-	if customBound.SelectorOrder != nil {
-		t.Fatalf("expected nil selector_order for custom-bound persona, got %#v", customBound.SelectorOrder)
-	}
-	if customBound.AgentConfigName == nil || *customBound.AgentConfigName != "custom-default" {
-		t.Fatalf("unexpected custom agent_config_name: %#v", customBound.AgentConfigName)
-	}
-	if customBound.CreatedAt == "" {
-		t.Fatal("expected created_at on custom-bound persona")
-	}
-	if customBound.ID != customBoundID.String() {
-		t.Fatalf("unexpected custom-bound id: %q", customBound.ID)
+	if len(customOnly.ToolDenylist) != 1 || customOnly.ToolDenylist[0] != "exec_command" {
+		t.Fatalf("unexpected custom-only tool_denylist: %#v", customOnly.ToolDenylist)
 	}
 
-	patchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+ghostID.String(), map[string]any{
+	patchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+created.ID, map[string]any{
+		"model":                "patched-cred^gpt-5",
+		"tool_denylist":        []string{"write_stdin"},
+		"reasoning_mode":       "high",
+		"prompt_cache_control": "none",
+	}, headers)
+	if patchResp.Code != nethttp.StatusOK {
+		t.Fatalf("patch persona: %d %s", patchResp.Code, patchResp.Body.String())
+	}
+	patched := decodeJSONBody[personaResponse](t, patchResp.Body.Bytes())
+	if patched.Model == nil || *patched.Model != "patched-cred^gpt-5" {
+		t.Fatalf("unexpected patched model: %#v", patched.Model)
+	}
+	if patched.ReasoningMode != "high" {
+		t.Fatalf("unexpected patched reasoning_mode: %q", patched.ReasoningMode)
+	}
+	if patched.PromptCacheControl != "none" {
+		t.Fatalf("unexpected patched prompt_cache_control: %q", patched.PromptCacheControl)
+	}
+	if len(patched.ToolDenylist) != 1 || patched.ToolDenylist[0] != "write_stdin" {
+		t.Fatalf("unexpected patched tool_denylist: %#v", patched.ToolDenylist)
+	}
+
+	ghostPatchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+ghostID.String(), map[string]any{
 		"display_name": "Ghost Renamed",
 	}, headers)
-	assertErrorEnvelope(t, patchResp, nethttp.StatusNotFound, "personas.not_found")
+	assertErrorEnvelope(t, ghostPatchResp, nethttp.StatusNotFound, "personas.not_found")
 }
 
-func intPtr(value int) *int {
+func intPtrPersonaLocal(value int) *int {
+	return &value
+}
+
+func strPtrPersonaLocal(value string) *string {
 	return &value
 }
 
@@ -300,29 +332,4 @@ func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, pool data.Querie
 		t.Fatalf("insert global persona failed: %v", err)
 	}
 	return id
-}
-
-func insertOrgPersonaHTTP(t *testing.T, ctx context.Context, pool data.Querier, orgID uuid.UUID, personaKey string, displayName string, agentConfigName *string) uuid.UUID {
-	t.Helper()
-
-	var id uuid.UUID
-	err := pool.QueryRow(
-		ctx,
-		`INSERT INTO personas
-			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, budgets_json, executor_type, executor_config_json, agent_config_name)
-		 VALUES ($1, $2, '1', $3, 'custom bound prompt', '{}', '{}'::jsonb, 'agent.simple', '{}'::jsonb, $4)
-		 RETURNING id`,
-		orgID,
-		personaKey,
-		displayName,
-		agentConfigName,
-	).Scan(&id)
-	if err != nil {
-		t.Fatalf("insert org persona failed: %v", err)
-	}
-	return id
-}
-
-func strPtr(value string) *string {
-	return &value
 }

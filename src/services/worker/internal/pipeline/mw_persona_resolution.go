@@ -12,9 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPersonaResolutionMiddleware 加载 org personas 并解析 persona_id，设置 RunContext 的 persona 相关字段。
-// persona 解析失败时写入 run.failed 并短路。
-// getBaseRegistry 每次 run 调用时获取最新 registry，支持热重载。
 func NewPersonaResolutionMiddleware(
 	getBaseRegistry func() *personas.Registry,
 	dbPool *pgxpool.Pool,
@@ -60,6 +57,9 @@ func NewPersonaResolutionMiddleware(
 		rc.ToolBudget = map[string]any{}
 		rc.PerToolSoftLimits = tools.DefaultPerToolSoftLimits()
 		rc.PersonaDefinition = resolution.Definition
+		rc.AgentConfig = nil
+		rc.AgentConfigID = nil
+		rc.AgentConfigName = ""
 
 		normalizedLimits := sharedexec.NormalizePlatformLimits(sharedexec.PlatformLimits{
 			AgentReasoningIterations: rc.AgentReasoningIterationsLimit,
@@ -68,18 +68,12 @@ func NewPersonaResolutionMiddleware(
 		rc.AgentReasoningIterationsLimit = normalizedLimits.AgentReasoningIterations
 		rc.ToolContinuationBudgetLimit = normalizedLimits.ToolContinuationBudget
 
-		if resolution.Definition != nil && resolution.Definition.AgentConfigName != nil && dbPool != nil {
-			ac, acName, err := loadAgentConfigByName(ctx, dbPool, *resolution.Definition.AgentConfigName, rc.Run.OrgID)
-			if err != nil {
-				slog.WarnContext(ctx, "persona: agent_config_name lookup failed",
-					"persona_id", resolution.Definition.ID,
-					"agent_config_name", *resolution.Definition.AgentConfigName,
-					"err", err.Error(),
-				)
-			} else if ac != nil {
-				rc.AgentConfig = ac
-				rc.AgentConfigName = acName
-				rc.AgentConfigID = nil
+		if resolution.Definition != nil {
+			def := resolution.Definition
+			rc.AgentConfig = &ResolvedAgentConfig{
+				Model:              def.Model,
+				PromptCacheControl: def.PromptCacheControl,
+				ReasoningMode:      def.ReasoningMode,
 			}
 		}
 
@@ -100,25 +94,6 @@ func NewPersonaResolutionMiddleware(
 		rc.ToolBudget = profile.ToolBudget
 		rc.PerToolSoftLimits = tools.CopyPerToolSoftLimits(profile.PerToolSoftLimits)
 		rc.PreferredCredentialName = profile.PreferredCredentialName
-
-		if rc.AgentConfig != nil {
-			switch rc.AgentConfig.ToolPolicy {
-			case "allowlist":
-				if len(rc.AgentConfig.ToolAllowlist) > 0 {
-					narrowed := make(map[string]struct{}, len(rc.AgentConfig.ToolAllowlist))
-					for _, name := range rc.AgentConfig.ToolAllowlist {
-						if ToolAllowed(rc.AllowlistSet, rc.ToolRegistry, name) {
-							narrowed[name] = struct{}{}
-						}
-					}
-					rc.AllowlistSet = narrowed
-				}
-			case "denylist":
-				for _, name := range rc.AgentConfig.ToolDenylist {
-					RemoveToolOrGroup(rc.AllowlistSet, rc.ToolRegistry, name)
-				}
-			}
-		}
 
 		if resolution.Definition != nil {
 			def := resolution.Definition
@@ -162,7 +137,6 @@ func toExecutionPersonaProfile(def *personas.Definition) *sharedexec.PersonaProf
 	return &sharedexec.PersonaProfile{
 		PromptMD:                def.PromptMD,
 		PreferredCredentialName: def.PreferredCredential,
-		ResolvedAgentConfigName: def.AgentConfigName,
 		Budgets: sharedexec.RequestedBudgets{
 			ReasoningIterations:    def.Budgets.ReasoningIterations,
 			ToolContinuationBudget: def.Budgets.ToolContinuationBudget,

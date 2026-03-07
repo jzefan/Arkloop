@@ -54,6 +54,13 @@ func NewProviderRouter(config ProviderRoutingConfig) *ProviderRouter {
 	return &ProviderRouter{config: config}
 }
 
+func (r *ProviderRouter) Config() ProviderRoutingConfig {
+	if r == nil {
+		return ProviderRoutingConfig{}
+	}
+	return r.config
+}
+
 func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) ProviderRouteDecision {
 	requestedRoute, exists := inputJSON["route_id"]
 	if exists && requestedRoute != nil {
@@ -137,6 +144,12 @@ func (r *ProviderRouter) pickFirstMatchingRoute(inputJSON map[string]any) Provid
 			return route
 		}
 	}
-	route, _ := r.config.GetRoute(r.config.DefaultRouteID)
-	return route
+	if strings.TrimSpace(r.config.DefaultRouteID) != "" {
+		route, _ := r.config.GetRoute(r.config.DefaultRouteID)
+		return route
+	}
+	if len(r.config.Routes) > 0 {
+		return r.config.Routes[0]
+	}
+	return ProviderRouteRule{}
 }

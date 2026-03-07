@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Play, ClipboardList, AlertTriangle,
-  KeyRound, Bot, FileText, Plug, Sparkles,
+  KeyRound, Bot, Plug, Sparkles,
   Key, Webhook,
   ShieldCheck,
   Users, UsersRound, FolderOpen, UserPlus,
@@ -65,10 +65,8 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
       id: 'configuration',
       label: t.groups.configuration,
       items: [
-        { label: t.nav.credentials,      path: '/credentials',      icon: <KeyRound size={17} /> },
+        { label: t.nav.credentials,      path: '/providers',       icon: <KeyRound size={17} /> },
         { label: t.nav.tools,            path: '/tools',            icon: <Wrench size={17} /> },
-        { label: t.nav.agentConfigs,     path: '/agent-configs',    icon: <Bot size={17} /> },
-        { label: t.nav.promptTemplates,  path: '/prompt-templates', icon: <FileText size={17} /> },
         { label: t.nav.mcpConfigs,       path: '/mcp-configs',      icon: <Plug size={17} /> },
         { label: t.nav.personas,           path: '/personas',           icon: <Sparkles size={17} /> },
         { label: t.nav.asrCredentials,   path: '/asr-credentials',  icon: <Mic size={17} /> },

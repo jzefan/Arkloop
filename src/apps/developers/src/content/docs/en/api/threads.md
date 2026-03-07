@@ -94,7 +94,6 @@ PATCH /v1/threads/{thread_id}
 |------|------|------|
 | `title` | `string \| null` | Title (`null` to clear) |
 | `project_id` | `string \| null` | Associated project |
-| `agent_config_id` | `string \| null` | Associated Agent configuration |
 
 ---
 

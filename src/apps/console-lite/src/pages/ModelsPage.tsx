@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
   Loader2, Plus, Trash2, Settings, Search, RefreshCw, Download, X,
@@ -36,11 +36,6 @@ function clientTypeToBackend(ct: ClientType): { provider: string; openai_api_mod
   }
 }
 
-function backendToClientType(provider: string, mode: string | null): ClientType {
-  if (provider === 'anthropic') return 'anthropic'
-  if (mode === 'chat_completions') return 'openai_chat'
-  return 'openai_response'
-}
 
 export function ModelsPage() {
   const { accessToken } = useOutletContext<LiteOutletContext>()
@@ -101,6 +96,7 @@ export function ModelsPage() {
   const [importLoading, setImportLoading] = useState(false)
   const [importError, setImportError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importSearchQuery, setImportSearchQuery] = useState('')
 
   const firstLoadRef = useRef(true)
 
@@ -309,6 +305,7 @@ export function ModelsPage() {
     setImportLoading(true)
     setImportError('')
     setImportSelected(new Set())
+    setImportSearchQuery('')
     try {
       const data = await listAvailableModels(selected.id, accessToken)
       setAvailableModels(data.models.filter((m) => !m.configured))
@@ -348,6 +345,14 @@ export function ModelsPage() {
       return next
     })
   }, [])
+
+  const filteredImportModels = useMemo(() => {
+    const keyword = importSearchQuery.trim().toLowerCase()
+    if (!keyword) return availableModels
+    return availableModels.filter((item) =>
+      item.id.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword),
+    )
+  }, [availableModels, importSearchQuery])
 
   const inputCls =
     'w-full rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none focus:border-[var(--c-border-focus)]'
@@ -780,22 +785,38 @@ export function ModelsPage() {
           ) : availableModels.length === 0 ? (
             <p className="py-4 text-center text-sm text-[var(--c-text-muted)]">{tc.importModelsEmpty}</p>
           ) : (
-            <div className="max-h-[400px] space-y-1 overflow-y-auto">
-              {availableModels.map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-[var(--c-bg-sub)]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={importSelected.has(m.id)}
-                    onChange={() => toggleImportModel(m.id)}
-                    className="rounded"
-                  />
-                  <span className="text-sm text-[var(--c-text-primary)]">{m.id}</span>
-                </label>
-              ))}
-            </div>
+            <>
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
+                <input
+                  type="text"
+                  value={importSearchQuery}
+                  onChange={(e) => setImportSearchQuery(e.target.value)}
+                  placeholder={tc.importSearchPlaceholder}
+                  className={`${editInputCls} pl-9`}
+                />
+              </div>
+              {filteredImportModels.length === 0 ? (
+                <p className="py-4 text-center text-sm text-[var(--c-text-muted)]">{tc.importModelsEmpty}</p>
+              ) : (
+                <div className="max-h-[400px] space-y-1 overflow-y-auto">
+                  {filteredImportModels.map((m: AvailableModel) => (
+                    <label
+                      key={m.id}
+                      className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-[var(--c-bg-sub)]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={importSelected.has(m.id)}
+                        onChange={() => toggleImportModel(m.id)}
+                        className="rounded"
+                      />
+                      <span className="text-sm text-[var(--c-text-primary)]">{m.id}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </>
           )}
           <div className="flex justify-end gap-2">
             <button

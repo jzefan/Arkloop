@@ -66,6 +66,7 @@ export const zhCN: LocaleStrings = {
     importModelsEmpty: '没有可导入的模型',
     importModelsError: '获取模型列表失败',
     importSelected: '导入选中',
+    importSearchPlaceholder: '搜索模型',
     modelName: '模型名称',
     tags: '标签',
     addTag: '添加标签...',

@@ -70,8 +70,6 @@ type HandlerConfig struct {
 	TeamRepo                     *data.TeamRepository
 	ProjectRepo                  *data.ProjectRepository
 	WebhookRepo                  *data.WebhookEndpointRepository
-	PromptTemplatesRepo          *data.PromptTemplateRepository
-	AgentConfigsRepo             *data.AgentConfigRepository
 	PlansRepo                    *data.PlanRepository
 	SubscriptionsRepo            *data.SubscriptionRepository
 	EntitlementsRepo             *data.EntitlementsRepository
@@ -189,7 +187,6 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			cfg.RunEventRepo,
 			cfg.ProjectRepo,
 			cfg.TeamRepo,
-			cfg.AgentConfigsRepo,
 			cfg.AuditWriter,
 			cfg.Pool,
 			cfg.APIKeysRepo,
@@ -338,30 +335,12 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 
 	mux.HandleFunc(
-		"/v1/prompt-templates",
-		promptTemplatesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PromptTemplatesRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/prompt-templates/",
-		promptTemplateEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PromptTemplatesRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/agent-configs",
-		agentConfigsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AgentConfigsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/agent-configs/",
-		agentConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AgentConfigsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
 		"/v1/lite/agents",
-		liteAgentsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.AgentConfigsRepo, cfg.Pool, cfg.RepoPersonas),
+		liteAgentsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.RepoPersonas),
 	)
 	mux.HandleFunc(
 		"/v1/lite/agents/",
-		liteAgentEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.AgentConfigsRepo, cfg.Pool),
+		liteAgentEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo),
 	)
 
 	mux.HandleFunc(
@@ -433,7 +412,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"/v1/admin/runs/",
-		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo, cfg.AgentConfigsRepo, cfg.ThreadRepo),
+		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo, cfg.ThreadRepo),
 	)
 	mux.HandleFunc(
 		"/v1/admin/reports",
@@ -553,7 +532,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"/v1/admin/execution-governance",
-		adminExecutionGovernance(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AgentConfigsRepo, cfg.PersonasRepo, cfg.RepoPersonas, registry, cfg.Pool),
+		adminExecutionGovernance(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PersonasRepo, cfg.RepoPersonas, registry, cfg.Pool),
 	)
 
 	mux.HandleFunc(

@@ -23,28 +23,28 @@ type adminRunEventsStats struct {
 }
 
 type adminRunUsageItem struct {
-	RunID              string   `json:"run_id"`
-	OrgID              string   `json:"org_id"`
-	ThreadID           string   `json:"thread_id"`
-	ParentRunID        *string  `json:"parent_run_id,omitempty"`
-	Status             string   `json:"status"`
-	PersonaID          *string  `json:"persona_id,omitempty"`
-	Model              *string  `json:"model,omitempty"`
-	ProviderKind       *string  `json:"provider_kind,omitempty"`
-	CredentialName     *string  `json:"credential_name,omitempty"`
-	AgentConfigName    *string  `json:"agent_config_name,omitempty"`
-	DurationMs         *int64   `json:"duration_ms,omitempty"`
-	TotalInputTokens   *int64   `json:"total_input_tokens,omitempty"`
-	TotalOutputTokens  *int64   `json:"total_output_tokens,omitempty"`
-	TotalCostUSD       *float64 `json:"total_cost_usd,omitempty"`
-	CacheHitRate       *float64 `json:"cache_hit_rate,omitempty"`
-	CacheCreationTokens *int64  `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens    *int64   `json:"cache_read_tokens,omitempty"`
-	CachedTokens       *int64   `json:"cached_tokens,omitempty"`
-	CreditsUsed        *int64   `json:"credits_used,omitempty"`
-	CreatedAt          string   `json:"created_at"`
-	CompletedAt        *string  `json:"completed_at,omitempty"`
-	FailedAt           *string  `json:"failed_at,omitempty"`
+	RunID               string   `json:"run_id"`
+	OrgID               string   `json:"org_id"`
+	ThreadID            string   `json:"thread_id"`
+	ParentRunID         *string  `json:"parent_run_id,omitempty"`
+	Status              string   `json:"status"`
+	PersonaID           *string  `json:"persona_id,omitempty"`
+	Model               *string  `json:"model,omitempty"`
+	ProviderKind        *string  `json:"provider_kind,omitempty"`
+	CredentialName      *string  `json:"credential_name,omitempty"`
+	PersonaModel        *string  `json:"persona_model,omitempty"`
+	DurationMs          *int64   `json:"duration_ms,omitempty"`
+	TotalInputTokens    *int64   `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens   *int64   `json:"total_output_tokens,omitempty"`
+	TotalCostUSD        *float64 `json:"total_cost_usd,omitempty"`
+	CacheHitRate        *float64 `json:"cache_hit_rate,omitempty"`
+	CacheCreationTokens *int64   `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     *int64   `json:"cache_read_tokens,omitempty"`
+	CachedTokens        *int64   `json:"cached_tokens,omitempty"`
+	CreditsUsed         *int64   `json:"credits_used,omitempty"`
+	CreatedAt           string   `json:"created_at"`
+	CompletedAt         *string  `json:"completed_at,omitempty"`
+	FailedAt            *string  `json:"failed_at,omitempty"`
 }
 
 type adminRunUsageAggregate struct {
@@ -55,28 +55,28 @@ type adminRunUsageAggregate struct {
 }
 
 type adminRunDetailResponse struct {
-	RunID             string   `json:"run_id"`
-	OrgID             string   `json:"org_id"`
-	ThreadID          string   `json:"thread_id"`
-	Status            string   `json:"status"`
-	Model             *string  `json:"model,omitempty"`
-	PersonaID           *string  `json:"persona_id,omitempty"`
-	ProviderKind      *string  `json:"provider_kind,omitempty"`
-	CredentialName    *string  `json:"credential_name,omitempty"`
-	AgentConfigName   *string  `json:"agent_config_name,omitempty"`
-	DurationMs        *int64   `json:"duration_ms,omitempty"`
-	TotalInputTokens  *int64   `json:"total_input_tokens,omitempty"`
-	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
-	TotalCostUSD      *float64 `json:"total_cost_usd,omitempty"`
-	CreatedAt         string   `json:"created_at"`
-	CompletedAt       *string  `json:"completed_at,omitempty"`
-	FailedAt          *string  `json:"failed_at,omitempty"`
-	CreatedByUserID   *string  `json:"created_by_user_id,omitempty"`
-	CreatedByUserName *string  `json:"created_by_user_name,omitempty"`
-	CreatedByEmail    *string  `json:"created_by_email,omitempty"`
-	UserPrompt        *string  `json:"user_prompt,omitempty"`
-	EventsStats       adminRunEventsStats `json:"events_stats"`
-	Children          []adminRunUsageItem `json:"children,omitempty"`
+	RunID             string                  `json:"run_id"`
+	OrgID             string                  `json:"org_id"`
+	ThreadID          string                  `json:"thread_id"`
+	Status            string                  `json:"status"`
+	Model             *string                 `json:"model,omitempty"`
+	PersonaID         *string                 `json:"persona_id,omitempty"`
+	ProviderKind      *string                 `json:"provider_kind,omitempty"`
+	CredentialName    *string                 `json:"credential_name,omitempty"`
+	PersonaModel      *string                 `json:"persona_model,omitempty"`
+	DurationMs        *int64                  `json:"duration_ms,omitempty"`
+	TotalInputTokens  *int64                  `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens *int64                  `json:"total_output_tokens,omitempty"`
+	TotalCostUSD      *float64                `json:"total_cost_usd,omitempty"`
+	CreatedAt         string                  `json:"created_at"`
+	CompletedAt       *string                 `json:"completed_at,omitempty"`
+	FailedAt          *string                 `json:"failed_at,omitempty"`
+	CreatedByUserID   *string                 `json:"created_by_user_id,omitempty"`
+	CreatedByUserName *string                 `json:"created_by_user_name,omitempty"`
+	CreatedByEmail    *string                 `json:"created_by_email,omitempty"`
+	UserPrompt        *string                 `json:"user_prompt,omitempty"`
+	EventsStats       adminRunEventsStats     `json:"events_stats"`
+	Children          []adminRunUsageItem     `json:"children,omitempty"`
 	TotalAggregate    *adminRunUsageAggregate `json:"total_aggregate,omitempty"`
 }
 
@@ -88,7 +88,6 @@ func adminRunsEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	messagesRepo *data.MessageRepository,
 	credentialsRepo *data.LlmCredentialsRepository,
-	agentConfigsRepo *data.AgentConfigRepository,
 	threadRepo *data.ThreadRepository,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -147,7 +146,7 @@ func adminRunsEntry(
 			return
 		}
 
-		stats, routeModel, providerKind, credentialID, credentialName, agentConfigName := summarizeRunEvents(events)
+		stats, routeModel, providerKind, credentialID, credentialName, personaModel := summarizeRunEvents(events)
 
 		// 如果事件中没有 credential_name（旧 run），尝试从 DB 查询补全
 		if credentialName == nil && credentialID != nil && credentialsRepo != nil {
@@ -164,33 +163,16 @@ func adminRunsEntry(
 			model = run.Model
 		}
 
-		// 旧 run 事件中没有 agent_config_name 时，复用 Worker 的解析链：thread→project→org 默认
-		if agentConfigName == nil && threadRepo != nil && agentConfigsRepo != nil {
-			if thread, tErr := threadRepo.GetByID(r.Context(), run.ThreadID); tErr == nil && thread != nil {
-				var resolvedID *uuid.UUID
-				if thread.AgentConfigID != nil {
-					resolvedID = thread.AgentConfigID
-				} else {
-					resolvedID = resolveDefaultAgentConfigID(r.Context(), agentConfigsRepo, run.OrgID, thread.ProjectID)
-				}
-				if resolvedID != nil {
-					if ac, acErr := agentConfigsRepo.GetByID(r.Context(), *resolvedID); acErr == nil && ac != nil {
-						agentConfigName = &ac.Name
-					}
-				}
-			}
-		}
-
 		resp := adminRunDetailResponse{
 			RunID:             run.ID.String(),
 			OrgID:             run.OrgID.String(),
 			ThreadID:          run.ThreadID.String(),
 			Status:            run.Status,
 			Model:             model,
-			PersonaID:           run.PersonaID,
+			PersonaID:         run.PersonaID,
 			ProviderKind:      providerKind,
 			CredentialName:    credentialName,
-			AgentConfigName:   agentConfigName,
+			PersonaModel:      personaModel,
 			DurationMs:        run.DurationMs,
 			TotalInputTokens:  run.TotalInputTokens,
 			TotalOutputTokens: run.TotalOutputTokens,
@@ -344,22 +326,22 @@ func loadChildRunUsageRows(ctx context.Context, repo *data.RunEventRepository, p
 
 func toAdminRunUsageItem(rw data.RunWithUser, parentRunID *string) *adminRunUsageItem {
 	item := &adminRunUsageItem{
-		RunID:             rw.ID.String(),
-		OrgID:             rw.OrgID.String(),
-		ThreadID:          rw.ThreadID.String(),
-		ParentRunID:       parentRunID,
-		Status:            rw.Status,
-		Model:             rw.Model,
-		PersonaID:         rw.PersonaID,
-		DurationMs:        rw.DurationMs,
-		TotalInputTokens:  rw.TotalInputTokens,
-		TotalOutputTokens: rw.TotalOutputTokens,
-		TotalCostUSD:      rw.TotalCostUSD,
+		RunID:               rw.ID.String(),
+		OrgID:               rw.OrgID.String(),
+		ThreadID:            rw.ThreadID.String(),
+		ParentRunID:         parentRunID,
+		Status:              rw.Status,
+		Model:               rw.Model,
+		PersonaID:           rw.PersonaID,
+		DurationMs:          rw.DurationMs,
+		TotalInputTokens:    rw.TotalInputTokens,
+		TotalOutputTokens:   rw.TotalOutputTokens,
+		TotalCostUSD:        rw.TotalCostUSD,
 		CacheCreationTokens: rw.CacheCreationTokens,
-		CacheReadTokens:   rw.CacheReadTokens,
-		CachedTokens:      rw.CachedTokens,
-		CreditsUsed:       rw.CreditsUsed,
-		CreatedAt:         rw.CreatedAt.UTC().Format(time.RFC3339Nano),
+		CacheReadTokens:     rw.CacheReadTokens,
+		CachedTokens:        rw.CachedTokens,
+		CreditsUsed:         rw.CreditsUsed,
+		CreatedAt:           rw.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if rw.CompletedAt != nil {
 		s := rw.CompletedAt.UTC().Format(time.RFC3339Nano)
@@ -387,13 +369,13 @@ func fillAdminRunUsageMeta(
 		return err
 	}
 
-	_, routeModel, providerKind, _, credentialName, agentConfigName := summarizeRunEvents(events)
+	_, routeModel, providerKind, _, credentialName, personaModel := summarizeRunEvents(events)
 	if routeModel != nil {
 		item.Model = routeModel
 	}
 	item.ProviderKind = providerKind
 	item.CredentialName = credentialName
-	item.AgentConfigName = agentConfigName
+	item.PersonaModel = personaModel
 
 	if item.PersonaID == nil {
 		if pid := personaIDFromEvents(events); pid != "" {
@@ -422,7 +404,7 @@ func summarizeRunEvents(events []data.RunEvent) (
 	providerKind *string,
 	credentialID *string,
 	credentialName *string,
-	agentConfigName *string,
+	personaModel *string,
 ) {
 	stats.Total = len(events)
 	for _, ev := range events {
@@ -448,9 +430,9 @@ func summarizeRunEvents(events []data.RunEvent) (
 					providerKind = &pk
 				}
 			}
-			if agentConfigName == nil {
-				if n, ok := stringFromData(ev.DataJSON, "agent_config_name"); ok {
-					agentConfigName = &n
+			if personaModel == nil {
+				if n, ok := stringFromData(ev.DataJSON, "persona_model"); ok {
+					personaModel = &n
 				}
 			}
 		case "llm.request":
@@ -461,7 +443,7 @@ func summarizeRunEvents(events []data.RunEvent) (
 			stats.ProviderFallbacks++
 		}
 	}
-	return stats, routeModel, providerKind, credentialID, credentialName, agentConfigName
+	return stats, routeModel, providerKind, credentialID, credentialName, personaModel
 }
 
 func stringFromData(dataJSON any, key string) (string, bool) {
@@ -475,22 +457,4 @@ func stringFromData(dataJSON any, key string) (string, bool) {
 	}
 	s, ok := v.(string)
 	return s, ok
-}
-
-// resolveDefaultAgentConfigID 按 project→org 优先级查找默认 agent config。
-func resolveDefaultAgentConfigID(
-	ctx context.Context,
-	repo *data.AgentConfigRepository,
-	orgID uuid.UUID,
-	projectID *uuid.UUID,
-) *uuid.UUID {
-	if projectID != nil {
-		if ac, err := repo.GetDefaultForProject(ctx, orgID, *projectID); err == nil && ac != nil {
-			return &ac.ID
-		}
-	}
-	if ac, err := repo.GetDefaultForOrg(ctx, orgID); err == nil && ac != nil {
-		return &ac.ID
-	}
-	return nil
 }

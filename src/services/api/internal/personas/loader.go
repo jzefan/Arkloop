@@ -32,7 +32,6 @@ func BuiltinPersonasRoot() (string, error) {
 	return "", fmt.Errorf("src directory not found, cannot locate personas root directory")
 }
 
-// RepoPersona 表示从 src/personas/ 目录加载的仓库 persona。
 type RepoPersona struct {
 	ID                  string         `yaml:"id"`
 	Version             string         `yaml:"version"`
@@ -45,14 +44,14 @@ type RepoPersona struct {
 	ToolDenylist        []string       `yaml:"tool_denylist"`
 	Budgets             map[string]any `yaml:"budgets"`
 	PreferredCredential string         `yaml:"preferred_credential"`
-	AgentConfigName     string         `yaml:"agent_config"`
+	Model               string         `yaml:"model"`
+	ReasoningMode       string         `yaml:"reasoning_mode"`
+	PromptCacheControl  string         `yaml:"prompt_cache_control"`
 	ExecutorType        string         `yaml:"executor_type"`
 	ExecutorConfig      map[string]any `yaml:"executor_config"`
 	PromptMD            string         `yaml:"-"`
 }
 
-// LoadFromDir 扫描指定目录下的所有 persona 子目录，读取 persona.yaml 和 prompt.md。
-// 如果目录不存在或无有效 persona，返回空 slice（不报错）。
 func LoadFromDir(root string) ([]RepoPersona, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -87,7 +86,6 @@ func LoadFromDir(root string) ([]RepoPersona, error) {
 		if p.Version == "" {
 			p.Version = "1"
 		}
-
 		if promptData, err := os.ReadFile(promptPath); err == nil {
 			p.PromptMD = string(promptData)
 		}

@@ -30,7 +30,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 	}
 
 	orgID := uuid.New()
-	custom, err := repo.Create(ctx, orgID, "custom-only", "1", "Custom Only", nil, "prompt", nil, nil, nil, "agent.simple", nil)
+	custom, err := repo.Create(ctx, orgID, "custom-only", "1", "Custom Only", nil, "prompt", nil, nil, nil, nil, nil, "auto", "none", "agent.simple", nil)
 	if err != nil {
 		t.Fatalf("create custom persona: %v", err)
 	}

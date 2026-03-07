@@ -27,9 +27,8 @@ type createThreadRequest struct {
 }
 
 type updateThreadRequest struct {
-	Title         optionalString `json:"title"`
-	ProjectID     optionalUUID   `json:"project_id"`
-	AgentConfigID optionalUUID   `json:"agent_config_id"`
+	Title     optionalString `json:"title"`
+	ProjectID optionalUUID   `json:"project_id"`
 }
 
 type threadResponse struct {
@@ -70,7 +69,7 @@ type optionalUUID struct {
 }
 
 func isTitleOnlyThreadUpdate(body updateThreadRequest) bool {
-	return body.Title.Present && !body.ProjectID.Present && !body.AgentConfigID.Present
+	return body.Title.Present && !body.ProjectID.Present
 }
 
 func (u *optionalUUID) UnmarshalJSON(raw []byte) error {
@@ -257,7 +256,6 @@ func patchThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	projectRepo *data.ProjectRepository,
-	agentConfigRepo *data.AgentConfigRepository,
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -285,7 +283,7 @@ func patchThread(
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if !body.Title.Present && !body.ProjectID.Present && !body.AgentConfigID.Present {
+		if !body.Title.Present && !body.ProjectID.Present {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -295,14 +293,12 @@ func patchThread(
 		}
 
 		params := data.ThreadUpdateFields{
-			SetTitle:         body.Title.Present,
-			Title:            body.Title.Value,
-			SetTitleLocked:   body.Title.Present,
-			TitleLocked:      body.Title.Present,
-			SetProjectID:     body.ProjectID.Present,
-			ProjectID:        body.ProjectID.Value,
-			SetAgentConfigID: body.AgentConfigID.Present,
-			AgentConfigID:    body.AgentConfigID.Value,
+			SetTitle:       body.Title.Present,
+			Title:          body.Title.Value,
+			SetTitleLocked: body.Title.Present,
+			TitleLocked:    body.Title.Present,
+			SetProjectID:   body.ProjectID.Present,
+			ProjectID:      body.ProjectID.Value,
 		}
 
 		if isTitleOnlyThreadUpdate(body) {
@@ -344,23 +340,6 @@ func patchThread(
 			}
 			if project == nil || project.OrgID != actor.OrgID {
 				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "project not found in org", traceID, nil)
-				return
-			}
-		}
-
-		// 验证新的 agent_config_id 归属于同一 org，防止跨 org 配置泄露
-		if body.AgentConfigID.Present && body.AgentConfigID.Value != nil {
-			if agentConfigRepo == nil {
-				WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
-				return
-			}
-			ac, err := agentConfigRepo.GetByID(r.Context(), *body.AgentConfigID.Value)
-			if err != nil {
-				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			if ac == nil || (ac.Scope != "platform" && (ac.OrgID == nil || *ac.OrgID != actor.OrgID)) {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "agent config not found in org", traceID, nil)
 				return
 			}
 		}
@@ -672,7 +651,6 @@ func threadEntry(
 	runRepo *data.RunEventRepository,
 	projectRepo *data.ProjectRepository,
 	teamRepo *data.TeamRepository,
-	agentConfigRepo *data.AgentConfigRepository,
 	auditWriter *audit.Writer,
 	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
@@ -681,7 +659,7 @@ func threadEntry(
 	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getThread(authService, membershipRepo, threadRepo, projectRepo, teamRepo, auditWriter, apiKeysRepo)
-	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, agentConfigRepo, auditWriter, apiKeysRepo)
+	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, auditWriter, apiKeysRepo)
 	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo)

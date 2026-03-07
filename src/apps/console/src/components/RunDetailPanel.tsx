@@ -205,7 +205,7 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
     model: d?.model ?? r.model,
     provider_kind: d?.provider_kind,
     credential_name: d?.credential_name,
-    agent_config_name: d?.agent_config_name,
+    persona_model: d?.persona_model,
     duration_ms: d?.duration_ms ?? r.duration_ms,
     total_input_tokens: d?.total_input_tokens ?? r.total_input_tokens,
     total_output_tokens: d?.total_output_tokens ?? r.total_output_tokens,
@@ -280,7 +280,7 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
                 <MetaRow label={rt.labelPersona} value={d?.persona_id ?? r.persona_id} />
               </div>
               <div className="pt-2">
-                <MetaRow label={rt.labelAgentConfig} value={d?.agent_config_name} />
+                <MetaRow label={rt.labelPersonaModel} value={d?.persona_model} />
                 <MetaRow label={rt.labelCredential} value={d?.credential_name} />
                 <MetaRow label={rt.labelModel} value={d?.model ?? r.model} />
                 <MetaRow
@@ -469,12 +469,12 @@ function UsageBreakdownTable({ self, children, aggregate, onOpenRun }: UsageBrea
                       {modelText}
                       <span className="text-[var(--c-text-muted)]">{providerText}</span>
                     </div>
-                    {(item.credential_name || item.agent_config_name) && (
+                    {(item.credential_name || item.persona_model) && (
                       <div
                         className="truncate text-[11px] text-[var(--c-text-muted)]"
-                        title={item.credential_name ?? item.agent_config_name}
+                        title={item.credential_name ?? item.persona_model}
                       >
-                        {item.credential_name ?? item.agent_config_name}
+                        {item.credential_name ?? item.persona_model}
                       </div>
                     )}
                   </td>

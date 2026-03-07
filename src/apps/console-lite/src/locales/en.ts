@@ -66,6 +66,7 @@ export const en: LocaleStrings = {
     importModelsEmpty: 'No models available to import',
     importModelsError: 'Failed to fetch model list',
     importSelected: 'Import Selected',
+    importSearchPlaceholder: 'Search models',
     modelName: 'Model Name',
     tags: 'Tags',
     addTag: 'Add tag...',

@@ -182,10 +182,12 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			tool_allowlist       TEXT[]      NOT NULL DEFAULT '{}',
 			tool_denylist        TEXT[]      NOT NULL DEFAULT '{}',
 			budgets_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			model                TEXT        NULL,
+			reasoning_mode       TEXT        NOT NULL DEFAULT 'auto',
+			prompt_cache_control TEXT        NOT NULL DEFAULT 'none',
 			executor_type        TEXT        NOT NULL DEFAULT 'agent.simple',
 			executor_config_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			preferred_credential TEXT        NULL,
-			agent_config_name    TEXT        NULL,
 			is_active            BOOLEAN     NOT NULL DEFAULT TRUE,
 			created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 			CONSTRAINT uq_personas_org_key_version UNIQUE NULLS NOT DISTINCT (org_id, persona_key, version)
@@ -233,7 +235,6 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		`CREATE TABLE threads (
 			id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 			org_id     UUID        NOT NULL,
-			agent_config_id UUID   NULL,
 			project_id UUID        NULL,
 			is_private BOOLEAN     NOT NULL DEFAULT FALSE,
 			expires_at TIMESTAMPTZ NULL,

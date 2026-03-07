@@ -134,3 +134,28 @@ func TestProviderRouteRuleMatches_WhenContainsArrayDoesNotPanic(t *testing.T) {
 func stringPtr(value string) *string {
 	return &value
 }
+
+func TestProviderRouterDecide_FirstRouteFallbackWithoutDefaultRouteID(t *testing.T) {
+	cfg := ProviderRoutingConfig{
+		Credentials: []ProviderCredential{
+			{ID: "c1", Name: "openrouter", Scope: CredentialScopePlatform, ProviderKind: ProviderKindOpenAI, AdvancedJSON: map[string]any{}},
+			{ID: "c2", Name: "backup", Scope: CredentialScopePlatform, ProviderKind: ProviderKindOpenAI, AdvancedJSON: map[string]any{}},
+		},
+		Routes: []ProviderRouteRule{
+			{ID: "r-high", Model: "openai/gpt-oss-120b", CredentialID: "c1", When: map[string]any{}},
+			{ID: "r-low", Model: "openai/gpt-4.1-mini", CredentialID: "c2", When: map[string]any{}},
+		},
+	}
+	router := NewProviderRouter(cfg)
+
+	decision := router.Decide(map[string]any{}, false)
+	if decision.Denied != nil {
+		t.Fatalf("expected selected, got denied: %+v", decision.Denied)
+	}
+	if decision.Selected == nil {
+		t.Fatal("expected selected route")
+	}
+	if decision.Selected.Route.ID != "r-high" {
+		t.Fatalf("unexpected route id: %s", decision.Selected.Route.ID)
+	}
+}

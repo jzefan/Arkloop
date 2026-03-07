@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
@@ -6,10 +6,15 @@ import { FormField } from '../../components/FormField'
 import { useToast } from '../../components/useToast'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { listAgentConfigs, type AgentConfig } from '../../api/agent-configs'
+import { listLlmProviders } from '../../api/llm-providers'
 import { getPlatformSetting, setPlatformSetting, deletePlatformSetting } from '../../api/platform-settings'
 
-const SETTING_KEY = 'title_summarizer.agent_config_id'
+const SETTING_KEY = 'title_summarizer.model'
+
+type SelectorOption = {
+  value: string
+  label: string
+}
 
 export function TitleSummarizerPage() {
   const { accessToken } = useOutletContext<ConsoleOutletContext>()
@@ -19,18 +24,26 @@ export function TitleSummarizerPage() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [agentConfigs, setAgentConfigs] = useState<AgentConfig[]>([])
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('')
+  const [selectedModel, setSelectedModel] = useState('')
+  const [options, setOptions] = useState<SelectorOption[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [configs, setting] = await Promise.all([
-        listAgentConfigs(accessToken),
+      const [providers, setting] = await Promise.all([
+        listLlmProviders(accessToken),
         getPlatformSetting(SETTING_KEY, accessToken).catch(() => null),
       ])
-      setAgentConfigs(configs)
-      setSelectedAgentId(setting?.value ?? '')
+
+      const nextOptions = providers.flatMap((provider) =>
+        (provider.models ?? []).map((model) => ({
+          value: `${provider.name}^${model.model}`,
+          label: `${provider.name} · ${model.model}`,
+        })),
+      )
+
+      setOptions(nextOptions)
+      setSelectedModel(setting?.value ?? '')
     } catch {
       addToast(tc.toastLoadFailed, 'error')
     } finally {
@@ -42,11 +55,18 @@ export function TitleSummarizerPage() {
     void load()
   }, [load])
 
+  const mergedOptions = useMemo(() => {
+    if (!selectedModel.trim() || options.some((item) => item.value === selectedModel)) {
+      return options
+    }
+    return [{ value: selectedModel, label: selectedModel }, ...options]
+  }, [options, selectedModel])
+
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
-      if (selectedAgentId) {
-        await setPlatformSetting(SETTING_KEY, selectedAgentId, accessToken)
+      if (selectedModel.trim()) {
+        await setPlatformSetting(SETTING_KEY, selectedModel.trim(), accessToken)
       } else {
         await deletePlatformSetting(SETTING_KEY, accessToken).catch(() => {})
       }
@@ -56,7 +76,7 @@ export function TitleSummarizerPage() {
     } finally {
       setSaving(false)
     }
-  }, [selectedAgentId, accessToken, addToast, tc])
+  }, [accessToken, addToast, selectedModel, tc])
 
   const inputCls =
     'w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] focus:outline-none'
@@ -81,20 +101,19 @@ export function TitleSummarizerPage() {
             <span className="text-sm text-[var(--c-text-muted)]">...</span>
           </div>
         ) : (
-          <FormField label={tc.fieldAgent}>
+          <FormField label={tc.fieldModel}>
             <select
-              value={selectedAgentId}
-              onChange={(e) => setSelectedAgentId(e.target.value)}
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
               className={inputCls}
             >
-              <option value="">{tc.agentNone}</option>
-              {agentConfigs.map((ac) => (
-                <option key={ac.id} value={ac.id}>
-                  {ac.name}{ac.model ? ` (${ac.model})` : ''}
+              <option value="">{tc.modelNone}</option>
+              {mergedOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-[var(--c-text-muted)]">{tc.fieldAgentHint}</p>
           </FormField>
         )}
       </div>

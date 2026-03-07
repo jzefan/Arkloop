@@ -110,9 +110,8 @@ const zhApiSidebar: SidebarGroup[] = [
   {
     label: '配置',
     items: [
-      { label: 'LLM Credentials', href: '/api/llm-credentials' },
+      { label: 'LLM Providers', href: '/api/llm-providers' },
       { label: 'MCP Configs', href: '/api/mcp-configs' },
-      { label: 'Agent Configs', href: '/api/agent-configs' },
       { label: 'ASR Credentials', href: '/api/asr-credentials' },
       { label: 'Tool Providers', href: '/api/tool-providers' },
     ],
@@ -162,9 +161,8 @@ const enApiSidebar: SidebarGroup[] = [
   {
     label: 'Configuration',
     items: [
-      { label: 'LLM Credentials', href: '/en/api/llm-credentials' },
+      { label: 'LLM Providers', href: '/en/api/llm-providers' },
       { label: 'MCP Configs', href: '/en/api/mcp-configs' },
-      { label: 'Agent Configs', href: '/en/api/agent-configs' },
       { label: 'ASR Credentials', href: '/en/api/asr-credentials' },
       { label: 'Tool Providers', href: '/en/api/tool-providers' },
     ],

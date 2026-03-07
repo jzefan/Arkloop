@@ -64,15 +64,18 @@ func main() {
 ```
 
 ```typescript
-interface AgentConfig {
-  id: string;
-  name: string;
-  temperature: number;
-  maxTokens?: number;
+interface PersonaConfig {
+  persona_key: string;
+  display_name: string;
+  model?: string;
+  budgets?: {
+    temperature?: number;
+    max_output_tokens?: number;
+  };
 }
 
-async function createAgent(config: AgentConfig): Promise<string> {
-  const res = await fetch('/v1/agent-configs', {
+async function createPersona(config: PersonaConfig): Promise<string> {
+  const res = await fetch('/v1/personas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
@@ -84,10 +87,12 @@ async function createAgent(config: AgentConfig): Promise<string> {
 
 ```json
 {
-  "id": "agent-001",
-  "name": "默认助手",
-  "temperature": 0.7,
-  "tools": ["web_search", "code_exec"],
+  "persona_key": "default-assistant",
+  "display_name": "默认助手",
+  "model": "openai-main^gpt-4o",
+  "budgets": {
+    "temperature": 0.7
+  },
   "budget": 100
 }
 ```

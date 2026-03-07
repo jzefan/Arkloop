@@ -69,6 +69,7 @@ export interface LocaleStrings {
     importModelsEmpty: string
     importModelsError: string
     importSelected: string
+    importSearchPlaceholder: string
     modelName: string
     tags: string
     addTag: string

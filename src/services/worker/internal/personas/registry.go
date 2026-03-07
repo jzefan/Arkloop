@@ -36,10 +36,12 @@ type Definition struct {
 	ToolDenylist        []string
 	Budgets             Budgets
 	PromptMD            string
-	ExecutorType        string                 // 执行策略类型，默认 "agent.simple"
-	ExecutorConfig      map[string]any         // Executor 配置，默认 {}
-	PreferredCredential *string                // 偏好凭证名称，nil 表示不绑定
-	AgentConfigName     *string                // 显式绑定 AgentConfig 名称，nil 则走继承链
+	ExecutorType        string         // 执行策略类型，默认 "agent.simple"
+	ExecutorConfig      map[string]any // Executor 配置，默认 {}
+	PreferredCredential *string        // 偏好凭证名称，nil 表示不绑定
+	Model               *string        // model selector，优先 provider^model，其次兼容裸 model
+	ReasoningMode       string
+	PromptCacheControl  string
 	TitleSummarizer     *TitleSummarizerConfig // nil 表示此 persona 不自动生成标题
 }
 

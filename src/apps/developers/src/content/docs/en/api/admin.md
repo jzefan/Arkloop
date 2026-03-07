@@ -117,7 +117,7 @@ GET /v1/admin/runs/{run_id}
   "persona_id": null,
   "provider_kind": "anthropic",
   "credential_name": "Main Anthropic Account",
-  "agent_config_name": "Standard Counsel",
+  "persona_model": "anthropic-main^claude-sonnet-4-20250514",
   "duration_ms": 3200,
   "total_input_tokens": 1000,
   "total_output_tokens": 500,
