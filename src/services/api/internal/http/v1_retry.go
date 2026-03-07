@@ -44,6 +44,9 @@ func editThreadMessage(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+			return
+		}
 
 		var body createMessageRequest
 		if err := decodeJSON(r, &body); err != nil {
@@ -170,6 +173,9 @@ func retryThread(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataRunsWrite, w, traceID) {
 			return
 		}
 

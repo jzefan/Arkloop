@@ -13,14 +13,15 @@ import (
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/shared/objectstore"
+	"github.com/google/uuid"
 )
 
 // ExecRequest 是 POST /v1/exec 的请求体。
 type ExecRequest struct {
 	SessionID string `json:"session_id"`
 	OrgID     string `json:"org_id"`
-	Tier      string `json:"tier"`       // "lite" | "pro" | "ultra"
-	Language  string `json:"language"`   // "python" | "shell"
+	Tier      string `json:"tier"`     // "lite" | "pro" | "ultra"
+	Language  string `json:"language"` // "python" | "shell"
 	Code      string `json:"code"`
 	TimeoutMs int    `json:"timeout_ms"` // 0 表示使用服务端默认值（30s）
 }
@@ -154,9 +155,12 @@ func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string
 			continue
 		}
 
-		// key 格式: {orgID}/{sessionID}/{filename}，供 API 侧做归属校验
+		ownerID := resolveArtifactOwnerRunID(sessionID)
+		metadata := objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, ownerID, orgID, nil)
+
+		// key 格式: {orgID}/{sessionID}/{filename}
 		key := fmt.Sprintf("%s/%s/%s", orgID, sessionID, safeName)
-		if err := store.PutWithContentType(ctx, key, data, entry.MimeType); err != nil {
+		if err := store.PutObject(ctx, key, data, objectstore.PutOptions{ContentType: entry.MimeType, Metadata: metadata}); err != nil {
 			logger.Warn("upload artifact failed", logging.LogFields{SessionID: &sessionID}, map[string]any{
 				"key":   key,
 				"error": err.Error(),
@@ -172,4 +176,19 @@ func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string
 		})
 	}
 	return refs
+}
+
+func resolveArtifactOwnerRunID(sessionID string) string {
+	cleaned := strings.TrimSpace(sessionID)
+	if cleaned == "" {
+		return ""
+	}
+	parts := strings.Split(cleaned, "/")
+	if len(parts) == 0 {
+		return cleaned
+	}
+	if _, err := uuid.Parse(parts[0]); err == nil {
+		return parts[0]
+	}
+	return cleaned
 }

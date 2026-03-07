@@ -1,19 +1,27 @@
 package http
 
 import (
+	"context"
 	nethttp "net/http"
 	"strings"
 
+	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/shared/objectstore"
+
+	"github.com/google/uuid"
 )
 
 func artifactsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
-	store *objectstore.Store,
+	apiKeysRepo *data.APIKeysRepository,
+	runRepo *data.RunEventRepository,
+	threadShareRepo *data.ThreadShareRepository,
+	auditWriter *audit.Writer,
+	store artifactStore,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -22,42 +30,65 @@ func artifactsEntry(
 			writeMethodNotAllowed(w, r)
 			return
 		}
-
 		if store == nil {
 			WriteError(w, nethttp.StatusServiceUnavailable, "artifacts.not_configured", "artifact storage not configured", traceID, nil)
 			return
 		}
-
-		a, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
-		if !ok {
+		if runRepo == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
-		// key 格式: {orgID}/{sessionID}/{filename}
 		key := strings.TrimPrefix(r.URL.Path, "/v1/artifacts/")
 		if key == "" || strings.Contains(key, "..") {
 			WriteError(w, nethttp.StatusBadRequest, "artifacts.invalid_key", "invalid artifact key", traceID, nil)
 			return
 		}
 
-		// 校验 key 的 orgID 前缀与当前用户所属 org 一致
-		slashIdx := strings.Index(key, "/")
-		if slashIdx < 1 {
-			WriteError(w, nethttp.StatusBadRequest, "artifacts.invalid_key", "invalid artifact key", traceID, nil)
+		info, err := store.Head(r.Context(), key)
+		if err != nil {
+			if objectstore.IsNotFound(err) {
+				WriteError(w, nethttp.StatusNotFound, "artifacts.not_found", "artifact not found", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
-		keyOrgID := key[:slashIdx]
-		if keyOrgID != a.OrgID.String() {
+
+		run, ok := resolveArtifactRun(r.Context(), runRepo, key, info)
+		if !ok || run == nil {
 			WriteError(w, nethttp.StatusForbidden, "artifacts.forbidden", "access denied", traceID, nil)
 			return
 		}
 
-		blobData, contentType, err := store.GetWithContentType(r.Context(), key)
-		if err != nil {
-			WriteError(w, nethttp.StatusNotFound, "artifacts.not_found", "artifact not found", traceID, nil)
-			return
+		shareToken := strings.TrimSpace(r.URL.Query().Get("share_token"))
+		hasAuthorization := strings.TrimSpace(r.Header.Get("Authorization")) != ""
+		if !hasAuthorization && shareToken != "" {
+			if !authorizeArtifactShare(w, r, traceID, threadShareRepo, shareToken, run) {
+				return
+			}
+		} else {
+			actor, authenticated := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
+			if !authenticated {
+				return
+			}
+			if !requirePerm(actor, auth.PermDataRunsRead, w, traceID) {
+				return
+			}
+			if !authorizeRunOrAudit(w, r, traceID, actor, "artifacts.get", run, auditWriter) {
+				return
+			}
 		}
 
+		blobData, contentType, err := store.GetWithContentType(r.Context(), key)
+		if err != nil {
+			if objectstore.IsNotFound(err) {
+				WriteError(w, nethttp.StatusNotFound, "artifacts.not_found", "artifact not found", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
@@ -67,4 +98,84 @@ func artifactsEntry(
 		w.WriteHeader(nethttp.StatusOK)
 		_, _ = w.Write(blobData)
 	}
+}
+
+func resolveArtifactRun(
+	ctx context.Context,
+	runRepo *data.RunEventRepository,
+	key string,
+	info objectstore.ObjectInfo,
+) (*data.Run, bool) {
+	runID, ok := resolveArtifactRunID(key, info.Metadata)
+	if !ok {
+		return nil, false
+	}
+	run, err := runRepo.GetRun(ctx, runID)
+	if err != nil || run == nil {
+		return nil, false
+	}
+	if metadataOrgID := strings.TrimSpace(info.Metadata[objectstore.ArtifactMetaOrgID]); metadataOrgID != "" && metadataOrgID != run.OrgID.String() {
+		return nil, false
+	}
+	return run, true
+}
+
+func authorizeArtifactShare(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	threadShareRepo *data.ThreadShareRepository,
+	shareToken string,
+	run *data.Run,
+) bool {
+	if threadShareRepo == nil || run == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return false
+	}
+
+	share, err := threadShareRepo.GetByToken(r.Context(), shareToken)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return false
+	}
+	if share == nil || share.ThreadID != run.ThreadID {
+		WriteError(w, nethttp.StatusForbidden, "artifacts.forbidden", "access denied", traceID, nil)
+		return false
+	}
+	if share.AccessType == "password" {
+		sessionToken := strings.TrimSpace(r.URL.Query().Get("session_token"))
+		if sessionToken == "" || !validateShareSession(sessionToken, share) {
+			WriteError(w, nethttp.StatusForbidden, "artifacts.forbidden", "access denied", traceID, nil)
+			return false
+		}
+	}
+	return true
+}
+
+func resolveArtifactRunID(key string, metadata map[string]string) (uuid.UUID, bool) {
+	if len(metadata) > 0 {
+		ownerKind := strings.TrimSpace(metadata[objectstore.ArtifactMetaOwnerKind])
+		ownerID := strings.TrimSpace(metadata[objectstore.ArtifactMetaOwnerID])
+		if ownerKind != objectstore.ArtifactOwnerKindRun || ownerID == "" {
+			return uuid.Nil, false
+		}
+		parsed, err := uuid.Parse(ownerID)
+		if err != nil {
+			return uuid.Nil, false
+		}
+		return parsed, true
+	}
+	return resolveLegacyArtifactRunID(key)
+}
+
+func resolveLegacyArtifactRunID(key string) (uuid.UUID, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 3 {
+		return uuid.Nil, false
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return parsed, true
 }

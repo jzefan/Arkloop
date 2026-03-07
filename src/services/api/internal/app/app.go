@@ -217,26 +217,26 @@ func (a *Application) Run(ctx context.Context) error {
 		runEventRepo     *data.RunEventRepository
 		auditRepo        *data.AuditLogRepository
 
-		secretsRepo             *data.SecretsRepository
-		llmCredRepo             *data.LlmCredentialsRepository
-		llmRoutesRepo           *data.LlmRoutesRepository
-		mcpConfigsRepo          *data.MCPConfigsRepository
+		secretsRepo                  *data.SecretsRepository
+		llmCredRepo                  *data.LlmCredentialsRepository
+		llmRoutesRepo                *data.LlmRoutesRepository
+		mcpConfigsRepo               *data.MCPConfigsRepository
 		toolProviderConfigsRepo      *data.ToolProviderConfigsRepository
 		toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
 		personasRepo                 *data.PersonasRepository
-		ipRulesRepo             *data.IPRulesRepository
-		apiKeysRepo             *data.APIKeysRepository
-		orgInvitationsRepo      *data.OrgInvitationsRepository
-		teamRepo                *data.TeamRepository
-		projectRepo             *data.ProjectRepository
-		webhookRepo             *data.WebhookEndpointRepository
-		promptTemplatesRepo     *data.PromptTemplateRepository
-		agentConfigsRepo        *data.AgentConfigRepository
-		plansRepo               *data.PlanRepository
-		subscriptionsRepo       *data.SubscriptionRepository
-		entitlementsRepo        *data.EntitlementsRepository
-		entitlementSvc          *entitlement.Service
-		usageRepo               *data.UsageRepository
+		ipRulesRepo                  *data.IPRulesRepository
+		apiKeysRepo                  *data.APIKeysRepository
+		orgInvitationsRepo           *data.OrgInvitationsRepository
+		teamRepo                     *data.TeamRepository
+		projectRepo                  *data.ProjectRepository
+		webhookRepo                  *data.WebhookEndpointRepository
+		promptTemplatesRepo          *data.PromptTemplateRepository
+		agentConfigsRepo             *data.AgentConfigRepository
+		plansRepo                    *data.PlanRepository
+		subscriptionsRepo            *data.SubscriptionRepository
+		entitlementsRepo             *data.EntitlementsRepository
+		entitlementSvc               *entitlement.Service
+		usageRepo                    *data.UsageRepository
 
 		featureFlagsRepo *data.FeatureFlagRepository
 		featureFlagSvc   *featureflag.Service
@@ -531,6 +531,9 @@ func (a *Application) Run(ctx context.Context) error {
 				}
 			}
 		}
+		if err := backfillWebhookSecrets(ctx, pool, webhookRepo, secretsRepo, a.logger); err != nil {
+			return err
+		}
 	}
 
 	// 启动分区管理器（自动创建/清理 run_events 月分区）
@@ -568,72 +571,72 @@ func (a *Application) Run(ctx context.Context) error {
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
-			Pool:                     pool,
-			DirectPool:               directPool,
-			DirectPoolAcquireTimeout: time.Duration(a.config.DirectPoolAcquireTimeoutMs) * time.Millisecond,
-			MaxInFlight:              a.config.MaxInFlight,
-			Logger:                   a.logger,
-			TrustIncomingTraceID:     a.config.TrustIncomingTraceID,
-			TrustXForwardedFor:       a.config.TrustXForwardedFor,
-			SchemaRepository:         schemaRepo,
-			AuthService:              authService,
-			RegistrationService:      registrationService,
-			OrgService:               orgService,
-			OrgMembershipRepo:        membershipRepo,
-			ThreadRepo:               threadRepo,
-			ThreadStarRepo:           threadStarRepo,
-			ThreadShareRepo:          threadShareRepo,
-			ThreadReportRepo:         threadReportRepo,
-			MessageRepo:              messageRepo,
-			RunEventRepo:             runEventRepo,
-			AuditWriter:              auditWriter,
-			LlmCredentialsRepo:       llmCredRepo,
-			LlmRoutesRepo:            llmRoutesRepo,
-			SecretsRepo:              secretsRepo,
-			MCPConfigsRepo:           mcpConfigsRepo,
+			Pool:                         pool,
+			DirectPool:                   directPool,
+			DirectPoolAcquireTimeout:     time.Duration(a.config.DirectPoolAcquireTimeoutMs) * time.Millisecond,
+			MaxInFlight:                  a.config.MaxInFlight,
+			Logger:                       a.logger,
+			TrustIncomingTraceID:         a.config.TrustIncomingTraceID,
+			TrustXForwardedFor:           a.config.TrustXForwardedFor,
+			SchemaRepository:             schemaRepo,
+			AuthService:                  authService,
+			RegistrationService:          registrationService,
+			OrgService:                   orgService,
+			OrgMembershipRepo:            membershipRepo,
+			ThreadRepo:                   threadRepo,
+			ThreadStarRepo:               threadStarRepo,
+			ThreadShareRepo:              threadShareRepo,
+			ThreadReportRepo:             threadReportRepo,
+			MessageRepo:                  messageRepo,
+			RunEventRepo:                 runEventRepo,
+			AuditWriter:                  auditWriter,
+			LlmCredentialsRepo:           llmCredRepo,
+			LlmRoutesRepo:                llmRoutesRepo,
+			SecretsRepo:                  secretsRepo,
+			MCPConfigsRepo:               mcpConfigsRepo,
 			ToolProviderConfigsRepo:      toolProviderConfigsRepo,
 			ToolDescriptionOverridesRepo: toolDescriptionOverridesRepo,
 			PersonasRepo:                 personasRepo,
-			IPRulesRepo:              ipRulesRepo,
-			APIKeysRepo:              apiKeysRepo,
-			OrgInvitationsRepo:       orgInvitationsRepo,
-			TeamRepo:                 teamRepo,
-			ProjectRepo:              projectRepo,
-			WebhookRepo:              webhookRepo,
-			PromptTemplatesRepo:      promptTemplatesRepo,
-			AgentConfigsRepo:         agentConfigsRepo,
-			PlansRepo:                plansRepo,
-			SubscriptionsRepo:        subscriptionsRepo,
-			EntitlementsRepo:         entitlementsRepo,
-			EntitlementService:       entitlementSvc,
-			UsageRepo:                usageRepo,
-			FeatureFlagsRepo:         featureFlagsRepo,
-			FeatureFlagService:       featureFlagSvc,
-			NotificationsRepo:        notificationsRepo,
-			AuditLogRepo:             auditRepo,
-			UsersRepo:                userRepo,
-			OrgRepo:                  orgRepo,
-			UserCredentialRepo:       credentialRepo,
-			InviteCodesRepo:          inviteCodesRepo,
-			ReferralsRepo:            referralsRepo,
-			CreditsRepo:              creditsRepo,
-			RedemptionCodesRepo:      redemptionCodesRepo,
-			PlatformSettingsRepo:     platformSettingsRepo,
-			RedisClient:              redisClient,
-			GatewayRedisClient:       gatewayRedisClient,
-			RunLimiter:               runLimiter,
-			AsrCredentialsRepo:       asrCredRepo,
-			EmailVerifyService:       emailVerifyService,
-			EmailOTPLoginService:     emailOTPLoginService,
-			JobRepo:                  jobRepo,
-			ArtifactStore:            artifactStore,
-			EmailFrom:                strings.TrimSpace(a.config.EmailFrom),
-			TurnstileEnvSecretKey:    a.config.TurnstileSecretKey,
-			TurnstileEnvSiteKey:      a.config.TurnstileSiteKey,
-			TurnstileEnvAllowedHost:  a.config.TurnstileAllowedHost,
-			ConfigResolver:           configResolver,
-			ConfigInvalidator:        configResolver,
-			ConfigRegistry:           configRegistry,
+			IPRulesRepo:                  ipRulesRepo,
+			APIKeysRepo:                  apiKeysRepo,
+			OrgInvitationsRepo:           orgInvitationsRepo,
+			TeamRepo:                     teamRepo,
+			ProjectRepo:                  projectRepo,
+			WebhookRepo:                  webhookRepo,
+			PromptTemplatesRepo:          promptTemplatesRepo,
+			AgentConfigsRepo:             agentConfigsRepo,
+			PlansRepo:                    plansRepo,
+			SubscriptionsRepo:            subscriptionsRepo,
+			EntitlementsRepo:             entitlementsRepo,
+			EntitlementService:           entitlementSvc,
+			UsageRepo:                    usageRepo,
+			FeatureFlagsRepo:             featureFlagsRepo,
+			FeatureFlagService:           featureFlagSvc,
+			NotificationsRepo:            notificationsRepo,
+			AuditLogRepo:                 auditRepo,
+			UsersRepo:                    userRepo,
+			OrgRepo:                      orgRepo,
+			UserCredentialRepo:           credentialRepo,
+			InviteCodesRepo:              inviteCodesRepo,
+			ReferralsRepo:                referralsRepo,
+			CreditsRepo:                  creditsRepo,
+			RedemptionCodesRepo:          redemptionCodesRepo,
+			PlatformSettingsRepo:         platformSettingsRepo,
+			RedisClient:                  redisClient,
+			GatewayRedisClient:           gatewayRedisClient,
+			RunLimiter:                   runLimiter,
+			AsrCredentialsRepo:           asrCredRepo,
+			EmailVerifyService:           emailVerifyService,
+			EmailOTPLoginService:         emailOTPLoginService,
+			JobRepo:                      jobRepo,
+			ArtifactStore:                artifactStore,
+			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
+			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
+			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,
+			TurnstileEnvAllowedHost:      a.config.TurnstileAllowedHost,
+			ConfigResolver:               configResolver,
+			ConfigInvalidator:            configResolver,
+			ConfigRegistry:               configRegistry,
 			SSEConfig: apihttp.SSEConfig{
 				HeartbeatSeconds: a.config.SSE.HeartbeatSeconds,
 				BatchLimit:       a.config.SSE.BatchLimit,

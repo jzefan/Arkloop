@@ -14,15 +14,15 @@ import (
 )
 
 type APIKey struct {
-	ID          uuid.UUID
-	OrgID       uuid.UUID
-	UserID      uuid.UUID
-	Name        string
-	KeyPrefix   string
-	Scopes      []string
-	RevokedAt   *time.Time
-	LastUsedAt  *time.Time
-	CreatedAt   time.Time
+	ID         uuid.UUID
+	OrgID      uuid.UUID
+	UserID     uuid.UUID
+	Name       string
+	KeyPrefix  string
+	Scopes     []string
+	RevokedAt  *time.Time
+	LastUsedAt *time.Time
+	CreatedAt  time.Time
 }
 
 type APIKeysRepository struct {
@@ -119,6 +119,39 @@ func (r *APIKeysRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]A
 	return keys, rows.Err()
 }
 
+func (r *APIKeysRepository) ListByOrgAndUser(ctx context.Context, orgID, userID uuid.UUID) ([]APIKey, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT id, org_id, user_id, name, key_prefix, scopes, revoked_at, last_used_at, created_at
+		 FROM api_keys
+		 WHERE org_id = $1 AND user_id = $2
+		 ORDER BY created_at DESC`,
+		orgID,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := []APIKey{}
+	for rows.Next() {
+		var k APIKey
+		if err := rows.Scan(
+			&k.ID, &k.OrgID, &k.UserID, &k.Name, &k.KeyPrefix,
+			&k.Scopes, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
 // GetByHash 根据 key hash 查询，用于鉴权路径。
 func (r *APIKeysRepository) GetByHash(ctx context.Context, keyHash string) (*APIKey, error) {
 	if ctx == nil {
@@ -159,6 +192,30 @@ func (r *APIKeysRepository) Revoke(ctx context.Context, orgID, keyID uuid.UUID) 
 		 WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
 		 RETURNING key_hash`,
 		keyID, orgID,
+	).Scan(&keyHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return keyHash, nil
+}
+
+func (r *APIKeysRepository) RevokeOwned(ctx context.Context, orgID, userID, keyID uuid.UUID) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var keyHash string
+	err := r.db.QueryRow(
+		ctx,
+		`UPDATE api_keys SET revoked_at = now()
+		 WHERE id = $1 AND org_id = $2 AND user_id = $3 AND revoked_at IS NULL
+		 RETURNING key_hash`,
+		keyID,
+		orgID,
+		userID,
 	).Scan(&keyHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

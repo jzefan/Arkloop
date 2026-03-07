@@ -119,6 +119,9 @@ func createThread(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+			return
+		}
 
 		var body createThreadRequest
 		if err := decodeJSON(r, &body); err != nil {
@@ -166,6 +169,9 @@ func listThreads(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataThreadsRead, w, traceID) {
 			return
 		}
 
@@ -224,6 +230,9 @@ func getThread(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsRead, w, traceID) {
+			return
+		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
@@ -265,6 +274,9 @@ func patchThread(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
 			return
 		}
 
@@ -391,6 +403,9 @@ func deleteThread(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+			return
+		}
 
 		deleted, err := threadRepo.DeleteOwnedReturning(r.Context(), threadID, actor.OrgID, actor.UserID)
 		if err != nil {
@@ -485,6 +500,9 @@ func searchThreads(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsRead, w, traceID) {
+			return
+		}
 
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
 		if q == "" {
@@ -557,6 +575,9 @@ func forkThread(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
 			return
 		}
 
@@ -1013,6 +1034,9 @@ func handleThreadStar(
 	if !ok {
 		return
 	}
+	if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+		return
+	}
 
 	thread, err := threadRepo.GetByID(r.Context(), threadID)
 	if err != nil {
@@ -1065,6 +1089,9 @@ func listStarredThreads(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataThreadsRead, w, traceID) {
 			return
 		}
 

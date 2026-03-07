@@ -26,15 +26,15 @@ type createAPIKeyRequest struct {
 }
 
 type apiKeyResponse struct {
-	ID          string   `json:"id"`
-	OrgID       string   `json:"org_id"`
-	UserID      string   `json:"user_id"`
-	Name        string   `json:"name"`
-	KeyPrefix   string   `json:"key_prefix"`
-	Scopes      []string `json:"scopes"`
-	RevokedAt   *string  `json:"revoked_at,omitempty"`
-	LastUsedAt  *string  `json:"last_used_at,omitempty"`
-	CreatedAt   string   `json:"created_at"`
+	ID         string   `json:"id"`
+	OrgID      string   `json:"org_id"`
+	UserID     string   `json:"user_id"`
+	Name       string   `json:"name"`
+	KeyPrefix  string   `json:"key_prefix"`
+	Scopes     []string `json:"scopes"`
+	RevokedAt  *string  `json:"revoked_at,omitempty"`
+	LastUsedAt *string  `json:"last_used_at,omitempty"`
+	CreatedAt  string   `json:"created_at"`
 }
 
 type createAPIKeyResponse struct {
@@ -123,6 +123,9 @@ func createAPIKey(
 	if !ok {
 		return
 	}
+	if !requirePerm(actor, auth.PermDataAPIKeysManage, w, traceID) {
+		return
+	}
 
 	var req createAPIKeyRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -142,8 +145,18 @@ func createAPIKey(
 	if req.Scopes == nil {
 		req.Scopes = []string{}
 	}
+	normalizedScopes, invalidScopes := auth.NormalizePermissions(req.Scopes)
+	if len(invalidScopes) > 0 {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid scopes", traceID, map[string]any{"scopes": invalidScopes})
+		return
+	}
+	rolePermissions := auth.PermissionsForRole(actor.OrgRole)
+	if !auth.IsPermissionSubset(normalizedScopes, rolePermissions) {
+		WriteError(w, nethttp.StatusForbidden, "api_keys.scope_forbidden", "access denied", traceID, nil)
+		return
+	}
 
-	apiKey, rawKey, err := apiKeysRepo.Create(r.Context(), actor.OrgID, actor.UserID, req.Name, req.Scopes)
+	apiKey, rawKey, err := apiKeysRepo.Create(r.Context(), actor.OrgID, actor.UserID, req.Name, normalizedScopes)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -183,8 +196,11 @@ func listAPIKeys(
 	if !ok {
 		return
 	}
+	if !requirePerm(actor, auth.PermDataAPIKeysManage, w, traceID) {
+		return
+	}
 
-	keys, err := apiKeysRepo.ListByOrg(r.Context(), actor.OrgID)
+	keys, err := listVisibleAPIKeys(r.Context(), actor, apiKeysRepo)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -221,8 +237,11 @@ func revokeAPIKey(
 	if !ok {
 		return
 	}
+	if !requirePerm(actor, auth.PermDataAPIKeysManage, w, traceID) {
+		return
+	}
 
-	keyHash, err := apiKeysRepo.Revoke(r.Context(), actor.OrgID, keyID)
+	keyHash, err := revokeVisibleAPIKey(r.Context(), actor, apiKeysRepo, keyID)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -276,7 +295,7 @@ func toAPIKeyResponse(k data.APIKey) apiKeyResponse {
 		UserID:    k.UserID.String(),
 		Name:      k.Name,
 		KeyPrefix: k.KeyPrefix,
-		Scopes:    k.Scopes,
+		Scopes:    normalizeAPIKeyScopes(k.Scopes),
 		CreatedAt: k.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	if k.RevokedAt != nil {
@@ -288,4 +307,33 @@ func toAPIKeyResponse(k data.APIKey) apiKeyResponse {
 		resp.LastUsedAt = &s
 	}
 	return resp
+}
+
+func listVisibleAPIKeys(ctx context.Context, actor *actor, repo *data.APIKeysRepository) ([]data.APIKey, error) {
+	if isOrgAPIKeyAdmin(actor) {
+		return repo.ListByOrg(ctx, actor.OrgID)
+	}
+	return repo.ListByOrgAndUser(ctx, actor.OrgID, actor.UserID)
+}
+
+func revokeVisibleAPIKey(ctx context.Context, actor *actor, repo *data.APIKeysRepository, keyID uuid.UUID) (string, error) {
+	if isOrgAPIKeyAdmin(actor) {
+		return repo.Revoke(ctx, actor.OrgID, keyID)
+	}
+	return repo.RevokeOwned(ctx, actor.OrgID, actor.UserID, keyID)
+}
+
+func isOrgAPIKeyAdmin(actor *actor) bool {
+	if actor == nil {
+		return false
+	}
+	if actor.HasPermission(auth.PermPlatformAdmin) {
+		return true
+	}
+	return actor.OrgRole == auth.RoleOrgAdmin || actor.OrgRole == "owner"
+}
+
+func normalizeAPIKeyScopes(scopes []string) []string {
+	normalized, _ := auth.NormalizePermissions(scopes)
+	return normalized
 }

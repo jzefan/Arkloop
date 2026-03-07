@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/shared/objectstore"
+	"github.com/google/uuid"
 )
 
 type artifactVersion struct {
@@ -75,7 +77,8 @@ func collectArtifacts(
 		}
 
 		key := artifactObjectKey(sn.OrgID, sessionID, commandSeq, safeName)
-		if err := store.PutWithContentType(ctx, key, data, entry.MimeType); err != nil {
+		metadata := objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, resolveArtifactOwnerRunID(sessionID), sn.OrgID, nil)
+		if err := store.PutObject(ctx, key, data, objectstore.PutOptions{ContentType: entry.MimeType, Metadata: metadata}); err != nil {
 			logger.Warn("upload shell artifact failed", logging.LogFields{SessionID: &sessionID}, map[string]any{"key": key, "error": err.Error()})
 			retryableFailure = true
 			continue
@@ -131,7 +134,21 @@ func retainKnownArtifacts(nextKnown, known map[string]artifactVersion, seen map[
 }
 
 type artifactStore interface {
-	PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error
+	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
 }
 
 var _ artifactStore = (*objectstore.Store)(nil)
+
+func resolveArtifactOwnerRunID(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	segments := strings.Split(sessionID, "/")
+	if len(segments) == 0 {
+		return sessionID
+	}
+	if _, err := uuid.Parse(segments[0]); err == nil {
+		return segments[0]
+	}
+	return sessionID
+}
