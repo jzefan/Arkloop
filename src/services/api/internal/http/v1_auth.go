@@ -420,7 +420,7 @@ func register(
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if body.Password == "" || len(body.Password) < 8 || len(body.Password) > 1024 {
+		if body.Password == "" || len(body.Password) > 1024 {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -452,6 +452,11 @@ func register(
 			var loginExists auth.LoginExistsError
 			if errors.As(err, &loginExists) {
 				WriteError(w, nethttp.StatusConflict, "auth.login_exists", "login already taken", traceID, nil)
+				return
+			}
+			var passwordPolicy auth.PasswordPolicyError
+			if errors.As(err, &passwordPolicy) {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", passwordPolicy.Error(), traceID, nil)
 				return
 			}
 			var codeErr auth.InviteCodeInvalidError

@@ -82,6 +82,7 @@ export interface LocaleStrings {
   enterYourPasswordTitle: string
   fieldIdentity: string
   fieldPassword: string
+  registerPasswordHint: string
   backBtn: string
   editIdentity: string
   // profile editing

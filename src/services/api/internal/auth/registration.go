@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"arkloop/services/api/internal/data"
 
@@ -28,6 +29,40 @@ type InviteCodeInvalidError struct {
 
 func (e InviteCodeInvalidError) Error() string {
 	return e.Reason
+}
+
+const (
+	minRegistrationPasswordBytes = 8
+	maxRegistrationPasswordBytes = 72
+	passwordPolicyMessage        = "password must be 8-72 characters and include letters and numbers"
+)
+
+type PasswordPolicyError struct{}
+
+func (PasswordPolicyError) Error() string {
+	return passwordPolicyMessage
+}
+
+func ValidateRegistrationPassword(password string) error {
+	if len(password) < minRegistrationPasswordBytes || len(password) > maxRegistrationPasswordBytes {
+		return PasswordPolicyError{}
+	}
+
+	hasLetter := false
+	hasDigit := false
+	for _, char := range password {
+		if unicode.IsLetter(char) {
+			hasLetter = true
+		}
+		if unicode.IsDigit(char) {
+			hasDigit = true
+		}
+		if hasLetter && hasDigit {
+			return nil
+		}
+	}
+
+	return PasswordPolicyError{}
 }
 
 type RegisterResult struct {
@@ -124,6 +159,9 @@ func (s *RegistrationService) Register(
 ) (RegisterResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ValidateRegistrationPassword(password); err != nil {
+		return RegisterResult{}, err
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})

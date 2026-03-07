@@ -148,6 +148,205 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	}
 }
 
+func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_auth_password_policy")
+
+	ctx := context.Background()
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+	handler := NewHandler(HandlerConfig{
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
+	})
+
+	cases := []struct {
+		name     string
+		login    string
+		email    string
+		password string
+	}{
+		{name: "letters_only", login: "letters-only", email: "letters-only@test.com", password: "abcdefgh"},
+		{name: "digits_only", login: "digits-only", email: "digits-only@test.com", password: "12345678"},
+		{name: "too_short", login: "too-short", email: "too-short@test.com", password: "abc123"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+				"login":    tc.login,
+				"password": tc.password,
+				"email":    tc.email,
+			}, nil)
+			assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
+
+			payload := decodeJSONBody[ErrorEnvelope](t, resp.Body.Bytes())
+			if payload.Message != "password must be 8-72 characters and include letters and numbers" {
+				t.Fatalf("unexpected message: %q", payload.Message)
+			}
+		})
+	}
+
+	strongResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "strong-user",
+		"password": "abc12345",
+		"email":    "strong-user@test.com",
+	}, nil)
+	if strongResp.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected register status: %d body=%s", strongResp.Code, strongResp.Body.String())
+	}
+}
+
+func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_auth_legacy_password")
+
+	ctx := context.Background()
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	orgRepo, err := data.NewOrgRepository(pool)
+	if err != nil {
+		t.Fatalf("new org repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+	handler := NewHandler(HandlerConfig{
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
+	})
+
+	legacyUser, err := userRepo.Create(ctx, "legacy-user", "legacy-user@test.com", "")
+	if err != nil {
+		t.Fatalf("create legacy user: %v", err)
+	}
+	legacyHash, err := passwordHasher.HashPassword("abcdefgh")
+	if err != nil {
+		t.Fatalf("hash legacy password: %v", err)
+	}
+	if _, err := credentialRepo.Create(ctx, legacyUser.ID, "legacy-user", legacyHash); err != nil {
+		t.Fatalf("create legacy credential: %v", err)
+	}
+	legacyOrg, err := orgRepo.Create(ctx, "personal-legacy-user", "legacy-user's workspace", "personal")
+	if err != nil {
+		t.Fatalf("create legacy org: %v", err)
+	}
+	if _, err := membershipRepo.Create(ctx, legacyOrg.ID, legacyUser.ID, "owner"); err != nil {
+		t.Fatalf("create legacy membership: %v", err)
+	}
+
+	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
+		"login":    "legacy-user",
+		"password": "abcdefgh",
+	}, nil)
+	if loginResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected login status: %d body=%s", loginResp.Code, loginResp.Body.String())
+	}
+	loginPayload := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes())
+	if loginPayload.AccessToken == "" || loginPayload.TokenType != "bearer" {
+		t.Fatalf("unexpected login payload: %#v", loginPayload)
+	}
+}
+
 func TestAuthMeRequiresMembership(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_me_membership")
 

@@ -106,6 +106,7 @@ export const zh: LocaleStrings = {
   enterYourPasswordTitle: '输入密码',
   fieldIdentity: '用户名 / 邮箱',
   fieldPassword: '密码',
+  registerPasswordHint: '使用 8-72 位密码，并同时包含字母和数字',
   backBtn: '返回',
   editIdentity: '编辑',
   otpLoginTab: '邮箱验证码',

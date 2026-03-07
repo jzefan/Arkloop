@@ -106,6 +106,7 @@ export const en: LocaleStrings = {
   enterYourPasswordTitle: 'Enter your password',
   fieldIdentity: 'Username / Email',
   fieldPassword: 'Password',
+  registerPasswordHint: 'Use 8-72 characters with letters and numbers',
   backBtn: 'Back',
   editIdentity: 'Edit',
   otpLoginTab: 'Email Code',
