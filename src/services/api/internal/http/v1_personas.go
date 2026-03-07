@@ -22,8 +22,12 @@ type createPersonaRequest struct {
 	Description         *string         `json:"description"`
 	PromptMD            string          `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
+	ToolDenylist        []string        `json:"tool_denylist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	PreferredCredential *string         `json:"preferred_credential"`
+	Model               *string         `json:"model"`
+	ReasoningMode       string          `json:"reasoning_mode"`
+	PromptCacheControl  string          `json:"prompt_cache_control"`
 	ExecutorType        string          `json:"executor_type"`
 	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 }
@@ -33,9 +37,13 @@ type patchPersonaRequest struct {
 	Description         *string         `json:"description"`
 	PromptMD            *string         `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
+	ToolDenylist        []string        `json:"tool_denylist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	IsActive            *bool           `json:"is_active"`
 	PreferredCredential *string         `json:"preferred_credential"`
+	Model               *string         `json:"model"`
+	ReasoningMode       *string         `json:"reasoning_mode"`
+	PromptCacheControl  *string         `json:"prompt_cache_control"`
 	ExecutorType        *string         `json:"executor_type"`
 	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 }
@@ -52,11 +60,14 @@ type personaResponse struct {
 	SelectorOrder       *int            `json:"selector_order,omitempty"`
 	PromptMD            string          `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
+	ToolDenylist        []string        `json:"tool_denylist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	IsActive            bool            `json:"is_active"`
 	CreatedAt           string          `json:"created_at"`
 	PreferredCredential *string         `json:"preferred_credential,omitempty"`
-	AgentConfigName     *string         `json:"agent_config_name,omitempty"`
+	Model               *string         `json:"model,omitempty"`
+	ReasoningMode       string          `json:"reasoning_mode"`
+	PromptCacheControl  string          `json:"prompt_cache_control"`
 	ExecutorType        string          `json:"executor_type"`
 	ExecutorConfigJSON  json.RawMessage `json:"executor_config"`
 	Source              string          `json:"source"`
@@ -161,8 +172,12 @@ func createPersona(
 		req.Description,
 		req.PromptMD,
 		req.ToolAllowlist,
+		req.ToolDenylist,
 		req.BudgetsJSON,
 		req.PreferredCredential,
+		req.Model,
+		req.ReasoningMode,
+		req.PromptCacheControl,
 		req.ExecutorType,
 		req.ExecutorConfigJSON,
 	)
@@ -271,9 +286,13 @@ func patchPersona(
 		Description:         req.Description,
 		PromptMD:            req.PromptMD,
 		ToolAllowlist:       req.ToolAllowlist,
+		ToolDenylist:        req.ToolDenylist,
 		BudgetsJSON:         req.BudgetsJSON,
 		IsActive:            req.IsActive,
 		PreferredCredential: req.PreferredCredential,
+		Model:               req.Model,
+		ReasoningMode:       req.ReasoningMode,
+		PromptCacheControl:  req.PromptCacheControl,
 		ExecutorType:        req.ExecutorType,
 		ExecutorConfigJSON:  req.ExecutorConfigJSON,
 	}
@@ -296,26 +315,35 @@ func toPersonaResponse(s data.Persona) personaResponse {
 	if allowlist == nil {
 		allowlist = []string{}
 	}
-
+	denylist := s.ToolDenylist
+	if denylist == nil {
+		denylist = []string{}
+	}
 	budgets := s.BudgetsJSON
 	if len(budgets) == 0 {
 		budgets = json.RawMessage("{}")
 	}
-
 	executorConfig := s.ExecutorConfigJSON
 	if len(executorConfig) == 0 {
 		executorConfig = json.RawMessage("{}")
 	}
-
-	executorType := s.ExecutorType
+	executorType := strings.TrimSpace(s.ExecutorType)
 	if executorType == "" {
 		executorType = "agent.simple"
+	}
+	reasoningMode := strings.TrimSpace(s.ReasoningMode)
+	if reasoningMode == "" {
+		reasoningMode = "auto"
+	}
+	promptCacheControl := strings.TrimSpace(s.PromptCacheControl)
+	if promptCacheControl == "" {
+		promptCacheControl = "none"
 	}
 
 	var orgIDStr *string
 	if s.OrgID != nil {
-		str := s.OrgID.String()
-		orgIDStr = &str
+		value := s.OrgID.String()
+		orgIDStr = &value
 	}
 
 	return personaResponse{
@@ -328,11 +356,14 @@ func toPersonaResponse(s data.Persona) personaResponse {
 		UserSelectable:      false,
 		PromptMD:            s.PromptMD,
 		ToolAllowlist:       allowlist,
+		ToolDenylist:        denylist,
 		BudgetsJSON:         budgets,
 		IsActive:            s.IsActive,
 		CreatedAt:           s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		PreferredCredential: s.PreferredCredential,
-		AgentConfigName:     optionalTrimmedStringPtr(s.AgentConfigName),
+		PreferredCredential: optionalTrimmedStringPtr(s.PreferredCredential),
+		Model:               optionalTrimmedStringPtr(s.Model),
+		ReasoningMode:       reasoningMode,
+		PromptCacheControl:  promptCacheControl,
 		ExecutorType:        executorType,
 		ExecutorConfigJSON:  executorConfig,
 		Source:              "custom",
@@ -344,24 +375,33 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 	if allowlist == nil {
 		allowlist = []string{}
 	}
-
+	denylist := s.ToolDenylist
+	if denylist == nil {
+		denylist = []string{}
+	}
 	budgets := json.RawMessage("{}")
 	if len(s.Budgets) > 0 {
 		if encoded, err := json.Marshal(s.Budgets); err == nil {
 			budgets = encoded
 		}
 	}
-
 	executorConfig := json.RawMessage("{}")
 	if len(s.ExecutorConfig) > 0 {
 		if encoded, err := json.Marshal(s.ExecutorConfig); err == nil {
 			executorConfig = encoded
 		}
 	}
-
 	executorType := strings.TrimSpace(s.ExecutorType)
 	if executorType == "" {
 		executorType = "agent.simple"
+	}
+	reasoningMode := strings.TrimSpace(s.ReasoningMode)
+	if reasoningMode == "" {
+		reasoningMode = "auto"
+	}
+	promptCacheControl := strings.TrimSpace(s.PromptCacheControl)
+	if promptCacheControl == "" {
+		promptCacheControl = "none"
 	}
 
 	var description *string
@@ -370,24 +410,28 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 	}
 
 	return personaResponse{
-		ID:                 "builtin:" + s.ID + ":" + s.Version,
-		OrgID:              nil,
-		PersonaKey:         s.ID,
-		Version:            s.Version,
-		DisplayName:        s.Title,
-		Description:        description,
-		UserSelectable:     s.UserSelectable,
-		SelectorName:       optionalTrimmedString(s.SelectorName),
-		SelectorOrder:      s.SelectorOrder,
-		PromptMD:           s.PromptMD,
-		ToolAllowlist:      allowlist,
-		BudgetsJSON:        budgets,
-		IsActive:           true,
-		CreatedAt:          "",
-		AgentConfigName:    optionalTrimmedString(s.AgentConfigName),
-		ExecutorType:       executorType,
-		ExecutorConfigJSON: executorConfig,
-		Source:             "builtin",
+		ID:                  "builtin:" + s.ID + ":" + s.Version,
+		OrgID:               nil,
+		PersonaKey:          s.ID,
+		Version:             s.Version,
+		DisplayName:         s.Title,
+		Description:         description,
+		UserSelectable:      s.UserSelectable,
+		SelectorName:        optionalTrimmedString(s.SelectorName),
+		SelectorOrder:       s.SelectorOrder,
+		PromptMD:            s.PromptMD,
+		ToolAllowlist:       allowlist,
+		ToolDenylist:        denylist,
+		BudgetsJSON:         budgets,
+		IsActive:            true,
+		CreatedAt:           "",
+		PreferredCredential: optionalTrimmedString(s.PreferredCredential),
+		Model:               optionalTrimmedString(s.Model),
+		ReasoningMode:       reasoningMode,
+		PromptCacheControl:  promptCacheControl,
+		ExecutorType:        executorType,
+		ExecutorConfigJSON:  executorConfig,
+		Source:              "builtin",
 	}
 }
 

@@ -160,7 +160,9 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		return Definition{}, err
 	}
 	preferredCredential := asOptionalString(obj["preferred_credential"])
-	agentConfigName := asOptionalString(obj["agent_config"])
+	model := asOptionalString(obj["model"])
+	reasoningMode := normalizePersonaReasoningMode(asOptionalString(obj["reasoning_mode"]))
+	promptCacheControl := normalizePersonaPromptCacheControl(asOptionalString(obj["prompt_cache_control"]))
 	titleSummarizer, err := asTitleSummarizer(obj["title_summarize"])
 	if err != nil {
 		return Definition{}, err
@@ -190,7 +192,9 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		ExecutorType:        executorType,
 		ExecutorConfig:      executorConfig,
 		PreferredCredential: preferredCredential,
-		AgentConfigName:     agentConfigName,
+		Model:               model,
+		ReasoningMode:       reasoningMode,
+		PromptCacheControl:  promptCacheControl,
 		TitleSummarizer:     titleSummarizer,
 	}, nil
 }
@@ -247,6 +251,38 @@ func asOptionalString(value any) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+func strPtrOrNil(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func normalizePersonaReasoningMode(value *string) string {
+	if value == nil {
+		return "auto"
+	}
+	switch strings.TrimSpace(*value) {
+	case "enabled", "disabled", "none", "auto":
+		return strings.TrimSpace(*value)
+	default:
+		return "auto"
+	}
+}
+
+func normalizePersonaPromptCacheControl(value *string) string {
+	if value == nil {
+		return "none"
+	}
+	switch strings.TrimSpace(*value) {
+	case "system_prompt", "none":
+		return strings.TrimSpace(*value)
+	default:
+		return "none"
+	}
 }
 
 func asOptionalMap(value any) map[string]any {
@@ -387,7 +423,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 		`SELECT persona_key, version, display_name, description,
 		        prompt_md, tool_allowlist, COALESCE(tool_denylist, '{}'), budgets_json,
 		        executor_type, executor_config_json,
-		        preferred_credential, agent_config_name
+		        preferred_credential, model, reasoning_mode, prompt_cache_control
 		 FROM personas
 		 WHERE org_id = $1 AND is_active = TRUE
 		 ORDER BY created_at ASC`,
@@ -412,11 +448,13 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 			executorType        string
 			executorConfigRaw   []byte
 			preferredCredential *string
-			agentConfigName     *string
+			model               *string
+			reasoningMode       string
+			promptCacheControl  string
 		)
 		if err := rows.Scan(&personaKey, &version, &displayName, &description,
 			&promptMD, &toolAllowlist, &toolDenylist, &budgetsRaw,
-			&executorType, &executorConfigRaw, &preferredCredential, &agentConfigName); err != nil {
+			&executorType, &executorConfigRaw, &preferredCredential, &model, &reasoningMode, &promptCacheControl); err != nil {
 			return nil, err
 		}
 
@@ -445,7 +483,9 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 			ExecutorType:        executorType,
 			ExecutorConfig:      executorConfig,
 			PreferredCredential: preferredCredential,
-			AgentConfigName:     agentConfigName,
+			Model:               model,
+			ReasoningMode:       normalizePersonaReasoningMode(strPtrOrNil(reasoningMode)),
+			PromptCacheControl:  normalizePersonaPromptCacheControl(strPtrOrNil(promptCacheControl)),
 		}
 		if description != nil && strings.TrimSpace(*description) != "" {
 			s := strings.TrimSpace(*description)

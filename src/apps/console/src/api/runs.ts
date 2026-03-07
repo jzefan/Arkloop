@@ -39,7 +39,7 @@ export type AdminRunUsageItem = {
   model?: string
   provider_kind?: string
   credential_name?: string
-  agent_config_name?: string
+  persona_model?: string
   duration_ms?: number
   total_input_tokens?: number
   total_output_tokens?: number
@@ -70,7 +70,7 @@ export type AdminRunDetail = {
   persona_id?: string
   provider_kind?: string
   credential_name?: string
-  agent_config_name?: string
+  persona_model?: string
   duration_ms?: number
   total_input_tokens?: number
   total_output_tokens?: number
@@ -169,15 +169,14 @@ export async function fetchRunEventsOnce(
   const text = await res.text()
   const events: RunEventRaw[] = []
 
-  // SSE 格式解析：每个 event block 以空行分隔
   for (const block of text.split('\n\n')) {
-    const dataLine = block.split('\n').find((l) => l.startsWith('data:'))
+    const dataLine = block.split('\n').find((line) => line.startsWith('data:'))
     if (!dataLine) continue
     try {
       const parsed = JSON.parse(dataLine.slice(5).trim()) as RunEventRaw
       events.push(parsed)
     } catch {
-      // 忽略格式异常的行
+      // ignore malformed lines
     }
   }
 

@@ -15,11 +15,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const settingTitleSummarizerAgentConfigID = "title_summarizer.agent_config_id"
+const settingTitleSummarizerModel = "title_summarizer.model"
 
-// NewTitleSummarizerMiddleware 在 thread 无标题时异步调 LLM 生成初始标题。
-// 位于 RoutingMiddleware 之后（需要 rc.Gateway），ToolBuildMiddleware 之前。
-// goroutine 内部完成 LLM call + DB 写入 + 通知推送，不阻塞主流程。
 func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGateway llm.Gateway, emitDebugEvents bool) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if rc.TitleSummarizer == nil || pool == nil {
@@ -36,14 +33,12 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 			return next(ctx, rc)
 		}
 
-		// 快照 goroutine 所需的值，避免闭包捕获整个 rc
 		fallbackGateway := rc.Gateway
 		fallbackModel := ""
 		if rc.SelectedRoute != nil {
 			fallbackModel = rc.SelectedRoute.Route.Model
 		}
 		runID := rc.Run.ID
-		orgID := rc.Run.OrgID
 		messages := append([]llm.Message{}, rc.Messages...)
 		prompt := rc.TitleSummarizer.Prompt
 		maxTokens := rc.TitleSummarizer.MaxTokens
@@ -51,7 +46,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 
 		go func() {
 			bgCtx := context.Background()
-			gateway, model := resolveTitleGateway(bgCtx, pool, orgID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes)
+			gateway, model := resolveTitleGateway(bgCtx, pool, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes)
 			if gateway == nil {
 				return
 			}
@@ -62,40 +57,24 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 	}
 }
 
-// resolveTitleGateway 尝试从 platform_settings 读取指定的 agent config，
-// 构建独立的 LLM gateway 用于标题生成。找不到配置时回退到 fallback。
 func resolveTitleGateway(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	orgID uuid.UUID,
 	fallbackGateway llm.Gateway,
 	fallbackModel string,
 	stubGateway llm.Gateway,
 	emitDebugEvents bool,
 	llmMaxResponseBytes int,
 ) (llm.Gateway, string) {
-	var agentConfigID string
+	var selector string
 	err := pool.QueryRow(ctx,
 		`SELECT value FROM platform_settings WHERE key = $1`,
-		settingTitleSummarizerAgentConfigID,
-	).Scan(&agentConfigID)
-	agentConfigID = strings.TrimSpace(agentConfigID)
-
-	if err != nil || agentConfigID == "" {
+		settingTitleSummarizerModel,
+	).Scan(&selector)
+	selector = strings.TrimSpace(selector)
+	if err != nil || selector == "" {
 		return fallbackGateway, fallbackModel
 	}
-
-	// agent_configs.model 字段存储的是 credential name
-	var credName string
-	err = pool.QueryRow(ctx,
-		`SELECT COALESCE(model, '') FROM agent_configs WHERE id = $1`,
-		agentConfigID,
-	).Scan(&credName)
-	if err != nil || strings.TrimSpace(credName) == "" {
-		slog.Warn("title_summarizer: agent config not found or no model", "id", agentConfigID)
-		return fallbackGateway, fallbackModel
-	}
-	credName = strings.TrimSpace(credName)
 
 	routingCfg, err := routing.LoadRoutingConfigFromDB(ctx, pool)
 	if err != nil {
@@ -103,22 +82,22 @@ func resolveTitleGateway(
 		return fallbackGateway, fallbackModel
 	}
 
-	route, cred, ok := routingCfg.GetHighestPriorityRouteByCredentialName(credName, map[string]any{})
-	if !ok {
-		slog.Warn("title_summarizer: credential not found in routing", "credential", credName)
+	selected, err := resolveSelectedRouteBySelector(routingCfg, selector, map[string]any{}, true)
+	if err != nil || selected == nil {
+		if err != nil {
+			slog.Warn("title_summarizer: selector resolve failed", "selector", selector, "err", err.Error())
+		}
 		return fallbackGateway, fallbackModel
 	}
 
-	gw, err := gatewayFromCredential(cred, stubGateway, emitDebugEvents, llmMaxResponseBytes)
+	gw, err := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		slog.Warn("title_summarizer: build gateway failed", "err", err.Error())
 		return fallbackGateway, fallbackModel
 	}
-
-	return gw, route.Model
+	return gw, selected.Route.Model
 }
 
-// isFirstRunOfThread 检查当前是否是 thread 的第一个 run。
 func isFirstRunOfThread(ctx context.Context, pool *pgxpool.Pool, threadID uuid.UUID) (bool, error) {
 	var count int
 	err := pool.QueryRow(ctx,
@@ -152,14 +131,8 @@ func generateTitle(
 	req := llm.Request{
 		Model: model,
 		Messages: []llm.Message{
-			{
-				Role:    "system",
-				Content: []llm.TextPart{{Text: buildSummarizeSystem(prompt)}},
-			},
-			{
-				Role:    "user",
-				Content: []llm.TextPart{{Text: userText}},
-			},
+			{Role: "system", Content: []llm.TextPart{{Text: buildSummarizeSystem(prompt)}}},
+			{Role: "user", Content: []llm.TextPart{{Text: userText}}},
 		},
 		MaxOutputTokens: &maxTokens,
 	}
@@ -170,16 +143,13 @@ func generateTitle(
 	err := gateway.Stream(ctx, req, func(ev llm.StreamEvent) error {
 		switch typed := ev.(type) {
 		case llm.StreamMessageDelta:
-			// 跳过 thinking channel，只采集主输出
 			if typed.Channel != nil && *typed.Channel == "thinking" {
 				return nil
 			}
 			if typed.ContentDelta != "" {
 				chunks = append(chunks, typed.ContentDelta)
 			}
-		case llm.StreamRunCompleted:
-			return sentinel
-		case llm.StreamRunFailed:
+		case llm.StreamRunCompleted, llm.StreamRunFailed:
 			return sentinel
 		}
 		return nil
@@ -209,7 +179,6 @@ func generateTitle(
 	emitTitleEvent(ctx, pool, rdb, runID, threadID, title)
 }
 
-// emitTitleEvent 写入 thread.title.updated 事件到 run_events 表，触发 SSE 推送。
 func emitTitleEvent(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -277,8 +246,6 @@ func extractUserText(messages []llm.Message) string {
 	return joined
 }
 
-// buildSummarizeSystem 构建标题生成的 system prompt。
-// 外层固定指令确保 LLM 只输出纯标题，persona 的 prompt 作为风格说明追加。
 func buildSummarizeSystem(styleHint string) string {
 	base := "Generate a concise title for the conversation. Output ONLY the title text — no quotes, no punctuation at the end, no explanation, no prefix like 'Title:'. The title must be in the same language as the user's message."
 	if styleHint != "" {

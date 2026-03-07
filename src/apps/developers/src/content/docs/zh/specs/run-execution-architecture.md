@@ -74,7 +74,7 @@ Worker 使用中间件链模式处理 run，顺序执行：
 | 4 | `mw_mcp_discovery` | 发现 MCP 工具（org 级 + 缓存） |
 | 5 | `mw_spawn_agent` | 按需注入 `spawn_agent` 工具（父子 run） |
 | 6 | `mw_tool_provider` | 注入 Tool Provider（org 覆盖 platform）并绑定 executor |
-| 7 | `mw_agent_config` | 解析 Agent 配置（thread→project→org→platform） |
+| 7 | `mw_agent_config` | 组装 Persona 运行时配置（model selector、reasoning mode、prompt cache control） |
 | 8 | `mw_persona_resolution` | 解析 persona_id、system prompt 与 persona 配置 |
 | 9 | `mw_memory` | 注入长期记忆（可选） |
 | 10 | `mw_routing` | LLM Provider 路由决策、构建 Gateway |
@@ -166,7 +166,7 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 
 ## 8. Provider 路由
 
-路由配置从数据库加载（`llm_credentials` + `llm_routes` 表）：
+路由配置从数据库中的 Provider 账号与模型路由加载：
 - 检查 run 请求中的 `route_id`
 - 验证路由存在、凭证可访问、BYOK 是否启用
 - 输出：`SelectedProviderRoute` 或 `ProviderRouteDenied`（`policy.route_not_found`、`policy.byok_disabled`）

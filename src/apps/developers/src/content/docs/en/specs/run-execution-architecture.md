@@ -74,7 +74,7 @@ Worker uses a middleware chain pattern to process runs, executing in order:
 | 4 | `mw_mcp_discovery` | Discovering MCP tools (org-level + cache) |
 | 5 | `mw_spawn_agent` | Injecting `spawn_agent` tool as needed (parent-child runs) |
 | 6 | `mw_tool_provider` | Injecting Tool Providers (org overrides platform) and binding executors |
-| 7 | `mw_agent_config` | Parsing Agent configuration (thread→project→org→platform) |
+| 7 | `mw_agent_config` | Assembling Persona runtime config (model selector, reasoning mode, prompt cache control) |
 | 8 | `mw_persona_resolution` | Resolving persona_id, system prompt, and persona config |
 | 9 | `mw_memory` | Injecting long-term memory (optional) |
 | 10 | `mw_routing` | LLM Provider routing decisions, building Gateway |
@@ -166,7 +166,7 @@ Note: Activation/credentials for Tool Providers are managed via the Console's To
 
 ## 8. Provider Routing
 
-Routing configuration is loaded from the database (`llm_credentials` + `llm_routes` tables):
+Routing configuration is loaded from provider accounts and model routes in the database:
 - Checks `route_id` in the run request
 - Validates route existence, credential accessibility, and whether BYOK is enabled
 - Output: `SelectedProviderRoute` or `ProviderRouteDenied` (`policy.route_not_found`, `policy.byok_disabled`)

@@ -78,7 +78,6 @@
 | `created_by_user_id` | FK -> users |
 | `title` | 标题 |
 | `project_id` | FK -> projects（可选） |
-| `agent_config_id` | FK -> agent_configs（可选） |
 | `private` | 私有标记 |
 | `deleted_at` | 软删除 |
 | `created_at` | 创建时间 |
@@ -132,9 +131,9 @@
 - Worker 写入，API 读取并以 SSE 回放
 - 支持 `after_seq` 游标断线续传
 
-## 5. LLM 凭证与路由
+## 5. LLM Providers 与路由
 
-### 5.1 `llm_credentials`（LLM 提供商凭证）
+### 5.1 Provider 账号
 
 | 列 | 说明 |
 |----|------|
@@ -153,7 +152,7 @@
 |----|------|
 | `id` | PK |
 | `org_id` | FK -> orgs |
-| `credential_id` | FK -> llm_credentials |
+| `credential_id` | FK -> Provider 账号记录 |
 | `model` | 模型标识 |
 | `priority` | 优先级 |
 | `is_default` | 默认路由标记 |
@@ -237,7 +236,7 @@ Resolver 的优先级链（从高到低）：
 - org scope active provider 优先
 - 无 org 配置时回落 platform scope active provider
 
-## 6. Personas 与 Agent 配置
+## 6. Personas
 
 ### 6.1 `personas`（人格定义）
 
@@ -252,26 +251,13 @@ Resolver 的优先级链（从高到低）：
 | `prompt_md` | system prompt |
 | `tool_allowlist` | 允许的工具列表 |
 | `tool_denylist` | 禁止的工具列表 |
-| `preferred_credential` | 首选凭证 |
-| `agent_config_name` | 关联 agent 配置 |
-
-### 6.2 `agent_configs`（Agent 配置）
-
-| 列 | 说明 |
-|----|------|
-| `id` | PK |
-| `org_id` | FK -> orgs |
-| `name` | 配置名称 |
-| `system_prompt_override` | system prompt 覆盖 |
-| `model` | 模型标识 |
-| `temperature` | 温度 |
-| `max_output_tokens` | 最大输出 token |
-| `tool_policy` | 工具策略 |
-| `tool_allowlist` | 工具白名单 |
-| `cache_control_json` | 缓存控制 |
+| `budgets_json` | 温度、输出上限、工具预算等运行预算 |
+| `model` | 可选 model selector，格式为 `provider_name^model_name` 或裸 `model` |
 | `reasoning_mode` | 推理模式 |
-| `scope` | 作用域 |
+| `prompt_cache_control` | prompt cache 控制策略 |
+| `preferred_credential` | 当 `model` 为空时的后备 Provider 名称 |
 
+当前 Persona 已吸收原本的 Agent Config / Prompt Template 执行配置，不再维护独立表层。
 ## 7. 计费与配额
 
 ### 7.1 `plans`（订阅计划）
@@ -411,7 +397,7 @@ PostgreSQL 表 + Advisory Lock 实现的任务队列。
 
 ### 12.2 `asr_credentials`（语音转文字凭证）
 
-与 `llm_credentials` 结构类似，独立管理。
+与 Provider 密钥存储结构类似，独立管理。
 
 ## 13. 其他
 
@@ -426,10 +412,10 @@ PostgreSQL 表 + Advisory Lock 实现的任务队列。
 ## 14. 架构决策记录
 
 - **存储引擎**：PostgreSQL（唯一生产后端）
-- **加密**：AES-256-GCM（`ARKLOOP_ENCRYPTION_KEY`），用于 `llm_credentials`、`asr_credentials`、`secrets`
+- **加密**：AES-256-GCM（`ARKLOOP_ENCRYPTION_KEY`），用于 LLM Provider 密钥、`asr_credentials`、`secrets`
 - **分区**：`run_events` 按月分区（`created_at`），自动清理过期分区
 - **软删除**：`threads`、`notification_broadcasts`、`projects` 使用 `deleted_at`
 - **UUID**：主键使用 UUID（`pgcrypto` 扩展）
 - **任务队列**：PostgreSQL 表 + Advisory Lock（不依赖外部 MQ）
 - **实时推送**：PostgreSQL `LISTEN/NOTIFY` -> SSE
-- **凭证范围**：`llm_credentials` 支持 platform 级（`org_id` 为 NULL）和 org 级两种作用域
+- **凭证范围**：LLM Providers 支持 platform 级（`org_id` 为 NULL）和 org 级两种作用域

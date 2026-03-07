@@ -9,7 +9,6 @@ import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
   getExecutionGovernance,
-  type ExecutionGovernanceAgentConfigSummary,
   type ExecutionGovernancePersona,
   type ExecutionGovernanceResponse,
   type ExecutionGovernanceToolSoftLimit,
@@ -19,28 +18,6 @@ const inputCls =
   'w-full rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none focus:border-[var(--c-border-focus)]'
 const sectionCls = 'rounded-lg border border-[var(--c-border-console)] bg-[var(--c-bg-card)] p-5'
 const linkCls = 'text-xs text-[var(--c-text-muted)] underline hover:opacity-70'
-
-function sourceVariant(source: string): 'success' | 'warning' | 'neutral' {
-  switch (source) {
-    case 'org_db':
-    case 'org_default':
-      return 'success'
-    case 'env':
-    case 'persona_binding':
-      return 'warning'
-    default:
-      return 'neutral'
-  }
-}
-
-function fallbackValue(value: string | null | undefined, fallback: string) {
-  return value?.trim() ? value : fallback
-}
-
-function formatAgentConfig(config?: ExecutionGovernanceAgentConfigSummary, fallback?: string) {
-  if (!config) return fallback ?? '--'
-  return config.model ? `${config.name} · ${config.model}` : config.name
-}
 
 function formatSoftLimit(limit?: ExecutionGovernanceToolSoftLimit, fallback = '--') {
   if (!limit) return fallback
@@ -83,6 +60,10 @@ function formatEffectiveSoftLimits(persona: ExecutionGovernancePersona, fallback
   return parts.length > 0 ? parts.join(' / ') : fallback
 }
 
+function sourceVariant(source: string): 'success' | 'neutral' {
+  return source === 'custom' ? 'success' : 'neutral'
+}
+
 export function ExecutionGovernancePage() {
   const { accessToken } = useOutletContext<ConsoleOutletContext>()
   const { addToast } = useToast()
@@ -110,12 +91,6 @@ export function ExecutionGovernancePage() {
     void load()
   }, [load])
 
-  const hasOrgScope = activeOrgId.trim() !== ''
-  const emptyValue = tc.defaultEmpty
-  const limits = data?.limits ?? []
-  const agentConfigs = data?.agent_configs ?? []
-  const personas = data?.personas ?? []
-
   const applyOrgScope = useCallback(() => {
     const nextOrgId = draftOrgId.trim()
     setActiveOrgId(nextOrgId)
@@ -127,6 +102,11 @@ export function ExecutionGovernancePage() {
     setActiveOrgId('')
     void load(undefined)
   }, [load])
+
+  const emptyValue = tc.defaultEmpty
+  const limits = data?.limits ?? []
+  const personas = data?.personas ?? []
+  const hasOrgScope = activeOrgId.trim() !== ''
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -147,25 +127,23 @@ export function ExecutionGovernancePage() {
                     {hasOrgScope ? tc.filterActive(activeOrgId) : tc.filterPlatformOnly}
                   </p>
                 </div>
-                <div className="flex w-full flex-col gap-2 lg:w-[520px]">
-                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{tc.fieldOrgId}</label>
+                <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
+                  <input
+                    className={inputCls}
+                    placeholder={tc.fieldOrgIdPlaceholder}
+                    value={draftOrgId}
+                    onChange={(e) => setDraftOrgId(e.target.value)}
+                  />
                   <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={draftOrgId}
-                      onChange={(e) => setDraftOrgId(e.target.value)}
-                      className={inputCls}
-                      placeholder={tc.fieldOrgIdPlaceholder}
-                    />
                     <button
                       onClick={applyOrgScope}
-                      className="rounded-md bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-sub)]"
+                      className="rounded-md bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
                     >
                       {tc.apply}
                     </button>
                     <button
                       onClick={resetOrgScope}
-                      className="rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-sub)]"
+                      className="rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
                     >
                       {tc.reset}
                     </button>
@@ -176,8 +154,13 @@ export function ExecutionGovernancePage() {
 
             <section className={sectionCls}>
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.limitsTitle}</h3>
-                <Link to="/entitlements" className={linkCls}>{tc.gotoEntitlements}</Link>
+                <div>
+                  <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.limitsTitle}</h3>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Link to="/entitlements" className={linkCls}>{tc.gotoEntitlements}</Link>
+                  <Link to="/personas" className={linkCls}>{tc.gotoPersonas}</Link>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
@@ -193,21 +176,16 @@ export function ExecutionGovernancePage() {
                     {limits.map((item) => (
                       <tr key={item.key} className="border-t border-[var(--c-border-console)] align-top">
                         <td className="py-3 pr-4">
-                          <div className="font-mono text-xs text-[var(--c-text-primary)]">{item.key}</div>
+                          <div className="font-medium text-[var(--c-text-primary)]">{item.key}</div>
                           <div className="mt-1 text-xs text-[var(--c-text-muted)]">{item.description}</div>
-                          <div className="mt-1 text-[11px] text-[var(--c-text-muted)]">
-                            {item.env_keys.join(', ') || emptyValue}
-                          </div>
                         </td>
-                        <td className="py-3 pr-4 text-[var(--c-text-primary)]">{item.effective.value}</td>
-                        <td className="py-3 pr-4">
-                          <Badge variant={sourceVariant(item.effective.source)}>{item.effective.source}</Badge>
-                        </td>
+                        <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.effective.value || emptyValue}</td>
+                        <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.effective.source || emptyValue}</td>
                         <td className="py-3 text-xs text-[var(--c-text-secondary)]">
-                          <div>{tc.layerEnv}: {fallbackValue(item.layers.env, emptyValue)}</div>
-                          <div>{tc.layerOrg}: {fallbackValue(item.layers.org_db, emptyValue)}</div>
-                          <div>{tc.layerPlatform}: {fallbackValue(item.layers.platform_db, emptyValue)}</div>
-                          <div>{tc.layerDefault}: {item.layers.default}</div>
+                          <div>{tc.layerEnv}: {item.layers.env ?? emptyValue}</div>
+                          <div>{tc.layerOrg}: {item.layers.org_db ?? emptyValue}</div>
+                          <div>{tc.layerPlatform}: {item.layers.platform_db ?? emptyValue}</div>
+                          <div>{tc.layerDefault}: {item.layers.default || emptyValue}</div>
                         </td>
                       </tr>
                     ))}
@@ -219,62 +197,13 @@ export function ExecutionGovernancePage() {
             <section className={sectionCls}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.agentConfigsTitle}</h3>
-                  <p className="mt-1 text-xs text-[var(--c-text-muted)]">{tc.agentConfigsHint}</p>
+                  <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.titleSummarizerTitle}</h3>
                 </div>
-                <Link to="/agent-configs" className={linkCls}>{tc.gotoAgentConfigs}</Link>
+                <Link to="/title-summarizer" className={linkCls}>{tc.gotoTitleSummarizer}</Link>
               </div>
-              {!hasOrgScope ? (
-                <p className="text-xs text-[var(--c-text-muted)]">{tc.personasPlatformOnly}</p>
-              ) : (
-                <>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-sub)] p-4">
-                      <div className="mb-1 text-xs text-[var(--c-text-muted)]">{tc.orgDefaultTitle}</div>
-                      <div className="text-sm text-[var(--c-text-primary)]">{formatAgentConfig(data?.agent_config_defaults.org_default, tc.defaultEmpty)}</div>
-                    </div>
-                    <div className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-sub)] p-4">
-                      <div className="mb-1 text-xs text-[var(--c-text-muted)]">{tc.platformDefaultTitle}</div>
-                      <div className="text-sm text-[var(--c-text-primary)]">{formatAgentConfig(data?.agent_config_defaults.platform_default, tc.defaultEmpty)}</div>
-                    </div>
-                  </div>
-                  <div className="mt-4 overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <thead className="text-xs text-[var(--c-text-muted)]">
-                        <tr>
-                          <th className="pb-2 pr-4 font-medium">{tc.colAgentConfig}</th>
-                          <th className="pb-2 pr-4 font-medium">{tc.colScope}</th>
-                          <th className="pb-2 pr-4 font-medium">{tc.colProject}</th>
-                          <th className="pb-2 pr-4 font-medium">{tc.colModel}</th>
-                          <th className="pb-2 pr-4 font-medium">{t.pages.agentConfigs.colMaxOutputTokens}</th>
-                          <th className="pb-2 font-medium">{tc.colReasoningMode}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {agentConfigs.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-4 text-xs text-[var(--c-text-muted)]">{tc.agentConfigEmpty}</td>
-                          </tr>
-                        ) : agentConfigs.map((item) => (
-                          <tr key={item.id} className="border-t border-[var(--c-border-console)]">
-                            <td className="py-3 pr-4">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[var(--c-text-primary)]">{item.name}</span>
-                                {item.is_default && <Badge>{tc.defaultBadge}</Badge>}
-                              </div>
-                            </td>
-                            <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.scope}</td>
-                            <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.project_id ?? emptyValue}</td>
-                            <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.model ?? emptyValue}</td>
-                            <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.max_output_tokens ?? emptyValue}</td>
-                            <td className="py-3 text-xs text-[var(--c-text-secondary)]">{item.reasoning_mode || emptyValue}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
+              <div className="text-sm text-[var(--c-text-primary)]">
+                {data?.title_summarizer_model?.trim() || emptyValue}
+              </div>
             </section>
 
             <section className={sectionCls}>
@@ -295,21 +224,23 @@ export function ExecutionGovernancePage() {
                         <th className="pb-2 pr-4 font-medium">{tc.colPersona}</th>
                         <th className="pb-2 pr-4 font-medium">{tc.colRequested}</th>
                         <th className="pb-2 pr-4 font-medium">{tc.colEffectiveBudget}</th>
-                        <th className="pb-2 pr-4 font-medium">{tc.colResolvedConfig}</th>
+                        <th className="pb-2 pr-4 font-medium">{tc.colModel}</th>
+                        <th className="pb-2 pr-4 font-medium">{tc.colReasoningMode}</th>
+                        <th className="pb-2 pr-4 font-medium">{tc.colPromptCacheControl}</th>
                         <th className="pb-2 font-medium">{tc.colSoftLimits}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {personas.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="py-4 text-xs text-[var(--c-text-muted)]">{tc.personaEmpty}</td>
+                          <td colSpan={7} className="py-4 text-xs text-[var(--c-text-muted)]">{tc.personaEmpty}</td>
                         </tr>
                       ) : personas.map((item) => (
                         <tr key={item.id} className="border-t border-[var(--c-border-console)] align-top">
                           <td className="py-3 pr-4">
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-[var(--c-text-primary)]">{item.display_name}</span>
-                              <Badge variant={item.source === 'custom' ? 'success' : 'neutral'}>{item.source}</Badge>
+                              <Badge variant={sourceVariant(item.source)}>{item.source}</Badge>
                             </div>
                             <div className="mt-1 font-mono text-xs text-[var(--c-text-muted)]">{item.persona_key}</div>
                             {item.preferred_credential && (
@@ -320,20 +251,9 @@ export function ExecutionGovernancePage() {
                           </td>
                           <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{formatRequestedBudget(item, emptyValue)}</td>
                           <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{formatEffectiveBudget(item, emptyValue)}</td>
-                          <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">
-                            <div>{tc.boundAgentConfig}: {item.agent_config_name ?? emptyValue}</div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <span>{formatAgentConfig(item.effective.resolved_agent_config.config, emptyValue)}</span>
-                              <Badge variant={sourceVariant(item.effective.resolved_agent_config.source)}>
-                                {item.effective.resolved_agent_config.source}
-                              </Badge>
-                            </div>
-                            {item.effective.reasoning_mode && (
-                              <div className="mt-1">
-                                {tc.labelReasoningMode}: {item.effective.reasoning_mode}
-                              </div>
-                            )}
-                          </td>
+                          <td className="py-3 pr-4 font-mono text-xs text-[var(--c-text-secondary)]">{item.model ?? emptyValue}</td>
+                          <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.reasoning_mode || item.effective.reasoning_mode || emptyValue}</td>
+                          <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.prompt_cache_control || emptyValue}</td>
                           <td className="py-3 text-xs text-[var(--c-text-secondary)]">{formatEffectiveSoftLimits(item, emptyValue)}</td>
                         </tr>
                       ))}
@@ -348,7 +268,6 @@ export function ExecutionGovernancePage() {
                 <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.rulesTitle}</h3>
                 <div className="flex items-center gap-3">
                   <Link to="/entitlements" className={linkCls}>{tc.gotoEntitlements}</Link>
-                  <Link to="/agent-configs" className={linkCls}>{tc.gotoAgentConfigs}</Link>
                   <Link to="/personas" className={linkCls}>{tc.gotoPersonas}</Link>
                 </div>
               </div>

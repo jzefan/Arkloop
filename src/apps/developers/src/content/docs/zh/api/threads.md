@@ -94,7 +94,6 @@ PATCH /v1/threads/{thread_id}
 |------|------|------|
 | `title` | `string \| null` | 标题（`null` 清空） |
 | `project_id` | `string \| null` | 关联项目 |
-| `agent_config_id` | `string \| null` | 关联 Agent 配置 |
 
 ---
 

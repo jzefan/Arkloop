@@ -78,7 +78,6 @@ Migration Tool: Goose (embedded in `src/services/api/internal/migrate/migrations
 | `created_by_user_id` | FK -> users |
 | `title` | Title |
 | `project_id` | FK -> projects (optional) |
-| `agent_config_id` | FK -> agent_configs (optional) |
 | `private` | Private flag |
 | `deleted_at` | Soft delete |
 | `created_at` | Creation time |
@@ -132,9 +131,9 @@ Key Constraints:
 - Written by the Worker, read and replayed as SSE by the API.
 - Supports `after_seq` cursor for resuming after disconnection.
 
-## 5. LLM Credentials and Routes
+## 5. LLM Providers and Routes
 
-### 5.1 `llm_credentials` (LLM Provider Credentials)
+### 5.1 Provider Accounts
 
 | Column | Description |
 |----|------|
@@ -153,7 +152,7 @@ Key Constraints:
 |----|------|
 | `id` | PK |
 | `org_id` | FK -> orgs |
-| `credential_id` | FK -> llm_credentials |
+| `credential_id` | FK -> provider account record |
 | `model` | Model identifier |
 | `priority` | Priority |
 | `is_default` | Default route flag |
@@ -237,7 +236,7 @@ Resolution Chain:
 - Org scope active provider prioritized.
 - Falls back to platform scope active provider if no org configuration exists.
 
-## 6. Personas and Agent Configurations
+## 6. Personas
 
 ### 6.1 `personas` (Persona Definitions)
 
@@ -252,25 +251,13 @@ Resolution Chain:
 | `prompt_md` | System prompt |
 | `tool_allowlist` | Allowed tools list |
 | `tool_denylist` | Forbidden tools list |
-| `preferred_credential` | Preferred credential |
-| `agent_config_name` | Associated agent configuration |
-
-### 6.2 `agent_configs` (Agent Configurations)
-
-| Column | Description |
-|----|------|
-| `id` | PK |
-| `org_id` | FK -> orgs |
-| `name` | Configuration name |
-| `system_prompt_override` | System prompt override |
-| `model` | Model identifier |
-| `temperature` | Temperature |
-| `max_output_tokens` | Maximum output tokens |
-| `tool_policy` | Tool policy |
-| `tool_allowlist` | Tool whitelist |
-| `cache_control_json` | Cache control |
+| `budgets_json` | Runtime budgets such as temperature, output cap, and tool budgets |
+| `model` | Optional model selector, stored as `provider_name^model_name` or a bare `model` |
 | `reasoning_mode` | Reasoning mode |
-| `scope` | Scope |
+| `prompt_cache_control` | Prompt cache policy |
+| `preferred_credential` | Fallback provider name when `model` is empty |
+
+Persona now absorbs the executable configuration that previously lived in Agent Configs and Prompt Templates, so there is no separate configuration table layer anymore.
 
 ## 7. Billing and Quotas
 
@@ -411,7 +398,7 @@ Task queue implemented using a PostgreSQL table and Advisory Locks.
 
 ### 12.2 `asr_credentials` (Speech-to-Text Credentials)
 
-Structure similar to `llm_credentials`, managed independently.
+Structure similar to provider secret storage, managed independently.
 
 ## 13. Miscellaneous
 
@@ -426,10 +413,10 @@ Structure similar to `llm_credentials`, managed independently.
 ## 14. Architecture Decision Records
 
 - **Storage Engine**: PostgreSQL (sole production backend).
-- **Encryption**: AES-256-GCM (`ARKLOOP_ENCRYPTION_KEY`), used for `llm_credentials`, `asr_credentials`, and `secrets`.
+- **Encryption**: AES-256-GCM (`ARKLOOP_ENCRYPTION_KEY`), used for LLM provider secrets, `asr_credentials`, and `secrets`.
 - **Partitioning**: `run_events` partitioned by month (`created_at`), with automatic cleanup of expired partitions.
 - **Soft Deletion**: `threads`, `notification_broadcasts`, and `projects` use `deleted_at`.
 - **UUID**: Primary keys use UUID (`pgcrypto` extension).
 - **Task Queue**: PostgreSQL table + Advisory Lock (no dependency on external MQ).
 - **Real-time Push**: PostgreSQL `LISTEN/NOTIFY` -> SSE.
-- **Credential Scopes**: `llm_credentials` supports both platform-level (`org_id` is NULL) and org-level scopes.
+- **Credential Scopes**: LLM providers support both platform-level (`org_id` is NULL) and org-level scopes.

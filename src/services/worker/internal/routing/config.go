@@ -44,8 +44,8 @@ type ProviderCredential struct {
 	Name         string // llm_credentials.name，用于 AgentConfig.Model 匹配
 	Scope        CredentialScope
 	ProviderKind ProviderKind
-	APIKeyEnv    *string  // 环境变量名（env var 加载路径使用）
-	APIKeyValue  *string  // 明文 API Key（DB 加载路径使用，优先于 APIKeyEnv）
+	APIKeyEnv    *string // 环境变量名（env var 加载路径使用）
+	APIKeyValue  *string // 明文 API Key（DB 加载路径使用，优先于 APIKeyEnv）
 	BaseURL      *string
 	OpenAIMode   *string
 	AdvancedJSON map[string]any
@@ -71,13 +71,13 @@ func (c ProviderCredential) ToPublicJSON() map[string]any {
 }
 
 type ProviderRouteRule struct {
-	ID               string
-	Model            string
-	CredentialID     string
-	When             map[string]any
-	Multiplier       float64
-	CostPer1kInput   *float64
-	CostPer1kOutput  *float64
+	ID                  string
+	Model               string
+	CredentialID        string
+	When                map[string]any
+	Multiplier          float64
+	CostPer1kInput      *float64
+	CostPer1kOutput     *float64
 	CostPer1kCacheWrite *float64
 	CostPer1kCacheRead  *float64
 }
@@ -336,34 +336,59 @@ func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialName(name stri
 	if strings.TrimSpace(name) == "" {
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
-	credIDByName := ""
-	for _, cred := range c.Credentials {
-		if strings.EqualFold(cred.Name, name) {
-			credIDByName = cred.ID
-			break
-		}
-	}
+	credIDByName := c.findCredentialIDByName(name)
 	if credIDByName == "" {
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
-	// 优先匹配有 When 条件且命中 inputJSON 的路由
+	return c.pickBestRoute(func(route ProviderRouteRule) bool {
+		return route.CredentialID == credIDByName
+	}, inputJSON)
+}
+
+func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialAndModel(name string, model string, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
+	credIDByName := c.findCredentialIDByName(name)
+	if credIDByName == "" || strings.TrimSpace(model) == "" {
+		return ProviderRouteRule{}, ProviderCredential{}, false
+	}
+	return c.pickBestRoute(func(route ProviderRouteRule) bool {
+		return route.CredentialID == credIDByName && strings.EqualFold(route.Model, model)
+	}, inputJSON)
+}
+
+func (c ProviderRoutingConfig) GetHighestPriorityRouteByModel(model string, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
+	if strings.TrimSpace(model) == "" {
+		return ProviderRouteRule{}, ProviderCredential{}, false
+	}
+	return c.pickBestRoute(func(route ProviderRouteRule) bool {
+		return strings.EqualFold(route.Model, model)
+	}, inputJSON)
+}
+
+func (c ProviderRoutingConfig) findCredentialIDByName(name string) string {
+	for _, cred := range c.Credentials {
+		if strings.EqualFold(cred.Name, name) {
+			return cred.ID
+		}
+	}
+	return ""
+}
+
+func (c ProviderRoutingConfig) pickBestRoute(match func(ProviderRouteRule) bool, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
 	for _, route := range c.Routes {
-		if route.CredentialID == credIDByName && len(route.When) > 0 && route.Matches(inputJSON) {
-			cred, _ := c.GetCredential(credIDByName)
+		if match(route) && len(route.When) > 0 && route.Matches(inputJSON) {
+			cred, _ := c.GetCredential(route.CredentialID)
 			return route, cred, true
 		}
 	}
-	// 其次取空 When 路由（通用兜底）
 	for _, route := range c.Routes {
-		if route.CredentialID == credIDByName && len(route.When) == 0 {
-			cred, _ := c.GetCredential(credIDByName)
+		if match(route) && len(route.When) == 0 {
+			cred, _ := c.GetCredential(route.CredentialID)
 			return route, cred, true
 		}
 	}
-	// 最终兜底：取该凭证的首条路由（所有路由均有 When 但无匹配时）
 	for _, route := range c.Routes {
-		if route.CredentialID == credIDByName {
-			cred, _ := c.GetCredential(credIDByName)
+		if match(route) {
+			cred, _ := c.GetCredential(route.CredentialID)
 			return route, cred, true
 		}
 	}
@@ -587,16 +612,20 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		return ProviderRoutingConfig{}, nil
 	}
 
-	// DB 配置没有全局默认路由：is_default 只在凭证内部排序时有意义
-	// （SQL ORDER BY ... is_default DESC 已保证凭证内默认路由优先被选中）
+	defaultRouteID := ""
+	if len(routes) > 0 {
+		defaultRouteID = routes[0].ID
+	}
+
 	credentials := make([]ProviderCredential, 0, len(credentialsByID))
 	for _, cred := range credentialsByID {
 		credentials = append(credentials, cred)
 	}
 
 	return ProviderRoutingConfig{
-		Credentials: credentials,
-		Routes:      routes,
+		DefaultRouteID: defaultRouteID,
+		Credentials:    credentials,
+		Routes:         routes,
 	}, nil
 }
 
@@ -611,7 +640,3 @@ func dbProviderToKind(provider string) (ProviderKind, error) {
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
 }
-
-
-
-

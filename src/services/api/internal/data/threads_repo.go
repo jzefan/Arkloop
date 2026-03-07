@@ -18,11 +18,10 @@ type Thread struct {
 	Title           *string
 	CreatedAt       time.Time
 	// R15: 软删除 + Phase 5 project 预留
-	DeletedAt     *time.Time
-	ProjectID     *uuid.UUID
-	AgentConfigID *uuid.UUID
-	IsPrivate     bool
-	ExpiresAt     *time.Time
+	DeletedAt *time.Time
+	ProjectID *uuid.UUID
+	IsPrivate bool
+	ExpiresAt *time.Time
 	// Fork 溯源
 	ParentThreadID        *uuid.UUID
 	BranchedFromMessageID *uuid.UUID
@@ -74,13 +73,13 @@ func (r *ThreadRepository) Create(
 		ctx,
 		`INSERT INTO threads (org_id, created_by_user_id, title, is_private, expires_at)
 		 VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN now() + INTERVAL '24 hours' ELSE NULL END)
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		orgID,
 		createdByUserID,
 		title,
 		isPrivate,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		return Thread{}, err
@@ -96,14 +95,14 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked
+		`SELECT id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked
 		 FROM threads
 		 WHERE id = $1
 		   AND deleted_at IS NULL
 		 LIMIT 1`,
 		threadID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -139,7 +138,7 @@ func (r *ThreadRepository) ListByOwner(
 	}
 
 	sql := `SELECT t.id, t.org_id, t.created_by_user_id, t.title, t.created_at,
-		       t.deleted_at, t.project_id, t.agent_config_id, t.is_private, t.expires_at,
+		       t.deleted_at, t.project_id, t.is_private, t.expires_at,
 		       t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		FROM threads t
 		LEFT JOIN LATERAL (
@@ -178,7 +177,7 @@ func (r *ThreadRepository) ListByOwner(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.OrgID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.IsPrivate, &item.ExpiresAt,
+			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
@@ -206,11 +205,11 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		 SET title = $1
 		 WHERE id = $2
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		title,
 		threadID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -224,14 +223,12 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 // ThreadUpdateFields 描述 PATCH 操作中要更新的字段集合。
 // Set* 为 true 才写对应列，允许单独或同时更新。
 type ThreadUpdateFields struct {
-	SetTitle         bool
-	Title            *string
-	SetProjectID     bool
-	ProjectID        *uuid.UUID
-	SetAgentConfigID bool
-	AgentConfigID    *uuid.UUID
-	SetTitleLocked   bool
-	TitleLocked      bool
+	SetTitle       bool
+	Title          *string
+	SetProjectID   bool
+	ProjectID      *uuid.UUID
+	SetTitleLocked bool
+	TitleLocked    bool
 }
 
 // UpdateFields 原子更新 thread 的一个或多个字段，单条 SQL 保证原子性。
@@ -243,7 +240,7 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 	if threadID == uuid.Nil {
 		return nil, fmt.Errorf("thread_id must not be empty")
 	}
-	if !params.SetTitle && !params.SetProjectID && !params.SetAgentConfigID && !params.SetTitleLocked {
+	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked {
 		return nil, fmt.Errorf("no fields to update")
 	}
 
@@ -253,18 +250,16 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 		`UPDATE threads
 		 SET title           = CASE WHEN $2 THEN $3 ELSE title END,
 		     project_id      = CASE WHEN $4 THEN $5 ELSE project_id END,
-		     agent_config_id = CASE WHEN $6 THEN $7 ELSE agent_config_id END,
-		     title_locked    = CASE WHEN $8 THEN $9 ELSE title_locked END
+		     title_locked    = CASE WHEN $6 THEN $7 ELSE title_locked END
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
-		params.SetAgentConfigID, params.AgentConfigID,
 		params.SetTitleLocked, params.TitleLocked,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -296,7 +291,7 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 	if ownerUserID == uuid.Nil {
 		return nil, fmt.Errorf("owner_user_id must not be empty")
 	}
-	if !params.SetTitle && !params.SetProjectID && !params.SetAgentConfigID && !params.SetTitleLocked {
+	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked {
 		return nil, fmt.Errorf("no fields to update")
 	}
 
@@ -306,22 +301,20 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 		`UPDATE threads
 		 SET title           = CASE WHEN $4 THEN $5 ELSE title END,
 		     project_id      = CASE WHEN $6 THEN $7 ELSE project_id END,
-		     agent_config_id = CASE WHEN $8 THEN $9 ELSE agent_config_id END,
-		     title_locked    = CASE WHEN $10 THEN $11 ELSE title_locked END
+		     title_locked    = CASE WHEN $8 THEN $9 ELSE title_locked END
 		 WHERE id = $1
 		   AND org_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		orgID,
 		ownerUserID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
-		params.SetAgentConfigID, params.AgentConfigID,
 		params.SetTitleLocked, params.TitleLocked,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -382,12 +375,12 @@ func (r *ThreadRepository) DeleteOwnedReturning(
 		   AND org_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		orgID,
 		ownerUserID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -428,7 +421,7 @@ func (r *ThreadRepository) SearchByQuery(
 		ctx,
 		`SELECT DISTINCT ON (t.created_at, t.id)
 		        t.id, t.org_id, t.created_by_user_id, t.title, t.created_at,
-		        t.deleted_at, t.project_id, t.agent_config_id, t.is_private, t.expires_at,
+		        t.deleted_at, t.project_id, t.is_private, t.expires_at,
 		        t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		 FROM threads t
 		 LEFT JOIN messages m
@@ -463,7 +456,7 @@ func (r *ThreadRepository) SearchByQuery(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.OrgID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.AgentConfigID, &item.IsPrivate, &item.ExpiresAt,
+			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
@@ -521,14 +514,14 @@ func (r *ThreadRepository) Fork(
 		`INSERT INTO threads (org_id, created_by_user_id, title, is_private, expires_at, parent_thread_id, branched_from_message_id)
 		 SELECT $1, $2, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, $4, $5
 		 FROM threads WHERE id = $4 AND deleted_at IS NULL
-		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, agent_config_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		orgID,
 		createdByUserID,
 		isPrivate,
 		parentThreadID,
 		branchFromMessageID,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.AgentConfigID, &thread.IsPrivate, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		return Thread{}, err

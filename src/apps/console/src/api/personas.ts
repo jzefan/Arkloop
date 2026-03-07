@@ -13,11 +13,14 @@ export type Persona = {
   description?: string
   prompt_md: string
   tool_allowlist: string[]
+  tool_denylist: string[]
   budgets: Record<string, unknown>
   is_active: boolean
   created_at: string
   preferred_credential?: string
-  agent_config_name?: string
+  model?: string
+  reasoning_mode: string
+  prompt_cache_control: string
   executor_type: string
   executor_config: Record<string, unknown>
 }
@@ -29,9 +32,13 @@ export type CreatePersonaRequest = {
   description?: string
   prompt_md: string
   tool_allowlist?: string[]
+  tool_denylist?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
   preferred_credential?: string
+  model?: string
+  reasoning_mode?: string
+  prompt_cache_control?: string
   executor_type?: string
   executor_config?: Record<string, unknown>
 }
@@ -41,9 +48,13 @@ export type PatchPersonaRequest = {
   description?: string
   prompt_md?: string
   tool_allowlist?: string[]
+  tool_denylist?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
   preferred_credential?: string
+  model?: string
+  reasoning_mode?: string
+  prompt_cache_control?: string
   executor_type?: string
   executor_config?: Record<string, unknown>
 }

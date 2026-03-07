@@ -18,25 +18,6 @@ export type ExecutionGovernanceLimit = {
   }
 }
 
-export type ExecutionGovernanceAgentConfigSummary = {
-  id: string
-  name: string
-  scope: string
-  is_default: boolean
-  project_id?: string
-  persona_id?: string
-  model?: string
-  max_output_tokens?: number
-  reasoning_mode?: string
-  prompt_cache_control?: string
-  tool_policy?: string
-}
-
-export type ExecutionGovernanceResolvedAgentConfig = {
-  source: string
-  config?: ExecutionGovernanceAgentConfigSummary
-}
-
 export type ExecutionGovernanceToolSoftLimit = {
   max_continuations?: number
   max_yield_time_ms?: number
@@ -61,10 +42,11 @@ export type ExecutionGovernancePersona = {
   version: string
   display_name: string
   preferred_credential?: string
-  agent_config_name?: string
+  model?: string
+  reasoning_mode?: string
+  prompt_cache_control?: string
   requested: ExecutionGovernanceRequestedBudgets
   effective: {
-    resolved_agent_config: ExecutionGovernanceResolvedAgentConfig
     reasoning_iterations: number
     tool_continuation_budget: number
     max_output_tokens?: number
@@ -77,11 +59,7 @@ export type ExecutionGovernancePersona = {
 
 export type ExecutionGovernanceResponse = {
   limits: ExecutionGovernanceLimit[]
-  agent_config_defaults: {
-    org_default?: ExecutionGovernanceAgentConfigSummary
-    platform_default?: ExecutionGovernanceAgentConfigSummary
-  }
-  agent_configs: ExecutionGovernanceAgentConfigSummary[]
+  title_summarizer_model?: string
   personas: ExecutionGovernancePersona[]
 }
 

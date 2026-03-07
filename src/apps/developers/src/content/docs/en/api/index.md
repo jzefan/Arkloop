@@ -82,10 +82,9 @@ Run execution progress is pushed via SSE events. For details, see [Run Execution
 - [Orgs](./orgs) — multi-tenant management, teams, invitations
 
 ### Configuration
-- [LLM Credentials](./llm-credentials) — LLM provider credentials and routing
+- [LLM Providers](./llm-providers) — provider accounts, model lists, and selector prefixes
 - [MCP Configs](./mcp-configs) — MCP server configuration
 - [Tool Providers](./tool-providers) — tool backend and credential configuration
-- [Agent Configs](./agent-configs) — Agent configuration and prompt templates
 - [ASR Credentials](./asr-credentials) — speech recognition credentials
 
 ### Billing & Entitlements

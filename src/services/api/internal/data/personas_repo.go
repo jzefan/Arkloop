@@ -34,11 +34,14 @@ type Persona struct {
 	Description         *string
 	PromptMD            string
 	ToolAllowlist       []string
+	ToolDenylist        []string
 	BudgetsJSON         json.RawMessage
 	IsActive            bool
 	CreatedAt           time.Time
 	PreferredCredential *string
-	AgentConfigName     *string
+	Model               *string
+	ReasoningMode       string
+	PromptCacheControl  string
 	ExecutorType        string
 	ExecutorConfigJSON  json.RawMessage
 }
@@ -48,9 +51,13 @@ type PersonaPatch struct {
 	Description         *string
 	PromptMD            *string
 	ToolAllowlist       []string
+	ToolDenylist        []string
 	BudgetsJSON         json.RawMessage
 	IsActive            *bool
 	PreferredCredential *string
+	Model               *string
+	ReasoningMode       *string
+	PromptCacheControl  *string
 	ExecutorType        *string
 	ExecutorConfigJSON  json.RawMessage
 }
@@ -75,8 +82,12 @@ func (r *PersonasRepository) Create(
 	description *string,
 	promptMD string,
 	toolAllowlist []string,
+	toolDenylist []string,
 	budgetsJSON json.RawMessage,
 	preferredCredential *string,
+	model *string,
+	reasoningMode string,
+	promptCacheControl string,
 	executorType string,
 	executorConfigJSON json.RawMessage,
 ) (Persona, error) {
@@ -105,9 +116,13 @@ func (r *PersonasRepository) Create(
 	if toolAllowlist == nil {
 		toolAllowlist = []string{}
 	}
-	if preferredCredential != nil && strings.TrimSpace(*preferredCredential) == "" {
-		preferredCredential = nil
+	if toolDenylist == nil {
+		toolDenylist = []string{}
 	}
+	preferredCredential = normalizeOptionalPersonaString(preferredCredential)
+	model = normalizeOptionalPersonaString(model)
+	reasoningMode = normalizePersonaReasoningMode(reasoningMode)
+	promptCacheControl = normalizePersonaPromptCacheControl(promptCacheControl)
 	if strings.TrimSpace(executorType) == "" {
 		executorType = "agent.simple"
 	}
@@ -120,20 +135,24 @@ func (r *PersonasRepository) Create(
 		ctx,
 		`INSERT INTO personas
 		    (org_id, persona_key, version, display_name, description, prompt_md,
-		     tool_allowlist, budgets_json, preferred_credential,
+		     tool_allowlist, tool_denylist, budgets_json, preferred_credential,
+		     model, reasoning_mode, prompt_cache_control,
 		     executor_type, executor_config_json)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		 RETURNING id, org_id, persona_key, version, display_name, description,
-		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		           preferred_credential, agent_config_name, executor_type, executor_config_json`,
+		           prompt_md, tool_allowlist, tool_denylist, budgets_json, is_active, created_at,
+		           preferred_credential, model, reasoning_mode, prompt_cache_control,
+		           executor_type, executor_config_json`,
 		orgID, personaKey, version, displayName, description, promptMD,
-		toolAllowlist, budgetsJSON, preferredCredential,
+		toolAllowlist, toolDenylist, budgetsJSON, preferredCredential,
+		model, reasoningMode, promptCacheControl,
 		executorType, executorConfigJSON,
 	).Scan(
 		&persona.ID, &persona.OrgID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description, &persona.PromptMD,
-		&persona.ToolAllowlist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
-		&persona.PreferredCredential, &persona.AgentConfigName, &persona.ExecutorType, &persona.ExecutorConfigJSON,
+		&persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
+		&persona.PreferredCredential, &persona.Model, &persona.ReasoningMode, &persona.PromptCacheControl,
+		&persona.ExecutorType, &persona.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -153,16 +172,18 @@ func (r *PersonasRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (
 	err := r.db.QueryRow(
 		ctx,
 		`SELECT id, org_id, persona_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential, agent_config_name, executor_type, executor_config_json
+		        prompt_md, tool_allowlist, tool_denylist, budgets_json, is_active, created_at,
+		        preferred_credential, model, reasoning_mode, prompt_cache_control,
+		        executor_type, executor_config_json
 		 FROM personas
 		 WHERE id = $1 AND org_id = $2`,
 		id, orgID,
 	).Scan(
 		&persona.ID, &persona.OrgID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description, &persona.PromptMD,
-		&persona.ToolAllowlist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
-		&persona.PreferredCredential, &persona.AgentConfigName, &persona.ExecutorType, &persona.ExecutorConfigJSON,
+		&persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
+		&persona.PreferredCredential, &persona.Model, &persona.ReasoningMode, &persona.PromptCacheControl,
+		&persona.ExecutorType, &persona.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -173,7 +194,6 @@ func (r *PersonasRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (
 	return &persona, nil
 }
 
-// ListByOrg 返回该 org 的所有 persona。
 func (r *PersonasRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -182,8 +202,9 @@ func (r *PersonasRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]
 	rows, err := r.db.Query(
 		ctx,
 		`SELECT id, org_id, persona_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential, agent_config_name, executor_type, executor_config_json
+		        prompt_md, tool_allowlist, tool_denylist, budgets_json, is_active, created_at,
+		        preferred_credential, model, reasoning_mode, prompt_cache_control,
+		        executor_type, executor_config_json
 		 FROM personas
 		 WHERE org_id = $1
 		 ORDER BY created_at ASC`,
@@ -197,8 +218,6 @@ func (r *PersonasRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]
 	return scanPersonas(rows)
 }
 
-// ListActiveByOrg 仅返回该 org 的 is_active=true 的 persona，供 Worker 执行时使用。
-// 不包含全局（org_id IS NULL）persona，全局 persona 由文件系统负责。
 func (r *PersonasRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -207,8 +226,9 @@ func (r *PersonasRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUI
 	rows, err := r.db.Query(
 		ctx,
 		`SELECT id, org_id, persona_key, version, display_name, description,
-		        prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		        preferred_credential, agent_config_name, executor_type, executor_config_json
+		        prompt_md, tool_allowlist, tool_denylist, budgets_json, is_active, created_at,
+		        preferred_credential, model, reasoning_mode, prompt_cache_control,
+		        executor_type, executor_config_json
 		 FROM personas
 		 WHERE org_id = $1 AND is_active = TRUE
 		 ORDER BY created_at ASC`,
@@ -227,8 +247,8 @@ func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, pat
 		ctx = context.Background()
 	}
 
-	setClauses := []string{}
-	args := []any{}
+	setClauses := make([]string, 0, 12)
+	args := make([]any, 0, 12)
 	argIdx := 1
 
 	if patch.DisplayName != nil {
@@ -259,6 +279,11 @@ func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, pat
 		args = append(args, patch.ToolAllowlist)
 		argIdx++
 	}
+	if patch.ToolDenylist != nil {
+		setClauses = append(setClauses, fmt.Sprintf("tool_denylist = $%d", argIdx))
+		args = append(args, patch.ToolDenylist)
+		argIdx++
+	}
 	if len(patch.BudgetsJSON) > 0 {
 		setClauses = append(setClauses, fmt.Sprintf("budgets_json = $%d", argIdx))
 		args = append(args, patch.BudgetsJSON)
@@ -270,13 +295,34 @@ func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, pat
 		argIdx++
 	}
 	if patch.PreferredCredential != nil {
-		if strings.TrimSpace(*patch.PreferredCredential) == "" {
+		value := normalizeOptionalPersonaString(patch.PreferredCredential)
+		if value == nil {
 			setClauses = append(setClauses, "preferred_credential = NULL")
 		} else {
 			setClauses = append(setClauses, fmt.Sprintf("preferred_credential = $%d", argIdx))
-			args = append(args, strings.TrimSpace(*patch.PreferredCredential))
+			args = append(args, *value)
 			argIdx++
 		}
+	}
+	if patch.Model != nil {
+		value := normalizeOptionalPersonaString(patch.Model)
+		if value == nil {
+			setClauses = append(setClauses, "model = NULL")
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("model = $%d", argIdx))
+			args = append(args, *value)
+			argIdx++
+		}
+	}
+	if patch.ReasoningMode != nil {
+		setClauses = append(setClauses, fmt.Sprintf("reasoning_mode = $%d", argIdx))
+		args = append(args, normalizePersonaReasoningMode(*patch.ReasoningMode))
+		argIdx++
+	}
+	if patch.PromptCacheControl != nil {
+		setClauses = append(setClauses, fmt.Sprintf("prompt_cache_control = $%d", argIdx))
+		args = append(args, normalizePersonaPromptCacheControl(*patch.PromptCacheControl))
+		argIdx++
 	}
 	if patch.ExecutorType != nil {
 		trimmed := strings.TrimSpace(*patch.ExecutorType)
@@ -308,15 +354,17 @@ func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, pat
 		 SET %s
 		 WHERE id = $%d AND org_id = $%d
 		 RETURNING id, org_id, persona_key, version, display_name, description,
-		           prompt_md, tool_allowlist, budgets_json, is_active, created_at,
-		           preferred_credential, agent_config_name, executor_type, executor_config_json`,
+		           prompt_md, tool_allowlist, tool_denylist, budgets_json, is_active, created_at,
+		           preferred_credential, model, reasoning_mode, prompt_cache_control,
+		           executor_type, executor_config_json`,
 			strings.Join(setClauses, ", "), idIdx, orgIdx),
 		args...,
 	).Scan(
 		&persona.ID, &persona.OrgID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description, &persona.PromptMD,
-		&persona.ToolAllowlist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
-		&persona.PreferredCredential, &persona.AgentConfigName, &persona.ExecutorType, &persona.ExecutorConfigJSON,
+		&persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.IsActive, &persona.CreatedAt,
+		&persona.PreferredCredential, &persona.Model, &persona.ReasoningMode, &persona.PromptCacheControl,
+		&persona.ExecutorType, &persona.ExecutorConfigJSON,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -337,8 +385,9 @@ func scanPersonas(rows pgx.Rows) ([]Persona, error) {
 		if err := rows.Scan(
 			&s.ID, &s.OrgID, &s.PersonaKey, &s.Version,
 			&s.DisplayName, &s.Description, &s.PromptMD,
-			&s.ToolAllowlist, &s.BudgetsJSON, &s.IsActive, &s.CreatedAt,
-			&s.PreferredCredential, &s.AgentConfigName, &s.ExecutorType, &s.ExecutorConfigJSON,
+			&s.ToolAllowlist, &s.ToolDenylist, &s.BudgetsJSON, &s.IsActive, &s.CreatedAt,
+			&s.PreferredCredential, &s.Model, &s.ReasoningMode, &s.PromptCacheControl,
+			&s.ExecutorType, &s.ExecutorConfigJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -360,4 +409,33 @@ func (r *PersonasRepository) Delete(ctx context.Context, orgID, id uuid.UUID) (b
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+func normalizeOptionalPersonaString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func normalizePersonaReasoningMode(value string) string {
+	switch strings.TrimSpace(value) {
+	case "enabled", "disabled", "none", "auto":
+		return strings.TrimSpace(value)
+	default:
+		return "auto"
+	}
+}
+
+func normalizePersonaPromptCacheControl(value string) string {
+	switch strings.TrimSpace(value) {
+	case "system_prompt", "none":
+		return strings.TrimSpace(value)
+	default:
+		return "none"
+	}
 }

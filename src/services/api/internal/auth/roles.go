@@ -18,7 +18,6 @@ var orgAdminPerms = []string{
 	PermDataMCPConfigs,
 	PermDataSecrets,
 	PermDataProjectsRead, PermDataProjectsManage,
-	PermDataAgentConfigsRead, PermDataAgentConfigsManage,
 	PermDataSubscriptionsRead,
 	PermDataUsageRead,
 	PermOrgAuditRead,
@@ -32,7 +31,6 @@ var orgMemberPerms = []string{
 	PermDataAPIKeysManage,
 	PermDataPersonasRead,
 	PermDataProjectsRead,
-	PermDataAgentConfigsRead,
 	PermDataSubscriptionsRead,
 }
 

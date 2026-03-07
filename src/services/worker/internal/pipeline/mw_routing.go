@@ -11,13 +11,11 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
+	"arkloop/services/worker/internal/tools"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewRoutingMiddleware per-run 从 DB 加载路由配置，执行路由决策，构建 LLM Gateway。
 func NewRoutingMiddleware(
 	staticRouter *routing.ProviderRouter,
 	dbPool *pgxpool.Pool,
@@ -30,14 +28,17 @@ func NewRoutingMiddleware(
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		activeRouter := staticRouter
-		var dbCfg routing.ProviderRoutingConfig
+		selectorConfig := routing.ProviderRoutingConfig{}
+		if staticRouter != nil {
+			selectorConfig = staticRouter.Config()
+		}
 		if dbPool != nil {
 			loaded, dbErr := routing.LoadRoutingConfigFromDB(ctx, dbPool)
 			if dbErr != nil {
 				slog.WarnContext(ctx, "routing: per-run db load failed, using static", "err", dbErr.Error())
 			} else if len(loaded.Routes) > 0 {
-				dbCfg = loaded
-				activeRouter = routing.NewProviderRouter(dbCfg)
+				selectorConfig = loaded
+				activeRouter = routing.NewProviderRouter(loaded)
 			}
 		}
 
@@ -73,71 +74,58 @@ func NewRoutingMiddleware(
 			}
 			return gw, routeDecision.Selected, nil
 		}
-		resolveGatewayForAgentName := func(resolveCtx context.Context, agentName string) (llm.Gateway, *routing.SelectedProviderRoute, error) {
-			cleanedName := strings.TrimSpace(agentName)
-			if cleanedName == "" {
+
+		resolveGatewayForAgentName := func(resolveCtx context.Context, selector string) (llm.Gateway, *routing.SelectedProviderRoute, error) {
+			_ = resolveCtx
+			cleanedSelector := strings.TrimSpace(selector)
+			if cleanedSelector == "" {
 				if rc.Gateway == nil || rc.SelectedRoute == nil {
 					return nil, nil, fmt.Errorf("current route is not initialized")
 				}
 				return rc.Gateway, rc.SelectedRoute, nil
 			}
-			if dbPool == nil {
-				return nil, nil, fmt.Errorf("db pool is not initialized")
-			}
-
-			var preferredCredentialName *string
-			agentScope := "org"
-			if err := dbPool.QueryRow(
-				resolveCtx,
-				`SELECT model, scope
-				 FROM agent_configs
-				 WHERE name = $1
-				   AND ((scope = 'org' AND org_id = $2) OR scope = 'platform')
-				 ORDER BY CASE WHEN scope = 'org' THEN 0 ELSE 1 END, created_at DESC
-				 LIMIT 1`,
-				cleanedName,
-				rc.Run.OrgID,
-			).Scan(&preferredCredentialName, &agentScope); err != nil {
-				return nil, nil, fmt.Errorf("agent lookup failed: %w", err)
-			}
-
-			allowGlobalFallback := strings.EqualFold(strings.TrimSpace(agentScope), "platform")
-			routeID, err := resolveRouteIDByCredentialName(resolveCtx, dbPool, rc.Run.OrgID, preferredCredentialName, allowGlobalFallback)
+			selected, err := resolveSelectedRouteBySelector(selectorConfig, cleanedSelector, map[string]any{}, byokEnabled)
 			if err != nil {
 				return nil, nil, err
 			}
-			if routeID == "" {
-				return nil, nil, fmt.Errorf("route not found for agent: %s", cleanedName)
+			if selected == nil {
+				return nil, nil, fmt.Errorf("route not found for selector: %s", cleanedSelector)
 			}
-			return resolveGatewayForRouteID(resolveCtx, routeID)
+			gw, gwErr := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			if gwErr != nil {
+				return nil, nil, gwErr
+			}
+			return gw, selected, nil
 		}
 
-		// 优先级链：
-		// 1. 用户显式 route_id → Decide() 直接处理
-		// 2. Persona.preferred_credential / AgentConfig.Model → 凭证名称查找
-		// 3. 兜底 → Decide() fallback
 		var decision routing.ProviderRouteDecision
 		if _, hasRouteID := rc.InputJSON["route_id"]; hasRouteID {
 			decision = activeRouter.Decide(rc.InputJSON, byokEnabled)
 		} else {
-			credName := rc.PreferredCredentialName
-			if credName == "" && rc.AgentConfig != nil && rc.AgentConfig.Model != nil {
-				credName = strings.TrimSpace(*rc.AgentConfig.Model)
+			selector := ""
+			if rc.AgentConfig != nil && rc.AgentConfig.Model != nil {
+				selector = strings.TrimSpace(*rc.AgentConfig.Model)
 			}
-			if credName != "" && len(dbCfg.Routes) > 0 {
-				if route, cred, ok := dbCfg.GetHighestPriorityRouteByCredentialName(credName, rc.InputJSON); ok {
-					if cred.Scope == routing.CredentialScopeOrg && !byokEnabled {
-						decision = routing.ProviderRouteDecision{
-							Denied: &routing.ProviderRouteDenied{
-								ErrorClass: "policy.denied",
-								Code:       "policy.byok_disabled",
-								Message:    "BYOK not enabled for this organization",
-							},
-						}
+			if selector != "" {
+				selected, err := resolveSelectedRouteBySelector(selectorConfig, selector, rc.InputJSON, byokEnabled)
+				if err != nil {
+					decision = routing.ProviderRouteDecision{
+						Denied: &routing.ProviderRouteDenied{
+							ErrorClass: tools.PolicyDeniedCode,
+							Code:       "policy.route_not_found",
+							Message:    err.Error(),
+						},
+					}
+				} else if selected != nil {
+					decision = routing.ProviderRouteDecision{Selected: selected}
+				}
+			}
+			if decision.Selected == nil && decision.Denied == nil && rc.PreferredCredentialName != "" {
+				if route, cred, ok := selectorConfig.GetHighestPriorityRouteByCredentialName(rc.PreferredCredentialName, rc.InputJSON); ok {
+					if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
+						decision = routing.ProviderRouteDecision{Denied: denied}
 					} else {
-						decision = routing.ProviderRouteDecision{
-							Selected: &routing.SelectedProviderRoute{Route: route, Credential: cred},
-						}
+						decision = routing.ProviderRouteDecision{Selected: &routing.SelectedProviderRoute{Route: route, Credential: cred}}
 					}
 				}
 			}
@@ -204,128 +192,51 @@ func NewRoutingMiddleware(
 	}
 }
 
-func resolveRouteIDByCredentialName(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	orgID uuid.UUID,
-	credentialName *string,
-	allowGlobalFallback bool,
-) (string, error) {
-	name := ""
-	if credentialName != nil {
-		name = strings.TrimSpace(*credentialName)
-	}
-	if name == "" {
-		return "", fmt.Errorf("agent model is empty")
+func resolveSelectedRouteBySelector(cfg routing.ProviderRoutingConfig, selector string, inputJSON map[string]any, byokEnabled bool) (*routing.SelectedProviderRoute, error) {
+	credentialName, modelName, exact := splitModelSelector(selector)
+	if exact {
+		route, cred, ok := cfg.GetHighestPriorityRouteByCredentialAndModel(credentialName, modelName, inputJSON)
+		if !ok {
+			return nil, fmt.Errorf("route not found for selector: %s", selector)
+		}
+		if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
+			return nil, fmt.Errorf("%s: %s", denied.Code, denied.Message)
+		}
+		return &routing.SelectedProviderRoute{Route: route, Credential: cred}, nil
 	}
 
-	routeID, err := queryRouteIDByCredentialName(ctx, pool, &orgID, name)
-	if err == nil {
-		return routeID.String(), nil
+	route, cred, ok := cfg.GetHighestPriorityRouteByModel(selector, inputJSON)
+	if !ok {
+		return nil, nil
 	}
-	if err != pgx.ErrNoRows {
-		return "", err
+	if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
+		return nil, fmt.Errorf("%s: %s", denied.Code, denied.Message)
 	}
-
-	routeID, err = queryRouteIDByModel(ctx, pool, &orgID, name)
-	if err == nil {
-		return routeID.String(), nil
-	}
-	if err != pgx.ErrNoRows {
-		return "", err
-	}
-
-	if !allowGlobalFallback {
-		return "", err
-	}
-
-	routeID, err = queryRouteIDByCredentialName(ctx, pool, nil, name)
-	if err == nil {
-		return routeID.String(), nil
-	}
-	if err != pgx.ErrNoRows {
-		return "", err
-	}
-
-	routeID, err = queryRouteIDByModel(ctx, pool, nil, name)
-	if err != nil {
-		return "", err
-	}
-	return routeID.String(), nil
+	return &routing.SelectedProviderRoute{Route: route, Credential: cred}, nil
 }
 
-func queryRouteIDByCredentialName(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	orgID *uuid.UUID,
-	name string,
-) (uuid.UUID, error) {
-	var routeID uuid.UUID
-	if orgID != nil {
-		err := pool.QueryRow(
-			ctx,
-			`SELECT r.id
-			 FROM llm_routes r
-			 JOIN llm_credentials c ON c.id = r.credential_id
-			 WHERE r.org_id = $1
-			   AND c.revoked_at IS NULL
-			   AND lower(c.name) = lower($2)
-			 ORDER BY r.priority DESC, r.is_default DESC
-			 LIMIT 1`,
-			*orgID,
-			name,
-		).Scan(&routeID)
-		return routeID, err
+func splitModelSelector(selector string) (string, string, bool) {
+	parts := strings.SplitN(strings.TrimSpace(selector), "^", 2)
+	if len(parts) != 2 {
+		return "", strings.TrimSpace(selector), false
 	}
-	err := pool.QueryRow(
-		ctx,
-		`SELECT r.id
-		 FROM llm_routes r
-		 JOIN llm_credentials c ON c.id = r.credential_id
-		 WHERE c.revoked_at IS NULL
-		   AND lower(c.name) = lower($1)
-		 ORDER BY r.priority DESC, r.is_default DESC
-		 LIMIT 1`,
-		name,
-	).Scan(&routeID)
-	return routeID, err
+	left := strings.TrimSpace(parts[0])
+	right := strings.TrimSpace(parts[1])
+	if left == "" || right == "" {
+		return "", strings.TrimSpace(selector), false
+	}
+	return left, right, true
 }
 
-func queryRouteIDByModel(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	orgID *uuid.UUID,
-	model string,
-) (uuid.UUID, error) {
-	var routeID uuid.UUID
-	if orgID != nil {
-		err := pool.QueryRow(
-			ctx,
-			`SELECT r.id
-			 FROM llm_routes r
-			 JOIN llm_credentials c ON c.id = r.credential_id
-			 WHERE r.org_id = $1
-			   AND c.revoked_at IS NULL
-			   AND lower(r.model) = lower($2)
-			 ORDER BY r.priority DESC, r.is_default DESC
-			 LIMIT 1`,
-			*orgID,
-			model,
-		).Scan(&routeID)
-		return routeID, err
+func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routing.ProviderRouteDenied {
+	if cred.Scope == routing.CredentialScopeOrg && !byokEnabled {
+		return &routing.ProviderRouteDenied{
+			ErrorClass: tools.PolicyDeniedCode,
+			Code:       "policy.byok_disabled",
+			Message:    "BYOK not enabled for this organization",
+		}
 	}
-	err := pool.QueryRow(
-		ctx,
-		`SELECT r.id
-		 FROM llm_routes r
-		 JOIN llm_credentials c ON c.id = r.credential_id
-		 WHERE c.revoked_at IS NULL
-		   AND lower(r.model) = lower($1)
-		 ORDER BY r.priority DESC, r.is_default DESC
-		 LIMIT 1`,
-		model,
-	).Scan(&routeID)
-	return routeID, err
+	return nil
 }
 
 func gatewayFromCredential(credential routing.ProviderCredential, stubGateway llm.Gateway, emitDebugEvents bool, llmMaxResponseBytes int) (llm.Gateway, error) {

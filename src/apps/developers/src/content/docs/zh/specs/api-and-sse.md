@@ -33,13 +33,11 @@
 
 | 资源 | 说明 |
 |------|------|
-| `llm_credentials` | LLM 提供商凭证（AES-256-GCM 加密存储） |
-| `llm_routes` | 模型路由规则（credential + model + priority + multiplier） |
+| `llm_providers` | 提供商账号与其下的模型列表，用于构造 model selector |
+| `llm_routes` | 模型路由规则（provider model + priority + multiplier） |
 | `asr_credentials` | 语音转文字凭证 |
 | `mcp_configs` | MCP 服务器配置（stdio/HTTP 类型） |
-| `personas` | 人格定义（executor_type + prompt + tool_allowlist） |
-| `agent_configs` | Agent 配置（system_prompt、reasoning_mode、model 路由） |
-| `prompt_templates` | 提示词模板 |
+| `personas` | 人格定义（prompt + 工具策略 + budgets + model selector） |
 
 ### 企业资源
 
@@ -91,7 +89,7 @@
 ### 3.4 会话与消息
 
 - `GET /v1/threads` -- 列表
-- `POST /v1/threads` -- 创建（可选 `project_id`、`agent_config_id`）
+- `POST /v1/threads` -- 创建（可选 `project_id`）
 - `GET /v1/threads/{id}` -- 详情
 - `PUT /v1/threads/{id}` -- 更新
 - `DELETE /v1/threads/{id}` -- 软删除
@@ -124,12 +122,13 @@ SSE 约定：
 
 - `GET /v1/s/{share_id}` -- 公开分享访问
 
-### 3.7 LLM 凭证与路由
+### 3.7 LLM Providers 与模型
 
-- `GET/POST /v1/llm-credentials` -- 凭证管理
-- `GET/PUT/DELETE /v1/llm-credentials/{id}`
-- `GET/POST /v1/llm-routes` -- 路由规则管理
-- `GET/PUT/DELETE /v1/llm-routes/{id}`
+- `GET/POST /v1/llm-providers` -- Provider 账号管理
+- `PATCH/DELETE /v1/llm-providers/{id}`
+- `POST /v1/llm-providers/{id}/models` -- 创建 Provider 模型
+- `PATCH/DELETE /v1/llm-providers/{id}/models/{model_id}`
+- `GET /v1/llm-providers/{id}/available-models` -- 查询上游模型目录
 
 ### 3.8 ASR（语音转文字）
 
@@ -142,16 +141,13 @@ SSE 约定：
 - `GET/POST /v1/mcp-configs`
 - `GET/PUT/DELETE /v1/mcp-configs/{id}`
 
-### 3.10 Personas 与 Agent 配置
+### 3.10 Personas
 
-说明：对外命名已从 `skills` 迁移为 `personas`（`/v1/skills` -> `/v1/personas`，`skill_key/skill_id` -> `persona_key/persona_id`），当前不提供旧命名兼容。
+说明：对外命名已从 `skills` 迁移为 `personas`（`/v1/skills` -> `/v1/personas`，`skill_key/skill_id` -> `persona_key/persona_id`）。执行配置直接收敛到 Persona，因此不再存在独立的 Agent Config / Prompt Template 层。
 
-- `GET/POST /v1/personas`
-- `GET/PUT/DELETE /v1/personas/{id}`
-- `GET/POST /v1/agent-configs`
-- `GET/PUT/DELETE /v1/agent-configs/{id}`
-- `GET/POST /v1/prompt-templates`
-- `GET/PUT/DELETE /v1/prompt-templates/{id}`
+- `GET /v1/personas`
+- `POST /v1/personas`
+- `PATCH /v1/personas/{id}`
 
 ### 3.11 组织与团队
 

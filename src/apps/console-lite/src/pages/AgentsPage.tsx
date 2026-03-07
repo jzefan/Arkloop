@@ -14,21 +14,17 @@ import {
   createLiteAgent,
   patchLiteAgent,
   deleteLiteAgent,
-  listLlmCredentials,
   listToolCatalog,
   type LiteAgent,
-  type LlmCredential,
   type ToolCatalogGroup,
 } from '../api/agents'
-
-// -- types --
+import { listLlmProviders } from '../api/llm-providers'
 
 type DetailTab = 'overview' | 'persona' | 'tools'
 
 type DetailForm = {
   name: string
   model: string
-  isDefault: boolean
   isActive: boolean
   temperature: number
   maxOutputTokens: string
@@ -37,16 +33,19 @@ type DetailForm = {
   tools: string[]
 }
 
+type ModelSelectorOption = {
+  value: string
+  label: string
+}
+
 function agentToForm(agent: LiteAgent): DetailForm {
   return {
     name: agent.display_name,
     model: agent.model || '',
-    isDefault: agent.is_default,
     isActive: agent.is_active,
     temperature: agent.temperature ?? 0.7,
-    maxOutputTokens: agent.max_output_tokens != null
-      ? String(agent.max_output_tokens) : '',
-    reasoningMode: agent.reasoning_mode ?? 'disabled',
+    maxOutputTokens: agent.max_output_tokens != null ? String(agent.max_output_tokens) : '',
+    reasoningMode: agent.reasoning_mode || 'auto',
     systemPrompt: agent.prompt_md || '',
     tools: agent.tool_allowlist ?? [],
   }
@@ -56,27 +55,41 @@ function isHybridAgent(agent: Pick<LiteAgent, 'executor_type'>): boolean {
   return agent.executor_type.trim() === 'agent.lua'
 }
 
-function resolveDefaultModelLabel(agent: LiteAgent, platformDefaultLabel: string): string {
-  if (agent.source === 'repo') {
-    return agent.agent_config_name?.trim() || platformDefaultLabel
+function resolveModelLabel(agent: LiteAgent): string {
+  return agent.model?.trim() || '—'
+}
+
+function buildSelectorOptions(providers: Awaited<ReturnType<typeof listLlmProviders>>): ModelSelectorOption[] {
+  return providers.flatMap((provider) =>
+    (provider.models ?? []).map((model) => ({
+      value: `${provider.name}^${model.model}`,
+      label: `${provider.name} · ${model.model}`,
+    })),
+  )
+}
+
+function ensureCurrentOption(
+  options: ModelSelectorOption[],
+  currentValue: string,
+): ModelSelectorOption[] {
+  if (!currentValue.trim() || options.some((item) => item.value === currentValue)) {
+    return options
   }
-  return agent.model?.trim() || agent.agent_config_name?.trim() || platformDefaultLabel
+  return [{ value: currentValue, label: currentValue }, ...options]
 }
 
 function AgentModelLine({
   agent,
   label,
-  platformDefaultLabel,
   hybridLabel,
   textClassName = 'text-xs text-[var(--c-text-muted)]',
 }: {
   agent: LiteAgent
   label?: string
-  platformDefaultLabel: string
   hybridLabel: string
   textClassName?: string
 }) {
-  const modelLabel = resolveDefaultModelLabel(agent, platformDefaultLabel)
+  const modelLabel = resolveModelLabel(agent)
 
   return (
     <div className={`flex items-center gap-1.5 ${textClassName}`}>
@@ -90,8 +103,6 @@ function AgentModelLine({
     </div>
   )
 }
-
-// -- custom checkbox --
 
 function CheckboxField({ checked, onChange, label }: {
   checked: boolean
@@ -121,8 +132,6 @@ function CheckboxField({ checked, onChange, label }: {
   )
 }
 
-// -- styles --
-
 const INPUT_CLS =
   'w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]'
 const SELECT_CLS =
@@ -136,41 +145,35 @@ export function AgentsPage() {
   const { t } = useLocale()
   const ta = t.agents
 
-  // data
   const [agents, setAgents] = useState<LiteAgent[]>([])
-  const [credentials, setCredentials] = useState<LlmCredential[]>([])
+  const [modelOptions, setModelOptions] = useState<ModelSelectorOption[]>([])
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [loading, setLoading] = useState(false)
 
-  // detail view
   const [selected, setSelected] = useState<LiteAgent | null>(null)
   const [tab, setTab] = useState<DetailTab>('overview')
   const [form, setForm] = useState<DetailForm | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // create modal
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createModel, setCreateModel] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // delete
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
-
-  // -- load --
 
   const load = useCallback(async (): Promise<LiteAgent[]> => {
     setLoading(true)
     try {
-      const [liteAgents, creds, catalogResp] = await Promise.all([
+      const [liteAgents, providers, catalogResp] = await Promise.all([
         listLiteAgents(accessToken),
-        listLlmCredentials(accessToken),
+        listLlmProviders(accessToken),
         listToolCatalog(accessToken),
       ])
 
       setAgents(liteAgents)
-      setCredentials(creds)
+      setModelOptions(buildSelectorOptions(providers))
       setCatalogGroups(catalogResp.groups)
       return liteAgents
     } catch (err) {
@@ -181,9 +184,9 @@ export function AgentsPage() {
     }
   }, [accessToken, addToast, t.requestFailed])
 
-  useEffect(() => { void load() }, [load])
-
-  // -- navigation --
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const selectAgent = useCallback((agent: LiteAgent) => {
     setSelected(agent)
@@ -197,24 +200,20 @@ export function AgentsPage() {
   }, [])
 
   const allCatalogToolNames = useMemo(
-    () => catalogGroups.flatMap((g) => g.tools.map((t) => t.name)),
+    () => catalogGroups.flatMap((group) => group.tools.map((tool) => tool.name)),
     [catalogGroups],
   )
-
-  // -- create --
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim() || !createModel.trim()) return
     setCreating(true)
     try {
-      const defaultTools = allCatalogToolNames
-
       const agent = await createLiteAgent({
         name: createName.trim(),
         prompt_md: createName.trim(),
         model: createModel.trim(),
-        tool_allowlist: defaultTools,
-        reasoning_mode: 'disabled',
+        tool_allowlist: allCatalogToolNames,
+        reasoning_mode: 'auto',
       }, accessToken)
 
       setCreateOpen(false)
@@ -227,9 +226,7 @@ export function AgentsPage() {
     } finally {
       setCreating(false)
     }
-  }, [createName, createModel, accessToken, addToast, t.requestFailed, load, selectAgent, allCatalogToolNames])
-
-  // -- save --
+  }, [accessToken, addToast, allCatalogToolNames, createModel, createName, load, selectAgent, t.requestFailed])
 
   const handleSave = useCallback(async () => {
     if (!selected || !form || !form.name.trim()) return
@@ -244,11 +241,10 @@ export function AgentsPage() {
         reasoning_mode: form.reasoningMode,
         tool_allowlist: form.tools,
         is_active: form.isActive,
-        is_default: form.isDefault,
       }, accessToken)
 
       const fresh = await load()
-      const updated = fresh.find((a) => a.id === selected.id)
+      const updated = fresh.find((item) => item.id === selected.id)
       if (updated) {
         setSelected(updated)
         setForm(agentToForm(updated))
@@ -258,9 +254,7 @@ export function AgentsPage() {
     } finally {
       setSaving(false)
     }
-  }, [selected, form, accessToken, addToast, t.requestFailed, load])
-
-  // -- delete --
+  }, [accessToken, addToast, form, load, selected, t.requestFailed])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return
@@ -275,40 +269,38 @@ export function AgentsPage() {
     } finally {
       setDeleting(false)
     }
-  }, [selected, accessToken, addToast, t.requestFailed, goBack, load])
-
-  // -- tool toggle --
+  }, [accessToken, addToast, goBack, load, selected, t.requestFailed])
 
   const toggleTool = useCallback((key: string) => {
-    setForm((prev) =>
+    setForm((prev) => (
       prev
         ? {
             ...prev,
             tools: prev.tools.includes(key)
-              ? prev.tools.filter((k) => k !== key)
+              ? prev.tools.filter((item) => item !== key)
               : [...prev.tools, key],
           }
-        : prev,
-    )
+        : prev
+    ))
   }, [])
 
-  // -- derived --
-
   const sortedAgents = useMemo(
-    () =>
-      [...agents].sort((a, b) => {
-        if (a.is_default !== b.is_default) return a.is_default ? -1 : 1
-        if (a.source !== b.source) return a.source === 'repo' ? -1 : 1
-        return a.display_name.localeCompare(b.display_name)
-      }),
+    () => [...agents].sort((a, b) => {
+      if (a.source !== b.source) return a.source === 'repo' ? -1 : 1
+      return a.display_name.localeCompare(b.display_name)
+    }),
     [agents],
   )
 
   const isRepoAgent = selected?.source === 'repo'
-
-  // ============================================================
-  //  DETAIL VIEW
-  // ============================================================
+  const selectedModelOptions = useMemo(
+    () => ensureCurrentOption(modelOptions, form?.model ?? ''),
+    [form?.model, modelOptions],
+  )
+  const createModelOptions = useMemo(
+    () => ensureCurrentOption(modelOptions, createModel),
+    [createModel, modelOptions],
+  )
 
   if (selected && form) {
     const tabs: { key: DetailTab; label: string }[] = [
@@ -320,7 +312,7 @@ export function AgentsPage() {
     return (
       <div className="flex h-full flex-col overflow-hidden">
         <PageHeader
-          title={
+          title={(
             <div className="flex items-center gap-2">
               <button
                 onClick={goBack}
@@ -334,19 +326,14 @@ export function AgentsPage() {
                   {ta.builtIn}
                 </span>
               )}
-              {selected.is_default && (
-                <span className="rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]">
-                  {t.common.default}
-                </span>
-              )}
               {selected.is_active && (
                 <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
                   {ta.active}
                 </span>
               )}
             </div>
-          }
-          actions={
+          )}
+          actions={(
             <div className="flex items-center gap-2">
               {!isRepoAgent && (
                 <button
@@ -365,11 +352,10 @@ export function AgentsPage() {
                 {saving ? '...' : t.common.save}
               </button>
             </div>
-          }
+          )}
         />
 
         <div className="flex flex-1 overflow-hidden">
-          {/* inner sidebar */}
           <nav className="w-[160px] shrink-0 overflow-y-auto border-r border-[var(--c-border-console)] p-2">
             <div className="flex flex-col gap-[3px]">
               {tabs.map((item) => (
@@ -389,61 +375,48 @@ export function AgentsPage() {
             </div>
           </nav>
 
-          {/* content -- left-aligned */}
           <div className="flex-1 overflow-auto p-6">
             <div className="flex max-w-[640px] flex-col gap-5">
-
-              {/* -- Overview tab -- */}
               {tab === 'overview' && (
                 <>
                   <FormField label={`${ta.name} *`}>
                     <input
                       className={INPUT_CLS}
                       value={form.name}
-                      onChange={(e) => setForm((f) => f && { ...f, name: e.target.value })}
+                      onChange={(e) => setForm((prev) => prev && { ...prev, name: e.target.value })}
                     />
                   </FormField>
 
-                  {isRepoAgent && (
+                  {isRepoAgent ? (
                     <FormField label={ta.model}>
                       <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-2">
                         <AgentModelLine
                           agent={selected}
-                          platformDefaultLabel={ta.platformDefault}
                           hybridLabel={ta.hybrid}
                           textClassName="text-sm text-[var(--c-text-secondary)]"
                         />
                       </div>
                     </FormField>
-                  )}
-
-                  {!isRepoAgent && (
+                  ) : (
                     <FormField label={ta.model}>
                       <select
                         className={SELECT_CLS}
                         value={form.model}
-                        onChange={(e) => setForm((f) => f && { ...f, model: e.target.value })}
+                        onChange={(e) => setForm((prev) => prev && { ...prev, model: e.target.value })}
                       >
                         <option value="" />
-                        {credentials.map((c) => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
+                        {selectedModelOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                     </FormField>
                   )}
 
-                  <div className="flex flex-col gap-3">
-                    <CheckboxField
-                      checked={form.isDefault}
-                      onChange={(v) => setForm((f) => f && { ...f, isDefault: v })}
-                      label={ta.setDefault}
-                    />
-                    <CheckboxField
-                      checked={form.isActive}
-                      onChange={(v) => setForm((f) => f && { ...f, isActive: v })}
-                      label={ta.active}
-                    />
-                  </div>
+                  <CheckboxField
+                    checked={form.isActive}
+                    onChange={(value) => setForm((prev) => prev && { ...prev, isActive: value })}
+                    label={ta.active}
+                  />
 
                   <FormField label={ta.temperature}>
                     <div className="flex items-center gap-3">
@@ -453,7 +426,7 @@ export function AgentsPage() {
                         max={2}
                         step={0.1}
                         value={form.temperature}
-                        onChange={(e) => setForm((f) => f && { ...f, temperature: Number(e.target.value) })}
+                        onChange={(e) => setForm((prev) => prev && { ...prev, temperature: Number(e.target.value) })}
                         className="flex-1"
                       />
                       <span className="w-8 text-right text-xs tabular-nums text-[var(--c-text-muted)]">
@@ -467,7 +440,7 @@ export function AgentsPage() {
                       type="number"
                       className={INPUT_CLS}
                       value={form.maxOutputTokens}
-                      onChange={(e) => setForm((f) => f && { ...f, maxOutputTokens: e.target.value })}
+                      onChange={(e) => setForm((prev) => prev && { ...prev, maxOutputTokens: e.target.value })}
                     />
                   </FormField>
 
@@ -475,54 +448,49 @@ export function AgentsPage() {
                     <select
                       className={SELECT_CLS}
                       value={form.reasoningMode}
-                      onChange={(e) => setForm((f) => f && { ...f, reasoningMode: e.target.value })}
+                      onChange={(e) => setForm((prev) => prev && { ...prev, reasoningMode: e.target.value })}
                     >
-                      <option value="disabled">{ta.reasoningDisabled}</option>
-                      <option value="enabled">{ta.reasoningEnabled}</option>
+                      {['auto', 'enabled', 'disabled', 'none'].map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
                     </select>
                   </FormField>
                 </>
               )}
 
-              {/* -- Persona tab -- */}
               {tab === 'persona' && (
-                <>
-                  <FormField label="prompt.md">
-                    <textarea
-                      className={`${MONO_CLS} min-h-[240px] resize-y`}
-                      rows={10}
-                      value={form.systemPrompt}
-                      onChange={(e) => setForm((f) => f && { ...f, systemPrompt: e.target.value })}
-                    />
-                  </FormField>
-                </>
+                <FormField label="prompt.md">
+                  <textarea
+                    className={`${MONO_CLS} min-h-[240px] resize-y`}
+                    rows={10}
+                    value={form.systemPrompt}
+                    onChange={(e) => setForm((prev) => prev && { ...prev, systemPrompt: e.target.value })}
+                  />
+                </FormField>
               )}
 
-              {/* -- Tools tab -- */}
               {tab === 'tools' && (
-                <>
-                  {catalogGroups.length > 0 ? (
-                    <div className="flex flex-col gap-4">
-                      {catalogGroups.map((group) => (
-                        <div key={group.group} className="flex flex-col gap-2">
-                          <span className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
-                            {group.group}
-                          </span>
-                          {group.tools.map((tool) => (
-                            <CheckboxField
-                              key={tool.name}
-                              checked={form.tools.includes(tool.name)}
-                              onChange={() => toggleTool(tool.name)}
-                              label={tool.name}
-                            />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-[var(--c-text-muted)]">--</p>
-                  )}
-                </>
+                catalogGroups.length > 0 ? (
+                  <div className="flex flex-col gap-4">
+                    {catalogGroups.map((group) => (
+                      <div key={group.group} className="flex flex-col gap-2">
+                        <span className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+                          {group.group}
+                        </span>
+                        {group.tools.map((tool) => (
+                          <CheckboxField
+                            key={tool.name}
+                            checked={form.tools.includes(tool.name)}
+                            onChange={() => toggleTool(tool.name)}
+                            label={tool.name}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--c-text-muted)]">--</p>
+                )
               )}
             </div>
           </div>
@@ -540,23 +508,23 @@ export function AgentsPage() {
     )
   }
 
-  // ============================================================
-  //  LIST VIEW
-  // ============================================================
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title={ta.title}
-        actions={
+        actions={(
           <button
-            onClick={() => { setCreateOpen(true); setCreateName(''); setCreateModel('') }}
+            onClick={() => {
+              setCreateOpen(true)
+              setCreateName('')
+              setCreateModel('')
+            }}
             className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
           >
             <Plus size={13} />
             {ta.newAgent}
           </button>
-        }
+        )}
       />
 
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
@@ -586,11 +554,6 @@ export function AgentsPage() {
                         {ta.builtIn}
                       </span>
                     )}
-                    {agent.is_default && (
-                      <span className="rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]">
-                        {t.common.default}
-                      </span>
-                    )}
                     {agent.is_active && (
                       <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
                         {ta.active}
@@ -598,19 +561,13 @@ export function AgentsPage() {
                     )}
                   </div>
                 </div>
-                <AgentModelLine
-                  agent={agent}
-                  label={ta.model}
-                  platformDefaultLabel={ta.platformDefault}
-                  hybridLabel={ta.hybrid}
-                />
+                <AgentModelLine agent={agent} label={ta.model} hybridLabel={ta.hybrid} />
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* create modal */}
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={ta.newAgent} width="420px">
         <div className="flex flex-col gap-4">
           <FormField label={`${ta.name} *`}>
@@ -628,8 +585,8 @@ export function AgentsPage() {
               onChange={(e) => setCreateModel(e.target.value)}
             >
               <option value="" />
-              {credentials.map((c) => (
-                <option key={c.id} value={c.name}>{c.name}</option>
+              {createModelOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </FormField>

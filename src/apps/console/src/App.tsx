@@ -7,9 +7,7 @@ import { AuditPage } from './pages/AuditPage'
 import { ReportsPage } from './pages/reports/ReportsPage'
 import { RunsPage } from './pages/RunsPage'
 import { DashboardPage } from './pages/dashboard/DashboardPage'
-import { CredentialsPage } from './pages/credentials/CredentialsPage'
-import { AgentConfigsPage } from './pages/agent-configs/AgentConfigsPage'
-import { PromptTemplatesPage } from './pages/prompt-templates/PromptTemplatesPage'
+import { ProvidersPage } from './pages/providers/ProvidersPage'
 import { MCPConfigsPage } from './pages/mcp-configs/MCPConfigsPage'
 import { PersonasPage } from './pages/personas/PersonasPage'
 import { ToolsPage } from './pages/tools/ToolsPage'
@@ -115,9 +113,7 @@ function App() {
         <Route path="audit" element={<AuditPage />} />
         <Route path="reports" element={<ReportsPage />} />
         {/* Configuration */}
-        <Route path="credentials" element={<CredentialsPage />} />
-        <Route path="agent-configs" element={<AgentConfigsPage />} />
-        <Route path="prompt-templates" element={<PromptTemplatesPage />} />
+        <Route path="providers" element={<ProvidersPage />} />
         <Route path="mcp-configs" element={<MCPConfigsPage />} />
         <Route path="tools" element={<ToolsPage />} />
         <Route path="personas" element={<PersonasPage />} />
@@ -153,7 +149,7 @@ function App() {
         <Route path="broadcasts" element={<BroadcastsPage />} />
         <Route path="email" element={<EmailPage />} />
         {/* Redirects */}
-        <Route path="providers" element={<Navigate to="/credentials" replace />} />
+        
         <Route path="tool-providers" element={<Navigate to="/tools" replace />} />
         <Route path="sandbox-config" element={<Navigate to="/tools" replace />} />
         <Route path="memory-config" element={<Navigate to="/tools" replace />} />

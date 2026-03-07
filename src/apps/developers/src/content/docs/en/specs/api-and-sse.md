@@ -33,13 +33,11 @@ This document describes the resource model, endpoint design, error model, and SS
 
 | Resource | Description |
 |------|------|
-| `llm_credentials` | LLM provider credentials (stored with AES-256-GCM encryption) |
-| `llm_routes` | Model routing rules (credential + model + priority + multiplier) |
+| `llm_providers` | Provider accounts plus nested model lists, used to build model selectors |
+| `llm_routes` | Model routing rules (provider model + priority + multiplier) |
 | `asr_credentials` | Speech-to-text credentials |
 | `mcp_configs` | MCP server configurations (stdio/HTTP types) |
-| `personas` | Persona definitions (executor_type + prompt + tool_allowlist) |
-| `agent_configs` | Agent configurations (system_prompt, reasoning_mode, model routing) |
-| `prompt_templates` | Prompt templates |
+| `personas` | Persona definitions (prompt + tool policy + budgets + model selector) |
 
 ### Enterprise Resources
 
@@ -91,7 +89,7 @@ This document describes the resource model, endpoint design, error model, and SS
 ### 3.4 Threads and Messages
 
 - `GET /v1/threads` -- List
-- `POST /v1/threads` -- Create (optional `project_id`, `agent_config_id`)
+- `POST /v1/threads` -- Create (optional `project_id`)
 - `GET /v1/threads/{id}` -- Details
 - `PUT /v1/threads/{id}` -- Update
 - `DELETE /v1/threads/{id}` -- Soft delete
@@ -124,12 +122,13 @@ SSE Conventions:
 
 - `GET /v1/s/{share_id}` -- Public share access
 
-### 3.7 LLM Credentials and Routes
+### 3.7 LLM Providers and Models
 
-- `GET/POST /v1/llm-credentials` -- Credential management
-- `GET/PUT/DELETE /v1/llm-credentials/{id}`
-- `GET/POST /v1/llm-routes` -- Routing rule management
-- `GET/PUT/DELETE /v1/llm-routes/{id}`
+- `GET/POST /v1/llm-providers` -- Provider account management
+- `PATCH/DELETE /v1/llm-providers/{id}`
+- `POST /v1/llm-providers/{id}/models` -- Create provider model
+- `PATCH/DELETE /v1/llm-providers/{id}/models/{model_id}`
+- `GET /v1/llm-providers/{id}/available-models` -- Query upstream model catalog
 
 ### 3.8 ASR (Speech-to-Text)
 
@@ -142,16 +141,13 @@ SSE Conventions:
 - `GET/POST /v1/mcp-configs`
 - `GET/PUT/DELETE /v1/mcp-configs/{id}`
 
-### 3.10 Personas and Agent Configurations
+### 3.10 Personas
 
-Note: External naming has migrated from `skills` to `personas` (`/v1/skills` -> `/v1/personas`, `skill_key/skill_id` -> `persona_key/persona_id`). Legacy compatibility is not provided.
+Note: External naming has migrated from `skills` to `personas` (`/v1/skills` -> `/v1/personas`, `skill_key/skill_id` -> `persona_key/persona_id`). Execution now reads model selectors directly from Persona, so there is no separate Agent Config or Prompt Template layer.
 
-- `GET/POST /v1/personas`
-- `GET/PUT/DELETE /v1/personas/{id}`
-- `GET/POST /v1/agent-configs`
-- `GET/PUT/DELETE /v1/agent-configs/{id}`
-- `GET/POST /v1/prompt-templates`
-- `GET/PUT/DELETE /v1/prompt-templates/{id}`
+- `GET /v1/personas`
+- `POST /v1/personas`
+- `PATCH /v1/personas/{id}`
 
 ### 3.11 Organizations and Teams
 

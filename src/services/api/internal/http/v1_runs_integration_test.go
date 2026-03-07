@@ -196,7 +196,6 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 
 	threadOrgID := uuid.MustParse(threadPayload.OrgID)
-	threadUUID := uuid.MustParse(threadPayload.ID)
 	var outputCredentialID uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
@@ -216,35 +215,39 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		threadOrgID,
 		outputCredentialID,
 	).Scan(&outputRouteFromAgent); err != nil {
-		t.Fatalf("create output route for output agent: %v", err)
-	}
-	if _, err := pool.Exec(
-		ctx,
-		`INSERT INTO agent_configs (org_id, scope, name, model, is_default)
-		 VALUES ($1, 'org', 'sub-haiku-4.5', 'hybrid-output-cred', false)`,
-		threadOrgID,
-	); err != nil {
-		t.Fatalf("create output agent config by name: %v", err)
+		t.Fatalf("create output route for exact selector: %v", err)
 	}
 
-	var agentConfigID uuid.UUID
+	var gptCredentialID uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO agent_configs (org_id, scope, name, safety_rules_json, is_default)
-		 VALUES ($1, 'org', 'search-hybrid', $2::jsonb, false)
+		`INSERT INTO llm_credentials (org_id, provider, name)
+		 VALUES ($1, 'openai', 'gpt-output-cred')
 		 RETURNING id`,
 		threadOrgID,
-		`{"search_hybrid_output_routes":{"gpt5":"pg-gpt5-route"},"search_hybrid_output_agents":{"claude4":"sub-haiku-4.5"}}`,
-	).Scan(&agentConfigID); err != nil {
-		t.Fatalf("create agent config: %v", err)
+	).Scan(&gptCredentialID); err != nil {
+		t.Fatalf("create gpt output credential: %v", err)
 	}
+	var outputRouteFromModel uuid.UUID
+	if err := pool.QueryRow(
+		ctx,
+		`INSERT INTO llm_routes (id, org_id, credential_id, model, priority, is_default, when_json, multiplier)
+		 VALUES ('11111111-1111-1111-1111-111111111111', $1, $2, 'gpt-5', 120, true, '{}'::jsonb, 1.0)
+		 RETURNING id`,
+		threadOrgID,
+		gptCredentialID,
+	).Scan(&outputRouteFromModel); err != nil {
+		t.Fatalf("create output route for bare model selector: %v", err)
+	}
+
 	if _, err := pool.Exec(
 		ctx,
-		`UPDATE threads SET agent_config_id = $1 WHERE id = $2`,
-		agentConfigID,
-		threadUUID,
+		`INSERT INTO platform_settings (key, value, updated_at)
+		 VALUES ('search_hybrid_output_models', $1, now())
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+		`{"gpt5":"gpt-5","claude4":"hybrid-output-cred^claude-3-5-haiku"}`,
 	); err != nil {
-		t.Fatalf("bind thread agent config: %v", err)
+		t.Fatalf("seed search hybrid output models: %v", err)
 	}
 
 	runWithOutputModelResp := doJSON(
@@ -277,8 +280,8 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if startedDataWithOutputModel["output_model_key"] != "gpt5" {
 		t.Fatalf("unexpected started output_model_key: %#v", startedDataWithOutputModel["output_model_key"])
 	}
-	if startedDataWithOutputModel["output_route_id"] != "pg-gpt5-route" {
-		t.Fatalf("unexpected started output_route_id from model key: %#v", startedDataWithOutputModel["output_route_id"])
+	if startedDataWithOutputModel["output_route_id"] != outputRouteFromModel.String() {
+		t.Fatalf("unexpected started output_route_id from model selector: %#v", startedDataWithOutputModel["output_route_id"])
 	}
 
 	runWithBothOutputResp := doJSON(
@@ -327,7 +330,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		aliceHeaders,
 	)
 	if runWithOutputModelFromAgentNameResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected create run with output agent name mapping status: %d body=%s", runWithOutputModelFromAgentNameResp.Code, runWithOutputModelFromAgentNameResp.Body.String())
+		t.Fatalf("unexpected create run with exact selector mapping status: %d body=%s", runWithOutputModelFromAgentNameResp.Code, runWithOutputModelFromAgentNameResp.Body.String())
 	}
 	runWithOutputModelFromAgentName := decodeJSONBody[createRunResponse](t, runWithOutputModelFromAgentNameResp.Body.Bytes())
 	runWithOutputModelFromAgentNameID := uuid.MustParse(runWithOutputModelFromAgentName.RunID)
@@ -337,17 +340,17 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelFromAgentNameID,
 	).Scan(&startedJSONWithOutputModelFromAgentName); err != nil {
-		t.Fatalf("load started event with output agent name mapping: %v", err)
+		t.Fatalf("load started event with exact selector mapping: %v", err)
 	}
 	var startedDataWithOutputModelFromAgentName map[string]any
 	if err := json.Unmarshal(startedJSONWithOutputModelFromAgentName, &startedDataWithOutputModelFromAgentName); err != nil {
-		t.Fatalf("decode started json with output agent name mapping: %v raw=%s", err, string(startedJSONWithOutputModelFromAgentName))
+		t.Fatalf("decode started json with exact selector mapping: %v raw=%s", err, string(startedJSONWithOutputModelFromAgentName))
 	}
 	if startedDataWithOutputModelFromAgentName["output_model_key"] != "claude4" {
 		t.Fatalf("unexpected started output_model_key from output agent name path: %#v", startedDataWithOutputModelFromAgentName["output_model_key"])
 	}
 	if startedDataWithOutputModelFromAgentName["output_route_id"] != outputRouteFromAgent.String() {
-		t.Fatalf("unexpected output_route_id from output agent name mapping: %#v", startedDataWithOutputModelFromAgentName["output_route_id"])
+		t.Fatalf("unexpected output_route_id from exact selector mapping: %#v", startedDataWithOutputModelFromAgentName["output_route_id"])
 	}
 
 	t.Setenv("ARKLOOP_SEARCH_OUTPUT_ROUTE_GEMINI3", "env-gemini3-route")

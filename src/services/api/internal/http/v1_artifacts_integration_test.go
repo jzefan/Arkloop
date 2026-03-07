@@ -258,7 +258,7 @@ func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 		t.Fatalf("generate share token: %v", err)
 	}
 	password := "topsecret"
-	share, err := env.threadShareRepo.Create(context.Background(), thread.ID, shareToken, "password", &password, 1, false, 1, env.aliceUserID, nil)
+	share, err := env.threadShareRepo.Create(context.Background(), thread.ID, shareToken, "password", &password, 1, false, 1, env.aliceUserID)
 	if err != nil {
 		t.Fatalf("create password share: %v", err)
 	}

@@ -230,8 +230,6 @@ func (a *Application) Run(ctx context.Context) error {
 		teamRepo                     *data.TeamRepository
 		projectRepo                  *data.ProjectRepository
 		webhookRepo                  *data.WebhookEndpointRepository
-		promptTemplatesRepo          *data.PromptTemplateRepository
-		agentConfigsRepo             *data.AgentConfigRepository
 		plansRepo                    *data.PlanRepository
 		subscriptionsRepo            *data.SubscriptionRepository
 		entitlementsRepo             *data.EntitlementsRepository
@@ -359,14 +357,6 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		webhookRepo, err = data.NewWebhookEndpointRepository(pool)
-		if err != nil {
-			return err
-		}
-		promptTemplatesRepo, err = data.NewPromptTemplateRepository(pool)
-		if err != nil {
-			return err
-		}
-		agentConfigsRepo, err = data.NewAgentConfigRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -603,8 +593,6 @@ func (a *Application) Run(ctx context.Context) error {
 			TeamRepo:                     teamRepo,
 			ProjectRepo:                  projectRepo,
 			WebhookRepo:                  webhookRepo,
-			PromptTemplatesRepo:          promptTemplatesRepo,
-			AgentConfigsRepo:             agentConfigsRepo,
 			PlansRepo:                    plansRepo,
 			SubscriptionsRepo:            subscriptionsRepo,
 			EntitlementsRepo:             entitlementsRepo,

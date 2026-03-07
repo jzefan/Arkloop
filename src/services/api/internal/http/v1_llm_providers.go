@@ -355,6 +355,10 @@ func patchLlmProvider(
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name is required", traceID, nil)
 		return
 	}
+	if strings.Contains(mergedName, "^") {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name must not contain ^", traceID, nil)
+		return
+	}
 	if !validLlmProviders[strings.TrimSpace(mergedProvider)] {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider", traceID, nil)
 		return
@@ -631,6 +635,9 @@ func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 	apiKey := strings.TrimSpace(req.APIKey)
 	if name == "" || provider == "" || apiKey == "" {
 		return errors.New("name, provider and api_key are required")
+	}
+	if strings.Contains(name, "^") {
+		return errors.New("name must not contain ^")
 	}
 	if !validLlmProviders[provider] {
 		return errors.New("invalid provider")

@@ -21,8 +21,6 @@ export interface LocaleStrings {
     auditLogs: string
     credentials: string
     toolProviders: string
-    agentConfigs: string
-    promptTemplates: string
     mcpConfigs: string
     personas: string
     apiKeys: string
@@ -155,6 +153,21 @@ export interface LocaleStrings {
       copyTitle: string
       toastCopied: string
       toastCopyFailed: string
+      searchPlaceholder: string
+      fieldTags: string
+      emptyRoutes: string
+      deleteRouteTitle: string
+      deleteRouteMessage: (name: string) => string
+      deleteRouteConfirm: string
+      toastRouteCreated: string
+      toastDeletedRoute: string
+      importModels: string
+      importModelsTitle: string
+      importModelsLoading: string
+      importModelsEmpty: string
+      importModelsError: string
+      importSelected: string
+      importSearchPlaceholder: string
     }
     toolProviders: {
       title: string
@@ -232,92 +245,6 @@ export interface LocaleStrings {
       toastSaved: string
       toastSaveFailed: string
     }
-    agentConfigs: {
-      title: string
-      addConfig: string
-      // table columns
-      colName: string
-      colModel: string
-      colTemperature: string
-      colMaxOutputTokens: string
-      colToolPolicy: string
-      colIsDefault: string
-      colProject: string
-      colCreatedAt: string
-      // empty state
-      empty: string
-      // create/edit modal
-      modalTitleCreate: string
-      modalTitleEdit: string
-      fieldName: string
-      fieldSystemPromptTemplate: string
-      fieldSystemPromptTemplateNone: string
-      fieldSystemPromptOverride: string
-      fieldModel: string
-      fieldTemperature: string
-      fieldMaxOutputTokens: string
-      fieldTopP: string
-      fieldToolPolicy: string
-      fieldToolAllowlist: string
-      fieldToolDenylist: string
-      fieldContentFilterLevel: string
-      fieldIsDefault: string
-      fieldPromptCacheControl: string
-      fieldReasoningMode: string
-      // buttons
-      cancel: string
-      create: string
-      save: string
-      // delete dialog
-      deleteTitle: string
-      deleteMessage: (name: string) => string
-      deleteConfirm: string
-      // errors
-      errRequired: string
-      // toasts
-      toastCreated: string
-      toastUpdated: string
-      toastDeleted: string
-      toastLoadFailed: string
-      toastSaveFailed: string
-      toastDeleteFailed: string
-    }
-    promptTemplates: {
-      title: string
-      addTemplate: string
-      // table columns
-      colName: string
-      colIsDefault: string
-      colVersion: string
-      colVariablesCount: string
-      colCreatedAt: string
-      // empty state
-      empty: string
-      // create/edit modal
-      modalTitleCreate: string
-      modalTitleEdit: string
-      fieldName: string
-      fieldContent: string
-      fieldVariables: string
-      fieldIsDefault: string
-      // buttons
-      cancel: string
-      create: string
-      save: string
-      // delete dialog
-      deleteTitle: string
-      deleteMessage: (name: string) => string
-      deleteConfirm: string
-      // errors
-      errRequired: string
-      // toasts
-      toastCreated: string
-      toastUpdated: string
-      toastDeleted: string
-      toastLoadFailed: string
-      toastSaveFailed: string
-      toastDeleteFailed: string
-    }
     mcpConfigs: {
       title: string
       addConfig: string
@@ -363,17 +290,13 @@ export interface LocaleStrings {
     personas: {
       title: string
       addPersona: string
-      // table columns
       colPersonaKey: string
       colDisplayName: string
       colVersion: string
-      colDefaultModel: string
+      colModel: string
       colActive: string
-      colSelectable: string
       colCreatedAt: string
-      // empty state
       empty: string
-      // create/edit modal
       modalTitleCreate: string
       modalTitleEdit: string
       fieldPersonaKey: string
@@ -381,27 +304,26 @@ export interface LocaleStrings {
       fieldDisplayName: string
       fieldDescription: string
       fieldPrompt: string
+      fieldModel: string
       fieldToolAllowlist: string
       fieldToolAllowlistPlaceholder: string
+      fieldToolDenylist: string
       fieldBudgetsJSON: string
       fieldIsActive: string
       fieldExecutorType: string
-      fieldDefaultModel: string
       fieldExecutorConfig: string
       fieldPreferredCredential: string
+      fieldReasoningMode: string
+      fieldPromptCacheControl: string
       selectorMeta: (name: string, order: number) => string
       valuePlatformDefault: string
-      // read-only label for global personas
       labelGlobal: string
       labelHybrid: string
-      // buttons
       cancel: string
       create: string
       save: string
-      // errors
       errRequired: string
       errInvalidJSON: string
-      // toasts
       toastCreated: string
       toastUpdated: string
       toastLoadFailed: string
@@ -504,9 +426,8 @@ export interface LocaleStrings {
     }
     titleSummarizer: {
       title: string
-      fieldAgent: string
-      fieldAgentHint: string
-      agentNone: string
+      fieldModel: string
+      modelNone: string
       save: string
       toastSaved: string
       toastLoadFailed: string
@@ -1010,9 +931,10 @@ export interface LocaleStrings {
       apply: string
       reset: string
       gotoEntitlements: string
-      gotoAgentConfigs: string
       gotoPersonas: string
+      gotoTitleSummarizer: string
       limitsTitle: string
+      titleSummarizerTitle: string
       colLimit: string
       colEffective: string
       colSource: string
@@ -1021,18 +943,7 @@ export interface LocaleStrings {
       layerOrg: string
       layerPlatform: string
       layerDefault: string
-      agentConfigsTitle: string
-      agentConfigsHint: string
-      orgDefaultTitle: string
-      platformDefaultTitle: string
       defaultEmpty: string
-      colAgentConfig: string
-      colModel: string
-      colScope: string
-      colProject: string
-      colReasoningMode: string
-      agentConfigEmpty: string
-      defaultBadge: string
       personasTitle: string
       personasHint: string
       personasPlatformOnly: string
@@ -1040,10 +951,10 @@ export interface LocaleStrings {
       colPersona: string
       colRequested: string
       colEffectiveBudget: string
-      colResolvedConfig: string
+      colModel: string
+      colReasoningMode: string
+      colPromptCacheControl: string
       colSoftLimits: string
-      boundAgentConfig: string
-      labelReasoningMode: string
       rulesTitle: string
       ruleSources: string
       ruleClamp: string
@@ -1176,7 +1087,7 @@ export interface LocaleStrings {
       labelThread: string
       labelOrg: string
       labelPersona: string
-      labelAgentConfig: string
+      labelPersonaModel: string
       labelCredential: string
       labelModel: string
       labelTokens: string
