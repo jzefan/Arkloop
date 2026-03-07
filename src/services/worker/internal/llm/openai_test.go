@@ -724,6 +724,55 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_UsageOnlyChunkAfterFinishReason_
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_UsageCost_IsCaptured(t *testing.T) {
+	chunk1, _ := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta":         map[string]any{"role": "assistant", "content": "ok"},
+				"finish_reason": "stop",
+			},
+		},
+	})
+	chunk2, _ := json.Marshal(map[string]any{
+		"choices": []any{},
+		"usage": map[string]any{
+			"prompt_tokens":     12,
+			"completion_tokens": 34,
+			"cost":              0.0012,
+			"prompt_tokens_details": map[string]any{
+				"cached_tokens": 5,
+			},
+		},
+	})
+
+	reader := strings.NewReader(
+		"data: " + string(chunk1) + "\n\n" +
+			"data: " + string(chunk2) + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), reader, "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+
+	last, ok := events[len(events)-1].(StreamRunCompleted)
+	if !ok {
+		t.Fatalf("expected StreamRunCompleted as last event, got %T", events[len(events)-1])
+	}
+	if last.Usage == nil || last.Usage.CachedTokens == nil || *last.Usage.CachedTokens != 5 {
+		t.Fatalf("expected cached usage in completion, got %#v", last.Usage)
+	}
+	if last.Cost == nil || last.Cost.AmountMicros != 1200 || last.Cost.Currency != "USD" {
+		t.Fatalf("expected cost in completion, got %#v", last.Cost)
+	}
+}
+
 func TestOpenAIGateway_StreamChatCompletionsSSE_UsageOnlyWithoutContent_Fails(t *testing.T) {
 	chunk1, _ := json.Marshal(map[string]any{
 		"choices": []any{},
@@ -972,6 +1021,90 @@ func TestOpenAIGateway_Stream_Responses_SSE_ToolCalls(t *testing.T) {
 
 	if _, ok := events[len(events)-1].(StreamRunCompleted); !ok {
 		t.Fatalf("expected StreamRunCompleted as last event, got %T", events[len(events)-1])
+	}
+}
+
+func TestOpenAIGateway_Stream_Responses_SSE_UsageCost_IsCaptured(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		chunk1, _ := json.Marshal(map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": "ok",
+		})
+		_, _ = w.Write(append(append([]byte("data: "), chunk1...), []byte("\n\n")...))
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		chunk2, _ := json.Marshal(map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"output": []any{
+					map[string]any{
+						"id":   "msg_1",
+						"type": "message",
+						"role": "assistant",
+						"content": []any{
+							map[string]any{"type": "output_text", "text": "ok"},
+						},
+					},
+				},
+				"usage": map[string]any{
+					"input_tokens":  12,
+					"output_tokens": 34,
+					"cost":          0.0017,
+					"input_tokens_details": map[string]any{
+						"cached_tokens": 6,
+					},
+				},
+			},
+		})
+		_, _ = w.Write(append(append([]byte("data: "), chunk2...), []byte("\n\n")...))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:          "test",
+		BaseURL:         server.URL,
+		APIMode:         "responses",
+		EmitDebugEvents: false,
+	})
+
+	events := []StreamEvent{}
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "gpt-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	last, ok := events[len(events)-1].(StreamRunCompleted)
+	if !ok {
+		t.Fatalf("expected StreamRunCompleted as last event, got %T", events[len(events)-1])
+	}
+	if last.Usage == nil || last.Usage.CachedTokens == nil || *last.Usage.CachedTokens != 6 {
+		t.Fatalf("expected cached usage in completion, got %#v", last.Usage)
+	}
+	if last.Cost == nil || last.Cost.AmountMicros != 1700 || last.Cost.Currency != "USD" {
+		t.Fatalf("expected cost in completion, got %#v", last.Cost)
 	}
 }
 
