@@ -221,8 +221,9 @@ func (a *Application) Run(ctx context.Context) error {
 		llmCredRepo             *data.LlmCredentialsRepository
 		llmRoutesRepo           *data.LlmRoutesRepository
 		mcpConfigsRepo          *data.MCPConfigsRepository
-		toolProviderConfigsRepo *data.ToolProviderConfigsRepository
-		personasRepo            *data.PersonasRepository
+		toolProviderConfigsRepo      *data.ToolProviderConfigsRepository
+		toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
+		personasRepo                 *data.PersonasRepository
 		ipRulesRepo             *data.IPRulesRepository
 		apiKeysRepo             *data.APIKeysRepository
 		orgInvitationsRepo      *data.OrgInvitationsRepository
@@ -326,6 +327,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		toolProviderConfigsRepo, err = data.NewToolProviderConfigsRepository(pool)
+		if err != nil {
+			return err
+		}
+		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -586,8 +591,9 @@ func (a *Application) Run(ctx context.Context) error {
 			LlmRoutesRepo:            llmRoutesRepo,
 			SecretsRepo:              secretsRepo,
 			MCPConfigsRepo:           mcpConfigsRepo,
-			ToolProviderConfigsRepo:  toolProviderConfigsRepo,
-			PersonasRepo:             personasRepo,
+			ToolProviderConfigsRepo:      toolProviderConfigsRepo,
+			ToolDescriptionOverridesRepo: toolDescriptionOverridesRepo,
+			PersonasRepo:                 personasRepo,
 			IPRulesRepo:              ipRulesRepo,
 			APIKeysRepo:              apiKeysRepo,
 			OrgInvitationsRepo:       orgInvitationsRepo,

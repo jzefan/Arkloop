@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -30,6 +31,10 @@ var toolProviderCatalog = []toolProviderDefinition{
 	{GroupName: "web_fetch", ProviderName: "web_fetch.jina", RequiresAPIKey: true},
 	{GroupName: "web_fetch", ProviderName: "web_fetch.firecrawl", RequiresAPIKey: true},
 	{GroupName: "web_fetch", ProviderName: "web_fetch.basic"},
+	{GroupName: "sandbox", ProviderName: "sandbox.docker", RequiresBaseURL: true},
+	{GroupName: "sandbox", ProviderName: "sandbox.firecracker", RequiresBaseURL: true},
+	{GroupName: "memory", ProviderName: "memory.openviking", RequiresBaseURL: true, RequiresAPIKey: true},
+	{GroupName: "memory", ProviderName: "memory.memos", RequiresBaseURL: true, RequiresAPIKey: true},
 }
 
 type toolProvidersResponse struct {
@@ -42,14 +47,15 @@ type toolProviderGroupResponse struct {
 }
 
 type toolProviderItemResponse struct {
-	GroupName       string  `json:"group_name"`
-	ProviderName    string  `json:"provider_name"`
-	IsActive        bool    `json:"is_active"`
-	KeyPrefix       *string `json:"key_prefix,omitempty"`
-	BaseURL         *string `json:"base_url,omitempty"`
-	RequiresAPIKey  bool    `json:"requires_api_key"`
-	RequiresBaseURL bool    `json:"requires_base_url"`
-	Configured      bool    `json:"configured"`
+	GroupName       string          `json:"group_name"`
+	ProviderName    string          `json:"provider_name"`
+	IsActive        bool            `json:"is_active"`
+	KeyPrefix       *string         `json:"key_prefix,omitempty"`
+	BaseURL         *string         `json:"base_url,omitempty"`
+	RequiresAPIKey  bool            `json:"requires_api_key"`
+	RequiresBaseURL bool            `json:"requires_base_url"`
+	Configured      bool            `json:"configured"`
+	ConfigJSON      json.RawMessage `json:"config_json,omitempty"`
 }
 
 type upsertToolProviderCredentialRequest struct {
@@ -129,6 +135,13 @@ func toolProviderEntry(
 				writeMethodNotAllowed(w, r)
 			}
 			return
+		case "config":
+			if r.Method != nethttp.MethodPut {
+				writeMethodNotAllowed(w, r)
+				return
+			}
+			updateToolProviderConfig(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool)
+			return
 		default:
 			writeNotFound(w, r)
 			return
@@ -190,7 +203,7 @@ func listToolProviders(
 		byProvider[cfg.ProviderName] = cfg
 	}
 
-	groupOrder := []string{"web_search", "web_fetch"}
+	groupOrder := []string{"web_search", "web_fetch", "sandbox", "memory"}
 	groups := make([]toolProviderGroupResponse, 0, len(groupOrder))
 	for _, groupName := range groupOrder {
 		items := []toolProviderItemResponse{}
@@ -220,6 +233,10 @@ func listToolProviders(
 			if has && cfg.BaseURL != nil && strings.TrimSpace(*cfg.BaseURL) != "" {
 				baseURLConfigured = true
 				item.BaseURL = cfg.BaseURL
+			}
+
+			if has && len(cfg.ConfigJSON) > 2 {
+				item.ConfigJSON = cfg.ConfigJSON
 			}
 
 			item.Configured = (!def.RequiresAPIKey || secretConfigured) && (!def.RequiresBaseURL || baseURLConfigured)
@@ -588,6 +605,73 @@ func clearToolProviderCredential(
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	w.WriteHeader(nethttp.StatusNoContent)
+}
+
+func updateToolProviderConfig(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	groupName string,
+	providerName string,
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	toolProvidersRepo *data.ToolProviderConfigsRepository,
+	pool *pgxpool.Pool,
+	directPool *pgxpool.Pool,
+) {
+	if authService == nil {
+		writeAuthNotConfigured(w, traceID)
+		return
+	}
+	if toolProvidersRepo == nil || pool == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+		return
+	}
+
+	orgID := uuid.Nil
+	notifyPayload := "platform"
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return
+		}
+	} else {
+		if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+			return
+		}
+		orgID = actor.OrgID
+		notifyPayload = actor.OrgID.String()
+	}
+
+	var raw json.RawMessage
+	if err := decodeJSON(r, &raw); err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid JSON body", traceID, nil)
+		return
+	}
+	if len(raw) == 0 {
+		raw = json.RawMessage("{}")
+	}
+
+	if _, err := toolProvidersRepo.UpsertConfig(r.Context(), orgID, scope, groupName, providerName, nil, nil, nil, raw); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}

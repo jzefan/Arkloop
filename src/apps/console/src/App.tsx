@@ -12,7 +12,7 @@ import { AgentConfigsPage } from './pages/agent-configs/AgentConfigsPage'
 import { PromptTemplatesPage } from './pages/prompt-templates/PromptTemplatesPage'
 import { MCPConfigsPage } from './pages/mcp-configs/MCPConfigsPage'
 import { PersonasPage } from './pages/personas/PersonasPage'
-import { ToolProvidersPage } from './pages/tool-providers/ToolProvidersPage'
+import { ToolsPage } from './pages/tools/ToolsPage'
 import { APIKeysPage } from './pages/api-keys/APIKeysPage'
 import { IPRulesPage } from './pages/ip-rules/IPRulesPage'
 import { CaptchaPage } from './pages/captcha/CaptchaPage'
@@ -31,8 +31,7 @@ import { AsrCredentialsPage } from './pages/asr-credentials/AsrCredentialsPage'
 import { EmailPage } from './pages/email/EmailPage'
 import { TitleSummarizerPage } from './pages/title-summarizer/TitleSummarizerPage'
 import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
-import { SandboxConfigPage } from './pages/sandbox-config/SandboxConfigPage'
-import { MemoryConfigPage } from './pages/memory-config/MemoryConfigPage'
+
 import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionGovernancePage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
@@ -120,12 +119,11 @@ function App() {
         <Route path="agent-configs" element={<AgentConfigsPage />} />
         <Route path="prompt-templates" element={<PromptTemplatesPage />} />
         <Route path="mcp-configs" element={<MCPConfigsPage />} />
-        <Route path="tool-providers" element={<ToolProvidersPage />} />
+        <Route path="tools" element={<ToolsPage />} />
         <Route path="personas" element={<PersonasPage />} />
         <Route path="asr-credentials" element={<AsrCredentialsPage />} />
         <Route path="title-summarizer" element={<TitleSummarizerPage />} />
-        <Route path="sandbox-config" element={<SandboxConfigPage />} />
-        <Route path="memory-config" element={<MemoryConfigPage />} />
+
         <Route path="execution-governance" element={<ExecutionGovernancePage />} />
         {/* Integration */}
         <Route path="api-keys" element={<APIKeysPage />} />
@@ -156,6 +154,9 @@ function App() {
         <Route path="email" element={<EmailPage />} />
         {/* Redirects */}
         <Route path="providers" element={<Navigate to="/credentials" replace />} />
+        <Route path="tool-providers" element={<Navigate to="/tools" replace />} />
+        <Route path="sandbox-config" element={<Navigate to="/tools" replace />} />
+        <Route path="memory-config" element={<Navigate to="/tools" replace />} />
         <Route path="orgs" element={<Navigate to="/members" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>

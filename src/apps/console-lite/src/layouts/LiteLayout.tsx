@@ -5,7 +5,6 @@ import {
   Sparkles,
   KeyRound,
   Wrench,
-  BrainCircuit,
   Play,
   Settings,
   ShieldCheck,
@@ -32,7 +31,6 @@ function buildNavItems(t: LocaleStrings): NavItem[] {
     { label: t.nav.agents,    path: '/agents',    icon: <Sparkles size={17} /> },
     { label: t.nav.models,    path: '/models',    icon: <KeyRound size={17} /> },
     { label: t.nav.tools,     path: '/tools',     icon: <Wrench size={17} /> },
-    { label: t.nav.memory,    path: '/memory',    icon: <BrainCircuit size={17} /> },
     { label: t.nav.runs,      path: '/runs',      icon: <Play size={17} /> },
     { label: t.nav.settings,  path: '/settings',  icon: <Settings size={17} /> },
   ]
