@@ -86,7 +86,7 @@ func (l *Loop) Run(
 	}
 	for turnIndex := 1; ; turnIndex++ {
 		if cancelled(runCtx) {
-			return yield(emitter.Emit("run.cancelled", map[string]any{"reason": "cancel_signal"}, nil, nil))
+			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
 		if runCtx.PreIterHook != nil {
@@ -99,6 +99,9 @@ func (l *Loop) Run(
 		turn, err := l.runTurnWithRetry(ctx, runCtx, turnRequest, emitter, yield)
 		if err != nil {
 			return err
+		}
+		if turn.Terminal {
+			turn = applyTerminalTotals(turn, completionTotals)
 		}
 
 		hasToolCalls := len(turn.ToolCalls) > 0
@@ -119,12 +122,12 @@ func (l *Loop) Run(
 			return nil
 		}
 		if turn.Cancelled {
-			return yield(emitter.Emit("run.cancelled", map[string]any{"reason": "cancel_signal"}, nil, nil))
+			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
 		pureContinuationTurn := isPureContinuationTurn(turn.ToolCalls)
 		if hasReasoningIterationLimit(runCtx.ReasoningIterations) && !pureContinuationTurn && reasoningTurnsUsed >= runCtx.ReasoningIterations {
-			return yield(emitter.Emit("run.failed", reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON(), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
+			return yield(emitter.Emit("run.failed", completionTotals.Apply(reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON()), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 		}
 
 		if turn.AssistantText != "" || len(turn.ToolCalls) > 0 {
@@ -141,7 +144,7 @@ func (l *Loop) Run(
 
 		if turn.CompletedDataJSON == nil {
 			internal := llm.InternalStreamEndedError()
-			event := emitter.Emit("run.failed", internal.ToJSON(), nil, stringPtr(internal.ErrorClass))
+			event := emitter.Emit("run.failed", completionTotals.Apply(internal.ToJSON()), nil, stringPtr(internal.ErrorClass))
 			return yield(event)
 		}
 		completionTotals.Add(turn.CompletedDataJSON)
@@ -160,7 +163,7 @@ func (l *Loop) Run(
 		}
 
 		if cancelled(runCtx) {
-			return yield(emitter.Emit("run.cancelled", map[string]any{"reason": "cancel_signal"}, nil, nil))
+			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
 		if runCtx.ToolExecutor == nil {
@@ -224,7 +227,7 @@ func (l *Loop) Run(
 		reasoningUsedThisTurn := !pureContinuationTurn || continuationRejected
 		if reasoningUsedThisTurn && pureContinuationTurn && hasReasoningIterationLimit(runCtx.ReasoningIterations) {
 			if reasoningTurnsUsed >= runCtx.ReasoningIterations {
-				return yield(emitter.Emit("run.failed", reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON(), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
+				return yield(emitter.Emit("run.failed", completionTotals.Apply(reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON()), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 			}
 		}
 		if reasoningUsedThisTurn {
@@ -245,6 +248,24 @@ func (l *Loop) Run(
 			}
 		}
 	}
+}
+
+func applyTerminalTotals(turn turnResult, totals *completionTotals) turnResult {
+	if len(turn.Events) == 0 || totals == nil {
+		return turn
+	}
+	last := turn.Events[len(turn.Events)-1]
+	switch last.Type {
+	case "run.failed":
+		merged := *totals
+		merged.Add(last.DataJSON)
+		last.DataJSON = merged.Apply(last.DataJSON)
+		turn.Events[len(turn.Events)-1] = last
+	case "run.cancelled":
+		last.DataJSON = totals.Apply(last.DataJSON)
+		turn.Events[len(turn.Events)-1] = last
+	}
+	return turn
 }
 
 type pendingToolExecution struct {

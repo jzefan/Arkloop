@@ -257,6 +257,93 @@ func TestAgentLoopAggregatesUsageAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestAgentLoopAggregatesUsageIntoRunFailed(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
+
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+			llm.StreamRunCompleted{
+				Usage: &llm.Usage{InputTokens: intPtr(10), OutputTokens: intPtr(3), CachedTokens: intPtr(4)},
+				Cost:  &llm.Cost{Currency: "USD", AmountMicros: 1200},
+			},
+		},
+		{
+			llm.StreamRunFailed{
+				Error: llm.GatewayError{ErrorClass: llm.ErrorClassProviderNonRetryable, Message: "upstream failed"},
+				Usage: &llm.Usage{InputTokens: intPtr(20), OutputTokens: intPtr(5), CachedTokens: intPtr(6)},
+				Cost:  &llm.Cost{Currency: "USD", AmountMicros: 3400},
+			},
+		},
+	}}
+
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	var failed events.RunEvent
+	found := false
+	for _, ev := range got {
+		if ev.Type == "run.failed" {
+			failed = ev
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.failed")
+	}
+	usage, ok := failed.DataJSON["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected usage payload in run.failed")
+	}
+	if value := mustInt64(t, usage["input_tokens"]); value != 30 {
+		t.Fatalf("expected input_tokens=30, got %d", value)
+	}
+	if value := mustInt64(t, usage["output_tokens"]); value != 8 {
+		t.Fatalf("expected output_tokens=8, got %d", value)
+	}
+	if value := mustInt64(t, usage["cached_tokens"]); value != 10 {
+		t.Fatalf("expected cached_tokens=10, got %d", value)
+	}
+	cost, ok := failed.DataJSON["cost"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cost payload in run.failed")
+	}
+	if value := mustInt64(t, cost["amount_micros"]); value != 4600 {
+		t.Fatalf("expected amount_micros=4600, got %d", value)
+	}
+}
+
 func TestAgentLoopSearchToolTurnDoesNotInjectAssistantText(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
