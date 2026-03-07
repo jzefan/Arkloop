@@ -59,10 +59,11 @@ export function buildUrl(path: string): string {
   return `${base}${path}`
 }
 
-export async function refreshAccessToken(): Promise<LoginResponse> {
+export async function refreshAccessToken(signal?: AbortSignal): Promise<LoginResponse> {
   return await apiFetch<LoginResponse>('/v1/auth/refresh', {
     method: 'POST',
     _isRetry: true,
+    signal,
   })
 }
 

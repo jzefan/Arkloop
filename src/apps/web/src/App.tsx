@@ -18,6 +18,8 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     setUnauthenticatedHandler(() => {
       clearAccessTokenFromStorage()
       clearActiveThreadIdInStorage()
@@ -28,15 +30,21 @@ function App() {
       setAccessToken(token)
     })
 
-    refreshAccessToken()
+    refreshAccessToken(controller.signal)
       .then((resp) => {
+        if (controller.signal.aborted) return
         writeAccessTokenToStorage(resp.access_token)
         setAccessToken(resp.access_token)
       })
       .catch(() => {})
       .finally(() => {
+        if (controller.signal.aborted) return
         setAuthChecked(true)
       })
+
+    return () => {
+      controller.abort()
+    }
   }, [])
 
   const handleLoggedIn = useCallback((token: string) => {
