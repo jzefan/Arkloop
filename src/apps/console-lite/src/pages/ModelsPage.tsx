@@ -404,7 +404,7 @@ export function ModelsPage() {
                 ))}
               </div>
             </div>
-            <div className="border-t border-[var(--c-border-console)] p-2">
+            <div className="border-t border-[var(--c-border-console)] px-3 py-3">
               <button
                 onClick={() => {
                   setShowAddProvider(true)
@@ -414,7 +414,7 @@ export function ModelsPage() {
                   setNewClientType('openai_response')
                   setNewError('')
                 }}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-sm text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
+                className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md text-sm text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
               >
                 <Plus size={14} />
                 {tc.addProvider}
