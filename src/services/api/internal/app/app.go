@@ -552,8 +552,14 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	// 加载仓库 persona（src/personas/）
-	repoPersonas, _ := personas.LoadFromDir("src/personas")
+	personasRoot, err := personas.BuiltinPersonasRoot()
+	if err != nil {
+		return err
+	}
+	repoPersonas, err := personas.LoadFromDir(personasRoot)
+	if err != nil {
+		return err
+	}
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{

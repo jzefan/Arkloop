@@ -47,6 +47,9 @@ type personaResponse struct {
 	Version             string          `json:"version"`
 	DisplayName         string          `json:"display_name"`
 	Description         *string         `json:"description,omitempty"`
+	UserSelectable      bool            `json:"user_selectable"`
+	SelectorName        *string         `json:"selector_name,omitempty"`
+	SelectorOrder       *int            `json:"selector_order,omitempty"`
 	PromptMD            string          `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
@@ -321,6 +324,7 @@ func toPersonaResponse(s data.Persona) personaResponse {
 		Version:             s.Version,
 		DisplayName:         s.DisplayName,
 		Description:         s.Description,
+		UserSelectable:      false,
 		PromptMD:            s.PromptMD,
 		ToolAllowlist:       allowlist,
 		BudgetsJSON:         budgets,
@@ -370,6 +374,9 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 		Version:            s.Version,
 		DisplayName:        s.Title,
 		Description:        description,
+		UserSelectable:     s.UserSelectable,
+		SelectorName:       optionalTrimmedString(s.SelectorName),
+		SelectorOrder:      s.SelectorOrder,
 		PromptMD:           s.PromptMD,
 		ToolAllowlist:      allowlist,
 		BudgetsJSON:        budgets,
@@ -379,4 +386,12 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 		ExecutorConfigJSON: executorConfig,
 		Source:             "builtin",
 	}
+}
+
+func optionalTrimmedString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
@@ -18,7 +19,7 @@ import (
 
 var (
 	idRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
-	budgetKeys = map[string]struct{}{"max_iterations": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}, "temperature": {}, "top_p": {}}
+	budgetKeys = map[string]struct{}{"reasoning_iterations": {}, "tool_continuation_budget": {}, "max_output_tokens": {}, "tool_timeout_ms": {}, "tool_budget": {}, "per_tool_soft_limits": {}, "temperature": {}, "top_p": {}}
 )
 
 const defaultExecutorType = "agent.simple"
@@ -127,6 +128,12 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 	}
 
 	description := asOptionalString(obj["description"])
+	userSelectable := asOptionalBool(obj["user_selectable"])
+	selectorName := asOptionalString(obj["selector_name"])
+	selectorOrder, err := asOptionalInt(obj["selector_order"], "selector_order")
+	if err != nil {
+		return Definition{}, err
+	}
 	allowlist, err := asToolNameList(obj["tool_allowlist"], "tool_allowlist")
 	if err != nil {
 		return Definition{}, err
@@ -172,6 +179,9 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		Version:             version,
 		Title:               title,
 		Description:         description,
+		UserSelectable:      userSelectable,
+		SelectorName:        selectorName,
+		SelectorOrder:       selectorOrder,
 		ToolAllowlist:       allowlist,
 		ToolDenylist:        denylist,
 		Budgets:             budgets,
@@ -182,6 +192,36 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		AgentConfigName:     agentConfigName,
 		TitleSummarizer:     titleSummarizer,
 	}, nil
+}
+
+func asOptionalBool(value any) bool {
+	flag, ok := value.(bool)
+	if !ok {
+		return false
+	}
+	return flag
+}
+
+func asOptionalInt(value any, label string) (*int, error) {
+	if value == nil {
+		return nil, nil
+	}
+	switch n := value.(type) {
+	case int:
+		out := n
+		return &out, nil
+	case int64:
+		out := int(n)
+		return &out, nil
+	case float64:
+		if float64(int(n)) != n {
+			return nil, fmt.Errorf("%s must be an integer", label)
+		}
+		out := int(n)
+		return &out, nil
+	default:
+		return nil, fmt.Errorf("%s must be an integer", label)
+	}
 }
 
 func asNonEmptyString(value any, label string) (string, error) {
@@ -313,7 +353,7 @@ func asToolNameList(value any, label string) ([]string, error) {
 
 func asBudgets(value any) (Budgets, error) {
 	if value == nil {
-		return Budgets{ToolBudget: map[string]any{}}, nil
+		return Budgets{ToolBudget: map[string]any{}, PerToolSoftLimits: tools.PerToolSoftLimits{}}, nil
 	}
 	raw, ok := value.(map[string]any)
 	if !ok {
@@ -327,7 +367,11 @@ func asBudgets(value any) (Budgets, error) {
 		return Budgets{}, fmt.Errorf("budgets contains unsupported field: %s", key)
 	}
 
-	maxIterations, err := asOptionalPositiveInt(raw["max_iterations"], "budgets.max_iterations")
+	reasoningIterations, err := asOptionalPositiveInt(raw["reasoning_iterations"], "budgets.reasoning_iterations")
+	if err != nil {
+		return Budgets{}, err
+	}
+	toolContinuationBudget, err := asOptionalPositiveInt(raw["tool_continuation_budget"], "budgets.tool_continuation_budget")
 	if err != nil {
 		return Budgets{}, err
 	}
@@ -351,6 +395,11 @@ func asBudgets(value any) (Budgets, error) {
 		}
 	}
 
+	perToolSoftLimits, err := asPerToolSoftLimits(raw["per_tool_soft_limits"])
+	if err != nil {
+		return Budgets{}, err
+	}
+
 	temperature, err := asOptionalFloat64(raw["temperature"], "budgets.temperature")
 	if err != nil {
 		return Budgets{}, err
@@ -361,12 +410,14 @@ func asBudgets(value any) (Budgets, error) {
 	}
 
 	return Budgets{
-		MaxIterations:   maxIterations,
-		MaxOutputTokens: maxOutputTokens,
-		ToolTimeoutMs:   toolTimeoutMs,
-		ToolBudget:      toolBudget,
-		Temperature:     temperature,
-		TopP:            topP,
+		ReasoningIterations:    reasoningIterations,
+		ToolContinuationBudget: toolContinuationBudget,
+		MaxOutputTokens:        maxOutputTokens,
+		ToolTimeoutMs:          toolTimeoutMs,
+		ToolBudget:             toolBudget,
+		PerToolSoftLimits:      perToolSoftLimits,
+		Temperature:            temperature,
+		TopP:                   topP,
 	}, nil
 }
 
@@ -478,13 +529,83 @@ func mergeDefinition(base Definition, override Definition) Definition {
 
 func parseBudgetsJSON(raw []byte) (Budgets, error) {
 	if len(raw) == 0 {
-		return Budgets{ToolBudget: map[string]any{}}, nil
+		return Budgets{ToolBudget: map[string]any{}, PerToolSoftLimits: tools.PerToolSoftLimits{}}, nil
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return Budgets{}, fmt.Errorf("invalid budgets_json: %w", err)
 	}
 	return asBudgets(obj)
+}
+
+func asPerToolSoftLimits(value any) (tools.PerToolSoftLimits, error) {
+	if value == nil {
+		return tools.PerToolSoftLimits{}, nil
+	}
+	mapped, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("budgets.per_tool_soft_limits must be an object")
+	}
+	limits := tools.PerToolSoftLimits{}
+	for toolName, rawLimit := range mapped {
+		if toolName != "exec_command" && toolName != "write_stdin" {
+			return nil, fmt.Errorf("budgets.per_tool_soft_limits.%s is unsupported", toolName)
+		}
+		limitObj, ok := rawLimit.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("budgets.per_tool_soft_limits.%s must be an object", toolName)
+		}
+		limit, err := asToolSoftLimit(toolName, limitObj)
+		if err != nil {
+			return nil, err
+		}
+		limits[toolName] = limit
+	}
+	return limits, nil
+}
+
+func asToolSoftLimit(toolName string, raw map[string]any) (tools.ToolSoftLimit, error) {
+	allowed := map[string]struct{}{"max_output_bytes": {}}
+	if toolName == "write_stdin" {
+		allowed["max_continuations"] = struct{}{}
+		allowed["max_yield_time_ms"] = struct{}{}
+	}
+	for key := range raw {
+		if _, ok := allowed[key]; ok {
+			continue
+		}
+		return tools.ToolSoftLimit{}, fmt.Errorf("budgets.per_tool_soft_limits.%s.%s is unsupported", toolName, key)
+	}
+	maxOutputBytes, err := asOptionalBoundedPositiveInt(raw["max_output_bytes"], fmt.Sprintf("budgets.per_tool_soft_limits.%s.max_output_bytes", toolName), tools.HardMaxToolSoftLimitOutputBytes)
+	if err != nil {
+		return tools.ToolSoftLimit{}, err
+	}
+	limit := tools.ToolSoftLimit{MaxOutputBytes: maxOutputBytes}
+	if toolName != "write_stdin" {
+		return limit, nil
+	}
+	maxContinuations, err := asOptionalBoundedPositiveInt(raw["max_continuations"], "budgets.per_tool_soft_limits.write_stdin.max_continuations", tools.HardMaxToolSoftLimitContinuations)
+	if err != nil {
+		return tools.ToolSoftLimit{}, err
+	}
+	maxYieldTimeMs, err := asOptionalBoundedPositiveInt(raw["max_yield_time_ms"], "budgets.per_tool_soft_limits.write_stdin.max_yield_time_ms", tools.HardMaxToolSoftLimitYieldTimeMs)
+	if err != nil {
+		return tools.ToolSoftLimit{}, err
+	}
+	limit.MaxContinuations = maxContinuations
+	limit.MaxYieldTimeMs = maxYieldTimeMs
+	return limit, nil
+}
+
+func asOptionalBoundedPositiveInt(value any, label string, max int) (*int, error) {
+	parsed, err := asOptionalPositiveInt(value, label)
+	if err != nil {
+		return nil, err
+	}
+	if parsed != nil && *parsed > max {
+		return nil, fmt.Errorf("%s must be less than or equal to %d", label, max)
+	}
+	return parsed, nil
 }
 
 func parseExecutorConfigJSON(raw []byte) (map[string]any, error) {

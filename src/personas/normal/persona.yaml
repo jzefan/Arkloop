@@ -2,9 +2,12 @@ id: normal
 version: "1"
 title: Normal
 description: 通用对话模式，支持工具调用、多轮推理和深度分析。
+user_selectable: true
+selector_name: Normal
+selector_order: 1
 tool_allowlist: []
 budgets:
-  max_iterations: 99999
+  reasoning_iterations: 99999
   max_output_tokens: 20480
   temperature: 1.0
 title_summarize:

@@ -7,6 +7,9 @@ export type Persona = {
   persona_key: string
   version: string
   display_name: string
+  user_selectable: boolean
+  selector_name?: string
+  selector_order?: number
   description?: string
   prompt_md: string
   tool_allowlist: string[]
