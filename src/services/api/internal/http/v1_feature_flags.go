@@ -6,6 +6,7 @@ import (
 
 	nethttp "net/http"
 
+	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/featureflag"
@@ -49,11 +50,12 @@ func featureFlagsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	flagRepo *data.FeatureFlagRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createFeatureFlag(w, r, authService, membershipRepo, flagRepo, apiKeysRepo)
+			createFeatureFlag(w, r, authService, membershipRepo, flagRepo, apiKeysRepo, auditWriter)
 		case nethttp.MethodGet:
 			listFeatureFlags(w, r, authService, membershipRepo, flagRepo, apiKeysRepo)
 		default:
@@ -68,11 +70,11 @@ func featureFlagEntry(
 	flagRepo *data.FeatureFlagRepository,
 	flagService *featureflag.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 
-		// 路径形如 /v1/feature-flags/{key} 或 /v1/feature-flags/{key}/org-overrides[/{org_id}]
 		tail := strings.TrimPrefix(r.URL.Path, "/v1/feature-flags/")
 		tail = strings.Trim(tail, "/")
 		if tail == "" {
@@ -80,19 +82,17 @@ func featureFlagEntry(
 			return
 		}
 
-		// 分割路径段
 		parts := strings.SplitN(tail, "/", 3)
 		flagKey := parts[0]
 
 		if len(parts) == 1 {
-			// /v1/feature-flags/{key}
 			switch r.Method {
 			case nethttp.MethodGet:
 				getFeatureFlag(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, apiKeysRepo)
 			case nethttp.MethodPatch:
-				updateFeatureFlag(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo)
+				updateFeatureFlag(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo, auditWriter)
 			case nethttp.MethodDelete:
-				deleteFeatureFlag(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo)
+				deleteFeatureFlag(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo, auditWriter)
 			default:
 				writeMethodNotAllowed(w, r)
 			}
@@ -105,10 +105,9 @@ func featureFlagEntry(
 		}
 
 		if len(parts) == 2 {
-			// /v1/feature-flags/{key}/org-overrides
 			switch r.Method {
 			case nethttp.MethodPost:
-				setFlagOrgOverride(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo)
+				setFlagOrgOverride(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, flagService, apiKeysRepo, auditWriter)
 			case nethttp.MethodGet:
 				listFlagOrgOverrides(w, r, traceID, flagKey, authService, membershipRepo, flagRepo, apiKeysRepo)
 			default:
@@ -117,9 +116,7 @@ func featureFlagEntry(
 			return
 		}
 
-		// /v1/feature-flags/{key}/org-overrides/{org_id}
-		orgIDStr := parts[2]
-		orgID, err := uuid.Parse(orgIDStr)
+		orgID, err := uuid.Parse(parts[2])
 		if err != nil {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid org_id", traceID, nil)
 			return
@@ -127,7 +124,7 @@ func featureFlagEntry(
 
 		switch r.Method {
 		case nethttp.MethodDelete:
-			deleteFlagOrgOverride(w, r, traceID, flagKey, orgID, authService, membershipRepo, flagRepo, flagService, apiKeysRepo)
+			deleteFlagOrgOverride(w, r, traceID, flagKey, orgID, authService, membershipRepo, flagRepo, flagService, apiKeysRepo, auditWriter)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -141,6 +138,7 @@ func createFeatureFlag(
 	membershipRepo *data.OrgMembershipRepository,
 	flagRepo *data.FeatureFlagRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	if authService == nil {
@@ -178,7 +176,11 @@ func createFeatureFlag(
 		return
 	}
 
-	writeJSON(w, traceID, nethttp.StatusCreated, toFeatureFlagResponse(flag))
+	state := toFeatureFlagResponse(flag)
+	if auditWriter != nil {
+		auditWriter.WriteFeatureFlagCreated(r.Context(), traceID, actor.UserID, flag.ID, flag.Key, state)
+	}
+	writeJSON(w, traceID, nethttp.StatusCreated, state)
 }
 
 func listFeatureFlags(
@@ -270,6 +272,7 @@ func updateFeatureFlag(
 	flagRepo *data.FeatureFlagRepository,
 	flagService *featureflag.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -298,6 +301,16 @@ func updateFeatureFlag(
 		return
 	}
 
+	previous, err := flagRepo.GetFlag(r.Context(), flagKey)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if previous == nil {
+		WriteError(w, nethttp.StatusNotFound, "feature_flags.not_found", "feature flag not found", traceID, nil)
+		return
+	}
+
 	flag, err := flagRepo.UpdateFlagDefaultValue(r.Context(), flagKey, *req.DefaultValue)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -310,6 +323,17 @@ func updateFeatureFlag(
 
 	if flagService != nil {
 		flagService.InvalidateGlobalCache(r.Context(), flagKey)
+	}
+	if auditWriter != nil {
+		auditWriter.WriteFeatureFlagUpdated(
+			r.Context(),
+			traceID,
+			actor.UserID,
+			flag.ID,
+			flag.Key,
+			toFeatureFlagResponse(*previous),
+			toFeatureFlagResponse(*flag),
+		)
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, toFeatureFlagResponse(*flag))
@@ -325,6 +349,7 @@ func deleteFeatureFlag(
 	flagRepo *data.FeatureFlagRepository,
 	flagService *featureflag.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -343,12 +368,21 @@ func deleteFeatureFlag(
 		return
 	}
 
+	previous, err := flagRepo.GetFlag(r.Context(), flagKey)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
 	if err := flagRepo.DeleteFlag(r.Context(), flagKey); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	_ = flagService // 删除 flag 时 org overrides 随 ON DELETE CASCADE 清除，缓存自然过期
+	_ = flagService
+	if auditWriter != nil && previous != nil {
+		auditWriter.WriteFeatureFlagDeleted(r.Context(), traceID, actor.UserID, previous.ID, previous.Key, toFeatureFlagResponse(*previous))
+	}
 	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -362,6 +396,7 @@ func setFlagOrgOverride(
 	flagRepo *data.FeatureFlagRepository,
 	flagService *featureflag.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -392,7 +427,6 @@ func setFlagOrgOverride(
 		return
 	}
 
-	// 确保 flag 存在
 	flag, err := flagRepo.GetFlag(r.Context(), flagKey)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -400,6 +434,12 @@ func setFlagOrgOverride(
 	}
 	if flag == nil {
 		WriteError(w, nethttp.StatusNotFound, "feature_flags.not_found", "feature flag not found", traceID, nil)
+		return
+	}
+
+	previous, err := flagRepo.GetOrgOverride(r.Context(), orgID, flagKey)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
@@ -411,6 +451,17 @@ func setFlagOrgOverride(
 
 	if flagService != nil {
 		flagService.InvalidateCache(r.Context(), orgID, flagKey)
+	}
+	if auditWriter != nil {
+		auditWriter.WriteFeatureFlagOrgOverrideSet(
+			r.Context(),
+			traceID,
+			actor.UserID,
+			orgID,
+			flagKey,
+			orgFeatureOverrideAuditState(previous),
+			toOrgOverrideResponse(override),
+		)
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, toOrgOverrideResponse(override))
@@ -467,6 +518,7 @@ func deleteFlagOrgOverride(
 	flagRepo *data.FeatureFlagRepository,
 	flagService *featureflag.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -485,13 +537,29 @@ func deleteFlagOrgOverride(
 		return
 	}
 
+	previous, err := flagRepo.GetOrgOverride(r.Context(), orgID, flagKey)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
 	if err := flagRepo.DeleteOrgOverride(r.Context(), orgID, flagKey); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	if flagService != nil {
+	if flagService != nil && previous != nil {
 		flagService.InvalidateCache(r.Context(), orgID, flagKey)
+	}
+	if auditWriter != nil && previous != nil {
+		auditWriter.WriteFeatureFlagOrgOverrideDeleted(
+			r.Context(),
+			traceID,
+			actor.UserID,
+			orgID,
+			flagKey,
+			orgFeatureOverrideAuditState(previous),
+		)
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
@@ -514,4 +582,11 @@ func toOrgOverrideResponse(o data.OrgFeatureOverride) orgFeatureOverrideResponse
 		Enabled:   o.Enabled,
 		CreatedAt: o.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+func orgFeatureOverrideAuditState(o *data.OrgFeatureOverride) any {
+	if o == nil {
+		return nil
+	}
+	return toOrgOverrideResponse(*o)
 }

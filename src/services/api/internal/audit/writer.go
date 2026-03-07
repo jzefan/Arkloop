@@ -40,12 +40,12 @@ func (w *Writer) WriteLoginFailed(ctx context.Context, traceID string, login str
 	targetType := "user_login"
 	targetID := loginHash
 	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
-		Action:    "auth.login",
+		Action:     "auth.login",
 		TargetType: &targetType,
-		TargetID:  &targetID,
-		TraceID:   traceID,
-		IPAddress: ip,
-		UserAgent: ua,
+		TargetID:   &targetID,
+		TraceID:    traceID,
+		IPAddress:  ip,
+		UserAgent:  ua,
 		Metadata: map[string]any{
 			"result":     "failed",
 			"method":     "password",
@@ -753,6 +753,204 @@ func (w *Writer) WriteBroadcastCreated(
 		Metadata:    meta,
 	}); err != nil {
 		w.logError(traceID, "failed to write broadcast-created audit log", err)
+	}
+}
+
+func (w *Writer) WriteCreditsAdjusted(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetOrgID uuid.UUID,
+	amount int64,
+	note string,
+	beforeState any,
+	afterState any,
+) {
+	targetType := "org"
+	targetID := targetOrgID.String()
+	w.writeStateChange(ctx, traceID, &targetOrgID, &actorUserID, "credits.adjust", &targetType, &targetID, map[string]any{
+		"amount":           amount,
+		"note":             note,
+		"transaction_type": "admin_adjustment",
+	}, beforeState, afterState, "failed to write credits-adjusted audit log")
+}
+
+func (w *Writer) WriteCreditsBulkAdjusted(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	amount int64,
+	note string,
+	affectedCount int64,
+) {
+	targetType := "credits_batch"
+	w.writeStateChange(ctx, traceID, nil, &actorUserID, "credits.bulk_adjust", &targetType, nil, map[string]any{
+		"amount":         amount,
+		"note":           note,
+		"affected_count": affectedCount,
+	}, nil, nil, "failed to write credits-bulk-adjust audit log")
+}
+
+func (w *Writer) WriteCreditsResetAll(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	note string,
+	affectedCount int64,
+) {
+	targetType := "credits_batch"
+	w.writeStateChange(ctx, traceID, nil, &actorUserID, "credits.reset_all", &targetType, nil, map[string]any{
+		"note":           note,
+		"affected_count": affectedCount,
+		"operation":      "reset_all",
+	}, nil, nil, "failed to write credits-reset-all audit log")
+}
+
+func (w *Writer) WriteEntitlementOverrideSet(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetOrgID uuid.UUID,
+	overrideID uuid.UUID,
+	key string,
+	beforeState any,
+	afterState any,
+) {
+	targetType := "entitlement_override"
+	targetID := overrideID.String()
+	w.writeStateChange(ctx, traceID, &targetOrgID, &actorUserID, "entitlements.override_set", &targetType, &targetID, map[string]any{
+		"key": key,
+	}, beforeState, afterState, "failed to write entitlement-override-set audit log")
+}
+
+func (w *Writer) WriteEntitlementOverrideDeleted(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetOrgID uuid.UUID,
+	overrideID uuid.UUID,
+	key string,
+	beforeState any,
+) {
+	targetType := "entitlement_override"
+	targetID := overrideID.String()
+	w.writeStateChange(ctx, traceID, &targetOrgID, &actorUserID, "entitlements.override_delete", &targetType, &targetID, map[string]any{
+		"key": key,
+	}, beforeState, nil, "failed to write entitlement-override-delete audit log")
+}
+
+func (w *Writer) WriteFeatureFlagCreated(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	flagID uuid.UUID,
+	key string,
+	afterState any,
+) {
+	targetType := "feature_flag"
+	targetID := flagID.String()
+	w.writeStateChange(ctx, traceID, nil, &actorUserID, "feature_flags.create", &targetType, &targetID, map[string]any{
+		"key": key,
+	}, nil, afterState, "failed to write feature-flag-created audit log")
+}
+
+func (w *Writer) WriteFeatureFlagUpdated(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	flagID uuid.UUID,
+	key string,
+	beforeState any,
+	afterState any,
+) {
+	targetType := "feature_flag"
+	targetID := flagID.String()
+	w.writeStateChange(ctx, traceID, nil, &actorUserID, "feature_flags.update", &targetType, &targetID, map[string]any{
+		"key": key,
+	}, beforeState, afterState, "failed to write feature-flag-updated audit log")
+}
+
+func (w *Writer) WriteFeatureFlagDeleted(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	flagID uuid.UUID,
+	key string,
+	beforeState any,
+) {
+	targetType := "feature_flag"
+	targetID := flagID.String()
+	w.writeStateChange(ctx, traceID, nil, &actorUserID, "feature_flags.delete", &targetType, &targetID, map[string]any{
+		"key": key,
+	}, beforeState, nil, "failed to write feature-flag-deleted audit log")
+}
+
+func (w *Writer) WriteFeatureFlagOrgOverrideSet(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetOrgID uuid.UUID,
+	flagKey string,
+	beforeState any,
+	afterState any,
+) {
+	targetType := "feature_flag_org_override"
+	targetID := targetOrgID.String() + ":" + flagKey
+	w.writeStateChange(ctx, traceID, &targetOrgID, &actorUserID, "feature_flags.org_override_set", &targetType, &targetID, map[string]any{
+		"key": flagKey,
+	}, beforeState, afterState, "failed to write feature-flag-org-override-set audit log")
+}
+
+func (w *Writer) WriteFeatureFlagOrgOverrideDeleted(
+	ctx context.Context,
+	traceID string,
+	actorUserID uuid.UUID,
+	targetOrgID uuid.UUID,
+	flagKey string,
+	beforeState any,
+) {
+	targetType := "feature_flag_org_override"
+	targetID := targetOrgID.String() + ":" + flagKey
+	w.writeStateChange(ctx, traceID, &targetOrgID, &actorUserID, "feature_flags.org_override_delete", &targetType, &targetID, map[string]any{
+		"key": flagKey,
+	}, beforeState, nil, "failed to write feature-flag-org-override-delete audit log")
+}
+
+func (w *Writer) writeStateChange(
+	ctx context.Context,
+	traceID string,
+	orgID *uuid.UUID,
+	actorUserID *uuid.UUID,
+	action string,
+	targetType *string,
+	targetID *string,
+	metadata map[string]any,
+	beforeState any,
+	afterState any,
+	msg string,
+) {
+	if w == nil || w.auditRepo == nil {
+		return
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+
+	ip, ua := requestMetaFromContext(ctx)
+	if err := w.auditRepo.Create(ctx, data.AuditLogCreateParams{
+		OrgID:           orgID,
+		ActorUserID:     actorUserID,
+		Action:          action,
+		TargetType:      targetType,
+		TargetID:        targetID,
+		TraceID:         traceID,
+		IPAddress:       ip,
+		UserAgent:       ua,
+		Metadata:        metadata,
+		BeforeStateJSON: beforeState,
+		AfterStateJSON:  afterState,
+	}); err != nil {
+		w.logError(traceID, msg, err)
 	}
 }
 

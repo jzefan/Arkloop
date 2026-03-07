@@ -6,6 +6,7 @@ import (
 
 	nethttp "net/http"
 
+	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
@@ -41,11 +42,12 @@ func entitlementOverridesEntry(
 	entitlementsRepo *data.EntitlementsRepository,
 	entitlementService *entitlement.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createEntitlementOverride(w, r, authService, membershipRepo, entitlementsRepo, entitlementService, apiKeysRepo)
+			createEntitlementOverride(w, r, authService, membershipRepo, entitlementsRepo, entitlementService, apiKeysRepo, auditWriter)
 		case nethttp.MethodGet:
 			listEntitlementOverrides(w, r, authService, membershipRepo, entitlementsRepo, apiKeysRepo)
 		default:
@@ -60,6 +62,7 @@ func entitlementOverrideEntry(
 	entitlementsRepo *data.EntitlementsRepository,
 	entitlementService *entitlement.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -79,7 +82,7 @@ func entitlementOverrideEntry(
 
 		switch r.Method {
 		case nethttp.MethodDelete:
-			deleteEntitlementOverride(w, r, traceID, overrideID, authService, membershipRepo, entitlementsRepo, entitlementService, apiKeysRepo)
+			deleteEntitlementOverride(w, r, traceID, overrideID, authService, membershipRepo, entitlementsRepo, entitlementService, apiKeysRepo, auditWriter)
 		default:
 			writeMethodNotAllowed(w, r)
 		}
@@ -94,6 +97,7 @@ func createEntitlementOverride(
 	entitlementsRepo *data.EntitlementsRepository,
 	entitlementService *entitlement.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	if authService == nil {
@@ -147,6 +151,12 @@ func createEntitlementOverride(
 		expiresAt = &t
 	}
 
+	previous, err := entitlementsRepo.GetOverrideByOrgAndKey(r.Context(), orgID, req.Key)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
 	override, err := entitlementsRepo.CreateOverride(
 		r.Context(), orgID, req.Key, req.Value, req.ValueType,
 		req.Reason, expiresAt, actor.UserID,
@@ -156,9 +166,20 @@ func createEntitlementOverride(
 		return
 	}
 
-	// 缓存失效
 	if entitlementService != nil {
 		entitlementService.InvalidateCache(r.Context(), orgID, req.Key)
+	}
+	if auditWriter != nil {
+		auditWriter.WriteEntitlementOverrideSet(
+			r.Context(),
+			traceID,
+			actor.UserID,
+			orgID,
+			override.ID,
+			override.Key,
+			entitlementOverrideAuditState(previous),
+			toOverrideResponse(override),
+		)
 	}
 
 	writeJSON(w, traceID, nethttp.StatusCreated, toOverrideResponse(override))
@@ -224,6 +245,7 @@ func deleteEntitlementOverride(
 	entitlementsRepo *data.EntitlementsRepository,
 	entitlementService *entitlement.Service,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
 ) {
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
@@ -253,17 +275,10 @@ func deleteEntitlementOverride(
 		return
 	}
 
-	invalidateKey := ""
-	if entitlementService != nil {
-		overrides, err := entitlementsRepo.ListOverridesByOrg(r.Context(), orgID)
-		if err == nil {
-			for _, o := range overrides {
-				if o.ID == overrideID {
-					invalidateKey = o.Key
-					break
-				}
-			}
-		}
+	previous, err := entitlementsRepo.GetOverrideByID(r.Context(), overrideID, orgID)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
 	}
 
 	if err := entitlementsRepo.DeleteOverride(r.Context(), overrideID, orgID); err != nil {
@@ -271,8 +286,19 @@ func deleteEntitlementOverride(
 		return
 	}
 
-	if entitlementService != nil && invalidateKey != "" {
-		entitlementService.InvalidateCache(r.Context(), orgID, invalidateKey)
+	if entitlementService != nil && previous != nil {
+		entitlementService.InvalidateCache(r.Context(), orgID, previous.Key)
+	}
+	if auditWriter != nil && previous != nil {
+		auditWriter.WriteEntitlementOverrideDeleted(
+			r.Context(),
+			traceID,
+			actor.UserID,
+			orgID,
+			previous.ID,
+			previous.Key,
+			entitlementOverrideAuditState(previous),
+		)
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
@@ -297,4 +323,11 @@ func toOverrideResponse(o data.OrgEntitlementOverride) entitlementOverrideRespon
 		resp.CreatedByUserID = &uid
 	}
 	return resp
+}
+
+func entitlementOverrideAuditState(o *data.OrgEntitlementOverride) any {
+	if o == nil {
+		return nil
+	}
+	return toOverrideResponse(*o)
 }

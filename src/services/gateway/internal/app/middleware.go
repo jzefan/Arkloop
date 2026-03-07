@@ -22,7 +22,13 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-const traceIDHeader = "X-Trace-Id"
+const (
+	traceIDHeader          = "X-Trace-Id"
+	cspHeaderValue         = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'"
+	corsAllowMethodsValue  = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+	corsAllowHeadersValue  = "Authorization,Content-Type,Accept,X-Client-App,X-Trace-Id"
+	corsExposeHeadersValue = traceIDHeader
+)
 
 type statusRecorder struct {
 	http.ResponseWriter
@@ -46,7 +52,6 @@ func (r *statusRecorder) Write(payload []byte) (int, error) {
 	return r.ResponseWriter.Write(payload)
 }
 
-// Flush forwards to the underlying ResponseWriter; required for SSE/streaming.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
@@ -75,7 +80,6 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 
 		next.ServeHTTP(recorder, r)
 
-		// clientip 中间件在 next.ServeHTTP 之前已写入 context
 		ip := clientip.FromContext(r.Context())
 		uaInfo := ua.Parse(r)
 		durationMs := time.Since(start).Milliseconds()
@@ -90,7 +94,6 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 			riskScore, _ = strconv.Atoi(s)
 		}
 
-		// 身份提取
 		auth := strings.TrimSpace(r.Header.Get("Authorization"))
 		identCtx := r.Context()
 		cancel := func() {}
@@ -102,7 +105,6 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 		ident := identity.ExtractInfo(identCtx, auth, rdb, jwtSecret)
 		cancel()
 
-		// 结构化日志
 		if logger != nil {
 			extra := map[string]any{
 				"method":      r.Method,
@@ -123,7 +125,6 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 			logger.Info("request", LogFields{TraceID: &tid}, extra)
 		}
 
-		// 访问日志写入 Redis Stream（尽力而为，不阻塞请求）。
 		if logWriter != nil {
 			logWriter.Write(accesslog.Entry{
 				Timestamp:    start.UTC().Format(time.RFC3339),
@@ -146,11 +147,57 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 	})
 }
 
+func securityHeadersMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowed[origin] = struct{}{}
+		}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", cspHeaderValue)
+
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" {
+			appendVaryHeader(w.Header(), "Origin")
+			if _, ok := allowed[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", corsAllowMethodsValue)
+				w.Header().Set("Access-Control-Allow-Headers", corsAllowHeadersValue)
+				w.Header().Set("Access-Control-Expose-Headers", corsExposeHeadersValue)
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func appendVaryHeader(header http.Header, value string) {
+	if header == nil || value == "" {
+		return
+	}
+	current := header.Values("Vary")
+	for _, item := range current {
+		for _, part := range strings.Split(item, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
+}
+
 func recoverMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if value := recover(); value != nil {
-				// 复用 traceMiddleware 已设置在 response header 上的 traceID
 				traceID := w.Header().Get(traceIDHeader)
 				if traceID == "" {
 					traceID = newTraceID()

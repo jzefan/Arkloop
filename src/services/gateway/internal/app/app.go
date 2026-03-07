@@ -238,6 +238,8 @@ func (a *Application) Run(ctx context.Context) error {
 		inner = ipFilter.Middleware(inner)
 	}
 
+	inner = securityHeadersMiddleware(a.config.CORSAllowedOrigins, inner)
+
 	// trace 在 clientip 内层，可以从 context 读到 IP
 	inner = traceMiddleware(inner, a.logger, geo, rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret), a.config.TrustIncomingTraceID)
 

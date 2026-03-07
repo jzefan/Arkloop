@@ -85,7 +85,6 @@ func TestCreditsIntegration(t *testing.T) {
 		UsersRepo:           userRepo,
 	})
 
-	// 注册用户
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
 		map[string]any{"login": "credit_user@test.com", "password": "testpass123", "email": "credit_user@test.com"}, nil)
 	if registerResp.Code != nethttp.StatusCreated {
@@ -112,7 +111,6 @@ func TestCreditsIntegration(t *testing.T) {
 		}
 	})
 
-	// 注册 admin 用户
 	adminResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
 		map[string]any{"login": "admin@test.com", "password": "adminpass123", "email": "admin@test.com"}, nil)
 	if adminResp.Code != nethttp.StatusCreated {
@@ -120,12 +118,9 @@ func TestCreditsIntegration(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminResp.Body.Bytes())
 
-	// 提升为 platform_admin
-	_, err = pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
-	if err != nil {
+	if _, err = pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
-	// 重新登录获取新权限
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
 		map[string]any{"login": "admin@test.com", "password": "adminpass123"}, nil)
 	if loginResp.Code != nethttp.StatusOK {
@@ -133,7 +128,6 @@ func TestCreditsIntegration(t *testing.T) {
 	}
 	adminToken := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes()).AccessToken
 
-	// 获取 credit_user 的 org_id
 	meResp := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(token))
 	if meResp.Code != nethttp.StatusOK {
 		t.Fatalf("get me: %d %s", meResp.Code, meResp.Body.String())
@@ -144,7 +138,7 @@ func TestCreditsIntegration(t *testing.T) {
 	meData := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
 	orgID := meData.OrgID
 
-	t.Run("admin adjust positive", func(t *testing.T) {
+	t.Run("admin adjust positive writes audit", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
 			map[string]any{"org_id": orgID, "amount": 500, "note": "test top-up"},
 			authHeader(adminToken))
@@ -156,9 +150,23 @@ func TestCreditsIntegration(t *testing.T) {
 		if payload.Balance != 1500 {
 			t.Fatalf("expected balance 1500, got %d", payload.Balance)
 		}
+
+		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
+		if log.TargetType == nil || *log.TargetType != "org" {
+			t.Fatalf("unexpected target_type: %#v", log.TargetType)
+		}
+		if log.TargetID == nil || *log.TargetID != orgID {
+			t.Fatalf("unexpected target_id: %#v", log.TargetID)
+		}
+		if log.Metadata["amount"] != float64(500) || log.Metadata["note"] != "test top-up" {
+			t.Fatalf("unexpected metadata: %#v", log.Metadata)
+		}
+		if log.BeforeState["balance"] != float64(1000) || log.AfterState["balance"] != float64(1500) {
+			t.Fatalf("unexpected states: before=%#v after=%#v", log.BeforeState, log.AfterState)
+		}
 	})
 
-	t.Run("admin adjust negative", func(t *testing.T) {
+	t.Run("admin adjust negative writes audit", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
 			map[string]any{"org_id": orgID, "amount": -200, "note": "test deduction"},
 			authHeader(adminToken))
@@ -169,6 +177,17 @@ func TestCreditsIntegration(t *testing.T) {
 		payload := decodeJSONBody[creditBalanceResponse](t, resp.Body.Bytes())
 		if payload.Balance != 1300 {
 			t.Fatalf("expected balance 1300, got %d", payload.Balance)
+		}
+		if count := countAuditLogByAction(t, ctx, pool, "credits.adjust"); count != 2 {
+			t.Fatalf("expected 2 credits.adjust audit logs, got %d", count)
+		}
+
+		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
+		if log.Metadata["amount"] != float64(-200) || log.Metadata["note"] != "test deduction" {
+			t.Fatalf("unexpected metadata: %#v", log.Metadata)
+		}
+		if log.BeforeState["balance"] != float64(1500) || log.AfterState["balance"] != float64(1300) {
+			t.Fatalf("unexpected states: before=%#v after=%#v", log.BeforeState, log.AfterState)
 		}
 	})
 
@@ -195,7 +214,6 @@ func TestCreditsIntegration(t *testing.T) {
 		if payload.Balance != 1300 {
 			t.Fatalf("expected balance 1300, got %d", payload.Balance)
 		}
-		// initial_grant + admin_adjustment x2 = 3 transactions
 		if len(payload.Transactions) != 3 {
 			t.Fatalf("expected 3 transactions, got %d", len(payload.Transactions))
 		}
@@ -206,6 +224,68 @@ func TestCreditsIntegration(t *testing.T) {
 			authHeader(token))
 		if resp.Code != nethttp.StatusForbidden {
 			t.Fatalf("expected 403, got %d", resp.Code)
+		}
+	})
+
+	t.Run("admin bulk adjust writes summary audit", func(t *testing.T) {
+		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/bulk-adjust",
+			map[string]any{"amount": 100, "note": "batch top-up"},
+			authHeader(adminToken))
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("bulk adjust: %d %s", resp.Code, resp.Body.String())
+		}
+
+		type bulkResp struct {
+			Affected int64 `json:"affected"`
+		}
+		payload := decodeJSONBody[bulkResp](t, resp.Body.Bytes())
+		if payload.Affected != 2 {
+			t.Fatalf("expected affected 2, got %d", payload.Affected)
+		}
+
+		log := latestAuditLogByAction(t, ctx, pool, "credits.bulk_adjust")
+		if log.TargetType == nil || *log.TargetType != "credits_batch" {
+			t.Fatalf("unexpected target_type: %#v", log.TargetType)
+		}
+		if log.Metadata["amount"] != float64(100) || log.Metadata["affected_count"] != float64(2) {
+			t.Fatalf("unexpected metadata: %#v", log.Metadata)
+		}
+	})
+
+	t.Run("admin reset all writes summary audit", func(t *testing.T) {
+		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/reset-all",
+			map[string]any{"note": "cleanup credits"},
+			authHeader(adminToken))
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("reset all: %d %s", resp.Code, resp.Body.String())
+		}
+
+		type resetResp struct {
+			Affected int64 `json:"affected"`
+		}
+		payload := decodeJSONBody[resetResp](t, resp.Body.Bytes())
+		if payload.Affected != 2 {
+			t.Fatalf("expected affected 2, got %d", payload.Affected)
+		}
+
+		log := latestAuditLogByAction(t, ctx, pool, "credits.reset_all")
+		if log.TargetType == nil || *log.TargetType != "credits_batch" {
+			t.Fatalf("unexpected target_type: %#v", log.TargetType)
+		}
+		if log.Metadata["operation"] != "reset_all" || log.Metadata["affected_count"] != float64(2) {
+			t.Fatalf("unexpected metadata: %#v", log.Metadata)
+		}
+
+		checkResp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?org_id="+orgID, nil, authHeader(adminToken))
+		if checkResp.Code != nethttp.StatusOK {
+			t.Fatalf("view after reset: %d %s", checkResp.Code, checkResp.Body.String())
+		}
+		type adminResp struct {
+			Balance int64 `json:"balance"`
+		}
+		check := decodeJSONBody[adminResp](t, checkResp.Body.Bytes())
+		if check.Balance != 0 {
+			t.Fatalf("expected balance 0 after reset, got %d", check.Balance)
 		}
 	})
 
