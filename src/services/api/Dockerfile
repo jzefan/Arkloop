@@ -6,6 +6,7 @@ RUN printf 'go 1.26.0\nuse (\n\t./src/services/api\n\t./src/services/shared\n)\n
 RUN go mod download
 COPY src/services/api src/services/api
 COPY src/services/shared src/services/shared
+COPY src/personas src/personas
 RUN go build -ldflags="-s -w" -o /api     ./src/services/api/cmd/api
 RUN go build -ldflags="-s -w" -o /migrate ./src/services/api/cmd/migrate
 
@@ -13,4 +14,6 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
 COPY --from=builder /api     /usr/local/bin/api
 COPY --from=builder /migrate /usr/local/bin/migrate
+COPY --from=builder /workspace/src/personas /usr/local/share/arkloop/personas
+ENV ARKLOOP_PERSONAS_ROOT=/usr/local/share/arkloop/personas
 ENTRYPOINT ["api"]
