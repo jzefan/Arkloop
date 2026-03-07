@@ -193,4 +193,9 @@ export const en: LocaleStrings = {
   reportSubmitting: 'Submitting...',
   reportCancel: 'Cancel',
   reportSuccess: 'Report submitted',
+  // shell execution
+  shellRan: 'Ran command',
+  shellRanCommand: 'Ran command',
+  shellSuccess: 'Success',
+  shellFailed: 'Failed',
 }

@@ -5,6 +5,7 @@ import { Glasses, Loader2, Paperclip, Share2, X, Zap } from 'lucide-react'
 import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
+import { ShellExecutionBlock } from './ShellExecutionBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { ErrorCallout, type AppError } from './ErrorCallout'
@@ -691,7 +692,7 @@ export function ChatPage() {
         }
         // 检测 sandbox 执行产物 + document_write 产物
         if (obj.tool_name === 'python_execute' || obj.tool_name === 'exec_command' || obj.tool_name === 'write_stdin' || obj.tool_name === 'document_write') {
-          const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown } | undefined
+          const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
           if (Array.isArray(result?.artifacts)) {
             const newArtifacts: ArtifactRef[] = result.artifacts
               .filter((a): a is Record<string, unknown> => a != null && typeof a === 'object')
@@ -709,9 +710,12 @@ export function ChatPage() {
           // 将 stdout/exitCode 回填到对应的 code execution 记录
           const resultCallId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
           const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+          const stdout = typeof result?.stdout === 'string' ? result.stdout : ''
+          const stderr = typeof result?.stderr === 'string' ? result.stderr : ''
+          const fallbackOutput = typeof result?.output === 'string' ? result.output : ''
           const rawOutput = exitCode != null && exitCode !== 0
-            ? (typeof result?.stderr === 'string' && result.stderr ? result.stderr : typeof result?.stdout === 'string' ? result.stdout : '')
-            : (typeof result?.stdout === 'string' ? result.stdout : '')
+            ? (stderr || stdout || fallbackOutput)
+            : (stdout || fallbackOutput)
           const output = rawOutput || undefined
           if (resultCallId && (output || exitCode != null)) {
             const patchExec = (exec: CodeExecution): CodeExecution =>
@@ -1506,9 +1510,11 @@ export function ChatPage() {
               {/* 无 COP 时，顶层代码执行卡片独立渲染（仅流式结束后、run.completed 前的短暂窗口） */}
               {!isStreaming && topLevelCodeExecutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {topLevelCodeExecutions.map((ce) => (
-                    <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
-                  ))}
+                  {topLevelCodeExecutions.map((ce) =>
+                    ce.language === 'shell'
+                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
+                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
+                  )}
                 </div>
               )}
 
