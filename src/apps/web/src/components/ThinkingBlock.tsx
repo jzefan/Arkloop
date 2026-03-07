@@ -9,6 +9,7 @@ export type CodeExecution = {
   code?: string
   output?: string
   exitCode?: number
+  sessionId?: string
 }
 
 export function CodeExecutionCard({ language, code, output, onOpen }: {

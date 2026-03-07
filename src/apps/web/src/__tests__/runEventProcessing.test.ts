@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildMessageThinkingFromRunEvents, selectFreshRunEvents } from '../runEventProcessing'
+import {
+  buildMessageCodeExecutionsFromRunEvents,
+  buildMessageThinkingFromRunEvents,
+  selectFreshRunEvents,
+  shouldReplayMessageCodeExecutions,
+} from '../runEventProcessing'
 import type { RunEvent } from '../sse'
 
 function makeRunEvent(params: {
@@ -95,6 +100,166 @@ describe('selectFreshRunEvents', () => {
 
     expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
     expect(result.nextProcessedCount).toBe(2)
+  })
+})
+
+describe('buildMessageCodeExecutionsFromRunEvents', () => {
+  it('应将 write_stdin 结果回填到原始 exec_command 记录', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'uname -a' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call_exec',
+          result: { session_id: 'sess_1', running: true, output: 'Linux ' },
+        },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 3,
+        type: 'tool.call',
+        data: { tool_name: 'write_stdin', tool_call_id: 'call_write', arguments: { session_id: 'sess_1' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 4,
+        type: 'tool.result',
+        data: {
+          tool_name: 'write_stdin',
+          tool_call_id: 'call_write',
+          result: { session_id: 'sess_1', running: false, output: '6.12.72', exit_code: 0 },
+        },
+      }),
+    ]
+
+    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    expect(executions).toHaveLength(1)
+    expect(executions[0]).toMatchObject({
+      id: 'call_exec',
+      language: 'shell',
+      code: 'uname -a',
+      sessionId: 'sess_1',
+      output: 'Linux 6.12.72',
+      exitCode: 0,
+    })
+  })
+
+  it('应过滤常见终端控制序列', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'uname -a' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call_exec',
+          result: { session_id: 'sess_1', running: false, output: '\u001b[?2004hLinux\n\u001b[?2004l', exit_code: 0 },
+        },
+      }),
+    ]
+
+    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    expect(executions).toHaveLength(1)
+    expect(executions[0]?.output).toBe('Linux\n')
+  })
+
+  it('累计输出与全量输出混用时应避免重复拼接', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'echo hi' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call_exec',
+          result: { session_id: 'sess_1', running: true, output: 'hi' },
+        },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 3,
+        type: 'tool.result',
+        data: {
+          tool_name: 'write_stdin',
+          tool_call_id: 'call_write',
+          result: { session_id: 'sess_1', running: false, output: 'hi there', exit_code: 0 },
+        },
+      }),
+    ]
+
+    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    expect(executions).toHaveLength(1)
+    expect(executions[0]?.output).toBe('hi there')
+  })
+
+  it('缺少原始 exec_command 时，write_stdin 结果也不应丢失', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.result',
+        data: {
+          tool_name: 'write_stdin',
+          tool_call_id: 'call_write',
+          result: { session_id: 'sess_orphan', running: false, output: 'done', exit_code: 0 },
+        },
+      }),
+    ]
+
+    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    expect(executions).toHaveLength(1)
+    expect(executions[0]).toMatchObject({
+      id: 'call_write',
+      language: 'shell',
+      sessionId: 'sess_orphan',
+      output: 'done',
+      exitCode: 0,
+    })
+  })
+})
+
+describe('shouldReplayMessageCodeExecutions', () => {
+  it('shell 记录缺少 sessionId 时应触发回放修复', () => {
+    expect(shouldReplayMessageCodeExecutions([{
+      id: 'call_exec',
+      language: 'shell',
+      code: 'uname -a',
+      output: 'Linux',
+    }])).toBe(true)
+  })
+
+  it('空数组哨兵不应重复触发回放', () => {
+    expect(shouldReplayMessageCodeExecutions([])).toBe(false)
+  })
+
+  it('已有 sessionId 的 shell 记录不需要额外回放', () => {
+    expect(shouldReplayMessageCodeExecutions([{
+      id: 'call_exec',
+      language: 'shell',
+      code: 'uname -a',
+      output: 'Linux',
+      sessionId: 'sess_1',
+    }])).toBe(false)
   })
 })
 

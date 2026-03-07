@@ -228,6 +228,7 @@ export type CodeExecutionRef = {
   code?: string
   output?: string
   exitCode?: number
+  sessionId?: string
 }
 
 function messageCodeExecutionsKey(messageId: string): string {
@@ -246,7 +247,7 @@ export function readMessageCodeExecutions(messageId: string): CodeExecutionRef[]
 }
 
 export function writeMessageCodeExecutions(messageId: string, executions: CodeExecutionRef[]): void {
-  if (!canUseLocalStorage() || !messageId || executions.length === 0) return
+  if (!canUseLocalStorage() || !messageId) return
   try {
     localStorage.setItem(messageCodeExecutionsKey(messageId), JSON.stringify(executions))
   } catch { /* ignore */ }
