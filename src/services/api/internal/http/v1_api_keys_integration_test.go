@@ -14,9 +14,22 @@ import (
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/testutil"
+	"github.com/google/uuid"
 )
 
-func buildAPIKeyHandler(t *testing.T) (nethttp.Handler, *data.APIKeysRepository, string) {
+const apiKeysTestJWTSecret = "test-secret-should-be-long-enough-32chars"
+
+type apiKeyTestEnv struct {
+	handler        nethttp.Handler
+	apiKeysRepo    *data.APIKeysRepository
+	membershipRepo *data.OrgMembershipRepository
+	tokenService   *auth.JwtAccessTokenService
+	aliceToken     string
+	aliceUserID    uuid.UUID
+	aliceOrgID     uuid.UUID
+}
+
+func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	t.Helper()
 
 	db := testutil.SetupPostgresDatabase(t, "api_keys")
@@ -36,7 +49,7 @@ func buildAPIKeyHandler(t *testing.T) (nethttp.Handler, *data.APIKeysRepository,
 	if err != nil {
 		t.Fatalf("new password hasher: %v", err)
 	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	tokenService, err := auth.NewJwtAccessTokenService(apiKeysTestJWTSecret, 3600, 2592000)
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
@@ -105,8 +118,33 @@ func buildAPIKeyHandler(t *testing.T) (nethttp.Handler, *data.APIKeysRepository,
 		t.Fatalf("register: %d %s", regResp.Code, regResp.Body.String())
 	}
 	regPayload := decodeJSONBody[registerResponse](t, regResp.Body.Bytes())
+	aliceUserID, err := uuid.Parse(regPayload.UserID)
+	if err != nil {
+		t.Fatalf("parse user id: %v", err)
+	}
+	aliceMembership, err := membershipRepo.GetDefaultForUser(ctx, aliceUserID)
+	if err != nil {
+		t.Fatalf("lookup membership: %v", err)
+	}
+	if aliceMembership == nil {
+		t.Fatal("expected default membership")
+	}
 
-	return handler, apiKeysRepo, regPayload.AccessToken
+	return apiKeyTestEnv{
+		handler:        handler,
+		apiKeysRepo:    apiKeysRepo,
+		membershipRepo: membershipRepo,
+		tokenService:   tokenService,
+		aliceToken:     regPayload.AccessToken,
+		aliceUserID:    aliceUserID,
+		aliceOrgID:     aliceMembership.OrgID,
+	}
+}
+
+func buildAPIKeyHandler(t *testing.T) (nethttp.Handler, *data.APIKeysRepository, string) {
+	t.Helper()
+	env := buildAPIKeyEnv(t)
+	return env.handler, env.apiKeysRepo, env.aliceToken
 }
 
 func TestAPIKeyCreateListRevoke(t *testing.T) {
@@ -185,7 +223,7 @@ func TestAPIKeyAuthenticatesRequests(t *testing.T) {
 
 	// 创建 API Key
 	createResp := doJSON(handler, nethttp.MethodPost, "/v1/api-keys",
-		map[string]any{"name": "ci-key"},
+		map[string]any{"name": "ci-key", "scopes": []string{auth.PermDataThreadsRead}},
 		authHeader(jwtToken),
 	)
 	if createResp.Code != nethttp.StatusCreated {
@@ -215,6 +253,93 @@ func TestAPIKeyAuthenticatesRequests(t *testing.T) {
 
 	afterRevokeResp := doJSON(handler, nethttp.MethodGet, "/v1/threads", nil, authHeader(created.Key))
 	assertErrorEnvelope(t, afterRevokeResp, nethttp.StatusUnauthorized, "auth.invalid_api_key")
+}
+
+func TestAPIKeyEmptyScopesDenied(t *testing.T) {
+	handler, _, jwtToken := buildAPIKeyHandler(t)
+
+	createResp := doJSON(handler, nethttp.MethodPost, "/v1/api-keys",
+		map[string]any{"name": "empty-scope", "scopes": []string{}},
+		authHeader(jwtToken),
+	)
+	if createResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create api key: %d %s", createResp.Code, createResp.Body.String())
+	}
+	type createBody struct {
+		Key string `json:"key"`
+	}
+	created := decodeJSONBody[createBody](t, createResp.Body.Bytes())
+
+	threadsResp := doJSON(handler, nethttp.MethodGet, "/v1/threads", nil, authHeader(created.Key))
+	assertErrorEnvelope(t, threadsResp, nethttp.StatusForbidden, "auth.forbidden")
+}
+
+func TestAPIKeyOwnershipVisibility(t *testing.T) {
+	env := buildAPIKeyEnv(t)
+
+	register := func(login string) uuid.UUID {
+		resp := doJSON(env.handler, nethttp.MethodPost, "/v1/auth/register",
+			map[string]any{"login": login, "password": "pwdpwdpwd", "email": login + "@test.com"},
+			nil,
+		)
+		if resp.Code != nethttp.StatusCreated {
+			t.Fatalf("register %s: %d %s", login, resp.Code, resp.Body.String())
+		}
+		payload := decodeJSONBody[registerResponse](t, resp.Body.Bytes())
+		id, err := uuid.Parse(payload.UserID)
+		if err != nil {
+			t.Fatalf("parse user id: %v", err)
+		}
+		return id
+	}
+
+	memberAID := register("member-a")
+	memberBID := register("member-b")
+	for _, userID := range []uuid.UUID{memberAID, memberBID} {
+		if _, err := env.membershipRepo.Create(context.Background(), env.aliceOrgID, userID, auth.RoleOrgMember); err != nil {
+			t.Fatalf("add membership: %v", err)
+		}
+	}
+
+	memberAToken, err := env.tokenService.Issue(memberAID, env.aliceOrgID, auth.RoleOrgMember, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("issue member token: %v", err)
+	}
+
+	memberAKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, memberAID, "member-a-key", []string{auth.PermDataThreadsRead})
+	if err != nil {
+		t.Fatalf("create member A key: %v", err)
+	}
+	memberBKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, memberBID, "member-b-key", []string{auth.PermDataThreadsRead})
+	if err != nil {
+		t.Fatalf("create member B key: %v", err)
+	}
+
+	listResp := doJSON(env.handler, nethttp.MethodGet, "/v1/api-keys", nil, authHeader(memberAToken))
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list api keys: %d %s", listResp.Code, listResp.Body.String())
+	}
+	items := decodeJSONBody[[]apiKeyResponse](t, listResp.Body.Bytes())
+	if len(items) != 1 || items[0].ID != memberAKey.ID.String() {
+		t.Fatalf("unexpected visible keys: %#v", items)
+	}
+
+	revokeOther := doJSON(env.handler, nethttp.MethodDelete, "/v1/api-keys/"+memberBKey.ID.String(), nil, authHeader(memberAToken))
+	assertErrorEnvelope(t, revokeOther, nethttp.StatusNotFound, "api_keys.not_found")
+
+	adminList := doJSON(env.handler, nethttp.MethodGet, "/v1/api-keys", nil, authHeader(env.aliceToken))
+	if adminList.Code != nethttp.StatusOK {
+		t.Fatalf("admin list api keys: %d %s", adminList.Code, adminList.Body.String())
+	}
+	adminItems := decodeJSONBody[[]apiKeyResponse](t, adminList.Body.Bytes())
+	if len(adminItems) != 2 {
+		t.Fatalf("expected 2 keys for admin view, got %d", len(adminItems))
+	}
+
+	adminRevoke := doJSON(env.handler, nethttp.MethodDelete, "/v1/api-keys/"+memberBKey.ID.String(), nil, authHeader(env.aliceToken))
+	if adminRevoke.Code != nethttp.StatusNoContent {
+		t.Fatalf("admin revoke api key: %d %s", adminRevoke.Code, adminRevoke.Body.String())
+	}
 }
 
 func TestAPIKeyUpdatesLastUsedAtAsync(t *testing.T) {

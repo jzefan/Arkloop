@@ -86,6 +86,33 @@ func (r *OrgMembershipRepository) GetDefaultForUser(ctx context.Context, userID 
 	return &membership, nil
 }
 
+func (r *OrgMembershipRepository) GetByOrgAndUser(ctx context.Context, orgID, userID uuid.UUID) (*OrgMembership, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if orgID == uuid.Nil || userID == uuid.Nil {
+		return nil, nil
+	}
+
+	var membership OrgMembership
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, org_id, user_id, role, role_id, created_at
+		 FROM org_memberships
+		 WHERE org_id = $1 AND user_id = $2
+		 LIMIT 1`,
+		orgID,
+		userID,
+	).Scan(&membership.ID, &membership.OrgID, &membership.UserID, &membership.Role, &membership.RoleID, &membership.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &membership, nil
+}
+
 // SetRoleForUser 将用户的默认 membership（最早创建）的角色更新为 role。
 func (r *OrgMembershipRepository) SetRoleForUser(ctx context.Context, userID uuid.UUID, role string) error {
 	if ctx == nil {

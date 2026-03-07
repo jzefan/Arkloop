@@ -174,19 +174,13 @@ func resolveActorFromAPIKey(
 		return nil, false
 	}
 
-	membership, err := membershipRepo.GetDefaultForUser(r.Context(), apiKey.UserID)
+	membership, err := membershipRepo.GetByOrgAndUser(r.Context(), apiKey.OrgID, apiKey.UserID)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if membership == nil {
 		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
-		return nil, false
-	}
-
-	// 确保 key 所属 org 和 membership org 一致（防止跨租户）
-	if membership.OrgID != apiKey.OrgID {
-		WriteError(w, nethttp.StatusForbidden, "auth.org_mismatch", "API key org does not match membership", traceID, nil)
 		return nil, false
 	}
 
@@ -206,12 +200,14 @@ func resolveActorFromAPIKey(
 		auditWriter.WriteAPIKeyUsed(r.Context(), traceID, orgID, userID, keyID, "api_key.used")
 	}
 
-	// v1：同 authenticateActor，静态映射；RoleID 为自定义角色预留。
+	normalizedScopes, _ := auth.NormalizePermissions(apiKey.Scopes)
+	effectivePermissions := auth.IntersectPermissions(auth.PermissionsForRole(membership.Role), normalizedScopes)
+
 	return &actor{
 		OrgID:       membership.OrgID,
 		UserID:      apiKey.UserID,
 		OrgRole:     membership.Role,
-		Permissions: auth.PermissionsForRole(membership.Role),
+		Permissions: effectivePermissions,
 	}, true
 }
 

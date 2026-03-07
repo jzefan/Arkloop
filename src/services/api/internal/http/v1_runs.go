@@ -142,6 +142,9 @@ func createThreadRun(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataRunsWrite, w, traceID) {
+			return
+		}
 
 		var body *createRunRequest
 		if err := decodeJSON(r, &body); err != nil {
@@ -621,6 +624,9 @@ func listThreadRuns(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataRunsRead, w, traceID) {
+			return
+		}
 
 		limit, ok := parseLimit(w, traceID, r.URL.Query().Get("limit"))
 		if !ok {
@@ -689,6 +695,9 @@ func getRun(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataRunsRead, w, traceID) {
 			return
 		}
 
@@ -775,6 +784,9 @@ func cancelRun(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataRunsWrite, w, traceID) {
+			return
+		}
 
 		run, err := runRepo.GetRun(r.Context(), runID)
 		if err != nil {
@@ -852,6 +864,9 @@ func submitRunInput(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataRunsWrite, w, traceID) {
 			return
 		}
 
@@ -956,6 +971,9 @@ func streamRunEvents(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataRunsRead, w, traceID) {
 			return
 		}
 

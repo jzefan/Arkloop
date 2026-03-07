@@ -330,7 +330,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	mux.HandleFunc(
 		"/v1/webhook-endpoints",
-		webhookEndpointsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.WebhookRepo, cfg.APIKeysRepo),
+		webhookEndpointsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.WebhookRepo, cfg.APIKeysRepo, cfg.SecretsRepo, cfg.Pool),
 	)
 	mux.HandleFunc(
 		"/v1/webhook-endpoints/",

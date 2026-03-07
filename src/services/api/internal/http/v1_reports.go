@@ -60,6 +60,9 @@ func reportEntry(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+			return
+		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {

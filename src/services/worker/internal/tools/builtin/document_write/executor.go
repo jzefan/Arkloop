@@ -52,13 +52,19 @@ func (e *ToolExecutor) Execute(
 		orgPrefix = "_anonymous"
 	}
 	key := fmt.Sprintf("%s/%s/%s", orgPrefix, execCtx.RunID.String(), filename)
+	var threadID *string
+	if execCtx.ThreadID != nil {
+		value := execCtx.ThreadID.String()
+		threadID = &value
+	}
+	metadata := objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, execCtx.RunID.String(), orgPrefix, threadID)
 
 	contentType := "text/markdown"
 	if ext := strings.ToLower(filepath.Ext(filename)); ext != ".md" {
 		contentType = "text/plain"
 	}
 
-	if err := e.store.PutWithContentType(ctx, key, []byte(content), contentType); err != nil {
+	if err := e.store.PutObject(ctx, key, []byte(content), objectstore.PutOptions{ContentType: contentType, Metadata: metadata}); err != nil {
 		return errResult(errorUploadFailed, fmt.Sprintf("upload failed: %s", err.Error()), started)
 	}
 

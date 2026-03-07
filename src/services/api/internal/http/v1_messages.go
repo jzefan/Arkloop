@@ -58,6 +58,9 @@ func createThreadMessage(
 		if !ok {
 			return
 		}
+		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
+			return
+		}
 
 		var body createMessageRequest
 		if err := decodeJSON(r, &body); err != nil {
@@ -124,6 +127,9 @@ func listThreadMessages(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
+			return
+		}
+		if !requirePerm(actor, auth.PermDataThreadsRead, w, traceID) {
 			return
 		}
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	workercrypto "arkloop/services/worker/internal/crypto"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,11 +23,14 @@ type endpointRow struct {
 // getWebhookEndpoint 查询端点，返回 (nil, true, nil) 表示端点存在但已禁用，(nil, false, nil) 表示不存在。
 func getWebhookEndpoint(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*endpointRow, bool, error) {
 	var ep endpointRow
+	var encryptedValue *string
 	err := pool.QueryRow(ctx,
-		`SELECT id, url, signing_secret, events, enabled
-		 FROM webhook_endpoints WHERE id = $1`,
+		`SELECT e.id, e.url, e.signing_secret, s.encrypted_value, e.events, e.enabled
+		 FROM webhook_endpoints e
+		 LEFT JOIN secrets s ON s.id = e.secret_id
+		 WHERE e.id = $1`,
 		id,
-	).Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &ep.Events, &ep.Enabled)
+	).Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &encryptedValue, &ep.Events, &ep.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -35,15 +40,19 @@ func getWebhookEndpoint(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (
 	if !ep.Enabled {
 		return nil, true, nil
 	}
+	if err := hydrateWebhookSigningSecret(&ep, encryptedValue); err != nil {
+		return nil, false, err
+	}
 	return &ep, false, nil
 }
 
 // listEndpointsForEvent 返回指定 org 中订阅了给定事件类型的所有启用端点。
 func listEndpointsForEvent(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, eventType string) ([]endpointRow, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, url, signing_secret, events, enabled
-		 FROM webhook_endpoints
-		 WHERE org_id = $1
+		`SELECT e.id, e.url, e.signing_secret, s.encrypted_value, e.events, e.enabled
+		 FROM webhook_endpoints e
+		 LEFT JOIN secrets s ON s.id = e.secret_id
+		 WHERE e.org_id = $1
 		   AND enabled = true
 		   AND $2 = ANY(events)`,
 		orgID, eventType,
@@ -56,12 +65,31 @@ func listEndpointsForEvent(ctx context.Context, pool *pgxpool.Pool, orgID uuid.U
 	var endpoints []endpointRow
 	for rows.Next() {
 		var ep endpointRow
-		if err := rows.Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &ep.Events, &ep.Enabled); err != nil {
+		var encryptedValue *string
+		if err := rows.Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &encryptedValue, &ep.Events, &ep.Enabled); err != nil {
+			return nil, err
+		}
+		if err := hydrateWebhookSigningSecret(&ep, encryptedValue); err != nil {
 			return nil, err
 		}
 		endpoints = append(endpoints, ep)
 	}
 	return endpoints, rows.Err()
+}
+
+func hydrateWebhookSigningSecret(ep *endpointRow, encryptedValue *string) error {
+	if ep == nil {
+		return nil
+	}
+	if encryptedValue != nil && *encryptedValue != "" {
+		plaintext, err := workercrypto.DecryptGCM(*encryptedValue)
+		if err != nil {
+			return err
+		}
+		ep.SigningSecret = string(plaintext)
+		return nil
+	}
+	return nil
 }
 
 // insertDelivery 创建一条 pending 的投递记录，返回 delivery_id。

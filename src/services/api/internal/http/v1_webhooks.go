@@ -13,6 +13,8 @@ import (
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var validWebhookEvents = map[string]struct{}{
@@ -44,11 +46,13 @@ func webhookEndpointsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	webhookRepo *data.WebhookEndpointRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	secretsRepo *data.SecretsRepository,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createWebhookEndpoint(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo)
+			createWebhookEndpoint(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo, secretsRepo, pool)
 		case nethttp.MethodGet:
 			listWebhookEndpoints(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo)
 		default:
@@ -99,13 +103,19 @@ func createWebhookEndpoint(
 	membershipRepo *data.OrgMembershipRepository,
 	webhookRepo *data.WebhookEndpointRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	secretsRepo *data.SecretsRepository,
+	pool *pgxpool.Pool,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	if authService == nil {
 		writeAuthNotConfigured(w, traceID)
 		return
 	}
-	if webhookRepo == nil {
+	if webhookRepo == nil || pool == nil {
+		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+	if secretsRepo == nil {
 		WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -150,9 +160,27 @@ func createWebhookEndpoint(
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
+	endpointID := uuid.New()
 
-	ep, err := webhookRepo.Create(r.Context(), actor.OrgID, req.URL, signingSecret, req.Events)
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	defer tx.Rollback(r.Context()) //nolint:errcheck
+
+	secret, err := secretsRepo.WithTx(tx).Create(r.Context(), actor.OrgID, data.WebhookSecretName(endpointID), signingSecret)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	ep, err := webhookRepo.WithTx(tx).Create(r.Context(), endpointID, actor.OrgID, req.URL, secret.ID, req.Events)
+	if err != nil {
+		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}

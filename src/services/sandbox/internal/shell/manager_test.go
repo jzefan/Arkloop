@@ -12,6 +12,7 @@ import (
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	"arkloop/services/shared/objectstore"
 )
 
 func TestManagerExecCommand_IdempotentReuse(t *testing.T) {
@@ -676,14 +677,14 @@ func newFakeArtifactStore() *fakeArtifactStore {
 	return &fakeArtifactStore{failKeys: make(map[string]int)}
 }
 
-func (s *fakeArtifactStore) PutWithContentType(_ context.Context, key string, data []byte, contentType string) error {
+func (s *fakeArtifactStore) PutObject(_ context.Context, key string, data []byte, options objectstore.PutOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if remaining := s.failKeys[key]; remaining > 0 {
 		s.failKeys[key] = remaining - 1
 		return errors.New("upload failed")
 	}
-	s.puts = append(s.puts, artifactPut{Key: key, Data: append([]byte(nil), data...), ContentType: contentType})
+	s.puts = append(s.puts, artifactPut{Key: key, Data: append([]byte(nil), data...), ContentType: options.ContentType})
 	return nil
 }
 
