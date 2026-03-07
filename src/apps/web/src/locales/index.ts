@@ -208,6 +208,7 @@ export interface LocaleStrings {
   shellRanCommand: string
   shellSuccess: string
   shellFailed: string
+  shellNoOutput: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

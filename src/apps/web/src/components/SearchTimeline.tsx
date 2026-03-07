@@ -213,7 +213,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: steps.length > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
               {dottedStepCount >= 2 && (
                 <div
                   key={`tl-${dottedStepCount}`}
@@ -347,19 +347,60 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
 
               {/* 有 finished 步骤时不在底部渲染，已在步骤循环内处理 */}
               {codeExecutions && codeExecutions.length > 0 && !steps.some((s) => s.kind === 'finished') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px' }}>
-                  {codeExecutions.map((ce) =>
-                    ce.language === 'shell'
-                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
-                      : <CodeExecutionCard
-                          key={ce.id}
-                          language={ce.language}
-                          code={ce.code}
-                          output={ce.output}
-                          exitCode={ce.exitCode}
-                          onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
-                        />
-                  )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0px', paddingTop: steps.length > 0 ? '8px' : '0' }}>
+                  {codeExecutions.map((ce, idx) => {
+                    const isLast = idx === codeExecutions.length - 1
+                    const showTimeline = codeExecutions.length >= 2
+                    return (
+                      <div
+                        key={ce.id}
+                        style={{
+                          position: 'relative',
+                          paddingBottom: isLast ? 0 : '8px',
+                        }}
+                      >
+                        {showTimeline && !isLast && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: '-15.75px',
+                              top: '13px',
+                              bottom: '-13px',
+                              width: '1.5px',
+                              background: 'var(--c-border-subtle)',
+                            }}
+                          />
+                        )}
+                        {showTimeline && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: '-19px',
+                              top: '9px',
+                              width: `${DOT_SIZE}px`,
+                              height: `${DOT_SIZE}px`,
+                              borderRadius: '50%',
+                              background: ce.exitCode != null
+                                ? ce.exitCode === 0 ? 'var(--c-border-subtle)' : '#ef4444'
+                                : 'var(--c-text-secondary)',
+                              border: '2px solid var(--c-bg-page)',
+                              zIndex: 1,
+                            }}
+                          />
+                        )}
+                        {ce.language === 'shell'
+                          ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
+                          : <CodeExecutionCard
+                              language={ce.language}
+                              code={ce.code}
+                              output={ce.output}
+                              exitCode={ce.exitCode}
+                              onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
+                            />
+                        }
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
