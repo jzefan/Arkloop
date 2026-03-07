@@ -28,6 +28,18 @@ type Store struct {
 	region string
 }
 
+type PutOptions struct {
+	ContentType string
+	Metadata    map[string]string
+}
+
+type ObjectInfo struct {
+	Key         string
+	ContentType string
+	Metadata    map[string]string
+	Size        int64
+}
+
 // New 初始化 S3 客户端，并确保目标 bucket 存在。
 // region 为空时默认 "us-east-1"（兼容 MinIO）。
 func New(ctx context.Context, endpoint, accessKey, secretKey, bucket, region string) (*Store, error) {
@@ -122,32 +134,47 @@ func (o *Store) ensureBucket(ctx context.Context) error {
 
 // Put 上传对象，key 为对象路径。
 func (o *Store) Put(ctx context.Context, key string, data []byte) error {
-	_, err := o.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(o.bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(data),
-	})
-	if err != nil {
-		return fmt.Errorf("put object %q: %w", key, err)
-	}
-	return nil
+	return o.PutObject(ctx, key, data, PutOptions{})
 }
 
 // PutWithContentType 上传对象并指定 Content-Type。
 func (o *Store) PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error {
+	return o.PutObject(ctx, key, data, PutOptions{ContentType: contentType})
+}
+
+func (o *Store) PutObject(ctx context.Context, key string, data []byte, options PutOptions) error {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(data),
 	}
-	if contentType != "" {
-		input.ContentType = aws.String(contentType)
+	if options.ContentType != "" {
+		input.ContentType = aws.String(options.ContentType)
+	}
+	if metadata := normalizeMetadata(options.Metadata); len(metadata) > 0 {
+		input.Metadata = metadata
 	}
 	_, err := o.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("put object %q: %w", key, err)
 	}
 	return nil
+}
+
+func (o *Store) Head(ctx context.Context, key string) (ObjectInfo, error) {
+	out, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("head object %q: %w", key, err)
+	}
+	return ObjectInfo{
+		Key:         key,
+		ContentType: aws.ToString(out.ContentType),
+		Metadata:    normalizeMetadata(out.Metadata),
+		Size:        aws.ToInt64(out.ContentLength),
+	}, nil
 }
 
 // Get 下载对象并返回内容。
@@ -186,6 +213,24 @@ func (o *Store) GetWithContentType(ctx context.Context, key string) ([]byte, str
 		return nil, "", fmt.Errorf("read object %q: %w", key, err)
 	}
 	return data, contentType, nil
+}
+
+func normalizeMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	cleaned := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		if normalizedKey == "" {
+			continue
+		}
+		cleaned[normalizedKey] = strings.TrimSpace(value)
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }
 
 func (o *Store) SetLifecycleExpirationDays(ctx context.Context, days int) error {

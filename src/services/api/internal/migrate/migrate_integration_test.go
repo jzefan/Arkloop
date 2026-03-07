@@ -308,8 +308,8 @@ func TestLlmRoutesProviderModelsMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 88); err != nil {
-		t.Fatalf("up to 88: %v", err)
+	if _, err := provider.UpTo(ctx, 90); err != nil {
+		t.Fatalf("up to 90: %v", err)
 	}
 
 	orgID := uuid.New()
@@ -340,8 +340,8 @@ func TestLlmRoutesProviderModelsMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("up by one: %v", err)
 	}
-	if result == nil || result.Source == nil || result.Source.Version != 89 {
-		t.Fatalf("expected migration 89, got %#v", result)
+	if result == nil || result.Source == nil || result.Source.Version != 91 {
+		t.Fatalf("expected migration 91, got %#v", result)
 	}
 
 	var exists bool
