@@ -18,7 +18,6 @@ type createShareRequest struct {
 	AccessType string  `json:"access_type"` // "public" | "password"
 	Password   *string `json:"password"`
 	LiveUpdate *bool   `json:"live_update"`
-	MessageID  *string `json:"message_id"`
 }
 
 type shareResponse struct {
@@ -29,7 +28,6 @@ type shareResponse struct {
 	Password          *string `json:"password,omitempty"`
 	LiveUpdate        bool    `json:"live_update"`
 	SnapshotTurnCount int     `json:"snapshot_turn_count"`
-	MessageID         *string `json:"message_id,omitempty"`
 	CreatedAt         string  `json:"created_at"`
 }
 
@@ -77,19 +75,6 @@ func createShare(
 	if body.AccessType == "" {
 		body.AccessType = "public"
 	}
-
-	// 消息级分享强制 public
-	var messageID *uuid.UUID
-	if body.MessageID != nil {
-		mid, err := uuid.Parse(*body.MessageID)
-		if err != nil {
-			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid message_id", traceID, nil)
-			return
-		}
-		messageID = &mid
-		body.AccessType = "public"
-	}
-
 	if body.AccessType != "public" && body.AccessType != "password" {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "access_type must be 'public' or 'password'", traceID, nil)
 		return
@@ -110,8 +95,8 @@ func createShare(
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-
 	snapshotCount := len(messages)
+
 	turnCount := 0
 	for _, msg := range messages {
 		if msg.Role == "user" {
@@ -119,26 +104,8 @@ func createShare(
 		}
 	}
 
-	// 消息级分享：验证消息存在，计算 Q&A 对数量
-	if messageID != nil {
-		found := false
-		for _, msg := range messages {
-			if msg.ID == *messageID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			WriteError(w, nethttp.StatusNotFound, "messages.not_found", "message not found in this thread", traceID, nil)
-			return
-		}
-		// Q&A 对最多 2 条（用户问题 + 助手回复）
-		snapshotCount = 2
-		turnCount = 1
-	}
-
 	liveUpdate := false
-	if body.LiveUpdate != nil && messageID == nil {
+	if body.LiveUpdate != nil {
 		liveUpdate = *body.LiveUpdate
 	}
 
@@ -156,14 +123,14 @@ func createShare(
 
 	share, err := threadShareRepo.Create(
 		r.Context(), thread.ID, token, body.AccessType, password,
-		snapshotCount, liveUpdate, turnCount, actor.UserID, messageID,
+		snapshotCount, liveUpdate, turnCount, actor.UserID,
 	)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	resp := shareResponse{
+	writeJSON(w, traceID, nethttp.StatusOK, shareResponse{
 		ID:                share.ID.String(),
 		Token:             share.Token,
 		URL:               "/s/" + share.Token,
@@ -172,12 +139,7 @@ func createShare(
 		LiveUpdate:        share.LiveUpdate,
 		SnapshotTurnCount: share.SnapshotTurnCount,
 		CreatedAt:         share.CreatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if share.MessageID != nil {
-		mid := share.MessageID.String()
-		resp.MessageID = &mid
-	}
-	writeJSON(w, traceID, nethttp.StatusOK, resp)
+	})
 }
 
 func listShares(
@@ -201,7 +163,7 @@ func listShares(
 
 	resp := make([]shareResponse, 0, len(shares))
 	for _, s := range shares {
-		sr := shareResponse{
+		resp = append(resp, shareResponse{
 			ID:                s.ID.String(),
 			Token:             s.Token,
 			URL:               "/s/" + s.Token,
@@ -210,12 +172,7 @@ func listShares(
 			LiveUpdate:        s.LiveUpdate,
 			SnapshotTurnCount: s.SnapshotTurnCount,
 			CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339Nano),
-		}
-		if s.MessageID != nil {
-			mid := s.MessageID.String()
-			sr.MessageID = &mid
-		}
-		resp = append(resp, sr)
+		})
 	}
 
 	writeJSON(w, traceID, nethttp.StatusOK, resp)
@@ -281,9 +238,6 @@ func shareEntry(
 
 		actor, ok := resolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
 		if !ok {
-			return
-		}
-		if !requirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
 			return
 		}
 

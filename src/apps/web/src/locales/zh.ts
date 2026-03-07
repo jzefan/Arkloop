@@ -171,6 +171,7 @@ export const zh: LocaleStrings = {
   shareTurnCount: (n: number) => `到第 ${n} 轮`,
   shareCreateNew: '新建分享链接',
   shareListEmpty: '暂无分享链接',
+  shareLinkCopied: '链接已复制',
   sharePageLogin: '登录',
   sharePageRegister: '注册',
   sharePagePasswordTitle: '此对话需要密码访问',

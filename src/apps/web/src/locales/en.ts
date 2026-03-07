@@ -171,6 +171,7 @@ export const en: LocaleStrings = {
   shareTurnCount: (n: number) => `Up to round ${n}`,
   shareCreateNew: 'New share link',
   shareListEmpty: 'No share links yet',
+  shareLinkCopied: 'Link copied',
   sharePageLogin: 'Sign in',
   sharePageRegister: 'Sign up',
   sharePagePasswordTitle: 'This chat is password protected',

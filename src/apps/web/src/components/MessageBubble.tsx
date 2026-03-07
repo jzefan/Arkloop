@@ -12,6 +12,7 @@ type Props = {
   onFork?: () => void
   onShare?: () => void
   onReport?: () => void
+  shareState?: 'idle' | 'sharing' | 'shared'
   webSources?: WebSource[]
   artifacts?: ArtifactRef[]
   accessToken?: string
@@ -37,7 +38,7 @@ function extractFilesFromContent(content: string): { text: string; fileNames: st
   return { text, fileNames }
 }
 
-export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onReport, webSources, artifacts, accessToken, onShowSources }: Props) {
+export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onReport, shareState, webSources, artifacts, accessToken, onShowSources }: Props) {
   const { t } = useLocale()
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -356,13 +357,31 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
             >
               <RefreshCw size={15} />
             </button>
-            <button
-              onClick={onShare}
-              disabled={!onShare}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-[opacity,background] duration-150 border-none bg-transparent ${onShare ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 cursor-pointer' : 'opacity-25 cursor-default'}`}
-            >
-              <Share2 size={15} />
-            </button>
+            <div style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                onClick={onShare}
+                disabled={!onShare || shareState === 'sharing'}
+                className={`flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-[opacity,background] duration-150 border-none bg-transparent ${onShare && shareState !== 'sharing' ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 cursor-pointer' : 'opacity-25 cursor-default'}`}
+              >
+                {shareState === 'shared' ? <Check size={15} /> : <Share2 size={15} />}
+              </button>
+              <span
+                className="absolute -top-7 left-1/2 -translate-x-1/2 rounded px-1.5 py-0.5 text-[11px]"
+                style={{
+                  backgroundColor: 'var(--c-bg-deep)',
+                  color: 'var(--c-text-primary)',
+                  padding: '2px 6px',
+                  whiteSpace: 'nowrap',
+                  opacity: shareState === 'shared' ? 1 : 0,
+                  transition: 'opacity 150ms ease',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  zIndex: 10,
+                }}
+              >
+                {t.shareLinkCopied}
+              </span>
+            </div>
             <button
               onClick={onFork}
               disabled={!onFork}
