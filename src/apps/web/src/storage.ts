@@ -11,7 +11,11 @@ export {
 const ACTIVE_THREAD_ID_KEY = 'arkloop:web:active_thread_id'
 const LOCALE_KEY = 'arkloop:web:locale'
 const THEME_KEY = 'arkloop:web:theme'
-const SELECTED_TIER_KEY = 'arkloop:web:selected_tier'
+const LEGACY_SELECTED_TIER_KEY = 'arkloop:web:selected_tier'
+const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
+
+export const DEFAULT_PERSONA_KEY = 'normal'
+export const SEARCH_PERSONA_KEY = 'extended-search'
 
 export type Theme = 'system' | 'light' | 'dark'
 
@@ -124,26 +128,38 @@ export function writeThemeToStorage(theme: Theme): void {
   }
 }
 
-export type SelectedTier = 'Normal' | 'Search'
+function migrateLegacySelectedTier(raw: string | null): string | null {
+  if (raw === 'Normal' || raw === 'Ultra') return DEFAULT_PERSONA_KEY
+  if (raw === 'Search' || raw === 'Extended Search') return SEARCH_PERSONA_KEY
+  return null
+}
 
-export function readSelectedTierFromStorage(): SelectedTier {
-  if (!canUseLocalStorage()) return 'Normal'
+export function readSelectedPersonaKeyFromStorage(): string {
+  if (!canUseLocalStorage()) return DEFAULT_PERSONA_KEY
   try {
-    const raw = localStorage.getItem(SELECTED_TIER_KEY)
-    if (raw === 'Normal' || raw === 'Search') return raw
-    // 兼容旧值迁移
-    if (raw === 'Ultra') return 'Normal'
-    if (raw === 'Extended Search') return 'Search'
-    return 'Normal'
+    const raw = localStorage.getItem(SELECTED_PERSONA_KEY)
+    if (raw && raw.trim()) return raw.trim()
+
+    const migrated = migrateLegacySelectedTier(localStorage.getItem(LEGACY_SELECTED_TIER_KEY))
+    if (migrated) {
+      localStorage.setItem(SELECTED_PERSONA_KEY, migrated)
+      localStorage.removeItem(LEGACY_SELECTED_TIER_KEY)
+      return migrated
+    }
+
+    return DEFAULT_PERSONA_KEY
   } catch {
-    return 'Normal'
+    return DEFAULT_PERSONA_KEY
   }
 }
 
-export function writeSelectedTierToStorage(tier: SelectedTier): void {
+export function writeSelectedPersonaKeyToStorage(personaKey: string): void {
   if (!canUseLocalStorage()) return
+  const trimmed = personaKey.trim()
+  if (!trimmed) return
   try {
-    localStorage.setItem(SELECTED_TIER_KEY, tier)
+    localStorage.setItem(SELECTED_PERSONA_KEY, trimmed)
+    localStorage.removeItem(LEGACY_SELECTED_TIER_KEY)
   } catch {
     // 忽略存储失败
   }

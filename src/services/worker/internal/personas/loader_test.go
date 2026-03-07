@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"arkloop/services/worker/internal/testutil"
+	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -90,6 +91,58 @@ func TestLoadPersonaWithExecutorType(t *testing.T) {
 	}
 	if def.ExecutorConfig["check_in_every"] == nil {
 		t.Fatalf("expected executor_config.check_in_every to be set")
+	}
+}
+
+func TestLoadPersonaWithSelectorFields(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "selectable_persona",
+		"id: selectable_persona\nversion: \"1\"\ntitle: Selectable\nuser_selectable: true\nselector_name: Search\nselector_order: 2\n",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("selectable_persona")
+	if !ok {
+		t.Fatalf("expected selectable_persona persona loaded")
+	}
+	if !def.UserSelectable {
+		t.Fatal("expected UserSelectable to be true")
+	}
+	if def.SelectorName == nil || *def.SelectorName != "Search" {
+		t.Fatalf("expected selector_name Search, got %#v", def.SelectorName)
+	}
+	if def.SelectorOrder == nil || *def.SelectorOrder != 2 {
+		t.Fatalf("expected selector_order 2, got %#v", def.SelectorOrder)
+	}
+}
+
+func TestLoadPersonaWithoutSelectorFieldsUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "default_selector_persona",
+		"id: default_selector_persona\nversion: \"1\"\ntitle: Default\n",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("default_selector_persona")
+	if !ok {
+		t.Fatalf("expected default_selector_persona persona loaded")
+	}
+	if def.UserSelectable {
+		t.Fatal("expected UserSelectable default false")
+	}
+	if def.SelectorName != nil {
+		t.Fatalf("expected nil SelectorName, got %#v", def.SelectorName)
+	}
+	if def.SelectorOrder != nil {
+		t.Fatalf("expected nil SelectorOrder, got %#v", def.SelectorOrder)
 	}
 }
 
@@ -336,6 +389,119 @@ func TestMergeRegistryUsesOrgOverrideOnly(t *testing.T) {
 	}
 	if def.Title != "Custom Normal" {
 		t.Fatalf("expected custom override title, got %q", def.Title)
+	}
+}
+
+func TestLoadPersonaRejectsLegacyMaxIterations(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "legacy_budget",
+		"id: legacy_budget\nversion: \"1\"\ntitle: Legacy\nbudgets:\n  max_iterations: 3\n",
+		"# prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil || err.Error() != "budgets contains unsupported field: max_iterations" {
+		t.Fatalf("expected legacy max_iterations error, got %v", err)
+	}
+}
+
+func TestLoadPersonaParsesLayeredBudgets(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "layered_budget",
+		"id: layered_budget\nversion: \"1\"\ntitle: Layered\nbudgets:\n  reasoning_iterations: 6\n  tool_continuation_budget: 18\n  per_tool_soft_limits:\n    exec_command:\n      max_output_bytes: 12000\n    write_stdin:\n      max_continuations: 9\n      max_yield_time_ms: 2500\n      max_output_bytes: 15000\n",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("layered_budget")
+	if !ok {
+		t.Fatal("expected layered_budget persona")
+	}
+	if def.Budgets.ReasoningIterations == nil || *def.Budgets.ReasoningIterations != 6 {
+		t.Fatalf("unexpected reasoning_iterations: %v", def.Budgets.ReasoningIterations)
+	}
+	if def.Budgets.ToolContinuationBudget == nil || *def.Budgets.ToolContinuationBudget != 18 {
+		t.Fatalf("unexpected tool_continuation_budget: %v", def.Budgets.ToolContinuationBudget)
+	}
+	execLimit := def.Budgets.PerToolSoftLimits["exec_command"]
+	if execLimit.MaxOutputBytes == nil || *execLimit.MaxOutputBytes != 12000 {
+		t.Fatalf("unexpected exec_command limit: %v", execLimit.MaxOutputBytes)
+	}
+	writeLimit := def.Budgets.PerToolSoftLimits["write_stdin"]
+	if writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 9 {
+		t.Fatalf("unexpected write_stdin max_continuations: %v", writeLimit.MaxContinuations)
+	}
+	if writeLimit.MaxYieldTimeMs == nil || *writeLimit.MaxYieldTimeMs != 2500 {
+		t.Fatalf("unexpected write_stdin max_yield_time_ms: %v", writeLimit.MaxYieldTimeMs)
+	}
+	if writeLimit.MaxOutputBytes == nil || *writeLimit.MaxOutputBytes != 15000 {
+		t.Fatalf("unexpected write_stdin max_output_bytes: %v", writeLimit.MaxOutputBytes)
+	}
+}
+
+func TestLoadPersonaRejectsSoftLimitAboveHardCap(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "bad_soft_limit",
+		"id: bad_soft_limit\nversion: \"1\"\ntitle: Bad\nbudgets:\n  per_tool_soft_limits:\n    write_stdin:\n      max_yield_time_ms: 40000\n",
+		"# prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil {
+		t.Fatal("expected max_yield_time_ms validation error")
+	}
+	want := "budgets.per_tool_soft_limits.write_stdin.max_yield_time_ms must be less than or equal to 30000"
+	if err.Error() != want {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFromDBParsesLayeredBudgets(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_personas_layered_db")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New failed: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	orgID := uuid.New()
+	_, err = pool.Exec(
+		context.Background(),
+		`INSERT INTO personas
+			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
+		 VALUES ($1, 'db-budget', '1', 'DB Budget', 'prompt', '{}', '{}', $2::jsonb, 'agent.simple', '{}'::jsonb)`,
+		orgID,
+		`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"write_stdin":{"max_continuations":7,"max_output_bytes":12345}}}`,
+	)
+	if err != nil {
+		t.Fatalf("insert persona row failed: %v", err)
+	}
+
+	defs, err := LoadFromDB(context.Background(), pool, orgID)
+	if err != nil {
+		t.Fatalf("LoadFromDB failed: %v", err)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("expected 1 persona, got %d", len(defs))
+	}
+	if defs[0].Budgets.ReasoningIterations == nil || *defs[0].Budgets.ReasoningIterations != 4 {
+		t.Fatalf("unexpected reasoning_iterations: %v", defs[0].Budgets.ReasoningIterations)
+	}
+	if defs[0].Budgets.ToolContinuationBudget == nil || *defs[0].Budgets.ToolContinuationBudget != 12 {
+		t.Fatalf("unexpected tool_continuation_budget: %v", defs[0].Budgets.ToolContinuationBudget)
+	}
+	writeLimit := defs[0].Budgets.PerToolSoftLimits["write_stdin"]
+	if writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 7 {
+		t.Fatalf("unexpected write_stdin max_continuations: %v", writeLimit.MaxContinuations)
+	}
+	if writeLimit.MaxOutputBytes == nil || *writeLimit.MaxOutputBytes != 12345 {
+		t.Fatalf("unexpected write_stdin max_output_bytes: %v", writeLimit.MaxOutputBytes)
+	}
+	if tools.ResolveToolSoftLimit(defs[0].Budgets.PerToolSoftLimits, "exec_command").MaxOutputBytes != nil {
+		t.Fatal("unexpected exec_command override from db budgets")
 	}
 }
 

@@ -1,9 +1,14 @@
-import { useRef, useEffect, useCallback, useState } from 'react'
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
 import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
-import { transcribeAudio } from '../api'
+import { listSelectablePersonas, transcribeAudio, type SelectablePersona } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
-import { readSelectedTierFromStorage, writeSelectedTierToStorage, type SelectedTier } from '../storage'
+import {
+  DEFAULT_PERSONA_KEY,
+  SEARCH_PERSONA_KEY,
+  readSelectedPersonaKeyFromStorage,
+  writeSelectedPersonaKeyToStorage,
+} from '../storage'
 
 export type Attachment = {
   id: string
@@ -16,7 +21,7 @@ export type Attachment = {
 type Props = {
   value: string
   onChange: (val: string) => void
-  onSubmit: (e: FormEvent<HTMLFormElement>, tier: SelectedTier) => void
+  onSubmit: (e: FormEvent<HTMLFormElement>, personaKey: string) => void
   onCancel?: () => void
   placeholder?: string
   disabled?: boolean
@@ -29,7 +34,23 @@ type Props = {
   onAttachFiles?: (files: File[]) => void
   accessToken?: string
   onAsrError?: (error: unknown) => void
-  onTierChange?: (tier: SelectedTier) => void
+  onPersonaChange?: (personaKey: string) => void
+}
+
+function buildFallbackSelectablePersonas(selectedPersonaKey: string): SelectablePersona[] {
+  const keys = [DEFAULT_PERSONA_KEY]
+  if (selectedPersonaKey !== DEFAULT_PERSONA_KEY) keys.push(selectedPersonaKey)
+  return keys.map((personaKey, index) => ({
+    persona_key: personaKey,
+    selector_name: personaKey,
+    selector_order: index,
+  }))
+}
+
+function pickPreferredPersonaKey(personas: SelectablePersona[], preferred?: string): string {
+  if (preferred && personas.some((persona) => persona.persona_key === preferred)) return preferred
+  if (personas.some((persona) => persona.persona_key === DEFAULT_PERSONA_KEY)) return DEFAULT_PERSONA_KEY
+  return personas[0]?.persona_key ?? DEFAULT_PERSONA_KEY
 }
 function hasTransferFiles(dataTransfer?: DataTransfer | null): boolean {
   if (!dataTransfer) return false
@@ -89,7 +110,7 @@ export function ChatInput({
   onAttachFiles,
   accessToken,
   onAsrError,
-  onTierChange,
+  onPersonaChange,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -119,7 +140,8 @@ export function ChatInput({
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
-  const [selectedTier, setSelectedTier] = useState<SelectedTier>(readSelectedTierFromStorage)
+  const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[]>([])
+  const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
   const [tierHovered, setTierHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -135,6 +157,51 @@ export function ChatInput({
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [])
+
+  const persistSelectedPersona = useCallback((personaKey: string, closeMenu = false) => {
+    setSelectedPersonaKey(personaKey)
+    writeSelectedPersonaKeyToStorage(personaKey)
+    if (closeMenu) setTierMenuOpen(false)
+    onPersonaChange?.(personaKey)
+  }, [onPersonaChange])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!accessToken) {
+      setSelectablePersonas([])
+      return () => { cancelled = true }
+    }
+
+    void listSelectablePersonas(accessToken)
+      .then((personas) => {
+        if (cancelled) return
+        setSelectablePersonas(personas)
+        if (personas.length === 0) return
+
+        const preferredKey = readSelectedPersonaKeyFromStorage()
+        const nextKey = pickPreferredPersonaKey(personas, preferredKey)
+        if (nextKey !== preferredKey) persistSelectedPersona(nextKey)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSelectablePersonas([])
+      })
+
+    return () => { cancelled = true }
+  }, [accessToken, persistSelectedPersona])
+
+  const personas = useMemo(
+    () => selectablePersonas.length > 0
+      ? selectablePersonas
+      : buildFallbackSelectablePersonas(selectedPersonaKey),
+    [selectablePersonas, selectedPersonaKey],
+  )
+
+  const selectedPersona = useMemo(
+    () => personas.find((persona) => persona.persona_key === selectedPersonaKey) ?? null,
+    [personas, selectedPersonaKey],
+  )
 
   const formatRecordingTime = (secs: number) => {
     const m = Math.floor(secs / 60)
@@ -242,13 +309,12 @@ export function ChatInput({
   }, [])
 
 
-  // 进入 search 模式时同步 tier 状态
+  // 进入搜索模式时强制切到搜索人格
   useEffect(() => {
-    if (searchMode) {
-      setSelectedTier('Search')
-      writeSelectedTierToStorage('Search')
+    if (searchMode && selectedPersonaKey !== SEARCH_PERSONA_KEY) {
+      persistSelectedPersona(SEARCH_PERSONA_KEY)
     }
-  }, [searchMode])
+  }, [persistSelectedPersona, searchMode, selectedPersonaKey])
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current
@@ -389,19 +455,15 @@ export function ChatInput({
     e.preventDefault()
   }
 
-  const cycleTier = () => {
-    const order: SelectedTier[] = ['Normal', 'Search']
-    const next = order[(order.indexOf(selectedTier) + 1) % order.length]
-    setSelectedTier(next)
-    writeSelectedTierToStorage(next)
-    onTierChange?.(next)
+  const cyclePersona = () => {
+    if (personas.length === 0) return
+    const currentIndex = personas.findIndex((persona) => persona.persona_key === selectedPersonaKey)
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % personas.length : 0
+    persistSelectedPersona(personas[nextIndex].persona_key)
   }
 
-  const handleTierSelect = (tier: SelectedTier) => {
-    setSelectedTier(tier)
-    writeSelectedTierToStorage(tier)
-    setTierMenuOpen(false)
-    onTierChange?.(tier)
+  const handlePersonaSelect = (personaKey: string) => {
+    persistSelectedPersona(personaKey, true)
   }
 
   return (
@@ -518,7 +580,7 @@ export function ChatInput({
           }
         }}
       >
-      <form onSubmit={(e) => onSubmit(e, selectedTier)}>
+      <form onSubmit={(e) => onSubmit(e, selectedPersonaKey)}>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -603,7 +665,7 @@ export function ChatInput({
             {/* tier 按钮 */}
             <button
               type="button"
-              onClick={cycleTier}
+              onClick={cyclePersona}
               onMouseEnter={() => setTierHovered(true)}
               onMouseLeave={() => setTierHovered(false)}
               className="relative top-px flex h-8 items-center rounded-lg font-semibold"
@@ -614,20 +676,20 @@ export function ChatInput({
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
                 cursor: 'pointer',
-                width: selectedTier === 'Search' ? '68px' : '68px',
-                background: selectedTier === 'Search'
+                minWidth: '68px',
+                background: selectedPersonaKey === SEARCH_PERSONA_KEY
                   ? 'var(--c-pro-bg)'
                   : tierHovered ? 'var(--c-bg-deep)' : 'transparent',
-                color: selectedTier === 'Search'
+                color: selectedPersonaKey === SEARCH_PERSONA_KEY
                   ? '#4691F6'
                   : 'var(--c-text-secondary)',
-                opacity: selectedTier === 'Search'
+                opacity: selectedPersonaKey === SEARCH_PERSONA_KEY
                   ? 1 : tierHovered ? 1 : 0.7,
                 fontSize: '14px',
-                transition: 'width 0.22s ease, background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
+                transition: 'background-color 0.15s ease, color 0.2s ease, opacity 0.15s ease',
               }}
             >
-              {selectedTier}
+              {selectedPersona?.selector_name ?? selectedPersonaKey}
             </button>
 
             {/* chevron：始终可见，searchMode 下打开下拉可切换其他 tier */}
@@ -657,14 +719,14 @@ export function ChatInput({
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {(['Normal', 'Search'] as const).map((tier) => {
-                    const isBlue = tier === 'Search'
-                    const isSelected = selectedTier === tier
+                  {personas.map((persona) => {
+                    const isBlue = persona.persona_key === SEARCH_PERSONA_KEY
+                    const isSelected = selectedPersonaKey === persona.persona_key
                     return (
                       <button
-                        key={tier}
+                        key={persona.persona_key}
                         type="button"
-                        onClick={() => handleTierSelect(tier)}
+                        onClick={() => handlePersonaSelect(persona.persona_key)}
                         className="flex w-full items-center px-3 py-2 text-sm transition-colors duration-100"
                         style={{
                           borderRadius: '8px',
@@ -675,7 +737,7 @@ export function ChatInput({
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--c-bg-deep)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--c-bg-menu)')}
                       >
-                        {tier}
+                        {persona.selector_name}
                       </button>
                     )
                   })}

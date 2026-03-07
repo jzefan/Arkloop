@@ -16,7 +16,7 @@ import {
   type MeResponse,
   type ThreadResponse,
 } from '../api'
-import { clearActiveThreadIdInStorage, writeSelectedTierToStorage } from '../storage'
+import { clearActiveThreadIdInStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY } from '../storage'
 
 type Props = {
   accessToken: string
@@ -229,7 +229,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         onOpenSearch={() => {
             if (location.pathname !== '/') navigate('/')
             window.history.pushState({ searchMode: true }, '', '/')
-            writeSelectedTierToStorage('Search')
+            writeSelectedPersonaKeyToStorage(SEARCH_PERSONA_KEY)
             setIsSearchMode(true)
           }}
         isSearchMode={isSearchMode}

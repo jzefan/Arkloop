@@ -320,6 +320,7 @@ export interface LocaleStrings {
       colDisplayName: string
       colVersion: string
       colActive: string
+      colSelectable: string
       colCreatedAt: string
       // empty state
       empty: string
@@ -338,6 +339,7 @@ export interface LocaleStrings {
       fieldExecutorType: string
       fieldExecutorConfig: string
       fieldPreferredCredential: string
+      selectorMeta: (name: string, order: number) => string
       // read-only label for global personas
       labelGlobal: string
       // buttons

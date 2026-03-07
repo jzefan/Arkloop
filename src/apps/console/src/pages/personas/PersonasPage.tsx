@@ -288,7 +288,14 @@ export function PersonasPage() {
       key: 'display_name',
       header: tc.colDisplayName,
       render: (row) => (
-        <span className="font-medium text-[var(--c-text-primary)]">{row.display_name}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="font-medium text-[var(--c-text-primary)]">{row.display_name}</span>
+          {row.source === 'builtin' && row.user_selectable && row.selector_name && typeof row.selector_order === 'number' && (
+            <span className="text-xs text-[var(--c-text-muted)]">
+              {tc.selectorMeta(row.selector_name, row.selector_order)}
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -303,6 +310,16 @@ export function PersonasPage() {
       header: tc.colActive,
       render: (row) =>
         row.is_active ? (
+          <Badge variant="success">on</Badge>
+        ) : (
+          <Badge variant="neutral">off</Badge>
+        ),
+    },
+    {
+      key: 'user_selectable',
+      header: tc.colSelectable,
+      render: (row) =>
+        row.user_selectable ? (
           <Badge variant="success">on</Badge>
         ) : (
           <Badge variant="neutral">off</Badge>

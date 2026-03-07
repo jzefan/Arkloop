@@ -84,11 +84,14 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
-				ID:       "builtin-only",
-				Version:  "1",
-				Title:    "Builtin Only",
-				PromptMD: "builtin prompt",
-				Budgets:  map[string]any{"max_output_tokens": 64},
+				ID:             "builtin-only",
+				Version:        "1",
+				Title:          "Builtin Only",
+				PromptMD:       "builtin prompt",
+				Budgets:        map[string]any{"max_output_tokens": 64},
+				UserSelectable: true,
+				SelectorName:   "Builtin",
+				SelectorOrder:  intPtr(3),
 			},
 			{
 				ID:       "shadowed",
@@ -158,6 +161,15 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 	if builtinOnly.OrgID != nil {
 		t.Fatalf("expected nil org_id for builtin persona, got %v", *builtinOnly.OrgID)
 	}
+	if !builtinOnly.UserSelectable {
+		t.Fatal("expected builtin persona selectable")
+	}
+	if builtinOnly.SelectorName == nil || *builtinOnly.SelectorName != "Builtin" {
+		t.Fatalf("unexpected selector_name: %#v", builtinOnly.SelectorName)
+	}
+	if builtinOnly.SelectorOrder == nil || *builtinOnly.SelectorOrder != 3 {
+		t.Fatalf("unexpected selector_order: %#v", builtinOnly.SelectorOrder)
+	}
 
 	shadowed := byKey["shadowed"]
 	if shadowed.Source != "custom" {
@@ -171,6 +183,15 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 	if customOnly.Source != "custom" {
 		t.Fatalf("expected custom source, got %q", customOnly.Source)
 	}
+	if customOnly.UserSelectable {
+		t.Fatal("expected custom persona not selectable")
+	}
+	if customOnly.SelectorName != nil {
+		t.Fatalf("expected nil selector_name for custom persona, got %#v", customOnly.SelectorName)
+	}
+	if customOnly.SelectorOrder != nil {
+		t.Fatalf("expected nil selector_order for custom persona, got %#v", customOnly.SelectorOrder)
+	}
 	if customOnly.CreatedAt == "" {
 		t.Fatal("expected created_at on custom persona")
 	}
@@ -179,6 +200,10 @@ func TestPersonasListMergesBuiltinAndCustom(t *testing.T) {
 		"display_name": "Ghost Renamed",
 	}, headers)
 	assertErrorEnvelope(t, patchResp, nethttp.StatusNotFound, "personas.not_found")
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, pool data.Querier, personaKey string, displayName string) uuid.UUID {

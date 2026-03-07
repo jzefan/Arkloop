@@ -34,7 +34,8 @@ import {
   type ThreadResponse,
 } from '../api'
 import {
-  type SelectedTier,
+  addSearchThreadId,
+  SEARCH_PERSONA_KEY,
   isSearchThreadId,
   readMessageSources,
   writeMessageSources,
@@ -989,7 +990,7 @@ export function ChatPage() {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleSend = async (e: React.FormEvent<HTMLFormElement>, tier: SelectedTier) => {
+  const handleSend = async (e: React.FormEvent<HTMLFormElement>, personaKey: string) => {
     e.preventDefault()
     if (sending || !threadId) return
 
@@ -1025,10 +1026,8 @@ export function ChatPage() {
         if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
         onThreadCreated(forked)
         await createMessage(accessToken, forked.id, { content })
-        const tierToPersonaId: Record<SelectedTier, string> = {
-          Normal: 'normal', Search: 'extended-search',
-        }
-        const run = await createRun(accessToken, forked.id, tierToPersonaId[tier])
+        const run = await createRun(accessToken, forked.id, personaKey)
+        if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         setDraft('')
         setAttachments([])
         navigate(`/t/${forked.id}`, {
@@ -1045,11 +1044,8 @@ export function ChatPage() {
       setAttachments([])
       setAssistantDraft('')
 
-      const tierToPersonaId: Record<SelectedTier, string> = {
-        Normal: 'normal',
-        Search: 'extended-search',
-      }
-      const run = await createRun(accessToken, threadId, tierToPersonaId[tier])
+      const run = await createRun(accessToken, threadId, personaKey)
+      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -1649,7 +1645,7 @@ export function ChatPage() {
           accessToken={accessToken}
           onAsrError={handleAsrError}
           searchMode={isSearchThread}
-          onTierChange={(tier) => setIsSearchThread(tier === 'Search')}
+          onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
         />
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>
           Arkloop is AI and can make mistakes. Please double-check responses.

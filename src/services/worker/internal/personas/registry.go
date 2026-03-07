@@ -3,15 +3,19 @@ package personas
 import (
 	"fmt"
 	"sort"
+
+	"arkloop/services/worker/internal/tools"
 )
 
 type Budgets struct {
-	MaxIterations   *int
-	MaxOutputTokens *int
-	ToolTimeoutMs   *int
-	ToolBudget      map[string]any
-	Temperature     *float64
-	TopP            *float64
+	ReasoningIterations    *int
+	ToolContinuationBudget *int
+	MaxOutputTokens        *int
+	ToolTimeoutMs          *int
+	ToolBudget             map[string]any
+	PerToolSoftLimits      tools.PerToolSoftLimits
+	Temperature            *float64
+	TopP                   *float64
 }
 
 // TitleSummarizerConfig 控制 goroutine 模式下的标题自动生成。
@@ -21,19 +25,22 @@ type TitleSummarizerConfig struct {
 }
 
 type Definition struct {
-	ID               string
-	Version          string
-	Title            string
-	Description      *string
-	ToolAllowlist    []string
-	ToolDenylist     []string
-	Budgets          Budgets
-	PromptMD         string
-	ExecutorType     string         // 执行策略类型，默认 "agent.simple"
-	ExecutorConfig   map[string]any // Executor 配置，默认 {}
-	PreferredCredential *string     // 偏好凭证名称，nil 表示不绑定
-	AgentConfigName  *string        // 显式绑定 AgentConfig 名称，nil 则走继承链
-	TitleSummarizer  *TitleSummarizerConfig // nil 表示此 persona 不自动生成标题
+	ID                  string
+	Version             string
+	Title               string
+	Description         *string
+	UserSelectable      bool
+	SelectorName        *string
+	SelectorOrder       *int
+	ToolAllowlist       []string
+	ToolDenylist        []string
+	Budgets             Budgets
+	PromptMD            string
+	ExecutorType        string                 // 执行策略类型，默认 "agent.simple"
+	ExecutorConfig      map[string]any         // Executor 配置，默认 {}
+	PreferredCredential *string                // 偏好凭证名称，nil 表示不绑定
+	AgentConfigName     *string                // 显式绑定 AgentConfig 名称，nil 则走继承链
+	TitleSummarizer     *TitleSummarizerConfig // nil 表示此 persona 不自动生成标题
 }
 
 type Registry struct {

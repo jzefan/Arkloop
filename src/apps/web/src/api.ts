@@ -51,6 +51,24 @@ export type MeResponse = {
   email_verification_required: boolean
 }
 
+export type Persona = {
+  id: string
+  org_id: string | null
+  source?: 'builtin' | 'custom'
+  persona_key: string
+  version: string
+  display_name: string
+  user_selectable: boolean
+  selector_name?: string
+  selector_order?: number
+}
+
+export type SelectablePersona = {
+  persona_key: string
+  selector_name: string
+  selector_order: number
+}
+
 export async function login(req: LoginRequest): Promise<LoginResponse> {
   return await apiFetch<LoginResponse>('/v1/auth/login', {
     method: 'POST',
@@ -76,6 +94,29 @@ export async function getMe(accessToken: string): Promise<MeResponse> {
     method: 'GET',
     accessToken,
   })
+}
+
+export async function listSelectablePersonas(accessToken: string): Promise<SelectablePersona[]> {
+  const personas = await apiFetch<Persona[]>('/v1/personas', {
+    method: 'GET',
+    accessToken,
+  })
+
+  return personas
+    .filter((persona) => persona.user_selectable)
+    .map((persona) => ({
+      persona_key: persona.persona_key,
+      selector_name: (persona.selector_name ?? persona.display_name).trim() || persona.persona_key,
+      selector_order: persona.selector_order ?? 99,
+    }))
+    .sort((left, right) => {
+      if (left.selector_order !== right.selector_order) {
+        return left.selector_order - right.selector_order
+      }
+      const byName = left.selector_name.localeCompare(right.selector_name)
+      if (byName !== 0) return byName
+      return left.persona_key.localeCompare(right.persona_key)
+    })
 }
 
 export async function updateMe(accessToken: string, username: string): Promise<{ username: string }> {

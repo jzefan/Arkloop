@@ -2,13 +2,14 @@ id: search-output
 version: "1"
 title: Search Output
 description: 搜索最终输出阶段，用于整理检索草稿并生成最终回答。
+user_selectable: false
 tool_denylist:
   - spawn_agent
 executor_type: agent.lua
 executor_config:
   script_file: agent.lua
 budgets:
-  max_iterations: 2
+  reasoning_iterations: 2
   max_output_tokens: 20480
   temperature: 1.0
 agent_config: openrouter-google/gemini-3-flash-preview
