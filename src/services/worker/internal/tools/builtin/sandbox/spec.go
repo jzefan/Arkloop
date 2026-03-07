@@ -3,6 +3,7 @@ package sandbox
 import (
 	"strings"
 
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -33,7 +34,7 @@ var (
 
 var PythonExecuteLlmSpec = llm.ToolSpec{
 	Name:        "python_execute",
-	Description: stringPtr("execute Python code in an isolated sandbox environment. Use this tool for any numerical calculations or data processing instead of computing manually. Pre-installed libraries include numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, etc. For charts and visualizations, prefer Plotly (plotly.express or plotly.graph_objects) over matplotlib. Use fig.write_image() for PNG output (kaleido is pre-installed). Only fall back to fig.write_html() if write_image fails. Do not set pio.renderers or attempt to open a browser. To produce output files (images, CSVs, HTML, etc.), write them to /tmp/output/. Files there are automatically uploaded; the tool result includes an artifacts array with each file's key, filename, size and mime_type. To display an artifact in your response, reference it using the key from the artifacts array: use ![alt](artifact:<key>) for images/SVG, or [label](artifact:<key>) for other files. NEVER use /tmp/output/ paths as links."),
+	Description: stringPtr(sharedtoolmeta.Must("python_execute").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -47,7 +48,7 @@ var PythonExecuteLlmSpec = llm.ToolSpec{
 
 var ExecCommandLlmSpec = llm.ToolSpec{
 	Name:        "exec_command",
-	Description: stringPtr("run a command in the default persistent shell session inside the isolated sandbox. The session is reused automatically inside the same run, so do not pass session_id. Short commands usually finish in this first response. Only switch to write_stdin when the result still shows running=true or when you need to send stdin. Write files meant for the final answer to /tmp/output/ so they appear in artifacts."),
+	Description: stringPtr(sharedtoolmeta.Must("exec_command").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -79,7 +80,7 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 
 var WriteStdinLlmSpec = llm.ToolSpec{
 	Name:        "write_stdin",
-	Description: stringPtr("send stdin to, or poll output from, a running shell session. Pass the session_id returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output."),
+	Description: stringPtr(sharedtoolmeta.Must("write_stdin").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

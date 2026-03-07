@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -25,7 +26,7 @@ var AgentSpec = tools.AgentToolSpec{
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "spawn_agent",
-	Description: stringPtr("spawn a sub-agent to execute a task with a specific persona, returns the sub-agent output"),
+	Description: stringPtr(sharedtoolmeta.Must("spawn_agent").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Plus, Trash2, ChevronLeft, Check } from 'lucide-react'
+import { Plus, Trash2, ChevronLeft, Check, CheckCheck, Minus } from 'lucide-react'
 import type { LiteOutletContext } from '../layouts/LiteLayout'
 import { PageHeader } from '../components/PageHeader'
 import { Modal } from '../components/Modal'
@@ -17,6 +17,7 @@ import {
   listToolCatalog,
   type LiteAgent,
   type ToolCatalogGroup,
+  type ToolCatalogItem,
 } from '../api/agents'
 import { listLlmProviders } from '../api/llm-providers'
 
@@ -132,6 +133,50 @@ function CheckboxField({ checked, onChange, label }: {
   )
 }
 
+function uniqToolNames(names: string[]): string[] {
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)))
+}
+
+function ToolOptionCard({
+  tool, checked, disabled, onToggle,
+}: {
+  tool: ToolCatalogItem
+  checked: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      className={[
+        'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors',
+        checked
+          ? 'border-[var(--c-accent)] bg-[var(--c-accent)]/8'
+          : 'border-[var(--c-border)] bg-[var(--c-bg-sub)] hover:border-[var(--c-border-focus)]',
+        disabled ? 'cursor-not-allowed opacity-60' : '',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors',
+          checked
+            ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-white'
+            : 'border-[var(--c-border)] bg-[var(--c-bg-input)] text-transparent',
+        ].join(' ')}
+      >
+        <Check size={12} strokeWidth={3} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-[var(--c-text-primary)]">{tool.label}</span>
+        <span className="mt-0.5 block font-mono text-[10px] text-[var(--c-text-muted)]">{tool.name}</span>
+        <span className="mt-1 block line-clamp-2 text-xs text-[var(--c-text-muted)]">{tool.llm_description}</span>
+      </span>
+    </button>
+  )
+}
+
 const INPUT_CLS =
   'w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]'
 const SELECT_CLS =
@@ -200,9 +245,10 @@ export function AgentsPage() {
   }, [])
 
   const allCatalogToolNames = useMemo(
-    () => catalogGroups.flatMap((group) => group.tools.map((tool) => tool.name)),
+    () => uniqToolNames(catalogGroups.flatMap((group) => group.tools.map((tool) => tool.name))),
     [catalogGroups],
   )
+  const selectedToolCount = form?.tools.length ?? 0
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim() || !createModel.trim()) return
@@ -271,6 +317,10 @@ export function AgentsPage() {
     }
   }, [accessToken, addToast, goBack, load, selected, t.requestFailed])
 
+  const replaceTools = useCallback((tools: string[]) => {
+    setForm((prev) => (prev ? { ...prev, tools: uniqToolNames(tools) } : prev))
+  }, [])
+
   const toggleTool = useCallback((key: string) => {
     setForm((prev) => (
       prev
@@ -278,10 +328,23 @@ export function AgentsPage() {
             ...prev,
             tools: prev.tools.includes(key)
               ? prev.tools.filter((item) => item !== key)
-              : [...prev.tools, key],
+              : uniqToolNames([...prev.tools, key]),
           }
         : prev
     ))
+  }, [])
+
+  const toggleToolGroup = useCallback((group: ToolCatalogGroup, enabled: boolean) => {
+    setForm((prev) => {
+      if (!prev) return prev
+      const groupNames = group.tools.map((tool) => tool.name)
+      return {
+        ...prev,
+        tools: enabled
+          ? uniqToolNames([...prev.tools, ...groupNames])
+          : prev.tools.filter((toolName) => !groupNames.includes(toolName)),
+      }
+    })
   }, [])
 
   const sortedAgents = useMemo(
@@ -472,21 +535,75 @@ export function AgentsPage() {
               {tab === 'tools' && (
                 catalogGroups.length > 0 ? (
                   <div className="flex flex-col gap-4">
-                    {catalogGroups.map((group) => (
-                      <div key={group.group} className="flex flex-col gap-2">
-                        <span className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
-                          {group.group}
-                        </span>
-                        {group.tools.map((tool) => (
-                          <CheckboxField
-                            key={tool.name}
-                            checked={form.tools.includes(tool.name)}
-                            onChange={() => toggleTool(tool.name)}
-                            label={tool.name}
-                          />
-                        ))}
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-sub)] px-4 py-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">{ta.tools}</p>
+                        <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{ta.toolsSelected(selectedToolCount, allCatalogToolNames.length)}</p>
                       </div>
-                    ))}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => replaceTools(allCatalogToolNames)}
+                          disabled={isRepoAgent || allCatalogToolNames.length === 0}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
+                        >
+                          <CheckCheck size={13} />
+                          {ta.enableAllTools}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => replaceTools([])}
+                          disabled={isRepoAgent || selectedToolCount === 0}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
+                        >
+                          <Minus size={13} />
+                          {ta.clearAllTools}
+                        </button>
+                      </div>
+                    </div>
+                    {catalogGroups.map((group) => {
+                      const groupNames = group.tools.map((tool) => tool.name)
+                      const groupSelectedCount = groupNames.filter((toolName) => form.tools.includes(toolName)).length
+                      return (
+                        <div key={group.group} className="flex flex-col gap-3 rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-sub)] p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">{group.group}</p>
+                              <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{ta.toolsSelected(groupSelectedCount, group.tools.length)}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleToolGroup(group, true)}
+                                disabled={isRepoAgent || group.tools.length === 0 || groupSelectedCount === group.tools.length}
+                                className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
+                              >
+                                {ta.groupEnableAll}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleToolGroup(group, false)}
+                                disabled={isRepoAgent || groupSelectedCount === 0}
+                                className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
+                              >
+                                {ta.groupClearAll}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {group.tools.map((tool) => (
+                              <ToolOptionCard
+                                key={tool.name}
+                                tool={tool}
+                                checked={form.tools.includes(tool.name)}
+                                disabled={isRepoAgent}
+                                onToggle={() => toggleTool(tool.name)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 ) : (
                   <p className="text-sm text-[var(--c-text-muted)]">--</p>

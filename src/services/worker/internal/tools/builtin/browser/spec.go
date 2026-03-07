@@ -3,6 +3,7 @@ package browser
 import (
 	"strings"
 
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -48,7 +49,7 @@ var (
 var (
 	NavigateLlmSpec = llm.ToolSpec{
 		Name:        "browser_navigate",
-		Description: stringPtr("navigate to a URL in headless browser, returns screenshot and page content"),
+		Description: stringPtr(sharedtoolmeta.Must("browser_navigate").LLMDescription),
 		JSONSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -62,7 +63,7 @@ var (
 	}
 	InteractLlmSpec = llm.ToolSpec{
 		Name:        "browser_interact",
-		Description: stringPtr("interact with page elements: click, type, scroll, select, hover"),
+		Description: stringPtr(sharedtoolmeta.Must("browser_interact").LLMDescription),
 		JSONSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -84,7 +85,7 @@ var (
 	}
 	ExtractLlmSpec = llm.ToolSpec{
 		Name:        "browser_extract",
-		Description: stringPtr("extract structured content from current page"),
+		Description: stringPtr(sharedtoolmeta.Must("browser_extract").LLMDescription),
 		JSONSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -97,7 +98,7 @@ var (
 	}
 	ScreenshotLlmSpec = llm.ToolSpec{
 		Name:        "browser_screenshot",
-		Description: stringPtr("take screenshot of current page"),
+		Description: stringPtr(sharedtoolmeta.Must("browser_screenshot").LLMDescription),
 		JSONSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -110,10 +111,10 @@ var (
 	}
 	SessionCloseLlmSpec = llm.ToolSpec{
 		Name:        "browser_session_close",
-		Description: stringPtr("close browser session and clear all state"),
+		Description: stringPtr(sharedtoolmeta.Must("browser_session_close").LLMDescription),
 		JSONSchema: map[string]any{
 			"type":                 "object",
-			"properties":          map[string]any{},
+			"properties":           map[string]any{},
 			"additionalProperties": false,
 		},
 	}

@@ -3,19 +3,30 @@ package http
 import (
 	"strings"
 
-	nethttp "net/http"
-
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
+
+	nethttp "net/http"
 
 	"github.com/google/uuid"
 )
 
+type toolDescriptionSource string
+
+const (
+	toolDescriptionSourceDefault  toolDescriptionSource = "default"
+	toolDescriptionSourcePlatform toolDescriptionSource = "platform"
+	toolDescriptionSourceOrg      toolDescriptionSource = "org"
+)
+
 type toolCatalogItem struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	HasOverride bool   `json:"has_override"`
+	Name              string                `json:"name"`
+	Label             string                `json:"label"`
+	LLMDescription    string                `json:"llm_description"`
+	HasOverride       bool                  `json:"has_override"`
+	DescriptionSource toolDescriptionSource `json:"description_source"`
 }
 
 type toolCatalogGroup struct {
@@ -27,52 +38,46 @@ type toolCatalogResponse struct {
 	Groups []toolCatalogGroup `json:"groups"`
 }
 
-type defaultToolDef struct {
-	Group       string
-	Name        string
-	Description string
-}
+func buildToolCatalog(
+	scope string,
+	platformOverrides []data.ToolDescriptionOverride,
+	orgOverrides []data.ToolDescriptionOverride,
+) toolCatalogResponse {
+	platformByName := buildToolDescriptionOverrideMap(platformOverrides)
+	orgByName := buildToolDescriptionOverrideMap(orgOverrides)
 
-var defaultToolDefs = []defaultToolDef{
-	{Group: "web_search", Name: "web_search", Description: "Web search"},
-	{Group: "web_fetch", Name: "web_fetch", Description: "Web page fetch"},
-	{Group: "sandbox", Name: "python_execute", Description: "Python code execution"},
-	{Group: "sandbox", Name: "exec_command", Description: "Persistent shell command execution"},
-	{Group: "sandbox", Name: "write_stdin", Description: "Shell stdin and poll"},
-	{Group: "memory", Name: "memory_search", Description: "Search user memory"},
-	{Group: "memory", Name: "memory_commit", Description: "Commit to user memory"},
-	{Group: "browser", Name: "browser_navigate", Description: "Navigate to URL"},
-	{Group: "browser", Name: "browser_interact", Description: "Interact with page element"},
-	{Group: "browser", Name: "browser_screenshot", Description: "Take page screenshot"},
-}
+	groups := make([]toolCatalogGroup, 0, len(sharedtoolmeta.GroupOrder()))
+	for _, group := range sharedtoolmeta.Catalog() {
+		items := make([]toolCatalogItem, 0, len(group.Tools))
+		for _, meta := range group.Tools {
+			description := meta.LLMDescription
+			hasOverride := false
+			source := toolDescriptionSourceDefault
 
-func buildToolCatalog(overrides []data.ToolDescriptionOverride) toolCatalogResponse {
-	byName := map[string]string{}
-	for _, o := range overrides {
-		byName[o.ToolName] = o.Description
-	}
+			if scope == "org" {
+				if override, ok := orgByName[meta.Name]; ok {
+					description = override
+					hasOverride = true
+					source = toolDescriptionSourceOrg
+				} else if override, ok := platformByName[meta.Name]; ok {
+					description = override
+					source = toolDescriptionSourcePlatform
+				}
+			} else if override, ok := platformByName[meta.Name]; ok {
+				description = override
+				hasOverride = true
+				source = toolDescriptionSourcePlatform
+			}
 
-	groupOrder := []string{"web_search", "web_fetch", "sandbox", "memory", "browser"}
-	grouped := map[string][]toolCatalogItem{}
-	for _, def := range defaultToolDefs {
-		desc := def.Description
-		hasOverride := false
-		if ov, ok := byName[def.Name]; ok {
-			desc = ov
-			hasOverride = true
+			items = append(items, toolCatalogItem{
+				Name:              meta.Name,
+				Label:             meta.Label,
+				LLMDescription:    description,
+				HasOverride:       hasOverride,
+				DescriptionSource: source,
+			})
 		}
-		grouped[def.Group] = append(grouped[def.Group], toolCatalogItem{
-			Name:        def.Name,
-			Description: desc,
-			HasOverride: hasOverride,
-		})
-	}
-
-	var groups []toolCatalogGroup
-	for _, g := range groupOrder {
-		if items, ok := grouped[g]; ok {
-			groups = append(groups, toolCatalogGroup{Group: g, Tools: items})
-		}
+		groups = append(groups, toolCatalogGroup{Group: group.Name, Tools: items})
 	}
 	return toolCatalogResponse{Groups: groups}
 }
@@ -92,25 +97,33 @@ func toolCatalogEntry(
 			writeAuthNotConfigured(w, traceID)
 			return
 		}
-		if _, ok := authenticateActor(w, r, traceID, authService, membershipRepo); !ok {
+		actor, ok := authenticateActor(w, r, traceID, authService, membershipRepo)
+		if !ok {
 			return
 		}
 
-		scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-		if scope == "" {
-			scope = "platform"
+		scope, orgID, ok := resolveToolCatalogScope(w, r, traceID, actor)
+		if !ok {
+			return
 		}
 
-		var overrides []data.ToolDescriptionOverride
+		var platformOverrides []data.ToolDescriptionOverride
+		var orgOverrides []data.ToolDescriptionOverride
 		if overridesRepo != nil {
 			var err error
-			overrides, err = overridesRepo.ListByScope(r.Context(), uuid.Nil, scope)
+			platformOverrides, err = overridesRepo.ListByScope(r.Context(), uuid.Nil, "platform")
 			if err != nil {
-				overrides = nil
+				platformOverrides = nil
+			}
+			if scope == "org" {
+				orgOverrides, err = overridesRepo.ListByScope(r.Context(), orgID, "org")
+				if err != nil {
+					orgOverrides = nil
+				}
 			}
 		}
 
-		writeJSON(w, traceID, nethttp.StatusOK, buildToolCatalog(overrides))
+		writeJSON(w, traceID, nethttp.StatusOK, buildToolCatalog(scope, platformOverrides, orgOverrides))
 	}
 }
 
@@ -137,7 +150,10 @@ func toolCatalogItemEntry(
 		if len(parts) == 2 {
 			action = parts[1]
 		}
-
+		if _, ok := sharedtoolmeta.Lookup(toolName); !ok {
+			writeNotFound(w, r)
+			return
+		}
 		if action != "description" {
 			writeNotFound(w, r)
 			return
@@ -151,13 +167,10 @@ func toolCatalogItemEntry(
 		if !ok {
 			return
 		}
-		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
 
-		scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-		if scope == "" {
-			scope = "platform"
+		scope, orgID, ok := resolveToolCatalogScope(w, r, traceID, actor)
+		if !ok {
+			return
 		}
 
 		if overridesRepo == nil {
@@ -176,14 +189,14 @@ func toolCatalogItemEntry(
 				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "description must not be empty", traceID, nil)
 				return
 			}
-			if err := overridesRepo.Upsert(r.Context(), uuid.Nil, scope, toolName, req.Description); err != nil {
+			if err := overridesRepo.Upsert(r.Context(), orgID, scope, toolName, req.Description); err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 			w.WriteHeader(nethttp.StatusNoContent)
 
 		case nethttp.MethodDelete:
-			if err := overridesRepo.Delete(r.Context(), uuid.Nil, scope, toolName); err != nil {
+			if err := overridesRepo.Delete(r.Context(), orgID, scope, toolName); err != nil {
 				WriteError(w, nethttp.StatusNotFound, "not_found", "no override found", traceID, nil)
 				return
 			}
@@ -193,4 +206,40 @@ func toolCatalogItemEntry(
 			writeMethodNotAllowed(w, r)
 		}
 	}
+}
+
+func resolveToolCatalogScope(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	actor *actor,
+) (string, uuid.UUID, bool) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "org" && scope != "platform" {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+		return "", uuid.Nil, false
+	}
+
+	if scope == "platform" {
+		if !requirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return "", uuid.Nil, false
+		}
+		return scope, uuid.Nil, true
+	}
+
+	if !requirePerm(actor, auth.PermDataSecrets, w, traceID) {
+		return "", uuid.Nil, false
+	}
+	return scope, actor.OrgID, true
+}
+
+func buildToolDescriptionOverrideMap(overrides []data.ToolDescriptionOverride) map[string]string {
+	out := make(map[string]string, len(overrides))
+	for _, override := range overrides {
+		out[override.ToolName] = override.Description
+	}
+	return out
 }

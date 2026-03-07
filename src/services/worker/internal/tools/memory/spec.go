@@ -1,6 +1,7 @@
 package memory
 
 import (
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -19,7 +20,7 @@ var SearchAgentSpec = tools.AgentToolSpec{
 
 var SearchLlmSpec = llm.ToolSpec{
 	Name:        "memory_search",
-	Description: stringPtr("search long-term memory for information about the user (preferences, past experiences, constraints, priorities) or past interactions. Use this tool when handling recommendations, comparisons, preference-driven questions, opinions, 'best' options, 'how to' questions, or open-ended problems with multiple valid approaches — user context significantly improves answer quality in areas like shopping, travel planning, and project planning. Call at most once per user query; do not issue multiple memory searches for the same request. Use the results to guide subsequent tool selection — memory provides context, but a complete answer may still require other tools. IMPORTANT: results contain internal fields (such as uri, _ref) that are system identifiers and must never be shown to the user; only present the natural-language content (abstract) to the user, never expose storage paths, URIs, or any internal metadata."),
+	Description: stringPtr(sharedtoolmeta.Must("memory_search").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -44,7 +45,7 @@ var ReadAgentSpec = tools.AgentToolSpec{
 
 var ReadLlmSpec = llm.ToolSpec{
 	Name:        "memory_read",
-	Description: stringPtr("read the full content of a memory entry by its URI. IMPORTANT: the URI and other internal fields (_ref, storage paths) are system identifiers and must never be exposed to the user; only present the natural-language content to the user."),
+	Description: stringPtr(sharedtoolmeta.Must("memory_read").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -68,7 +69,7 @@ var WriteAgentSpec = tools.AgentToolSpec{
 
 var WriteLlmSpec = llm.ToolSpec{
 	Name:        "memory_write",
-	Description: stringPtr("store a piece of knowledge in long-term memory for future reference"),
+	Description: stringPtr(sharedtoolmeta.Must("memory_write").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -98,7 +99,7 @@ var ForgetAgentSpec = tools.AgentToolSpec{
 
 var ForgetLlmSpec = llm.ToolSpec{
 	Name:        "memory_forget",
-	Description: stringPtr("remove a specific memory entry"),
+	Description: stringPtr(sharedtoolmeta.Must("memory_forget").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

@@ -17,10 +17,14 @@ export type ToolProviderGroup = {
   providers: ToolProviderItem[]
 }
 
+export type ToolDescriptionSource = 'default' | 'platform' | 'org'
+
 export type ToolCatalogItem = {
   name: string
-  description: string
+  label: string
+  llm_description: string
   has_override: boolean
+  description_source: ToolDescriptionSource
 }
 
 export type ToolCatalogGroup = {
@@ -49,7 +53,7 @@ export async function activateToolProvider(
   group: string, provider: string, accessToken: string,
 ): Promise<void> {
   await apiFetch<void>(scopedPath(`/v1/tool-providers/${group}/${provider}/activate`), {
-    method: 'POST', accessToken,
+    method: 'PUT', accessToken,
   })
 }
 
@@ -57,7 +61,7 @@ export async function deactivateToolProvider(
   group: string, provider: string, accessToken: string,
 ): Promise<void> {
   await apiFetch<void>(scopedPath(`/v1/tool-providers/${group}/${provider}/deactivate`), {
-    method: 'POST', accessToken,
+    method: 'PUT', accessToken,
   })
 }
 
@@ -81,7 +85,7 @@ export async function updateToolProviderConfig(
   group: string, provider: string, configJSON: Record<string, unknown>, accessToken: string,
 ): Promise<void> {
   await apiFetch<void>(scopedPath(`/v1/tool-providers/${group}/${provider}/config`), {
-    method: 'PUT', body: JSON.stringify({ config_json: configJSON }), accessToken,
+    method: 'PUT', body: JSON.stringify(configJSON), accessToken,
   })
 }
 

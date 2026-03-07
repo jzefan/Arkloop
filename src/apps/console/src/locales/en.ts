@@ -189,6 +189,7 @@ export const en: LocaleStrings = {
       statusActive: 'on',
       statusInactive: 'off',
       statusUnconfigured: 'Unconfigured',
+      statusInheritedPlatform: 'Inherited from platform',
       activate: 'Activate',
       deactivate: 'Deactivate',
       configure: 'Configure',

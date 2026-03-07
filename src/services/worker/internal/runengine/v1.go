@@ -61,11 +61,12 @@ type EngineV1Deps struct {
 	AllLlmToolSpecs        []llm.ToolSpec
 	BaseToolAllowlistNames []string
 
-	PersonaRegistryGetter func() *personas.Registry
-	MCPPool               *mcp.Pool
-	MCPDiscoveryCache     *mcp.DiscoveryCache // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
-	ToolProviderCache     *toolprovider.Cache
-	ExecutorRegistry      pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
+	PersonaRegistryGetter        func() *personas.Registry
+	MCPPool                      *mcp.Pool
+	MCPDiscoveryCache            *mcp.DiscoveryCache // 缓存 DiscoverFromDB 结果，nil 时跳过 per-org MCP 发现
+	ToolProviderCache            *toolprovider.Cache
+	ToolDescriptionOverridesRepo pipeline.ToolDescriptionOverridesReader
+	ExecutorRegistry             pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
 
 	// JobQueue 可选；非 nil 时启用 SpawnChildRun
 	JobQueue queue.JobQueue
@@ -167,6 +168,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewMemoryMiddleware(deps.MemoryProvider, deps.DBPool, deps.ConfigResolver),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.DBPool, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents),
+		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
 		pipeline.NewToolBuildMiddleware(),
 	}
 

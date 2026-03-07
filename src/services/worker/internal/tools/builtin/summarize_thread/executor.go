@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 
@@ -29,7 +30,7 @@ var AgentSpec = tools.AgentToolSpec{
 
 var LlmSpec = llm.ToolSpec{
 	Name:        "summarize_thread",
-	Description: stringPtr("update the current thread title with a concise summary"),
+	Description: stringPtr(sharedtoolmeta.Must("summarize_thread").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

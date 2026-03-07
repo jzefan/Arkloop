@@ -41,6 +41,11 @@ export const zhCN: LocaleStrings = {
     builtIn: '内置',
     platformDefault: '平台默认',
     hybrid: 'Hybrid',
+    toolsSelected: (selected: number, total: number) => `已选 ${selected}/${total}`,
+    enableAllTools: '全部开启',
+    clearAllTools: '全部清空',
+    groupEnableAll: '启用本组',
+    groupClearAll: '清空本组',
   },
   models: {
     title: '模型管理',
