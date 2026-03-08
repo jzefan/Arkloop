@@ -70,6 +70,46 @@ func TestStorePutGetDelete(t *testing.T) {
 	}
 }
 
+func TestStorePutObjectHeadAndContentType(t *testing.T) {
+	endpoint, accessKey, secretKey, bucket, region := s3EnvOrSkip(t)
+
+	store, err := New(context.Background(), endpoint, accessKey, secretKey, bucket, region)
+	if err != nil {
+		t.Fatalf("new object store: %v", err)
+	}
+
+	key := fmt.Sprintf("test/integration/%s", t.Name())
+	metadata := map[string]string{"Owner": "arkloop", " Thread ": "demo"}
+	payload := []byte("hello metadata")
+
+	if err := store.PutObject(context.Background(), key, payload, PutOptions{ContentType: "text/plain", Metadata: metadata}); err != nil {
+		t.Fatalf("put object: %v", err)
+	}
+	defer func() { _ = store.Delete(context.Background(), key) }()
+
+	head, err := store.Head(context.Background(), key)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	if head.ContentType != "text/plain" {
+		t.Fatalf("unexpected content type: %q", head.ContentType)
+	}
+	if head.Metadata["owner"] != "arkloop" || head.Metadata["thread"] != "demo" {
+		t.Fatalf("unexpected metadata: %#v", head.Metadata)
+	}
+	if strings.TrimSpace(head.ETag) == "" {
+		t.Fatal("expected etag")
+	}
+
+	data, contentType, err := store.GetWithContentType(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get with content type: %v", err)
+	}
+	if contentType != "text/plain" || !bytes.Equal(data, payload) {
+		t.Fatalf("unexpected object: contentType=%q data=%q", contentType, data)
+	}
+}
+
 func TestNewRejectsEmptyEndpoint(t *testing.T) {
 	_, err := New(context.Background(), "", "key", "secret", "bucket", "")
 	if err == nil {

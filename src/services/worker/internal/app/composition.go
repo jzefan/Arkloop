@@ -258,7 +258,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	})
 }
 
-func buildDocumentArtifactStore(ctx context.Context) (*objectstore.Store, error) {
+func buildDocumentArtifactStore(ctx context.Context) (objectstore.Store, error) {
 	s3Endpoint := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ENDPOINT"))
 	if s3Endpoint == "" {
 		return nil, nil
@@ -266,10 +266,11 @@ func buildDocumentArtifactStore(ctx context.Context) (*objectstore.Store, error)
 	s3AccessKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ACCESS_KEY"))
 	s3SecretKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_SECRET_KEY"))
 	s3Region := strings.TrimSpace(os.Getenv("ARKLOOP_S3_REGION"))
-	return objectstore.New(ctx, s3Endpoint, s3AccessKey, s3SecretKey, objectstore.ArtifactBucket, s3Region)
+	opener := objectstore.NewS3Opener(objectstore.S3Config{Endpoint: s3Endpoint, AccessKey: s3AccessKey, SecretKey: s3SecretKey, Region: s3Region})
+	return opener.Open(ctx, objectstore.ArtifactBucket)
 }
 
-func buildMessageAttachmentStore(ctx context.Context) (*objectstore.Store, error) {
+func buildMessageAttachmentStore(ctx context.Context) (objectstore.Store, error) {
 	s3Endpoint := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ENDPOINT"))
 	if s3Endpoint == "" {
 		return nil, nil
@@ -281,7 +282,8 @@ func buildMessageAttachmentStore(ctx context.Context) (*objectstore.Store, error
 	if s3Bucket == "" {
 		return nil, nil
 	}
-	return objectstore.New(ctx, s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket, s3Region)
+	opener := objectstore.NewS3Opener(objectstore.S3Config{Endpoint: s3Endpoint, AccessKey: s3AccessKey, SecretKey: s3SecretKey, Region: s3Region})
+	return opener.Open(ctx, s3Bucket)
 }
 
 func resolveBuiltinAvailability(

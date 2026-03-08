@@ -174,31 +174,23 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
 
-	var artifactStore *objectstore.Store
-	var messageAttachmentStore *objectstore.Store
+	var artifactStore objectstore.Store
+	var messageAttachmentStore objectstore.Store
 	if strings.TrimSpace(a.config.S3Endpoint) != "" {
-		mainStore, err := objectstore.New(
-			ctx,
-			a.config.S3Endpoint,
-			a.config.S3AccessKey,
-			a.config.S3SecretKey,
-			a.config.S3Bucket,
-			a.config.S3Region,
-		)
+		opener := objectstore.NewS3Opener(objectstore.S3Config{
+			Endpoint:  a.config.S3Endpoint,
+			AccessKey: a.config.S3AccessKey,
+			SecretKey: a.config.S3SecretKey,
+			Region:    a.config.S3Region,
+		})
+		mainStore, err := opener.Open(ctx, a.config.S3Bucket)
 		if err != nil {
 			return fmt.Errorf("objectstore: %w", err)
 		}
 		messageAttachmentStore = mainStore
 		a.logger.Info("objectstore connected", observability.LogFields{}, map[string]any{"bucket": a.config.S3Bucket})
 
-		as, err := objectstore.New(
-			ctx,
-			a.config.S3Endpoint,
-			a.config.S3AccessKey,
-			a.config.S3SecretKey,
-			objectstore.ArtifactBucket,
-			a.config.S3Region,
-		)
+		as, err := opener.Open(ctx, objectstore.ArtifactBucket)
 		if err != nil {
 			return fmt.Errorf("artifact store: %w", err)
 		}

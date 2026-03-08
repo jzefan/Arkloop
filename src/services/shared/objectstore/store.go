@@ -21,12 +21,40 @@ const ArtifactBucket = "sandbox-artifacts"
 const SessionStateBucket = "sandbox-session-state"
 const EnvironmentStateBucket = "sandbox-environments"
 
-// Store 封装 S3 兼容存储客户端，绑定到单个 bucket。
+type Store interface {
+	Put(ctx context.Context, key string, data []byte) error
+	PutObject(ctx context.Context, key string, data []byte, options PutOptions) error
+	Get(ctx context.Context, key string) ([]byte, error)
+	GetWithContentType(ctx context.Context, key string) ([]byte, string, error)
+	Head(ctx context.Context, key string) (ObjectInfo, error)
+	Delete(ctx context.Context, key string) error
+}
+
+type LifecycleConfigurator interface {
+	SetLifecycleExpirationDays(ctx context.Context, days int) error
+}
+
+type BucketOpener interface {
+	Open(ctx context.Context, bucket string) (Store, error)
+}
+
+type S3Config struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Region    string
+}
+
+// S3Store 封装 S3 兼容存储客户端，绑定到单个 bucket。
 // 支持 MinIO、AWS S3、GCS（S3 兼容模式）等。
-type Store struct {
+type S3Store struct {
 	client *s3.Client
 	bucket string
 	region string
+}
+
+type S3Opener struct {
+	config S3Config
 }
 
 type PutOptions struct {
@@ -39,80 +67,85 @@ type ObjectInfo struct {
 	ContentType string
 	Metadata    map[string]string
 	Size        int64
+	ETag        string
 }
 
-// New 初始化 S3 客户端，并确保目标 bucket 存在。
-// region 为空时默认 "us-east-1"（兼容 MinIO）。
-func New(ctx context.Context, endpoint, accessKey, secretKey, bucket, region string) (*Store, error) {
+func New(ctx context.Context, endpoint, accessKey, secretKey, bucket, region string) (Store, error) {
+	return NewS3Opener(S3Config{
+		Endpoint:  endpoint,
+		AccessKey: accessKey,
+		SecretKey: secretKey,
+		Region:    region,
+	}).Open(ctx, bucket)
+}
+
+func NewS3Opener(cfg S3Config) *S3Opener {
+	return &S3Opener{config: normalizeS3Config(cfg)}
+}
+
+func (o *S3Opener) Open(ctx context.Context, bucket string) (Store, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	endpoint = strings.TrimSpace(endpoint)
-	accessKey = strings.TrimSpace(accessKey)
-	secretKey = strings.TrimSpace(secretKey)
+	cfg := normalizeS3Config(o.config)
 	bucket = strings.TrimSpace(bucket)
-	region = strings.TrimSpace(region)
-
-	if endpoint == "" {
+	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("s3 endpoint must not be empty")
 	}
-	if accessKey == "" {
+	if cfg.AccessKey == "" {
 		return nil, fmt.Errorf("s3 access key must not be empty")
 	}
-	if secretKey == "" {
+	if cfg.SecretKey == "" {
 		return nil, fmt.Errorf("s3 secret key must not be empty")
 	}
 	if bucket == "" {
 		return nil, fmt.Errorf("s3 bucket must not be empty")
 	}
-	if region == "" {
-		region = "us-east-1"
-	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
+		config.WithRegion(cfg.Region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(endpoint)
-		o.UsePathStyle = true // MinIO 要求 path-style 寻址
+	client := s3.NewFromConfig(awsCfg, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String(cfg.Endpoint)
+		options.UsePathStyle = true
 	})
 
-	store := &Store{client: client, bucket: bucket, region: region}
-
+	store := &S3Store{client: client, bucket: bucket, region: cfg.Region}
 	if err := store.ensureBucket(ctx); err != nil {
 		return nil, fmt.Errorf("ensure bucket %q: %w", bucket, err)
 	}
-
 	return store, nil
 }
 
-// ensureBucket 如果 bucket 不存在则创建。
-func (o *Store) ensureBucket(ctx context.Context) error {
-	_, err := o.client.HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(o.bucket),
-	})
+func normalizeS3Config(cfg S3Config) S3Config {
+	cfg.Endpoint = strings.TrimSpace(cfg.Endpoint)
+	cfg.AccessKey = strings.TrimSpace(cfg.AccessKey)
+	cfg.SecretKey = strings.TrimSpace(cfg.SecretKey)
+	cfg.Region = strings.TrimSpace(cfg.Region)
+	if cfg.Region == "" {
+		cfg.Region = "us-east-1"
+	}
+	return cfg
+}
+
+func (o *S3Store) ensureBucket(ctx context.Context) error {
+	_, err := o.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(o.bucket)})
 	if err == nil {
 		return nil
 	}
 
-	// 判断是否是 bucket 不存在（404）
 	var notFound *types.NotFound
 	if !errors.As(err, &notFound) {
-		// 非 404 错误（如网络问题、权限问题），直接返回
 		return fmt.Errorf("head bucket: %w", err)
 	}
 
-	// Bucket 不存在，创建它
-	createInput := &s3.CreateBucketInput{
-		Bucket: aws.String(o.bucket),
-	}
-	// AWS S3 非 us-east-1 区域需要指定 LocationConstraint
+	createInput := &s3.CreateBucketInput{Bucket: aws.String(o.bucket)}
 	if o.region != "" && o.region != "us-east-1" {
 		createInput.CreateBucketConfiguration = &types.CreateBucketConfiguration{
 			LocationConstraint: types.BucketLocationConstraint(o.region),
@@ -121,7 +154,6 @@ func (o *Store) ensureBucket(ctx context.Context) error {
 
 	_, createErr := o.client.CreateBucket(ctx, createInput)
 	if createErr != nil {
-		// 并发场景下 bucket 可能已被创建
 		var alreadyOwned *types.BucketAlreadyOwnedByYou
 		var alreadyExists *types.BucketAlreadyExists
 		if errors.As(createErr, &alreadyOwned) || errors.As(createErr, &alreadyExists) {
@@ -129,21 +161,18 @@ func (o *Store) ensureBucket(ctx context.Context) error {
 		}
 		return fmt.Errorf("create bucket: %w", createErr)
 	}
-
 	return nil
 }
 
-// Put 上传对象，key 为对象路径。
-func (o *Store) Put(ctx context.Context, key string, data []byte) error {
+func (o *S3Store) Put(ctx context.Context, key string, data []byte) error {
 	return o.PutObject(ctx, key, data, PutOptions{})
 }
 
-// PutWithContentType 上传对象并指定 Content-Type。
-func (o *Store) PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error {
+func (o *S3Store) PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error {
 	return o.PutObject(ctx, key, data, PutOptions{ContentType: contentType})
 }
 
-func (o *Store) PutObject(ctx context.Context, key string, data []byte, options PutOptions) error {
+func (o *S3Store) PutObject(ctx context.Context, key string, data []byte, options PutOptions) error {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
@@ -162,7 +191,7 @@ func (o *Store) PutObject(ctx context.Context, key string, data []byte, options 
 	return nil
 }
 
-func (o *Store) Head(ctx context.Context, key string) (ObjectInfo, error) {
+func (o *S3Store) Head(ctx context.Context, key string) (ObjectInfo, error) {
 	out, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
@@ -175,11 +204,11 @@ func (o *Store) Head(ctx context.Context, key string) (ObjectInfo, error) {
 		ContentType: aws.ToString(out.ContentType),
 		Metadata:    normalizeMetadata(out.Metadata),
 		Size:        aws.ToInt64(out.ContentLength),
+		ETag:        strings.Trim(aws.ToString(out.ETag), `"`),
 	}, nil
 }
 
-// Get 下载对象并返回内容。
-func (o *Store) Get(ctx context.Context, key string) ([]byte, error) {
+func (o *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 	out, err := o.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
@@ -196,8 +225,7 @@ func (o *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
-// GetWithContentType 下载对象并返回内容及 Content-Type。
-func (o *Store) GetWithContentType(ctx context.Context, key string) ([]byte, string, error) {
+func (o *S3Store) GetWithContentType(ctx context.Context, key string) ([]byte, string, error) {
 	out, err := o.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
@@ -208,7 +236,6 @@ func (o *Store) GetWithContentType(ctx context.Context, key string) ([]byte, str
 	defer out.Body.Close()
 
 	contentType := aws.ToString(out.ContentType)
-
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("read object %q: %w", key, err)
@@ -234,7 +261,7 @@ func normalizeMetadata(metadata map[string]string) map[string]string {
 	return cleaned
 }
 
-func (o *Store) SetLifecycleExpirationDays(ctx context.Context, days int) error {
+func (o *S3Store) SetLifecycleExpirationDays(ctx context.Context, days int) error {
 	if days <= 0 {
 		return nil
 	}
@@ -251,21 +278,18 @@ func (o *Store) SetLifecycleExpirationDays(ctx context.Context, days int) error 
 
 func expirationLifecycleConfiguration(days int) *types.BucketLifecycleConfiguration {
 	return &types.BucketLifecycleConfiguration{
-		Rules: []types.LifecycleRule{
-			{
-				ID:     aws.String("expire-after-days"),
-				Status: types.ExpirationStatusEnabled,
-				Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
-				Expiration: &types.LifecycleExpiration{
-					Days: aws.Int32(int32(days)),
-				},
+		Rules: []types.LifecycleRule{{
+			ID:     aws.String("expire-after-days"),
+			Status: types.ExpirationStatusEnabled,
+			Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
+			Expiration: &types.LifecycleExpiration{
+				Days: aws.Int32(int32(days)),
 			},
-		},
+		}},
 	}
 }
 
-// Delete 删除对象。
-func (o *Store) Delete(ctx context.Context, key string) error {
+func (o *S3Store) Delete(ctx context.Context, key string) error {
 	_, err := o.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
@@ -294,3 +318,7 @@ func IsNotFound(err error) bool {
 	var notFound *types.NotFound
 	return errors.As(err, &notFound)
 }
+
+var _ Store = (*S3Store)(nil)
+var _ LifecycleConfigurator = (*S3Store)(nil)
+var _ BucketOpener = (*S3Opener)(nil)
