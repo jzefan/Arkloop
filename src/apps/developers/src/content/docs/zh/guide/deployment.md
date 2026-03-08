@@ -38,6 +38,7 @@ cp .env.example .env
 | `ARKLOOP_S3_SECRET_KEY` | S3 兼容密钥 |
 | `ARKLOOP_AUTH_JWT_SECRET` | JWT 签名密钥（至少 32 字符） |
 | `ARKLOOP_ENCRYPTION_KEY` | AES-256-GCM 密钥（32 字节 hex） |
+| `ARKLOOP_S3_VOLUME_MAX` | SeaweedFS volume 槽位上限，建议保持默认 `64` |
 
 生成安全密钥：
 
@@ -54,6 +55,8 @@ openssl rand -hex 32
 ```bash
 docker compose up -d
 ```
+
+SeaweedFS 默认 volume 槽位较小，Arkloop 会同时使用 `arkloop`、`sandbox-artifacts`、`sandbox-session-state`、`sandbox-environments` 等 bucket/collection。若槽位耗尽，会出现 `No writable volumes`，并导致 artifact 与 environment archive 上传失败；默认配置已把 `ARKLOOP_S3_VOLUME_MAX` 提升到 `64`。
 
 `migrate` 服务会自动在 `api/worker` 启动之前运行迁移并退出。查看启动状态：
 

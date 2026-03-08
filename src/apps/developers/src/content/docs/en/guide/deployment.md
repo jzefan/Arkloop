@@ -38,6 +38,7 @@ Edit `.env` and set at least the following required fields:
 | `ARKLOOP_S3_SECRET_KEY` | S3-compatible secret key |
 | `ARKLOOP_AUTH_JWT_SECRET` | JWT Signing Secret (at least 32 characters) |
 | `ARKLOOP_ENCRYPTION_KEY` | AES-256-GCM Key (32-byte hex) |
+| `ARKLOOP_S3_VOLUME_MAX` | SeaweedFS volume slot limit, keep the default `64` unless you know you need less |
 
 Generate secure keys:
 
@@ -54,6 +55,8 @@ openssl rand -hex 32
 ```bash
 docker compose up -d
 ```
+
+SeaweedFS ships with a small default volume slot limit. Arkloop uses multiple buckets/collections such as `arkloop`, `sandbox-artifacts`, `sandbox-session-state`, and `sandbox-environments`. Once the slots are exhausted, SeaweedFS returns `No writable volumes`, and artifact or environment archive uploads start failing. The default config now raises `ARKLOOP_S3_VOLUME_MAX` to `64`.
 
 The `migrate` service will automatically run migrations before `api/worker` starts and then exit. Check startup status:
 
