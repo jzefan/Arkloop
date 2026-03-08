@@ -11,7 +11,6 @@ export {
 const ACTIVE_THREAD_ID_KEY = 'arkloop:web:active_thread_id'
 const LOCALE_KEY = 'arkloop:web:locale'
 const THEME_KEY = 'arkloop:web:theme'
-const LEGACY_SELECTED_TIER_KEY = 'arkloop:web:selected_tier'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 
 export const DEFAULT_PERSONA_KEY = 'normal'
@@ -128,25 +127,11 @@ export function writeThemeToStorage(theme: Theme): void {
   }
 }
 
-function migrateLegacySelectedTier(raw: string | null): string | null {
-  if (raw === 'Normal' || raw === 'Ultra') return DEFAULT_PERSONA_KEY
-  if (raw === 'Search' || raw === 'Extended Search') return SEARCH_PERSONA_KEY
-  return null
-}
-
 export function readSelectedPersonaKeyFromStorage(): string {
   if (!canUseLocalStorage()) return DEFAULT_PERSONA_KEY
   try {
     const raw = localStorage.getItem(SELECTED_PERSONA_KEY)
     if (raw && raw.trim()) return raw.trim()
-
-    const migrated = migrateLegacySelectedTier(localStorage.getItem(LEGACY_SELECTED_TIER_KEY))
-    if (migrated) {
-      localStorage.setItem(SELECTED_PERSONA_KEY, migrated)
-      localStorage.removeItem(LEGACY_SELECTED_TIER_KEY)
-      return migrated
-    }
-
     return DEFAULT_PERSONA_KEY
   } catch {
     return DEFAULT_PERSONA_KEY
@@ -159,7 +144,6 @@ export function writeSelectedPersonaKeyToStorage(personaKey: string): void {
   if (!trimmed) return
   try {
     localStorage.setItem(SELECTED_PERSONA_KEY, trimmed)
-    localStorage.removeItem(LEGACY_SELECTED_TIER_KEY)
   } catch {
     // 忽略存储失败
   }

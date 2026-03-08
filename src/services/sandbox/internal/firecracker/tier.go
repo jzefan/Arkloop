@@ -12,9 +12,8 @@ type TierConfig struct {
 const KernelArgs = "console=ttyS0 reboot=k panic=1 pci=off nomodules rw"
 
 var tiers = map[string]TierConfig{
-	"lite":  {VCPUCount: 1, MemSizeMiB: 256},
-	"pro":   {VCPUCount: 1, MemSizeMiB: 1024},
-	"ultra": {VCPUCount: 2, MemSizeMiB: 4096},
+	"lite": {VCPUCount: 1, MemSizeMiB: 256},
+	"pro":  {VCPUCount: 1, MemSizeMiB: 1024},
 }
 
 // TierFor 返回指定 tier 的资源配额，未知 tier 返回 lite 配额。
@@ -28,9 +27,9 @@ func TierFor(tier string) TierConfig {
 // ValidTier 验证 tier 值是否合法。
 func ValidTier(tier string) error {
 	switch tier {
-	case "lite", "pro", "ultra":
+	case "lite", "pro":
 		return nil
 	default:
-		return fmt.Errorf("unknown tier %q: must be lite, pro, or ultra", tier)
+		return fmt.Errorf("unknown tier %q: must be lite or pro", tier)
 	}
 }

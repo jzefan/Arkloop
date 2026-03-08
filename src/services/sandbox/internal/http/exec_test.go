@@ -131,7 +131,6 @@ func newTestManager() *session.Manager {
 		Pool:               &noopPool{},
 		IdleTimeoutLite:    0,
 		IdleTimeoutPro:     0,
-		IdleTimeoutUltra:   0,
 		MaxLifetimeSeconds: 3600,
 	})
 }
@@ -146,4 +145,4 @@ func (p *noopPool) Acquire(_ context.Context, tier string) (*session.Session, *o
 func (p *noopPool) DestroyVM(_ *os.Process, _ string) {}
 func (p *noopPool) Ready() bool                       { return true }
 func (p *noopPool) Stats() session.PoolStats          { return session.PoolStats{} }
-func (p *noopPool) Drain(_ context.Context)            {}
+func (p *noopPool) Drain(_ context.Context)           {}

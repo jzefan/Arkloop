@@ -9,9 +9,8 @@ type TierResources struct {
 }
 
 var tierResources = map[string]TierResources{
-	session.TierLite:  {NanoCPUs: 1_000_000_000, MemoryMB: 256},
-	session.TierPro:   {NanoCPUs: 1_000_000_000, MemoryMB: 1024},
-	session.TierUltra: {NanoCPUs: 2_000_000_000, MemoryMB: 4096},
+	session.TierLite: {NanoCPUs: 1_000_000_000, MemoryMB: 256},
+	session.TierPro:  {NanoCPUs: 1_000_000_000, MemoryMB: 1024},
 }
 
 func resourcesFor(tier string) TierResources {

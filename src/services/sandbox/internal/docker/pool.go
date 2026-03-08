@@ -18,6 +18,7 @@ import (
 	"arkloop/services/sandbox/internal/session"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -109,6 +110,10 @@ func New(cfg Config) (*Pool, error) {
 		cli.Close()
 		return nil, err
 	}
+	if err := cleanupStaleContainers(ensureCtx, cli); err != nil {
+		cli.Close()
+		return nil, err
+	}
 
 	ready := make(map[string]chan *entry)
 	for tier, size := range cfg.WarmSizes {
@@ -125,6 +130,26 @@ func New(cfg Config) (*Pool, error) {
 		stop:       make(chan struct{}),
 		containers: make(map[string]string),
 	}, nil
+}
+
+func cleanupStaleContainers(ctx context.Context, cli *client.Client) error {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: sandboxAgentFilters()})
+	if err != nil {
+		return fmt.Errorf("list stale sandbox containers: %w", err)
+	}
+	for _, item := range containers {
+		if err := cli.ContainerRemove(ctx, item.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			return fmt.Errorf("remove stale sandbox container %s: %w", item.ID, err)
+		}
+	}
+	return nil
+}
+
+func sandboxAgentFilters() filters.Args {
+	args := filters.NewArgs()
+	args.Add("label", "com.docker.compose.project=arkloop")
+	args.Add("label", "com.docker.compose.service=sandbox-agent")
+	return args
 }
 
 func ensureNetworkExists(ctx context.Context, cli *client.Client, name string, internal bool) error {
@@ -339,6 +364,7 @@ func buildCreatePlan(cfg Config, tier string) createPlan {
 		Labels: map[string]string{
 			"com.docker.compose.project": "arkloop",
 			"com.docker.compose.service": "sandbox-agent",
+			"arkloop.role":               "sandbox-agent",
 			"arkloop.tier":               tier,
 		},
 	}

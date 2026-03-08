@@ -518,7 +518,125 @@ func TestOutputTruncation(t *testing.T) {
 	}
 }
 
-func TestTierFromBudget(t *testing.T) {
+func TestPythonExecute_UsesLiteTierByDefault(t *testing.T) {
+	var receivedTier string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execRequest
+		json.NewDecoder(r.Body).Decode(&body)
+		receivedTier = body.Tier
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execResponse{ExitCode: 0})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"python_execute",
+		map[string]any{"code": "x=1"},
+		testContext(),
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if receivedTier != "lite" {
+		t.Errorf("expected tier=lite, got %s", receivedTier)
+	}
+}
+
+func TestExecCommand_UsesProTierByDefault(t *testing.T) {
+	var receivedTier string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execCommandRequest
+		json.NewDecoder(r.Body).Decode(&body)
+		receivedTier = body.Tier
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"exec_command",
+		map[string]any{"command": "pwd"},
+		testContext(),
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if receivedTier != "pro" {
+		t.Errorf("expected tier=pro, got %s", receivedTier)
+	}
+}
+
+func TestTierFromSandboxProfilesToolOverride(t *testing.T) {
+	var receivedTier string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execRequest
+		json.NewDecoder(r.Body).Decode(&body)
+		receivedTier = body.Tier
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execResponse{ExitCode: 0})
+	}))
+	defer server.Close()
+
+	ctx := testContext()
+	ctx.Budget = map[string]any{"sandbox_profiles": map[string]any{"python_execute": "pro"}}
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"python_execute",
+		map[string]any{"code": "x=1"},
+		ctx,
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if receivedTier != "pro" {
+		t.Errorf("expected tier=pro, got %s", receivedTier)
+	}
+}
+
+func TestTierFromSandboxProfilesWorkloadOverride(t *testing.T) {
+	var receivedTier string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execCommandRequest
+		json.NewDecoder(r.Body).Decode(&body)
+		receivedTier = body.Tier
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle"})
+	}))
+	defer server.Close()
+
+	ctx := testContext()
+	ctx.Budget = map[string]any{"sandbox_profiles": map[string]any{"interactive_shell": "lite"}}
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(
+		t.Context(),
+		"exec_command",
+		map[string]any{"command": "pwd"},
+		ctx,
+		"",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if receivedTier != "lite" {
+		t.Errorf("expected tier=lite, got %s", receivedTier)
+	}
+}
+
+func TestLegacySandboxTierIsIgnored(t *testing.T) {
 	var receivedTier string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body execRequest
@@ -544,8 +662,8 @@ func TestTierFromBudget(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	if receivedTier != "pro" {
-		t.Errorf("expected tier=pro, got %s", receivedTier)
+	if receivedTier != "lite" {
+		t.Errorf("expected legacy sandbox_tier ignored, got %s", receivedTier)
 	}
 }
 

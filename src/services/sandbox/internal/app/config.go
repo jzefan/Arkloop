@@ -17,23 +17,23 @@ import (
 
 // 部署级别的 ENV（文件路径、地址、凭证 -- 不进 registry，不能从 console 改）
 const (
-	sandboxAddrEnv       = "ARKLOOP_SANDBOX_ADDR"
-	sandboxAuthTokenEnv  = "ARKLOOP_SANDBOX_AUTH_TOKEN"
-	sessionStateTTLEnv   = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
-	allowEgressEnv       = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
-	dockerNetworkEnv     = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
-	firecrackerBinEnv    = "ARKLOOP_FIRECRACKER_BIN"
-	kernelImagePathEnv   = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
-	rootfsPathEnv        = "ARKLOOP_SANDBOX_ROOTFS"
-	socketBaseDirEnv     = "ARKLOOP_SANDBOX_SOCKET_DIR"
-	templatesPathEnv     = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
-	firecrackerIfaceEnv  = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
-	firecrackerTapEnv    = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
-	firecrackerCIDREnv   = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
-	firecrackerDNSEnv    = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
-	s3EndpointEnv        = "ARKLOOP_S3_ENDPOINT"
-	s3AccessKeyEnv       = "ARKLOOP_S3_ACCESS_KEY"
-	s3SecretKeyEnv       = "ARKLOOP_S3_SECRET_KEY"
+	sandboxAddrEnv      = "ARKLOOP_SANDBOX_ADDR"
+	sandboxAuthTokenEnv = "ARKLOOP_SANDBOX_AUTH_TOKEN"
+	sessionStateTTLEnv  = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
+	allowEgressEnv      = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
+	dockerNetworkEnv    = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
+	firecrackerBinEnv   = "ARKLOOP_FIRECRACKER_BIN"
+	kernelImagePathEnv  = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	rootfsPathEnv       = "ARKLOOP_SANDBOX_ROOTFS"
+	socketBaseDirEnv    = "ARKLOOP_SANDBOX_SOCKET_DIR"
+	templatesPathEnv    = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	firecrackerIfaceEnv = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
+	firecrackerTapEnv   = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
+	firecrackerCIDREnv  = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
+	firecrackerDNSEnv   = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
+	s3EndpointEnv       = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv      = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv      = "ARKLOOP_S3_SECRET_KEY"
 )
 
 // Provider 标识 sandbox 后端类型。
@@ -43,42 +43,40 @@ const (
 )
 
 type Config struct {
-	Addr                string
-	AuthToken           string // 服务间认证 Bearer token，空则跳过校验（仅限开发环境）
-	Provider            string // "firecracker" | "docker"
-	FirecrackerBin      string
-	KernelImagePath     string
-	RootfsPath          string
-	SocketBaseDir       string
-	BootTimeoutSeconds  int
-	GuestAgentPort      uint32
-	MaxSessions         int
-	S3Endpoint          string
-	S3AccessKey         string
-	S3SecretKey         string
-	SessionStateTTLDays int
-	TemplatesPath       string
-	DockerImage         string // Docker 后端使用的 sandbox-agent 镜像
-	AllowEgress         bool
-	DockerNetwork       string // agent 容器加入的 Docker 网络（compose 桥接网络）
+	Addr                       string
+	AuthToken                  string // 服务间认证 Bearer token，空则跳过校验（仅限开发环境）
+	Provider                   string // "firecracker" | "docker"
+	FirecrackerBin             string
+	KernelImagePath            string
+	RootfsPath                 string
+	SocketBaseDir              string
+	BootTimeoutSeconds         int
+	GuestAgentPort             uint32
+	MaxSessions                int
+	S3Endpoint                 string
+	S3AccessKey                string
+	S3SecretKey                string
+	SessionStateTTLDays        int
+	TemplatesPath              string
+	DockerImage                string // Docker 后端使用的 sandbox-agent 镜像
+	AllowEgress                bool
+	DockerNetwork              string // agent 容器加入的 Docker 网络（compose 桥接网络）
 	FirecrackerEgressInterface string
 	FirecrackerTapPrefix       string
 	FirecrackerTapCIDR         string
 	FirecrackerDNS             []string
 
 	// Warm pool: 各 tier 的预热 VM 数量
-	WarmLite  int
-	WarmPro   int
-	WarmUltra int
+	WarmLite int
+	WarmPro  int
 
 	// Warm pool: 补充策略
 	RefillIntervalSeconds int
 	RefillConcurrency     int
 
 	// Session 超时: 各 tier 空闲超时（秒）
-	IdleTimeoutLite  int
-	IdleTimeoutPro   int
-	IdleTimeoutUltra int
+	IdleTimeoutLite int
+	IdleTimeoutPro  int
 
 	// Session 超时: 最大存活时间（秒），所有 tier 统一
 	MaxLifetimeSeconds int
@@ -86,20 +84,20 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:                "0.0.0.0:8002",
-		Provider:            ProviderFirecracker,
-		FirecrackerBin:      "/usr/bin/firecracker",
-		KernelImagePath:     "/opt/sandbox/vmlinux",
-		RootfsPath:          "/opt/sandbox/rootfs.ext4",
-		SocketBaseDir:       "/run/sandbox",
-		BootTimeoutSeconds:  30,
-		GuestAgentPort:      8080,
-		MaxSessions:         50,
-		SessionStateTTLDays: 7,
-		TemplatesPath:       "/opt/sandbox/templates.json",
-		DockerImage:         "arkloop/sandbox-agent:latest",
-		AllowEgress:         true,
-		DockerNetwork:       "arkloop_sandbox_agent_egress",
+		Addr:                       "0.0.0.0:8002",
+		Provider:                   ProviderFirecracker,
+		FirecrackerBin:             "/usr/bin/firecracker",
+		KernelImagePath:            "/opt/sandbox/vmlinux",
+		RootfsPath:                 "/opt/sandbox/rootfs.ext4",
+		SocketBaseDir:              "/run/sandbox",
+		BootTimeoutSeconds:         30,
+		GuestAgentPort:             8080,
+		MaxSessions:                50,
+		SessionStateTTLDays:        7,
+		TemplatesPath:              "/opt/sandbox/templates.json",
+		DockerImage:                "arkloop/sandbox-agent:latest",
+		AllowEgress:                true,
+		DockerNetwork:              "arkloop_sandbox_agent_egress",
 		FirecrackerEgressInterface: "eth0",
 		FirecrackerTapPrefix:       "arktap",
 		FirecrackerTapCIDR:         "172.29.0.0/16",
@@ -107,12 +105,10 @@ func DefaultConfig() Config {
 
 		WarmLite:              3,
 		WarmPro:               2,
-		WarmUltra:             1,
 		RefillIntervalSeconds: 5,
 		RefillConcurrency:     2,
 		IdleTimeoutLite:       180,
 		IdleTimeoutPro:        300,
-		IdleTimeoutUltra:      600,
 		MaxLifetimeSeconds:    1800,
 	}
 }
@@ -267,9 +263,6 @@ func LoadConfigFromEnv() (Config, error) {
 	if v := resolveInt("sandbox.warm_pro"); v > 0 {
 		cfg.WarmPro = v
 	}
-	if v := resolveInt("sandbox.warm_ultra"); v > 0 {
-		cfg.WarmUltra = v
-	}
 	if v := resolveInt("sandbox.refill_interval_s"); v > 0 {
 		cfg.RefillIntervalSeconds = v
 	}
@@ -281,9 +274,6 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if v := resolveInt("sandbox.idle_timeout_pro_s"); v > 0 {
 		cfg.IdleTimeoutPro = v
-	}
-	if v := resolveInt("sandbox.idle_timeout_ultra_s"); v > 0 {
-		cfg.IdleTimeoutUltra = v
 	}
 	if v := resolveInt("sandbox.max_lifetime_s"); v > 0 {
 		cfg.MaxLifetimeSeconds = v
@@ -345,9 +335,8 @@ func (c Config) Validate() error {
 // WarmSizes 返回各 tier 预热数量的 map。
 func (c Config) WarmSizes() map[string]int {
 	return map[string]int{
-		"lite":  c.WarmLite,
-		"pro":   c.WarmPro,
-		"ultra": c.WarmUltra,
+		"lite": c.WarmLite,
+		"pro":  c.WarmPro,
 	}
 }
 
@@ -356,8 +345,6 @@ func (c Config) IdleTimeoutSeconds(tier string) int {
 	switch tier {
 	case "pro":
 		return c.IdleTimeoutPro
-	case "ultra":
-		return c.IdleTimeoutUltra
 	default:
 		return c.IdleTimeoutLite
 	}
