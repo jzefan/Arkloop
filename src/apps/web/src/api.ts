@@ -345,6 +345,7 @@ export type MessageResponse = {
   content: string
   content_json?: MessageContent
   created_at: string
+  run_id?: string
 }
 
 export type UploadedThreadAttachment = {

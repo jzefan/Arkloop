@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"github.com/google/uuid"
 )
 
 func TestMessagesCreateListAndAudit(t *testing.T) {
@@ -173,5 +175,110 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	}
 	if deniedListCount != 1 {
 		t.Fatalf("unexpected denied list audit count: %d", deniedListCount)
+	}
+}
+
+func TestMessagesListIncludesAssistantRunID(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_messages_run_id")
+
+	ctx := context.Background()
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, _ := data.NewUserRepository(pool)
+	credentialRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	auditRepo, _ := data.NewAuditLogRepository(pool)
+	threadRepo, _ := data.NewThreadRepository(pool)
+	messageRepo, _ := data.NewMessageRepository(pool)
+	jobRepo, _ := data.NewJobRepository(pool)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+
+	handler := NewHandler(HandlerConfig{
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		OrgMembershipRepo:   membershipRepo,
+		ThreadRepo:          threadRepo,
+		MessageRepo:         messageRepo,
+		AuditWriter:         auditWriter,
+	})
+
+	aliceRegister := doJSON(
+		handler,
+		nethttp.MethodPost,
+		"/v1/auth/register",
+		map[string]any{"login": "alice-run-id", "password": "pwdpwdpwd", "email": "alice-run-id@test.com"},
+		nil,
+	)
+	if aliceRegister.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected register status: %d body=%s", aliceRegister.Code, aliceRegister.Body.String())
+	}
+	alice := decodeJSONBody[registerResponse](t, aliceRegister.Body.Bytes())
+	aliceHeaders := authHeader(alice.AccessToken)
+
+	threadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "t"}, aliceHeaders)
+	if threadResp.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected create thread status: %d body=%s", threadResp.Code, threadResp.Body.String())
+	}
+	threadPayload := decodeJSONBody[threadResponse](t, threadResp.Body.Bytes())
+	threadID, err := uuid.Parse(threadPayload.ID)
+	if err != nil {
+		t.Fatalf("parse thread id: %v", err)
+	}
+	orgID, err := uuid.Parse(threadPayload.OrgID)
+	if err != nil {
+		t.Fatalf("parse org id: %v", err)
+	}
+	runID := uuid.New()
+	metadataRaw, err := json.Marshal(map[string]any{"run_id": runID.String()})
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	_, err = pool.Exec(
+		ctx,
+		`INSERT INTO messages (org_id, thread_id, created_by_user_id, role, content, metadata_json)
+		 VALUES ($1, $2, NULL, 'assistant', $3, $4::jsonb)`,
+		orgID,
+		threadID,
+		"hello from assistant",
+		string(metadataRaw),
+	)
+	if err != nil {
+		t.Fatalf("insert assistant: %v", err)
+	}
+
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+threadPayload.ID+"/messages", nil, aliceHeaders)
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected list messages status: %d body=%s", listResp.Code, listResp.Body.String())
+	}
+	listPayload := decodeJSONBody[[]messageResponse](t, listResp.Body.Bytes())
+	if len(listPayload) != 1 {
+		t.Fatalf("unexpected list payload: %#v", listPayload)
+	}
+	if listPayload[0].RunID == nil || *listPayload[0].RunID != runID.String() {
+		t.Fatalf("unexpected assistant run_id: %#v", listPayload[0])
 	}
 }

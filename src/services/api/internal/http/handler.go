@@ -100,6 +100,7 @@ type HandlerConfig struct {
 
 	ArtifactStore          artifactStore
 	MessageAttachmentStore messageAttachmentStore
+	EnvironmentStore       environmentStore
 
 	EmailFrom string
 
@@ -130,6 +131,10 @@ type messageAttachmentStore interface {
 	Head(ctx context.Context, key string) (objectstore.ObjectInfo, error)
 	GetWithContentType(ctx context.Context, key string) ([]byte, string, error)
 	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
+}
+
+type environmentStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
@@ -225,6 +230,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux.HandleFunc(
 		"/v1/runs/",
 		runEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, cfg.DirectPool, cfg.DirectPoolAcquireTimeout, sseConfig, cfg.APIKeysRepo, resolver, cfg.RedisClient),
+	)
+	mux.HandleFunc(
+		"GET /v1/workspace-files",
+		workspaceFilesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.EnvironmentStore),
 	)
 
 	mux.HandleFunc(

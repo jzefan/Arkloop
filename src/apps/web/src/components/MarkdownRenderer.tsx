@@ -14,10 +14,12 @@ import { ArtifactImage } from './ArtifactImage'
 import { ArtifactHtmlPreview } from './ArtifactHtmlPreview'
 import { ArtifactDownload } from './ArtifactDownload'
 import { MindmapBlock } from './MindmapBlock'
+import { WorkspaceResource, type WorkspaceFileRef } from './WorkspaceResource'
 
 type ArtifactsContextValue = {
   artifacts: ArtifactRef[]
   accessToken: string
+  runId?: string
   onOpenDocument?: (artifact: ArtifactRef) => void
 }
 
@@ -46,10 +48,11 @@ function normalizeLatexDelimiters(content: string): string {
 }
 
 const ARTIFACT_PREFIX = 'artifact:'
+const WORKSPACE_PREFIX = 'workspace:'
 
-// react-markdown v10 的 defaultUrlTransform 会过滤非标准协议，需要放行 artifact:
+// react-markdown v10 的 defaultUrlTransform 会过滤非标准协议，需要放行 artifact:/workspace:
 const artifactUrlTransform: UrlTransform = (url) => {
-  if (url.startsWith(ARTIFACT_PREFIX)) return url
+  if (url.startsWith(ARTIFACT_PREFIX) || url.startsWith(WORKSPACE_PREFIX)) return url
   return defaultUrlTransform(url)
 }
 
@@ -60,7 +63,10 @@ function findArtifactByKey(artifacts: ArtifactRef[], key: string): ArtifactRef |
 const EXT_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   svg: 'image/svg+xml', webp: 'image/webp', html: 'text/html', htm: 'text/html',
-  pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain',
+  pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain', md: 'text/markdown',
+  json: 'application/json', log: 'text/plain', py: 'text/x-python', ts: 'text/typescript',
+  tsx: 'text/typescript', js: 'text/javascript', jsx: 'text/javascript', sh: 'text/x-shellscript',
+  yml: 'text/yaml', yaml: 'text/yaml', xml: 'application/xml', sql: 'text/plain', go: 'text/plain',
 }
 
 function guessMimeType(key: string): string {
@@ -68,33 +74,39 @@ function guessMimeType(key: string): string {
   return EXT_MIME[ext] ?? 'application/octet-stream'
 }
 
+function buildWorkspaceFileRef(path: string): WorkspaceFileRef {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return {
+    path: normalizedPath,
+    filename: normalizedPath.split('/').pop() ?? normalizedPath,
+    mime_type: guessMimeType(normalizedPath),
+  }
+}
+
 // artifact: 协议感知的 img 渲染器
 function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
-  const { artifacts, accessToken, onOpenDocument } = useContext(ArtifactsContext)
+  const { artifacts, accessToken, runId, onOpenDocument } = useContext(ArtifactsContext)
 
   if (src?.startsWith(ARTIFACT_PREFIX)) {
     const key = src.slice(ARTIFACT_PREFIX.length)
     const artifact = findArtifactByKey(artifacts, key)
 
-    // 从 key 推断的回退 artifact（当 SSE 事件尚未到达或 artifacts 为空时）
-    const resolved: ArtifactRef = artifact ?? {
-      key,
-      filename: key.split('/').pop() ?? key,
-      size: 0,
-      mime_type: guessMimeType(key),
-    }
+    if (!artifact || !accessToken) return null
 
-    if (!accessToken) return null
+    if (artifact.mime_type.startsWith('image/')) {
+      return <ArtifactImage artifact={artifact} accessToken={accessToken} />
+    }
+    if (artifact.mime_type === 'text/html') {
+      return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
+    }
+    if (onOpenDocument && isDocumentArtifact(artifact)) return null
+    return <ArtifactDownload artifact={artifact} accessToken={accessToken} />
+  }
 
-    if (resolved.mime_type.startsWith('image/')) {
-      return <ArtifactImage artifact={resolved} accessToken={accessToken} />
-    }
-    if (resolved.mime_type === 'text/html') {
-      return <ArtifactHtmlPreview artifact={resolved} accessToken={accessToken} />
-    }
-    // 文档类型：有面板回调时抑制内联渲染（顶部卡片是唯一入口）
-    if (onOpenDocument && isDocumentArtifact(resolved)) return null
-    return <ArtifactDownload artifact={resolved} accessToken={accessToken} />
+  if (src?.startsWith(WORKSPACE_PREFIX)) {
+    const file = buildWorkspaceFileRef(src.slice(WORKSPACE_PREFIX.length))
+    if (!accessToken || !runId) return alt ? <span>{alt}</span> : null
+    return <WorkspaceResource file={file} runId={runId} accessToken={accessToken} />
   }
 
   return <img src={src} alt={alt ?? ''} style={{ maxWidth: '100%', borderRadius: '8px' }} />
@@ -102,31 +114,30 @@ function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
 
 // artifact: 协议感知的 a 渲染器
 function ArtifactAwareLink({ href, children }: { href?: string; children?: ReactNode }) {
-  const { artifacts, accessToken, onOpenDocument } = useContext(ArtifactsContext)
+  const { artifacts, accessToken, runId, onOpenDocument } = useContext(ArtifactsContext)
 
   if (href?.startsWith(ARTIFACT_PREFIX)) {
     const key = href.slice(ARTIFACT_PREFIX.length)
     const artifact = findArtifactByKey(artifacts, key)
 
-    const resolved: ArtifactRef = artifact ?? {
-      key,
-      filename: key.split('/').pop() ?? key,
-      size: 0,
-      mime_type: guessMimeType(key),
-    }
-
-    if (!accessToken) return null
+    if (!artifact || !accessToken) return <>{children}</>
 
     // LLM 可能用 [text](artifact:key) 而非 ![text](artifact:key)，统一按 mime_type 分派
-    if (resolved.mime_type.startsWith('image/')) {
-      return <ArtifactImage artifact={resolved} accessToken={accessToken} />
+    if (artifact.mime_type.startsWith('image/')) {
+      return <ArtifactImage artifact={artifact} accessToken={accessToken} />
     }
-    if (resolved.mime_type === 'text/html') {
-      return <ArtifactHtmlPreview artifact={resolved} accessToken={accessToken} />
+    if (artifact.mime_type === 'text/html') {
+      return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
     }
     // 文档类型：有面板回调时抑制内联渲染（顶部卡片是唯一入口）
-    if (onOpenDocument && isDocumentArtifact(resolved)) return null
-    return <ArtifactDownload artifact={resolved} accessToken={accessToken} />
+    if (onOpenDocument && isDocumentArtifact(artifact)) return null
+    return <ArtifactDownload artifact={artifact} accessToken={accessToken} />
+  }
+
+  if (href?.startsWith(WORKSPACE_PREFIX)) {
+    const file = buildWorkspaceFileRef(href.slice(WORKSPACE_PREFIX.length))
+    if (!accessToken || !runId) return <>{children}</>
+    return <WorkspaceResource file={file} runId={runId} accessToken={accessToken} />
   }
 
   return (
@@ -489,11 +500,12 @@ type Props = {
   webSources?: WebSource[]
   artifacts?: ArtifactRef[]
   accessToken?: string
+  runId?: string
   onOpenDocument?: (artifact: ArtifactRef) => void
   compact?: boolean
 }
 
-export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, onOpenDocument, compact = false }: Props) {
+export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false }: Props) {
   const remarkPlugins = disableMath
     ? [remarkGfm]
     : [remarkGfm, remarkMath]
@@ -509,6 +521,7 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
   const artifactsValue: ArtifactsContextValue = {
     artifacts: artifacts ?? [],
     accessToken: accessToken ?? '',
+    runId,
     onOpenDocument,
   }
 

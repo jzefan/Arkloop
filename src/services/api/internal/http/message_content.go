@@ -45,6 +45,7 @@ type messageResponse struct {
 	OrgID           string          `json:"org_id"`
 	ThreadID        string          `json:"thread_id"`
 	CreatedByUserID *string         `json:"created_by_user_id"`
+	RunID           *string         `json:"run_id,omitempty"`
 	Role            string          `json:"role"`
 	Content         string          `json:"content"`
 	ContentJSON     json.RawMessage `json:"content_json,omitempty"`

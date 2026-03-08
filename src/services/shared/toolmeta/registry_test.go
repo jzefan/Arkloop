@@ -1,6 +1,8 @@
 package toolmeta
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,5 +21,29 @@ func TestSandboxToolDescriptionsExplainWorkspaceAndArtifacts(t *testing.T) {
 	stdinDesc := Must("write_stdin").LLMDescription
 	if !strings.Contains(stdinDesc, "session_ref") || !strings.Contains(stdinDesc, "/workspace") {
 		t.Fatalf("write_stdin description should mention session_ref and /workspace: %s", stdinDesc)
+	}
+
+	for _, desc := range []string{python, execDesc, stdinDesc} {
+		if !strings.Contains(desc, "workspace:/relative/path") {
+			t.Fatalf("sandbox tool description should mention workspace protocol: %s", desc)
+		}
+		if !strings.Contains(desc, "Never invent artifact keys") {
+			t.Fatalf("sandbox tool description should forbid invented artifact keys: %s", desc)
+		}
+	}
+}
+
+func TestSearchOutputPromptExplainsWorkspaceAndArtifactRules(t *testing.T) {
+	promptPath := filepath.Join("..", "..", "..", "personas", "search-output", "prompt.md")
+	body, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt: %v", err)
+	}
+	content := string(body)
+	if !strings.Contains(content, "workspace:/path") {
+		t.Fatalf("prompt should mention workspace protocol: %s", content)
+	}
+	if !strings.Contains(content, "禁止根据 stdout、stderr、本地路径或文件名臆造新的 `artifact:<key>` 或 `workspace:/path`") {
+		t.Fatalf("prompt should forbid invented file references: %s", content)
 	}
 }

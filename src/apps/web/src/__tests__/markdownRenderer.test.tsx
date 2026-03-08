@@ -3,12 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
 import type { WebSource } from '../storage'
 
-function renderMarkdown(content: string, options?: { webSources?: WebSource[]; disableMath?: boolean }): string {
+function renderMarkdown(content: string, options?: { webSources?: WebSource[]; disableMath?: boolean; accessToken?: string; runId?: string }): string {
   return renderToStaticMarkup(
     <MarkdownRenderer
       content={content}
       webSources={options?.webSources}
       disableMath={options?.disableMath}
+      accessToken={options?.accessToken}
+      runId={options?.runId}
     />,
   )
 }
@@ -87,5 +89,28 @@ describe('MarkdownRenderer', () => {
   it('disableMath 时不应转换 \\[...\\] 定界符', () => {
     const html = renderMarkdown('\\[a^2\\]', { disableMath: true })
     expect(html).not.toContain('class="katex"')
+  })
+
+  it('artifact 查不到真实 key 时不应再猜测伪文件', () => {
+    const html = renderMarkdown('![图表](artifact:missing.png)', { accessToken: 'token' })
+
+    expect(html).not.toContain('missing.png')
+    expect(html).not.toContain('artifact:missing.png')
+  })
+
+  it('应识别 workspace 图片引用并渲染按需预览占位', () => {
+    const html = renderMarkdown('![图表](workspace:/charts/study.png)', { accessToken: 'token', runId: 'run-1' })
+
+    expect(html).toContain('data-workspace-kind="loading"')
+    expect(html).toContain('data-workspace-preview="image"')
+    expect(html).toContain('study.png')
+  })
+
+  it('应识别 workspace 文本引用并渲染按需预览占位', () => {
+    const html = renderMarkdown('[代码](workspace:/notes/example.py)', { accessToken: 'token', runId: 'run-1' })
+
+    expect(html).toContain('data-workspace-kind="loading"')
+    expect(html).toContain('data-workspace-preview="text"')
+    expect(html).toContain('example.py')
   })
 })
