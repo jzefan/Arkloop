@@ -130,15 +130,3 @@ jobs:
 
       - name: Test (console)
         run: pnpm --filter console test
-
-      - name: Install browser dependencies
-        working-directory: src/services/browser
-        run: pnpm install --frozen-lockfile
-
-      - name: Type check (browser)
-        working-directory: src/services/browser
-        run: pnpm type-check
-
-      - name: Test (browser)
-        working-directory: src/services/browser
-        run: pnpm test

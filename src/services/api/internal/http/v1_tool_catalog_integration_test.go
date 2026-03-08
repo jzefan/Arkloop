@@ -109,7 +109,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 		t.Fatalf("list: %d %s", listResp.Code, listResp.Body.String())
 	}
 	catalog := decodeJSONBody[toolCatalogResponse](t, listResp.Body.Bytes())
-	for _, groupName := range []string{"web_search", "web_fetch", "sandbox", "memory", "browser", "document", "orchestration", "internal"} {
+	for _, groupName := range []string{"web_search", "web_fetch", "sandbox", "memory", "document", "orchestration", "internal"} {
 		if _, ok := findCatalogGroup(catalog, groupName); !ok {
 			t.Fatalf("missing group %s", groupName)
 		}
@@ -392,10 +392,6 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 			t.Fatalf("missing effective tool %s/%s", toolName.group, toolName.name)
 		}
 	}
-	if _, ok := findCatalogGroup(catalog, "browser"); ok {
-		t.Fatal("browser group should be absent from effective catalog")
-	}
-
 	item, ok := findCatalogTool(catalog, "mcp", "mcp__env_demo__tools_list_tool")
 	if !ok {
 		t.Fatal("expected env mcp tool")

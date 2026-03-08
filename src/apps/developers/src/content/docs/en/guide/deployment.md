@@ -18,7 +18,6 @@ Arkloop orchestrates all services via `compose.yaml`, enabling a full deployment
 | `gateway` | Reverse Proxy + Rate Limiting | 8000 |
 | `worker` | Job Worker (Agent Execution Plane) | — |
 | `sandbox` | Code Sandbox (Firecracker / Docker) | 8002 |
-| `browser` | Browser Service (Playwright) | 3100 |
 | `openviking` | Vector Memory Service | 1933 |
 
 Startup order is guaranteed by `depends_on`: postgres → pgbouncer → migrate → api/worker → gateway, and redis → api/gateway/worker.

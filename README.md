@@ -44,7 +44,7 @@ docker compose up -d
 
 Once all services are healthy, access the web interface at `http://localhost:8000`.
 
-For host-level debugging ports such as PostgreSQL, API, Browser, Sandbox, or OpenViking, opt in explicitly:
+For host-level debugging ports such as PostgreSQL, API, Sandbox, or OpenViking, opt in explicitly:
 
 ```bash
 docker compose -f compose.yaml -f compose.dev.yaml up -d
@@ -63,8 +63,8 @@ Deep web search that synthesizes sources into structured answers with citations.
 **3. Sandboxed Code Execution**
 Isolated execution environments powered by Firecracker microVMs or Docker containers. Supports Python, data analysis, chart generation, and file operations with strict resource limits.
 
-**4. Browser Automation**
-Headless browser control integrated as a native agent tool. Web interaction, data extraction, and screenshot capture via Playwright.
+**4. Tool Providers**
+Unified provider management for search and fetch tools. Configure platform defaults and org-level overrides without changing agent prompts.
 
 **5. Custom Personas**
 Define specialized agent configurations with distinct system prompts, tool sets, and behavioral tiers. Switch between general-purpose, research-focused, and domain-specific modes.
@@ -83,7 +83,6 @@ Admin dashboard for user management, persona configuration, LLM credential manag
 | Gateway | Go | Reverse proxy, rate limiting, risk scoring, geo-IP |
 | Worker | Go | Job execution, LLM routing, tool dispatch, persona management |
 | Sandbox | Go | Code execution in Firecracker VMs or Docker containers |
-| Browser | Node.js | Playwright-based headless browser automation |
 | Web | React / TypeScript | User-facing chat interface |
 | Console | React / TypeScript | Platform administration dashboard |
 

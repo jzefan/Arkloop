@@ -1640,7 +1640,7 @@ v1 可以先简化为：
 - `reasoning_iterations`
   - 真正的模型主循环预算
 - `tool_continuation_budget`
-  - shell / browser / 其他长任务 continuation 预算
+  - shell / 其他长任务 continuation 预算
 - `per_tool_soft_limits`
   - 单命令最多 continuation 次数
   - 单次 continuation 最长等待时间

@@ -19,10 +19,9 @@ docker compose -f compose.bench.yaml -p arkloop-bench up -d
 - bench 默认端口：
   - Gateway：`http://127.0.0.1:8005`
   - API：`http://127.0.0.1:8006`
-  - Browser：`http://127.0.0.1:3105`（可选，需开启 tools profile）
   - Postgres：`127.0.0.1:5437`（用于 bench 自动注册/bootstrapping）
-- baseline suite 只跑核心链路（Gateway / API / Worker + stub LLM），不包含 Browser / Sandbox / OpenViking 等工具压测
-- Browser / OpenViking / Sandbox 各自用独立子命令压测（避免 baseline 被未接入/外部依赖拖垮）
+- baseline suite 只跑核心链路（Gateway / API / Worker + stub LLM），不包含 Sandbox / OpenViking 等外部能力压测
+- OpenViking 使用独立子命令压测，避免 baseline 被外部依赖拖垮
 
 bench 自动注册依赖 `DATABASE_URL`（连到 bench 的 Postgres）：
 
@@ -88,16 +87,6 @@ go run ./tests/bench/cmd/bench baseline \
   -out docs/benchmark/baseline-2026-03-03.json
 ```
 
-单独压测 Browser（Playwright 工具服务，仅用于回归/容量评估，和 sandbox 同级，不代表已接入 worker 链路）：
-
-```bash
-# 启动 browser（tools profile）
-docker compose -f compose.bench.yaml -p arkloop-bench --profile tools up -d
-
-go run ./tests/bench/cmd/bench browser \
-  -out /tmp/arkloop-browser.json
-```
-
 ## Interpretation
 
 - 输出为 JSON，`overall_pass=false` 时进程退出码为 1
@@ -107,7 +96,6 @@ go run ./tests/bench/cmd/bench browser \
 - `api_crud.stats.pg_stat_activity_max_total` / `api_crud.stats.pg_stat_activity_max_active`：压测期间 DB 连接数峰值（需要 `DATABASE_URL` 或 `-db-dsn`）
 - `worker_runs.stats.pg_stat_activity_max_total` / `worker_runs.stats.pg_stat_activity_max_active`：同上
 - `*.stats.net_error_kinds`：网络错误类型聚合（便于区分超时/拒绝/重置等）
-- `browser_navigate.stats.docker_memory_start` / `browser_navigate.stats.docker_memory` 为开始/结束采样值（非峰值）。如需记录峰值，建议旁路运行 `docker stats` 观察，并把峰值写入基线文件顶层 `manual_notes`（例如 `{"browser_memory_peak":"2.8GiB"}`）。仅在 `bench browser` 时出现
 
 ## OpenViking
 
@@ -122,6 +110,5 @@ OpenViking 的压测默认不在 baseline suite 中执行，避免触发外部 e
 
 - `gateway.not_ready` / `api.not_ready` / `openviking.not_ready`：服务未就绪（检查对应服务 `/healthz` 或 OpenViking `/health`）
 - `gateway_ratelimit` 返回 404：确认 Gateway 已启用 `/benchz`（bench compose 默认设置 `ARKLOOP_GATEWAY_ENABLE_BENCHZ=true`），并可直接 `curl http://127.0.0.1:8005/benchz` 验证
-- `browser.not_ready`：仅在 `bench browser` 时出现（检查 browser `/healthz`，或确认已开启 tools profile）
 - `auth.register.code.auth.invite_code_required`：注册模式为 invite_only（需要配置 `registration.open=true` 或提供邀请码/显式 token）
 - `worker_runs.runs_create_failed` 很高：通常是 `limit.concurrent_runs` 太低或 Worker 未消费队列

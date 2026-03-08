@@ -9,7 +9,6 @@ This document describes Arkloop's Run execution topology and service boundaries.
 - **Worker**: Executing Agent Loop, tool calls, event writing
 - **Gateway**: Reverse proxy, rate limiting, access logs
 - **Sandbox**: Code execution in Firecracker microVMs
-- **Browser**: Playwright browser automation
 - `run_events` as the single source of truth
 
 ## 1. Current Topology
@@ -24,9 +23,9 @@ Client (Web/CLI) --HTTP+SSE--> API (Go, Control Plane)
                         Worker (Go, Execution Plane) --lease jobs--> PostgreSQL
                                  |
                         +--------+--------+--------+
-                        |        |        |        |
-                     LLM API   MCP    Sandbox   Browser
-                  (OpenAI/     Server  (Firecracker) (Playwright)
+                        |        |        |
+                     LLM API   MCP    Sandbox
+                  (OpenAI/     Server  (Firecracker)
                    Anthropic)
 ```
 
@@ -135,7 +134,6 @@ Persona configuration fields: `id`, `executor_type`, `executor_config`, `tool_al
 | `web_search` | Search (execution backend can be overridden by Console's Tool Providers config) |
 | `web_fetch` | Fetch (execution backend can be overridden by Console's Tool Providers config) |
 | `sandbox` | Code execution (Firecracker microVM) |
-| `browser` | Browser automation (Playwright) |
 | `spawn_agent` | Spawning child Agent runs |
 | `summarize_thread` | Conversation summary |
 | `echo` | Echo for testing |
@@ -194,13 +192,7 @@ Firecracker microVM code execution:
 - Called by Worker via `ARKLOOP_SANDBOX_BASE_URL`
 - Isolated execution of user code
 
-### 9.3 Browser (`src/services/browser/`)
-
-Node.js + Playwright browser automation:
-- Called by Worker via `ARKLOOP_BROWSER_BASE_URL`
-- Used for `web_fetch` rendering and the `browser` tool
-
-### 9.4 OpenViking (External Service)
+### 9.3 OpenViking (External Service)
 
 User memory system:
 - Called by Worker via `ARKLOOP_OPENVIKING_BASE_URL` + `ARKLOOP_OPENVIKING_ROOT_API_KEY`
@@ -244,7 +236,6 @@ Workers register their capabilities and versions in the `worker_registrations` t
 | `ARKLOOP_TOOL_PROVIDER_CACHE_TTL_SECONDS` | Tool Provider cache TTL (default 60) |
 | `ARKLOOP_LLM_DEBUG_EVENTS` | Debug events toggle |
 | `ARKLOOP_SANDBOX_BASE_URL` | Sandbox service address |
-| `ARKLOOP_BROWSER_BASE_URL` | Browser service address |
 | `ARKLOOP_OPENVIKING_BASE_URL` | Memory system address |
 | `ARKLOOP_OPENVIKING_ROOT_API_KEY` | Memory system key |
 | `ARKLOOP_ENCRYPTION_KEY` | Credential decryption key |

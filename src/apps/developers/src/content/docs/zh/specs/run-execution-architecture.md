@@ -9,7 +9,6 @@
 - **Worker**：执行 Agent Loop、工具调用、事件写入
 - **Gateway**：反向代理、速率限制、访问日志
 - **Sandbox**：Firecracker 微虚拟机代码执行
-- **Browser**：Playwright 浏览器自动化
 - `run_events` 作为唯一真相
 
 ## 1. 当前拓扑
@@ -24,9 +23,9 @@ Client (Web/CLI) --HTTP+SSE--> API (Go, 控制面)
                         Worker (Go, 执行面) --lease jobs--> PostgreSQL
                                  |
                         +--------+--------+--------+
-                        |        |        |        |
-                     LLM API   MCP    Sandbox   Browser
-                  (OpenAI/     Server  (Firecracker) (Playwright)
+                        |        |        |
+                     LLM API   MCP    Sandbox
+                  (OpenAI/     Server  (Firecracker)
                    Anthropic)
 ```
 
@@ -135,7 +134,6 @@ Persona 配置字段：`id`、`executor_type`、`executor_config`、`tool_allowl
 | `web_search` | 搜索（执行后端可由 Console 的 Tool Providers 配置覆盖） |
 | `web_fetch` | 抓取（执行后端可由 Console 的 Tool Providers 配置覆盖） |
 | `sandbox` | 代码执行（Firecracker 微虚拟机） |
-| `browser` | 浏览器自动化（Playwright） |
 | `spawn_agent` | 生成子 Agent run |
 | `summarize_thread` | 会话摘要 |
 | `echo` | 测试回声 |
@@ -194,13 +192,7 @@ Firecracker 微虚拟机代码执行：
 - Worker 通过 `ARKLOOP_SANDBOX_BASE_URL` 调用
 - 隔离执行用户代码
 
-### 9.3 Browser（`src/services/browser/`）
-
-Node.js + Playwright 浏览器自动化：
-- Worker 通过 `ARKLOOP_BROWSER_BASE_URL` 调用
-- 用于 `web_fetch` 渲染和 `browser` 工具
-
-### 9.4 OpenViking（外部服务）
+### 9.3 OpenViking（外部服务）
 
 用户记忆系统：
 - Worker 通过 `ARKLOOP_OPENVIKING_BASE_URL` + `ARKLOOP_OPENVIKING_ROOT_API_KEY` 调用
@@ -244,7 +236,6 @@ Worker 启动时向 `worker_registrations` 表注册能力与版本。
 | `ARKLOOP_TOOL_PROVIDER_CACHE_TTL_SECONDS` | Tool Provider 缓存 TTL（默认 60） |
 | `ARKLOOP_LLM_DEBUG_EVENTS` | 调试事件开关 |
 | `ARKLOOP_SANDBOX_BASE_URL` | Sandbox 服务地址 |
-| `ARKLOOP_BROWSER_BASE_URL` | Browser 服务地址 |
 | `ARKLOOP_OPENVIKING_BASE_URL` | 记忆系统地址 |
 | `ARKLOOP_OPENVIKING_ROOT_API_KEY` | 记忆系统密钥 |
 | `ARKLOOP_ENCRYPTION_KEY` | 凭证解密密钥 |

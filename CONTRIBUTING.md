@@ -48,7 +48,6 @@ src/
     gateway/      # Reverse proxy (Go)
     worker/       # Job execution engine (Go)
     sandbox/      # Code execution sandbox (Go)
-    browser/      # Browser automation (Node.js)
     shared/       # Shared Go libraries
   personas/       # Agent persona templates
   docs/           # Documentation (VitePress)

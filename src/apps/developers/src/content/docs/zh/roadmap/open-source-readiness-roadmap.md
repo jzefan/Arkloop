@@ -24,7 +24,7 @@
 
 **Worker 执行引擎**：Pipeline 中间件链、Executor 注册表（SimpleExecutor / InteractiveExecutor / ClassifyRouteExecutor / LuaExecutor）、Personas（YAML + DB 双源）、MCP 连接池、Provider 路由（when 条件匹配 + default fallback）、Human-in-the-loop（WaitForInput + input_requested）、Sub-agent Spawning（parent_run_id + spawn_agent tool）、Memory System（OpenViking 适配 + memory_search/read/write/forget tool）、Cost Budget 追踪（RunContext.ToolBudget 预留，执行侧未强制）。
 
-**独立服务**：Sandbox（Firecracker microVM + Warm Pool + Snapshot + MinIO 持久化）、Browser Service（Playwright + Session Manager + BrowserPool）、OpenViking（Python HTTP 记忆服务）。
+**独立服务**：Sandbox（Firecracker microVM + Warm Pool + Snapshot + MinIO 持久化）、OpenViking（Python HTTP 记忆服务）。
 
 **前端**：Web App（React + Vite + TypeScript）、Console（React 管理后台，含运营/配置/集成/安全/组织/计费/平台八大模块）、CLI（参考客户端）。
 
@@ -38,7 +38,7 @@
 
 **P2 -- Scope 解析不一致**
 
-Agent Config 走 thread -> project -> org -> platform 四级解析；ASR Credentials 走 org -> platform 两级；web_search/email 只读 platform_settings 不区分 org；browser/sandbox 构造函数注入无动态解析。同一系统内 scope 解析有四种写法，新模块无从参考。
+Agent Config 走 thread -> project -> org -> platform 四级解析；ASR Credentials 走 org -> platform 两级；web_search/email 只读 platform_settings 不区分 org；sandbox 构造函数注入无动态解析。同一系统内 scope 解析有四种写法，新模块无从参考。
 
 **P3 -- Tool Provider 管理缺失**
 
@@ -82,7 +82,7 @@ Gateway 和 API 的全部 Go 代码中不存在任何 CORS 处理逻辑（`Acces
 
 **P13 -- Docker 构建缺少 .dockerignore**
 
-五个 Dockerfile 均存在（api、gateway、worker、sandbox、browser），但仓库中没有任何 `.dockerignore` 文件。Docker build context 会包含 `.env`（含真实密钥）、`.git/`（整个历史）、`node_modules/` 等。开源用户按文档 `docker compose up --build` 时可能无意间把密钥打进镜像，且构建时间和镜像体积都会不必要地膨胀。
+四个 Dockerfile 均存在（api、gateway、worker、sandbox），但仓库中没有任何 `.dockerignore` 文件。Docker build context 会包含 `.env`（含真实密钥）、`.git/`（整个历史）、`node_modules/` 等。开源用户按文档 `docker compose up --build` 时可能无意间把密钥打进镜像，且构建时间和镜像体积都会不必要地膨胀。
 
 **P14 -- 测试覆盖率严重不足**
 
@@ -239,8 +239,6 @@ CREATE TABLE org_settings (
 | `credit.invite_reward` | entitlement resolve.go | 500 | platform |
 | `credit.per_usd` | handler_agent_loop.go | 1000 | platform |
 | `llm.max_response_bytes` | anthropic.go | 16384 | platform |
-| `browser.max_body_bytes` | server.ts | 1048576 | platform |
-| `browser.context_max_lifetime_s` | config.ts | 1800 | platform |
 | `sandbox.idle_timeout_lite_s` | .env | 180 | platform |
 | `sandbox.idle_timeout_pro_s` | .env | 300 | platform |
 | `sandbox.idle_timeout_ultra_s` | .env | 600 | platform |
@@ -396,18 +394,11 @@ packages:
 - 子轨道 A：LLM 原生 thinking 输出分离到 `channel: "thinking"` 事件
 - 子轨道 B：`run.segment.start/end` 事件，Agent 级执行过程分组
 
-### E6 -- Browser SSRF 防护（AS-7.5）
-
-状态：Browser Service 基础功能完整，SSRF 防护未实现。
-
-内容：Playwright route 拦截内网地址（RFC 1918/4193/6890），阻断 SSRF 攻击路径。
-
 ### E7 -- 可扩展性与性能基线（AS-12）
 
 状态：未实现。
 
 内容：
-- AS-12.1：Browser Service 横向扩展路径（Session Affinity vs Stateless Mode 决策）
 - AS-12.2：Sandbox 多节点调度接口（SandboxClient 抽象）
 - AS-12.3：MCP Pool 运行时指标暴露
 - AS-12.4：OpenViking 容量基线压测
@@ -883,7 +874,7 @@ GitHub Actions 配置，触发条件：PR 和 main 分支 push。
 - `pnpm lint`（ESLint）
 - `pnpm type-check`（tsc --noEmit）
 - `pnpm test`（Vitest）
-- 对 web、console、browser、shared 各自运行
+- 对 web、console、shared 各自运行
 
 **数据库**：
 - Migration 前进/回滚测试（apply all -> rollback all -> reapply）
@@ -1092,8 +1083,7 @@ Track E（Agent System 未完成）—— 各项独立
   E2 → E3（Memory 提炼 → 测试）
   E4（Cost Budget）
   E5（Thinking 协议）
-  E6（Browser SSRF）
-  E7（性能基线，依赖 E6）
+  E7（性能基线）
 
 Track F（插件体系 / OpenCore-BusinessCore 分离）—— 依赖 Track A（配置集成）
   F0（设计决策）
@@ -1156,8 +1146,7 @@ Track H（开源发布与治理）—— 与 A/G 并行，发布前必须收敛
 - **无插件时系统完整可用**：所有扩展点有 OSS 默认实现。商业插件只做能力增强，不做功能阉割。
 - **CI 不阻塞开发**：CI 失败产生警告，不阻塞合并（开源发布前切换为强制门禁）。
 - **旧 roadmap 归档不删除**：三份旧 roadmap 保留作为历史参考，不再新增内容。所有新工作在本文档中追踪。
-- **Browser SSRF 在开源前必须完成**：这是安全底线，不可妥协。
-- **沿用已有决策**：agent-system-roadmap 中第 16 节的所有不变量继续生效（Sandbox 独立服务、Executor 注册表、Memory 降级策略、Model 优先级链、Sub-agent 层级限制、Thinking 渲染协议、Browser Service 独立部署、Tool Provider 双名机制、Lua Executor 选型等）。
+- **沿用已有决策**：agent-system-roadmap 中第 16 节的所有不变量继续生效（Sandbox 独立服务、Executor 注册表、Memory 降级策略、Model 优先级链、Sub-agent 层级限制、Thinking 渲染协议、Tool Provider 双名机制、Lua Executor 选型等）。
 - **开源仓库标准文件齐备**：`LICENSE`、`README.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md` 为开源发布前置条件。
 - **最小可运行集优先**：默认发布的“最小部署 profile”不得依赖 KVM/特权容器；Sandbox 等高依赖能力必须显式启用。
 - **CORS 在开源前必须完成**：没有 CORS 中间件，前后端分离部署无法工作。这是“项目能跑起来”的前提。

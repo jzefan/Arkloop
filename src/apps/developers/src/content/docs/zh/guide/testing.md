@@ -51,7 +51,6 @@ docker compose -f compose.bench.yaml -p arkloop-bench up -d
 |------|------|
 | Gateway | `http://127.0.0.1:8005` |
 | API | `http://127.0.0.1:8006` |
-| Browser | `http://127.0.0.1:3105`（可选，`--profile tools`） |
 | Postgres | `127.0.0.1:5437` |
 
 设置 `DATABASE_URL` 以启用自动注册和 `pg_stat_activity` 采集：
@@ -74,15 +73,6 @@ go run ./tests/bench/cmd/bench baseline \
   -include-openviking \
   -openviking-root-key "$ARKLOOP_OPENVIKING_ROOT_API_KEY" \
   -out /tmp/arkloop-baseline.json
-```
-
-仅浏览器基准：
-
-```bash
-docker compose -f compose.bench.yaml -p arkloop-bench --profile tools up -d
-
-go run ./tests/bench/cmd/bench browser \
-  -out /tmp/arkloop-browser.json
 ```
 
 ### 结果解读
@@ -120,6 +110,5 @@ ARKLOOP_WORKER_CONCURRENCY=50
 |------|------|
 | `gateway.not_ready` / `api.not_ready` | 服务未就绪，检查 `/healthz` |
 | `gateway_ratelimit` 返回 404 | 未设置 `ARKLOOP_GATEWAY_ENABLE_BENCHZ`（bench compose 默认启用） |
-| `browser.not_ready` | Browser 服务未启动，需启用 `--profile tools` |
 | `auth.register.code.auth.invite_code_required` | 注册需要邀请码，使用 `-force-open-registration` 或传入 token |
 | `worker_runs.runs_create_failed` 偏高 | `limit.concurrent_runs` 过低或 Worker 未消费队列 |
