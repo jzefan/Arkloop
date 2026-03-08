@@ -54,19 +54,19 @@ var registry = []ToolMeta{
 		Name:           "python_execute",
 		Group:          GroupSandbox,
 		Label:          "Python execution",
-		LLMDescription: "execute Python code in an isolated sandbox environment. Use this tool for any numerical calculations or data processing instead of computing manually. Pre-installed libraries include numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, etc. For charts and visualizations, prefer Plotly (plotly.express or plotly.graph_objects) over matplotlib. Use fig.write_image() for PNG output (kaleido is pre-installed). Only fall back to fig.write_html() if write_image fails. Do not set pio.renderers or attempt to open a browser. To produce output files (images, CSVs, HTML, etc.), write them to /tmp/output/. Files there are automatically uploaded; the tool result includes an artifacts array with each file's key, filename, size and mime_type. To display an artifact in your response, reference it using the key from the artifacts array: use ![alt](artifact:<key>) for images/SVG, or [label](artifact:<key>) for other files. NEVER use /tmp/output/ paths as links.",
+		LLMDescription: "execute Python code in an isolated sandbox environment. Use this tool for any numerical calculations or data processing instead of computing manually. Pre-installed libraries include numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, etc. For charts and visualizations, prefer Plotly (plotly.express or plotly.graph_objects) over matplotlib. Use fig.write_image() for PNG output (kaleido is pre-installed). Only fall back to fig.write_html() if write_image fails. Do not set pio.renderers or attempt to open a browser. IMPORTANT: when another tool needs to read the file later, write shared intermediate files to /workspace/. Use /tmp/output/ only for final files that should be uploaded as artifacts for the user. Files written to /tmp/output/ are automatically uploaded; the tool result includes an artifacts array with each file's key, filename, size and mime_type. To display an artifact in your response, reference the key from the artifacts array: use ![alt](artifact:<key>) for images/SVG, or [label](artifact:<key>) for other files. NEVER use /tmp/output/ paths as links.",
 	},
 	{
 		Name:           "exec_command",
 		Group:          GroupSandbox,
 		Label:          "Command execution",
-		LLMDescription: "run a command in a persistent shell session inside the isolated sandbox. Use session_mode=auto unless you need a fresh session, an explicit resume, or a fork. When the tool returns session_ref, keep using that stable reference in later calls instead of any transient sandbox identifier. Short commands usually finish in this first response. Only switch to write_stdin when the result still shows running=true or when you need to send stdin. Write files meant for the final answer to /tmp/output/ so they appear in artifacts.",
+		LLMDescription: "run a command in a persistent shell session inside the isolated sandbox. Use session_mode=auto unless you need a fresh session, an explicit resume, or a fork. When the tool returns session_ref, keep using that stable reference in later calls instead of any transient sandbox identifier. Short commands usually finish in this first response. Only switch to write_stdin when the result still shows running=true or when you need to send stdin. IMPORTANT: write shared working files that later tools should read to /workspace/. Use /tmp/output/ only for final files that should be uploaded as artifacts for the user.",
 	},
 	{
 		Name:           "write_stdin",
 		Group:          GroupSandbox,
 		Label:          "Shell stdin",
-		LLMDescription: "send stdin to, or poll output from, a running shell session. Pass the session_ref returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output.",
+		LLMDescription: "send stdin to, or poll output from, a running shell session. Pass the session_ref returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output. Keep using the same session_ref while you need that shell session's /workspace state.",
 	},
 	{
 		Name:           "memory_search",
