@@ -23,7 +23,7 @@ type ExecRequest struct {
 	OrgID        string `json:"org_id"`
 	ProfileRef   string `json:"profile_ref,omitempty"`
 	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier"`     // "lite" | "pro" | "ultra"
+	Tier         string `json:"tier"`     // "lite" | "pro"
 	Language     string `json:"language"` // "python" | "shell"
 	Code         string `json:"code"`
 	TimeoutMs    int    `json:"timeout_ms"` // 0 表示使用服务端默认值（30s）
@@ -47,7 +47,11 @@ type ExecResponse struct {
 	Artifacts  []ArtifactRef `json:"artifacts,omitempty"`
 }
 
-func handleExec(mgr *session.Manager, envMgr *environment.Manager, artifactStore *objectstore.Store, logger *logging.JSONLogger) http.HandlerFunc {
+type artifactStore interface {
+	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
+}
+
+func handleExec(mgr *session.Manager, envMgr *environment.Manager, artifactStore artifactStore, logger *logging.JSONLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ExecRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -144,7 +148,7 @@ func handleExec(mgr *session.Manager, envMgr *environment.Manager, artifactStore
 }
 
 // collectArtifacts 从 microVM 拉取产物并上传到对象存储，失败不阻断主流程。
-func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string, store *objectstore.Store, logger *logging.JSONLogger) []ArtifactRef {
+func collectArtifacts(ctx context.Context, sn *session.Session, sessionID string, store artifactStore, logger *logging.JSONLogger) []ArtifactRef {
 	fetchResult, err := sn.FetchArtifacts(ctx)
 	if err != nil {
 		logger.Warn("fetch artifacts failed", logging.LogFields{SessionID: &sessionID}, map[string]any{"error": err.Error()})

@@ -49,7 +49,6 @@ type ManagerConfig struct {
 	Pool               VMPool
 	IdleTimeoutLite    int // 秒
 	IdleTimeoutPro     int
-	IdleTimeoutUltra   int
 	MaxLifetimeSeconds int
 	BeforeDelete       BeforeDeleteFunc
 }
@@ -280,8 +279,6 @@ func (m *Manager) idleTimeoutFor(tier string) int {
 	switch tier {
 	case "pro":
 		return m.cfg.IdleTimeoutPro
-	case "ultra":
-		return m.cfg.IdleTimeoutUltra
 	default:
 		return m.cfg.IdleTimeoutLite
 	}

@@ -13,7 +13,7 @@ type Template struct {
 	ID              string   `json:"id"`
 	KernelImagePath string   `json:"kernel_image_path"`
 	RootfsPath      string   `json:"rootfs_path"`
-	Tier            string   `json:"tier"` // "lite" | "pro" | "ultra"
+	Tier            string   `json:"tier"` // "lite" | "pro"
 	Languages       []string `json:"languages"`
 }
 

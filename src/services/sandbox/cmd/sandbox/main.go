@@ -21,10 +21,6 @@ import (
 	"arkloop/services/shared/objectstore"
 )
 
-type stateLifecycleStore interface {
-	SetLifecycleExpirationDays(ctx context.Context, days int) error
-}
-
 func main() {
 	if err := run(); err != nil {
 		_, _ = os.Stderr.WriteString(err.Error() + "\n")
@@ -45,16 +41,22 @@ func run() error {
 	logger := logging.NewJSONLogger("sandbox", os.Stdout)
 
 	// 可选依赖：S3 artifact 存储
-	var artifactStore *objectstore.Store
-	var stateStore *objectstore.Store
-	var envStore *objectstore.Store
+	var artifactStore objectstore.Store
+	var stateStore objectstore.Store
+	var envStore objectstore.Store
+	var bucketOpener objectstore.BucketOpener
 	if cfg.S3Endpoint != "" {
-		aStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.ArtifactBucket, "")
+		bucketOpener = objectstore.NewS3Opener(objectstore.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+		})
+		aStore, err := bucketOpener.Open(context.Background(), objectstore.ArtifactBucket)
 		if err != nil {
 			return err
 		}
 		artifactStore = aStore
-		sStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.SessionStateBucket, "")
+		sStore, err := bucketOpener.Open(context.Background(), objectstore.SessionStateBucket)
 		if err != nil {
 			return err
 		}
@@ -62,7 +64,7 @@ func run() error {
 			return err
 		}
 		stateStore = sStore
-		eStore, err := objectstore.New(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, objectstore.EnvironmentStateBucket, "")
+		eStore, err := bucketOpener.Open(context.Background(), objectstore.EnvironmentStateBucket)
 		if err != nil {
 			return err
 		}
@@ -89,7 +91,6 @@ func run() error {
 		Pool:               vmPool,
 		IdleTimeoutLite:    cfg.IdleTimeoutLite,
 		IdleTimeoutPro:     cfg.IdleTimeoutPro,
-		IdleTimeoutUltra:   cfg.IdleTimeoutUltra,
 		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
 	})
 	envMgr := environment.NewManager(envStore, logger)
@@ -108,11 +109,15 @@ func run() error {
 	return application.Run(context.Background(), handler)
 }
 
-func applyStateStoreLifecycle(ctx context.Context, cfg app.Config, store stateLifecycleStore) error {
+func applyStateStoreLifecycle(ctx context.Context, cfg app.Config, store any) error {
 	if store == nil || cfg.SessionStateTTLDays == 0 {
 		return nil
 	}
-	if err := store.SetLifecycleExpirationDays(ctx, cfg.SessionStateTTLDays); err != nil {
+	configurer, ok := store.(objectstore.LifecycleConfigurator)
+	if !ok {
+		return nil
+	}
+	if err := configurer.SetLifecycleExpirationDays(ctx, cfg.SessionStateTTLDays); err != nil {
 		return fmt.Errorf("configure session state lifecycle: %w", err)
 	}
 	return nil
@@ -124,7 +129,11 @@ func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.V
 
 	if cfg.S3Endpoint != "" {
 		cacheDir := cfg.SocketBaseDir + "/_snapshots"
-		store, err := storage.NewMinIOStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cacheDir)
+		store, err := storage.NewSnapshotStore(context.Background(), objectstore.NewS3Opener(objectstore.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+		}), cacheDir)
 		if err != nil {
 			return nil, err
 		}

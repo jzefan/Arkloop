@@ -113,10 +113,10 @@ type artifactRef struct {
 }
 
 type ToolExecutor struct {
-	baseURL       string
-	authToken     string
-	client        *http.Client
-	orchestrator  *sessionOrchestrator
+	baseURL      string
+	authToken    string
+	client       *http.Client
+	orchestrator *sessionOrchestrator
 }
 
 func NewToolExecutor(baseURL, authToken string) *ToolExecutor {
@@ -174,7 +174,7 @@ func (e *ToolExecutor) executePython(
 		OrgID:        resolveOrgID(execCtx),
 		ProfileRef:   resolveProfileRef(execCtx),
 		WorkspaceRef: resolveWorkspaceRef(execCtx),
-		Tier:         resolveTier(execCtx.Budget),
+		Tier:         resolveTier("python_execute", execCtx.Budget),
 		Language:     "python",
 		Code:         code,
 		TimeoutMs:    resolveTimeoutMs(args),
@@ -243,7 +243,7 @@ func (e *ToolExecutor) executeExecCommand(
 		OrgID:        resolveOrgID(execCtx),
 		ProfileRef:   resolveProfileRef(execCtx),
 		WorkspaceRef: resolveWorkspaceRef(execCtx),
-		Tier:         resolveTier(execCtx.Budget),
+		Tier:         resolveTier("exec_command", execCtx.Budget),
 		Cwd:          reqArgs.Cwd,
 		Command:      reqArgs.Command,
 		TimeoutMs:    reqArgs.TimeoutMs,
@@ -371,15 +371,15 @@ func (e *ToolExecutor) executeExecSessionRequest(
 	}
 	output, outputTruncated := truncateOutputByLimit(result.Output, tools.ResolveToolSoftLimit(softLimits, toolName).MaxOutputBytes)
 	resultJSON := map[string]any{
-		"session_id":          result.SessionID,
-		"status":              result.Status,
-		"cwd":                 result.Cwd,
-		"stdout":              output,
-		"output":              output,
-		"running":             result.Running,
-		"timed_out":           result.TimedOut,
-		"truncated":           result.Truncated || outputTruncated,
-		"duration_ms":         durationMs(started),
+		"session_id":               result.SessionID,
+		"status":                   result.Status,
+		"cwd":                      result.Cwd,
+		"stdout":                   output,
+		"output":                   output,
+		"running":                  result.Running,
+		"timed_out":                result.TimedOut,
+		"truncated":                result.Truncated || outputTruncated,
+		"duration_ms":              durationMs(started),
 		"restored_from_checkpoint": result.Restored,
 	}
 	if result.ExitCode != nil {
@@ -541,13 +541,63 @@ func readIntArg(args map[string]any, key string) int {
 	return 0
 }
 
-func resolveTier(budget map[string]any) string {
-	if budget != nil {
-		if tier, ok := budget["sandbox_tier"].(string); ok && tier != "" {
-			return tier
-		}
+func resolveTier(toolName string, budget map[string]any) string {
+	if tier, ok := resolveTierOverride(budget, toolName); ok {
+		return tier
 	}
-	return "lite"
+	if tier, ok := resolveTierOverride(budget, sandboxWorkloadClass(toolName)); ok {
+		return tier
+	}
+	return defaultTierForTool(toolName)
+}
+
+func defaultTierForTool(toolName string) string {
+	switch sandboxWorkloadClass(toolName) {
+	case "interactive_shell":
+		return "pro"
+	default:
+		return "lite"
+	}
+}
+
+func sandboxWorkloadClass(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "exec_command", "write_stdin":
+		return "interactive_shell"
+	case "python_execute":
+		return "ephemeral_exec"
+	default:
+		return "ephemeral_exec"
+	}
+}
+
+func resolveTierOverride(budget map[string]any, key string) (string, bool) {
+	if budget == nil || strings.TrimSpace(key) == "" {
+		return "", false
+	}
+	rawProfiles, ok := budget["sandbox_profiles"]
+	if !ok || rawProfiles == nil {
+		return "", false
+	}
+	profiles, ok := rawProfiles.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	tier, ok := normalizeTierValue(profiles[key])
+	return tier, ok
+}
+
+func normalizeTierValue(value any) (string, bool) {
+	raw, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	switch strings.TrimSpace(raw) {
+	case "lite", "pro":
+		return strings.TrimSpace(raw), true
+	default:
+		return "", false
+	}
 }
 
 func resolveTimeoutMs(args map[string]any) int {
@@ -610,7 +660,7 @@ func mapHTTPError(statusCode int, body []byte, started time.Time) tools.Executio
 
 func errResult(errorClass, message string, started time.Time) tools.ExecutionResult {
 	return tools.ExecutionResult{
-		Error: &tools.ExecutionError{ErrorClass: errorClass, Message: message},
+		Error:      &tools.ExecutionError{ErrorClass: errorClass, Message: message},
 		DurationMs: durationMs(started),
 	}
 }

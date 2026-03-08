@@ -7,7 +7,6 @@ import {
   writeSelectedPersonaKeyToStorage,
 } from '../storage'
 
-const legacyKey = 'arkloop:web:selected_tier'
 const nextKey = 'arkloop:web:selected_persona_key'
 
 function createMemoryStorage(): Storage {
@@ -49,30 +48,13 @@ describe('selected persona storage', () => {
     Object.defineProperty(window, 'localStorage', { value: originalLocalStorage, configurable: true })
   })
 
-  it('迁移旧 tier 值到 persona_key', () => {
-    const cases: Array<[string, string]> = [
-      ['Normal', DEFAULT_PERSONA_KEY],
-      ['Ultra', DEFAULT_PERSONA_KEY],
-      ['Search', SEARCH_PERSONA_KEY],
-      ['Extended Search', SEARCH_PERSONA_KEY],
-    ]
-
-    for (const [legacyValue, expected] of cases) {
-      localStorage.clear()
-      localStorage.setItem(legacyKey, legacyValue)
-
-      expect(readSelectedPersonaKeyFromStorage()).toBe(expected)
-      expect(localStorage.getItem(nextKey)).toBe(expected)
-      expect(localStorage.getItem(legacyKey)).toBeNull()
-    }
+  it('没有 persona_key 时返回默认值', () => {
+    expect(readSelectedPersonaKeyFromStorage()).toBe(DEFAULT_PERSONA_KEY)
   })
 
-  it('写入 persona_key 时清理旧 key', () => {
-    localStorage.setItem(legacyKey, 'Search')
-
+  it('写入 persona_key', () => {
     writeSelectedPersonaKeyToStorage(DEFAULT_PERSONA_KEY)
 
     expect(localStorage.getItem(nextKey)).toBe(DEFAULT_PERSONA_KEY)
-    expect(localStorage.getItem(legacyKey)).toBeNull()
   })
 })
