@@ -22,17 +22,19 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 	runID := uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
 	repo := ShellSessionsRepository{}
 	liveSessionID := "live-1"
+	restoreRev := "restore-1"
 	record := ShellSessionRecord{
-		SessionRef:    "shref_test",
-		OrgID:         orgID,
-		ProfileRef:    "pref_test",
-		WorkspaceRef:  "wsref_test",
-		ThreadID:      &threadID,
-		RunID:         &runID,
-		ShareScope:    ShellShareScopeThread,
-		State:         ShellSessionStateBusy,
-		LiveSessionID: &liveSessionID,
-		MetadataJSON:  map[string]any{"source": "test"},
+		SessionRef:       "shref_test",
+		OrgID:            orgID,
+		ProfileRef:       "pref_test",
+		WorkspaceRef:     "wsref_test",
+		ThreadID:         &threadID,
+		RunID:            &runID,
+		ShareScope:       ShellShareScopeThread,
+		State:            ShellSessionStateBusy,
+		LiveSessionID:    &liveSessionID,
+		LatestRestoreRev: &restoreRev,
+		MetadataJSON:     map[string]any{"source": "test"},
 	}
 	if err := repo.Upsert(context.Background(), pool, record); err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -50,6 +52,49 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 	}
 	if stored.State != ShellSessionStateBusy {
 		t.Fatalf("unexpected state: %s", stored.State)
+	}
+	if stored.LatestRestoreRev == nil || *stored.LatestRestoreRev != restoreRev {
+		t.Fatalf("unexpected latest_restore_rev: %#v", stored.LatestRestoreRev)
+	}
+}
+
+func TestShellSessionsRepository_UpdateRestoreRevision(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_shell_sessions_restore")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	repo := ShellSessionsRepository{}
+	if err := repo.Upsert(context.Background(), pool, ShellSessionRecord{
+		SessionRef:   "shref_test",
+		OrgID:        orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+		ShareScope:   ShellShareScopeThread,
+		State:        ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := repo.UpdateCheckpointRevision(context.Background(), pool, orgID, "shref_test", "checkpoint-1"); err != nil {
+		t.Fatalf("update checkpoint revision: %v", err)
+	}
+	if err := repo.UpdateRestoreRevision(context.Background(), pool, orgID, "shref_test", "restore-2"); err != nil {
+		t.Fatalf("update restore revision: %v", err)
+	}
+
+	stored, err := repo.GetBySessionRef(context.Background(), pool, orgID, "shref_test")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.LatestCheckpointRev == nil || *stored.LatestCheckpointRev != "checkpoint-1" {
+		t.Fatalf("unexpected latest_checkpoint_rev: %#v", stored.LatestCheckpointRev)
+	}
+	if stored.LatestRestoreRev == nil || *stored.LatestRestoreRev != "restore-2" {
+		t.Fatalf("unexpected latest_restore_rev: %#v", stored.LatestRestoreRev)
 	}
 }
 
