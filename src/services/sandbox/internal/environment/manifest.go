@@ -14,8 +14,6 @@ const (
 	EntryTypeDir     = "dir"
 	EntryTypeFile    = "file"
 	EntryTypeSymlink = "symlink"
-
-	legacyRevision = "legacy"
 )
 
 type Manifest struct {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"arkloop/services/shared/objectstore"
 	"github.com/klauspost/compress/zstd"
@@ -145,8 +144,4 @@ func decompressBlob(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decompress blob: %w", err)
 	}
 	return decoded, nil
-}
-
-func nextRevision(now time.Time) string {
-	return fmt.Sprintf("%d", now.UTC().UnixNano())
 }

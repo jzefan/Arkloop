@@ -164,21 +164,6 @@ func (c *ShellController) ensureStarted(req shellapi.AgentExecCommandRequest) er
 	return err
 }
 
-func (c *ShellController) ensureCwd(cwd string) error {
-	c.mu.Lock()
-	if c.status == shellapi.StatusRunning {
-		c.mu.Unlock()
-		return newShellError(shellapi.CodeSessionBusy, "shell session is busy")
-	}
-	if strings.TrimSpace(cwd) == "" || cwd == c.cwd {
-		c.mu.Unlock()
-		return nil
-	}
-	c.mu.Unlock()
-	_, err := c.runControlCommand(":", cwd, defaultControlTimeout)
-	return err
-}
-
 func (c *ShellController) runControlCommand(command, cwd string, timeoutMs int) (*shellapi.AgentSessionResponse, error) {
 	startCursor, err := c.startCommand(command, cwd, timeoutMs, true)
 	if err != nil {
@@ -360,12 +345,8 @@ func (c *ShellController) debugSnapshotLocked() *shellapi.AgentDebugResponse {
 		ExitCode:               c.lastExit,
 		PendingOutputBytes:     pendingBytes,
 		PendingOutputTruncated: pendingTruncated,
-		Transcript: shellapi.DebugTranscript{
-			Text:         transcript.Text,
-			Truncated:    transcript.Truncated,
-			OmittedBytes: transcript.OmittedBytes,
-		},
-		Tail: string(c.tail.Bytes()),
+		Transcript:             shellapi.DebugTranscript(transcript),
+		Tail:                   string(c.tail.Bytes()),
 	}
 	if resp.Status == "" {
 		resp.Status = shellapi.StatusIdle
@@ -510,32 +491,29 @@ func (c *ShellController) processCurrentLocked() {
 		current.startSeen = true
 	}
 
-	for {
-		idx := strings.Index(raw, current.endPrefix)
-		if idx == -1 {
-			keep := trailingMarkerPrefixLen(raw, current.endPrefix)
-			safeLen := len(raw) - keep
-			c.appendOutputLocked(raw[:safeLen], current.suppress)
-			current.raw = raw[safeLen:]
-			return
-		}
-
-		c.appendOutputLocked(raw[:idx], current.suppress)
-		rest := raw[idx:]
-		lineEnd := strings.IndexByte(rest, '\n')
-		if lineEnd == -1 {
-			current.raw = rest
-			return
-		}
-
-		line := strings.TrimRight(rest[:lineEnd], "\r")
-		c.finishCommandLocked(current, line)
-		trailing := rest[lineEnd+1:]
-		c.current = nil
-		if trailing != "" {
-			c.appendVisibleOutputLocked(trailing)
-		}
+	idx := strings.Index(raw, current.endPrefix)
+	if idx == -1 {
+		keep := trailingMarkerPrefixLen(raw, current.endPrefix)
+		safeLen := len(raw) - keep
+		c.appendOutputLocked(raw[:safeLen], current.suppress)
+		current.raw = raw[safeLen:]
 		return
+	}
+
+	c.appendOutputLocked(raw[:idx], current.suppress)
+	rest := raw[idx:]
+	lineEnd := strings.IndexByte(rest, '\n')
+	if lineEnd == -1 {
+		current.raw = rest
+		return
+	}
+
+	line := strings.TrimRight(rest[:lineEnd], "\r")
+	c.finishCommandLocked(current, line)
+	trailing := rest[lineEnd+1:]
+	c.current = nil
+	if trailing != "" {
+		c.appendVisibleOutputLocked(trailing)
 	}
 }
 

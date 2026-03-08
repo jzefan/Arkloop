@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 
 	nethttp "net/http"
@@ -897,9 +896,4 @@ func normalizeOptionalString(value *string) *string {
 	}
 	trimmed := strings.TrimSpace(*value)
 	return &trimmed
-}
-
-func readOptionalJSONNumber(raw json.RawMessage) (float64, error) {
-	text := strings.TrimSpace(string(raw))
-	return strconv.ParseFloat(text, 64)
 }

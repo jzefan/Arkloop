@@ -443,7 +443,7 @@ func writeTarHeader(t *testing.T, tw *tar.Writer, header *tar.Header) {
 	if err := tw.WriteHeader(header); err != nil {
 		t.Fatalf("write tar header: %v", err)
 	}
-	if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+	if header.Typeflag == tar.TypeReg {
 		if _, err := io.WriteString(tw, "payload"); err != nil {
 			t.Fatalf("write tar payload: %v", err)
 		}

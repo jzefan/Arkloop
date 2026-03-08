@@ -23,6 +23,7 @@ type endpointRow struct {
 // getWebhookEndpoint 查询端点，返回 (nil, true, nil) 表示端点存在但已禁用，(nil, false, nil) 表示不存在。
 func getWebhookEndpoint(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (*endpointRow, bool, error) {
 	var ep endpointRow
+	var signingSecret *string
 	var encryptedValue *string
 	err := pool.QueryRow(ctx,
 		`SELECT e.id, e.url, e.signing_secret, s.encrypted_value, e.events, e.enabled
@@ -30,12 +31,15 @@ func getWebhookEndpoint(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) (
 		 LEFT JOIN secrets s ON s.id = e.secret_id
 		 WHERE e.id = $1`,
 		id,
-	).Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &encryptedValue, &ep.Events, &ep.Enabled)
+	).Scan(&ep.ID, &ep.URL, &signingSecret, &encryptedValue, &ep.Events, &ep.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+	if signingSecret != nil {
+		ep.SigningSecret = *signingSecret
 	}
 	if !ep.Enabled {
 		return nil, true, nil
@@ -65,9 +69,13 @@ func listEndpointsForEvent(ctx context.Context, pool *pgxpool.Pool, orgID uuid.U
 	var endpoints []endpointRow
 	for rows.Next() {
 		var ep endpointRow
+		var signingSecret *string
 		var encryptedValue *string
-		if err := rows.Scan(&ep.ID, &ep.URL, &ep.SigningSecret, &encryptedValue, &ep.Events, &ep.Enabled); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.URL, &signingSecret, &encryptedValue, &ep.Events, &ep.Enabled); err != nil {
 			return nil, err
+		}
+		if signingSecret != nil {
+			ep.SigningSecret = *signingSecret
 		}
 		if err := hydrateWebhookSigningSecret(&ep, encryptedValue); err != nil {
 			return nil, err

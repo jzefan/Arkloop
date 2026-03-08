@@ -484,7 +484,7 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 
 // EnsureImage 确保 sandbox 镜像存在于本地。
 func (p *Pool) EnsureImage(ctx context.Context) error {
-	_, _, err := p.cli.ImageInspectWithRaw(ctx, p.cfg.Image)
+	_, err := p.cli.ImageInspect(ctx, p.cfg.Image)
 	if err == nil {
 		return nil
 	}

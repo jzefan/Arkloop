@@ -367,37 +367,6 @@ func resolveSearchOutputRouteIDFromPlatformSetting(
 	return resolveSearchOutputRouteIDByModelSelector(ctx, pool, orgID, selector)
 }
 
-func pickSearchOutputRouteID(safetyRules map[string]any, outputModelKey string) string {
-	if safetyRules == nil {
-		return ""
-	}
-	rawRoutes, ok := safetyRules[searchHybridOutputRoutesKey]
-	if !ok {
-		return ""
-	}
-
-	routes, ok := rawRoutes.(map[string]any)
-	if !ok {
-		return ""
-	}
-
-	rawRouteID, ok := routes[outputModelKey]
-	if !ok {
-		return ""
-	}
-
-	routeID, ok := rawRouteID.(string)
-	if !ok {
-		return ""
-	}
-
-	routeID = strings.TrimSpace(routeID)
-	if routeID == "" || !routeIDRegex.MatchString(routeID) {
-		return ""
-	}
-	return routeID
-}
-
 func pickSearchOutputModelSelector(models map[string]any, outputModelKey string) string {
 	if models == nil {
 		return ""

@@ -325,7 +325,7 @@ func restoreCheckpointArchive(roots []checkpointRoot, archive []byte) error {
 			if err := os.MkdirAll(targetPath, fileModeOrDefault(header.Mode, 0o755)); err != nil {
 				return fmt.Errorf("restore dir %s: %w", targetPath, err)
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := restoreRegularFile(tr, targetPath, header.Mode); err != nil {
 				return err
 			}

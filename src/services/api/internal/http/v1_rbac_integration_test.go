@@ -113,7 +113,7 @@ func TestRBACPermissions(t *testing.T) {
 		t.Fatalf("register member: %d %s", regB.Code, regB.Body.String())
 	}
 	payloadB := decodeJSONBody[registerResponse](t, regB.Body.Bytes())
-	tokenB := payloadB.AccessToken
+	var tokenB string
 	userBID := payloadB.UserID
 
 	// 查询两人各自的 org_id
