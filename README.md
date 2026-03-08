@@ -94,6 +94,29 @@ If you find Arkloop useful, give it a star -- it helps others discover the proje
 
 <!-- Star GIF will be added here -->
 
+
+## Developer Checks
+
+For daily local validation, use the repository CI helper:
+
+```bash
+# Fast daily checks
+bin/ci-local quick
+
+# Go integration checks with a temporary PostgreSQL container
+bin/ci-local integration
+
+# Full local pass
+bin/ci-local full
+
+# GitHub Actions style verification
+bin/ci-local act go-check
+bin/ci-local act typescript
+bin/ci-local act go-integration
+```
+
+Recommended order: `bin/ci-local quick` -> `bin/ci-local integration` -> `bin/ci-local act <job>`.
+
 ## Contributing
 
 We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to get involved.

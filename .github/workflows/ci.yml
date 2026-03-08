@@ -54,10 +54,17 @@ jobs:
           retention-days: 7
 
   go-integration:
-    name: Go Integration
+    name: Go Integration (${{ matrix.module }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     needs: [go-check]
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [api, gateway, worker, sandbox, shared]
+    defaults:
+      run:
+        working-directory: src/services/${{ matrix.module }}
     services:
       postgres:
         image: postgres:16-alpine
@@ -73,8 +80,8 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql://arkloop:ci_test_password@localhost:5432/arkloop
-      ARKLOOP_DATABASE_URL: postgresql://arkloop:ci_test_password@localhost:5432/arkloop
+      DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
+      ARKLOOP_DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
       ARKLOOP_AUTH_JWT_SECRET: ci_test_jwt_secret_at_least_32_chars_long
       ARKLOOP_PROVIDER_ROUTING_JSON: '{"default_route_id":"default","credentials":[{"id":"stub_default","scope":"platform","provider_kind":"stub"}],"routes":[{"id":"default","model":"stub","credential_id":"stub_default"}]}'
     steps:
@@ -85,19 +92,7 @@ jobs:
           go-version-file: go.work
 
       - name: Run integration tests
-        run: |
-          modules=(api gateway worker sandbox shared)
-          failed=0
-          for module in "${modules[@]}"; do
-            echo "::group::src/services/$module"
-            cd src/services/$module
-            if ! go test -v -count=1 -race ./...; then
-              failed=1
-            fi
-            cd "$GITHUB_WORKSPACE"
-            echo "::endgroup::"
-          done
-          exit $failed
+        run: go test -count=1 -race ./...
 
   typescript:
     name: TypeScript

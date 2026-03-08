@@ -94,6 +94,29 @@ docker compose -f compose.yaml -f compose.dev.yaml up -d
 
 <!-- Star GIF will be added here -->
 
+
+## 开发者检查
+
+日常本地验证可以直接使用仓库内的 CI 辅助脚本：
+
+```bash
+# 日常快速检查
+bin/ci-local quick
+
+# 启动临时 PostgreSQL 后跑 Go 集成测试
+bin/ci-local integration
+
+# 完整本地检查
+bin/ci-local full
+
+# 近似 GitHub Actions 的验证
+bin/ci-local act go-check
+bin/ci-local act typescript
+bin/ci-local act go-integration
+```
+
+推荐顺序：`bin/ci-local quick` -> `bin/ci-local integration` -> `bin/ci-local act <job>`。
+
 ## 贡献
 
 欢迎贡献。查看 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解参与方式。
