@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 
 	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
@@ -29,8 +32,9 @@ type OpenAIGatewayConfig struct {
 }
 
 type OpenAIGateway struct {
-	cfg    OpenAIGatewayConfig
-	client *http.Client
+	cfg        OpenAIGatewayConfig
+	client     *http.Client
+	baseURLErr error
 }
 
 const (
@@ -59,6 +63,10 @@ func NewOpenAIGateway(cfg OpenAIGatewayConfig) *OpenAIGateway {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
+	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(baseURL)
+	if baseURLErr == nil {
+		baseURL = normalizedBaseURL
+	}
 	cfg.BaseURL = baseURL
 	if strings.TrimSpace(cfg.APIMode) == "" {
 		cfg.APIMode = "auto"
@@ -68,12 +76,16 @@ func NewOpenAIGateway(cfg OpenAIGatewayConfig) *OpenAIGateway {
 		cfg.AdvancedJSON = map[string]any{}
 	}
 	return &OpenAIGateway{
-		cfg:    cfg,
-		client: &http.Client{},
+		cfg:        cfg,
+		client:     sharedoutbound.DefaultPolicy().NewHTTPClient(timeout),
+		baseURLErr: baseURLErr,
 	}
 }
 
 func (g *OpenAIGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
+	if g.baseURLErr != nil {
+		return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": g.baseURLErr.Error()}}})
+	}
 	ctx, cancel := context.WithTimeout(ctx, g.cfg.TotalTimeout)
 	defer cancel()
 
@@ -113,9 +125,20 @@ func (g *OpenAIGateway) Stream(ctx context.Context, request Request, yield func(
 func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yield func(StreamEvent) error) error {
 	llmCallID := uuid.NewString()
 
+	messagesPayload, err := toOpenAIChatMessages(request.Messages)
+	if err != nil {
+		return yield(StreamRunFailed{
+			Error: GatewayError{
+				ErrorClass: ErrorClassInternalError,
+				Message:    "OpenAI chat messages construction failed",
+				Details:    map[string]any{"reason": err.Error()},
+			},
+		})
+	}
+
 	payload := map[string]any{
 		"model":          request.Model,
-		"messages":       toOpenAIChatMessages(request.Messages),
+		"messages":       messagesPayload,
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
 	}
@@ -197,6 +220,11 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 
 	resp, err := g.client.Do(req)
 	if err != nil {
+		var denied sharedoutbound.DeniedError
+		if errors.As(err, &denied) {
+			failed := StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": denied.Error()}}}
+			return yield(failed)
+		}
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
@@ -388,6 +416,10 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 
 	resp, err := g.client.Do(req)
 	if err != nil {
+		var denied sharedoutbound.DeniedError
+		if errors.As(err, &denied) {
+			return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": denied.Error()}}})
+		}
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
@@ -1074,7 +1106,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 	return yield(StreamRunFailed{Error: InternalStreamEndedError()})
 }
 
-func toOpenAIChatMessages(messages []Message) []map[string]any {
+func toOpenAIChatMessages(messages []Message) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		text := joinParts(message.Content)
@@ -1093,17 +1125,27 @@ func toOpenAIChatMessages(messages []Message) []map[string]any {
 			continue
 		}
 
+		contentBlocks, hasStructured, err := toOpenAIChatContentBlocks(message.Content)
+		if err != nil {
+			return nil, err
+		}
+		if hasStructured {
+			out = append(out, map[string]any{"role": message.Role, "content": contentBlocks})
+			continue
+		}
 		out = append(out, map[string]any{"role": message.Role, "content": text})
 	}
-	return out
+	return out, nil
 }
 
-func joinParts(parts []TextPart) string {
-	var b strings.Builder
+func joinParts(parts []ContentPart) string {
+	chunks := make([]string, 0, len(parts))
 	for _, part := range parts {
-		b.WriteString(part.Text)
+		if text := strings.TrimSpace(PartPromptText(part)); text != "" {
+			chunks = append(chunks, PartPromptText(part))
+		}
 	}
-	return b.String()
+	return strings.Join(chunks, "\n\n")
 }
 
 func toOpenAITools(specs []ToolSpec) []map[string]any {
@@ -1280,14 +1322,91 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 			continue
 		}
 
+		contentBlocks, err := toOpenAIResponsesContentBlocks(message.Content, contentType)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, map[string]any{
-			"role": message.Role,
-			"content": []map[string]any{
-				{"type": contentType, "text": text},
-			},
+			"role":    message.Role,
+			"content": contentBlocks,
 		})
 	}
 	return items, nil
+}
+
+func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, error) {
+	blocks := make([]map[string]any, 0, len(parts))
+	hasStructured := false
+	for _, part := range parts {
+		switch part.Kind() {
+		case "text":
+			if strings.TrimSpace(part.Text) == "" {
+				continue
+			}
+			blocks = append(blocks, map[string]any{"type": "text", "text": part.Text})
+		case "file":
+			text := PartPromptText(part)
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			hasStructured = true
+			blocks = append(blocks, map[string]any{"type": "text", "text": text})
+		case "image":
+			dataURL, err := partDataURL(part)
+			if err != nil {
+				return nil, false, err
+			}
+			hasStructured = true
+			blocks = append(blocks, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": dataURL},
+			})
+		}
+	}
+	return blocks, hasStructured, nil
+}
+
+func toOpenAIResponsesContentBlocks(parts []ContentPart, contentType string) ([]map[string]any, error) {
+	blocks := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		switch part.Kind() {
+		case "text":
+			if strings.TrimSpace(part.Text) == "" {
+				continue
+			}
+			blocks = append(blocks, map[string]any{"type": contentType, "text": part.Text})
+		case "file":
+			text := PartPromptText(part)
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			blocks = append(blocks, map[string]any{"type": contentType, "text": text})
+		case "image":
+			dataURL, err := partDataURL(part)
+			if err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
+		}
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, map[string]any{"type": contentType, "text": ""})
+	}
+	return blocks, nil
+}
+
+func partDataURL(part ContentPart) (string, error) {
+	if part.Attachment == nil {
+		return "", fmt.Errorf("image attachment is required")
+	}
+	if len(part.Data) == 0 {
+		return "", fmt.Errorf("image attachment data is required")
+	}
+	mimeType := strings.TrimSpace(part.Attachment.MimeType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data), nil
 }
 
 func toOpenAIAssistantToolCalls(calls []ToolCall) []map[string]any {

@@ -267,11 +267,16 @@ func createLlmProvider(
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 		return
 	}
+	normalizedBaseURL, err := normalizeOptionalBaseURL(req.BaseURL)
+	if err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
+		return
+	}
 	provider, err := service.CreateProvider(r.Context(), actor.OrgID, llmproviders.CreateProviderInput{
 		Provider:      strings.TrimSpace(req.Provider),
 		Name:          strings.TrimSpace(req.Name),
 		APIKey:        strings.TrimSpace(req.APIKey),
-		BaseURL:       req.BaseURL,
+		BaseURL:       normalizedBaseURL,
 		OpenAIAPIMode: normalizeOptionalString(req.OpenAIAPIMode),
 		AdvancedJSON:  req.AdvancedJSON,
 	})
@@ -371,11 +376,16 @@ func patchLlmProvider(
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 		return
 	}
+	normalizedBaseURL, err := normalizeOptionalBaseURL(baseURL)
+	if err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
+		return
+	}
 	provider, err := service.UpdateProvider(r.Context(), actor.OrgID, providerID, llmproviders.UpdateProviderInput{
 		Provider:         normalizeOptionalString(providerText),
 		Name:             normalizeOptionalString(nameText),
 		BaseURLSet:       baseURLSet,
-		BaseURL:          normalizeOptionalString(baseURL),
+		BaseURL:          normalizedBaseURL,
 		OpenAIAPIModeSet: openAIAPIModeSet,
 		OpenAIAPIMode:    normalizeOptionalString(openAIAPIMode),
 		AdvancedJSONSet:  advancedJSONSet,
@@ -641,6 +651,9 @@ func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 	}
 	if !validLlmProviders[provider] {
 		return errors.New("invalid provider")
+	}
+	if _, err := normalizeOptionalBaseURL(req.BaseURL); err != nil {
+		return errors.New("base_url is invalid")
 	}
 	return validateProviderFields(provider, normalizeOptionalString(req.OpenAIAPIMode), req.AdvancedJSON)
 }

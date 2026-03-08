@@ -175,8 +175,9 @@ func (a *Application) Run(ctx context.Context) error {
 	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
 
 	var artifactStore *objectstore.Store
+	var messageAttachmentStore *objectstore.Store
 	if strings.TrimSpace(a.config.S3Endpoint) != "" {
-		_, err := objectstore.New(
+		mainStore, err := objectstore.New(
 			ctx,
 			a.config.S3Endpoint,
 			a.config.S3AccessKey,
@@ -187,6 +188,7 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("objectstore: %w", err)
 		}
+		messageAttachmentStore = mainStore
 		a.logger.Info("objectstore connected", observability.LogFields{}, map[string]any{"bucket": a.config.S3Bucket})
 
 		as, err := objectstore.New(
@@ -450,6 +452,8 @@ func (a *Application) Run(ctx context.Context) error {
 				map[string]any{"reason": keyRingErr.Error()},
 			)
 		}
+
+		warnUnsafeOutboundBaseURLs(ctx, pool, a.logger)
 	}
 
 	if pool != nil && a.config.Auth != nil {
@@ -488,7 +492,11 @@ func (a *Application) Run(ctx context.Context) error {
 		registrationService.SetEmailVerifyService(emailVerifyService)
 
 		if userRepo != nil && emailOTPTokenRepo != nil && jobRepo != nil && tokenService != nil && refreshTokenRepo != nil && membershipRepo != nil {
-			emailOTPLoginService, err = auth.NewEmailOTPLoginService(userRepo, emailOTPTokenRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo)
+			var emailOTPRiskControl auth.EmailOTPRiskControl
+			if redisClient != nil {
+				emailOTPRiskControl = auth.NewRedisEmailOTPRiskControl(redisClient)
+			}
+			emailOTPLoginService, err = auth.NewEmailOTPLoginService(userRepo, emailOTPTokenRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo, emailOTPRiskControl)
 			if err != nil {
 				return err
 			}
@@ -618,6 +626,7 @@ func (a *Application) Run(ctx context.Context) error {
 			EmailOTPLoginService:         emailOTPLoginService,
 			JobRepo:                      jobRepo,
 			ArtifactStore:                artifactStore,
+			MessageAttachmentStore:       messageAttachmentStore,
 			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
 			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,

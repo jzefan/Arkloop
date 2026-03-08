@@ -9,14 +9,17 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 const defaultFirecrawlBaseURL = "https://api.firecrawl.dev"
 
 type FirecrawlProvider struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	baseURLErr error
 }
 
 func NewFirecrawlProvider(apiKey string, baseURL string) *FirecrawlProvider {
@@ -25,15 +28,23 @@ func NewFirecrawlProvider(apiKey string, baseURL string) *FirecrawlProvider {
 	if trimmedBase == "" {
 		trimmedBase = defaultFirecrawlBaseURL
 	}
+	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(trimmedBase)
+	if baseURLErr == nil {
+		trimmedBase = normalizedBaseURL
+	}
 
 	return &FirecrawlProvider{
-		apiKey:  cleanedKey,
-		baseURL: trimmedBase,
-		client:  &http.Client{Timeout: 60 * time.Second},
+		apiKey:     cleanedKey,
+		baseURL:    trimmedBase,
+		client:     sharedoutbound.DefaultPolicy().NewHTTPClient(60 * time.Second),
+		baseURLErr: baseURLErr,
 	}
 }
 
 func (p *FirecrawlProvider) Fetch(ctx context.Context, targetURL string, maxLength int) (Result, error) {
+	if p.baseURLErr != nil {
+		return Result{}, p.baseURLErr
+	}
 	payload := map[string]any{
 		"url":             targetURL,
 		"formats":         []string{"markdown"},

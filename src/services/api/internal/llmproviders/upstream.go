@@ -3,6 +3,7 @@ package llmproviders
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 const (
@@ -20,8 +22,6 @@ const (
 	availableModelsTimeout      = 15 * time.Second
 	availableModelsResponseSize = 2 << 20
 )
-
-var availableModelsHTTPClient = &nethttp.Client{Timeout: availableModelsTimeout}
 
 type UpstreamListModelsError struct {
 	Kind       string
@@ -62,6 +62,9 @@ func listOpenAIModels(ctx context.Context, provider data.LlmCredential, apiKey s
 	if provider.BaseURL != nil && strings.TrimSpace(*provider.BaseURL) != "" {
 		baseURL = strings.TrimRight(strings.TrimSpace(*provider.BaseURL), "/")
 	}
+	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(baseURL + "/models"); err != nil {
+		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
+	}
 	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
@@ -69,8 +72,12 @@ func listOpenAIModels(ctx context.Context, provider data.LlmCredential, apiKey s
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := availableModelsHTTPClient.Do(req)
+	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
 	if err != nil {
+		var denied sharedoutbound.DeniedError
+		if errors.As(err, &denied) {
+			return nil, &UpstreamListModelsError{Kind: "request", Err: err}
+		}
 		return nil, &UpstreamListModelsError{Kind: "network", Err: err}
 	}
 	defer resp.Body.Close()
@@ -115,6 +122,9 @@ func listAnthropicModels(ctx context.Context, provider data.LlmCredential, apiKe
 	if provider.BaseURL != nil && strings.TrimSpace(*provider.BaseURL) != "" {
 		baseURL = strings.TrimRight(strings.TrimSpace(*provider.BaseURL), "/")
 	}
+	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(baseURL + "/models"); err != nil {
+		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
+	}
 	version, extraHeaders := parseAnthropicAdvanced(provider.AdvancedJSON)
 	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, baseURL+"/models", nil)
 	if err != nil {
@@ -127,8 +137,12 @@ func listAnthropicModels(ctx context.Context, provider data.LlmCredential, apiKe
 		req.Header.Set(key, value)
 	}
 
-	resp, err := availableModelsHTTPClient.Do(req)
+	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
 	if err != nil {
+		var denied sharedoutbound.DeniedError
+		if errors.As(err, &denied) {
+			return nil, &UpstreamListModelsError{Kind: "request", Err: err}
+		}
 		return nil, &UpstreamListModelsError{Kind: "network", Err: err}
 	}
 	defer resp.Body.Close()

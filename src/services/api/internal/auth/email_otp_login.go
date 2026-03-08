@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const emailOTPTokenTTL = 1 * time.Hour
+const emailOTPTokenTTL = 10 * time.Minute
 
 // OTPExpiredOrUsedError 表示登录 OTP 无效、已用或已过期。
 type OTPExpiredOrUsedError struct{}
@@ -29,6 +31,7 @@ type EmailOTPLoginService struct {
 	tokenService     *JwtAccessTokenService
 	refreshTokenRepo *data.RefreshTokenRepository
 	membershipRepo   *data.OrgMembershipRepository
+	riskControl      EmailOTPRiskControl
 	settingsRepo     *data.PlatformSettingsRepository
 	envBaseURL       string
 }
@@ -40,6 +43,7 @@ func NewEmailOTPLoginService(
 	tokenService *JwtAccessTokenService,
 	refreshTokenRepo *data.RefreshTokenRepository,
 	membershipRepo *data.OrgMembershipRepository,
+	riskControl EmailOTPRiskControl,
 ) (*EmailOTPLoginService, error) {
 	if userRepo == nil {
 		return nil, errors.New("userRepo must not be nil")
@@ -66,6 +70,7 @@ func NewEmailOTPLoginService(
 		tokenService:     tokenService,
 		refreshTokenRepo: refreshTokenRepo,
 		membershipRepo:   membershipRepo,
+		riskControl:      riskControl,
 	}, nil
 }
 
@@ -84,16 +89,21 @@ func (s *EmailOTPLoginService) RefreshTokenTTLSeconds() int {
 // SendLoginOTP 向指定邮箱发送登录 OTP。
 // 若邮箱不存在则静默返回 nil（不暴露用户是否存在）。
 func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) error {
+	if s.riskControl != nil {
+		if err := s.riskControl.AllowSend(ctx, email); err != nil {
+			return formatOTPProtectionError(err)
+		}
+	}
+
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return fmt.Errorf("lookup user: %w", err)
 	}
 	if user == nil || user.Status != "active" {
-		// 静默：不暴露账号是否存在
 		return nil
 	}
 
-	plaintext, tokenHash, err := generateVerifyToken()
+	plaintext, tokenHash, err := generateEmailOTPToken()
 	if err != nil {
 		return fmt.Errorf("generate otp: %w", err)
 	}
@@ -117,18 +127,18 @@ func (s *EmailOTPLoginService) SendLoginOTP(ctx context.Context, email string) e
 			Title:    "登录验证码",
 			Greeting: fmt.Sprintf("你好 %s，", username),
 			Code:     plaintext,
-			Notice:   "验证码有效期 1 小时，请勿泄露",
+			Notice:   "验证码有效期 10 分钟，请勿泄露",
 		})
-		text = fmt.Sprintf("你好 %s，\n\n登录验证码：%s\n\n有效期 1 小时，请勿泄露。", username, plaintext)
+		text = fmt.Sprintf("你好 %s，\n\n登录验证码：%s\n\n有效期 10 分钟，请勿泄露。", username, plaintext)
 	} else {
 		subject = "Your login code"
 		htmlBody = buildEmailHTML(emailParams{
 			Title:    "Your login code",
 			Greeting: fmt.Sprintf("Hi %s,", username),
 			Code:     plaintext,
-			Notice:   "Expires in 1 hour · Do not share this code",
+			Notice:   "Expires in 10 minutes · Do not share this code",
 		})
-		text = fmt.Sprintf("Hi %s,\n\nYour login code: %s\n\nExpires in 1 hour. Do not share this code.", username, plaintext)
+		text = fmt.Sprintf("Hi %s,\n\nYour login code: %s\n\nExpires in 10 minutes. Do not share this code.", username, plaintext)
 	}
 
 	if _, err := s.jobRepo.EnqueueEmail(ctx, email, subject, htmlBody, text); err != nil {
@@ -143,12 +153,22 @@ func (s *EmailOTPLoginService) VerifyLoginOTP(ctx context.Context, email string,
 	if code == "" {
 		return IssuedTokenPair{}, OTPExpiredOrUsedError{}
 	}
+	if s.riskControl != nil {
+		if err := s.riskControl.EnsureVerifyAllowed(ctx, email); err != nil {
+			return IssuedTokenPair{}, formatOTPProtectionError(err)
+		}
+	}
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return IssuedTokenPair{}, fmt.Errorf("lookup user: %w", err)
 	}
 	if user == nil {
+		if s.riskControl != nil {
+			if err := s.riskControl.RecordVerifyFailure(ctx, email); err != nil {
+				return IssuedTokenPair{}, formatOTPProtectionError(err)
+			}
+		}
 		return IssuedTokenPair{}, OTPExpiredOrUsedError{}
 	}
 	if user.Status != "active" {
@@ -161,17 +181,39 @@ func (s *EmailOTPLoginService) VerifyLoginOTP(ctx context.Context, email string,
 		return IssuedTokenPair{}, err
 	}
 	if !ok || userID != user.ID {
+		if s.riskControl != nil {
+			if err := s.riskControl.RecordVerifyFailure(ctx, email); err != nil {
+				return IssuedTokenPair{}, formatOTPProtectionError(err)
+			}
+		}
 		return IssuedTokenPair{}, OTPExpiredOrUsedError{}
 	}
 
-	// OTP 登录成功时顺带完成邮箱验证
 	if user.EmailVerifiedAt == nil {
 		if err := s.userRepo.SetEmailVerified(ctx, user.ID); err != nil {
 			return IssuedTokenPair{}, fmt.Errorf("set email verified: %w", err)
 		}
 	}
 
-	return s.issueTokenPair(ctx, user.ID)
+	pair, err := s.issueTokenPair(ctx, user.ID)
+	if err != nil {
+		return IssuedTokenPair{}, err
+	}
+	if s.riskControl != nil {
+		_ = s.riskControl.ResetVerifyState(ctx, email)
+	}
+	return pair, nil
+}
+
+func generateEmailOTPToken() (plaintext, hash string, err error) {
+	var b [4]byte
+	if _, err = rand.Read(b[:]); err != nil {
+		return "", "", err
+	}
+	n := binary.BigEndian.Uint32(b[:])%90000000 + 10000000
+	plaintext = fmt.Sprintf("%08d", n)
+	hash = hashVerifyToken(plaintext)
+	return plaintext, hash, nil
 }
 
 func (s *EmailOTPLoginService) issueTokenPair(ctx context.Context, userID uuid.UUID) (IssuedTokenPair, error) {

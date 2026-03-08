@@ -924,7 +924,20 @@ func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, resolver sharedcon
 		}
 
 		// 静默处理：无论邮箱是否存在都返回 204
-		_ = otpLoginService.SendLoginOTP(r.Context(), body.Email)
+		if err := otpLoginService.SendLoginOTP(r.Context(), body.Email); err != nil {
+			var rateLimited auth.OTPRateLimitedError
+			if errors.As(err, &rateLimited) {
+				WriteError(w, nethttp.StatusTooManyRequests, "auth.otp_rate_limited", "otp rate limited", traceID, nil)
+				return
+			}
+			var unavailable auth.OTPProtectionUnavailableError
+			if errors.As(err, &unavailable) {
+				WriteError(w, nethttp.StatusServiceUnavailable, "auth.otp_protection_unavailable", "otp protection unavailable", traceID, nil)
+				return
+			}
+			WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
 		w.WriteHeader(nethttp.StatusNoContent)
 	}
 }
@@ -956,6 +969,16 @@ func emailOTPVerify(otpLoginService *auth.EmailOTPLoginService, authService *aut
 
 		issued, err := otpLoginService.VerifyLoginOTP(r.Context(), body.Email, body.Code)
 		if err != nil {
+			var locked auth.OTPLockedError
+			if errors.As(err, &locked) {
+				WriteError(w, nethttp.StatusTooManyRequests, "auth.otp_locked", "too many attempts", traceID, nil)
+				return
+			}
+			var unavailable auth.OTPProtectionUnavailableError
+			if errors.As(err, &unavailable) {
+				WriteError(w, nethttp.StatusServiceUnavailable, "auth.otp_protection_unavailable", "otp protection unavailable", traceID, nil)
+				return
+			}
 			var expired auth.OTPExpiredOrUsedError
 			if errors.As(err, &expired) {
 				WriteError(w, nethttp.StatusUnprocessableEntity, "auth.otp_invalid", "code invalid or expired", traceID, nil)
