@@ -46,8 +46,10 @@ export interface LocaleStrings {
     hybrid: string
     toolsSelected: (selected: number, total: number) => string
     enableAllTools: string
+    disableAllTools: string
     clearAllTools: string
     groupEnableAll: string
+    groupDisableAll: string
     groupClearAll: string
     toolModeLabel: string
     toolModeInherit: string
@@ -133,6 +135,9 @@ export interface LocaleStrings {
     fieldCostPerCommitHint: string
     editDescription: string
     resetDescription: string
+    disableTool: string
+    enableTool: string
+    statusDisabled: string
     descriptionPlaceholder: string
     save: string
     cancel: string

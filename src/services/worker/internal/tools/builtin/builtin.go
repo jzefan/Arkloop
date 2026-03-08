@@ -15,8 +15,6 @@ import (
 
 func AgentSpecs() []tools.AgentToolSpec {
 	return []tools.AgentToolSpec{
-		EchoAgentSpec,
-		NoopAgentSpec,
 		TimelineTitleAgentSpec,
 		websearch.AgentSpec,
 		websearch.AgentSpecTavily,
@@ -32,8 +30,6 @@ func AgentSpecs() []tools.AgentToolSpec {
 
 func LlmSpecs() []llm.ToolSpec {
 	return []llm.ToolSpec{
-		EchoLlmSpec,
-		NoopLlmSpec,
 		TimelineTitleLlmSpec,
 		websearch.LlmSpec,
 		webfetch.LlmSpec,
@@ -46,8 +42,6 @@ func LlmSpecs() []llm.ToolSpec {
 // rdb 可选；非 nil 时用于跨实例通知推送。
 func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Resolver) map[string]tools.Executor {
 	return map[string]tools.Executor{
-		EchoAgentSpec.Name:               EchoExecutor{},
-		NoopAgentSpec.Name:               NoopExecutor{},
 		TimelineTitleAgentSpec.Name:      TimelineTitleExecutor{},
 		websearch.AgentSpec.Name:         websearch.NewToolExecutor(resolver),
 		websearch.AgentSpecTavily.Name:   websearch.NewTavilyExecutor(resolver),

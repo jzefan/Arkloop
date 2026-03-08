@@ -38,17 +38,27 @@ func NewToolDescriptionOverrideMiddleware(repo ToolDescriptionOverridesReader) R
 		}
 
 		descriptionByTool := make(map[string]string, len(platformOverrides)+len(orgOverrides))
+		disabledByTool := make(map[string]struct{}, len(platformOverrides)+len(orgOverrides))
 		for _, override := range platformOverrides {
+			if override.IsDisabled {
+				disabledByTool[override.ToolName] = struct{}{}
+			}
 			if strings.TrimSpace(override.Description) == "" {
 				continue
 			}
 			descriptionByTool[override.ToolName] = override.Description
 		}
 		for _, override := range orgOverrides {
+			if override.IsDisabled {
+				disabledByTool[override.ToolName] = struct{}{}
+			}
 			if strings.TrimSpace(override.Description) == "" {
 				continue
 			}
 			descriptionByTool[override.ToolName] = override.Description
+		}
+		for toolName := range disabledByTool {
+			RemoveToolOrGroup(rc.AllowlistSet, rc.ToolRegistry, toolName)
 		}
 		if len(descriptionByTool) == 0 {
 			return next(ctx, rc)

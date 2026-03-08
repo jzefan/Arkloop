@@ -35,6 +35,7 @@ type DetailForm = {
   systemPrompt: string
   toolSelectionMode: ToolSelectionMode
   tools: string[]
+  toolDenylist: string[]
 }
 
 type ModelSelectorOption = {
@@ -44,6 +45,7 @@ type ModelSelectorOption = {
 
 function agentToForm(agent: LiteAgent): DetailForm {
   const allowlist = agent.tool_allowlist ?? []
+  const denylist = agent.tool_denylist ?? []
   return {
     name: agent.display_name,
     model: agent.model || '',
@@ -54,6 +56,7 @@ function agentToForm(agent: LiteAgent): DetailForm {
     systemPrompt: agent.prompt_md || '',
     toolSelectionMode: allowlist.length === 0 ? 'inherit' : 'custom',
     tools: allowlist,
+    toolDenylist: denylist,
   }
 }
 
@@ -256,7 +259,11 @@ export function AgentsPage() {
     () => uniqToolNames(catalogGroups.flatMap((group) => group.tools.map((tool) => tool.name))),
     [catalogGroups],
   )
-  const selectedToolCount = form ? (form.toolSelectionMode === 'inherit' ? allCatalogToolNames.length : form.tools.length) : 0
+  const selectedToolCount = form
+    ? (form.toolSelectionMode === 'inherit'
+        ? allCatalogToolNames.filter((toolName) => !form.toolDenylist.includes(toolName)).length
+        : form.tools.length)
+    : 0
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim() || !createModel.trim()) return
@@ -267,6 +274,7 @@ export function AgentsPage() {
         prompt_md: createName.trim(),
         model: createModel.trim(),
         tool_allowlist: [],
+        tool_denylist: [],
         reasoning_mode: 'auto',
       }, accessToken)
 
@@ -281,7 +289,7 @@ export function AgentsPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, allCatalogToolNames, createModel, createName, load, selectAgent, t.requestFailed])
+  }, [accessToken, addToast, createModel, createName, load, selectAgent, t.requestFailed])
 
   const handleSave = useCallback(async () => {
     if (!selected || !form || !form.name.trim()) return
@@ -297,6 +305,7 @@ export function AgentsPage() {
           max_output_tokens: form.maxOutputTokens ? Number(form.maxOutputTokens) : undefined,
           reasoning_mode: form.reasoningMode,
           tool_allowlist: form.toolSelectionMode === 'inherit' ? [] : form.tools,
+          tool_denylist: form.toolSelectionMode === 'inherit' ? form.toolDenylist : [],
           executor_type: selected.executor_type,
         }, accessToken)
         : await patchLiteAgent(selected.id, {
@@ -307,6 +316,7 @@ export function AgentsPage() {
           max_output_tokens: form.maxOutputTokens ? Number(form.maxOutputTokens) : undefined,
           reasoning_mode: form.reasoningMode,
           tool_allowlist: form.toolSelectionMode === 'inherit' ? [] : form.tools,
+          tool_denylist: form.toolSelectionMode === 'inherit' ? form.toolDenylist : [],
           is_active: form.isActive,
         }, accessToken)
 
@@ -344,17 +354,28 @@ export function AgentsPage() {
     setForm((prev) => (prev ? { ...prev, toolSelectionMode: 'custom', tools: uniqToolNames(tools) } : prev))
   }, [])
 
+  const replaceDeniedTools = useCallback((tools: string[]) => {
+    setForm((prev) => (prev ? { ...prev, toolDenylist: uniqToolNames(tools) } : prev))
+  }, [])
+
   const toggleTool = useCallback((key: string) => {
     setForm((prev) => (
-      prev
-        ? {
-            ...prev,
-            toolSelectionMode: 'custom',
-            tools: prev.tools.includes(key)
-              ? prev.tools.filter((item) => item !== key)
-              : uniqToolNames([...prev.tools, key]),
-          }
-        : prev
+      !prev
+        ? prev
+        : prev.toolSelectionMode === 'inherit'
+          ? {
+              ...prev,
+              toolDenylist: prev.toolDenylist.includes(key)
+                ? prev.toolDenylist.filter((item) => item !== key)
+                : uniqToolNames([...prev.toolDenylist, key]),
+            }
+          : {
+              ...prev,
+              toolSelectionMode: 'custom',
+              tools: prev.tools.includes(key)
+                ? prev.tools.filter((item) => item !== key)
+                : uniqToolNames([...prev.tools, key]),
+            }
     ))
   }, [])
 
@@ -362,6 +383,14 @@ export function AgentsPage() {
     setForm((prev) => {
       if (!prev) return prev
       const groupNames = group.tools.map((tool) => tool.name)
+      if (prev.toolSelectionMode === 'inherit') {
+        return {
+          ...prev,
+          toolDenylist: enabled
+            ? prev.toolDenylist.filter((toolName) => !groupNames.includes(toolName))
+            : uniqToolNames([...prev.toolDenylist, ...groupNames]),
+        }
+      }
       return {
         ...prev,
         toolSelectionMode: 'custom',
@@ -378,7 +407,11 @@ export function AgentsPage() {
       if (mode === 'inherit') {
         return { ...prev, toolSelectionMode: mode }
       }
-      const nextTools = prev.tools.length > 0 ? prev.tools : allCatalogToolNames
+      const nextTools = prev.tools.length > 0
+        ? prev.tools
+        : prev.toolSelectionMode === 'inherit'
+          ? allCatalogToolNames.filter((toolName) => !prev.toolDenylist.includes(toolName))
+          : allCatalogToolNames
       return { ...prev, toolSelectionMode: mode, tools: uniqToolNames(nextTools) }
     })
   }, [allCatalogToolNames])
@@ -597,8 +630,16 @@ export function AgentsPage() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => replaceTools(allCatalogToolNames)}
-                            disabled={form.toolSelectionMode !== 'custom' || allCatalogToolNames.length === 0}
+                            onClick={() => {
+                              if (form.toolSelectionMode === 'inherit') {
+                                replaceDeniedTools([])
+                                return
+                              }
+                              replaceTools(allCatalogToolNames)
+                            }}
+                            disabled={form.toolSelectionMode === 'inherit'
+                              ? form.toolDenylist.length === 0
+                              : allCatalogToolNames.length === 0 || form.tools.length === allCatalogToolNames.length}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
                           >
                             <CheckCheck size={13} />
@@ -606,12 +647,20 @@ export function AgentsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => replaceTools([])}
-                            disabled={form.toolSelectionMode !== 'custom' || form.tools.length === 0}
+                            onClick={() => {
+                              if (form.toolSelectionMode === 'inherit') {
+                                replaceDeniedTools(allCatalogToolNames)
+                                return
+                              }
+                              replaceTools([])
+                            }}
+                            disabled={form.toolSelectionMode === 'inherit'
+                              ? allCatalogToolNames.length === 0 || form.toolDenylist.length === allCatalogToolNames.length
+                              : form.tools.length === 0}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
                           >
                             <Minus size={13} />
-                            {ta.clearAllTools}
+                            {form.toolSelectionMode === 'inherit' ? ta.disableAllTools : ta.clearAllTools}
                           </button>
                         </div>
                       </div>
@@ -619,7 +668,7 @@ export function AgentsPage() {
                     {catalogGroups.map((group) => {
                       const groupNames = group.tools.map((tool) => tool.name)
                       const groupSelectedCount = form.toolSelectionMode === 'inherit'
-                        ? group.tools.length
+                        ? groupNames.filter((toolName) => !form.toolDenylist.includes(toolName)).length
                         : groupNames.filter((toolName) => form.tools.includes(toolName)).length
                       return (
                         <div key={group.group} className="flex flex-col gap-3 rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-sub)] p-4">
@@ -632,7 +681,7 @@ export function AgentsPage() {
                               <button
                                 type="button"
                                 onClick={() => toggleToolGroup(group, true)}
-                                disabled={form.toolSelectionMode !== 'custom' || group.tools.length === 0 || groupSelectedCount === group.tools.length}
+                                disabled={group.tools.length === 0 || groupSelectedCount === group.tools.length}
                                 className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
                               >
                                 {ta.groupEnableAll}
@@ -640,10 +689,10 @@ export function AgentsPage() {
                               <button
                                 type="button"
                                 onClick={() => toggleToolGroup(group, false)}
-                                disabled={form.toolSelectionMode !== 'custom' || groupSelectedCount === 0}
+                                disabled={groupSelectedCount === 0}
                                 className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
                               >
-                                {ta.groupClearAll}
+                                {form.toolSelectionMode === 'inherit' ? ta.groupDisableAll : ta.groupClearAll}
                               </button>
                             </div>
                           </div>
@@ -652,8 +701,10 @@ export function AgentsPage() {
                               <ToolOptionCard
                                 key={tool.name}
                                 tool={tool}
-                                checked={form.toolSelectionMode === 'inherit' || form.tools.includes(tool.name)}
-                                disabled={form.toolSelectionMode !== 'custom'}
+                                checked={form.toolSelectionMode === 'inherit'
+                                  ? !form.toolDenylist.includes(tool.name)
+                                  : form.tools.includes(tool.name)}
+                                disabled={false}
                                 onToggle={() => toggleTool(tool.name)}
                               />
                             ))}

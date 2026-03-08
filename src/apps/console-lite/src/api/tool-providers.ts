@@ -25,6 +25,7 @@ export type ToolCatalogItem = {
   llm_description: string
   has_override: boolean
   description_source: ToolDescriptionSource
+  is_disabled: boolean
 }
 
 export type ToolCatalogGroup = {
@@ -102,5 +103,13 @@ export async function deleteToolDescription(
 ): Promise<void> {
   await apiFetch<void>(scopedPath(`/v1/tool-catalog/${toolName}/description`), {
     method: 'DELETE', accessToken,
+  })
+}
+
+export async function updateToolDisabled(
+  toolName: string, disabled: boolean, accessToken: string,
+): Promise<void> {
+  await apiFetch<void>(scopedPath(`/v1/tool-catalog/${toolName}/disabled`), {
+    method: 'PUT', body: JSON.stringify({ disabled }), accessToken,
   })
 }

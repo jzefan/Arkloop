@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   Loader2, Save, CheckCircle2, Ban, Pencil, Trash2, RotateCcw,
 } from 'lucide-react'
@@ -19,6 +19,7 @@ import {
   updateToolProviderConfig,
   updateToolDescription,
   deleteToolDescription,
+  updateToolDisabled,
   type ToolProviderGroup,
   type ToolProviderItem,
   type ToolCatalogGroup,
@@ -76,13 +77,15 @@ function flatSet(obj: Record<string, unknown>, dotPath: string, value: string): 
 
 export function ToolsPage() {
   const { accessToken } = useOutletContext<LiteOutletContext>()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { addToast } = useToast()
   const { t } = useLocale()
   const tc = t.tools
+  const groupParam = searchParams.get('group')?.trim() ?? ''
 
   const [providerGroups, setProviderGroups] = useState<ToolProviderGroup[]>([])
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<string>('')
+  const [selectedGroup, setSelectedGroup] = useState<string>(groupParam)
   const [loading, setLoading] = useState(true)
   const [mutating, setMutating] = useState(false)
 
@@ -102,6 +105,7 @@ export function ToolsPage() {
   const [descEdit, setDescEdit] = useState<DescEditTarget | null>(null)
   const [descText, setDescText] = useState('')
   const [descSaving, setDescSaving] = useState(false)
+  const [toolToggling, setToolToggling] = useState('')
 
 
   const fetchAll = useCallback(async () => {
@@ -119,15 +123,44 @@ export function ToolsPage() {
 
   useEffect(() => { void fetchAll() }, [fetchAll])
 
+  const syncGroupParam = useCallback((group: string, replace = false) => {
+    const next = new URLSearchParams(searchParams)
+    if (group) {
+      next.set('group', group)
+    } else {
+      next.delete('group')
+    }
+    setSearchParams(next, { replace })
+  }, [searchParams, setSearchParams])
+
   useEffect(() => {
     if (catalogGroups.length === 0) {
+      if (groupParam) {
+        syncGroupParam('', true)
+      }
       setSelectedGroup('')
       return
     }
-    if (!catalogGroups.some((group) => group.group === selectedGroup)) {
-      setSelectedGroup(catalogGroups[0].group)
+
+    if (catalogGroups.some((group) => group.group === groupParam)) {
+      if (selectedGroup !== groupParam) {
+        setSelectedGroup(groupParam)
+      }
+      return
     }
-  }, [catalogGroups, selectedGroup])
+
+    const fallbackGroup = catalogGroups.some((group) => group.group === selectedGroup)
+      ? selectedGroup
+      : catalogGroups[0].group
+
+    if (selectedGroup !== fallbackGroup) {
+      setSelectedGroup(fallbackGroup)
+      return
+    }
+    if (groupParam !== fallbackGroup) {
+      syncGroupParam(fallbackGroup, true)
+    }
+  }, [catalogGroups, groupParam, selectedGroup, syncGroupParam])
 
   useEffect(() => {
     const grp = providerGroups.find((g) => g.group_name === selectedGroup)
@@ -283,6 +316,21 @@ export function ToolsPage() {
     }
   }, [descEdit, descText, accessToken, fetchAll, addToast, tc])
 
+  const handleToggleToolDisabled = useCallback(async (tool: ToolCatalogItem) => {
+    if (toolToggling) return
+    setToolToggling(tool.name)
+    try {
+      await updateToolDisabled(tool.name, !tool.is_disabled, accessToken)
+      addToast(tc.toastUpdated, 'success')
+      notifyToolCatalogChanged()
+      await fetchAll()
+    } catch {
+      addToast(tc.toastUpdateFailed, 'error')
+    } finally {
+      setToolToggling('')
+    }
+  }, [toolToggling, accessToken, fetchAll, addToast, tc])
+
   const handleResetDescription = useCallback(async (toolName: string) => {
     try {
       await deleteToolDescription(toolName, accessToken)
@@ -322,7 +370,10 @@ export function ToolsPage() {
                 return (
                   <button
                     key={g.group}
-                    onClick={() => setSelectedGroup(g.group)}
+                    onClick={() => {
+                      setSelectedGroup(g.group)
+                      syncGroupParam(g.group)
+                    }}
                     className={[
                       'flex h-[30px] items-center rounded-[5px] px-3 text-sm font-medium transition-colors',
                       active
@@ -467,6 +518,8 @@ export function ToolsPage() {
                           setDescText(tool.llm_description)
                         }}
                         onReset={() => handleResetDescription(tool.name)}
+                        onToggleDisabled={() => handleToggleToolDisabled(tool)}
+                        togglingDisabled={toolToggling === tool.name}
                       />
                     ))}
                   </div>
@@ -695,21 +748,36 @@ function SandboxConfigSection({
 }
 
 function ToolDescriptionRow({
-  tool, tc, onEdit, onReset,
+  tool, tc, onEdit, onReset, onToggleDisabled, togglingDisabled,
 }: {
   tool: ToolCatalogItem
-  tc: { editDescription: string; resetDescription: string }
+  tc: { editDescription: string; resetDescription: string; disableTool: string; enableTool: string; statusDisabled: string }
   onEdit: () => void
   onReset: () => void
+  onToggleDisabled: () => void
+  togglingDisabled: boolean
 }) {
   return (
     <div className="flex items-start justify-between gap-2 rounded-md border border-[var(--c-border-console)] px-3 py-2">
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-[var(--c-text-primary)]">{tool.label}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-medium text-[var(--c-text-primary)]">{tool.label}</p>
+          {tool.is_disabled && (
+            <span className="rounded-full bg-[var(--c-status-warning-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-status-warning-text)]">{tc.statusDisabled}</span>
+          )}
+        </div>
         <p className="mt-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">{tool.name}</p>
         <p className="mt-1 line-clamp-3 text-xs text-[var(--c-text-muted)]">{tool.llm_description}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <button
+          onClick={onToggleDisabled}
+          disabled={togglingDisabled}
+          className="rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)] disabled:opacity-40"
+          title={tool.is_disabled ? tc.enableTool : tc.disableTool}
+        >
+          {togglingDisabled ? <Loader2 size={12} className="animate-spin" /> : <Ban size={12} />}
+        </button>
         <button
           onClick={onEdit}
           className="rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"

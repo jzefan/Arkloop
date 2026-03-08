@@ -15,6 +15,7 @@ type ToolDescriptionOverride struct {
 	Scope       string
 	ToolName    string
 	Description string
+	IsDisabled  bool
 	UpdatedAt   time.Time
 }
 
@@ -35,7 +36,7 @@ func (r *ToolDescriptionOverridesRepository) ListByScope(ctx context.Context, or
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT org_id, scope, tool_name, description, updated_at
+		SELECT org_id, scope, tool_name, description, is_disabled, updated_at
 		FROM tool_description_overrides
 		WHERE org_id = $1 AND scope = $2
 		ORDER BY tool_name ASC
@@ -48,7 +49,7 @@ func (r *ToolDescriptionOverridesRepository) ListByScope(ctx context.Context, or
 	var out []ToolDescriptionOverride
 	for rows.Next() {
 		var o ToolDescriptionOverride
-		if err := rows.Scan(&o.OrgID, &o.Scope, &o.ToolName, &o.Description, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.OrgID, &o.Scope, &o.ToolName, &o.Description, &o.IsDisabled, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -88,6 +89,18 @@ func (r *ToolDescriptionOverridesRepository) Delete(ctx context.Context, orgID u
 	}
 
 	tag, err := r.db.Exec(ctx, `
+		UPDATE tool_description_overrides
+		SET description = '', updated_at = now()
+		WHERE org_id = $1 AND scope = $2 AND tool_name = $3 AND is_disabled = TRUE
+	`, orgID, scope, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	tag, err = r.db.Exec(ctx, `
 		DELETE FROM tool_description_overrides
 		WHERE org_id = $1 AND scope = $2 AND tool_name = $3
 	`, orgID, scope, name)
@@ -98,4 +111,42 @@ func (r *ToolDescriptionOverridesRepository) Delete(ctx context.Context, orgID u
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+func (r *ToolDescriptionOverridesRepository) SetDisabled(ctx context.Context, orgID uuid.UUID, scope string, toolName string, disabled bool) error {
+	if scope != "org" && scope != "platform" {
+		return fmt.Errorf("scope must be org or platform")
+	}
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return fmt.Errorf("tool_name must not be empty")
+	}
+
+	if disabled {
+		_, err := r.db.Exec(ctx, `
+			INSERT INTO tool_description_overrides (org_id, scope, tool_name, description, is_disabled, updated_at)
+			VALUES ($1, $2, $3, '', TRUE, now())
+			ON CONFLICT (org_id, scope, tool_name)
+			DO UPDATE SET is_disabled = TRUE, updated_at = now()
+		`, orgID, scope, name)
+		return err
+	}
+
+	tag, err := r.db.Exec(ctx, `
+		UPDATE tool_description_overrides
+		SET is_disabled = FALSE, updated_at = now()
+		WHERE org_id = $1 AND scope = $2 AND tool_name = $3 AND description <> ''
+	`, orgID, scope, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	_, err = r.db.Exec(ctx, `
+		DELETE FROM tool_description_overrides
+		WHERE org_id = $1 AND scope = $2 AND tool_name = $3
+	`, orgID, scope, name)
+	return err
 }

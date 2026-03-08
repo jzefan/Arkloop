@@ -109,10 +109,13 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 		t.Fatalf("list: %d %s", listResp.Code, listResp.Body.String())
 	}
 	catalog := decodeJSONBody[toolCatalogResponse](t, listResp.Body.Bytes())
-	for _, groupName := range []string{"web_search", "web_fetch", "sandbox", "memory", "document", "orchestration", "internal"} {
+	for _, groupName := range []string{"web_search", "web_fetch", "sandbox", "memory", "document", "orchestration"} {
 		if _, ok := findCatalogGroup(catalog, groupName); !ok {
 			t.Fatalf("missing group %s", groupName)
 		}
+	}
+	if _, ok := findCatalogGroup(catalog, "internal"); ok {
+		t.Fatal("internal group should be absent")
 	}
 
 	webSearch, ok := findCatalogTool(catalog, "web_search", "web_search")
@@ -207,6 +210,21 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	unknown := doJSON(handler, nethttp.MethodPut, "/v1/tool-catalog/not_real/description", platformOverride, authHeader(adminToken))
 	if unknown.Code != nethttp.StatusNotFound {
 		t.Fatalf("unknown tool should be 404, got %d", unknown.Code)
+	}
+
+	disableDoc := doJSON(handler, nethttp.MethodPut, "/v1/tool-catalog/document_write/disabled", map[string]any{"disabled": true}, authHeader(adminToken))
+	if disableDoc.Code != nethttp.StatusNoContent {
+		t.Fatalf("disable document_write: %d %s", disableDoc.Code, disableDoc.Body.String())
+	}
+
+	listPlatform = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog", nil, authHeader(adminToken))
+	platformCatalog = decodeJSONBody[toolCatalogResponse](t, listPlatform.Body.Bytes())
+	documentWrite, ok := findCatalogTool(platformCatalog, "document", "document_write")
+	if !ok {
+		t.Fatal("document_write should still be visible in management catalog")
+	}
+	if !documentWrite.IsDisabled {
+		t.Fatal("document_write should be marked disabled")
 	}
 }
 
@@ -310,6 +328,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	mcpRepo, _ := data.NewMCPConfigsRepository(pool)
 	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(pool)
+	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(pool)
 	orgRepo, _ := data.NewOrgRepository(pool)
 	passwordHasher, _ := auth.NewBcryptPasswordHasher(0)
 	tokenService, _ := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
@@ -367,13 +386,14 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	}
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                    pool,
-		DirectPool:              pool,
-		Logger:                  logger,
-		AuthService:             authService,
-		OrgMembershipRepo:       membershipRepo,
-		ToolProviderConfigsRepo: toolProvidersRepo,
-		ArtifactStore:           newFakeHTTPArtifactStore(),
+		Pool:                         pool,
+		DirectPool:                   pool,
+		Logger:                       logger,
+		AuthService:                  authService,
+		OrgMembershipRepo:            membershipRepo,
+		ToolProviderConfigsRepo:      toolProvidersRepo,
+		ToolDescriptionOverridesRepo: overridesRepo,
+		ArtifactStore:                newFakeHTTPArtifactStore(),
 	})
 
 	resp := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog/effective", nil, authHeader(token))
@@ -398,6 +418,19 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	}
 	if item.Label != "Docs Lookup" {
 		t.Fatalf("unexpected mcp label: %s", item.Label)
+	}
+
+	if err := overridesRepo.SetDisabled(ctx, uuid.Nil, "platform", "document_write", true); err != nil {
+		t.Fatalf("disable document_write: %v", err)
+	}
+
+	resp = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog/effective", nil, authHeader(token))
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("effective catalog after disable: %d %s", resp.Code, resp.Body.String())
+	}
+	catalog = decodeJSONBody[toolCatalogResponse](t, resp.Body.Bytes())
+	if _, ok := findCatalogTool(catalog, "document", "document_write"); ok {
+		t.Fatal("document_write should be hidden after disable")
 	}
 }
 

@@ -27,6 +27,7 @@ type liteAgentResponse struct {
 	ReasoningMode   string          `json:"reasoning_mode"`
 	ToolPolicy      string          `json:"tool_policy"`
 	ToolAllowlist   []string        `json:"tool_allowlist"`
+	ToolDenylist    []string        `json:"tool_denylist"`
 	IsActive        bool            `json:"is_active"`
 	ExecutorType    string          `json:"executor_type"`
 	BudgetsJSON     json.RawMessage `json:"budgets"`
@@ -43,6 +44,7 @@ type createLiteAgentRequest struct {
 	MaxOutputTokens        *int     `json:"max_output_tokens"`
 	ReasoningMode          string   `json:"reasoning_mode"`
 	ToolAllowlist          []string `json:"tool_allowlist"`
+	ToolDenylist           []string `json:"tool_denylist"`
 	ExecutorType           string   `json:"executor_type"`
 }
 
@@ -54,6 +56,7 @@ type patchLiteAgentRequest struct {
 	MaxOutputTokens *int      `json:"max_output_tokens"`
 	ReasoningMode   *string   `json:"reasoning_mode"`
 	ToolAllowlist   *[]string `json:"tool_allowlist"`
+	ToolDenylist    *[]string `json:"tool_denylist"`
 	IsActive        *bool     `json:"is_active"`
 }
 
@@ -207,7 +210,7 @@ func createLiteAgent(
 		nil,
 		req.PromptMD,
 		req.ToolAllowlist,
-		nil,
+		req.ToolDenylist,
 		mergeLiteAgentBudgets(nil, req.Temperature, req.MaxOutputTokens),
 		nil,
 		req.Model,
@@ -268,6 +271,9 @@ func patchLiteAgent(
 	if req.ToolAllowlist != nil {
 		patch.ToolAllowlist = *req.ToolAllowlist
 	}
+	if req.ToolDenylist != nil {
+		patch.ToolDenylist = *req.ToolDenylist
+	}
 
 	updated, err := personasRepo.Patch(r.Context(), actor.OrgID, personaID, patch)
 	if err != nil {
@@ -318,6 +324,10 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	if allowlist == nil {
 		allowlist = []string{}
 	}
+	denylist := p.ToolDenylist
+	if denylist == nil {
+		denylist = []string{}
+	}
 	budgets := p.BudgetsJSON
 	if len(budgets) == 0 {
 		budgets = json.RawMessage("{}")
@@ -334,6 +344,8 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	toolPolicy := "none"
 	if len(allowlist) > 0 {
 		toolPolicy = "allowlist"
+	} else if len(denylist) > 0 {
+		toolPolicy = "denylist"
 	}
 	return liteAgentResponse{
 		ID:              p.ID.String(),
@@ -347,6 +359,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 		ReasoningMode:   reasoningMode,
 		ToolPolicy:      toolPolicy,
 		ToolAllowlist:   allowlist,
+		ToolDenylist:    denylist,
 		IsActive:        p.IsActive,
 		ExecutorType:    executorType,
 		BudgetsJSON:     budgets,
@@ -359,6 +372,10 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 	allowlist := rp.ToolAllowlist
 	if allowlist == nil {
 		allowlist = []string{}
+	}
+	denylist := rp.ToolDenylist
+	if denylist == nil {
+		denylist = []string{}
 	}
 	budgets := json.RawMessage("{}")
 	if rp.Budgets != nil {
@@ -383,6 +400,8 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 	toolPolicy := "none"
 	if len(allowlist) > 0 {
 		toolPolicy = "allowlist"
+	} else if len(denylist) > 0 {
+		toolPolicy = "denylist"
 	}
 	return liteAgentResponse{
 		ID:              rp.ID,
@@ -396,6 +415,7 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 		ReasoningMode:   reasoningMode,
 		ToolPolicy:      toolPolicy,
 		ToolAllowlist:   allowlist,
+		ToolDenylist:    denylist,
 		IsActive:        true,
 		ExecutorType:    executorType,
 		BudgetsJSON:     budgets,

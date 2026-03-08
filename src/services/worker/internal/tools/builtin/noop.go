@@ -5,7 +5,6 @@ import (
 	"sort"
 	"time"
 
-	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -21,7 +20,7 @@ var NoopAgentSpec = tools.AgentToolSpec{
 
 var NoopLlmSpec = llm.ToolSpec{
 	Name:        "noop",
-	Description: stringPtr(sharedtoolmeta.Must("noop").LLMDescription),
+	Description: stringPtr("no-op with no side effects"),
 	JSONSchema: map[string]any{
 		"type":                 "object",
 		"properties":           map[string]any{},

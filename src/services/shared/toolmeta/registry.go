@@ -9,7 +9,6 @@ const (
 	GroupMemory        = "memory"
 	GroupDocument      = "document"
 	GroupOrchestration = "orchestration"
-	GroupInternal      = "internal"
 
 	WebSearchDefaultMaxResults = 5
 	WebSearchMaxResultsLimit   = 20
@@ -36,7 +35,6 @@ var groupOrder = []string{
 	GroupMemory,
 	GroupDocument,
 	GroupOrchestration,
-	GroupInternal,
 }
 
 var registry = []ToolMeta{
@@ -123,18 +121,6 @@ var registry = []ToolMeta{
 		Group:          GroupOrchestration,
 		Label:          "Timeline title",
 		LLMDescription: "UI metadata tool that sets a short label shown in the user-facing thinking timeline. Call this tool in parallel with your first tool call of each round (include it in the same tool_use batch). Also call it when you are only thinking without other tools, to describe what you are considering. The label parameter must be a single-line plain-text phrase (no quotes, no Markdown, no numbering) in the same language as the user's input. Keep it concise: 8-16 characters for Chinese, <=8 words for English. You may prefix with stage words such as 'Searching for ...', 'Analyzing ...', 'Reviewing ...', etc. Call this tool as often as possible to keep the timeline informative.",
-	},
-	{
-		Name:           "echo",
-		Group:          GroupInternal,
-		Label:          "Echo",
-		LLMDescription: "echo back input text",
-	},
-	{
-		Name:           "noop",
-		Group:          GroupInternal,
-		Label:          "No-op",
-		LLMDescription: "no-op with no side effects",
 	},
 }
 

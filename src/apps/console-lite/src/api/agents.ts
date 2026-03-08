@@ -15,6 +15,7 @@ export type LiteAgent = {
   reasoning_mode: string
   tool_policy: string
   tool_allowlist: string[]
+  tool_denylist: string[]
   is_active: boolean
   executor_type: string
   budgets: Record<string, unknown>
@@ -31,6 +32,7 @@ export type CreateLiteAgentRequest = {
   max_output_tokens?: number
   reasoning_mode?: string
   tool_allowlist?: string[]
+  tool_denylist?: string[]
   executor_type?: string
 }
 
@@ -42,6 +44,7 @@ export type PatchLiteAgentRequest = {
   max_output_tokens?: number
   reasoning_mode?: string
   tool_allowlist?: string[]
+  tool_denylist?: string[]
   is_active?: boolean
 }
 
