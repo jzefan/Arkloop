@@ -18,10 +18,14 @@ const (
 
 // ToolExecutor 将 Markdown 内容直接上传到 S3，不经过 Sandbox。
 type ToolExecutor struct {
-	store *objectstore.Store
+	store interface {
+		PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
+	}
 }
 
-func NewToolExecutor(store *objectstore.Store) *ToolExecutor {
+func NewToolExecutor(store interface {
+	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
+}) *ToolExecutor {
 	return &ToolExecutor{store: store}
 }
 

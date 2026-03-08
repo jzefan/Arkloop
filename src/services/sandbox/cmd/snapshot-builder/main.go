@@ -15,6 +15,7 @@ import (
 	"arkloop/services/sandbox/internal/snapshot"
 	"arkloop/services/sandbox/internal/storage"
 	"arkloop/services/sandbox/internal/template"
+	"arkloop/services/shared/objectstore"
 )
 
 func main() {
@@ -136,9 +137,13 @@ func initDeps(cfg app.Config) (storage.SnapshotStore, *template.Registry, *loggi
 	}
 
 	cacheDir := cfg.SocketBaseDir + "/_snapshots"
-	store, err := storage.NewMinIOStore(context.Background(), cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cacheDir)
+	store, err := storage.NewSnapshotStore(context.Background(), objectstore.NewS3Opener(objectstore.S3Config{
+		Endpoint:  cfg.S3Endpoint,
+		AccessKey: cfg.S3AccessKey,
+		SecretKey: cfg.S3SecretKey,
+	}), cacheDir)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("init minio store: %w", err)
+		return nil, nil, nil, fmt.Errorf("init snapshot store: %w", err)
 	}
 
 	registry, err := template.LoadFromFile(cfg.TemplatesPath)

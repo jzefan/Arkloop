@@ -21,7 +21,7 @@ type stateStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 }
 
-var _ stateStore = (*objectstore.Store)(nil)
+var _ stateStore = (*objectstore.S3Store)(nil)
 
 type checkpointManifest struct {
 	Version        int                        `json:"version"`

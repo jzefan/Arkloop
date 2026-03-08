@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"arkloop/services/shared/objectstore"
 )
 
 type memoryStore struct {
@@ -33,6 +35,16 @@ func (s *memoryStore) Get(_ context.Context, key string) ([]byte, error) {
 		return nil, os.ErrNotExist
 	}
 	return append([]byte(nil), value...), nil
+}
+
+func (s *memoryStore) Head(_ context.Context, key string) (objectstore.ObjectInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.data[key]
+	if !ok {
+		return objectstore.ObjectInfo{}, os.ErrNotExist
+	}
+	return objectstore.ObjectInfo{Key: key, Size: int64(len(value)), ETag: string(value)}, nil
 }
 
 type fakeCarrier struct {
@@ -101,5 +113,79 @@ func TestManagerFlushAndPrepareAcrossCarriers(t *testing.T) {
 	}
 	if string(second.imports[ScopeWorkspace]) != "workspace-v1" {
 		t.Fatalf("unexpected imported workspace archive: %q", second.imports[ScopeWorkspace])
+	}
+}
+
+func TestPutBlobIfMissingSkipsExistingBlob(t *testing.T) {
+	store := newMemoryStore()
+	blob := []byte("hello blob")
+	key := blobKey(ScopeWorkspace, "ws-1", "sha-1")
+	store.data[key] = append([]byte(nil), blob...)
+
+	if err := putBlobIfMissing(context.Background(), store, key, []byte("new blob")); err != nil {
+		t.Fatalf("put blob if missing: %v", err)
+	}
+	got, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get blob: %v", err)
+	}
+	if string(got) != "hello blob" {
+		t.Fatalf("unexpected existing blob overwrite: %q", got)
+	}
+}
+
+func TestPutBlobIfMissingWritesCompressedBlob(t *testing.T) {
+	store := newMemoryStore()
+	plain := []byte("hello compressed world")
+	key := blobKey(ScopeProfile, "profile-1", "sha-2")
+
+	if err := putBlobIfMissing(context.Background(), store, key, plain); err != nil {
+		t.Fatalf("put blob if missing: %v", err)
+	}
+	loaded, err := loadBlob(context.Background(), store, key)
+	if err != nil {
+		t.Fatalf("load blob: %v", err)
+	}
+	if string(loaded) != string(plain) {
+		t.Fatalf("unexpected blob content: %q", loaded)
+	}
+}
+
+func TestLoadLegacyArchive(t *testing.T) {
+	store := newMemoryStore()
+	store.data[workspaceKey("ws-legacy")] = []byte("legacy-workspace")
+
+	got, err := loadLegacyArchive(context.Background(), store, ScopeWorkspace, "ws-legacy")
+	if err != nil {
+		t.Fatalf("load legacy archive: %v", err)
+	}
+	if string(got) != "legacy-workspace" {
+		t.Fatalf("unexpected legacy archive: %q", got)
+	}
+}
+
+func TestSaveAndLoadManifest(t *testing.T) {
+	store := newMemoryStore()
+	manifest := Manifest{
+		Scope:    ScopeWorkspace,
+		Ref:      "ws-1",
+		Revision: "rev-1",
+		Entries: []ManifestEntry{{
+			Path:    "docs/readme.md",
+			Type:    EntryTypeFile,
+			Size:    12,
+			SHA256:  "abc",
+			BlobKey: "workspaces/ws-1/blobs/abc.zst",
+		}},
+	}
+	if err := saveManifest(context.Background(), store, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	loaded, err := loadLatestManifest(context.Background(), store, ScopeWorkspace, "ws-1")
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if loaded.Ref != "ws-1" || len(loaded.Entries) != 1 || loaded.Entries[0].Path != "docs/readme.md" {
+		t.Fatalf("unexpected manifest: %#v", loaded)
 	}
 }
