@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	sharedoutbound "arkloop/services/shared/outboundurl"
+
 	"arkloop/services/worker/internal/memory"
 
 	"github.com/google/uuid"
@@ -82,14 +84,20 @@ type client struct {
 	rootAPIKey string
 	http       *http.Client // 读操作（Find/Content）短超时
 	writeHTTP  *http.Client // 写操作（commit/session）长超时，LLM 处理需要
+	baseURLErr error
 }
 
 func newClient(baseURL, rootAPIKey string) *client {
+	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(strings.TrimSpace(baseURL))
+	if baseURLErr == nil {
+		baseURL = normalizedBaseURL
+	}
 	return &client{
 		baseURL:    baseURL,
 		rootAPIKey: rootAPIKey,
-		http:       &http.Client{Timeout: defaultHTTPTimeout},
-		writeHTTP:  &http.Client{Timeout: writeHTTPTimeout},
+		http:       sharedoutbound.DefaultPolicy().NewHTTPClient(defaultHTTPTimeout),
+		writeHTTP:  sharedoutbound.DefaultPolicy().NewHTTPClient(writeHTTPTimeout),
+		baseURLErr: baseURLErr,
 	}
 }
 
@@ -104,6 +112,9 @@ func (c *client) doWriteJSON(ctx context.Context, method, path string, body any,
 }
 
 func (c *client) doJSONWith(ctx context.Context, hc *http.Client, method, path string, body any, ident memory.MemoryIdentity, out any) error {
+	if c.baseURLErr != nil {
+		return c.baseURLErr
+	}
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -171,9 +182,9 @@ func (c *client) doJSONWithRetry(ctx context.Context, method, path string, body 
 // --- Find ---
 
 type findRequest struct {
-	Query     string  `json:"query"`
-	TargetURI string  `json:"target_uri,omitempty"`
-	Limit     int     `json:"limit"`
+	Query     string   `json:"query"`
+	TargetURI string   `json:"target_uri,omitempty"`
+	Limit     int      `json:"limit"`
 	Threshold *float64 `json:"score_threshold,omitempty"`
 }
 
@@ -185,11 +196,11 @@ type findResponse struct {
 }
 
 type matchedContext struct {
-	URI         string            `json:"uri"`
-	Abstract    string            `json:"abstract"`
-	Score       float64           `json:"score"`
-	MatchReason string            `json:"match_reason"`
-	Relations   []relatedContext  `json:"relations"`
+	URI         string           `json:"uri"`
+	Abstract    string           `json:"abstract"`
+	Score       float64          `json:"score"`
+	MatchReason string           `json:"match_reason"`
+	Relations   []relatedContext `json:"relations"`
 }
 
 type relatedContext struct {

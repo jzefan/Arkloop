@@ -11,8 +11,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/queue"
@@ -58,61 +61,19 @@ func NewDeliveryHandler(pool *pgxpool.Pool, q queue.JobQueue, logger *app.JSONLo
 
 // newSafeHTTPClient 创建阻断内网地址的 HTTP 客户端，防止 SSRF。
 func newSafeHTTPClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout: deliveryTimeoutSec * time.Second,
-	}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, fmt.Errorf("webhook: invalid addr %q: %w", addr, err)
-			}
-			ips, err := net.DefaultResolver.LookupHost(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("webhook: dns lookup %q: %w", host, err)
-			}
-			for _, ipStr := range ips {
-				ip := net.ParseIP(ipStr)
-				if ip == nil {
-					continue
-				}
-				if isPrivateIP(ip) {
-					return nil, fmt.Errorf("webhook: target IP %s is not allowed (private/loopback/link-local)", ipStr)
-				}
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
-		},
-	}
-	return &http.Client{
-		Timeout:   deliveryTimeoutSec * time.Second,
-		Transport: transport,
-	}
+	return sharedoutbound.DefaultPolicy().NewHTTPClient(deliveryTimeoutSec * time.Second)
 }
 
 // isPrivateIP 判断 IP 是否属于禁止访问的地址范围。
 func isPrivateIP(ip net.IP) bool {
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"::1/128",
-		"169.254.0.0/16", // link-local
-		"fe80::/10",      // IPv6 link-local
-		"fc00::/7",       // IPv6 unique local
-		"100.64.0.0/10",  // RFC 6598 carrier-grade NAT
-		"198.18.0.0/15",  // RFC 2544 benchmarking
+	if ip == nil {
+		return false
 	}
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
 	}
-	return false
+	return sharedoutbound.DefaultPolicy().EnsureIPAllowed(addr.Unmap()) != nil
 }
 
 func (h *DeliveryHandler) Handle(ctx context.Context, lease queue.JobLease) error {

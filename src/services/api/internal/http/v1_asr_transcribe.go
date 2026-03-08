@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -11,6 +12,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 const groqDefaultBaseURL = "https://api.groq.com/openai/v1"
@@ -21,10 +23,6 @@ const (
 	asrUpstreamTimeout  = 120 * time.Second
 	asrMaxResponseBytes = 2 << 20 // 2 MiB
 )
-
-var asrHTTPClient = &nethttp.Client{
-	Timeout: asrUpstreamTimeout,
-}
 
 func asrTranscribeEntry(
 	authService *auth.Service,
@@ -120,6 +118,10 @@ func asrTranscribeEntry(
 		mw.Close()
 
 		upstreamURL := resolveAsrBaseURL(cred) + "/audio/transcriptions"
+		if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(upstreamURL); err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "asr.invalid_base_url", "invalid ASR base_url configured", traceID, nil)
+			return
+		}
 
 		req, err := nethttp.NewRequestWithContext(r.Context(), nethttp.MethodPost, upstreamURL, &buf)
 		if err != nil {
@@ -129,8 +131,13 @@ func asrTranscribeEntry(
 		req.Header.Set("Content-Type", mw.FormDataContentType())
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
 
-		resp, err := asrHTTPClient.Do(req)
+		resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(asrUpstreamTimeout).Do(req)
 		if err != nil {
+			var denied sharedoutbound.DeniedError
+			if errors.As(err, &denied) {
+				WriteError(w, nethttp.StatusUnprocessableEntity, "asr.invalid_base_url", "invalid ASR base_url configured", traceID, nil)
+				return
+			}
 			WriteError(w, nethttp.StatusBadGateway, "asr.upstream_error", "upstream ASR request failed", traceID, nil)
 			return
 		}

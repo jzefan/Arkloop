@@ -9,22 +9,33 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 type SearxngProvider struct {
-	baseURL string
-	client  *http.Client
+	baseURL    string
+	client     *http.Client
+	baseURLErr error
 }
 
 func NewSearxngProvider(baseURL string) *SearxngProvider {
 	cleaned := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(cleaned)
+	if baseURLErr == nil {
+		cleaned = normalizedBaseURL
+	}
 	return &SearxngProvider{
-		baseURL: cleaned,
-		client:  &http.Client{Timeout: 15 * time.Second},
+		baseURL:    cleaned,
+		client:     sharedoutbound.DefaultPolicy().NewHTTPClient(15 * time.Second),
+		baseURLErr: baseURLErr,
 	}
 }
 
 func (p *SearxngProvider) Search(ctx context.Context, query string, maxResults int) ([]Result, error) {
+	if p.baseURLErr != nil {
+		return nil, p.baseURLErr
+	}
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query must not be empty")
 	}
@@ -96,4 +107,3 @@ func (p *SearxngProvider) Search(ctx context.Context, query string, maxResults i
 	}
 	return out, nil
 }
-

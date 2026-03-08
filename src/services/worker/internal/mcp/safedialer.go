@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 // SSRFError 表示请求被 SSRF 防护拦截。
@@ -24,28 +26,25 @@ func (e SSRFError) Error() string {
 // DNS 解析后检查实际 IP，防止 DNS rebinding 攻击。
 func newSafeHTTPClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: ssrf: invalid addr %q: %w", addr, err)
+		}
 
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, fmt.Errorf("mcp: ssrf: invalid addr %q: %w", addr, err)
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: ssrf: resolve %q: %w", host, err)
+		}
+
+		for _, ip := range ips {
+			if isDeniedIP(ip.Unmap()) {
+				return nil, SSRFError{Message: fmt.Sprintf("mcp: ssrf: denied ip %s for host %s", ip, host)}
 			}
+		}
 
-			ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-			if err != nil {
-				return nil, fmt.Errorf("mcp: ssrf: resolve %q: %w", host, err)
-			}
-
-			for _, ip := range ips {
-				if isDeniedIP(ip) {
-					return nil, SSRFError{Message: fmt.Sprintf("mcp: ssrf: denied ip %s for host %s", ip, host)}
-				}
-			}
-
-			// 使用第一个合法 IP 直连，跳过后续 DNS 查询防止 rebinding
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
-		},
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].Unmap().String(), port))
 	}
 
 	return &http.Client{
@@ -78,7 +77,7 @@ func validateURL(u *url.URL) error {
 		return SSRFError{Message: fmt.Sprintf("mcp: ssrf: denied hostname %q", host)}
 	}
 
-	if ip, err := netip.ParseAddr(host); err == nil {
+	if ip := sharedoutbound.ParseIP(host); ip.IsValid() {
 		if isDeniedIP(ip) {
 			return SSRFError{Message: fmt.Sprintf("mcp: ssrf: denied ip %s", ip)}
 		}
@@ -88,20 +87,17 @@ func validateURL(u *url.URL) error {
 }
 
 func isDeniedIP(ip netip.Addr) bool {
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified() ||
-		isCloudMetadata(ip)
+	if isCloudMetadata(ip) {
+		return true
+	}
+	return sharedoutbound.DefaultPolicy().EnsureIPAllowed(ip.Unmap()) != nil
 }
 
 // isCloudMetadata 检查 AWS/GCP/Azure 元数据服务地址。
 func isCloudMetadata(ip netip.Addr) bool {
 	metadata := []netip.Addr{
-		netip.MustParseAddr("169.254.169.254"), // AWS/GCP/Azure
-		netip.MustParseAddr("fd00:ec2::254"),   // AWS IPv6
+		netip.MustParseAddr("169.254.169.254"),
+		netip.MustParseAddr("fd00:ec2::254"),
 	}
 	for _, m := range metadata {
 		if ip == m {

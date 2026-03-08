@@ -141,6 +141,11 @@ func createAsrCredential(
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.APIKey = strings.TrimSpace(req.APIKey)
 	req.Model = strings.TrimSpace(req.Model)
+	normalizedBaseURL, err := normalizeOptionalBaseURL(req.BaseURL)
+	if err != nil {
+		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
+		return
+	}
 	if req.Scope == "" {
 		req.Scope = "org"
 	}
@@ -196,7 +201,7 @@ func createAsrCredential(
 		req.Name,
 		&secret.ID,
 		&keyPrefix,
-		req.BaseURL,
+		normalizedBaseURL,
 		req.Model,
 		req.IsDefault,
 	)

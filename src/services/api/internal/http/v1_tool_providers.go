@@ -446,8 +446,17 @@ func upsertToolProviderCredential(
 		apiKey = strings.TrimSpace(*req.APIKey)
 	}
 	baseURLRaw := ""
+	var baseURLPtr *string
 	if req.BaseURL != nil {
-		baseURLRaw = strings.TrimRight(strings.TrimSpace(*req.BaseURL), "/")
+		normalizedBaseURL, err := normalizeOptionalBaseURL(req.BaseURL)
+		if err != nil {
+			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
+			return
+		}
+		if normalizedBaseURL != nil {
+			baseURLRaw = *normalizedBaseURL
+			baseURLPtr = normalizedBaseURL
+		}
 		if def.RequiresBaseURL && baseURLRaw == "" {
 			WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is required", traceID, nil)
 			return
@@ -475,9 +484,8 @@ func upsertToolProviderCredential(
 	txProviders := toolProvidersRepo.WithTx(tx)
 
 	var (
-		secretID   *uuid.UUID
-		keyPrefix  *string
-		baseURLPtr *string
+		secretID  *uuid.UUID
+		keyPrefix *string
 	)
 	if apiKey != "" {
 		if secretsRepo == nil {
@@ -501,10 +509,6 @@ func upsertToolProviderCredential(
 		secretID = &id
 		prefix := computeKeyPrefix(apiKey)
 		keyPrefix = &prefix
-	}
-
-	if baseURL != "" {
-		baseURLPtr = &baseURL
 	}
 
 	if _, err := txProviders.UpsertConfig(r.Context(), orgID, scope, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {

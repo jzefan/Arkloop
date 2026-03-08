@@ -3,12 +3,15 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 
 	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
@@ -62,8 +65,9 @@ type AnthropicGatewayConfig struct {
 }
 
 type AnthropicGateway struct {
-	cfg    AnthropicGatewayConfig
-	client *http.Client
+	cfg        AnthropicGatewayConfig
+	client     *http.Client
+	baseURLErr error
 }
 
 func NewAnthropicGateway(cfg AnthropicGatewayConfig) *AnthropicGateway {
@@ -74,6 +78,10 @@ func NewAnthropicGateway(cfg AnthropicGatewayConfig) *AnthropicGateway {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
+	}
+	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(baseURL)
+	if baseURLErr == nil {
+		baseURL = normalizedBaseURL
 	}
 	cfg.BaseURL = baseURL
 	if strings.TrimSpace(cfg.AnthropicVersion) == "" {
@@ -87,14 +95,16 @@ func NewAnthropicGateway(cfg AnthropicGatewayConfig) *AnthropicGateway {
 		cfg.AdvancedJSON = map[string]any{}
 	}
 	return &AnthropicGateway{
-		cfg: cfg,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		cfg:        cfg,
+		client:     sharedoutbound.DefaultPolicy().NewHTTPClient(timeout),
+		baseURLErr: baseURLErr,
 	}
 }
 
 func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
+	if g.baseURLErr != nil {
+		return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "Anthropic base_url blocked", Details: map[string]any{"reason": g.baseURLErr.Error()}}})
+	}
 	llmCallID := uuid.NewString()
 
 	system, messages, err := toAnthropicMessages(request.Messages)
@@ -218,6 +228,10 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 
 	resp, err := g.client.Do(req)
 	if err != nil {
+		var denied sharedoutbound.DeniedError
+		if errors.As(err, &denied) {
+			return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "Anthropic base_url blocked", Details: map[string]any{"reason": denied.Error()}}})
+		}
 		return yield(StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
@@ -417,13 +431,9 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 			continue
 		}
 
-		blocks := []map[string]any{}
-		for _, part := range message.Content {
-			block := map[string]any{"type": "text", "text": part.Text}
-			if part.CacheControl != nil && strings.TrimSpace(*part.CacheControl) != "" {
-				block["cache_control"] = map[string]any{"type": *part.CacheControl}
-			}
-			blocks = append(blocks, block)
+		blocks, err := anthropicContentBlocks(message.Content)
+		if err != nil {
+			return nil, nil, err
 		}
 		if len(blocks) == 0 {
 			blocks = []map[string]any{{"type": "text", "text": text}}
@@ -436,6 +446,46 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 
 	flushToolResults()
 	return systemBlocks, out, nil
+}
+
+func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
+	blocks := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		switch part.Kind() {
+		case "text":
+			block := map[string]any{"type": "text", "text": part.Text}
+			if part.CacheControl != nil && strings.TrimSpace(*part.CacheControl) != "" {
+				block["cache_control"] = map[string]any{"type": *part.CacheControl}
+			}
+			blocks = append(blocks, block)
+		case "file":
+			text := PartPromptText(part)
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			blocks = append(blocks, map[string]any{"type": "text", "text": text})
+		case "image":
+			if part.Attachment == nil {
+				return nil, fmt.Errorf("image attachment is required")
+			}
+			if len(part.Data) == 0 {
+				return nil, fmt.Errorf("image attachment data is required")
+			}
+			mimeType := strings.TrimSpace(part.Attachment.MimeType)
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			blocks = append(blocks, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": mimeType,
+					"data":       base64.StdEncoding.EncodeToString(part.Data),
+				},
+			})
+		}
+	}
+	return blocks, nil
 }
 
 func anthropicToolResultBlock(text string) (map[string]any, error) {
