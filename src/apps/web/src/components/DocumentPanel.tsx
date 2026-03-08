@@ -3,13 +3,65 @@ import { X, FileText, Download, Eye, Code } from 'lucide-react'
 import type { ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 
+const toggleButtonWidth = 36
+const toggleButtonHeight = 30
+const toggleButtonGap = 2
+const toggleButtonOffset = toggleButtonWidth + toggleButtonGap
+const actionButtonSize = 30
+
 function apiBaseUrl(): string {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
   return raw.replace(/\/$/, '')
 }
 
-function isTextMime(mime: string): boolean {
-  return mime.startsWith('text/')
+const textLikeMimeTypes = new Set([
+  'application/json',
+  'application/ld+json',
+  'application/xml',
+  'application/javascript',
+  'application/ecmascript',
+  'application/typescript',
+  'application/yaml',
+  'application/x-yaml',
+  'application/toml',
+  'application/x-toml',
+  'application/markdown',
+  'application/x-markdown',
+])
+
+const textFallbackExtensions = new Set([
+  'md', 'markdown', 'txt', 'log', 'json', 'jsonl', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf',
+  'csv', 'tsv', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'css', 'html', 'htm', 'sh', 'bash', 'zsh',
+  'py', 'go', 'rs', 'java', 'c', 'cc', 'cpp', 'h', 'hpp', 'sql',
+])
+
+function normalizeMime(mime: string | null | undefined): string {
+  return (mime ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? ''
+}
+
+function getFilenameExtension(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  if (dot < 0 || dot === filename.length - 1) return ''
+  return filename.slice(dot + 1).trim().toLowerCase()
+}
+
+function isTextMime(mime: string | null | undefined): boolean {
+  const normalized = normalizeMime(mime)
+  return normalized.startsWith('text/') || textLikeMimeTypes.has(normalized)
+}
+
+export function canPreviewDocumentAsText(serverMime: string | null | undefined, artifactMime: string | null | undefined, filename: string): boolean {
+  if (isTextMime(serverMime) || isTextMime(artifactMime)) return true
+
+  const normalizedServerMime = normalizeMime(serverMime)
+  const normalizedArtifactMime = normalizeMime(artifactMime)
+  const shouldUseExtensionFallback = normalizedServerMime === ''
+    || normalizedServerMime === 'application/octet-stream'
+    || normalizedArtifactMime === ''
+    || normalizedArtifactMime === 'application/octet-stream'
+
+  if (!shouldUseExtensionFallback) return false
+  return textFallbackExtensions.has(getFilenameExtension(filename))
 }
 
 type ViewMode = 'preview' | 'source'
@@ -37,9 +89,8 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
     fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       .then(async (res) => {
         if (!res.ok) throw new Error(`${res.status}`)
-        // 以服务器返回的 Content-Type 为准，artifact.mime_type 仅作兜底
         const serverMime = res.headers.get('content-type') ?? artifact.mime_type ?? ''
-        if (isTextMime(serverMime)) {
+        if (canPreviewDocumentAsText(serverMime, artifact.mime_type, artifact.filename)) {
           const text = await res.text()
           setLoadState({ status: 'text', content: text })
         } else {
@@ -75,7 +126,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
   }, [artifact, accessToken, downloading])
 
   return (
-    <div style={{ width: '540px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* header */}
       <div
         style={{
@@ -115,6 +166,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
               style={{
                 position: 'relative',
                 display: 'flex',
+                columnGap: `${toggleButtonGap}px`,
                 padding: '2px',
                 borderRadius: '8px',
                 background: 'var(--c-bg-deep)',
@@ -126,13 +178,13 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
                   position: 'absolute',
                   top: '2px',
                   left: '2px',
-                  width: '26px',
-                  height: '26px',
+                  width: `${toggleButtonWidth}px`,
+                  height: `${toggleButtonHeight}px`,
                   borderRadius: '6px',
                   background: 'var(--c-bg-page)',
                   border: '0.5px solid var(--c-border-subtle)',
                   transition: 'transform 180ms cubic-bezier(0.16,1,0.3,1)',
-                  transform: mode === 'preview' ? 'translateX(0)' : 'translateX(28px)',
+                  transform: mode === 'preview' ? 'translateX(0)' : `translateX(${toggleButtonOffset}px)`,
                   pointerEvents: 'none',
                 }}
               />
@@ -140,8 +192,8 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
                 onClick={() => setMode('preview')}
                 title="预览"
                 style={{
-                  width: '26px',
-                  height: '26px',
+                  width: `${toggleButtonWidth}px`,
+                  height: `${toggleButtonHeight}px`,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -155,14 +207,14 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
                   transition: 'color 180ms',
                 }}
               >
-                <Eye size={13} />
+                <Eye size={14} />
               </button>
               <button
                 onClick={() => setMode('source')}
                 title="源码"
                 style={{
-                  width: '26px',
-                  height: '26px',
+                  width: `${toggleButtonWidth}px`,
+                  height: `${toggleButtonHeight}px`,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -176,7 +228,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
                   transition: 'color 180ms',
                 }}
               >
-                <Code size={13} />
+                <Code size={14} />
               </button>
             </div>
           )}
@@ -188,8 +240,8 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: '28px',
-              height: '28px',
+              width: `${actionButtonSize}px`,
+              height: `${actionButtonSize}px`,
               borderRadius: '8px',
               border: 'none',
               background: 'transparent',
@@ -213,8 +265,8 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: '28px',
-              height: '28px',
+              width: `${actionButtonSize}px`,
+              height: `${actionButtonSize}px`,
               borderRadius: '8px',
               border: 'none',
               background: 'transparent',
@@ -253,7 +305,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
 
         {loadState.status === 'text' && mode === 'preview' && (
           <div style={{ padding: '20px 28px' }}>
-            <MarkdownRenderer content={loadState.content} />
+            <MarkdownRenderer content={loadState.content} compact />
           </div>
         )}
 

@@ -1,727 +1,770 @@
 ---
 ---
 
-# Installer Bridge 与 Setup Chain 设计方案
+# Installer Bridge 与自部署安装架构
 
-本文定义 Arkloop 自托管部署的完整安装链路设计。覆盖 `setup.sh` 的职责边界、Installer Bridge 的分发与升级机制、用户从零到运行的全链路，以及需要解决的前端服务缺口。
+本文重新定义 Arkloop 自部署安装链路，目标是降低选择成本、收紧权限边界，并给 Agent、CLI、Console 三种入口提供同一套安装语义。
 
-结论先行：
+## 1. 设计目标
 
-- 自托管安装必须做到**一条命令可跑通**，但不能以牺牲可控性为代价。
-- 保留三种安装方式：**one-liner**（curl pipe）、**release tarball**、**git clone**。去掉不必要的抽象层（不做 installer docker image，不做 brew/apt 包）。
-- `setup.sh` 是唯一入口脚本，职责是 pre-flight → 配置生成 → 镜像拉取 → 服务启动 → 健康验证 → 引导提示。
-- 前端应用（web / console）当前 compose.yaml 中缺失，必须补齐为独立 nginx 容器，不嵌入 Gateway。
-- 升级链路不引入额外 CLI 工具，直接复用 `setup.sh upgrade` 子命令。
+本文只解决四件事：
 
-## 1. 安装方式
+1. 自部署用户如何安装 Arkloop
+2. 哪些模块默认安装，哪些模块可选
+3. Console 能管到哪里，不能管到哪里
+4. Installer Bridge 是否需要，以及它的最小职责
 
-### 1.1 保留的三种方式
+本文不解决这些问题：
 
-| 方式 | 命令 | 适用场景 |
-|------|------|---------|
-| **one-liner** | `curl -fsSL https://get.arkloop.ai \| bash` | 快速试用，最低摩擦 |
-| **release tarball** | 从 GitHub Releases 下载 `arkloop-vX.Y.Z.tar.gz`，解压后运行 `./setup.sh` | 版本锁定，离线预备，生产部署 |
-| **git clone** | `git clone` + `./setup.sh` | 开发者，需要阅读/修改源码 |
+- Docker Desktop 如何跨平台自动安装
+- 所有第三方系统的内部高级配置如何统一抽象
+- 所有更新流程的一键无人值守回滚
+- 任意宿主机命令执行
 
-三种方式最终都收敛到同一个 `setup.sh`，行为一致。
+## 2. 先拍板的原则
 
-### 1.2 不做的方式
+### 2.1 默认安装必须只有一个答案
 
-| 方式 | 不做原因 |
-|------|---------|
-| Homebrew / apt 包 | 过度封装，Arkloop 不是单二进制，是一组 Docker 服务 |
-| Helm Chart | Kubernetes 部署是独立课题，不在 setup.sh 范围内，后续单独规划 |
-| Installer Docker image | 多一层抽象但没有实质收益，用户机器上已经有 Docker |
+自部署默认安装档位固定为：
 
-### 1.3 one-liner 引导流程
-
-```
-curl -fsSL https://get.arkloop.ai | bash
+```text
+standard = core + gateway + console-lite
 ```
 
-CDN 返回的是一个 **bootstrap stub**（约 50 行），不是完整 setup.sh。stub 的职责：
+含义：
 
-1. 检测 `curl`/`wget` 和 `tar` 是否可用
-2. 从 GitHub Releases 下载当前最新 release tarball（或用户指定版本：`curl ... | ARKLOOP_VERSION=1.2.3 bash`）
-3. 解压到 `$ARKLOOP_HOME`（默认 `./arkloop`）
-4. exec 到解压后的 `setup.sh`
+- 用户第一次安装不需要理解全部模块
+- 安装完成后，用户立刻有可访问入口
+- 后续扩展模块通过 Console 或 Agent 增量安装
 
-这样 setup.sh 始终从 tarball 中运行，版本一致性有保证。stub 自身无状态、无副作用、可审计。
+### 2.2 模块分层必须清晰
 
-## 2. Release Tarball 内容
+安装问题不能混在一起谈。必须分为四层：
 
+1. 宿主前置条件
+2. Arkloop 核心栈
+3. Arkloop 可选模块
+4. 外部系统内部配置
+
+其中：
+
+- 前三层是 Arkloop 的安装问题
+- 第四层通常不是 Arkloop 的安装问题，只能算接入或初始化问题
+
+### 2.3 Console 是控制面，不是宿主执行器
+
+Console 可以：
+
+- 展示状态
+- 收集参数
+- 发起安装意图
+- 展示日志和健康检查
+- 生成给 Agent 或 CLI 的操作入口
+
+Console 不应直接：
+
+- 操作宿主 Docker socket
+- 拿 root 权限执行命令
+- 充当任意命令入口
+
+### 2.4 setup.sh 必须很薄，但允许问答
+
+`setup.sh` 仍然可以做问答，但问答只能是同一套安装 parser 的一个输入前端。
+
+`setup.sh` 负责：
+
+- pre-flight
+- 生成初始 `.env`
+- 通过 parser 接收安装选择
+- 启动默认档位或指定档位
+- 基础诊断
+- 升级和卸载的兜底入口
+
+`setup.sh` 不负责：
+
+- 把安装规则散落成一堆 bash if/else 特例
+- 直接承载第三方 provider 内部高级配置
+- 形成只给人类可用、不给 Agent 可用的交互逻辑
+
+换句话说：
+
+- 普通用户可以通过 `setup.sh` 回答问题安装
+- Agent 也必须能通过同一个 parser 的 CLI 参数完成安装
+
+### 2.5 installation.md 作为 Agent 优先入口
+
+对自部署用户，优先推荐：
+
+```text
+installation.md + Agent
 ```
-arkloop-v1.2.3/
-  setup.sh                    # 主安装脚本
-  compose.yaml                # 生产 compose
-  compose.dev.yaml            # 开发 overlay
-  .env.example                # 环境变量模板
-  config/
-    openviking/ov.conf.example
-    sandbox/templates.json
-  VERSION                     # 版本号（纯文本，如 1.2.3）
-  CHECKSUMS.sha256            # 校验和
+
+原因：
+
+- 复杂分支问答更适合 Agent 处理
+- Agent 更适合处理异常、重试和解释错误
+- 可以显著减少 shell 菜单复杂度
+
+但 `setup.sh` 仍然保留，作为稳定托底执行器。
+
+## 3. 默认模块策略
+
+### 3.1 Core
+
+以下模块属于核心栈，必须安装：
+
+| 模块 | 说明 |
+|------|------|
+| `postgres` | 主数据库 |
+| `pgbouncer` | 连接池 |
+| `redis` | 队列与缓存 |
+| `minio` | 对象存储 |
+| `migrate` | 数据迁移 |
+| `api` | 控制面 API |
+| `worker` | 执行面 |
+
+说明：
+
+- `minio` 视为平台基座，不再作为用户决策项
+- `redis` 视为平台基座，不再作为用户决策项
+
+### 3.2 Standard 默认入口
+
+以下模块属于默认自部署入口：
+
+| 模块 | 默认值 | 说明 |
+|------|--------|------|
+| `gateway` | 开启 | 默认对外入口 |
+| `console-lite` | 开启 | 自部署默认控制台 |
+| `console` | 关闭 | 高级控制台，增量安装 |
+
+说明：
+
+- `gateway` 在产品层面默认开启
+- `console-lite` 是自部署默认控制台
+- `console` 只作为升级选项，不进入首次安装主流程
+
+### 3.3 Optional 模块
+
+| 模块 | 默认值 | 说明 |
+|------|--------|------|
+| `openviking` | 关闭 | 记忆系统，可选扩展 |
+| `sandbox-docker` | 关闭 | macOS / Windows / 无 KVM 环境 |
+| `sandbox-firecracker` | 关闭 | Linux + KVM 环境 |
+| `browser` | 关闭 | 现阶段实验性，默认不装 |
+
+说明：
+
+- `browser` 在替换方案明确前保持实验性
+- `sandbox-docker` 与 `sandbox-firecracker` 互斥
+- `openviking` 不进入首次安装默认路径
+
+### 3.4 不暴露给用户的内部细节
+
+这些属于实现细节，不作为首次安装问题抛给用户：
+
+| 项 | 策略 |
+|----|------|
+| `redis_gateway` 是否独立 | 对用户透明，由模块实现决定 |
+| `gateway` 依赖的 Redis 拆分策略 | 对用户透明 |
+| Compose 具体 service 名 | 对用户透明 |
+
+用户只决定“是否启用网关能力”，不决定“网关内部 Redis 拆不拆”。
+
+## 4. 安装边界
+
+### 4.1 三类边界
+
+#### A. 宿主前置条件
+
+典型例子：
+
+- Docker Desktop
+- WSL2
+- Linux 上的 `/dev/kvm`
+- rootless Docker socket
+
+策略：
+
+- Arkloop 只做检测、提示、恢复流程
+- 默认不承诺跨平台自动安装这些前置依赖
+
+#### B. Arkloop 管理的模块生命周期
+
+典型例子：
+
+- `openviking` 容器是否存在
+- `sandbox-docker` 是否启动
+- `console` 是否已安装
+- Arkloop 自己的升级、重启、健康检查
+
+策略：
+
+- 这是 Installer Bridge 的核心职责
+- 这部分可以做成一键安装 / 一键升级 / 一键重建
+
+#### C. 外部系统的内部配置
+
+典型例子：
+
+- OpenViking 的 embedding model 细项
+- 其他 memory system 的 provider 专有参数
+- 外部系统自己的租户、索引、向量维度、rerank 参数
+
+策略：
+
+- Arkloop 不做统一抽象
+- Arkloop 最多只做“默认初始化”
+- 高级配置仍由外部系统自己管理
+
+这条边界必须守住，否则 Bridge 会膨胀成“统一管理所有外部系统后台”的怪物。
+
+## 5. 统一安装语义
+
+安装入口可以有多个，但必须共用同一套语义。
+
+### 5.1 单一真源
+
+建议只保留一份模块定义：
+
+```text
+install/modules.yaml   # 模块定义、依赖、平台约束、能力集、默认值
 ```
 
-不包含源码、不包含 Go/Node 工具链。镜像从 registry 拉取，不在用户机器上构建。
+安装选择结果不额外落一份 `.env.install`。
 
-## 3. setup.sh 设计
+相反，`setup.sh` 内部维护统一 parser，允许三种输入源：
 
-### 3.1 子命令
+1. 交互式问答
+2. CLI flags
+3. 非交互模式默认值
+
+语义：
+
+- `install/modules.yaml` 描述系统“能装什么”
+- `setup parser` 负责解析“这次要装什么”
+
+这样 Agent、CLI、Console 都不会各自维护一套判断逻辑。
+
+### 5.2 四个入口
+
+| 入口 | 角色 | 是否必须 |
+|------|------|----------|
+| `installation.md` | Agent 问答与异常处理入口 | 是 |
+| `setup.sh` | 本地稳定执行器与 parser 宿主 | 是 |
+| Console | 状态页、增量安装、引导页 | 是 |
+| Installer Bridge | 真一键执行器 | 是 |
+
+本文按最终目标架构书写，因此 Bridge 视为明确要实现的组件。
+
+开发过渡期允许：
+
+- Console 先生成命令或 Prompt
+- Agent / CLI 先执行安装
+
+但 roadmap 应以 Bridge 存在为目标，而不是把“没有 Bridge”当成长期形态。
+
+## 6. installation.md 的职责
+
+`installation.md` 是 Agent 入口，不是普通宣传文档。
+
+它应该只做三件事：
+
+1. 告诉 Agent 如何探测环境
+2. 告诉 Agent 该问用户哪些问题
+3. 告诉 Agent 如何把答案转换成 `setup.sh` 的 parser 参数并调用 `setup.sh`
+
+### 6.1 Agent 固定提问顺序
+
+问题必须固定、很少、可判定：
+
+1. 你要默认自部署还是高级部署
+2. 是否启用记忆系统
+3. 是否启用代码执行能力
+4. 如果启用代码执行，当前平台是否支持 `firecracker`，否则改用 `docker`
+5. 是否安装高级控制台
+6. 是否启用实验性浏览器模块
+
+注意：
+
+- 不要先问用户几十个技术细节
+- 不要把实现细节暴露成选择题
+- 例如 `redis_gateway`、compose profile 名称、内部端口细分，都不应进入提问流程
+
+### 6.2 Agent 输出结果
+
+Agent 最终应该调用 `setup.sh` 的 parser 参数，而不是维护额外的安装结果文件。
+
+例如：
 
 ```bash
-./setup.sh              # 等同于 ./setup.sh install
-./setup.sh install      # 完整安装流程
-./setup.sh upgrade      # 升级到新版本
-./setup.sh status       # 服务状态概览
-./setup.sh doctor       # 诊断检查
-./setup.sh uninstall    # 停止服务并清理
-./setup.sh env-gen      # 仅生成 .env（不启动服务）
+./setup.sh install \
+  --profile standard \
+  --memory none \
+  --sandbox none \
+  --console lite \
+  --browser off \
+  --non-interactive
 ```
 
-### 3.2 install 流程（6 个 phase）
-
-```
-Phase 0: Self-check
-Phase 1: Pre-flight
-Phase 2: Configuration
-Phase 3: Image pull
-Phase 4: Service startup
-Phase 5: Post-install
-```
-
-#### Phase 0: Self-check
-
-- 确认 bash 版本 >= 4.0（macOS 默认 bash 3.2，需要提示用户用 `/bin/bash` 或安装新版）
-- 如果检测到旧版 bash 且系统有 `/usr/bin/env bash`，给出明确报错而非静默失败
-- 检测是否通过 pipe 运行（`[ -t 0 ]`），pipe 模式下禁用交互式提问，走全自动
-
-#### Phase 1: Pre-flight
-
-检测项和判定逻辑：
-
-| 检测项 | 最低要求 | 检测方法 | 失败策略 |
-|--------|---------|---------|---------|
-| OS | Linux / macOS / WSL2 | `uname -s`, `/proc/version` | 硬失败 |
-| Architecture | amd64 / arm64 | `uname -m` | 硬失败（仅支持这两个） |
-| Docker Engine | 24.0+ | `docker version --format '{{.Server.Version}}'` | 硬失败 |
-| Docker Compose | v2 plugin | `docker compose version` | 硬失败 |
-| CPU | >= 2 cores | `nproc` / `sysctl -n hw.ncpu` | 警告 |
-| Memory | >= 4 GiB | `/proc/meminfo` / `sysctl -n hw.memsize` | 警告 |
-| Disk | >= 10 GiB free | `df` | 警告 |
-| Port 8000 | 未被占用 | `ss -tlnp` / `lsof -i` | 警告（可在 Phase 2 改端口） |
-| Port 9000 | 未被占用 | 同上 | 警告 |
-| KVM | `/dev/kvm` 可用 | `test -c /dev/kvm && test -w /dev/kvm` | 仅用于决定 sandbox provider |
-| Docker socket | 检测用户态路径 | 按优先级探测多个路径（见下文） | sandbox docker mode 专用 |
-| Network | 能访问 ghcr.io | `curl -fsS --connect-timeout 5 https://ghcr.io` | 警告（离线模式需提前准备镜像） |
-
-Docker socket 探测优先级：
-
-```
-Linux rootless: /run/user/$(id -u)/docker.sock
-macOS Docker Desktop: $HOME/.docker/run/docker.sock
-Linux root: /var/run/docker.sock (不推荐，给出安全提示)
-WSL2: /mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.sock
-```
-
-#### Phase 2: Configuration
-
-**交互模式**（检测到 TTY 时默认启用，`--non-interactive` 关闭）：
-
-```
-[1/5] Base URL (访问地址)
-      用户输入域名或 IP，默认 http://localhost:8000
-      影响：ARKLOOP_APP_BASE_URL、前端构建时的 API endpoint
-
-[2/5] 端口配置
-      Gateway: 8000 (默认)
-      MinIO Console: 9001 (默认)
-      用户可修改，脚本检测端口冲突
-
-[3/5] 可选组件
-      [x] Sandbox (代码执行) — 自动选择 Firecracker/Docker
-      [x] Browser (网页浏览) — 需要额外 ~500MB 镜像
-      [x] OpenViking (长期记忆) — 需要额外 ~200MB 镜像
-      用户可取消勾选，减少资源占用
-
-[4/5] LLM Provider（至少配一个，否则系统无法推理）
-      选择 Provider: OpenAI / Anthropic / OpenAI-compatible
-      输入 API Key
-      输入 Model name (有默认值)
-      -> 写入 ARKLOOP_PROVIDER_ROUTING_JSON
-
-[5/5] 确认
-      展示配置摘要，确认后继续
-```
-
-**非交互模式**：
-
-从环境变量或 `--config /path/to/config.yaml` 读取所有值。缺少必填项则硬失败并列出缺失项。
-
-config.yaml 格式：
-
-```yaml
-base_url: https://arkloop.example.com
-gateway_port: 8000
-components:
-  sandbox: true
-  browser: true
-  openviking: true
-llm:
-  provider: openai
-  api_key: sk-xxx
-  model: gpt-4o
-```
-
-**密钥生成**：
-
-所有密钥在 Phase 2 自动生成，不需要用户操心：
+或：
 
 ```bash
-ARKLOOP_POSTGRES_PASSWORD=$(openssl rand -base64 24)
-ARKLOOP_REDIS_PASSWORD=$(openssl rand -base64 24)
-ARKLOOP_S3_SECRET_KEY=$(openssl rand -base64 24)
-ARKLOOP_AUTH_JWT_SECRET=$(openssl rand -base64 48)
-ARKLOOP_ENCRYPTION_KEY=$(openssl rand -hex 32)
-ARKLOOP_SANDBOX_AUTH_TOKEN=$(openssl rand -hex 32)
+./setup.sh install \
+  --profile full \
+  --memory openviking \
+  --sandbox docker \
+  --console full \
+  --browser off \
+  --non-interactive
 ```
 
-生成后写入 `.env`，并在终端输出提示用户备份。
+Agent 不应该直接重写 Compose 规则本身。
 
-#### Phase 3: Image pull
+## 7. setup.sh 的职责边界
+
+### 7.1 必须做的事
+
+`setup.sh` 只做以下命令：
 
 ```bash
-# 核心镜像（始终拉取）
-ghcr.io/qqqqqf/arkloop/api:v1.2.3
-ghcr.io/qqqqqf/arkloop/gateway:v1.2.3
-ghcr.io/qqqqqf/arkloop/worker:v1.2.3
-ghcr.io/qqqqqf/arkloop/web:v1.2.3
-ghcr.io/qqqqqf/arkloop/console:v1.2.3
-
-# 基础设施（来自上游）
-postgres:16-alpine
-redis:7-alpine
-minio/minio:latest
-edoburu/pgbouncer:latest
-
-# 可选镜像（根据 Phase 2 选择）
-ghcr.io/qqqqqf/arkloop/sandbox:v1.2.3
-ghcr.io/qqqqqf/arkloop/sandbox-agent:v1.2.3
-ghcr.io/qqqqqf/arkloop/browser:v1.2.3
-ghcr.io/volcengine/openviking:v0.1.18.dev0
-```
-
-拉取时显示进度条。支持 `--offline` 模式跳过拉取（要求用户提前 `docker load` 镜像）。
-
-#### Phase 4: Service startup
-
-```bash
-# 1. 确定需要的 compose profiles
-PROFILES=""
-if [ "$SANDBOX_MODE" = "firecracker" ]; then
-  PROFILES="$PROFILES --profile firecracker"
-elif [ "$SANDBOX_MODE" = "docker" ]; then
-  PROFILES="$PROFILES --profile docker-sandbox"
-fi
-
-# 2. 启动
-docker compose $PROFILES up -d
-
-# 3. 逐服务等待 healthy
-# 按依赖顺序检查: postgres → pgbouncer → migrate → api → gateway → web/console
-# 每个服务最多等待 120s，超时报错并输出该服务日志
-```
-
-健康检查进度展示：
-
-```
-[ok] postgres          healthy (2.1s)
-[ok] redis             healthy (1.3s)
-[ok] redis_gateway     healthy (1.2s)
-[ok] minio             healthy (3.5s)
-[ok] pgbouncer         healthy (1.8s)
-[ok] migrate           completed (4.2s)
-[ok] api               healthy (6.1s)
-[ok] gateway           healthy (2.3s)
-[ok] web               healthy (1.5s)
-[ok] console           healthy (1.5s)
-[ok] worker            running (3.2s)
-[ok] openviking        healthy (8.1s)
-[ok] browser           healthy (5.4s)
-[ok] sandbox-docker    healthy (4.7s)
-```
-
-#### Phase 5: Post-install
-
-```
-Arkloop is running.
-
-  Web UI:      http://localhost:8000
-  Console:     http://localhost:8000/console
-  MinIO:       http://localhost:9001
-  API:         http://localhost:8000/v1
-
-Next steps:
-  1. 访问 Web UI 注册第一个账号
-  2. 获取 user_id: curl -s http://localhost:8000/v1/auth/me -H "Authorization: Bearer <token>" | jq .id
-  3. 设置管理员: echo 'ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN=<user_id>' >> .env && docker compose restart api
-  4. 用管理员登录 Console，配置 LLM Provider 和其他选项
-
-Configuration saved to: /path/to/.env
-Backup this file. Losing it means losing access to encrypted data.
-```
-
-### 3.3 upgrade 流程
-
-```bash
-./setup.sh upgrade [--version 1.3.0]
-```
-
-1. 读取当前 `VERSION` 文件
-2. 不指定版本时，从 GitHub API 查询最新 release
-3. 下载新版 tarball，解压到临时目录
-4. 对比 `compose.yaml` 差异，如果有 breaking change 则提示用户确认
-5. 备份当前 `.env` 和 `compose.yaml`
-6. 拉取新版镜像
-7. `docker compose down`（保留 volumes）
-8. 替换 `compose.yaml`、`setup.sh`、`config/`
-9. 保留用户 `.env`（不覆盖）
-10. `docker compose up -d`（migrate 自动跑）
-11. 健康检查
-12. 输出变更摘要
-
-```
-Upgraded: v1.2.3 → v1.3.0
-
-Changed images:
-  api:     v1.2.3 → v1.3.0
-  worker:  v1.2.3 → v1.3.0
-  web:     v1.2.3 → v1.3.0
-
-Migrations applied: 3 new
-All services healthy.
-```
-
-**回滚**：upgrade 前的备份存放在 `.arkloop-backup/v1.2.3/`，用户可手动恢复。不提供自动回滚命令（复杂度不值得，数据库迁移一般不可逆）。
-
-### 3.4 doctor 流程
-
-```bash
+./setup.sh install
 ./setup.sh doctor
-```
-
-检查运行中实例的状态：
-
-```
-[ok] Docker Engine:     27.1.0
-[ok] Docker Compose:    v2.29.0
-[ok] postgres:          healthy, 1.2GB data
-[ok] redis:             healthy, 23MB used
-[ok] api:               healthy, uptime 3d 12h
-[ok] gateway:           healthy, uptime 3d 12h
-[ok] worker:            running, 4 goroutines
-[ok] web:               healthy
-[warn] sandbox-docker:  unhealthy — last health check failed 30s ago
-[ok] minio:             healthy, 4.1GB used
-[skip] openviking:      not running (disabled)
-[skip] browser:         not running (disabled)
-
-Issues found: 1
-  sandbox-docker: Container is unhealthy. Recent logs:
-    2024-01-15T10:23:45Z ERROR docker socket not accessible
-  Fix: Check ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH in .env
-```
-
-### 3.5 uninstall 流程
-
-```bash
+./setup.sh status
+./setup.sh upgrade
 ./setup.sh uninstall
 ```
 
-交互确认后：
+### 7.2 install 行为
 
-1. `docker compose down`
-2. 询问是否删除数据卷（`docker compose down -v`）
-3. 询问是否删除生成的 `.env`
-4. 询问是否删除拉取的镜像
-5. 输出完成信息
+`./setup.sh install` 支持两种入口：
 
-### 3.6 脚本约束
+- 交互模式：用户回答几个固定问题
+- 非交互模式：Agent 或高级用户直接传 parser 参数
 
-- POSIX sh 兼容为目标，但允许依赖 bash 4+（macOS 用户需 `/usr/local/bin/bash` 或通过 Homebrew 安装）
-- 不依赖 Python、Node.js、Go 或任何非系统工具
-- 唯一硬依赖：`bash`、`docker`、`curl`（或 `wget`）、`openssl`、`tar`
-- 所有输出使用纯 ASCII，不使用 emoji，不使用 ANSI 颜色转义（除非检测到支持且非 pipe 模式）
-- 幂等：重复执行 `setup.sh install` 不会破坏已有数据（检测到已运行的实例时提示 upgrade）
-
-## 4. 前端服务缺口
-
-当前 `compose.yaml` 中**没有 web 和 console 服务**。Gateway 是纯反向代理，不 serve 静态文件。自托管用户无法访问前端界面。
-
-### 4.1 方案：独立 nginx 容器
-
-为 `web` 和 `console` 各创建一个 Dockerfile，构建为 nginx 容器：
-
-```dockerfile
-# src/apps/web/Dockerfile
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY src/apps/shared/package.json src/apps/shared/
-COPY src/apps/web/package.json src/apps/web/
-RUN corepack enable pnpm && pnpm install --frozen-lockfile
-COPY src/apps/shared src/apps/shared
-COPY src/apps/web src/apps/web
-RUN cd src/apps/web && pnpm build
-
-FROM nginx:alpine
-COPY --from=builder /app/src/apps/web/dist /usr/share/nginx/html
-COPY src/apps/web/nginx.conf /etc/nginx/conf.d/default.conf
-```
-
-nginx.conf 要点：
-- SPA fallback（所有非文件请求 → index.html）
-- `/v1` 反向代理到 Gateway（或由上层负载均衡处理）
-- 运行时环境变量注入（构建时写入 `window.__ARKLOOP_CONFIG__`，或用 entrypoint 脚本替换占位符）
-
-### 4.2 compose.yaml 新增服务
-
-```yaml
-web:
-  build:
-    context: .
-    dockerfile: src/apps/web/Dockerfile
-  restart: unless-stopped
-  environment:
-    ARKLOOP_API_BASE_URL: "${ARKLOOP_API_BASE_URL:-http://gateway:8000}"
-  depends_on:
-    gateway:
-      condition: service_healthy
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
-    interval: 15s
-    timeout: 3s
-    retries: 5
-
-console:
-  build:
-    context: .
-    dockerfile: src/apps/console/Dockerfile
-  restart: unless-stopped
-  environment:
-    ARKLOOP_API_BASE_URL: "${ARKLOOP_API_BASE_URL:-http://gateway:8000}"
-  depends_on:
-    gateway:
-      condition: service_healthy
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
-    interval: 15s
-    timeout: 3s
-    retries: 5
-```
-
-### 4.3 Gateway 路由变更
-
-Gateway 需要根据路径前缀分发请求：
-
-| 路径 | 目标 |
-|------|------|
-| `/v1/*` | API (upstream) |
-| `/console/*` | Console 容器 |
-| `/*` | Web 容器 |
-
-或者更简单的方案：Gateway 不变，在 compose 最外层加一个 nginx/caddy 做入口路由。但这会增加一层，不如直接让 Gateway 支持多 upstream（web + api + console）。
-
-推荐方案：Gateway 增加静态文件路由能力，把 web/console 的构建产物挂载进去。这样 Gateway 既是 API 代理又是前端服务器，保持单入口。
-
-```yaml
-gateway:
-  volumes:
-    - web_dist:/usr/share/arkloop/web:ro
-    - console_dist:/usr/share/arkloop/console:ro
-```
-
-具体选择取决于 Gateway 侧的改造成本。建议先用方案 A（独立 nginx）快速落地，后续视情况合并到 Gateway。
-
-## 5. Installer Bridge 架构
-
-"Installer Bridge" 指安装器自身的分发、版本管理和更新通道。
-
-### 5.1 分发通道
-
-```
-GitHub Releases (source of truth)
-    ├── arkloop-vX.Y.Z.tar.gz          # release tarball
-    ├── arkloop-vX.Y.Z.tar.gz.sha256   # checksum
-    └── setup-stub.sh                   # one-liner bootstrap stub
-
-CDN (get.arkloop.ai)
-    └── index.sh → 重定向到 GitHub Releases 的 setup-stub.sh
-```
-
-CDN 层只做重定向，不缓存脚本内容。版本发布后 CDN 自动指向最新 release。
-
-### 5.2 镜像分发
-
-所有服务镜像推送到 GHCR：
-
-```
-ghcr.io/qqqqqf/arkloop/api:v1.2.3
-ghcr.io/qqqqqf/arkloop/api:latest
-ghcr.io/qqqqqf/arkloop/gateway:v1.2.3
-ghcr.io/qqqqqf/arkloop/worker:v1.2.3
-ghcr.io/qqqqqf/arkloop/web:v1.2.3
-ghcr.io/qqqqqf/arkloop/console:v1.2.3
-ghcr.io/qqqqqf/arkloop/sandbox:v1.2.3
-ghcr.io/qqqqqf/arkloop/sandbox-agent:v1.2.3
-ghcr.io/qqqqqf/arkloop/browser:v1.2.3
-```
-
-每个镜像同时推送 `vX.Y.Z` 精确标签和 `latest` 标签。compose.yaml 中使用精确版本标签。
-
-### 5.3 版本协议
-
-`VERSION` 文件为纯文本，内容如 `1.2.3`。遵循 semver。
-
-setup.sh 在 upgrade 时对比本地 VERSION 与远程 VERSION，决定是否需要升级以及升级路径。不支持跨大版本自动升级（v1 → v2），需要手动操作。
-
-### 5.4 离线安装
-
-支持完全离线的部署场景（内网/air-gapped 环境）：
+建议的 parser 参数：
 
 ```bash
-# 在有网络的机器上准备离线包
-./setup.sh pack --version 1.2.3 --output arkloop-offline-v1.2.3.tar.gz
+./setup.sh install \
+  --profile standard|full \
+  --memory none|openviking \
+  --sandbox none|docker|firecracker \
+  --console lite|full \
+  --browser off|on \
+  --gateway on|off \
+  --non-interactive
 ```
 
-pack 子命令：
-1. 下载 release tarball
-2. `docker pull` 所有镜像
-3. `docker save` 导出为 tar
-4. 打包为单个归档文件
+交互模式与非交互模式必须走同一套校验与默认值逻辑。
 
-```bash
-# 在目标机器上
-tar xzf arkloop-offline-v1.2.3.tar.gz
-cd arkloop-offline-v1.2.3
-./setup.sh install --offline
+默认行为：
+
+1. 检测宿主条件
+2. 生成缺失密钥
+3. 解析问答结果或 CLI 参数
+4. 生成或补全 `.env`
+5. 启动目标模块集合
+6. 等待健康检查通过
+7. 打印入口地址
+8. 打印下一步提示
+
+### 7.3 首次安装后的管理员初始化入口
+
+第一次安装成功后，如果系统中还不存在 `platform_admin`，`setup.sh` 应生成一次性初始化入口。
+
+目标：
+
+- 不要求用户先自行注册账号再回填 user_id
+- 首次部署后立刻能完成管理员创建或密码设置
+
+建议行为：
+
+1. 安装完成后生成一次性 bootstrap token
+2. 输出一个临时 URL，例如：`http://localhost:8000/bootstrap/<token>`
+3. 用户通过该 URL 创建首个管理员账号或设置管理员密码
+4. token 使用一次即失效
+5. token 超时自动失效
+6. 一旦系统已有 `platform_admin`，该入口不再生成
+
+这是首次安装体验的一部分，不应要求用户手动查数据库或额外编辑 `.env`。
+
+### 7.4 doctor 行为
+
+`./setup.sh doctor` 只做检测，不做修改。
+
+至少输出这些结果：
+
+- 平台类型：Linux / macOS / WSL2
+- Docker 是否可用
+- Compose 是否可用
+- Docker socket 路径
+- 是否检测到 KVM
+- 默认端口是否冲突
+- 当前已启动模块
+
+### 7.5 不要做成人工专用大菜单
+
+`setup.sh` 可以承载问答，但问答必须只是 parser 的一个前端。
+
+原因：
+
+- 多模块、多平台分支在 bash 中很难维护
+- 以后 Bridge 上线后，问答逻辑仍需要复用同一套规则
+- Agent 需要可编程调用入口，不能只能“模拟按键”
+
+## 8. Installer Bridge 的定位
+
+### 8.1 为什么必须要 Bridge
+
+Bridge 是目标架构中的正式组件，不是可有可无的补丁。
+
+原因只有一个：
+
+```text
+Console 需要从“状态面板”升级为“真正的一键执行面板”
 ```
 
-`--offline` 模式跳过网络检查，从本地 tar 文件 `docker load` 镜像。
+如果你要：
 
-## 6. 外部服务对接
+- 点击安装 OpenViking
+- 点击安装 Sandbox
+- 点击升级 Arkloop
+- 在 Console 内看到实时进度
 
-自托管用户可能已有 PostgreSQL / Redis / S3 实例，不需要 Docker 中的内置实例。
+那么就需要 Bridge。
 
-### 6.1 setup.sh 交互支持
+所以本文把 Bridge 作为明确需求写入；开发顺序可以后置，但需求本身不能省略。
 
-Phase 2 中增加选项：
+### 8.2 Bridge 的核心职责
 
-```
-[可选] 使用外部 PostgreSQL?
-  > 是: 输入连接串 postgresql://user:pass@host:5432/dbname
-  > 否: 使用内置 PostgreSQL (默认)
+Bridge 只负责 Arkloop 管理范围内的动作：
 
-[可选] 使用外部 Redis?
-  > 是: 输入连接串 redis://:pass@host:6379/0
-  > 否: 使用内置 Redis (默认)
+- 检测宿主环境
+- 拉镜像、启动模块、停止模块、重启模块
+- 读取和写入 Arkloop 的本地安装状态
+- 写 Arkloop 自己的连接配置
+- 健康检查
+- 升级 Arkloop 自己的组件
 
-[可选] 使用外部 S3?
-  > 是: 输入 endpoint / access_key / secret_key / bucket / region
-  > 否: 使用内置 MinIO (默认)
-```
+Bridge 不负责：
 
-选择外部服务时：
-- 对应的 Docker 服务不启动（通过生成 compose override 排除）
-- `.env` 中直接写入外部连接串
-- pre-flight 验证外部服务的连通性
+- 安装 Docker Desktop
+- 统一管理所有第三方系统的内部模型配置
+- 执行任意 shell
 
-### 6.2 compose override 策略
+### 8.3 第一版最小 API
 
-setup.sh 根据用户选择生成 `compose.override.yaml`：
-
-```yaml
-# 使用外部 PostgreSQL + 外部 Redis 时生成
-services:
-  postgres:
-    profiles: ["disabled"]
-  pgbouncer:
-    profiles: ["disabled"]
-  redis:
-    profiles: ["disabled"]
-  redis_gateway:
-    profiles: ["disabled"]
-  api:
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-  migrate:
-    depends_on: {}
+```text
+GET  /healthz
+GET  /v1/platform/detect
+GET  /v1/modules
+GET  /v1/modules/{id}
+POST /v1/modules/{id}/actions
+GET  /v1/operations/{id}/stream
+POST /v1/system/upgrade
 ```
 
-## 7. TLS 与反向代理
+动作只接受结构化请求，例如：
 
-### 7.1 内置 TLS（Caddy 方案）
-
-对于需要 HTTPS 的自托管用户，在 Gateway 前面增加 Caddy 作为 TLS 终止层：
-
-```yaml
-caddy:
-  image: caddy:2-alpine
-  restart: unless-stopped
-  ports:
-    - "80:80"
-    - "443:443"
-  volumes:
-    - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    - caddy_data:/data
-  depends_on:
-    gateway:
-      condition: service_healthy
+```json
+{ "action": "install" }
+{ "action": "start" }
+{ "action": "stop" }
+{ "action": "restart" }
+{ "action": "configure_connection", "params": { "base_url": "http://openviking:1933", "api_key": "***" } }
+{ "action": "bootstrap_defaults" }
 ```
 
-setup.sh Phase 2 中询问是否启用 HTTPS：
+Bridge 不接受：
 
-```
-[可选] 启用 HTTPS?
-  > 是: 输入域名 (Caddy 自动申请 Let's Encrypt 证书)
-  > 否: 仅 HTTP (默认，适合内网/开发)
+```json
+{ "action": "shell", "params": { "cmd": "docker exec ..." } }
 ```
 
-选择 HTTPS 时自动生成 Caddyfile 并加入 compose。Gateway 此时不对外暴露端口，所有流量经 Caddy 进入。
+### 8.4 安全约束
 
-### 7.2 自有反向代理
+- 只监听本机回环地址或 Unix Socket
+- 不经 Gateway 反代
+- 不接受任意 shell
+- 只允许访问 Arkloop 项目资源
+- 所有写操作必须有审计日志
+- 高风险动作需要显式确认
 
-用户如果已有 nginx / Traefik / CloudFlare Tunnel 等，直接代理到 Gateway:8000 即可。setup.sh 不做额外处理，文档中给出常见反向代理的配置示例。
+## 9. Memory System 的正确边界
 
-## 8. Admin Bootstrap 自动化
+这是本文最重要的约束。
 
-当前 bootstrap 管理员的流程需要 3 步手动操作（注册 → 获取 ID → 写 env → 重启），对自托管用户不友好。
+### 9.1 Arkloop 管什么
 
-### 8.1 改进方案
+Arkloop 管的是：
 
-setup.sh Phase 5 中提供自动化选项：
+- 这个 memory provider 是否已安装
+- 是否在运行
+- Arkloop 是否能连接到它
+- Arkloop 用什么运行时密钥接它
+- 是否完成 Arkloop 所需的默认初始化
 
-```
-是否立即创建管理员账号?
-  Email: admin@example.com
-  Password: ********
-```
+### 9.2 Arkloop 不管什么
 
-通过调用 API 完成：
-1. `POST /v1/auth/register` 创建账号
-2. `POST /v1/auth/login` 获取 token
-3. `GET /v1/auth/me` 获取 user_id
-4. 写入 `ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN=<user_id>` 到 `.env`
-5. `docker compose restart api`
-6. 等待 API healthy
+Arkloop 不承诺统一管理这些东西：
 
-这需要 API 已经启动且可访问。流程上在 Phase 4（服务启动）之后执行。
+- 所有 memory provider 的模型配置
+- 所有 provider 的 embedding / rerank / index 细项
+- 各 provider 私有的高级参数
 
-### 8.2 非交互模式
+也就是说，Bridge 不应该有一个通用接口叫：
 
-```bash
-ARKLOOP_ADMIN_EMAIL=admin@example.com \
-ARKLOOP_ADMIN_PASSWORD=securepassword \
-./setup.sh install --non-interactive
-```
-
-## 9. 诊断与错误处理
-
-### 9.1 失败时的诊断包
-
-任何 Phase 失败时自动收集：
-
-```
-arkloop-diagnostic-20240115-102345/
-  docker-info.txt          # docker info
-  docker-ps.txt            # docker compose ps -a
-  docker-logs/             # 每个服务最后 200 行日志
-  env-sanitized.txt        # .env 脱敏版本（密码替换为 ***）
-  system-info.txt          # uname, resources, ports
-  setup-log.txt            # setup.sh 完整执行日志
+```text
+set_memory_model_config(provider, ...)
 ```
 
-自动打包为 `arkloop-diagnostic-*.tar.gz`，提示用户附到 issue 中。
+这类抽象会很快失真，因为不同 memory system 的内部语义根本不同。
 
-### 9.2 常见错误的内联修复建议
+### 9.3 允许的例外：bootstrap_defaults
 
-| 错误场景 | 建议 |
-|---------|------|
-| Docker 未安装 | 输出 `curl -fsSL https://get.docker.com \| sh` |
-| 端口被占用 | 列出占用进程，提示修改 `.env` 中的端口 |
-| 内存不足 | 建议关闭可选组件（sandbox/browser/openviking） |
-| 镜像拉取失败 | 提示配置 Docker mirror，或使用 `--offline` |
-| KVM 不可用 | 自动回退 Docker sandbox，无需用户干预 |
-| 数据库迁移失败 | 输出 migrate 容器日志，提示检查数据库连接 |
+Bridge 可以对少数 provider 提供：
 
-## 10. 目录结构与文件约定
-
-安装完成后的目录结构：
-
-```
-$ARKLOOP_HOME/                     # 默认 ./arkloop 或 /opt/arkloop
-  setup.sh
-  compose.yaml
-  compose.override.yaml            # setup.sh 生成，用户可编辑
-  .env                             # setup.sh 生成
-  .env.example                     # 参考模板
-  config/
-    openviking/ov.conf
-    sandbox/templates.json
-    caddy/Caddyfile                # 启用 HTTPS 时生成
-  VERSION
-  .arkloop-backup/                 # upgrade 时的备份
-    v1.2.3/
-      compose.yaml
-      .env
+```text
+bootstrap_defaults
 ```
 
-`.env` 和 `compose.override.yaml` 是用户态文件，upgrade 不覆盖。`compose.yaml` 是发行版文件，upgrade 会替换。
+它的语义不是“全面接管 provider 后台配置”，而是：
 
-## 11. CI/CD Release Pipeline
+```text
+把 provider 初始化到 Arkloop 可用的默认状态
+```
 
-release 流程（GitHub Actions）：
+这一步只做默认值，不做完整后台管理。
 
-1. Tag push `vX.Y.Z` 触发
-2. 构建所有服务镜像（multi-arch: amd64 + arm64）
-3. 推送镜像到 GHCR
-4. 打包 release tarball（compose.yaml + setup.sh + config + VERSION）
-5. 计算 checksum
-6. 创建 GitHub Release，上传 tarball 和 checksum
-7. 更新 CDN 的 bootstrap stub 指向新版本
+### 9.4 OpenViking 的推荐策略
 
-## 12. 安全考量
+对 OpenViking，第一版只定义四个动作：
 
-| 关注点 | 措施 |
-|--------|------|
-| curl pipe 安全 | bootstrap stub 从 HTTPS 下载，tarball 有 SHA256 校验 |
-| 密钥存储 | `.env` 文件权限设为 `600`，setup.sh 自动执行 `chmod 600 .env` |
-| Docker socket | 优先使用 rootless Docker 用户态 socket，拒绝 `/var/run/docker.sock`（给出安全警告） |
-| 镜像完整性 | 使用精确版本标签，后续考虑引入 cosign 签名验证 |
-| 网络隔离 | 内部服务不暴露端口到宿主机（除 Gateway），sandbox 使用专用网络 |
-| 密钥轮换 | `setup.sh rotate-secrets` 子命令（后续实现） |
+```text
+memory.openviking.install
+memory.openviking.configure_connection
+memory.openviking.bootstrap_defaults
+memory.openviking.health
+```
 
-## 13. 与 compose.yaml 的 git clone 方式兼容
+语义：
 
-对于选择 `git clone` 安装方式的用户，setup.sh 必须能在仓库根目录正确运行。检测逻辑：
+- `install`：安装或启动 OpenViking 模块
+- `configure_connection`：写 Arkloop 侧连接信息
+- `bootstrap_defaults`：如果 OpenViking 支持，就写入 Arkloop 运行所需的默认配置
+- `health`：验证 Arkloop 到 OpenViking 的可用性
 
-- 如果 `compose.yaml` 在当前目录 → 直接使用
-- 如果在 `$ARKLOOP_HOME` 目录 → 从那里使用
-- 如果都不存在 → 报错
+不要定义：
 
-git clone 方式与 tarball 方式的差异：
-- git clone 包含源码，可以 `docker compose build` 而非 pull
-- setup.sh 检测到 `.git` 目录时，提供 "build from source" 选项
-- 非 git clone 方式始终从 registry pull 预构建镜像
+```text
+memory.openviking.set_model_config
+```
 
-## 14. 待确认事项
+因为这会把 Bridge 推向“外部系统后台”的方向。
 
-以下事项需要在实现前确认：
+### 9.5 Sandbox 的 bootstrap 语义
 
-1. **前端服务化方案**：Gateway 内嵌静态文件 vs 独立 nginx 容器 vs 外部 CDN — 决定 compose.yaml 结构
-2. **镜像 registry**：使用 GHCR 还是 Docker Hub — 影响 setup.sh 中的 pull 地址
-3. **LLM Provider 初始化**：是否在 setup.sh 中完成，还是引导用户进 Console 配置 — 影响 Phase 2 复杂度
-4. **最低 Docker 版本**：24.0 还是更低 — 影响 compose v2 plugin 依赖
-5. **arm64 镜像**：是否第一版就支持 arm64 multi-arch — 影响 CI 构建成本
-6. **Caddy TLS 是否内置**：是否作为可选组件进入 compose.yaml
+Sandbox 也应视为 `bootstrapSupported=true`。
+
+原因不是因为 Sandbox 内部配置简单，而是因为 Arkloop 侧的默认初始化是明确且可判定的：
+
+- 选择 provider
+- 校验宿主前置条件
+- 写 Arkloop 侧连接配置
+- 启动对应模块
+- 执行健康检查
+- 验证 Worker 到 Sandbox 的连通性
+
+其中：
+
+- `sandbox-firecracker` 的 bootstrap 可能需要高权限确认
+- `sandbox-docker` 的 bootstrap 前提是用户已经安装 Docker Desktop 或可用 Docker Engine
+
+也就是说，`sandbox-docker` 的难点在宿主前置条件，不在 Arkloop 自身的 bootstrap。
+
+### 9.6 root key 与 runtime key
+
+OpenViking 这类系统如果存在 root/admin key，应按两层使用：
+
+- 安装和初始化阶段：允许使用 root/admin key
+- 运行阶段：优先使用 runtime key 或 scoped key
+
+第一版可以暂时继续使用 root key 接入，但规格上要允许未来切到 runtime key。
+
+## 10. 模块能力模型
+
+建议每个可管理模块声明一组能力，而不是暴露大量特例逻辑。
+
+```typescript
+interface ModuleCapability {
+  installable: boolean
+  configurable: boolean
+  healthcheck: boolean
+  bootstrapSupported: boolean
+  externalAdminSupported: boolean
+  privilegedRequired: boolean
+}
+```
+
+建议的首批模块能力：
+
+| 模块 | installable | configurable | healthcheck | bootstrap | external admin | privileged |
+|------|-------------|--------------|-------------|-----------|----------------|------------|
+| `openviking` | true | true | true | true | true | false |
+| `sandbox-docker` | true | true | true | true | false | false |
+| `sandbox-firecracker` | true | true | true | true | false | true |
+| `console` | true | false | true | false | false | false |
+| `browser` | true | true | true | false | false | false |
+
+`bootstrapSupported=true` 仅表示“支持默认初始化”，不表示“Arkloop 能接管完整后台配置”。
+
+## 11. Console 里的安装体验
+
+### 11.1 第一版
+
+Console 先做成模块状态页，不强依赖 Bridge。
+
+每个模块只展示：
+
+- 未安装
+- 已安装但未连接
+- 待初始化
+- 运行中
+- 已停止
+- 异常
+
+每个模块只提供最少动作：
+
+- 安装
+- 配置连接
+- 初始化
+- 启动
+- 停止
+- 重启
+- 查看日志
+
+### 11.2 Bridge 不可用时的降级行为
+
+在开发过渡期，或本机 Bridge 未运行时：
+
+- “安装”按钮退化为“复制命令”
+- “初始化”按钮退化为“复制给 Agent 的 Prompt”
+- “升级”按钮退化为“显示升级命令”
+
+这样 Console 可以先上线，但不改变 Bridge 属于目标架构正式组件这一结论。
+
+### 11.3 Lite 与 Full Console 的关系
+
+- 自部署默认只安装 `console-lite`
+- `console-lite` 中提供“升级到高级控制台”的入口
+- 如果已安装 `console`，则显示跳转入口
+- 不在 Lite 中塞入大量解释性文案
+
+## 12. 升级策略
+
+升级也遵循同一边界。
+
+### 12.1 第一版
+
+第一版只支持：
+
+- 检查当前版本
+- 检查可升级版本
+- 生成升级命令
+- 生成给 Agent 的升级 Prompt
+
+### 12.2 第二版
+
+Bridge 上线后，再支持：
+
+- 拉取新镜像
+- 重建 Arkloop 模块
+- 执行迁移
+- 健康检查
+- 失败时停在明确错误状态
+
+第一版不要承诺“完全自动回滚”，避免过度设计。
+
+## 13. 推荐落地顺序
+
+### 第一步：收紧模块定义
+
+先增加：
+
+- `install/modules.yaml`
+
+并定义统一 setup parser：
+
+- 交互问答输入
+- CLI 参数输入
+- 默认值与校验规则
+
+把“模块、依赖、平台约束、默认值、能力集”收敛到同一处，把“安装选择解析”收敛到同一个 parser。
+
+### 第二步：收紧 setup.sh
+
+让 `setup.sh` 只承担：
+
+- `install`
+- `doctor`
+- `status`
+- `upgrade`
+- `uninstall`
+
+同时补上：
+
+- 交互问答入口
+- 非交互 parser 参数入口
+- 首次管理员初始化临时 URL
+
+并默认安装 `standard`。
+
+### 第三步：补 installation.md
+
+让 Agent 能基于固定问题生成 `setup.sh install ...` 参数，再调用 `setup.sh`。
+
+### 第四步：最小版 Bridge
+
+最小版至少支持：
+
+- 平台探测
+- OpenViking 安装
+- OpenViking 连接配置
+- OpenViking 默认初始化
+- Sandbox 启用与默认初始化
+- Arkloop 自身升级
+
+### 第五步：Console 先做状态页
+
+先做：
+
+- 模块状态
+- 复制命令
+- 复制给 Agent 的 Prompt
+- 健康检查结果
+
+Bridge 上线后，再把“复制命令”逐步替换为真一键动作。
+
+### 第六步：再扩展其他模块
+
+在 OpenViking 和 Sandbox 路径稳定后，再接 Browser、更多 memory system、更多第三方模块。
+
+## 14. 最终结论
+
+Installer Bridge 是值得做的，但不该成为第一天就承诺包打天下的大系统。
+
+更稳的路线是：
+
+1. 先把安装语义统一
+2. 先把 `setup.sh` 收薄，并统一 parser
+3. 先把首次管理员初始化临时入口补齐
+4. 先让 `installation.md` 成为 Agent 主入口
+5. 把 Bridge 作为正式组件实现进 roadmap
+6. 再让 Console 从状态页升级为真一键执行面板
+
+对 memory system，Arkloop 的边界必须明确：
+
+- Arkloop 管安装、连接、运行状态、默认初始化
+- Arkloop 不统一接管外部系统的完整模型配置
+
+这条边界如果不守住，后续 OpenViking、其他 memory system、Firecrawl 一类模块都会把 Bridge 拖进持续膨胀的特例泥潭。

@@ -312,6 +312,24 @@ button:not(:disabled) {
   color: var(--c-text-secondary);
   border: 0.5px solid var(--c-border-subtle);
 }
+
+.md-content--compact .md-table {
+  font-size: 13px;
+}
+
+.md-content--compact .md-table th,
+.md-content--compact .md-table td {
+  padding: 7px 10px;
+}
+
+.md-content--compact .md-table th {
+  font-size: 12px;
+}
+
+.md-content--compact :not(pre) > code {
+  padding: 1px 4px;
+}
+
 .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
