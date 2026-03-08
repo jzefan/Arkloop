@@ -162,3 +162,33 @@ func TestObjectSnapshotStoreExistsReturnsFalseOnMissingObject(t *testing.T) {
 		t.Fatal("expected missing snapshot")
 	}
 }
+
+func TestObjectSnapshotStoreWithFilesystemBackend(t *testing.T) {
+	opener := objectstore.NewFilesystemOpener(t.TempDir())
+	snapshotStore, err := NewSnapshotStore(context.Background(), opener, t.TempDir())
+	if err != nil {
+		t.Fatalf("new snapshot store: %v", err)
+	}
+
+	memPath := filepath.Join(t.TempDir(), "mem.snap")
+	diskPath := filepath.Join(t.TempDir(), "disk.snap")
+	if err := os.WriteFile(memPath, []byte("mem-data"), 0o600); err != nil {
+		t.Fatalf("write mem fixture: %v", err)
+	}
+	if err := os.WriteFile(diskPath, []byte("disk-data"), 0o600); err != nil {
+		t.Fatalf("write disk fixture: %v", err)
+	}
+
+	if err := snapshotStore.Upload(context.Background(), "tmpl-fs", memPath, diskPath); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	memLocal, diskLocal, err := snapshotStore.Download(context.Background(), "tmpl-fs")
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	memData, _ := os.ReadFile(memLocal)
+	diskData, _ := os.ReadFile(diskLocal)
+	if string(memData) != "mem-data" || string(diskData) != "disk-data" {
+		t.Fatalf("unexpected downloaded data: mem=%q disk=%q", memData, diskData)
+	}
+}

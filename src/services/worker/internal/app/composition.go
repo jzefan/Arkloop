@@ -259,31 +259,40 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 }
 
 func buildDocumentArtifactStore(ctx context.Context) (objectstore.Store, error) {
-	s3Endpoint := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ENDPOINT"))
-	if s3Endpoint == "" {
+	bucketOpener, err := buildStorageBucketOpenerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if bucketOpener == nil {
 		return nil, nil
 	}
-	s3AccessKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ACCESS_KEY"))
-	s3SecretKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_SECRET_KEY"))
-	s3Region := strings.TrimSpace(os.Getenv("ARKLOOP_S3_REGION"))
-	opener := objectstore.NewS3Opener(objectstore.S3Config{Endpoint: s3Endpoint, AccessKey: s3AccessKey, SecretKey: s3SecretKey, Region: s3Region})
-	return opener.Open(ctx, objectstore.ArtifactBucket)
+	return bucketOpener.Open(ctx, objectstore.ArtifactBucket)
 }
 
 func buildMessageAttachmentStore(ctx context.Context) (objectstore.Store, error) {
-	s3Endpoint := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ENDPOINT"))
-	if s3Endpoint == "" {
+	bucketOpener, err := buildStorageBucketOpenerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if bucketOpener == nil {
 		return nil, nil
 	}
-	s3AccessKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_ACCESS_KEY"))
-	s3SecretKey := strings.TrimSpace(os.Getenv("ARKLOOP_S3_SECRET_KEY"))
-	s3Region := strings.TrimSpace(os.Getenv("ARKLOOP_S3_REGION"))
 	s3Bucket := strings.TrimSpace(os.Getenv("ARKLOOP_S3_BUCKET"))
 	if s3Bucket == "" {
 		return nil, nil
 	}
-	opener := objectstore.NewS3Opener(objectstore.S3Config{Endpoint: s3Endpoint, AccessKey: s3AccessKey, SecretKey: s3SecretKey, Region: s3Region})
-	return opener.Open(ctx, s3Bucket)
+	return bucketOpener.Open(ctx, s3Bucket)
+}
+
+func buildStorageBucketOpenerFromEnv() (objectstore.BucketOpener, error) {
+	runtimeConfig, err := objectstore.LoadRuntimeConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if !runtimeConfig.Enabled() {
+		return nil, nil
+	}
+	return runtimeConfig.BucketOpener()
 }
 
 func resolveBuiltinAvailability(

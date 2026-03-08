@@ -35,10 +35,10 @@ Edit `.env` and set at least the following required fields:
 | Variable | Description |
 |------|------|
 | `ARKLOOP_POSTGRES_PASSWORD` | PostgreSQL Password |
-| `ARKLOOP_S3_SECRET_KEY` | S3-compatible secret key |
 | `ARKLOOP_AUTH_JWT_SECRET` | JWT Signing Secret (at least 32 characters) |
 | `ARKLOOP_ENCRYPTION_KEY` | AES-256-GCM Key (32-byte hex) |
-| `ARKLOOP_S3_VOLUME_MAX` | SeaweedFS volume slot limit, keep the default `64` unless you know you need less |
+| `ARKLOOP_STORAGE_BACKEND` | Storage backend, defaults to `filesystem` |
+| `ARKLOOP_STORAGE_ROOT` | Local storage root directory |
 
 Generate secure keys:
 
@@ -56,7 +56,7 @@ openssl rand -hex 32
 docker compose up -d
 ```
 
-SeaweedFS ships with a small default volume slot limit. Arkloop uses multiple buckets/collections such as `arkloop`, `sandbox-artifacts`, `sandbox-session-state`, and `sandbox-environments`. Once the slots are exhausted, SeaweedFS returns `No writable volumes`, and artifact or environment archive uploads start failing. The default config now raises `ARKLOOP_S3_VOLUME_MAX` to `64`.
+The default compose stack now uses local `filesystem` storage, which fits single-node deployments. If you switch to SeaweedFS or another S3-compatible backend, set `ARKLOOP_STORAGE_BACKEND=s3` and provide the `ARKLOOP_S3_*` variables explicitly.
 
 The `migrate` service will automatically run migrations before `api/worker` starts and then exit. Check startup status:
 
@@ -297,13 +297,20 @@ ARKLOOP_GATEWAY_UPSTREAM=http://host.docker.internal:8001 docker compose -f comp
 | `ARKLOOP_REDIS_URL` | — | Redis connection string |
 | `ARKLOOP_REDIS_PASSWORD` | `arkloop_redis` | |
 
-### Object Storage (SeaweedFS / S3-Compatible)
+### Storage
 
 | Variable | Default | Description |
 |------|--------|------|
-| `ARKLOOP_S3_ENDPOINT` | — | S3 endpoint URL |
+| `ARKLOOP_STORAGE_BACKEND` | `filesystem` | Default for local deploys; use `s3` for multi-node setups |
+| `ARKLOOP_STORAGE_ROOT` | `/var/lib/arkloop/storage` | Root directory for the `filesystem` backend |
+
+### Object Storage (Optional SeaweedFS / S3-Compatible)
+
+| Variable | Default | Description |
+|------|--------|------|
+| `ARKLOOP_S3_ENDPOINT` | — | Endpoint URL for the `s3` backend |
 | `ARKLOOP_S3_ACCESS_KEY` | `arkloop` | |
-| `ARKLOOP_S3_SECRET_KEY` | — | Required |
+| `ARKLOOP_S3_SECRET_KEY` | — | Required for the `s3` backend |
 | `ARKLOOP_S3_BUCKET` | `arkloop` | |
 | `ARKLOOP_S3_REGION` | `us-east-1` | |
 

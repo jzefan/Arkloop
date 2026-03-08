@@ -50,6 +50,8 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
+    profiles:
+      - s3
     entrypoint:
       - /bin/sh
       - -ec
@@ -97,7 +99,9 @@ services:
       ARKLOOP_DATABASE_DIRECT_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
       ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis_gateway:6379/0"
-      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-http://seaweedfs:8333}"
+      ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
+      ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
+      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
       ARKLOOP_API_DB_POOL_MAX_CONNS: "${ARKLOOP_API_DB_POOL_MAX_CONNS:-32}"
       ARKLOOP_API_DB_POOL_MIN_CONNS: "${ARKLOOP_API_DB_POOL_MIN_CONNS:-0}"
       ARKLOOP_API_DB_POOL_STATS_INTERVAL_SECONDS: "${ARKLOOP_API_DB_POOL_STATS_INTERVAL_SECONDS:-10}"
@@ -114,8 +118,8 @@ services:
         condition: service_healthy
       redis_gateway:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+    volumes:
+      - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8001/healthz"]
       interval: 15s
@@ -194,7 +198,9 @@ services:
       # 容器内无宿主机文件系统，MCP 配置从数据库读取
       ARKLOOP_MCP_CONFIG_FILE: ""
       ARKLOOP_OPENVIKING_BASE_URL: "http://openviking:1933"
-      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-http://seaweedfs:8333}"
+      ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
+      ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
+      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
       # Sandbox：容器内用服务名寻址（Firecracker 模式）；Docker 模式需在 .env 中覆盖为 host.docker.internal
       ARKLOOP_SANDBOX_BASE_URL: "${ARKLOOP_SANDBOX_BASE_URL:-}"
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: "${ARKLOOP_OUTBOUND_TRUST_FAKE_IP:-true}"
@@ -205,8 +211,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+    volumes:
+      - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
 
   # --- Sandbox: Firecracker 模式 ---
   # 启用条件：ARKLOOP_SANDBOX_PROVIDER=firecracker（默认）
@@ -243,19 +249,20 @@ services:
       ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR: "${ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR:-172.29.0.0/16}"
       ARKLOOP_SANDBOX_FIRECRACKER_DNS: "${ARKLOOP_SANDBOX_FIRECRACKER_DNS:-1.1.1.1,8.8.8.8}"
       ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
-      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-http://seaweedfs:8333}"
-      ARKLOOP_S3_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-arkloop}"
-      ARKLOOP_S3_SECRET_KEY: "${ARKLOOP_S3_SECRET_KEY:-please_change_me}"
+      ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
+      ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
+      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
+      ARKLOOP_S3_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-}"
+      ARKLOOP_S3_SECRET_KEY: "${ARKLOOP_S3_SECRET_KEY:-}"
     volumes:
       - sandbox_sockets:/run/sandbox
+      - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
       - ./config/sandbox/templates.json:/opt/sandbox/templates.json:ro
       - /usr/bin/firecracker:/usr/bin/firecracker:ro
       - /opt/sandbox/vmlinux:/opt/sandbox/vmlinux:ro
       - /opt/sandbox/rootfs:/opt/sandbox/rootfs:ro
     depends_on:
       pgbouncer:
-        condition: service_healthy
-      seaweedfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/healthz"]
@@ -284,9 +291,11 @@ services:
       ARKLOOP_SANDBOX_SOCKET_DIR: "/run/sandbox"
       ARKLOOP_SANDBOX_MAX_SESSIONS: "${ARKLOOP_SANDBOX_MAX_SESSIONS:-50}"
       ARKLOOP_SANDBOX_TEMPLATES_PATH: ""
-      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-http://seaweedfs:8333}"
-      ARKLOOP_S3_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-arkloop}"
-      ARKLOOP_S3_SECRET_KEY: "${ARKLOOP_S3_SECRET_KEY:-please_change_me}"
+      ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
+      ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
+      ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
+      ARKLOOP_S3_ACCESS_KEY: "${ARKLOOP_S3_ACCESS_KEY:-}"
+      ARKLOOP_S3_SECRET_KEY: "${ARKLOOP_S3_SECRET_KEY:-}"
       DOCKER_HOST: "unix:///run/docker-host.sock"
     networks:
       - default
@@ -295,10 +304,9 @@ services:
     volumes:
       - ${ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH:?请在 .env 中设置 ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH}:/run/docker-host.sock
       - sandbox_sockets:/run/sandbox
+      - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
     depends_on:
       pgbouncer:
-        condition: service_healthy
-      seaweedfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/healthz"]
@@ -327,6 +335,7 @@ volumes:
   seaweedfs_data:
   openviking_data:
   sandbox_sockets:
+  arkloop_storage:
 
 networks:
   sandbox_agent_egress:

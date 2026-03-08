@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"arkloop/services/sandbox/internal/app"
@@ -19,6 +20,7 @@ import (
 	"arkloop/services/sandbox/internal/storage"
 	"arkloop/services/sandbox/internal/template"
 	"arkloop/services/shared/objectstore"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -40,17 +42,15 @@ func run() error {
 
 	logger := logging.NewJSONLogger("sandbox", os.Stdout)
 
-	// 可选依赖：S3 artifact 存储
+	// 可选依赖：artifact 存储
 	var artifactStore objectstore.Store
 	var stateStore objectstore.Store
-	var envStore objectstore.Store
-	var bucketOpener objectstore.BucketOpener
-	if cfg.S3Endpoint != "" {
-		bucketOpener = objectstore.NewS3Opener(objectstore.S3Config{
-			Endpoint:  cfg.S3Endpoint,
-			AccessKey: cfg.S3AccessKey,
-			SecretKey: cfg.S3SecretKey,
-		})
+	var envStore objectstore.BlobStore
+	bucketOpener, err := buildStorageBucketOpener(cfg)
+	if err != nil {
+		return err
+	}
+	if bucketOpener != nil {
 		aStore, err := bucketOpener.Open(context.Background(), objectstore.ArtifactBucket)
 		if err != nil {
 			return err
@@ -68,7 +68,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		envStore = eStore
+		blobStore, ok := eStore.(objectstore.BlobStore)
+		if !ok {
+			return fmt.Errorf("environment store does not implement blob store")
+		}
+		envStore = blobStore
 		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
@@ -86,6 +90,15 @@ func run() error {
 		return err
 	}
 
+	dbPool, err := openRegistryPool()
+	if err != nil {
+		return err
+	}
+	if dbPool != nil {
+		defer dbPool.Close()
+	}
+	registryWriter := environment.NewPGRegistryWriter(dbPool)
+
 	mgr := session.NewManager(session.ManagerConfig{
 		MaxSessions:        cfg.MaxSessions,
 		Pool:               vmPool,
@@ -93,7 +106,7 @@ func run() error {
 		IdleTimeoutPro:     cfg.IdleTimeoutPro,
 		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
 	})
-	envMgr := environment.NewManager(envStore, logger)
+	envMgr := environment.NewManager(envStore, registryWriter, logger)
 	shellMgr := shell.NewManager(mgr, artifactStore, stateStore, envMgr, logger)
 
 	handler := sandboxhttp.NewHandler(mgr, envMgr, shellMgr, artifactStore, logger, cfg.AuthToken)
@@ -123,17 +136,36 @@ func applyStateStoreLifecycle(ctx context.Context, cfg app.Config, store any) er
 	return nil
 }
 
+func buildStorageBucketOpener(cfg app.Config) (objectstore.BucketOpener, error) {
+	runtimeConfig, err := objectstore.NormalizeRuntimeConfig(objectstore.RuntimeConfig{
+		Backend: cfg.StorageBackend,
+		RootDir: cfg.StorageRoot,
+		S3Config: objectstore.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+	if !runtimeConfig.Enabled() {
+		return nil, nil
+	}
+	return runtimeConfig.BucketOpener()
+}
+
 func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
 	var snapshotStore storage.SnapshotStore
 	var registry *template.Registry
 
-	if cfg.S3Endpoint != "" {
+	bucketOpener, err := buildStorageBucketOpener(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if bucketOpener != nil {
 		cacheDir := cfg.SocketBaseDir + "/_snapshots"
-		store, err := storage.NewSnapshotStore(context.Background(), objectstore.NewS3Opener(objectstore.S3Config{
-			Endpoint:  cfg.S3Endpoint,
-			AccessKey: cfg.S3AccessKey,
-			SecretKey: cfg.S3SecretKey,
-		}), cacheDir)
+		store, err := storage.NewSnapshotStore(context.Background(), bucketOpener, cacheDir)
 		if err != nil {
 			return nil, err
 		}
@@ -232,4 +264,19 @@ func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool
 
 	dp.Start()
 	return dp, nil
+}
+
+func openRegistryPool() (*pgxpool.Pool, error) {
+	databaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_DATABASE_URL"))
+	if databaseURL == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	poolCfg.MaxConns = 4
+	return pgxpool.NewWithConfig(ctx, poolCfg)
 }

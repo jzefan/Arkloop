@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/shared/objectstore"
 )
 
 const (
@@ -100,11 +101,13 @@ type Config struct {
 	GatewayRedisURL         string
 	MaxConcurrentRunsPerOrg int64
 
-	S3Endpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3Region    string
+	S3Endpoint     string
+	S3AccessKey    string
+	S3SecretKey    string
+	S3Bucket       string
+	S3Region       string
+	StorageBackend string
+	StorageRoot    string
 
 	BootstrapPlatformAdminUserID string
 	RunTimeoutMinutes            int
@@ -256,6 +259,12 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if raw, ok := lookupEnv(s3RegionEnv); ok {
 		cfg.S3Region = raw
+	}
+	if raw, ok := lookupEnv(objectstore.StorageBackendEnv); ok {
+		cfg.StorageBackend = raw
+	}
+	if raw, ok := lookupEnv(objectstore.StorageRootEnv); ok {
+		cfg.StorageRoot = raw
 	}
 
 	if raw, ok := lookupEnv(sseHeartbeatSecondsEnv); ok {
