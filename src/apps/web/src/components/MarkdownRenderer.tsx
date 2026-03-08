@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement } from 'react'
+import { useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -176,12 +176,15 @@ function extractTextFromChildren(node: ReactNode): string {
   return ''
 }
 
-function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
+function CodeBlockWrapper({ children, compact = false }: { children: React.ReactNode; compact?: boolean }) {
   const [copied, setCopied] = useState(false)
   const [copyHover, setCopyHover] = useState(false)
   const preRef = useRef<HTMLPreElement>(null)
   const languageLabel = normalizeCodeLanguageLabel(extractCodeLanguage(children))
   const frameRadius = 10
+  const labelFontSize = compact ? '10px' : '11px'
+  const codeFontSize = compact ? '12.5px' : '13.5px'
+  const codePadding = compact ? '34px 42px 12px 14px' : '36px 44px 14px 16px'
 
   const handleCopy = useCallback(() => {
     const text = preRef.current?.textContent ?? ''
@@ -219,7 +222,7 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
           borderBottom: '0.5px solid var(--c-border-subtle)',
           background: 'var(--c-md-code-label-bg, var(--c-bg-sub))',
           color: 'var(--c-text-secondary)',
-          fontSize: '11px',
+          fontSize: labelFontSize,
           letterSpacing: '0.18px',
           padding: '0 10px',
           textTransform: 'lowercase',
@@ -234,9 +237,9 @@ function CodeBlockWrapper({ children }: { children: React.ReactNode }) {
           background: 'transparent',
           border: 'none',
           borderRadius: 0,
-          padding: '36px 44px 14px 16px',
+          padding: codePadding,
           overflowX: 'auto',
-          fontSize: '13.5px',
+          fontSize: codeFontSize,
           lineHeight: 1.65,
           fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
           margin: 0,
@@ -368,107 +371,116 @@ function WithCitations({ children, prefix }: { children: ReactNode; prefix: stri
   return <>{processChildren(children, prefix)}</>
 }
 
-const mdComponents: Components = {
-  pre: ({ children }) => {
+function buildMarkdownComponents(compact: boolean): Components {
+  const paragraphFontSize = compact ? '14px' : '16px'
+  const heading1FontSize = compact ? '18px' : '22px'
+  const heading2FontSize = compact ? '17px' : '20px'
+  const heading3FontSize = compact ? '15.5px' : '18px'
+  const heading4FontSize = compact ? '14.5px' : '16px'
+  const listFontSize = compact ? '14px' : '16px'
+
+  return {
+    pre: ({ children }) => {
     const lang = extractCodeLanguage(children)
     if (lang === 'mindmap') {
       return <MindmapBlock content={extractTextFromChildren(children)} />
     }
-    return <CodeBlockWrapper>{children}</CodeBlockWrapper>
-  },
+      return <CodeBlockWrapper compact={compact}>{children}</CodeBlockWrapper>
+    },
 
-  // 内联/块级区分通过 CSS .md-content :not(pre) > code 处理
-  code: ({ className, children }) => (
-    <code className={className}>{children}</code>
-  ),
+    // 内联/块级区分通过 CSS .md-content :not(pre) > code 处理
+    code: ({ className, children }) => (
+      <code className={className}>{children}</code>
+    ),
 
-  p: ({ children }) => (
-    <p style={{ color: 'var(--c-text-primary)', fontSize: '16px', lineHeight: 1.6, letterSpacing: '0.16px', margin: '0 0 1em' }}>
-      <WithCitations prefix="p">{children}</WithCitations>
-    </p>
-  ),
+    p: ({ children }) => (
+      <p style={{ color: 'var(--c-text-primary)', fontSize: paragraphFontSize, lineHeight: 1.6, letterSpacing: compact ? '0.1px' : '0.16px', margin: '0 0 1em' }}>
+        <WithCitations prefix="p">{children}</WithCitations>
+      </p>
+    ),
 
-  h1: ({ children }) => (
-    <h1 style={{ color: 'var(--c-text-heading)', fontSize: '22px', fontWeight: 600, lineHeight: 1.4, margin: '1.5em 0 0.5em', letterSpacing: '-0.3px' }}>
-      {children}
-    </h1>
-  ),
-
-  h2: ({ children }) => (
-    <h2 style={{ color: 'var(--c-text-heading)', fontSize: '20px', fontWeight: 600, lineHeight: 1.4, margin: '1.4em 0 0.5em', letterSpacing: '-0.2px' }}>
-      {children}
-    </h2>
-  ),
-
-  h3: ({ children }) => (
-    <h3 style={{ color: 'var(--c-text-heading)', fontSize: '18px', fontWeight: 600, lineHeight: 1.4, margin: '1.2em 0 0.4em' }}>
-      {children}
-    </h3>
-  ),
-
-  h4: ({ children }) => (
-    <h4 style={{ color: 'var(--c-text-heading)', fontSize: '16px', fontWeight: 600, lineHeight: 1.4, margin: '1em 0 0.4em' }}>
-      {children}
-    </h4>
-  ),
-
-  ul: ({ children }) => (
-    <ul style={{ color: 'var(--c-text-primary)', fontSize: '16px', lineHeight: 1.6, paddingLeft: '1.5em', margin: '0 0 1em', listStyleType: 'disc' }}>
-      {children}
-    </ul>
-  ),
-
-  ol: ({ children }) => (
-    <ol style={{ color: 'var(--c-text-primary)', fontSize: '16px', lineHeight: 1.6, paddingLeft: '1.5em', margin: '0 0 1em', listStyleType: 'decimal' }}>
-      {children}
-    </ol>
-  ),
-
-  li: ({ children }) => <li style={{ marginBottom: '0.3em' }}><WithCitations prefix="li">{children}</WithCitations></li>,
-
-  blockquote: ({ children }) => (
-    <blockquote style={{ borderLeft: '3px solid var(--c-border-mid)', paddingLeft: '1em', margin: '1em 0', color: 'var(--c-text-secondary)', fontStyle: 'italic' }}>
-      <WithCitations prefix="bq">{children}</WithCitations>
-    </blockquote>
-  ),
-
-  a: ({ href, children }) => <ArtifactAwareLink href={href}>{children}</ArtifactAwareLink>,
-
-  img: ({ src, alt }) => <ArtifactAwareImg src={src} alt={alt} />,
-
-  table: ({ children }) => (
-    <div className="md-table-wrap">
-      <table className="md-table">
+    h1: ({ children }) => (
+      <h1 style={{ color: 'var(--c-text-heading)', fontSize: heading1FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.5em 0 0.5em', letterSpacing: compact ? '-0.2px' : '-0.3px' }}>
         {children}
-      </table>
-    </div>
-  ),
+      </h1>
+    ),
 
-  th: ({ children }) => (
-    <th>
-      {children}
-    </th>
-  ),
+    h2: ({ children }) => (
+      <h2 style={{ color: 'var(--c-text-heading)', fontSize: heading2FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.4em 0 0.5em', letterSpacing: '-0.2px' }}>
+        {children}
+      </h2>
+    ),
 
-  td: ({ children }) => (
-    <td>
-      <WithCitations prefix="td">{children}</WithCitations>
-    </td>
-  ),
+    h3: ({ children }) => (
+      <h3 style={{ color: 'var(--c-text-heading)', fontSize: heading3FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.2em 0 0.4em' }}>
+        {children}
+      </h3>
+    ),
 
-  hr: () => <hr style={{ border: 'none', borderTop: '0.5px solid var(--c-border-subtle)', margin: '1.5em 0' }} />,
+    h4: ({ children }) => (
+      <h4 style={{ color: 'var(--c-text-heading)', fontSize: heading4FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1em 0 0.4em' }}>
+        {children}
+      </h4>
+    ),
 
-  strong: ({ children }) => (
-    <strong style={{ color: 'var(--c-text-primary)', fontWeight: 600 }}>{children}</strong>
-  ),
+    ul: ({ children }) => (
+      <ul style={{ color: 'var(--c-text-primary)', fontSize: listFontSize, lineHeight: 1.6, paddingLeft: '1.5em', margin: '0 0 1em', listStyleType: 'disc' }}>
+        {children}
+      </ul>
+    ),
 
-  em: ({ children }) => (
-    <em style={{ fontStyle: 'italic', color: 'var(--c-text-secondary)' }}>{children}</em>
-  ),
+    ol: ({ children }) => (
+      <ol style={{ color: 'var(--c-text-primary)', fontSize: listFontSize, lineHeight: 1.6, paddingLeft: '1.5em', margin: '0 0 1em', listStyleType: 'decimal' }}>
+        {children}
+      </ol>
+    ),
 
-  del: ({ children }) => (
-    <del style={{ color: 'var(--c-text-muted)', textDecoration: 'line-through' }}>{children}</del>
-  ),
+    li: ({ children }) => <li style={{ marginBottom: '0.3em' }}><WithCitations prefix="li">{children}</WithCitations></li>,
+
+    blockquote: ({ children }) => (
+      <blockquote style={{ borderLeft: '3px solid var(--c-border-mid)', paddingLeft: '1em', margin: '1em 0', color: 'var(--c-text-secondary)', fontStyle: 'italic' }}>
+        <WithCitations prefix="bq">{children}</WithCitations>
+      </blockquote>
+    ),
+
+    a: ({ href, children }) => <ArtifactAwareLink href={href}>{children}</ArtifactAwareLink>,
+
+    img: ({ src, alt }) => <ArtifactAwareImg src={src} alt={alt} />,
+
+    table: ({ children }) => (
+      <div className="md-table-wrap">
+        <table className="md-table">
+          {children}
+        </table>
+      </div>
+    ),
+
+    th: ({ children }) => (
+      <th>
+        {children}
+      </th>
+    ),
+
+    td: ({ children }) => (
+      <td>
+        <WithCitations prefix="td">{children}</WithCitations>
+      </td>
+    ),
+
+    hr: () => <hr style={{ border: 'none', borderTop: '0.5px solid var(--c-border-subtle)', margin: '1.5em 0' }} />,
+
+    strong: ({ children }) => (
+      <strong style={{ color: 'var(--c-text-primary)', fontWeight: 600 }}>{children}</strong>
+    ),
+
+    em: ({ children }) => (
+      <em style={{ fontStyle: 'italic', color: 'var(--c-text-secondary)' }}>{children}</em>
+    ),
+
+    del: ({ children }) => (
+      <del style={{ color: 'var(--c-text-muted)', textDecoration: 'line-through' }}>{children}</del>
+    ),
+  }
 }
 
 type Props = {
@@ -478,9 +490,10 @@ type Props = {
   artifacts?: ArtifactRef[]
   accessToken?: string
   onOpenDocument?: (artifact: ArtifactRef) => void
+  compact?: boolean
 }
 
-export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, onOpenDocument }: Props) {
+export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, onOpenDocument, compact = false }: Props) {
   const remarkPlugins = disableMath
     ? [remarkGfm]
     : [remarkGfm, remarkMath]
@@ -500,11 +513,12 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
   }
 
   const normalizedContent = disableMath ? content : normalizeLatexDelimiters(content)
+  const mdComponents = useMemo(() => buildMarkdownComponents(compact), [compact])
 
   return (
     <ArtifactsContext.Provider value={artifactsValue}>
       <WebSourcesContext.Provider value={webSources ?? []}>
-        <div className="md-content" style={{ maxWidth: '100%' }}>
+        <div className={`md-content${compact ? ' md-content--compact' : ''}`} style={{ maxWidth: '100%' }}>
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}

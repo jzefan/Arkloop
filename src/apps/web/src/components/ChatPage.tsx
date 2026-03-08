@@ -66,6 +66,9 @@ import {
   migrateMessageMetadata,
 } from '../storage'
 
+const sidePanelWidth = 420
+const documentPanelWidth = 560
+
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
     return { message: error.message, traceId: error.traceId, code: error.code }
@@ -1787,7 +1790,7 @@ export function ChatPage() {
         {/* 右侧面板 - width 过渡驱动整体布局动画 */}
         <div
           style={{
-            width: isDocumentPanelOpen ? '540px' : (isSourcePanelOpen || isCodePanelOpen) ? '420px' : '0px',
+            width: isDocumentPanelOpen ? `${documentPanelWidth}px` : (isSourcePanelOpen || isCodePanelOpen) ? `${sidePanelWidth}px` : '0px',
             overflow: 'hidden',
             flexShrink: 0,
             transition: 'width 280ms cubic-bezier(0.16,1,0.3,1)',
@@ -1795,7 +1798,7 @@ export function ChatPage() {
           }}
         >
           {isSourcePanelOpen && panelDisplaySources && panelDisplaySources.length > 0 && (
-            <div style={{ width: '420px', height: '100%' }}>
+            <div style={{ width: `${sidePanelWidth}px`, height: '100%' }}>
               <SourcesPanel
                 sources={panelDisplaySources}
                 userQuery={panelDisplayQuery}
@@ -1804,7 +1807,7 @@ export function ChatPage() {
             </div>
           )}
           {isCodePanelOpen && codePanelDisplay && (
-            <div style={{ width: '420px', height: '100%' }}>
+            <div style={{ width: `${sidePanelWidth}px`, height: '100%' }}>
               <CodeExecutionPanel
                 execution={codePanelDisplay}
                 onClose={() => { setCodePanelExecution(null); onRightPanelChange?.(false) }}
@@ -1812,7 +1815,7 @@ export function ChatPage() {
             </div>
           )}
           {isDocumentPanelOpen && documentPanelDisplay && (
-            <div style={{ width: '540px', height: '100%' }}>
+            <div style={{ width: `${documentPanelWidth}px`, height: '100%' }}>
               <DocumentPanel
                 artifact={documentPanelDisplay}
                 accessToken={accessToken}
