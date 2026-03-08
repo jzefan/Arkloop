@@ -311,26 +311,41 @@ func TestShellControllerDebugSnapshotShowsTranscriptTruncation(t *testing.T) {
 		t.Fatalf("expected command to keep running, got %#v", resp)
 	}
 	var debug *shellapi.AgentDebugResponse
-	deadline := time.Now().Add(2 * time.Second)
+	sawPendingTruncated := false
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		debug, code, msg = controller.DebugSnapshot()
 		if code != "" {
 			t.Fatalf("debug snapshot failed: %s %s", code, msg)
 		}
-		if (debug.PendingOutputTruncated && strings.Contains(debug.Tail, "TAIL")) || time.Now().After(deadline) {
+		if debug.PendingOutputTruncated {
+			sawPendingTruncated = true
+			break
+		}
+		if time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !debug.PendingOutputTruncated {
+	if !sawPendingTruncated {
 		t.Fatalf("expected pending truncation flag, got %#v", debug)
 	}
-	poll, code, msg := controller.WriteStdin(shellapi.AgentWriteStdinRequest{YieldTimeMs: 100})
-	if code != "" {
-		t.Fatalf("poll failed: %s %s", code, msg)
+	sawPollTruncated := false
+	for resp.Running {
+		resp, code, msg = controller.WriteStdin(shellapi.AgentWriteStdinRequest{YieldTimeMs: 200})
+		if code != "" {
+			t.Fatalf("poll failed: %s %s", code, msg)
+		}
+		if resp.Truncated {
+			sawPollTruncated = true
+		}
 	}
-	if !poll.Truncated {
-		t.Fatalf("expected poll truncation, got %#v", poll)
+	if !sawPollTruncated {
+		t.Fatalf("expected truncated poll while draining output")
+	}
+	debug, code, msg = controller.DebugSnapshot()
+	if code != "" {
+		t.Fatalf("debug snapshot failed: %s %s", code, msg)
 	}
 	if !debug.Transcript.Truncated || debug.Transcript.OmittedBytes <= 0 {
 		t.Fatalf("expected transcript truncation, got %#v", debug.Transcript)

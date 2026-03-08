@@ -82,6 +82,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
       ARKLOOP_DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
+      ARKLOOP_RUN_INTEGRATION_TESTS: "1"
       ARKLOOP_AUTH_JWT_SECRET: ci_test_jwt_secret_at_least_32_chars_long
       ARKLOOP_PROVIDER_ROUTING_JSON: '{"default_route_id":"default","credentials":[{"id":"stub_default","scope":"platform","provider_kind":"stub"}],"routes":[{"id":"default","model":"stub","credential_id":"stub_default"}]}'
     steps:
