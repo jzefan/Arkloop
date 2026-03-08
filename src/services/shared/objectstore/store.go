@@ -3,6 +3,7 @@ package objectstore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,16 @@ type Store interface {
 	GetWithContentType(ctx context.Context, key string) ([]byte, string, error)
 	Head(ctx context.Context, key string) (ObjectInfo, error)
 	Delete(ctx context.Context, key string) error
+}
+
+type BlobStore interface {
+	Put(ctx context.Context, key string, data []byte) error
+	PutIfAbsent(ctx context.Context, key string, data []byte) (bool, error)
+	Get(ctx context.Context, key string) ([]byte, error)
+	Head(ctx context.Context, key string) (ObjectInfo, error)
+	Delete(ctx context.Context, key string) error
+	ListPrefix(ctx context.Context, prefix string) ([]ObjectInfo, error)
+	WriteJSONAtomic(ctx context.Context, key string, value any) error
 }
 
 type LifecycleConfigurator interface {
@@ -168,6 +179,18 @@ func (o *S3Store) Put(ctx context.Context, key string, data []byte) error {
 	return o.PutObject(ctx, key, data, PutOptions{})
 }
 
+func (o *S3Store) PutIfAbsent(ctx context.Context, key string, data []byte) (bool, error) {
+	if _, err := o.Head(ctx, key); err == nil {
+		return false, nil
+	} else if !IsNotFound(err) {
+		return false, err
+	}
+	if err := o.Put(ctx, key, data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (o *S3Store) PutWithContentType(ctx context.Context, key string, data []byte, contentType string) error {
 	return o.PutObject(ctx, key, data, PutOptions{ContentType: contentType})
 }
@@ -300,6 +323,37 @@ func (o *S3Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (o *S3Store) ListPrefix(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	paginator := s3.NewListObjectsV2Paginator(o.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(o.bucket),
+		Prefix: aws.String(strings.TrimSpace(prefix)),
+	})
+
+	objects := make([]ObjectInfo, 0)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list objects with prefix %q: %w", prefix, err)
+		}
+		for _, item := range page.Contents {
+			objects = append(objects, ObjectInfo{
+				Key:  strings.TrimSpace(aws.ToString(item.Key)),
+				Size: aws.ToInt64(item.Size),
+				ETag: strings.Trim(aws.ToString(item.ETag), `"`),
+			})
+		}
+	}
+	return objects, nil
+}
+
+func (o *S3Store) WriteJSONAtomic(ctx context.Context, key string, value any) error {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal json %q: %w", key, err)
+	}
+	return o.PutObject(ctx, key, payload, PutOptions{ContentType: "application/json"})
+}
+
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -320,5 +374,6 @@ func IsNotFound(err error) bool {
 }
 
 var _ Store = (*S3Store)(nil)
+var _ BlobStore = (*S3Store)(nil)
 var _ LifecycleConfigurator = (*S3Store)(nil)
 var _ BucketOpener = (*S3Opener)(nil)

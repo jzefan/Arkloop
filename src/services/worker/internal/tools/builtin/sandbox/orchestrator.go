@@ -2,14 +2,12 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,27 +29,25 @@ type resolvedSession struct {
 	Record                 *data.ShellSessionRecord
 }
 
-type memorySessionState struct {
-	record data.ShellSessionRecord
-}
-
 type sessionOrchestrator struct {
-	pool         *pgxpool.Pool
-	sessionsRepo data.ShellSessionsRepository
-	bindingsRepo data.DefaultShellSessionBindingsRepository
+	pool            *pgxpool.Pool
+	sessionsRepo    data.ShellSessionsRepository
+	bindingsRepo    data.DefaultShellSessionBindingsRepository
+	registryService *registryService
 
 	mu             sync.Mutex
-	runDefaults     map[string]string
-	memorySessions  map[string]data.ShellSessionRecord
-	memoryBindings  map[string]string
+	runDefaults    map[string]string
+	memorySessions map[string]data.ShellSessionRecord
+	memoryBindings map[string]string
 }
 
 func newSessionOrchestrator(pool *pgxpool.Pool) *sessionOrchestrator {
 	return &sessionOrchestrator{
-		pool:          pool,
-		runDefaults:   map[string]string{},
-		memorySessions: map[string]data.ShellSessionRecord{},
-		memoryBindings: map[string]string{},
+		pool:            pool,
+		registryService: newRegistryService(pool),
+		runDefaults:     map[string]string{},
+		memorySessions:  map[string]data.ShellSessionRecord{},
+		memoryBindings:  map[string]string{},
 	}
 }
 
@@ -153,11 +149,11 @@ func (o *sessionOrchestrator) lookupExplicit(
 		return nil, &tools.ExecutionError{ErrorClass: errorSandboxError, Message: "shell session not found", Details: map[string]any{"session_ref": sessionRef}}
 	}
 	return &resolvedSession{
-		SessionRef:  sessionRef,
-		ResolvedVia: resolvedVia,
-		Reused:      true,
-		ShareScope:  record.ShareScope,
-		Record:      &record,
+		SessionRef:             sessionRef,
+		ResolvedVia:            resolvedVia,
+		Reused:                 true,
+		ShareScope:             record.ShareScope,
+		Record:                 &record,
 		RestoredFromCheckpoint: record.LiveSessionID == nil && strings.TrimSpace(stringPtrValue(record.LatestCheckpointRev)) != "",
 	}, nil
 }
@@ -196,12 +192,12 @@ func (o *sessionOrchestrator) createSession(
 	}
 	o.setRunDefault(execCtx.RunID, sessionRef)
 	return &resolvedSession{
-		SessionRef:      sessionRef,
-		ResolvedVia:     "new_session",
-		Reused:          false,
-		ShareScope:      shareScope,
-		PersistBinding:  persistBinding,
-		Record:          &record,
+		SessionRef:     sessionRef,
+		ResolvedVia:    "new_session",
+		Reused:         false,
+		ShareScope:     shareScope,
+		PersistBinding: persistBinding,
+		Record:         &record,
 	}, nil
 }
 
@@ -285,6 +281,12 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 		o.memorySessions[record.SessionRef] = record
 		return nil
 	}
+	if err := o.registryService.EnsureProfileRegistry(ctx, record.OrgID, record.ProfileRef); err != nil {
+		return err
+	}
+	if err := o.registryService.EnsureWorkspaceRegistry(ctx, record.OrgID, record.WorkspaceRef); err != nil {
+		return err
+	}
 	return o.sessionsRepo.Upsert(ctx, o.pool, record)
 }
 
@@ -329,25 +331,6 @@ func (o *sessionOrchestrator) markResult(
 		MetadataJSON:        map[string]any{},
 	}
 	_ = o.sessionsRepo.Upsert(ctx, o.pool, record)
-}
-
-func (o *sessionOrchestrator) markClosed(ctx context.Context, execCtx tools.ExecutionContext, sessionRef string) {
-	if strings.TrimSpace(sessionRef) == "" {
-		return
-	}
-	if o.pool == nil {
-		o.mu.Lock()
-		defer o.mu.Unlock()
-		record, ok := o.memorySessions[sessionRef]
-		if !ok {
-			return
-		}
-		record.State = data.ShellSessionStateClosed
-		record.LiveSessionID = nil
-		o.memorySessions[sessionRef] = record
-		return
-	}
-	_ = o.sessionsRepo.SetState(ctx, o.pool, derefUUID(execCtx.OrgID), sessionRef, data.ShellSessionStateClosed)
 }
 
 func (o *sessionOrchestrator) setRunDefault(runID uuid.UUID, sessionRef string) {
@@ -434,14 +417,4 @@ func stringPtr(value string) *string {
 	}
 	copied := value
 	return &copied
-}
-
-func mapSessionLookupError(err error) *tools.ExecutionError {
-	if err == nil {
-		return nil
-	}
-	if err == pgx.ErrNoRows {
-		return &tools.ExecutionError{ErrorClass: errorSandboxError, Message: "shell session not found"}
-	}
-	return &tools.ExecutionError{ErrorClass: errorSandboxError, Message: fmt.Sprintf("resolve shell session failed: %s", err.Error())}
 }

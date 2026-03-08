@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	ShellSessionStateReady = "ready"
-	ShellSessionStateBusy  = "busy"
+	ShellSessionStateReady  = "ready"
+	ShellSessionStateBusy   = "busy"
 	ShellSessionStateClosed = "closed"
 
 	ShellShareScopeRun       = "run"
@@ -35,6 +35,7 @@ type ShellSessionRecord struct {
 	State               string
 	LiveSessionID       *string
 	LatestCheckpointRev *string
+	LatestRestoreRev    *string
 	LastUsedAt          time.Time
 	MetadataJSON        map[string]any
 	CreatedAt           time.Time
@@ -75,6 +76,7 @@ func (ShellSessionsRepository) GetBySessionRef(
 		        state,
 		        live_session_id,
 		        latest_checkpoint_rev,
+		        latest_restore_rev,
 		        last_used_at,
 		        metadata_json,
 		        created_at,
@@ -96,6 +98,7 @@ func (ShellSessionsRepository) GetBySessionRef(
 		&record.State,
 		&record.LiveSessionID,
 		&record.LatestCheckpointRev,
+		&record.LatestRestoreRev,
 		&record.LastUsedAt,
 		&metadataRaw,
 		&record.CreatedAt,
@@ -163,10 +166,11 @@ func (ShellSessionsRepository) Upsert(
 			state,
 			live_session_id,
 			latest_checkpoint_rev,
+			latest_restore_rev,
 			last_used_at,
 			metadata_json
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), $12::jsonb
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), $13::jsonb
 		)
 		ON CONFLICT (session_ref) DO UPDATE SET
 			profile_ref = EXCLUDED.profile_ref,
@@ -178,6 +182,7 @@ func (ShellSessionsRepository) Upsert(
 			state = EXCLUDED.state,
 			live_session_id = EXCLUDED.live_session_id,
 			latest_checkpoint_rev = COALESCE(EXCLUDED.latest_checkpoint_rev, shell_sessions.latest_checkpoint_rev),
+			latest_restore_rev = COALESCE(EXCLUDED.latest_restore_rev, shell_sessions.latest_restore_rev),
 			last_used_at = now(),
 			metadata_json = EXCLUDED.metadata_json,
 			updated_at = now()`,
@@ -192,6 +197,7 @@ func (ShellSessionsRepository) Upsert(
 		record.State,
 		record.LiveSessionID,
 		record.LatestCheckpointRev,
+		record.LatestRestoreRev,
 		string(metadataRaw),
 	)
 	return err
@@ -248,6 +254,39 @@ func (ShellSessionsRepository) UpdateCheckpointRevision(
 		ctx,
 		`UPDATE shell_sessions
 		    SET latest_checkpoint_rev = NULLIF($3, ''),
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE org_id = $1
+		    AND session_ref = $2`,
+		orgID,
+		sessionRef,
+		revision,
+	)
+	return err
+}
+
+func (ShellSessionsRepository) UpdateRestoreRevision(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	revision string,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return fmt.Errorf("pool must not be nil")
+	}
+	sessionRef = strings.TrimSpace(sessionRef)
+	revision = strings.TrimSpace(revision)
+	if sessionRef == "" {
+		return fmt.Errorf("session_ref must not be empty")
+	}
+	_, err := pool.Exec(
+		ctx,
+		`UPDATE shell_sessions
+		    SET latest_restore_rev = NULLIF($3, ''),
 		        updated_at = now(),
 		        last_used_at = now()
 		  WHERE org_id = $1

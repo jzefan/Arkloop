@@ -178,3 +178,77 @@ func TestNewRejectsEmptyBucket(t *testing.T) {
 		t.Fatal("expected error for empty bucket, got nil")
 	}
 }
+
+func TestBlobStorePutIfAbsentAndListPrefix(t *testing.T) {
+	endpoint, accessKey, secretKey, bucket, region := s3EnvOrSkip(t)
+
+	store, err := New(context.Background(), endpoint, accessKey, secretKey, bucket, region)
+	if err != nil {
+		t.Fatalf("new object store: %v", err)
+	}
+	blobStore, ok := store.(BlobStore)
+	if !ok {
+		t.Fatalf("store does not implement blob store: %T", store)
+	}
+
+	prefix := fmt.Sprintf("test/integration/%s/", t.Name())
+	keyA := prefix + "a.json"
+	keyB := prefix + "b.json"
+	created, err := blobStore.PutIfAbsent(context.Background(), keyA, []byte("first"))
+	if err != nil {
+		t.Fatalf("put if absent: %v", err)
+	}
+	if !created {
+		t.Fatal("expected first put to create object")
+	}
+	created, err = blobStore.PutIfAbsent(context.Background(), keyA, []byte("second"))
+	if err != nil {
+		t.Fatalf("put if absent twice: %v", err)
+	}
+	if created {
+		t.Fatal("expected second put to skip existing object")
+	}
+	if err := blobStore.Put(context.Background(), keyB, []byte("other")); err != nil {
+		t.Fatalf("put second object: %v", err)
+	}
+	defer func() {
+		_ = blobStore.Delete(context.Background(), keyA)
+		_ = blobStore.Delete(context.Background(), keyB)
+	}()
+
+	objects, err := blobStore.ListPrefix(context.Background(), prefix)
+	if err != nil {
+		t.Fatalf("list prefix: %v", err)
+	}
+	if len(objects) < 2 {
+		t.Fatalf("expected at least 2 objects, got %d", len(objects))
+	}
+}
+
+func TestBlobStoreWriteJSONAtomic(t *testing.T) {
+	endpoint, accessKey, secretKey, bucket, region := s3EnvOrSkip(t)
+
+	store, err := New(context.Background(), endpoint, accessKey, secretKey, bucket, region)
+	if err != nil {
+		t.Fatalf("new object store: %v", err)
+	}
+	blobStore, ok := store.(BlobStore)
+	if !ok {
+		t.Fatalf("store does not implement blob store: %T", store)
+	}
+
+	key := fmt.Sprintf("test/integration/%s.json", t.Name())
+	defer func() { _ = blobStore.Delete(context.Background(), key) }()
+
+	payload := map[string]any{"revision": "rev-1", "scope": "workspace"}
+	if err := blobStore.WriteJSONAtomic(context.Background(), key, payload); err != nil {
+		t.Fatalf("write json atomic: %v", err)
+	}
+	data, err := blobStore.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get json object: %v", err)
+	}
+	if !strings.Contains(string(data), "\"revision\":\"rev-1\"") {
+		t.Fatalf("unexpected json payload: %s", string(data))
+	}
+}
