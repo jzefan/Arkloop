@@ -7,7 +7,6 @@ const (
 	GroupWebFetch      = "web_fetch"
 	GroupSandbox       = "sandbox"
 	GroupMemory        = "memory"
-	GroupBrowser       = "browser"
 	GroupDocument      = "document"
 	GroupOrchestration = "orchestration"
 	GroupInternal      = "internal"
@@ -35,7 +34,6 @@ var groupOrder = []string{
 	GroupWebFetch,
 	GroupSandbox,
 	GroupMemory,
-	GroupBrowser,
 	GroupDocument,
 	GroupOrchestration,
 	GroupInternal,
@@ -101,36 +99,6 @@ var registry = []ToolMeta{
 		Group:          GroupMemory,
 		Label:          "Conversation search",
 		LLMDescription: "search the current user's visible conversation history across all threads using keywords. Use this when you need to recall facts previously discussed but not stored in long-term memory. Returns recent matching messages with thread_id, role, content snippet, and created_at. This is keyword search over stored messages, not semantic search, and it does not spend model tokens.",
-	},
-	{
-		Name:           "browser_navigate",
-		Group:          GroupBrowser,
-		Label:          "Browser navigate",
-		LLMDescription: "navigate to a URL in headless browser, returns screenshot and page content",
-	},
-	{
-		Name:           "browser_interact",
-		Group:          GroupBrowser,
-		Label:          "Browser interact",
-		LLMDescription: "interact with page elements: click, type, scroll, select, hover",
-	},
-	{
-		Name:           "browser_extract",
-		Group:          GroupBrowser,
-		Label:          "Browser extract",
-		LLMDescription: "extract structured content from current page",
-	},
-	{
-		Name:           "browser_screenshot",
-		Group:          GroupBrowser,
-		Label:          "Browser screenshot",
-		LLMDescription: "take screenshot of current page",
-	},
-	{
-		Name:           "browser_session_close",
-		Group:          GroupBrowser,
-		Label:          "Browser close",
-		LLMDescription: "close browser session and clear all state",
 	},
 	{
 		Name:           "document_write",

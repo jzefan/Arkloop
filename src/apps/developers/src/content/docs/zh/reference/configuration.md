@@ -3,8 +3,6 @@
 
 | key | type | scope | default | sensitive | description |
 | --- | --- | --- | --- | --- | --- |
-| browser.context_max_lifetime_s | int | platform | 1800 | false | Browser Context 最大存活时间（秒） |
-| browser.max_body_bytes | int | platform | 1048576 | false | Browser Service 请求体大小上限（字节） |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新组织初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |

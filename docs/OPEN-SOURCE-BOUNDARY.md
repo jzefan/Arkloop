@@ -12,7 +12,6 @@ This document defines the open-source boundary of the Arkloop repository: what b
 | `src/services/gateway/` | Gateway reverse proxy |
 | `src/services/worker/` | Worker execution engine |
 | `src/services/sandbox/` | Sandbox service |
-| `src/services/browser/` | Browser automation service |
 | `src/services/shared/` | Shared Go libraries |
 | `src/apps/web/` | Web frontend (brand protection per LICENSE) |
 | `src/apps/console/` | Console admin dashboard (brand protection per LICENSE) |

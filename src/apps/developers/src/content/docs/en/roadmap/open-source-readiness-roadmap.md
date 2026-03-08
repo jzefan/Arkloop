@@ -24,7 +24,7 @@ Related Documents (Historical Reference):
 
 **Worker Execution Engine**: Pipeline middleware chain, Executor Registry (SimpleExecutor / InteractiveExecutor / ClassifyRouteExecutor / LuaExecutor), Personas (YAML + DB dual source), MCP connection pool, Provider routing (when condition matching + default fallback), Human-in-the-loop (WaitForInput + input_requested), Sub-agent Spawning (parent_run_id + spawn_agent tool), Memory System (OpenViking adapter + memory_search/read/write/forget tools), and Cost Budget tracking (RunContext.ToolBudget reservation, enforcement pending on execution side).
 
-**Independent Services**: Sandbox (Firecracker microVM + Warm Pool + Snapshot + MinIO persistence), Browser Service (Playwright + Session Manager + BrowserPool), and OpenViking (Python HTTP memory service).
+**Independent Services**: Sandbox (Firecracker microVM + Warm Pool + Snapshot + MinIO persistence) and OpenViking (Python HTTP memory service).
 
 **Frontend**: Web App (React + Vite + TypeScript), Console (React admin dashboard with eight modules: operations, configuration, integration, security, organization, billing, and platform), and CLI (reference client).
 
@@ -38,7 +38,7 @@ Three configuration reading paths run in parallel (direct ENV reading, `platform
 
 **P2 -- Inconsistent Scope Resolution**
 
-Agent Config follows a four-level resolution (thread -> project -> org -> platform); ASR Credentials follow two levels (org -> platform); web_search/email only read `platform_settings` without distinguishing orgs; browser/sandbox constructor injection lacks dynamic resolution. Scope resolution has four different implementations within the same system, leaving no clear reference for new modules.
+Agent Config follows a four-level resolution (thread -> project -> org -> platform); ASR Credentials follow two levels (org -> platform); web_search/email only read `platform_settings` without distinguishing orgs; sandbox constructor injection lacks dynamic resolution. Scope resolution has four different implementations within the same system, leaving no clear reference for new modules.
 
 **P3 -- Missing Tool Provider Management**
 
@@ -82,7 +82,7 @@ No CORS handling logic exists in any Gateway or API Go code (no occurrences of `
 
 **P13 -- Missing .dockerignore in Docker Builds**
 
-Five Dockerfiles exist (api, gateway, worker, sandbox, browser), but no `.dockerignore` file is present in the repository. Docker build contexts will include `.env` (containing real keys), `.git/` (entire history), and `node_modules/`. Open-source users running `docker compose up --build` might unintentionally bake keys into images, while build times and image sizes swell unnecessarily.
+Four Dockerfiles exist (api, gateway, worker, sandbox), but no `.dockerignore` file is present in the repository. Docker build contexts will include `.env` (containing real keys), `.git/` (entire history), and `node_modules/`. Open-source users running `docker compose up --build` might unintentionally bake keys into images, while build times and image sizes swell unnecessarily.
 
 **P14 -- Severely Insufficient Test Coverage**
 
@@ -239,8 +239,6 @@ Extend the Track A Config Registry to include existing hardcoded limits:
 | `credit.invite_reward` | entitlement resolve.go | 500 | platform |
 | `credit.per_usd` | handler_agent_loop.go | 1000 | platform |
 | `llm.max_response_bytes` | anthropic.go | 16384 | platform |
-| `browser.max_body_bytes` | server.ts | 1048576 | platform |
-| `browser.context_max_lifetime_s` | config.ts | 1800 | platform |
 | `sandbox.idle_timeout_lite_s` | .env | 180 | platform |
 | `sandbox.idle_timeout_pro_s` | .env | 300 | platform |
 | `sandbox.idle_timeout_ultra_s` | .env | 600 | platform |
@@ -396,18 +394,11 @@ Content:
 - Sub-track A: Separate LLM native thinking output into `channel: "thinking"` events.
 - Sub-track B: `run.segment.start/end` events for Agent-level execution process grouping.
 
-### E6 -- Browser SSRF Protection (AS-7.5)
-
-Status: Browser Service base functionality complete; SSRF protection unimplemented.
-
-Content: Playwright route interception of internal addresses (RFC 1918/4193/6890) to block SSRF attack paths.
-
 ### E7 -- Scalability and Performance Baseline (AS-12)
 
 Status: Unimplemented.
 
 Content:
-- AS-12.1: Browser Service horizontal scaling path (Session Affinity vs Stateless Mode decision)
 - AS-12.2: Sandbox multi-node scheduling interface (SandboxClient abstraction)
 - AS-12.3: Exposure of MCP Pool runtime metrics
 - AS-12.4: OpenViking capacity baseline stress testing
@@ -868,7 +859,7 @@ GitHub Actions configuration triggered by PRs and main branch pushes.
 - `pnpm lint` (ESLint)
 - `pnpm type-check` (tsc --noEmit)
 - `pnpm test` (Vitest)
-- Runs independently for web, console, browser, and shared.
+- Runs independently for web, console, and shared.
 
 **Database**:
 - Migration forward/rollback testing (apply all -> rollback all -> reapply).
@@ -1068,8 +1059,7 @@ Track E (Agent System Unfinished) — Items independent
   E2 → E3 (Memory extraction → testing)
   E4 (Cost Budget)
   E5 (Thinking protocol)
-  E6 (Browser SSRF)
-  E7 (Performance baseline, depends on E6)
+  E7 (Performance baseline)
 
 Track F (Plugin System / OpenCore-BusinessCore) — Depends on Track A
   F0 (Design)
@@ -1131,9 +1121,8 @@ The following decisions are fixed within this roadmap:
 - **Plugin Boundary Limited to Four Extension Points**: BillingProvider, AuthProvider, NotificationChannel, AuditSink. Existing interfaces (llm.Gateway, VMPool, etc.) are internal abstractions, not plugin registry points.
 - **Full Functionality Without Plugins**: All extension points have OSS default implementations. Commercial plugins enhance, they don't restore essential features.
 - **CI Does Not Block Development**: CI failures generate warnings, not merge blocks (switching to enforcement before release).
-- **Old Roadmaps Archived, Not Deleted**: Three old roadmaps kept for historical reference, no new content. New work tracked here.
-- **Browser SSRF Must Complete Before Release**: Non-negotiable security baseline.
-- **Existing Decisions Continued**: All invariants in Section 16 of agent-system-roadmap remain in effect (Sandbox independent service, Executor registry, Memory fail-open, Model priority chain, Sub-agent level limits, Thinking protocol, Browser Service independent deployment, Tool Provider dual-names, Lua Executor choice, etc.).
+- **Old Roadmaps Archived, Not Deleted**: Three old roadmaps kept for historical reference, no new content. New work tracked here..
+- **Existing Decisions Continued**: All invariants in Section 16 of agent-system-roadmap remain in effect (Sandbox independent service, Executor registry, Memory fail-open, Model priority chain, Sub-agent level limits, Thinking protocol, Tool Provider dual-names, Lua Executor choice, etc.).
 - **Open Source Repository Standard Files Required**: `LICENSE`, `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` are prerequisites for release.
 - **Minimal Runnable Set Priority**: Default "minimal deployment profile" must not require KVM/privileged containers; high-dependency capabilities like Sandbox must be explicitly enabled.
 - **CORS Must Complete Before Release**: Essential for separate frontend-backend deployment.

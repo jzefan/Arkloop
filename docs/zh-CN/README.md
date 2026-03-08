@@ -44,7 +44,7 @@ docker compose up -d
 
 所有服务就绪后，通过 `http://localhost:8000` 访问 Web 界面。
 
-如果需要宿主机调试端口，例如 PostgreSQL、API、Browser、Sandbox 或 OpenViking，请显式叠加开发覆盖文件：
+如果需要宿主机调试端口，例如 PostgreSQL、API、Sandbox 或 OpenViking，请显式叠加开发覆盖文件：
 
 ```bash
 docker compose -f compose.yaml -f compose.dev.yaml up -d
@@ -63,8 +63,8 @@ docker compose -f compose.yaml -f compose.dev.yaml up -d
 **3. 沙箱代码执行**
 基于 Firecracker 微虚拟机或 Docker 容器的隔离执行环境。支持 Python、数据分析、图表生成和文件操作，具有严格的资源限制。
 
-**4. 浏览器自动化**
-无头浏览器控制，作为原生智能体工具集成。通过 Playwright 实现网页交互、数据提取和截图抓取。
+**4. Tool Providers**
+统一管理搜索与抓取工具后端。支持 platform 默认配置与 org 级覆盖，无需改动智能体提示词。
 
 **5. 自定义 Persona**
 定义专业化的智能体配置，包含独立的系统提示词、工具集和行为层级。在通用、研究和领域专用模式间切换。
@@ -83,7 +83,6 @@ docker compose -f compose.yaml -f compose.dev.yaml up -d
 | Gateway | Go | 反向代理、速率限制、风控评分、Geo-IP |
 | Worker | Go | 任务执行、LLM 路由、工具调度、Persona 管理 |
 | Sandbox | Go | Firecracker 微虚拟机或 Docker 容器中的代码执行 |
-| Browser | Node.js | 基于 Playwright 的无头浏览器自动化 |
 | Web | React / TypeScript | 面向用户的聊天界面 |
 | Console | React / TypeScript | 平台管理仪表板 |
 

@@ -13,23 +13,6 @@ func RegisterTrackB(r *Registry) error {
 
 	entries := []Entry{
 		{
-			Key:         "browser.context_max_lifetime_s",
-			Type:        TypeInt,
-			Default:     "1800",
-			Description: "Browser Context 最大存活时间（秒）",
-			Sensitive:   false,
-			Scope:       ScopePlatform,
-		},
-		{
-			Key:         "browser.max_body_bytes",
-			Type:        TypeInt,
-			Default:     "1048576",
-			Description: "Browser Service 请求体大小上限（字节）",
-			Sensitive:   false,
-			Scope:       ScopePlatform,
-		},
-
-		{
 			Key:         "credit.deduction_policy",
 			Type:        TypeString,
 			Default:     creditpolicy.DefaultPolicyJSON,

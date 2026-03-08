@@ -3,8 +3,6 @@
 
 | key | type | scope | default | sensitive | description |
 | --- | --- | --- | --- | --- | --- |
-| browser.context_max_lifetime_s | int | platform | 1800 | false | Maximum lifetime of a Browser Context (seconds) |
-| browser.max_body_bytes | int | platform | 1048576 | false | Maximum request body size for Browser Service (bytes) |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | Credit deduction policy (JSON) |
 | credit.initial_grant | int | platform | 1000 | false | Initial credit grant for new organizations |
 | credit.invite_reward | int | platform | 500 | false | Reward credits for the inviter |

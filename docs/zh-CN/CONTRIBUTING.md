@@ -48,7 +48,6 @@ src/
     gateway/      # 反向代理（Go）
     worker/       # 任务执行引擎（Go）
     sandbox/      # 代码执行沙箱（Go）
-    browser/      # 浏览器自动化（Node.js）
     shared/       # Go 共享库
   personas/       # 智能体 Persona 模板
   docs/           # 技术文档（VitePress）

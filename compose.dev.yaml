@@ -15,10 +15,6 @@ services:
     ports:
       - "${ARKLOOP_PGBOUNCER_PORT:-5433}:5432"
 
-  browser:
-    ports:
-      - "${ARKLOOP_BROWSER_PORT:-3100}:3000"
-
   sandbox:
     ports:
       - "${ARKLOOP_SANDBOX_PORT:-8002}:8002"

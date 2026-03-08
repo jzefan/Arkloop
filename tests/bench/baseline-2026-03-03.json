@@ -9,14 +9,12 @@
     "targets": {
       "gateway_base_url": "http://127.0.0.1:8005",
       "api_base_url": "http://127.0.0.1:8006",
-      "browser_base_url": "http://127.0.0.1:3105",
       "openviking_base_url": "http://127.0.0.1:1938"
     },
     "assumptions": [
       "env.docker_compose_single_node",
       "worker.llm_stub_by_default",
-      "openviking.skipped_in_baseline_by_default",
-      "browser_memory.sample_only"
+      "openviking.skipped_in_baseline_by_default"
     ]
   },
   "results": [
@@ -191,50 +189,6 @@
       "pass": false,
       "errors": [
         "worker_runs.runs.create.net.error"
-      ]
-    },
-    {
-      "name": "browser_navigate",
-      "config": {
-        "concurrency": 20,
-        "duration_s": 30,
-        "timeout_ms": 30000,
-        "warmup_s": 5
-      },
-      "stats": {
-        "docker_memory": {
-          "limit_bytes": 16814796963,
-          "raw": "480.7MiB / 15.66GiB",
-          "used_bytes": 504050483
-        },
-        "docker_memory_start": {
-          "limit_bytes": 16814796963,
-          "raw": "76.39MiB / 15.66GiB",
-          "used_bytes": 80100720
-        },
-        "latency_ms": {
-          "count": 60,
-          "min_ms": 1147.177875,
-          "p50_ms": 3558.690375,
-          "p90_ms": 8614.400875,
-          "p95_ms": 8626.110959,
-          "p99_ms": 8690.172125,
-          "max_ms": 8690.172125,
-          "avg_ms": 4447.596816666666
-        },
-        "responses_2xx": 60,
-        "responses_total": 204412,
-        "status_codes": {
-          "http.200": 60,
-          "net.error": 204352
-        }
-      },
-      "thresholds": {
-        "max_memory_bytes": 4294967296
-      },
-      "pass": true,
-      "errors": [
-        "browser.net.error"
       ]
     }
   ],
