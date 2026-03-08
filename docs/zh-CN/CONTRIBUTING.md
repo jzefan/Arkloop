@@ -108,6 +108,20 @@ src/
 ### 运行测试
 
 ```bash
+# 快速 CI 自检
+bin/ci-local quick
+
+# Go 集成测试
+bin/ci-local integration
+
+# 完整本地 CI
+bin/ci-local full
+
+# 模拟 GitHub Actions
+bin/ci-local act go-check
+bin/ci-local act typescript
+bin/ci-local act go-integration
+
 # Go 单元测试
 cd src/services/api && go test ./...
 cd src/services/worker && go test ./...
@@ -120,6 +134,9 @@ cd src/apps/console && pnpm test
 # 集成 / 冒烟测试
 cd tests/smoke && go test ./...
 ```
+
+日常推荐顺序：`bin/ci-local quick` -> `bin/ci-local integration` -> `bin/ci-local act <job>`。
+`quick` 适合提交前自检，`integration` 适合数据库、repo、worker pipeline、webhook、runengine 一类改动，`act` 用来做接近 GitHub Actions 的补充验证。
 
 ## 商标使用
 

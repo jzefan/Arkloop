@@ -150,6 +150,20 @@ Close #123
 ### Running Tests
 
 ```bash
+# Quick CI checks
+bin/ci-local quick
+
+# Go integration checks
+bin/ci-local integration
+
+# Full local CI pass
+bin/ci-local full
+
+# GitHub Actions style verification
+bin/ci-local act go-check
+bin/ci-local act typescript
+bin/ci-local act go-integration
+
 # Go unit tests
 cd src/services/api && go test ./...
 cd src/services/worker && go test ./...
@@ -162,6 +176,9 @@ cd src/apps/console && pnpm test
 # Integration / smoke tests
 cd tests/smoke && go test ./...
 ```
+
+Recommended order for daily work: `bin/ci-local quick` -> `bin/ci-local integration` -> `bin/ci-local act <job>`.
+Use `quick` before routine commits, `integration` after database or pipeline changes, and `act` when you want behavior close to GitHub Actions.
 
 ## Trademark Usage
 

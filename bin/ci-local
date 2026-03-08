@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+STATICCHECK_VERSION="v0.7.0"
+POSTGRES_IMAGE="postgres:16-alpine"
+POSTGRES_CONTAINER_NAME="${CI_LOCAL_POSTGRES_CONTAINER_NAME:-arkloop-ci-local-postgres}"
+POSTGRES_PORT="${CI_LOCAL_POSTGRES_PORT:-55432}"
+POSTGRES_USER="arkloop"
+POSTGRES_PASSWORD="ci_test_password"
+POSTGRES_DB="arkloop"
+DATABASE_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}"
+PROVIDER_ROUTING_JSON='{"default_route_id":"default","credentials":[{"id":"stub_default","scope":"platform","provider_kind":"stub"}],"routes":[{"id":"default","model":"stub","credential_id":"stub_default"}]}'
+GO_MODULES=(api gateway worker sandbox shared)
+ACT_JOBS=(typescript go-check go-integration)
+ACT_RUNNER_IMAGE="${CI_LOCAL_ACT_RUNNER_IMAGE:-catthehacker/ubuntu:full-latest}"
+
+usage() {
+  cat <<'USAGE'
+用法:
+  bin/ci-local [quick]
+  bin/ci-local integration
+  bin/ci-local full
+  bin/ci-local act <typescript|go-check|go-integration>
+USAGE
+}
+
+log_section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    printf '缺少命令: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+ensure_staticcheck() {
+  local gopath_bin
+  gopath_bin="$(go env GOPATH)/bin"
+  export PATH="${gopath_bin}:$PATH"
+  if ! command -v staticcheck >/dev/null 2>&1; then
+    log_section "Install staticcheck ${STATICCHECK_VERSION}"
+    go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+  fi
+}
+
+run_go_quick() {
+  require_command go
+  ensure_staticcheck
+  local module
+  for module in "${GO_MODULES[@]}"; do
+    log_section "Go quick: ${module}"
+    (
+      cd "${ROOT_DIR}/src/services/${module}"
+      go vet ./...
+      staticcheck ./...
+      go build ./...
+      go test -race ./...
+    )
+  done
+}
+
+run_typescript_quick() {
+  require_command pnpm
+  log_section "TypeScript: web lint"
+  (cd "${ROOT_DIR}" && pnpm --filter web lint)
+  log_section "TypeScript: console lint"
+  (cd "${ROOT_DIR}" && pnpm --filter console lint)
+  log_section "TypeScript: web type-check"
+  (cd "${ROOT_DIR}" && pnpm --filter web type-check)
+  log_section "TypeScript: console type-check"
+  (cd "${ROOT_DIR}" && pnpm --filter console type-check)
+  log_section "TypeScript: web test"
+  (cd "${ROOT_DIR}" && pnpm --filter web test)
+  log_section "TypeScript: console test"
+  (cd "${ROOT_DIR}" && pnpm --filter console test)
+}
+
+cleanup_postgres() {
+  docker rm -f "${POSTGRES_CONTAINER_NAME}" >/dev/null 2>&1 || true
+}
+
+start_postgres() {
+  require_command docker
+  cleanup_postgres
+  log_section "Integration postgres"
+  docker run -d \
+    --name "${POSTGRES_CONTAINER_NAME}" \
+    -e POSTGRES_USER="${POSTGRES_USER}" \
+    -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+    -e POSTGRES_DB="${POSTGRES_DB}" \
+    -p "${POSTGRES_PORT}:5432" \
+    "${POSTGRES_IMAGE}" >/dev/null
+
+  local attempt
+  for attempt in $(seq 1 60); do
+    if docker exec "${POSTGRES_CONTAINER_NAME}" pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  printf 'PostgreSQL 启动失败\n' >&2
+  exit 1
+}
+
+export_integration_env() {
+  export DATABASE_URL="${DATABASE_DSN}"
+  export ARKLOOP_DATABASE_URL="${DATABASE_DSN}"
+  export ARKLOOP_AUTH_JWT_SECRET='ci_test_jwt_secret_at_least_32_chars_long'
+  export ARKLOOP_PROVIDER_ROUTING_JSON="${PROVIDER_ROUTING_JSON}"
+}
+
+run_integration() {
+  require_command go
+  require_command docker
+  trap cleanup_postgres EXIT
+  start_postgres
+  export_integration_env
+
+  local module
+  for module in "${GO_MODULES[@]}"; do
+    log_section "Integration: ${module}"
+    (
+      cd "${ROOT_DIR}/src/services/${module}"
+      go test -count=1 -race ./...
+    )
+  done
+}
+
+run_quick() {
+  run_go_quick
+  run_typescript_quick
+}
+
+run_full() {
+  run_quick
+  run_integration
+}
+
+run_act() {
+  require_command act
+  local job="${1:-}"
+  if [[ -z "${job}" ]]; then
+    usage
+    exit 1
+  fi
+
+  local allowed=false
+  local candidate
+  for candidate in "${ACT_JOBS[@]}"; do
+    if [[ "${candidate}" == "${job}" ]]; then
+      allowed=true
+      break
+    fi
+  done
+  if [[ "${allowed}" != true ]]; then
+    printf '不支持的 act job: %s\n' "${job}" >&2
+    printf '可选值: %s\n' "${ACT_JOBS[*]}" >&2
+    exit 1
+  fi
+
+  log_section "act: ${job}"
+  (
+    cd "${ROOT_DIR}"
+    act -j "${job}" --container-architecture linux/amd64 -P "ubuntu-latest=${ACT_RUNNER_IMAGE}"
+  )
+}
+
+main() {
+  local command="${1:-quick}"
+  case "${command}" in
+    quick)
+      run_quick
+      ;;
+    integration)
+      run_integration
+      ;;
+    full)
+      run_full
+      ;;
+    act)
+      shift || true
+      run_act "${1:-}"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
