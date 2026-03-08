@@ -176,26 +176,32 @@ func (a *Application) Run(ctx context.Context) error {
 
 	var artifactStore objectstore.Store
 	var messageAttachmentStore objectstore.Store
-	if strings.TrimSpace(a.config.S3Endpoint) != "" {
-		opener := objectstore.NewS3Opener(objectstore.S3Config{
-			Endpoint:  a.config.S3Endpoint,
-			AccessKey: a.config.S3AccessKey,
-			SecretKey: a.config.S3SecretKey,
-			Region:    a.config.S3Region,
-		})
-		mainStore, err := opener.Open(ctx, a.config.S3Bucket)
+	var environmentStore objectstore.Store
+	bucketOpener, err := buildStorageBucketOpener(a.config)
+	if err != nil {
+		return err
+	}
+	if bucketOpener != nil {
+		mainStore, err := bucketOpener.Open(ctx, a.config.S3Bucket)
 		if err != nil {
 			return fmt.Errorf("objectstore: %w", err)
 		}
 		messageAttachmentStore = mainStore
 		a.logger.Info("objectstore connected", observability.LogFields{}, map[string]any{"bucket": a.config.S3Bucket})
 
-		as, err := opener.Open(ctx, objectstore.ArtifactBucket)
+		as, err := bucketOpener.Open(ctx, objectstore.ArtifactBucket)
 		if err != nil {
 			return fmt.Errorf("artifact store: %w", err)
 		}
 		artifactStore = as
 		a.logger.Info("artifact store connected", observability.LogFields{}, nil)
+
+		es, err := bucketOpener.Open(ctx, objectstore.EnvironmentStateBucket)
+		if err != nil {
+			return fmt.Errorf("environment store: %w", err)
+		}
+		environmentStore = es
+		a.logger.Info("environment store connected", observability.LogFields{}, nil)
 	}
 
 	var (
@@ -625,6 +631,7 @@ func (a *Application) Run(ctx context.Context) error {
 			JobRepo:                      jobRepo,
 			ArtifactStore:                artifactStore,
 			MessageAttachmentStore:       messageAttachmentStore,
+			EnvironmentStore:             environmentStore,
 			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
 			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,
@@ -668,6 +675,26 @@ func (a *Application) Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func buildStorageBucketOpener(cfg Config) (objectstore.BucketOpener, error) {
+	runtimeConfig, err := objectstore.NormalizeRuntimeConfig(objectstore.RuntimeConfig{
+		Backend: cfg.StorageBackend,
+		RootDir: cfg.StorageRoot,
+		S3Config: objectstore.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+			Region:    cfg.S3Region,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+	if !runtimeConfig.Enabled() {
+		return nil, nil
+	}
+	return runtimeConfig.BucketOpener()
 }
 
 func startDBPoolStatsLogger(

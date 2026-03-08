@@ -129,19 +129,19 @@ func runList(cfg app.Config) error {
 func initDeps(cfg app.Config) (storage.SnapshotStore, *template.Registry, *logging.JSONLogger, error) {
 	logger := logging.NewJSONLogger("snapshot-builder", os.Stdout)
 
-	if cfg.S3Endpoint == "" {
-		return nil, nil, nil, fmt.Errorf("S3 endpoint not configured (set ARKLOOP_S3_ENDPOINT)")
+	bucketOpener, err := newSnapshotBucketOpener(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if bucketOpener == nil {
+		return nil, nil, nil, fmt.Errorf("storage backend not configured")
 	}
 	if cfg.TemplatesPath == "" {
 		return nil, nil, nil, fmt.Errorf("templates path not configured (set ARKLOOP_SANDBOX_TEMPLATES_PATH)")
 	}
 
 	cacheDir := cfg.SocketBaseDir + "/_snapshots"
-	store, err := storage.NewSnapshotStore(context.Background(), objectstore.NewS3Opener(objectstore.S3Config{
-		Endpoint:  cfg.S3Endpoint,
-		AccessKey: cfg.S3AccessKey,
-		SecretKey: cfg.S3SecretKey,
-	}), cacheDir)
+	store, err := storage.NewSnapshotStore(context.Background(), bucketOpener, cacheDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("init snapshot store: %w", err)
 	}
@@ -152,6 +152,25 @@ func initDeps(cfg app.Config) (storage.SnapshotStore, *template.Registry, *loggi
 	}
 
 	return store, registry, logger, nil
+}
+
+func newSnapshotBucketOpener(cfg app.Config) (objectstore.BucketOpener, error) {
+	runtimeConfig, err := objectstore.NormalizeRuntimeConfig(objectstore.RuntimeConfig{
+		Backend: cfg.StorageBackend,
+		RootDir: cfg.StorageRoot,
+		S3Config: objectstore.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+	if !runtimeConfig.Enabled() {
+		return nil, nil
+	}
+	return runtimeConfig.BucketOpener()
 }
 
 func initNetworkManager(cfg app.Config) (*firecracker.NetworkManager, error) {

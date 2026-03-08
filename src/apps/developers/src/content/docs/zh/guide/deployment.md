@@ -35,10 +35,10 @@ cp .env.example .env
 | 变量 | 说明 |
 |------|------|
 | `ARKLOOP_POSTGRES_PASSWORD` | PostgreSQL 密码 |
-| `ARKLOOP_S3_SECRET_KEY` | S3 兼容密钥 |
 | `ARKLOOP_AUTH_JWT_SECRET` | JWT 签名密钥（至少 32 字符） |
 | `ARKLOOP_ENCRYPTION_KEY` | AES-256-GCM 密钥（32 字节 hex） |
-| `ARKLOOP_S3_VOLUME_MAX` | SeaweedFS volume 槽位上限，建议保持默认 `64` |
+| `ARKLOOP_STORAGE_BACKEND` | 存储后端，默认 `filesystem` |
+| `ARKLOOP_STORAGE_ROOT` | 本地存储根目录 |
 
 生成安全密钥：
 
@@ -56,7 +56,7 @@ openssl rand -hex 32
 docker compose up -d
 ```
 
-SeaweedFS 默认 volume 槽位较小，Arkloop 会同时使用 `arkloop`、`sandbox-artifacts`、`sandbox-session-state`、`sandbox-environments` 等 bucket/collection。若槽位耗尽，会出现 `No writable volumes`，并导致 artifact 与 environment archive 上传失败；默认配置已把 `ARKLOOP_S3_VOLUME_MAX` 提升到 `64`。
+默认 compose 使用本地 `filesystem` 存储，适合单机/单节点部署。若切换到 SeaweedFS / S3 兼容对象存储，请显式设置 `ARKLOOP_STORAGE_BACKEND=s3`，并补齐 `ARKLOOP_S3_*` 配置。
 
 `migrate` 服务会自动在 `api/worker` 启动之前运行迁移并退出。查看启动状态：
 
@@ -299,13 +299,20 @@ ARKLOOP_GATEWAY_UPSTREAM=http://host.docker.internal:8001 docker compose -f comp
 | `ARKLOOP_REDIS_URL` | — | Redis 连接串 |
 | `ARKLOOP_REDIS_PASSWORD` | `arkloop_redis` | |
 
-### 对象存储（SeaweedFS / S3 兼容）
+### 存储
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `ARKLOOP_S3_ENDPOINT` | — | S3 端点 URL |
+| `ARKLOOP_STORAGE_BACKEND` | `filesystem` | 本地部署默认值；多节点建议改为 `s3` |
+| `ARKLOOP_STORAGE_ROOT` | `/var/lib/arkloop/storage` | `filesystem` 后端根目录 |
+
+### 对象存储（可选 SeaweedFS / S3 兼容）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `ARKLOOP_S3_ENDPOINT` | — | `s3` 后端的端点 URL |
 | `ARKLOOP_S3_ACCESS_KEY` | `arkloop` | |
-| `ARKLOOP_S3_SECRET_KEY` | — | 必填 |
+| `ARKLOOP_S3_SECRET_KEY` | — | `s3` 后端必填 |
 | `ARKLOOP_S3_BUCKET` | `arkloop` | |
 | `ARKLOOP_S3_REGION` | `us-east-1` | |
 

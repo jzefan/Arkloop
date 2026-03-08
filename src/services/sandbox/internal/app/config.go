@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -56,6 +57,8 @@ type Config struct {
 	S3Endpoint                 string
 	S3AccessKey                string
 	S3SecretKey                string
+	StorageBackend             string
+	StorageRoot                string
 	SessionStateTTLDays        int
 	TemplatesPath              string
 	DockerImage                string // Docker 后端使用的 sandbox-agent 镜像
@@ -173,6 +176,12 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if raw := strings.TrimSpace(os.Getenv(s3SecretKeyEnv)); raw != "" {
 		cfg.S3SecretKey = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(objectstore.StorageBackendEnv)); raw != "" {
+		cfg.StorageBackend = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(objectstore.StorageRootEnv)); raw != "" {
+		cfg.StorageRoot = raw
 	}
 
 	// --- Registry 级配置（优先级：ENV > DB > Default）---

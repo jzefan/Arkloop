@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"arkloop/services/sandbox/internal/app"
+	"arkloop/services/shared/objectstore"
 )
 
 type fakeLifecycleStore struct {
@@ -53,5 +54,26 @@ func TestApplyStateStoreLifecycleReturnsError(t *testing.T) {
 
 	if err := applyStateStoreLifecycle(context.Background(), cfg, store); err == nil {
 		t.Fatal("expected lifecycle error")
+	}
+}
+
+func TestBuildStorageBucketOpenerFilesystem(t *testing.T) {
+	cfg := app.DefaultConfig()
+	cfg.StorageBackend = objectstore.BackendFilesystem
+	cfg.StorageRoot = t.TempDir()
+
+	opener, err := buildStorageBucketOpener(cfg)
+	if err != nil {
+		t.Fatalf("build storage bucket opener: %v", err)
+	}
+	if opener == nil {
+		t.Fatal("expected opener")
+	}
+	store, err := opener.Open(context.Background(), objectstore.ArtifactBucket)
+	if err != nil {
+		t.Fatalf("open artifact bucket: %v", err)
+	}
+	if _, ok := store.(*objectstore.FilesystemStore); !ok {
+		t.Fatalf("unexpected store type: %T", store)
 	}
 }
