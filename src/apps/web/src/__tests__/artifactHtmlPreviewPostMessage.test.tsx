@@ -5,6 +5,15 @@ import { createRoot } from 'react-dom/client'
 import { ArtifactHtmlPreview } from '../components/ArtifactHtmlPreview'
 import type { ArtifactRef } from '../storage'
 
+type URLWithObjectURL = typeof URL & {
+  createObjectURL?: (object: Blob) => string
+  revokeObjectURL?: (url: string) => void
+}
+
+type GlobalWithActEnvironment = typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean
+}
+
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
     .then(() => Promise.resolve())
@@ -12,37 +21,38 @@ function flushMicrotasks(): Promise<void> {
 }
 
 describe('ArtifactHtmlPreview', () => {
-  const originalCreateObjectURL = (URL as any).createObjectURL
-  const originalRevokeObjectURL = (URL as any).revokeObjectURL
+  const urlWithObjectURL = URL as URLWithObjectURL
+  const actEnvironmentGlobal = globalThis as GlobalWithActEnvironment
+  const originalCreateObjectURL = urlWithObjectURL.createObjectURL
+  const originalRevokeObjectURL = urlWithObjectURL.revokeObjectURL
   const originalFetch = globalThis.fetch
-  const originalActEnvironment = (globalThis as any).IS_REACT_ACT_ENVIRONMENT
+  const originalActEnvironment = actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT
 
   beforeEach(() => {
-    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-    ;(URL as any).createObjectURL = vi.fn(() => 'blob:mock')
-    ;(URL as any).revokeObjectURL = vi.fn()
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      blob: async () => new Blob(['<html></html>'], { type: 'text/html' }),
-    })) as any
+    actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = true
+    urlWithObjectURL.createObjectURL = vi.fn(() => 'blob:mock')
+    urlWithObjectURL.revokeObjectURL = vi.fn()
+    globalThis.fetch = vi.fn(async () => new Response('<html></html>', {
+      headers: { 'Content-Type': 'text/html' },
+    }))
   })
 
   afterEach(() => {
     if (originalCreateObjectURL) {
-      ;(URL as any).createObjectURL = originalCreateObjectURL
+      urlWithObjectURL.createObjectURL = originalCreateObjectURL
     } else {
-      delete (URL as any).createObjectURL
+      Reflect.deleteProperty(urlWithObjectURL, 'createObjectURL')
     }
     if (originalRevokeObjectURL) {
-      ;(URL as any).revokeObjectURL = originalRevokeObjectURL
+      urlWithObjectURL.revokeObjectURL = originalRevokeObjectURL
     } else {
-      delete (URL as any).revokeObjectURL
+      Reflect.deleteProperty(urlWithObjectURL, 'revokeObjectURL')
     }
     globalThis.fetch = originalFetch
     if (originalActEnvironment === undefined) {
-      delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT
+      delete actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT
     } else {
-      ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
+      actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
     }
     vi.restoreAllMocks()
   })
@@ -70,7 +80,7 @@ describe('ArtifactHtmlPreview', () => {
     expect(iframe).not.toBeNull()
     if (!iframe) return
 
-    const iframeWindow = {} as any
+    const iframeWindow = {} as WindowProxy
     Object.defineProperty(iframe, 'contentWindow', { value: iframeWindow, configurable: true })
 
     const badSource = new MessageEvent('message', {

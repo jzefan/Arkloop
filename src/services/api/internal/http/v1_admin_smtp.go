@@ -2,7 +2,6 @@ package http
 
 import (
 	nethttp "net/http"
-	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -405,13 +404,4 @@ func validateSmtpFields(from, host string, port int, tlsMode string) string {
 		}
 	}
 	return ""
-}
-
-// validateSmtpPort 供测试使用。
-func validateSmtpPort(raw string) bool {
-	if raw == "" {
-		return true
-	}
-	p, err := strconv.Atoi(strings.TrimSpace(raw))
-	return err == nil && p > 0 && p <= 65535
 }

@@ -53,8 +53,8 @@ describe('selected persona storage', () => {
   })
 
   it('写入 persona_key', () => {
-    writeSelectedPersonaKeyToStorage(DEFAULT_PERSONA_KEY)
+    writeSelectedPersonaKeyToStorage(SEARCH_PERSONA_KEY)
 
-    expect(localStorage.getItem(nextKey)).toBe(DEFAULT_PERSONA_KEY)
+    expect(localStorage.getItem(nextKey)).toBe(SEARCH_PERSONA_KEY)
   })
 })

@@ -34,19 +34,8 @@ func notFoundError() *Error {
 	return newError(CodeSessionNotFound, "shell session not found", http.StatusNotFound)
 }
 
-func invalidCursorError() *Error {
-	return newError(CodeInvalidCursor, "cursor is ahead of available output", http.StatusBadRequest)
-}
-
 func notRunningError() *Error {
 	return newError(CodeNotRunning, "shell session is not running", http.StatusConflict)
-}
-
-func signalFailedError(message string) *Error {
-	if message == "" {
-		message = "failed to signal foreground process"
-	}
-	return newError(CodeSignalFailed, message, http.StatusInternalServerError)
 }
 
 func timeoutTooLargeError() *Error {

@@ -28,8 +28,16 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new repo: %v", err)
 	}
+	orgRepo, err := NewOrgRepository(pool)
+	if err != nil {
+		t.Fatalf("new org repo: %v", err)
+	}
 
-	orgID := uuid.New()
+	org, err := orgRepo.Create(ctx, "persona-scope-org", "Persona Scope Org", "personal")
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	orgID := org.ID
 	custom, err := repo.Create(ctx, orgID, "custom-only", "1", "Custom Only", nil, "prompt", nil, nil, nil, nil, nil, "auto", "none", "agent.simple", nil)
 	if err != nil {
 		t.Fatalf("create custom persona: %v", err)

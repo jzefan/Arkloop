@@ -356,12 +356,3 @@ func resolveSandboxBillingConfig(ctx context.Context, resolver sharedconfig.Reso
 	}
 	return cfg
 }
-
-func findActiveProvider(providers []toolprovider.ActiveProviderConfig, groupName string) *toolprovider.ActiveProviderConfig {
-	for i := range providers {
-		if providers[i].GroupName == groupName {
-			return &providers[i]
-		}
-	}
-	return nil
-}

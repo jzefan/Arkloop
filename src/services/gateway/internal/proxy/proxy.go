@@ -34,8 +34,9 @@ func New(cfg Config) (*Proxy, error) {
 		return nil, fmt.Errorf("invalid upstream url: %q", cfg.Upstream)
 	}
 
-	rp := httputil.NewSingleHostReverseProxy(target)
-	rp.FlushInterval = -1
+	rp := &httputil.ReverseProxy{
+		FlushInterval: -1,
+	}
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -47,17 +48,14 @@ func New(cfg Config) (*Proxy, error) {
 		log.Printf("http: proxy error: %v", err)
 		w.WriteHeader(http.StatusBadGateway)
 	}
+	rp.Rewrite = func(req *httputil.ProxyRequest) {
+		req.SetURL(target)
+		req.Out.Host = req.In.Host
+		req.Out.Header.Del("X-Forwarded-For")
+		req.SetXForwarded()
 
-	original := rp.Director
-	rp.Director = func(req *http.Request) {
-		originalHost := req.Host
-		original(req)
-		req.Header.Del("X-Forwarded-For")
-		req.Header.Set("X-Forwarded-Host", originalHost)
-
-		// 透传 clientip 中间件解析的真实 IP
-		if realIP := clientip.FromContext(req.Context()); realIP != "" {
-			req.Header.Set("X-Real-IP", realIP)
+		if realIP := clientip.FromContext(req.In.Context()); realIP != "" {
+			req.Out.Header.Set("X-Real-IP", realIP)
 		}
 	}
 

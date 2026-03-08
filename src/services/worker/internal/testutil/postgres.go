@@ -354,6 +354,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			created_by_user_id UUID        NULL,
 			role               TEXT        NOT NULL,
 			content            TEXT        NOT NULL,
+			content_json       JSONB       NULL,
 			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()

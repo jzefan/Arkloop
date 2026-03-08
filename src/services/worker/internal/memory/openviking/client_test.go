@@ -3,7 +3,6 @@ package openviking
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -438,5 +437,4 @@ func TestClient_AgentScope_Write_NoUserHeader(t *testing.T) {
 	if msgHeaders != nil && msgHeaders.Get("X-OpenViking-User") != nilUUID {
 		t.Errorf("msg X-OpenViking-User should be nil UUID for agent scope, got %q", msgHeaders.Get("X-OpenViking-User"))
 	}
-	_ = fmt.Sprintf("") // suppress import
 }

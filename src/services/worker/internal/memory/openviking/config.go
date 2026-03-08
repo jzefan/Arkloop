@@ -10,9 +10,6 @@ import (
 const (
 	envBaseURL    = "ARKLOOP_OPENVIKING_BASE_URL"
 	envRootAPIKey = "ARKLOOP_OPENVIKING_ROOT_API_KEY"
-
-	settingBaseURL    = "openviking.base_url"
-	settingRootAPIKey = "openviking.root_api_key"
 )
 
 // Config 保存 OpenViking HTTP 客户端连接参数。

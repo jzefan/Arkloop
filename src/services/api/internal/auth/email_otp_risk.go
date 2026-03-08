@@ -155,14 +155,6 @@ func emailOTPSendKey(email string) string {
 	return emailOTPSendKeyPrefix + hashOTPEmail(email)
 }
 
-func emailOTPVerifyFailKey(email string) string {
-	return emailOTPVerifyFailKeyPrefix + hashOTPEmail(email)
-}
-
-func emailOTPVerifyLockKey(email string) string {
-	return emailOTPVerifyLockKeyPrefix + hashOTPEmail(email)
-}
-
 func formatOTPProtectionError(err error) error {
 	if err == nil {
 		return nil
