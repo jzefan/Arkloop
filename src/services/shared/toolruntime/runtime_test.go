@@ -47,13 +47,11 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 	want := []string{
 		"conversation_search",
 		"document_write",
-		"echo",
 		"exec_command",
 		"memory_forget",
 		"memory_read",
 		"memory_search",
 		"memory_write",
-		"noop",
 		"python_execute",
 		"spawn_agent",
 		"summarize_thread",

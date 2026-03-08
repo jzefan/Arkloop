@@ -40,8 +40,6 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		"timeline_title":   {},
 		"spawn_agent":      {},
 		"summarize_thread": {},
-		"echo":             {},
-		"noop":             {},
 	}
 	if input.HasConversationSearch {
 		available["conversation_search"] = struct{}{}

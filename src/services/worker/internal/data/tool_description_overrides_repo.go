@@ -15,6 +15,7 @@ type ToolDescriptionOverride struct {
 	Scope       string
 	ToolName    string
 	Description string
+	IsDisabled  bool
 	UpdatedAt   time.Time
 }
 
@@ -39,7 +40,7 @@ func (r *ToolDescriptionOverridesRepository) ListByScope(ctx context.Context, or
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT org_id, scope, tool_name, description, updated_at
+		SELECT org_id, scope, tool_name, description, is_disabled, updated_at
 		FROM tool_description_overrides
 		WHERE org_id = $1 AND scope = $2
 		ORDER BY tool_name ASC
@@ -52,7 +53,7 @@ func (r *ToolDescriptionOverridesRepository) ListByScope(ctx context.Context, or
 	out := make([]ToolDescriptionOverride, 0)
 	for rows.Next() {
 		var override ToolDescriptionOverride
-		if err := rows.Scan(&override.OrgID, &override.Scope, &override.ToolName, &override.Description, &override.UpdatedAt); err != nil {
+		if err := rows.Scan(&override.OrgID, &override.Scope, &override.ToolName, &override.Description, &override.IsDisabled, &override.UpdatedAt); err != nil {
 			return nil, err
 		}
 		override.ToolName = strings.TrimSpace(override.ToolName)

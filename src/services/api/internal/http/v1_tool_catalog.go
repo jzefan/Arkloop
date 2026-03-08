@@ -27,6 +27,7 @@ type toolCatalogItem struct {
 	LLMDescription    string                `json:"llm_description"`
 	HasOverride       bool                  `json:"has_override"`
 	DescriptionSource toolDescriptionSource `json:"description_source"`
+	IsDisabled        bool                  `json:"is_disabled"`
 }
 
 type toolCatalogGroup struct {
@@ -45,6 +46,8 @@ func buildToolCatalog(
 ) toolCatalogResponse {
 	platformByName := buildToolDescriptionOverrideMap(platformOverrides)
 	orgByName := buildToolDescriptionOverrideMap(orgOverrides)
+	platformDisabledByName := buildToolDisabledOverrideMap(platformOverrides)
+	orgDisabledByName := buildToolDisabledOverrideMap(orgOverrides)
 
 	groups := make([]toolCatalogGroup, 0, len(sharedtoolmeta.GroupOrder()))
 	for _, group := range sharedtoolmeta.Catalog() {
@@ -75,6 +78,7 @@ func buildToolCatalog(
 				LLMDescription:    description,
 				HasOverride:       hasOverride,
 				DescriptionSource: source,
+				IsDisabled:        platformDisabledByName[meta.Name] || orgDisabledByName[meta.Name],
 			})
 		}
 		groups = append(groups, toolCatalogGroup{Group: group.Name, Tools: items})
@@ -131,6 +135,10 @@ type updateToolDescriptionRequest struct {
 	Description string `json:"description"`
 }
 
+type updateToolDisabledRequest struct {
+	Disabled bool `json:"disabled"`
+}
+
 func toolCatalogItemEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
@@ -154,7 +162,7 @@ func toolCatalogItemEntry(
 			writeNotFound(w, r)
 			return
 		}
-		if action != "description" {
+		if action != "description" && action != "disabled" {
 			writeNotFound(w, r)
 			return
 		}
@@ -180,22 +188,40 @@ func toolCatalogItemEntry(
 
 		switch r.Method {
 		case nethttp.MethodPut:
-			var req updateToolDescriptionRequest
+			if action == "description" {
+				var req updateToolDescriptionRequest
+				if err := decodeJSON(r, &req); err != nil {
+					WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid request body", traceID, nil)
+					return
+				}
+				if strings.TrimSpace(req.Description) == "" {
+					WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "description must not be empty", traceID, nil)
+					return
+				}
+				if err := overridesRepo.Upsert(r.Context(), orgID, scope, toolName, req.Description); err != nil {
+					WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+					return
+				}
+				w.WriteHeader(nethttp.StatusNoContent)
+				return
+			}
+
+			var req updateToolDisabledRequest
 			if err := decodeJSON(r, &req); err != nil {
 				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid request body", traceID, nil)
 				return
 			}
-			if strings.TrimSpace(req.Description) == "" {
-				WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "description must not be empty", traceID, nil)
-				return
-			}
-			if err := overridesRepo.Upsert(r.Context(), orgID, scope, toolName, req.Description); err != nil {
+			if err := overridesRepo.SetDisabled(r.Context(), orgID, scope, toolName, req.Disabled); err != nil {
 				WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 			w.WriteHeader(nethttp.StatusNoContent)
 
 		case nethttp.MethodDelete:
+			if action != "description" {
+				writeMethodNotAllowed(w, r)
+				return
+			}
 			if err := overridesRepo.Delete(r.Context(), orgID, scope, toolName); err != nil {
 				WriteError(w, nethttp.StatusNotFound, "not_found", "no override found", traceID, nil)
 				return
@@ -239,7 +265,20 @@ func resolveToolCatalogScope(
 func buildToolDescriptionOverrideMap(overrides []data.ToolDescriptionOverride) map[string]string {
 	out := make(map[string]string, len(overrides))
 	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) == "" {
+			continue
+		}
 		out[override.ToolName] = override.Description
+	}
+	return out
+}
+
+func buildToolDisabledOverrideMap(overrides []data.ToolDescriptionOverride) map[string]bool {
+	out := make(map[string]bool, len(overrides))
+	for _, override := range overrides {
+		if override.IsDisabled {
+			out[override.ToolName] = true
+		}
 	}
 	return out
 }

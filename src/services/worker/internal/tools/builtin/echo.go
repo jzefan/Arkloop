@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
@@ -24,7 +23,7 @@ var EchoAgentSpec = tools.AgentToolSpec{
 
 var EchoLlmSpec = llm.ToolSpec{
 	Name:        "echo",
-	Description: stringPtr(sharedtoolmeta.Must("echo").LLMDescription),
+	Description: stringPtr("echo back input text"),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{

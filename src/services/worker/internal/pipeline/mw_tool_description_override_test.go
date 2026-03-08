@@ -8,8 +8,9 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/pipeline"
-	"arkloop/services/worker/internal/tools/builtin"
+	"arkloop/services/worker/internal/tools"
 	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
+	websearch "arkloop/services/worker/internal/tools/builtin/web_search"
 
 	"github.com/google/uuid"
 )
@@ -35,7 +36,7 @@ func (s stubToolDescriptionOverridesRepo) ListByScope(_ context.Context, _ uuid.
 func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
 	repo := stubToolDescriptionOverridesRepo{
 		platform: []data.ToolDescriptionOverride{
-			{ToolName: "echo", Description: "platform echo"},
+			{ToolName: "web_search", Description: "platform search"},
 			{ToolName: "spawn_agent", Description: "platform spawn"},
 		},
 		org: []data.ToolDescriptionOverride{
@@ -46,7 +47,7 @@ func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
 	rc := &pipeline.RunContext{
 		Run: data.Run{ID: uuid.New(), OrgID: uuid.New()},
 		ToolSpecs: []llm.ToolSpec{
-			builtin.EchoLlmSpec,
+			websearch.LlmSpec,
 			spawnagent.LlmSpec,
 			{Name: "mcp_external", Description: stringPtr("external description")},
 		},
@@ -54,8 +55,8 @@ func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
 
 	mw := pipeline.NewToolDescriptionOverrideMiddleware(repo)
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
-		if got := deref(rc.ToolSpecs[0].Description); got != "platform echo" {
-			t.Fatalf("unexpected echo description: %s", got)
+		if got := deref(rc.ToolSpecs[0].Description); got != "platform search" {
+			t.Fatalf("unexpected web_search description: %s", got)
 		}
 		if got := deref(rc.ToolSpecs[1].Description); got != "org spawn" {
 			t.Fatalf("unexpected spawn_agent description: %s", got)
@@ -73,22 +74,52 @@ func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
 
 func TestToolDescriptionOverrideMiddlewareFailsOpenOnRepoError(t *testing.T) {
 	repo := stubToolDescriptionOverridesRepo{
-		platform: []data.ToolDescriptionOverride{{ToolName: "echo", Description: "platform echo"}},
+		platform: []data.ToolDescriptionOverride{{ToolName: "web_search", Description: "platform search"}},
 		orgErr:   errors.New("boom"),
 	}
 
 	rc := &pipeline.RunContext{
 		Run: data.Run{ID: uuid.New(), OrgID: uuid.New()},
 		ToolSpecs: []llm.ToolSpec{
-			builtin.EchoLlmSpec,
+			websearch.LlmSpec,
 		},
 	}
-	defaultDescription := deref(builtin.EchoLlmSpec.Description)
+	defaultDescription := deref(websearch.LlmSpec.Description)
 
 	mw := pipeline.NewToolDescriptionOverrideMiddleware(repo)
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
 		if got := deref(rc.ToolSpecs[0].Description); got != defaultDescription {
 			t.Fatalf("expected default description on repo failure, got %s", got)
+		}
+		return nil
+	})
+
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("middleware error: %v", err)
+	}
+}
+
+func TestToolDescriptionOverrideMiddlewareRemovesDisabledTools(t *testing.T) {
+	repo := stubToolDescriptionOverridesRepo{
+		platform: []data.ToolDescriptionOverride{{ToolName: "document_write", IsDisabled: true}},
+	}
+
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	rc := &pipeline.RunContext{
+		Run:          data.Run{ID: uuid.New(), OrgID: uuid.New()},
+		ToolRegistry: registry,
+		AllowlistSet: map[string]struct{}{"document_write": {}},
+		ToolSpecs:    []llm.ToolSpec{{Name: "document_write", Description: stringPtr("doc")}},
+	}
+
+	mw := pipeline.NewToolDescriptionOverrideMiddleware(repo)
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
+		if _, ok := rc.AllowlistSet["document_write"]; ok {
+			t.Fatal("document_write should be removed from allowlist")
 		}
 		return nil
 	})

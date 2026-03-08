@@ -59,6 +59,7 @@ func buildEffectiveToolCatalog(
 ) (toolCatalogResponse, error) {
 	available := buildEffectiveBuiltinToolNameSet(ctx, pool, artifactStoreAvailable)
 	platformByName, orgByName := loadEffectiveToolDescriptionOverrides(ctx, overridesRepo, orgID)
+	platformDisabledByName, orgDisabledByName := loadEffectiveToolDisabledOverrides(ctx, overridesRepo, orgID)
 	mcpTools := []toolCatalogItem{}
 	if mcpCache != nil {
 		if envTools, err := mcpCache.GetEnv(ctx); err == nil {
@@ -78,6 +79,9 @@ func buildEffectiveToolCatalog(
 		items := make([]toolCatalogItem, 0, len(group.Tools))
 		for _, meta := range group.Tools {
 			if _, ok := available[meta.Name]; !ok {
+				continue
+			}
+			if platformDisabledByName[meta.Name] || orgDisabledByName[meta.Name] {
 				continue
 			}
 			description := meta.LLMDescription
@@ -127,4 +131,23 @@ func loadEffectiveToolDescriptionOverrides(
 		orgOverrides = nil
 	}
 	return buildToolDescriptionOverrideMap(platformOverrides), buildToolDescriptionOverrideMap(orgOverrides)
+}
+
+func loadEffectiveToolDisabledOverrides(
+	ctx context.Context,
+	overridesRepo *data.ToolDescriptionOverridesRepository,
+	orgID uuid.UUID,
+) (map[string]bool, map[string]bool) {
+	if overridesRepo == nil {
+		return nil, nil
+	}
+	platformOverrides, err := overridesRepo.ListByScope(ctx, uuid.Nil, "platform")
+	if err != nil {
+		platformOverrides = nil
+	}
+	orgOverrides, err := overridesRepo.ListByScope(ctx, orgID, "org")
+	if err != nil {
+		orgOverrides = nil
+	}
+	return buildToolDisabledOverrideMap(platformOverrides), buildToolDisabledOverrideMap(orgOverrides)
 }
