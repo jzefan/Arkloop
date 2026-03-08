@@ -357,7 +357,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
             ))}
           </div>
         )}
-        <MarkdownRenderer content={message.content} webSources={webSources} artifacts={artifacts} accessToken={accessToken} onOpenDocument={onOpenDocument} />
+        <MarkdownRenderer content={message.content} webSources={webSources} artifacts={artifacts} accessToken={accessToken} runId={message.run_id} onOpenDocument={onOpenDocument} />
         <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <div style={{ position: 'relative' }}>

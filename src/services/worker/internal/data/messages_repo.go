@@ -32,22 +32,32 @@ func (MessagesRepository) InsertAssistantMessage(
 	tx pgx.Tx,
 	orgID uuid.UUID,
 	threadID uuid.UUID,
+	runID uuid.UUID,
 	content string,
 ) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	_, err := tx.Exec(
+	metadataJSON := map[string]any{}
+	if runID != uuid.Nil {
+		metadataJSON["run_id"] = runID.String()
+	}
+	metadataRaw, err := json.Marshal(metadataJSON)
+	if err != nil {
+		return fmt.Errorf("marshal metadata_json: %w", err)
+	}
+	_, err = tx.Exec(
 		ctx,
 		`INSERT INTO messages (
-			org_id, thread_id, created_by_user_id, role, content
+			org_id, thread_id, created_by_user_id, role, content, metadata_json
 		) VALUES (
-			$1, $2, NULL, $3, $4
+			$1, $2, NULL, $3, $4, $5::jsonb
 		)`,
 		orgID,
 		threadID,
 		"assistant",
 		content,
+		string(metadataRaw),
 	)
 	return err
 }

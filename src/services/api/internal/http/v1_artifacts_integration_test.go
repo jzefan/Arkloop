@@ -20,10 +20,12 @@ import (
 	"arkloop/services/shared/objectstore"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type artifactTestEnv struct {
 	handler         nethttp.Handler
+	pool            *pgxpool.Pool
 	apiKeysRepo     *data.APIKeysRepository
 	membershipRepo  *data.OrgMembershipRepository
 	threadRepo      *data.ThreadRepository
@@ -68,12 +70,28 @@ func (s *fakeHTTPArtifactStore) PutObject(_ context.Context, key string, data []
 	s.put(key, data, contentType, options.Metadata)
 	return nil
 }
+
+func (s *fakeHTTPArtifactStore) Put(_ context.Context, key string, data []byte) error {
+	s.put(key, data, "application/octet-stream", nil)
+	return nil
+}
+
 func (s *fakeHTTPArtifactStore) Head(_ context.Context, key string) (objectstore.ObjectInfo, error) {
 	obj, ok := s.objects[key]
 	if !ok {
 		return objectstore.ObjectInfo{}, os.ErrNotExist
 	}
 	return objectstore.ObjectInfo{Key: key, ContentType: obj.contentType, Metadata: obj.metadata, Size: int64(len(obj.data))}, nil
+}
+
+func (s *fakeHTTPArtifactStore) Get(_ context.Context, key string) ([]byte, error) {
+	obj, ok := s.objects[key]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	copied := make([]byte, len(obj.data))
+	copy(copied, obj.data)
+	return copied, nil
 }
 
 func (s *fakeHTTPArtifactStore) GetWithContentType(_ context.Context, key string) ([]byte, string, error) {
@@ -84,6 +102,11 @@ func (s *fakeHTTPArtifactStore) GetWithContentType(_ context.Context, key string
 	copied := make([]byte, len(obj.data))
 	copy(copied, obj.data)
 	return copied, obj.contentType, nil
+}
+
+func (s *fakeHTTPArtifactStore) Delete(_ context.Context, key string) error {
+	delete(s.objects, key)
+	return nil
 }
 
 func buildArtifactEnv(t *testing.T) artifactTestEnv {
@@ -175,6 +198,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		APIKeysRepo:            apiKeysRepo,
 		ArtifactStore:          store,
 		MessageAttachmentStore: store,
+		EnvironmentStore:       store,
 	})
 
 	regResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
@@ -199,6 +223,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 
 	return artifactTestEnv{
 		handler:         handler,
+		pool:            pool,
 		apiKeysRepo:     apiKeysRepo,
 		membershipRepo:  membershipRepo,
 		threadRepo:      threadRepo,

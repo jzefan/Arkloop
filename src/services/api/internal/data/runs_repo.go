@@ -30,7 +30,9 @@ type Run struct {
 	TotalOutputTokens *int64
 	TotalCostUSD      *float64
 	Model             *string
-	PersonaID           *string
+	PersonaID         *string
+	ProfileRef        *string
+	WorkspaceRef      *string
 	DeletedAt         *time.Time
 }
 
@@ -131,7 +133,7 @@ func (r *RunEventRepository) GetRun(ctx context.Context, runID uuid.UUID) (*Run,
 		`SELECT id, org_id, thread_id, created_by_user_id, status, created_at,
 		        parent_run_id, status_updated_at, completed_at, failed_at,
 		        duration_ms, total_input_tokens, total_output_tokens, total_cost_usd,
-		        model, persona_id, deleted_at
+		        model, persona_id, profile_ref, workspace_ref, deleted_at
 		 FROM runs
 		 WHERE id = $1
 		 LIMIT 1`,
@@ -140,7 +142,7 @@ func (r *RunEventRepository) GetRun(ctx context.Context, runID uuid.UUID) (*Run,
 		&run.ID, &run.OrgID, &run.ThreadID, &run.CreatedByUserID, &run.Status, &run.CreatedAt,
 		&run.ParentRunID, &run.StatusUpdatedAt, &run.CompletedAt, &run.FailedAt,
 		&run.DurationMs, &run.TotalInputTokens, &run.TotalOutputTokens, &run.TotalCostUSD,
-		&run.Model, &run.PersonaID, &run.DeletedAt,
+		&run.Model, &run.PersonaID, &run.ProfileRef, &run.WorkspaceRef, &run.DeletedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -175,7 +177,7 @@ func (r *RunEventRepository) ListRunsByThread(
 		`SELECT id, org_id, thread_id, created_by_user_id, status, created_at,
 		        parent_run_id, status_updated_at, completed_at, failed_at,
 		        duration_ms, total_input_tokens, total_output_tokens, total_cost_usd,
-		        model, persona_id, deleted_at
+		        model, persona_id, profile_ref, workspace_ref, deleted_at
 		 FROM runs
 		 WHERE org_id = $1
 		   AND thread_id = $2
@@ -197,7 +199,7 @@ func (r *RunEventRepository) ListRunsByThread(
 			&run.ID, &run.OrgID, &run.ThreadID, &run.CreatedByUserID, &run.Status, &run.CreatedAt,
 			&run.ParentRunID, &run.StatusUpdatedAt, &run.CompletedAt, &run.FailedAt,
 			&run.DurationMs, &run.TotalInputTokens, &run.TotalOutputTokens, &run.TotalCostUSD,
-			&run.Model, &run.PersonaID, &run.DeletedAt,
+			&run.Model, &run.PersonaID, &run.ProfileRef, &run.WorkspaceRef, &run.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -519,7 +521,7 @@ type ListRunsParams struct {
 	ParentRunID    *uuid.UUID
 	Status         *string
 	Model          *string
-	PersonaID        *string
+	PersonaID      *string
 	Since          *time.Time
 	Until          *time.Time
 	Limit          int

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -172,12 +173,25 @@ func toMessageResponse(message data.Message) messageResponse {
 		value := message.CreatedByUserID.String()
 		createdByUserID = &value
 	}
+	var runID *string
+	if len(message.MetadataJSON) > 0 {
+		var metadata struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal(message.MetadataJSON, &metadata); err == nil {
+			metadata.RunID = strings.TrimSpace(metadata.RunID)
+			if metadata.RunID != "" {
+				runID = &metadata.RunID
+			}
+		}
+	}
 
 	return messageResponse{
 		ID:              message.ID.String(),
 		OrgID:           message.OrgID.String(),
 		ThreadID:        message.ThreadID.String(),
 		CreatedByUserID: createdByUserID,
+		RunID:           runID,
 		Role:            message.Role,
 		Content:         message.Content,
 		ContentJSON:     message.ContentJSON,

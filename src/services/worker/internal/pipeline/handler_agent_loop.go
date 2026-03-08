@@ -410,7 +410,7 @@ func (w *eventWriter) InsertAssistantMessage(
 		return err
 	}
 	content := strings.Join(w.assistantDeltas, "")
-	return repo.InsertAssistantMessage(ctx, w.tx, orgID, threadID, content)
+	return repo.InsertAssistantMessage(ctx, w.tx, orgID, threadID, w.run.ID, content)
 }
 
 func (w *eventWriter) Flush(ctx context.Context) error {
