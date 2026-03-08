@@ -25,6 +25,7 @@ type PostgresDatabase struct {
 func SetupPostgresDatabase(t *testing.T, prefix string) *PostgresDatabase {
 	t.Helper()
 
+	requireIntegrationTests(t)
 	loadDotenvIfEnabled(t)
 	baseDSN := lookupDatabaseDSN(t)
 	parsed, err := url.Parse(baseDSN)
@@ -91,6 +92,20 @@ func lookupEnv(key string) (string, bool) {
 		return "", false
 	}
 	return cleaned, true
+}
+
+func requireIntegrationTests(t *testing.T) {
+	t.Helper()
+
+	raw := strings.TrimSpace(os.Getenv("ARKLOOP_RUN_INTEGRATION_TESTS"))
+	if raw == "" {
+		t.Skip("integration tests disabled")
+	}
+	lower := strings.ToLower(raw)
+	if lower == "1" || lower == "true" || lower == "yes" || lower == "on" {
+		return
+	}
+	t.Skip("integration tests disabled")
 }
 
 func buildDatabaseName(prefix string) string {
