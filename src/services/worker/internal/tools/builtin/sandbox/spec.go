@@ -65,6 +65,11 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"type":        "string",
 				"description": "source session reference when session_mode is fork",
 			},
+			"share_scope": map[string]any{
+				"type":        "string",
+				"enum":        []string{"run", "thread", "workspace", "org"},
+				"description": "share scope used only when a new session must be created",
+			},
 			"command": map[string]any{
 				"type":        "string",
 				"description": "command to execute",

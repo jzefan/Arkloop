@@ -18,6 +18,7 @@ const (
 	errorSandboxError       = "tool.sandbox_error"
 	errorSandboxUnavailable = "tool.sandbox_unavailable"
 	errorSandboxTimeout     = "tool.sandbox_timeout"
+	errorPermissionDenied   = "tool.permission_denied"
 	errorArgsInvalid        = "tool.args_invalid"
 	errorNotConfigured      = "tool.not_configured"
 
@@ -94,6 +95,7 @@ type execCommandArgs struct {
 	SessionMode    string
 	SessionRef     string
 	FromSessionRef string
+	ShareScope     string
 	Cwd            string
 	Command        string
 	TimeoutMs      int
@@ -271,6 +273,7 @@ func (e *ToolExecutor) executeExecCommand(
 	if resp != nil {
 		e.orchestrator.markResult(ctx, execCtx, resolution, *resp)
 		result.ResultJSON["session_ref"] = resolution.SessionRef
+		result.ResultJSON["share_scope"] = resolution.ShareScope
 		result.ResultJSON["resolved_via"] = resolution.ResolvedVia
 		result.ResultJSON["reused"] = resolution.Reused
 		result.ResultJSON["restored_from_restore_state"] = resp.Restored || resolution.RestoredFromRestoreState
@@ -308,6 +311,7 @@ func (e *ToolExecutor) executeWriteStdin(
 	if resp != nil {
 		e.orchestrator.markResult(ctx, execCtx, resolution, *resp)
 		result.ResultJSON["session_ref"] = resolution.SessionRef
+		result.ResultJSON["share_scope"] = resolution.ShareScope
 		result.ResultJSON["resolved_via"] = resolution.ResolvedVia
 		result.ResultJSON["reused"] = true
 		result.ResultJSON["restored_from_restore_state"] = false
@@ -480,6 +484,7 @@ func parseExecCommandArgs(args map[string]any) (execCommandArgs, *tools.Executio
 		SessionMode:    readStringArg(args, "session_mode"),
 		SessionRef:     readStringArg(args, "session_ref"),
 		FromSessionRef: readStringArg(args, "from_session_ref"),
+		ShareScope:     readStringArg(args, "share_scope"),
 		Cwd:            readStringArg(args, "cwd"),
 		Command:        readStringArg(args, "command"),
 		TimeoutMs:      resolveTimeoutMs(args),
@@ -500,6 +505,9 @@ func parseWriteStdinArgs(args map[string]any) (writeStdinArgs, *tools.ExecutionE
 		Chars:       readStringArg(args, "chars"),
 		YieldTimeMs: readIntArg(args, "yield_time_ms"),
 	}
+	if _, ok := args["share_scope"]; ok {
+		return writeStdinArgs{}, sandboxArgsError("parameter share_scope is not supported for write_stdin")
+	}
 	if strings.TrimSpace(request.SessionRef) == "" {
 		return writeStdinArgs{}, sandboxArgsError("parameter session_ref is required")
 	}
@@ -508,6 +516,10 @@ func parseWriteStdinArgs(args map[string]any) (writeStdinArgs, *tools.ExecutionE
 
 func sandboxArgsError(message string) *tools.ExecutionError {
 	return &tools.ExecutionError{ErrorClass: errorArgsInvalid, Message: message}
+}
+
+func sandboxPermissionDenied(message string, details map[string]any) *tools.ExecutionError {
+	return &tools.ExecutionError{ErrorClass: errorPermissionDenied, Message: message, Details: details}
 }
 
 func resolveOrgID(execCtx tools.ExecutionContext) string {

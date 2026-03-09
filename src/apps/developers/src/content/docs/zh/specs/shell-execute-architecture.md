@@ -879,17 +879,25 @@ Arkloop 如果没有这一层，后续会把逻辑错误地堆进：
   - 同一 workspace / project 下多个 thread 可见
 - `org`
   - 组织内共享
-  - 默认应通过配置关闭
+  - 首版仅允许 `owner / org_admin / platform_admin`
+  - 首版仍要求 `profile_ref` 与当前调用方一致，不跨用户复用 `/home/arkloop`
 
 ### ACL 判定建议
 
 当请求方想 attach 一个 `session_ref` 时，至少校验：
 
 - `org_id` 是否一致
+- `profile_ref` 是否与当前调用方一致
 - 若 `share_scope=run`，`run_id` 是否一致
 - 若 `share_scope=thread`，`thread_id` 是否一致
 - 若 `share_scope=workspace`，是否属于同一 workspace/project
-- 若 `share_scope=org`，调用方是否具备组织内共享权限
+- 若 `share_scope=org`，调用方是否具备 `owner / org_admin / platform_admin` 权限
+
+### 当前实现补充
+
+- `share_scope` 只在新建 session 时消费；`resume` / `write` 不接受它
+- `session_mode=fork` 不允许重设 `share_scope`，新 session 直接继承源 session 的范围
+- `auto` 命中 ACL 不通过的默认候选时会继续 fallback，而不是直接 attach
 
 ### 重要原则
 
@@ -1822,7 +1830,9 @@ v1 可以先简化为：
 - 若 `share_scope=run`，`run_id` 是否一致
 - 若 `share_scope=thread`，`thread_id` 是否一致
 - 若 `share_scope=workspace`，是否属于同一 workspace / project
-- 若 `share_scope=org`，调用方是否具备组织共享权限
+- 若 `share_scope=org`，调用方是否具备 `owner / org_admin / platform_admin` 权限
+
+当前首版再补一条硬约束：即使是 `org` 共享，也仍要求 `profile_ref` 与调用方一致；否则会把别人的 `/home/arkloop` 一并暴露出来。
 
 ### 26.3 为什么这一步必须前置
 
@@ -2167,6 +2177,8 @@ P1 的目标是：把 Arkloop 从“run 级 shell”升级为“以 `profile_ref
 - `run / thread / workspace / org`
 - `profile_ref` 默认按用户所有权校验
 - attach / resume / fork 都经过 ACL 校验
+- 首版 `org` 共享不跨 `profile_ref`
+- `fork` 继承源 session 的 `share_scope`
 
 完成标准：
 
