@@ -17,8 +17,14 @@ Thank you for considering a contribution to Arkloop. This document covers the pr
 git clone https://github.com/qqqqqf/Arkloop.git
 cd Arkloop
 
-# Start infrastructure
-docker compose up -d postgres redis seaweedfs pgbouncer
+# Start the minimal infrastructure
+docker compose up -d postgres redis
+
+# Optional performance layer
+docker compose --profile performance up -d pgbouncer redis_gateway
+
+# Optional S3-compatible storage
+docker compose --profile s3 up -d seaweedfs
 
 # Copy and configure environment
 cp .env.example .env

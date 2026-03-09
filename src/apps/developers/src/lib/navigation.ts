@@ -46,6 +46,7 @@ const zhDocsSidebar: SidebarGroup[] = [
       { label: 'Console Lite Design Specification', href: '/docs/specs/console-lite' },
       { label: 'Shell Execute 设计方案', href: '/docs/specs/shell-execute-architecture' },
       { label: 'Installer Bridge 设计方案', href: '/docs/specs/installer-bridge-architecture' },
+      { label: 'Browser Automation 设计方案', href: '/docs/specs/browser-automation-architecture' },
     ],
   },
   {
@@ -78,6 +79,7 @@ const enDocsSidebar: SidebarGroup[] = [
       { label: 'Database Architecture and Data Models', href: '/en/docs/specs/database-architecture' },
       { label: 'Logging and Observability Strategy', href: '/en/docs/specs/logging-and-observability' },
       { label: 'Run Execution Architecture', href: '/en/docs/specs/run-execution-architecture' },
+      { label: 'Browser Automation Architecture', href: '/en/docs/specs/browser-automation-architecture' },
     ],
   },
   {

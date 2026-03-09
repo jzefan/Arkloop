@@ -10,9 +10,10 @@ Arkloop orchestrates all services via `compose.yaml`, enabling a full deployment
 | Service | Description | Default Port |
 |------|------|---------|
 | `postgres` | PostgreSQL 16 | 5432 |
-| `pgbouncer` | Connection Pool | 5433 |
+| `pgbouncer` | Optional connection pool | 5433 |
 | `redis` | Cache/Queue | 6379 |
-| `seaweedfs` | S3-compatible object storage | 9000 |
+| `redis_gateway` | Optional Gateway hot-path Redis | — |
+| `seaweedfs` | Optional S3-compatible object storage | 9000 |
 | `migrate` | Database Migrations (One-time, exits after completion) | — |
 | `api` | Control Plane API (Go) | 8001 |
 | `gateway` | Reverse Proxy + Rate Limiting | 8000 |
@@ -20,7 +21,7 @@ Arkloop orchestrates all services via `compose.yaml`, enabling a full deployment
 | `sandbox` | Code Sandbox (Firecracker / Docker) | 8002 |
 | `openviking` | Vector Memory Service | 1933 |
 
-Startup order is guaranteed by `depends_on`: postgres → pgbouncer → migrate → api/worker → gateway, redis → api/gateway/worker, and seaweedfs → api/worker/sandbox.
+The default startup order is kept by `depends_on`: postgres → migrate → api/worker, redis → api/gateway/worker. Optional profiles add `pgbouncer`, `redis_gateway`, and `seaweedfs` only when you ask for them.
 
 ## Quick Start
 
@@ -56,7 +57,7 @@ openssl rand -hex 32
 docker compose up -d
 ```
 
-The default compose stack now uses local `filesystem` storage, which fits single-node deployments. If you switch to SeaweedFS or another S3-compatible backend, set `ARKLOOP_STORAGE_BACKEND=s3` and provide the `ARKLOOP_S3_*` variables explicitly.
+The default compose stack now connects directly to `postgres` and `redis`, and uses local `filesystem` storage, which fits single-node deployments. If you want the optional performance layer, set `ARKLOOP_DOCKER_DATABASE_URL` or `ARKLOOP_DOCKER_GATEWAY_REDIS_URL` in `.env` first, then run `docker compose --profile performance up -d`. If you switch to SeaweedFS or another S3-compatible backend, set `ARKLOOP_STORAGE_BACKEND=s3` and run `docker compose --profile s3 up -d seaweedfs`.
 
 The `migrate` service will automatically run migrations before `api/worker` starts and then exit. Check startup status:
 
@@ -258,8 +259,14 @@ Deployment-level parameters (ENV only, not in Console):
 During development, you typically run the API on the host machine (for debugging/hot-reloading) while infrastructure runs in Docker:
 
 ```bash
-# Start infrastructure only
-docker compose -f compose.yaml -f compose.dev.yaml up -d postgres redis seaweedfs pgbouncer
+# Start the minimal infrastructure only
+docker compose -f compose.yaml -f compose.dev.yaml up -d postgres redis
+
+# Optional performance layer
+docker compose -f compose.yaml -f compose.dev.yaml --profile performance up -d pgbouncer redis_gateway
+
+# Optional object storage
+docker compose -f compose.yaml -f compose.dev.yaml --profile s3 up -d seaweedfs
 
 # Run migrations
 cd src/services/api

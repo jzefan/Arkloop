@@ -33,7 +33,7 @@ const (
 	defaultUpstream   = "http://127.0.0.1:8001"
 	defaultGeoIPDBDir = "/data/geoip"
 
-	defaultRedisTimeoutMs = 10
+	defaultRedisTimeoutMs = 150
 )
 
 var defaultCORSAllowedOrigins = []string{

@@ -17,8 +17,14 @@
 git clone https://github.com/qqqqqf/Arkloop.git
 cd Arkloop
 
-# 启动基础设施
-docker compose up -d postgres redis seaweedfs pgbouncer
+# 启动最小基础设施
+docker compose up -d postgres redis
+
+# 可选：性能层
+docker compose --profile performance up -d pgbouncer redis_gateway
+
+# 可选：S3 兼容对象存储
+docker compose --profile s3 up -d seaweedfs
 
 # 复制并配置环境变量
 cp .env.example .env
