@@ -1125,3 +1125,403 @@ func seedInMemorySession(orchestrator *sessionOrchestrator, sessionRef string) {
 		MetadataJSON: map[string]any{},
 	}
 }
+
+func TestExecCommand_InvalidShareScopeRejected(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":     "pwd",
+		"share_scope": "invalid",
+	}, testContext(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_ResumeRejectsShareScope(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_test",
+		"share_scope":  data.ShellShareScopeThread,
+	}, testContext(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_ForkRejectsShareScope(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":          "pwd",
+		"session_mode":     "fork",
+		"from_session_ref": "shref_test",
+		"share_scope":      data.ShellShareScopeWorkspace,
+	}, testContext(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got %+v", result.Error)
+	}
+}
+
+func TestWriteStdin_RejectsShareScope(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
+	result := exec.Execute(t.Context(), "write_stdin", map[string]any{
+		"session_ref":   "shref_test",
+		"share_scope":   data.ShellShareScopeThread,
+		"yield_time_ms": 1,
+	}, testContext(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_NewSessionPersistsRequestedShareScope(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_new_share_scope")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_admin")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{
+		RunID:        uuid.New(),
+		OrgID:        &orgID,
+		UserID:       &userID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+	}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "new",
+		"share_scope":  data.ShellShareScopeOrg,
+	}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if result.ResultJSON["share_scope"] != data.ShellShareScopeOrg {
+		t.Fatalf("unexpected share_scope: %v", result.ResultJSON["share_scope"])
+	}
+	sessionRef, _ := result.ResultJSON["session_ref"].(string)
+	repo := data.ShellSessionsRepository{}
+	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, sessionRef)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ShareScope != data.ShellShareScopeOrg {
+		t.Fatalf("unexpected stored share_scope: %s", stored.ShareScope)
+	}
+}
+
+func TestExecCommand_ResumeRunScopeRequiresSameRun(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_run")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	repo := data.ShellSessionsRepository{}
+	otherRunID := uuid.New()
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:   "shref_run_only",
+		OrgID:        orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+		RunID:        &otherRunID,
+		ShareScope:   data.ShellShareScopeRun,
+		State:        data.ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_run_only",
+	}, ctx, "")
+	if result.Error == nil || result.Error.ErrorClass != errorPermissionDenied {
+		t.Fatalf("expected permission_denied, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_ResumeOrgScopeRejectedForMember(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_org_member")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_member")
+	repo := data.ShellSessionsRepository{}
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:   "shref_org",
+		OrgID:        orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+		ShareScope:   data.ShellShareScopeOrg,
+		State:        data.ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_org",
+	}, ctx, "")
+	if result.Error == nil || result.Error.ErrorClass != errorPermissionDenied {
+		t.Fatalf("expected permission_denied, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_ResumeOrgScopeAllowedForAdmin(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_org_admin")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_admin")
+	repo := data.ShellSessionsRepository{}
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:   "shref_org_ok",
+		OrgID:        orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+		ShareScope:   data.ShellShareScopeOrg,
+		State:        data.ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_org_ok",
+	}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one sandbox call, got %d", calls)
+	}
+	if result.ResultJSON["share_scope"] != data.ShellShareScopeOrg {
+		t.Fatalf("unexpected share_scope: %v", result.ResultJSON["share_scope"])
+	}
+}
+
+func TestExecCommand_ResumeOrgScopeRejectsCrossProfile(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_org_profile")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_admin")
+	repo := data.ShellSessionsRepository{}
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:   "shref_other_profile",
+		OrgID:        orgID,
+		ProfileRef:   "pref_other",
+		WorkspaceRef: "wsref_test",
+		ShareScope:   data.ShellShareScopeOrg,
+		State:        data.ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_other_profile",
+	}, ctx, "")
+	if result.Error == nil || result.Error.ErrorClass != errorPermissionDenied {
+		t.Fatalf("expected permission_denied, got %+v", result.Error)
+	}
+}
+
+func TestExecCommand_AutoSkipsUnauthorizedCandidateAndCreatesNew(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_auto_skip")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	workspaceRef := "wsref_test"
+	seedMembership(t, pool, orgID, userID, "org_member")
+	repo := data.ShellSessionsRepository{}
+	bindingKey := "workspace:" + workspaceRef
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:        "shref_forbidden",
+		OrgID:             orgID,
+		ProfileRef:        "pref_test",
+		WorkspaceRef:      workspaceRef,
+		ShareScope:        data.ShellShareScopeOrg,
+		State:             data.ShellSessionStateReady,
+		DefaultBindingKey: &bindingKey,
+		MetadataJSON:      map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	var sessionIDs []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		sessionIDs = append(sessionIDs, body.SessionID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: workspaceRef}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if len(sessionIDs) != 1 {
+		t.Fatalf("expected one sandbox call, got %d", len(sessionIDs))
+	}
+	if sessionIDs[0] == "shref_forbidden" {
+		t.Fatalf("expected unauthorized session skipped, got %q", sessionIDs[0])
+	}
+	if result.ResultJSON["resolved_via"] != "new_session" {
+		t.Fatalf("unexpected resolved_via: %v", result.ResultJSON["resolved_via"])
+	}
+}
+
+func TestExecCommand_ForkInheritsShareScope(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_fork_scope")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_admin")
+	repo := data.ShellSessionsRepository{}
+	restoreRev := "rev-1"
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:       "shref_source",
+		OrgID:            orgID,
+		ProfileRef:       "pref_test",
+		WorkspaceRef:     "wsref_test",
+		ShareScope:       data.ShellShareScopeOrg,
+		State:            data.ShellSessionStateReady,
+		LatestRestoreRev: &restoreRev,
+		MetadataJSON:     map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/sessions/fork":
+			json.NewEncoder(w).Encode(forkSessionResponse{RestoreRevision: "rev-2"})
+		case "/v1/exec_command":
+			var body execCommandRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":          "pwd",
+		"session_mode":     "fork",
+		"from_session_ref": "shref_source",
+	}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if result.ResultJSON["share_scope"] != data.ShellShareScopeOrg {
+		t.Fatalf("unexpected share_scope: %v", result.ResultJSON["share_scope"])
+	}
+	newSessionRef, _ := result.ResultJSON["session_ref"].(string)
+	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, newSessionRef)
+	if err != nil {
+		t.Fatalf("get forked session: %v", err)
+	}
+	if stored.ShareScope != data.ShellShareScopeOrg {
+		t.Fatalf("unexpected stored share_scope: %s", stored.ShareScope)
+	}
+}
+
+func seedMembership(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, userID uuid.UUID, role string) {
+	t.Helper()
+	_, err := pool.Exec(
+		t.Context(),
+		`INSERT INTO org_memberships (org_id, user_id, role)
+		 VALUES ($1, $2, $3)`,
+		orgID,
+		userID,
+		role,
+	)
+	if err != nil {
+		t.Fatalf("insert membership: %v", err)
+	}
+}

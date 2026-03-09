@@ -257,6 +257,15 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		`CREATE TABLE org_memberships (
+			id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id     UUID        NOT NULL,
+			user_id    UUID        NOT NULL,
+			role       TEXT        NOT NULL,
+			role_id    UUID        NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT uq_org_memberships_org_id_user_id UNIQUE (org_id, user_id)
+		)`,
 		`CREATE TABLE runs (
 			id                  UUID        PRIMARY KEY,
 			org_id              UUID        NOT NULL,

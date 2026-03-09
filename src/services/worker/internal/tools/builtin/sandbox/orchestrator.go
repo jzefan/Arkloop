@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type sessionOrchestrator struct {
 	pool            *pgxpool.Pool
 	sessionsRepo    data.ShellSessionsRepository
 	registryService *registryService
+	acl             *sessionACLEvaluator
 
 	mu             sync.Mutex
 	memorySessions map[string]data.ShellSessionRecord
@@ -45,6 +47,7 @@ func newSessionOrchestrator(pool *pgxpool.Pool) *sessionOrchestrator {
 	return &sessionOrchestrator{
 		pool:            pool,
 		registryService: newRegistryService(pool),
+		acl:             newSessionACLEvaluator(pool),
 		memorySessions:  map[string]data.ShellSessionRecord{},
 	}
 }
@@ -55,11 +58,24 @@ func (o *sessionOrchestrator) resolveExecSession(
 	execCtx tools.ExecutionContext,
 ) (*resolvedSession, *tools.ExecutionError) {
 	mode := normalizeSessionMode(req.SessionMode)
+	shareScope, err := normalizeRequestedShareScope(req.ShareScope)
+	if err != nil {
+		return nil, sandboxArgsError(err.Error())
+	}
 	if mode == sessionModeResume && strings.TrimSpace(req.SessionRef) == "" {
 		return nil, sandboxArgsError("parameter session_ref is required when session_mode=resume")
 	}
 	if mode == sessionModeFork && strings.TrimSpace(req.FromSessionRef) == "" {
 		return nil, sandboxArgsError("parameter from_session_ref is required when session_mode=fork")
+	}
+	if shareScope != "" && mode == sessionModeAuto && strings.TrimSpace(req.SessionRef) != "" {
+		return nil, sandboxArgsError("parameter share_scope is not supported when session_ref is provided")
+	}
+	if shareScope != "" && mode == sessionModeResume {
+		return nil, sandboxArgsError("parameter share_scope is not supported when session_mode=resume")
+	}
+	if shareScope != "" && mode == sessionModeFork {
+		return nil, sandboxArgsError("parameter share_scope is not supported when session_mode=fork")
 	}
 
 	if strings.TrimSpace(req.SessionRef) != "" && mode == sessionModeAuto {
@@ -74,7 +90,7 @@ func (o *sessionOrchestrator) resolveExecSession(
 		if err != nil {
 			return nil, err
 		}
-		created, createErr := o.createSession(ctx, execCtx, data.ShellShareScopeRun, nil)
+		created, createErr := o.createSession(ctx, execCtx, base.ShareScope, nil)
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -83,7 +99,8 @@ func (o *sessionOrchestrator) resolveExecSession(
 		created.RestoredFromRestoreState = true
 		return created, nil
 	case sessionModeNew:
-		created, err := o.createSession(ctx, execCtx, data.ShellShareScopeRun, nil)
+		resolvedShareScope := requestedShareScopeOrDefault(execCtx, shareScope)
+		created, err := o.createSession(ctx, execCtx, resolvedShareScope, defaultBindingKeyForShareScope(execCtx, resolvedShareScope))
 		if err != nil {
 			return nil, err
 		}
@@ -107,9 +124,9 @@ func (o *sessionOrchestrator) resolveExecSession(
 			return resolved, nil
 		}
 
-		shareScope := defaultShareScope(execCtx)
-		defaultBindingKey := defaultBindingKeyForShareScope(execCtx, shareScope)
-		created, err := o.createSession(ctx, execCtx, shareScope, defaultBindingKey)
+		resolvedShareScope := requestedShareScopeOrDefault(execCtx, shareScope)
+		defaultBindingKey := defaultBindingKeyForShareScope(execCtx, resolvedShareScope)
+		created, err := o.createSession(ctx, execCtx, resolvedShareScope, defaultBindingKey)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +168,7 @@ func (o *sessionOrchestrator) resolveFallbackSession(
 		}
 	case "workspace_default":
 	}
-	shareScope := defaultShareScope(execCtx)
+	shareScope := requestedShareScopeOrDefault(execCtx, strings.TrimSpace(req.ShareScope))
 	defaultBindingKey := defaultBindingKeyForShareScope(execCtx, shareScope)
 	created, err := o.createSession(ctx, execCtx, shareScope, defaultBindingKey)
 	if err != nil {
@@ -185,6 +202,9 @@ func (o *sessionOrchestrator) lookupExplicit(
 	if !found {
 		return nil, &tools.ExecutionError{ErrorClass: errorSandboxError, Message: "shell session not found", Details: map[string]any{"session_ref": sessionRef}}
 	}
+	if aclErr := o.acl.AuthorizeSession(ctx, execCtx, record); aclErr != nil {
+		return nil, aclErr
+	}
 	return &resolvedSession{
 		SessionRef:               sessionRef,
 		ResolvedVia:              resolvedVia,
@@ -203,6 +223,9 @@ func (o *sessionOrchestrator) lookupRunDefault(ctx context.Context, execCtx tool
 	}
 	record, found, err := o.lookupLatestByRun(ctx, derefUUID(execCtx.OrgID), execCtx.RunID)
 	if err != nil || !found || record.SessionRef == strings.TrimSpace(skipSessionRef) {
+		return nil
+	}
+	if o.acl.AuthorizeSession(ctx, execCtx, record) != nil {
 		return nil
 	}
 	return &resolvedSession{
@@ -231,6 +254,9 @@ func (o *sessionOrchestrator) lookupDefaultBinding(
 	if err != nil || !found || record.SessionRef == strings.TrimSpace(skipSessionRef) {
 		return nil
 	}
+	if o.acl.AuthorizeSession(ctx, execCtx, record) != nil {
+		return nil
+	}
 	return &resolvedSession{
 		SessionRef:        record.SessionRef,
 		ResolvedVia:       resolvedVia,
@@ -247,6 +273,9 @@ func (o *sessionOrchestrator) createSession(
 	shareScope string,
 	defaultBindingKey *string,
 ) (*resolvedSession, *tools.ExecutionError) {
+	if aclErr := o.acl.AuthorizeShareScopeCreation(ctx, execCtx, shareScope); aclErr != nil {
+		return nil, aclErr
+	}
 	sessionRef := newSessionRef()
 	record := data.ShellSessionRecord{
 		SessionRef:        sessionRef,
@@ -490,9 +519,30 @@ func defaultShareScope(execCtx tools.ExecutionContext) string {
 	return data.ShellShareScopeWorkspace
 }
 
+func requestedShareScopeOrDefault(execCtx tools.ExecutionContext, requested string) string {
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested
+	}
+	return defaultShareScope(execCtx)
+}
+
+func normalizeRequestedShareScope(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "":
+		return "", nil
+	case data.ShellShareScopeRun, data.ShellShareScopeThread, data.ShellShareScopeWorkspace, data.ShellShareScopeOrg:
+		return strings.TrimSpace(value), nil
+	default:
+		return "", fmt.Errorf("parameter share_scope must be one of run, thread, workspace, org")
+	}
+}
+
 func defaultBindingKeyForShareScope(execCtx tools.ExecutionContext, shareScope string) *string {
 	var value string
 	switch shareScope {
+	case data.ShellShareScopeRun:
+		return nil
 	case data.ShellShareScopeThread:
 		value = data.ShellDefaultBindingKeyForThread(execCtx.ThreadID)
 	case data.ShellShareScopeWorkspace:
