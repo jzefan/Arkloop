@@ -709,9 +709,14 @@ export function ChatPage() {
           // 标记 searching 步骤完成
           const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
           if (callId) {
-            applySearchSteps((prev) =>
-              prev.map((s) => s.id === callId ? { ...s, status: 'done' as const } : s),
-            )
+            applySearchSteps((prev) => {
+              const next = prev.map((s) => s.id === callId ? { ...s, status: 'done' as const } : s)
+              const allSearchDone = next.filter((s) => s.kind === 'searching').every((s) => s.status === 'done')
+              if (allSearchDone && !next.some((s) => s.kind === 'reviewing')) {
+                return [...next, { id: 'auto-reviewing', kind: 'reviewing' as const, label: 'Reviewing sources', status: 'active' as const }]
+              }
+              return next
+            })
           }
         }
         // 检测 sandbox 执行产物 + document_write 产物
@@ -1418,6 +1423,7 @@ export function ChatPage() {
                         isComplete
                         codeExecutions={messageCodeExecutions}
                         onOpenCodeExecution={openCodePanel}
+                        activeCodeExecutionId={codePanelExecution?.id}
                       />
                     </div>
                   )}
@@ -1541,46 +1547,41 @@ export function ChatPage() {
                     </div>
                   )}
                   {dedupedTopLevelCodeExecutions.length > 0 && (
-                    <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', maxHeight: '60vh', overflowY: 'auto' }}>
+                    <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
                       {dedupedTopLevelCodeExecutions.map((ce, idx) => {
+                        const isFirst = idx === 0
                         const isLast = idx === dedupedTopLevelCodeExecutions.length - 1
                         const showDot = dedupedTopLevelCodeExecutions.length > 0
-                        const showLine = dedupedTopLevelCodeExecutions.length >= 2
+                        const multiItems = dedupedTopLevelCodeExecutions.length >= 2
                         return (
                           <motion.div
                             key={ce.id}
-                            initial={{ opacity: 0, x: -6 }}
-                            animate={{ opacity: 1, x: 0 }}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.25, ease: 'easeOut' }}
                             style={{
                               position: 'relative',
                               paddingBottom: isLast ? 0 : '8px',
                             }}
                           >
-                            {showLine && !isLast && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  left: '-15.75px',
-                                  top: '13px',
-                                  bottom: '-13px',
-                                  width: '1.5px',
-                                  background: 'var(--c-border-subtle)',
-                                }}
-                              />
+                            {/* Per-item line segments */}
+                            {multiItems && !isLast && (
+                              <div style={{ position: 'absolute', left: '-15px', top: '16px', bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                            )}
+                            {multiItems && !isFirst && (
+                              <div style={{ position: 'absolute', left: '-15px', top: 0, height: '12px', width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             {showDot && (
                               <div
                                 style={{
                                   position: 'absolute',
                                   left: '-19px',
-                                  top: '50%',
-                                  transform: 'translateY(-50%)',
+                                  top: '8px',
                                   width: '8px',
                                   height: '8px',
                                   borderRadius: '50%',
                                   background: ce.exitCode != null
-                                    ? ce.exitCode === 0 ? 'var(--c-border-subtle)' : '#ef4444'
+                                    ? 'var(--c-border-subtle)'
                                     : 'var(--c-text-secondary)',
                                   border: '2px solid var(--c-bg-page)',
                                   zIndex: 1,
@@ -1589,7 +1590,7 @@ export function ChatPage() {
                             )}
                             {ce.language === 'shell'
                               ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
-                              : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
+                              : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
                             }
                           </motion.div>
                         )
@@ -1607,6 +1608,7 @@ export function ChatPage() {
                   isComplete={liveTimelineExiting && !isStreaming}
                   codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
                   onOpenCodeExecution={openCodePanel}
+                  activeCodeExecutionId={codePanelExecution?.id}
                   headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
                   shimmer={!liveTimelineExiting && !assistantDraft}
                 />
@@ -1642,7 +1644,7 @@ export function ChatPage() {
                   {dedupedTopLevelCodeExecutions.map((ce) =>
                     ce.language === 'shell'
                       ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
-                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} />
+                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
                   )}
                 </div>
               )}

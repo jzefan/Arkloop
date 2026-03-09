@@ -13,6 +13,10 @@ function isDocumentArtifact(artifact: ArtifactRef): boolean {
   return !artifact.mime_type.startsWith('image/') && artifact.mime_type !== 'text/html'
 }
 
+function isArtifactReferenced(content: string, key: string): boolean {
+  return content.includes(`artifact:${key}`)
+}
+
 type Props = {
   message: MessageResponse
   onRetry?: () => void
@@ -344,19 +348,23 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div style={{ maxWidth: '663px' }}>
-        {/* 文档类 artifact 卡片：显示在消息最顶部 */}
-        {artifacts && artifacts.filter(isDocumentArtifact).length > 0 && onOpenDocument && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-            {artifacts.filter(isDocumentArtifact).map((artifact) => (
-              <DocumentCard
-                key={artifact.key}
-                artifact={artifact}
-                onClick={() => onOpenDocument(artifact)}
-                active={activePanelArtifactKey === artifact.key}
-              />
-            ))}
-          </div>
-        )}
+        {/* 文档类 artifact 卡片：仅显示被 message.content 引用的 */}
+        {artifacts && onOpenDocument && (() => {
+          const referenced = artifacts.filter((a) => isDocumentArtifact(a) && isArtifactReferenced(message.content, a.key))
+          if (referenced.length === 0) return null
+          return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+              {referenced.map((artifact) => (
+                <DocumentCard
+                  key={artifact.key}
+                  artifact={artifact}
+                  onClick={() => onOpenDocument(artifact)}
+                  active={activePanelArtifactKey === artifact.key}
+                />
+              ))}
+            </div>
+          )
+        })()}
         <MarkdownRenderer content={message.content} webSources={webSources} artifacts={artifacts} accessToken={accessToken} runId={message.run_id} onOpenDocument={onOpenDocument} />
         <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

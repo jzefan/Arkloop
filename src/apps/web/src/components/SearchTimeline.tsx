@@ -19,6 +19,7 @@ type Props = {
   isComplete: boolean
   codeExecutions?: CodeExecution[]
   onOpenCodeExecution?: (ce: CodeExecution) => void
+  activeCodeExecutionId?: string
   headerOverride?: string
   shimmer?: boolean
 }
@@ -136,7 +137,7 @@ function SourceItem({ source }: { source: WebSource }) {
 const DOT_TOP = 5
 const DOT_SIZE = 8
 
-export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, headerOverride, shimmer }: Props) {
+export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, headerOverride, shimmer }: Props) {
   const [collapsed, setCollapsed] = useState(() => isComplete)
   const prevIsCompleteRef = useRef(isComplete)
   useEffect(() => {
@@ -165,7 +166,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
       : 'Thinking'
 
   const headerLabel = headerOverride ?? autoLabel
-  const dottedStepCount = steps.filter(s => s.kind !== 'searching').length
+  const dottedStepCount = steps.length
 
   return (
     <div style={{ maxWidth: '663px' }}>
@@ -214,26 +215,13 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             style={{ overflow: 'hidden' }}
           >
             <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
-              {dottedStepCount >= 2 && (
-                <div
-                  key={`tl-${dottedStepCount}`}
-                  style={{
-                    position: 'absolute',
-                    left: '8px',
-                    top: '12px',
-                    bottom: '10px',
-                    width: '1.5px',
-                    background: 'var(--c-border-subtle)',
-                    transformOrigin: 'top',
-                    animation: 'timeline-line-grow 0.35s cubic-bezier(0.4, 0, 0.2, 1) both',
-                  }}
-                />
-              )}
 
               <AnimatePresence initial={false}>
               {steps.map((step, idx) => {
+                const isFirst = idx === 0
                 const isLast = idx === steps.length - 1
-                const hasDot = step.kind !== 'searching'
+                const hasDot = true
+                const multiSteps = dottedStepCount >= 2
                 const dotColor =
                   step.status === 'active'
                     ? 'var(--c-text-secondary)'
@@ -244,19 +232,31 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                 return (
                   <Fragment key={step.id}>
                     {step.kind === 'finished' && codeExecutions && codeExecutions.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: '14px', position: 'relative' }}>
-                        {codeExecutions.map((ce) =>
-                          ce.language === 'shell'
-                            ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
-                            : <CodeExecutionCard
-                                key={ce.id}
-                                language={ce.language}
-                                code={ce.code}
-                                output={ce.output}
-                                exitCode={ce.exitCode}
-                                onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
-                              />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingBottom: '14px', position: 'relative' }}>
+                        {/* Line through code execution area */}
+                        {multiSteps && (
+                          <div style={{ position: 'absolute', left: '-16px', top: 0, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                         )}
+                        {codeExecutions.map((ce) => (
+                          <motion.div
+                            key={ce.id}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.25, ease: 'easeOut' }}
+                          >
+                            {ce.language === 'shell'
+                              ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
+                              : <CodeExecutionCard
+                                  language={ce.language}
+                                  code={ce.code}
+                                  output={ce.output}
+                                  exitCode={ce.exitCode}
+                                  onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
+                                  isActive={activeCodeExecutionId === ce.id}
+                                />
+                            }
+                          </motion.div>
+                        ))}
                       </div>
                     )}
                     <motion.div
@@ -266,6 +266,18 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                       transition={{ duration: 0.22, ease: 'easeOut' }}
                       style={{ position: 'relative', paddingBottom: isLast ? 0 : '14px' }}
                     >
+
+                    {/* Per-item line segments */}
+                    {multiSteps && !isLast && (
+                      <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                    )}
+                    {/* Last step extends line down when code executions follow (streaming) */}
+                    {isLast && !steps.some((s) => s.kind === 'finished') && codeExecCount > 0 && (
+                      <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                    )}
+                    {multiSteps && !isFirst && (
+                      <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${DOT_TOP}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                    )}
 
                     {hasDot && (
                       <div
@@ -313,7 +325,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                       </div>
                     )}
 
-                    {step.kind === 'reviewing' && step.status === 'done' && sources.length > 0 && (
+                    {step.kind === 'reviewing' && sources.length > 0 && (
                       <div
                         style={{
                           marginTop: '8px',
@@ -322,7 +334,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                           background: 'var(--c-bg-menu)',
                           maxHeight: '240px',
                           overflowY: 'auto',
-                          overflow: 'hidden',
+                          overflowX: 'hidden',
                           padding: '4px',
                         }}
                       >
@@ -345,51 +357,22 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
               })}
               </AnimatePresence>
 
-              {/* 有 finished 步骤时不在底部渲染，已在步骤循环内处理 */}
+              {/* Streaming 中的代码执行：无 dots，只有连续线 + 入场动画 */}
               {codeExecutions && codeExecutions.length > 0 && !steps.some((s) => s.kind === 'finished') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0px', paddingTop: steps.length > 0 ? '8px' : '0' }}>
-                  {codeExecutions.map((ce, idx) => {
-                    const isLast = idx === codeExecutions.length - 1
-                    const showDot = codeExecutions.length > 0
-                    const showLine = codeExecutions.length >= 2
-                    return (
-                      <div
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: steps.length > 0 ? '8px' : '0', position: 'relative' }}>
+                  {/* 从上一步骤的 dot 延伸的连线 */}
+                  {steps.length > 0 && (
+                    <div style={{ position: 'absolute', left: '-16px', top: 0, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                  )}
+                  <AnimatePresence initial={false}>
+                    {codeExecutions.map((ce) => (
+                      <motion.div
                         key={ce.id}
-                        style={{
-                          position: 'relative',
-                          paddingBottom: isLast ? 0 : '8px',
-                        }}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
                       >
-                        {showLine && !isLast && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              left: '-15.75px',
-                              top: '13px',
-                              bottom: '-13px',
-                              width: '1.5px',
-                              background: 'var(--c-border-subtle)',
-                            }}
-                          />
-                        )}
-                        {showDot && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              left: '-19px',
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              width: `${DOT_SIZE}px`,
-                              height: `${DOT_SIZE}px`,
-                              borderRadius: '50%',
-                              background: ce.exitCode != null
-                                ? ce.exitCode === 0 ? 'var(--c-border-subtle)' : '#ef4444'
-                                : 'var(--c-text-secondary)',
-                              border: '2px solid var(--c-bg-page)',
-                              zIndex: 1,
-                            }}
-                          />
-                        )}
                         {ce.language === 'shell'
                           ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
                           : <CodeExecutionCard
@@ -398,11 +381,12 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                               output={ce.output}
                               exitCode={ce.exitCode}
                               onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined}
+                              isActive={activeCodeExecutionId === ce.id}
                             />
                         }
-                      </div>
-                    )
-                  })}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
                 </div>
               )}
             </div>

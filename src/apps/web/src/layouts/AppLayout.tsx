@@ -48,12 +48,35 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const isSearchModeRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('account')
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(
+    () => new URLSearchParams(location.search).has('notices'),
+  )
   const [notificationVersion, setNotificationVersion] = useState(0)
   const [creditsBalance, setCreditsBalance] = useState(0)
 
   const handleNotificationMarkedRead = useCallback(() => {
     setNotificationVersion((v) => v + 1)
+  }, [])
+
+  const openNotifications = useCallback(() => {
+    setNotificationsOpen(true)
+    const params = new URLSearchParams(window.location.search)
+    if (!params.has('notices')) {
+      params.set('notices', '')
+      const next = `${window.location.pathname}?${params.toString()}`
+      window.history.replaceState(window.history.state, '', next)
+    }
+  }, [])
+
+  const closeNotifications = useCallback(() => {
+    setNotificationsOpen(false)
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('notices')) {
+      params.delete('notices')
+      const qs = params.toString()
+      const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+      window.history.replaceState(window.history.state, '', next)
+    }
   }, [])
   const mountedRef = useRef(true)
 
@@ -68,7 +91,8 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   // 路由切换时重置右侧面板状态，避免 sidebar 宽度残留
   useEffect(() => {
     setRightPanelOpen(false)
-  }, [location.pathname])
+    if (notificationsOpen) closeNotifications()
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mouse 5 / 浏览器返回键：退出搜索模式而非离开页面
   useEffect(() => {
@@ -124,8 +148,9 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   const handleNewThread = useCallback(() => {
     setIsSearchMode(false)
+    closeNotifications()
     navigate('/')
-  }, [navigate])
+  }, [navigate, closeNotifications])
 
   // 从 WelcomePage 新建的 thread 需要注入到列表
   const handleThreadCreated = useCallback((thread: ThreadResponse) => {
@@ -255,9 +280,9 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: () => setNotificationsOpen(true), notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen }} />
         {notificationsOpen && (
-          <NotificationsPanel accessToken={accessToken} onClose={() => setNotificationsOpen(false)} onMarkedRead={handleNotificationMarkedRead} />
+          <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={handleNotificationMarkedRead} />
         )}
       </main>
     </div>

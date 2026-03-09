@@ -7,7 +7,6 @@ import {
   Search,
   FolderKanban,
   SearchCheck,
-  Scale,
   PanelLeftClose,
   Bolt,
   Glasses,
@@ -251,11 +250,6 @@ export function Sidebar({
         >
           <SearchCheck size={16} className="shrink-0 transition-transform duration-200 group-hover:scale-[1.1]" />
           <span>{t.retrieve}</span>
-        </button>
-
-        <button className="group flex h-9 items-center gap-2.5 rounded-lg px-2 text-[16px] text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]">
-          <Scale size={16} className="shrink-0 transition-transform duration-200 group-hover:scale-[1.1]" />
-          <span>{t.legal}</span>
         </button>
       </nav>
 

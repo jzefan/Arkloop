@@ -97,7 +97,18 @@ function findExecutionIndex(
 
   const primary = preferSession ? findBySession() : findByCallId()
   if (primary >= 0) return primary
-  return preferSession ? findByCallId() : findBySession()
+  const secondary = preferSession ? findByCallId() : findBySession()
+  if (secondary >= 0) return secondary
+
+  // write_stdin fallback: match last shell entry still awaiting output
+  if (preferSession) {
+    for (let i = executions.length - 1; i >= 0; i--) {
+      if (executions[i].language === 'shell' && executions[i].exitCode == null) {
+        return i
+      }
+    }
+  }
+  return -1
 }
 
 function patchExecution(
