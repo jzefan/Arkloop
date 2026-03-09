@@ -1,19 +1,13 @@
 package main
 
 import (
-	"archive/tar"
-	"bytes"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	shellapi "arkloop/services/sandbox/internal/shell"
-
-	"github.com/klauspost/compress/zstd"
 )
 
 func bindShellDirs(t *testing.T, workspace string) {
@@ -360,7 +354,7 @@ func TestShellControllerDebugSnapshotShowsTranscriptTruncation(t *testing.T) {
 	}
 }
 
-func TestShellControllerCheckpointRestorePreservesState(t *testing.T) {
+func TestShellControllerCaptureStatePreservesShellView(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)
 	controller := NewShellController()
@@ -369,27 +363,21 @@ func TestShellControllerCheckpointRestorePreservesState(t *testing.T) {
 	command := "mkdir -p demo && cd demo && export FOO=bar && touch a.txt && pwd"
 	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{Command: command, YieldTimeMs: 1000, TimeoutMs: 5000})
 	_ = drainShellOutput(t, controller, resp, code, msg)
-	checkpoint, code, msg := controller.CheckpointExport()
+	state, code, msg := controller.CaptureState()
 	if code != "" || msg != "" {
-		t.Fatalf("checkpoint failed: %s %s", code, msg)
+		t.Fatalf("capture state failed: %s %s", code, msg)
 	}
-	if checkpoint.Cwd != filepath.Join(workspace, "demo") {
-		t.Fatalf("unexpected checkpoint cwd: %s", checkpoint.Cwd)
+	if state.Cwd != filepath.Join(workspace, "demo") {
+		t.Fatalf("unexpected state cwd: %s", state.Cwd)
 	}
-
-	restored := NewShellController()
-	defer closeController(restored)
-	if _, code, msg := restored.RestoreImport(shellapi.AgentCheckpointRequest{Archive: checkpoint.Archive}); code != "" || msg != "" {
-		t.Fatalf("restore import failed: %s %s", code, msg)
-	}
-	verify, code, msg := restored.ExecCommand(shellapi.AgentExecCommandRequest{
-		Cwd:         checkpoint.Cwd,
-		Env:         checkpoint.Env,
+	verify, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
+		Cwd:         state.Cwd,
+		Env:         state.Env,
 		Command:     "printf '%s\n' \"$FOO\" && pwd && test -f a.txt && echo ok",
 		YieldTimeMs: 1000,
 		TimeoutMs:   5000,
 	})
-	verifyOutput := drainShellOutput(t, restored, verify, code, msg)
+	verifyOutput := drainShellOutput(t, controller, verify, code, msg)
 	if !strings.Contains(verifyOutput, "bar") || !strings.Contains(verifyOutput, filepath.Join(workspace, "demo")) || !strings.Contains(verifyOutput, "ok") {
 		t.Fatalf("unexpected restored output: %q", verifyOutput)
 	}
@@ -413,50 +401,22 @@ func TestShellControllerExecCommandWithEnvKeepsFixedHome(t *testing.T) {
 	}
 }
 
-func TestShellControllerRestoreRejectsEscapingSymlink(t *testing.T) {
+func TestShellControllerCaptureStateReturnsBusyWhileRunning(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)
 	controller := NewShellController()
 	defer closeController(controller)
-	archive := base64.StdEncoding.EncodeToString(mustCheckpointArchive(t, func(tw *tar.Writer) {
-		writeTarHeader(t, tw, &tar.Header{Name: "workspace/", Typeflag: tar.TypeDir, Mode: 0o755})
-		writeTarHeader(t, tw, &tar.Header{Name: "workspace/link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd", Mode: 0o777})
-	}))
-	_, code, msg := controller.RestoreImport(shellapi.AgentCheckpointRequest{Archive: archive})
-	if code != "" {
-		t.Fatalf("unexpected shell code: %s", code)
-	}
-	if !strings.Contains(msg, "escapes root") {
-		t.Fatalf("unexpected restore error: %s", msg)
-	}
-}
 
-func mustCheckpointArchive(t *testing.T, fill func(tw *tar.Writer)) []byte {
-	t.Helper()
-	var buffer bytes.Buffer
-	zw, err := zstd.NewWriter(&buffer)
-	if err != nil {
-		t.Fatalf("zstd writer: %v", err)
+	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{Command: "sleep 1", YieldTimeMs: 10, TimeoutMs: 5000})
+	if code != "" || msg != "" {
+		t.Fatalf("exec command failed: %s %s", code, msg)
 	}
-	tw := tar.NewWriter(zw)
-	fill(tw)
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
+	if resp == nil || !resp.Running {
+		t.Fatalf("expected running response, got %#v", resp)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close zstd: %v", err)
-	}
-	return buffer.Bytes()
-}
 
-func writeTarHeader(t *testing.T, tw *tar.Writer, header *tar.Header) {
-	t.Helper()
-	if err := tw.WriteHeader(header); err != nil {
-		t.Fatalf("write tar header: %v", err)
-	}
-	if header.Typeflag == tar.TypeReg {
-		if _, err := io.WriteString(tw, "payload"); err != nil {
-			t.Fatalf("write tar payload: %v", err)
-		}
+	_, code, msg = controller.CaptureState()
+	if code != shellapi.CodeSessionBusy {
+		t.Fatalf("expected busy code, got %q (%s)", code, msg)
 	}
 }

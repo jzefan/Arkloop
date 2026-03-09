@@ -1,18 +1,14 @@
 package http
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	nethttp "net/http"
 	"testing"
 
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/shared/workspaceblob"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/zstd"
 )
 
 func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
@@ -31,12 +27,15 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
 
-	archive := buildWorkspaceArchive(t, map[string][]byte{
-		"/workspace/report.html": []byte("<html><body>ok</body></html>"),
-		"/workspace/chart.png":   []byte("\x89PNG\r\n\x1a\nPNGDATA"),
-		"/workspace/notes.md":    []byte("# hello\nworld\n"),
-	})
-	env.store.put(workspaceArchiveKey(workspaceRef), archive, "application/zstd", nil)
+	env.store.put(workspaceLatestKey(workspaceRef), mustJSON(t, workspaceLatestPointer{Revision: "rev-1"}), "application/json", nil)
+	env.store.put(workspaceManifestKey(workspaceRef, "rev-1"), mustJSON(t, workspaceManifest{Entries: []workspaceManifestEntry{
+		{Path: "report.html", Type: workspaceEntryTypeFile, SHA256: "sha-report"},
+		{Path: "chart.png", Type: workspaceEntryTypeFile, SHA256: "sha-chart"},
+		{Path: "notes.md", Type: workspaceEntryTypeFile, SHA256: "sha-notes"},
+	}}), "application/json", nil)
+	env.store.put(workspaceBlobKey(workspaceRef, "sha-report"), mustWorkspaceBlob(t, []byte("<html><body>ok</body></html>")), "application/octet-stream", nil)
+	env.store.put(workspaceBlobKey(workspaceRef, "sha-chart"), mustWorkspaceBlob(t, []byte("\x89PNG\r\n\x1a\nPNGDATA")), "application/octet-stream", nil)
+	env.store.put(workspaceBlobKey(workspaceRef, "sha-notes"), mustWorkspaceBlob(t, []byte("# hello\nworld\n")), "application/octet-stream", nil)
 
 	t.Run("owner can read html", func(t *testing.T) {
 		resp := doArtifactRequest(t, env.handler, "/v1/workspace-files?run_id="+run.ID.String()+"&path=/report.html", authHeader(env.aliceToken))
@@ -144,6 +143,28 @@ func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFilesRejectLegacyArchiveOnly(t *testing.T) {
+	env := buildArtifactEnv(t)
+
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	workspaceRef := "wsref_test_workspace_legacy_only"
+	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
+		t.Fatalf("update run workspace_ref: %v", err)
+	}
+
+	env.store.put("workspaces/"+workspaceRef+"/state.tar.zst", []byte("legacy-only"), "application/zstd", nil)
+
+	resp := doArtifactRequest(t, env.handler, "/v1/workspace-files?run_id="+run.ID.String()+"&path=/report.html", authHeader(env.aliceToken))
+	assertErrorEnvelope(t, resp, nethttp.StatusNotFound, "workspace_files.not_found")
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	payload, err := json.Marshal(value)
@@ -160,41 +181,6 @@ func mustWorkspaceBlob(t *testing.T, data []byte) []byte {
 		t.Fatalf("encode workspace blob: %v", err)
 	}
 	return encoded
-}
-
-func buildWorkspaceArchive(t *testing.T, files map[string][]byte) []byte {
-	t.Helper()
-	var tarBuffer bytes.Buffer
-	tw := tar.NewWriter(&tarBuffer)
-	for name, content := range files {
-		header := &tar.Header{
-			Name: name,
-			Mode: 0o644,
-			Size: int64(len(content)),
-		}
-		if err := tw.WriteHeader(header); err != nil {
-			t.Fatalf("write tar header: %v", err)
-		}
-		if _, err := tw.Write(content); err != nil {
-			t.Fatalf("write tar content: %v", err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar writer: %v", err)
-	}
-
-	var compressed bytes.Buffer
-	zw, err := zstd.NewWriter(&compressed)
-	if err != nil {
-		t.Fatalf("new zstd writer: %v", err)
-	}
-	if _, err := io.Copy(zw, bytes.NewReader(tarBuffer.Bytes())); err != nil {
-		t.Fatalf("compress tar archive: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close zstd writer: %v", err)
-	}
-	return compressed.Bytes()
 }
 
 func TestDetectWorkspaceContentTypeFallsBackToSniffing(t *testing.T) {

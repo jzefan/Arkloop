@@ -79,9 +79,6 @@ func TestShellSessionsRepository_UpdateRestoreRevision(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := repo.UpdateCheckpointRevision(context.Background(), pool, orgID, "shref_test", "checkpoint-1"); err != nil {
-		t.Fatalf("update checkpoint revision: %v", err)
-	}
 	if err := repo.UpdateRestoreRevision(context.Background(), pool, orgID, "shref_test", "restore-2"); err != nil {
 		t.Fatalf("update restore revision: %v", err)
 	}
@@ -89,9 +86,6 @@ func TestShellSessionsRepository_UpdateRestoreRevision(t *testing.T) {
 	stored, err := repo.GetBySessionRef(context.Background(), pool, orgID, "shref_test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
-	}
-	if stored.LatestCheckpointRev == nil || *stored.LatestCheckpointRev != "checkpoint-1" {
-		t.Fatalf("unexpected latest_checkpoint_rev: %#v", stored.LatestCheckpointRev)
 	}
 	if stored.LatestRestoreRev == nil || *stored.LatestRestoreRev != "restore-2" {
 		t.Fatalf("unexpected latest_restore_rev: %#v", stored.LatestRestoreRev)

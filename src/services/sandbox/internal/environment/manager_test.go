@@ -148,8 +148,6 @@ func (r *fakeRegistryWriter) MarkFlushSucceeded(_ context.Context, scope, ref, r
 
 type fakeCarrier struct {
 	mu               sync.Mutex
-	legacyExports    map[string][]byte
-	legacyImports    map[string][]byte
 	appliedManifest  map[string]Manifest
 	appliedFiles     map[string][]FilePayload
 	appliedCount     map[string]int
@@ -162,8 +160,6 @@ type fakeCarrier struct {
 
 func newFakeCarrier() *fakeCarrier {
 	return &fakeCarrier{
-		legacyExports:    make(map[string][]byte),
-		legacyImports:    make(map[string][]byte),
 		appliedManifest:  make(map[string]Manifest),
 		appliedFiles:     make(map[string][]FilePayload),
 		appliedCount:     make(map[string]int),
@@ -217,36 +213,18 @@ func (c *fakeCarrier) ApplyEnvironment(_ context.Context, scope string, manifest
 	return nil
 }
 
-func (c *fakeCarrier) ExportEnvironment(_ context.Context, scope string) ([]byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]byte(nil), c.legacyExports[scope]...), nil
-}
-
-func (c *fakeCarrier) ImportEnvironment(_ context.Context, scope string, archive []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.legacyImports[scope] = append([]byte(nil), archive...)
-	return nil
-}
-
-func TestManagerPrepareKeepsLegacyRestoreAndEnsuresRegistries(t *testing.T) {
+func TestManagerPrepareWithoutManifestOnlyEnsuresRegistries(t *testing.T) {
 	store := newMemoryStore()
 	registry := newFakeRegistryWriter()
 	mgr := NewManager(store, registry, nil)
 	binding := Binding{OrgID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProfileRef: "pref_a", WorkspaceRef: "wsref_a"}
-	store.data[profileKey(binding.ProfileRef)] = []byte("profile-legacy")
-	store.data[workspaceKey(binding.WorkspaceRef)] = []byte("workspace-legacy")
 	carrier := newFakeCarrier()
 
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if string(carrier.legacyImports[ScopeProfile]) != "profile-legacy" {
-		t.Fatalf("unexpected legacy profile import: %q", carrier.legacyImports[ScopeProfile])
-	}
-	if string(carrier.legacyImports[ScopeWorkspace]) != "workspace-legacy" {
-		t.Fatalf("unexpected legacy workspace import: %q", carrier.legacyImports[ScopeWorkspace])
+	if carrier.appliedCount[ScopeProfile] != 0 || carrier.appliedCount[ScopeWorkspace] != 0 {
+		t.Fatalf("did not expect hydrate without manifest: %#v", carrier.appliedCount)
 	}
 	if len(registry.ensured) != 2 {
 		t.Fatalf("expected registry ensure calls, got %v", registry.ensured)
@@ -289,9 +267,6 @@ func TestManagerPrepareRestoresFromManifestState(t *testing.T) {
 	if !carrier.appliedReset[ScopeWorkspace] {
 		t.Fatal("expected reset apply for workspace hydrate")
 	}
-	if _, ok := carrier.legacyImports[ScopeWorkspace]; ok {
-		t.Fatalf("did not expect legacy import when manifest state exists: %#v", carrier.legacyImports)
-	}
 }
 
 func TestManagerPrepareFailsWhenRegistryManifestMissing(t *testing.T) {
@@ -300,15 +275,11 @@ func TestManagerPrepareFailsWhenRegistryManifestMissing(t *testing.T) {
 	mgr := NewManager(store, registry, nil)
 	binding := Binding{OrgID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProfileRef: "pref_a", WorkspaceRef: "wsref_a"}
 	carrier := newFakeCarrier()
-	store.data[workspaceKey(binding.WorkspaceRef)] = []byte("workspace-legacy")
 	registry.latest[ScopeWorkspace+":"+binding.WorkspaceRef] = "rev-missing"
 
 	err := mgr.Prepare(context.Background(), "sess-1", carrier, binding)
 	if err == nil {
 		t.Fatal("expected prepare to fail when manifest is missing")
-	}
-	if _, ok := carrier.legacyImports[ScopeWorkspace]; ok {
-		t.Fatalf("did not expect legacy fallback: %#v", carrier.legacyImports)
 	}
 }
 

@@ -1,13 +1,9 @@
 package http
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"mime"
 	nethttp "net/http"
 	"path"
@@ -20,7 +16,6 @@ import (
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/workspaceblob"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/zstd"
 )
 
 const workspaceRootPath = "/workspace"
@@ -124,10 +119,6 @@ func normalizeWorkspaceRelativePath(w nethttp.ResponseWriter, traceID string, ra
 	return strings.TrimPrefix(strings.TrimPrefix(cleaned, workspaceRootPath), "/"), true
 }
 
-func workspaceArchiveKey(workspaceRef string) string {
-	return "workspaces/" + workspaceRef + "/state.tar.zst"
-}
-
 func workspaceLatestKey(workspaceRef string) string {
 	return "workspaces/" + workspaceRef + "/latest.json"
 }
@@ -158,21 +149,7 @@ type workspaceManifestEntry struct {
 const workspaceEntryTypeFile = "file"
 
 func readWorkspaceFile(ctx context.Context, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
-	content, contentType, err := readWorkspaceFileFromManifest(ctx, store, workspaceRef, relativePath)
-	if err == nil {
-		return content, contentType, nil
-	}
-	if !errors.Is(err, errWorkspaceFileNotFound) {
-		return nil, "", err
-	}
-	archive, archiveErr := store.Get(ctx, workspaceArchiveKey(workspaceRef))
-	if archiveErr != nil {
-		if objectstore.IsNotFound(archiveErr) {
-			return nil, "", errWorkspaceFileNotFound
-		}
-		return nil, "", archiveErr
-	}
-	return readWorkspaceFileFromArchive(archive, relativePath)
+	return readWorkspaceFileFromManifest(ctx, store, workspaceRef, relativePath)
 }
 
 func readWorkspaceFileFromManifest(ctx context.Context, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
@@ -224,42 +201,6 @@ func readWorkspaceFileFromManifest(ctx context.Context, store environmentStore, 
 	}
 	return nil, "", errWorkspaceFileNotFound
 }
-
-func readWorkspaceFileFromArchive(archive []byte, relativePath string) ([]byte, string, error) {
-	decoder, err := zstd.NewReader(bytes.NewReader(archive))
-	if err != nil {
-		return nil, "", fmt.Errorf("open zstd archive: %w", err)
-	}
-	defer decoder.Close()
-
-	targetName := strings.TrimPrefix(path.Join(workspaceRootPath, relativePath), "/")
-	tr := tar.NewReader(decoder)
-	for {
-		header, err := tr.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, "", errWorkspaceFileNotFound
-			}
-			return nil, "", fmt.Errorf("iterate tar archive: %w", err)
-		}
-		if header == nil {
-			continue
-		}
-		if header.Typeflag != tar.TypeReg {
-			continue
-		}
-		headerName := path.Clean(strings.TrimPrefix(header.Name, "/"))
-		if headerName != targetName {
-			continue
-		}
-		content := make([]byte, header.Size)
-		if _, err := io.ReadFull(tr, content); err != nil {
-			return nil, "", fmt.Errorf("read workspace file: %w", err)
-		}
-		return content, detectWorkspaceContentType(relativePath, content), nil
-	}
-}
-
 func detectWorkspaceContentType(relativePath string, content []byte) string {
 	if ext := strings.ToLower(path.Ext(relativePath)); ext != "" {
 		if guessed := mime.TypeByExtension(ext); strings.TrimSpace(guessed) != "" {

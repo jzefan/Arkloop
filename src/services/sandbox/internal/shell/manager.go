@@ -335,7 +335,7 @@ func (m *Manager) prepareExecCommandRequest(ctx context.Context, req ExecCommand
 	if entry.compute == nil || m.stateStore == nil {
 		return prepared, nil, false, ""
 	}
-	state, err := loadLatestSessionState(ctx, m.stateStore, m.restoreRegistry, entry.orgID, req.SessionID)
+	state, err := loadLatestRestoreState(ctx, m.stateStore, m.restoreRegistry, entry.orgID, req.SessionID)
 	if err != nil {
 		if objectstore.IsNotFound(err) {
 			return prepared, nil, false, ""
@@ -374,7 +374,7 @@ func (m *Manager) saveRestoreStateLocked(ctx context.Context, sessionID string, 
 	if entry.compute == nil || m.stateStore == nil {
 		return nil
 	}
-	checkpoint, err := m.invokeCheckpoint(ctx, entry, "shell_checkpoint_export", AgentCheckpointRequest{})
+	state, err := m.invokeState(ctx, entry, "shell_capture_state", AgentStateRequest{})
 	if err != nil {
 		return fmt.Errorf("capture restore state: %w", err)
 	}
@@ -386,8 +386,8 @@ func (m *Manager) saveRestoreStateLocked(ctx context.Context, sessionID string, 
 		SessionID:      sessionID,
 		ProfileRef:     entry.profileRef,
 		WorkspaceRef:   entry.workspaceRef,
-		Cwd:            strings.TrimSpace(checkpoint.Cwd),
-		EnvSnapshot:    checkpoint.Env,
+		Cwd:            strings.TrimSpace(state.Cwd),
+		EnvSnapshot:    state.Env,
 		LastCommandSeq: entry.commandSeq,
 		UploadedSeq:    entry.uploadedSeq,
 		ArtifactSeen:   cloneArtifactSeen(entry.artifactSeen),
@@ -581,7 +581,7 @@ func (m *Manager) invokeSession(ctx context.Context, entry *managedSession, payl
 	return resp.Session, nil
 }
 
-func (m *Manager) invokeCheckpoint(ctx context.Context, entry *managedSession, action string, checkpointReq AgentCheckpointRequest) (*AgentCheckpointResponse, error) {
+func (m *Manager) invokeState(ctx context.Context, entry *managedSession, action string, stateReq AgentStateRequest) (*AgentStateResponse, error) {
 	if entry.compute == nil {
 		return nil, notFoundError()
 	}
@@ -597,17 +597,17 @@ func (m *Manager) invokeCheckpoint(ctx context.Context, entry *managedSession, a
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(callTimeout))
 
-	req := AgentRequest{Action: action, Checkpoint: &checkpointReq}
+	req := AgentRequest{Action: action, State: &stateReq}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return nil, &transportError{err: fmt.Errorf("send checkpoint request: %w", err)}
+		return nil, &transportError{err: fmt.Errorf("send shell state request: %w", err)}
 	}
 	respBody, err := io.ReadAll(conn)
 	if err != nil {
-		return nil, &transportError{err: fmt.Errorf("read checkpoint response: %w", err)}
+		return nil, &transportError{err: fmt.Errorf("read shell state response: %w", err)}
 	}
 	var resp AgentResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, &transportError{err: fmt.Errorf("decode checkpoint response: %w", err)}
+		return nil, &transportError{err: fmt.Errorf("decode shell state response: %w", err)}
 	}
 	if resp.Error != "" {
 		switch resp.Code {
@@ -619,10 +619,10 @@ func (m *Manager) invokeCheckpoint(ctx context.Context, entry *managedSession, a
 			return nil, errors.New(resp.Error)
 		}
 	}
-	if resp.Checkpoint == nil {
-		return nil, &transportError{err: fmt.Errorf("checkpoint response missing body")}
+	if resp.State == nil {
+		return nil, &transportError{err: fmt.Errorf("shell state response missing body")}
 	}
-	return resp.Checkpoint, nil
+	return resp.State, nil
 }
 
 func (m *Manager) attachArtifacts(ctx context.Context, sessionID string, entry *managedSession, result *AgentSessionResponse, resp *Response) {

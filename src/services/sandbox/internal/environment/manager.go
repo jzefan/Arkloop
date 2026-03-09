@@ -29,8 +29,6 @@ type Carrier interface {
 	BuildEnvironmentManifest(ctx context.Context, scope string, subtrees []string) (Manifest, error)
 	CollectEnvironmentFiles(ctx context.Context, scope string, paths []string) ([]FilePayload, error)
 	ApplyEnvironment(ctx context.Context, scope string, manifest Manifest, files []FilePayload, reset bool) error
-	ExportEnvironment(ctx context.Context, scope string) ([]byte, error)
-	ImportEnvironment(ctx context.Context, scope string, archive []byte) error
 }
 
 type Binding struct {
@@ -406,9 +404,6 @@ func (m *Manager) prepareScope(ctx context.Context, carrier Carrier, state *trac
 		}
 	}
 	if revision == "" {
-		if err := m.importScope(ctx, carrier, scope, ref); err != nil {
-			return err
-		}
 		if state != nil {
 			state.hydratedRevision = ""
 		}
@@ -425,19 +420,6 @@ func (m *Manager) prepareScope(ctx context.Context, carrier Carrier, state *trac
 	}
 	return nil
 }
-
-func (m *Manager) importScope(ctx context.Context, carrier Carrier, scope string, ref string) error {
-	ref = strings.TrimSpace(ref)
-	archive, err := m.store.Get(ctx, legacyArchiveKey(scope, ref))
-	if err != nil {
-		if objectstore.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	return carrier.ImportEnvironment(ctx, scope, archive)
-}
-
 func (m *Manager) ensureSession(sessionID string, carrier Carrier, binding Binding) *trackedSession {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -665,12 +647,4 @@ func changedRegularFilePaths(previous Manifest, next Manifest) []string {
 	}
 	sort.Strings(changed)
 	return changed
-}
-
-func profileKey(profileRef string) string {
-	return "profiles/" + strings.TrimSpace(profileRef) + "/state.tar.zst"
-}
-
-func workspaceKey(workspaceRef string) string {
-	return "workspaces/" + strings.TrimSpace(workspaceRef) + "/state.tar.zst"
 }

@@ -72,7 +72,7 @@ func (o *sessionOrchestrator) resolveExecSession(
 	case sessionModeResume:
 		return o.lookupExplicit(ctx, execCtx, strings.TrimSpace(req.SessionRef), "explicit_resume")
 	case sessionModeFork:
-		base, err := o.lookupExplicit(ctx, execCtx, strings.TrimSpace(req.FromSessionRef), "fork_from_checkpoint")
+		base, err := o.lookupExplicit(ctx, execCtx, strings.TrimSpace(req.FromSessionRef), "fork_from_restore_state")
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +80,7 @@ func (o *sessionOrchestrator) resolveExecSession(
 		if createErr != nil {
 			return nil, createErr
 		}
-		created.ResolvedVia = "fork_from_checkpoint"
+		created.ResolvedVia = "fork_from_restore_state"
 		created.FromSessionRef = base.SessionRef
 		created.RestoredFromRestoreState = true
 		return created, nil
@@ -154,7 +154,7 @@ func (o *sessionOrchestrator) lookupExplicit(
 		Reused:                   true,
 		ShareScope:               record.ShareScope,
 		Record:                   &record,
-		RestoredFromRestoreState: record.LiveSessionID == nil && (strings.TrimSpace(stringPtrValue(record.LatestRestoreRev)) != "" || strings.TrimSpace(stringPtrValue(record.LatestCheckpointRev)) != ""),
+		RestoredFromRestoreState: record.LiveSessionID == nil && strings.TrimSpace(stringPtrValue(record.LatestRestoreRev)) != "",
 	}, nil
 }
 

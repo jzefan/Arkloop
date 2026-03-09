@@ -302,7 +302,6 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			share_scope           TEXT        NOT NULL,
 			state                 TEXT        NOT NULL,
 			live_session_id       TEXT        NULL,
-			latest_checkpoint_rev TEXT        NULL,
 			latest_restore_rev    TEXT        NULL,
 			last_used_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 			metadata_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
