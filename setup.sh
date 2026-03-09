@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 ENV_EXAMPLE_FILE="${ROOT_DIR}/.env.example"
+INSTALL_STATE_FILE="${ROOT_DIR}/install/.state.env"
 MODULE_HELPER="${ROOT_DIR}/install/module_registry.py"
 MODULES_FILE="${ROOT_DIR}/install/modules.yaml"
 COMPOSE_FILE="${ROOT_DIR}/compose.yaml"
@@ -173,6 +174,56 @@ path.write_text("\n".join(out) + "\n", encoding='utf-8')
 PY
 }
 
+python_state_get() {
+  python3 - "$INSTALL_STATE_FILE" "$1" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+key = sys.argv[2]
+if not path.exists():
+    raise SystemExit(0)
+for raw in path.read_text(encoding='utf-8').splitlines():
+    line = raw.strip()
+    if not line or line.startswith('#') or '=' not in raw:
+        continue
+    k, v = raw.split('=', 1)
+    if k.strip() == key:
+        print(v)
+PY
+}
+
+python_state_set() {
+  python3 - "$INSTALL_STATE_FILE" "$1" "$2" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+key = sys.argv[2]
+value = sys.argv[3]
+if path.exists():
+    lines = path.read_text(encoding='utf-8').splitlines()
+else:
+    lines = []
+out = []
+updated = False
+for raw in lines:
+    if raw.strip().startswith('#') or '=' not in raw:
+        out.append(raw)
+        continue
+    current_key, _ = raw.split('=', 1)
+    if current_key.strip() == key:
+        out.append(f"{key}={value}")
+        updated = True
+    else:
+        out.append(raw)
+if not updated:
+    if out and out[-1] != '':
+        out.append('')
+    out.append(f"{key}={value}")
+path.write_text("\n".join(out) + "\n", encoding='utf-8')
+PY
+}
+
 ensure_env_file() {
   [ -f "$ENV_EXAMPLE_FILE" ] || fail "缺少 $ENV_EXAMPLE_FILE"
   if [ ! -f "$ENV_FILE" ]; then
@@ -256,6 +307,10 @@ set_if_empty() {
 
 set_value() {
   python_env_set "$1" "$2"
+}
+
+set_install_state() {
+  python_state_set "$1" "$2"
 }
 
 port_in_use() {
@@ -535,7 +590,6 @@ apply_runtime_env() {
   set_value ARKLOOP_PGBOUNCER_URL "postgresql://${pg_user}:${pg_pass}@127.0.0.1:5433/${pg_db}"
   set_value ARKLOOP_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/0"
   set_value ARKLOOP_GATEWAY_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/1"
-  set_value ARKLOOP_APP_BASE_URL "http://localhost:${gateway_port}"
   set_if_empty ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS "http://localhost:5173,http://localhost:5174,http://localhost:5175"
 
   case "$RESOLVED_CONSOLE" in
@@ -546,25 +600,25 @@ apply_runtime_env() {
   set_value ARKLOOP_GATEWAY_FRONTEND_UPSTREAM "$console_upstream"
 
   case "$RESOLVED_MEMORY" in
-    openviking) set_value ARKLOOP_OPENVIKING_BASE_URL "http://openviking:1933" ;;
-    none) set_value ARKLOOP_OPENVIKING_BASE_URL "" ;;
+    openviking|none) python_env_delete ARKLOOP_OPENVIKING_BASE_URL ;;
   esac
 
   case "$RESOLVED_SANDBOX" in
     docker)
       set_value ARKLOOP_SANDBOX_PROVIDER "docker"
-      set_value ARKLOOP_SANDBOX_BASE_URL "http://sandbox-docker:8002"
       [ -n "$DETECTED_DOCKER_SOCKET" ] || fail "未找到可用的用户态 Docker socket"
       set_value ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH "$DETECTED_DOCKER_SOCKET"
       ;;
     firecracker)
       set_value ARKLOOP_SANDBOX_PROVIDER "firecracker"
-      set_value ARKLOOP_SANDBOX_BASE_URL "http://sandbox:8002"
+      python_env_delete ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH
       ;;
     none)
-      set_value ARKLOOP_SANDBOX_BASE_URL ""
+      python_env_delete ARKLOOP_SANDBOX_PROVIDER
+      python_env_delete ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH
       ;;
   esac
+  python_env_delete ARKLOOP_SANDBOX_BASE_URL
 
   if [ "$RESOLVED_BROWSER" = "on" ]; then
     set_value ARKLOOP_SANDBOX_WARM_BROWSER "1"
@@ -572,30 +626,31 @@ apply_runtime_env() {
     set_value ARKLOOP_SANDBOX_WARM_BROWSER "0"
   fi
 
-  case "$RESOLVED_WEB_TOOLS" in
-    self-hosted)
-      set_value ARKLOOP_WEB_SEARCH_PROVIDER "searxng"
-      set_value ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL "http://searxng:8080"
-      set_value ARKLOOP_WEB_FETCH_PROVIDER "firecrawl"
-      set_value ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL "http://firecrawl:3002"
-      ;;
-    builtin)
-      python_env_delete ARKLOOP_WEB_SEARCH_PROVIDER
-      python_env_delete ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL
-      python_env_delete ARKLOOP_WEB_FETCH_PROVIDER
-      python_env_delete ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL
-      ;;
-  esac
+  python_env_delete ARKLOOP_APP_BASE_URL
+  python_env_delete ARKLOOP_WEB_SEARCH_PROVIDER
+  python_env_delete ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL
+  python_env_delete ARKLOOP_WEB_FETCH_PROVIDER
+  python_env_delete ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL
 
-  set_value ARKLOOP_INSTALL_PROFILE "$RESOLVED_PROFILE"
-  set_value ARKLOOP_INSTALL_MODE "$RESOLVED_MODE"
-  set_value ARKLOOP_INSTALL_MEMORY "$RESOLVED_MEMORY"
-  set_value ARKLOOP_INSTALL_SANDBOX "$RESOLVED_SANDBOX"
-  set_value ARKLOOP_INSTALL_CONSOLE "$RESOLVED_CONSOLE"
-  set_value ARKLOOP_INSTALL_BROWSER "$RESOLVED_BROWSER"
-  set_value ARKLOOP_INSTALL_WEB_TOOLS "$RESOLVED_WEB_TOOLS"
-  set_value ARKLOOP_INSTALL_GATEWAY "$RESOLVED_GATEWAY"
-  set_value ARKLOOP_INSTALL_MODULES "$(printf '%s' "$SELECTED_MODULES" | paste -sd, -)"
+  python_env_delete ARKLOOP_INSTALL_PROFILE
+  python_env_delete ARKLOOP_INSTALL_MODE
+  python_env_delete ARKLOOP_INSTALL_MEMORY
+  python_env_delete ARKLOOP_INSTALL_SANDBOX
+  python_env_delete ARKLOOP_INSTALL_CONSOLE
+  python_env_delete ARKLOOP_INSTALL_BROWSER
+  python_env_delete ARKLOOP_INSTALL_WEB_TOOLS
+  python_env_delete ARKLOOP_INSTALL_GATEWAY
+  python_env_delete ARKLOOP_INSTALL_MODULES
+
+  set_install_state ARKLOOP_INSTALL_PROFILE "$RESOLVED_PROFILE"
+  set_install_state ARKLOOP_INSTALL_MODE "$RESOLVED_MODE"
+  set_install_state ARKLOOP_INSTALL_MEMORY "$RESOLVED_MEMORY"
+  set_install_state ARKLOOP_INSTALL_SANDBOX "$RESOLVED_SANDBOX"
+  set_install_state ARKLOOP_INSTALL_CONSOLE "$RESOLVED_CONSOLE"
+  set_install_state ARKLOOP_INSTALL_BROWSER "$RESOLVED_BROWSER"
+  set_install_state ARKLOOP_INSTALL_WEB_TOOLS "$RESOLVED_WEB_TOOLS"
+  set_install_state ARKLOOP_INSTALL_GATEWAY "$RESOLVED_GATEWAY"
+  set_install_state ARKLOOP_INSTALL_MODULES "$(printf '%s' "$SELECTED_MODULES" | paste -sd, -)"
 }
 
 preflight_install() {
@@ -780,14 +835,25 @@ EOF
 
 status_from_metadata() {
   local profile mode memory sandbox console browser web_tools gateway
-  profile="$(python_env_get ARKLOOP_INSTALL_PROFILE)"
-  mode="$(python_env_get ARKLOOP_INSTALL_MODE)"
-  memory="$(python_env_get ARKLOOP_INSTALL_MEMORY)"
-  sandbox="$(python_env_get ARKLOOP_INSTALL_SANDBOX)"
-  console="$(python_env_get ARKLOOP_INSTALL_CONSOLE)"
-  browser="$(python_env_get ARKLOOP_INSTALL_BROWSER)"
-  web_tools="$(python_env_get ARKLOOP_INSTALL_WEB_TOOLS)"
-  gateway="$(python_env_get ARKLOOP_INSTALL_GATEWAY)"
+  profile="$(python_state_get ARKLOOP_INSTALL_PROFILE)"
+  mode="$(python_state_get ARKLOOP_INSTALL_MODE)"
+  memory="$(python_state_get ARKLOOP_INSTALL_MEMORY)"
+  sandbox="$(python_state_get ARKLOOP_INSTALL_SANDBOX)"
+  console="$(python_state_get ARKLOOP_INSTALL_CONSOLE)"
+  browser="$(python_state_get ARKLOOP_INSTALL_BROWSER)"
+  web_tools="$(python_state_get ARKLOOP_INSTALL_WEB_TOOLS)"
+  gateway="$(python_state_get ARKLOOP_INSTALL_GATEWAY)"
+
+  if [ -z "$profile" ]; then
+    profile="$(python_env_get ARKLOOP_INSTALL_PROFILE)"
+    mode="$(python_env_get ARKLOOP_INSTALL_MODE)"
+    memory="$(python_env_get ARKLOOP_INSTALL_MEMORY)"
+    sandbox="$(python_env_get ARKLOOP_INSTALL_SANDBOX)"
+    console="$(python_env_get ARKLOOP_INSTALL_CONSOLE)"
+    browser="$(python_env_get ARKLOOP_INSTALL_BROWSER)"
+    web_tools="$(python_env_get ARKLOOP_INSTALL_WEB_TOOLS)"
+    gateway="$(python_env_get ARKLOOP_INSTALL_GATEWAY)"
+  fi
 
   if [ -z "$profile" ]; then
     return 1
@@ -886,6 +952,7 @@ run_uninstall() {
     cmd+=(--volumes)
   fi
   "${cmd[@]}"
+  rm -f "$INSTALL_STATE_FILE"
   log "卸载完成"
 }
 

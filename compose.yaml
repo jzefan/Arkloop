@@ -205,12 +205,9 @@ services:
       ARKLOOP_WORKER_CONCURRENCY: "${ARKLOOP_WORKER_CONCURRENCY:-4}"
       # 容器内无宿主机文件系统，MCP 配置从数据库读取
       ARKLOOP_MCP_CONFIG_FILE: ""
-      ARKLOOP_OPENVIKING_BASE_URL: "http://openviking:1933"
       ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
       ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
       ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
-      # Sandbox：容器内用服务名寻址（Firecracker 模式）；Docker 模式需在 .env 中覆盖为 host.docker.internal
-      ARKLOOP_SANDBOX_BASE_URL: "${ARKLOOP_SANDBOX_BASE_URL:-}"
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: "${ARKLOOP_OUTBOUND_TRUST_FAKE_IP:-true}"
     depends_on:
       migrate:
@@ -331,7 +328,12 @@ services:
       - sandbox_agent_egress
       - sandbox_agent_internal
     volumes:
-      - ${ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH:?请在 .env 中设置 ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH}:/run/docker-host.sock
+      - type: bind
+        source: ${ARKLOOP_SANDBOX_DOCKER_SOCKET_PATH:-/tmp/arkloop-docker.sock}
+        target: /run/docker-host.sock
+        read_only: true
+        bind:
+          create_host_path: false
       - sandbox_sockets:/run/sandbox
       - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
     depends_on:
