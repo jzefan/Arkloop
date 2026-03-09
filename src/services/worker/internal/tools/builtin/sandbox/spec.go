@@ -30,6 +30,13 @@ var (
 		RiskLevel:   tools.RiskLevelHigh,
 		SideEffects: true,
 	}
+	BrowserSpec = tools.AgentToolSpec{
+		Name:        "browser",
+		Version:     "1",
+		Description: "execute browser automation commands in an isolated browser sandbox",
+		RiskLevel:   tools.RiskLevelHigh,
+		SideEffects: true,
+	}
 )
 
 var PythonExecuteLlmSpec = llm.ToolSpec{
@@ -118,6 +125,26 @@ var WriteStdinLlmSpec = llm.ToolSpec{
 			},
 		},
 		"required":             []string{"session_ref"},
+		"additionalProperties": false,
+	},
+}
+
+var BrowserLlmSpec = llm.ToolSpec{
+	Name:        "browser",
+	Description: llmStringPtr(sharedtoolmeta.Must("browser").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"command": map[string]any{
+				"type":        "string",
+				"description": "agent-browser CLI command to execute",
+			},
+			"session_ref": map[string]any{
+				"type":        "string",
+				"description": "optional browser session reference; omit to reuse the default browser session",
+			},
+		},
+		"required":             []string{"command"},
 		"additionalProperties": false,
 	},
 }

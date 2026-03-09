@@ -38,6 +38,7 @@ type resolvedSession struct {
 
 type sessionOrchestrator struct {
 	pool            *pgxpool.Pool
+	sessionType     string
 	sessionsRepo    data.ShellSessionsRepository
 	registryService *registryService
 	acl             *sessionACLEvaluator
@@ -47,8 +48,13 @@ type sessionOrchestrator struct {
 }
 
 func newSessionOrchestrator(pool *pgxpool.Pool) *sessionOrchestrator {
+	return newSessionOrchestratorWithType(pool, data.ShellSessionTypeShell)
+}
+
+func newSessionOrchestratorWithType(pool *pgxpool.Pool, sessionType string) *sessionOrchestrator {
 	return &sessionOrchestrator{
 		pool:            pool,
+		sessionType:     normalizeSessionType(sessionType),
 		registryService: newRegistryService(pool),
 		acl:             newSessionACLEvaluator(pool),
 		memorySessions:  map[string]data.ShellSessionRecord{},
@@ -276,12 +282,26 @@ func (o *sessionOrchestrator) createSession(
 	shareScope string,
 	defaultBindingKey *string,
 ) (*resolvedSession, *tools.ExecutionError) {
+	return o.createSessionWithRef(ctx, execCtx, shareScope, defaultBindingKey, "")
+}
+
+func (o *sessionOrchestrator) createSessionWithRef(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	shareScope string,
+	defaultBindingKey *string,
+	sessionRef string,
+) (*resolvedSession, *tools.ExecutionError) {
 	if aclErr := o.acl.AuthorizeShareScopeCreation(ctx, execCtx, shareScope); aclErr != nil {
 		return nil, aclErr
 	}
-	sessionRef := newSessionRef()
+	sessionRef = strings.TrimSpace(sessionRef)
+	if sessionRef == "" {
+		sessionRef = newSessionRef(o.sessionType)
+	}
 	record := data.ShellSessionRecord{
 		SessionRef:        sessionRef,
+		SessionType:       o.sessionType,
 		OrgID:             derefUUID(execCtx.OrgID),
 		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
 		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
@@ -315,6 +335,53 @@ func (o *sessionOrchestrator) createSession(
 	}, nil
 }
 
+func (o *sessionOrchestrator) resolveBrowserSession(
+	ctx context.Context,
+	req browserArgs,
+	execCtx tools.ExecutionContext,
+) (*resolvedSession, *tools.ExecutionError) {
+	requestedRef := strings.TrimSpace(req.SessionRef)
+	if requestedRef != "" {
+		resolved, err := o.lookupExplicit(ctx, execCtx, requestedRef, "explicit_resume")
+		if err == nil {
+			return resolved, nil
+		}
+		if err.ErrorClass != errorSandboxError || err.Message != "shell session not found" {
+			return nil, err
+		}
+		created, createErr := o.createSessionWithRef(ctx, execCtx, defaultShareScope(execCtx), nil, requestedRef)
+		if createErr != nil {
+			return nil, createErr
+		}
+		created.ResolvedVia = "explicit_new"
+		return created, nil
+	}
+	if resolved := o.lookupRunDefault(ctx, execCtx, ""); resolved != nil {
+		resolved.Reused = true
+		resolved.ResolvedVia = "run_default"
+		resolved.AllowUnavailableFallback = true
+		return resolved, nil
+	}
+	if resolved := o.lookupDefaultBinding(ctx, execCtx, data.ShellDefaultBindingKeyForThread(execCtx.ThreadID), "", "thread_default"); resolved != nil {
+		resolved.Reused = true
+		resolved.AllowUnavailableFallback = true
+		return resolved, nil
+	}
+	if resolved := o.lookupDefaultBinding(ctx, execCtx, data.ShellDefaultBindingKeyForWorkspace(execCtx.WorkspaceRef), "", "workspace_default"); resolved != nil {
+		resolved.Reused = true
+		resolved.AllowUnavailableFallback = true
+		return resolved, nil
+	}
+	shareScope := defaultShareScope(execCtx)
+	defaultBindingKey := defaultBindingKeyForShareScope(execCtx, shareScope)
+	created, err := o.createSession(ctx, execCtx, shareScope, defaultBindingKey)
+	if err != nil {
+		return nil, err
+	}
+	created.ResolvedVia = "new_session"
+	return created, nil
+}
+
 func (o *sessionOrchestrator) lookupLatestByRun(
 	ctx context.Context,
 	orgID uuid.UUID,
@@ -326,7 +393,7 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 		var selected data.ShellSessionRecord
 		found := false
 		for _, record := range o.memorySessions {
-			if record.OrgID != orgID || record.RunID == nil || *record.RunID != runID || record.State == data.ShellSessionStateClosed {
+			if record.OrgID != orgID || record.SessionType != o.sessionType || record.RunID == nil || *record.RunID != runID || record.State == data.ShellSessionStateClosed {
 				continue
 			}
 			if !found || record.LastUsedAt.After(selected.LastUsedAt) || (record.LastUsedAt.Equal(selected.LastUsedAt) && record.UpdatedAt.After(selected.UpdatedAt)) {
@@ -336,7 +403,7 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetLatestByRun(ctx, o.pool, orgID, runID)
+	record, err := o.sessionsRepo.GetLatestByRunAndType(ctx, o.pool, orgID, runID, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -358,7 +425,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 		var selected data.ShellSessionRecord
 		found := false
 		for _, record := range o.memorySessions {
-			if record.OrgID != orgID || strings.TrimSpace(record.ProfileRef) != strings.TrimSpace(profileRef) {
+			if record.OrgID != orgID || record.SessionType != o.sessionType || strings.TrimSpace(record.ProfileRef) != strings.TrimSpace(profileRef) {
 				continue
 			}
 			if strings.TrimSpace(stringPtrValue(record.DefaultBindingKey)) != strings.TrimSpace(defaultBindingKey) || record.State == data.ShellSessionStateClosed {
@@ -371,7 +438,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetByDefaultBindingKey(ctx, o.pool, orgID, profileRef, defaultBindingKey)
+	record, err := o.sessionsRepo.GetByDefaultBindingKeyAndType(ctx, o.pool, orgID, profileRef, defaultBindingKey, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -386,12 +453,12 @@ func (o *sessionOrchestrator) lookupSession(ctx context.Context, execCtx tools.E
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[sessionRef]
-		if ok {
+		if ok && record.SessionType == o.sessionType {
 			return record, true, nil
 		}
 		return data.ShellSessionRecord{}, false, nil
 	}
-	record, err := o.sessionsRepo.GetBySessionRef(ctx, o.pool, derefUUID(execCtx.OrgID), sessionRef)
+	record, err := o.sessionsRepo.GetBySessionRefAndType(ctx, o.pool, derefUUID(execCtx.OrgID), sessionRef, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -456,6 +523,7 @@ func (o *sessionOrchestrator) markResult(
 	}
 	record := data.ShellSessionRecord{
 		SessionRef:        resolution.SessionRef,
+		SessionType:       o.sessionType,
 		OrgID:             orgID,
 		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
 		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
@@ -471,6 +539,7 @@ func (o *sessionOrchestrator) markResult(
 	if resolution.Record != nil {
 		record = *resolution.Record
 		record.OrgID = orgID
+		record.SessionType = o.sessionType
 		record.ProfileRef = strings.TrimSpace(execCtx.ProfileRef)
 		record.WorkspaceRef = strings.TrimSpace(execCtx.WorkspaceRef)
 		record.ProjectID = uuidPtr(execCtx.ProjectID)
@@ -506,7 +575,7 @@ func (o *sessionOrchestrator) markResult(
 		return
 	}
 	var defaultShellSessionRef *string
-	if strings.HasPrefix(stringPtrValue(record.DefaultBindingKey), "workspace:") {
+	if o.sessionType == data.ShellSessionTypeShell && strings.HasPrefix(stringPtrValue(record.DefaultBindingKey), "workspace:") {
 		defaultShellSessionRef = stringPtr(record.SessionRef)
 	}
 	_ = o.registryService.UpsertWorkspaceRegistry(ctx, orgID, execCtx.UserID, execCtx.ProjectID, record.WorkspaceRef, defaultShellSessionRef)
@@ -560,8 +629,19 @@ func defaultBindingKeyForShareScope(execCtx tools.ExecutionContext, shareScope s
 	return stringPtr(value)
 }
 
-func newSessionRef() string {
-	return "shref_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+func newSessionRef(sessionType string) string {
+	prefix := "shref_"
+	if normalizeSessionType(sessionType) == data.ShellSessionTypeBrowser {
+		prefix = "brref_"
+	}
+	return prefix + strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
+func normalizeSessionType(value string) string {
+	if strings.TrimSpace(value) == data.ShellSessionTypeBrowser {
+		return data.ShellSessionTypeBrowser
+	}
+	return data.ShellSessionTypeShell
 }
 
 func derefUUID(value *uuid.UUID) uuid.UUID {

@@ -24,6 +24,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 	resolved := ResolveBuiltin(ResolveInput{
 		HasConversationSearch:  true,
 		ArtifactStoreAvailable: true,
+		BrowserEnabled:         true,
 		Env: EnvConfig{
 			MemoryBaseURL: memoryBaseURL,
 		},
@@ -45,6 +46,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 
 	got := resolved.ToolNames()
 	want := []string{
+		"browser",
 		"conversation_search",
 		"document_write",
 		"exec_command",
@@ -62,5 +64,15 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected tool names: got %v want %v", got, want)
+	}
+}
+
+func TestResolveBuiltinHidesBrowserWhenDisabled(t *testing.T) {
+	sandboxBaseURL := "http://sandbox.internal"
+	resolved := ResolveBuiltin(ResolveInput{
+		Env: EnvConfig{SandboxBaseURL: sandboxBaseURL},
+	})
+	if _, ok := resolved.ToolNameSet()["browser"]; ok {
+		t.Fatal("browser should be absent when BrowserEnabled=false")
 	}
 }

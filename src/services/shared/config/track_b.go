@@ -171,6 +171,15 @@ func RegisterTrackB(r *Registry) error {
 		},
 
 		{
+			Key:         "browser.enabled",
+			Type:        TypeBool,
+			Default:     "false",
+			Description: "是否在 Worker 中注册 browser 自动化工具",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+			EnvKeys:     []string{"ARKLOOP_BROWSER_ENABLED"},
+		},
+		{
 			Key:         "sandbox.base_url",
 			Type:        TypeString,
 			Default:     "",

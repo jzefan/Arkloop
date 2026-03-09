@@ -69,6 +69,12 @@ var registry = []ToolMeta{
 		LLMDescription: "send stdin to, or poll output from, a running shell session. Pass the session_ref returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output. Keep using the same session_ref while you need that shell session's /workspace state. In your final response, only keys that actually appear in result.artifacts may be referenced as artifact:<key>. If you want to show a file that exists only in /workspace/, you must use Markdown links: images use ![简短说明](workspace:/relative/path), non-images use [文件名](workspace:/relative/path). Never write workspace:/workspace/...; strip the leading /workspace and use workspace:/... instead. Never output malformed forms like ![workspace:path] or bare workspace:/path. Never invent artifact keys from stdout, stderr, or filenames. Never output raw /workspace/... or /tmp/output/... paths as user links.",
 	},
 	{
+		Name:           "browser",
+		Group:          GroupSandbox,
+		Label:          "Browser automation",
+		LLMDescription: "execute browser automation commands in the isolated browser sandbox. Pass command as the raw agent-browser CLI subcommand, for example: navigate <url>, snapshot, click <ref>, type <ref> <text>, tab list, console, network. Omit session_ref to reuse the default browser session for the current run or thread. Pass session_ref only when you need to continue a specific browser session or intentionally create an isolated browser session with that stable reference. Prefer browser only when web_search or web_fetch cannot complete the task because the page requires JavaScript rendering, form interaction, login flow reproduction, or DOM inspection.",
+	},
+	{
 		Name:           "memory_search",
 		Group:          GroupMemory,
 		Label:          "Memory search",

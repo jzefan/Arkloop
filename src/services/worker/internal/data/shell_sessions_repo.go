@@ -18,6 +18,9 @@ const (
 	ShellSessionStateBusy   = "busy"
 	ShellSessionStateClosed = "closed"
 
+	ShellSessionTypeShell   = "shell"
+	ShellSessionTypeBrowser = "browser"
+
 	ShellShareScopeRun       = "run"
 	ShellShareScopeThread    = "thread"
 	ShellShareScopeWorkspace = "workspace"
@@ -28,6 +31,7 @@ var ErrShellSessionLeaseConflict = errors.New("shell session writer lease confli
 
 type ShellSessionRecord struct {
 	SessionRef        string
+	SessionType       string
 	OrgID             uuid.UUID
 	ProfileRef        string
 	WorkspaceRef      string
@@ -56,7 +60,17 @@ func (ShellSessionsRepository) GetBySessionRef(
 	orgID uuid.UUID,
 	sessionRef string,
 ) (ShellSessionRecord, error) {
-	return getShellSession(ctx, pool, orgID, sessionRef)
+	return getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
+}
+
+func (ShellSessionsRepository) GetBySessionRefAndType(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	sessionType string,
+) (ShellSessionRecord, error) {
+	return getShellSessionByType(ctx, pool, orgID, sessionRef, sessionType)
 }
 
 func (ShellSessionsRepository) GetLatestByRun(
@@ -64,6 +78,16 @@ func (ShellSessionsRepository) GetLatestByRun(
 	pool *pgxpool.Pool,
 	orgID uuid.UUID,
 	runID uuid.UUID,
+) (ShellSessionRecord, error) {
+	return (ShellSessionsRepository{}).GetLatestByRunAndType(ctx, pool, orgID, runID, ShellSessionTypeShell)
+}
+
+func (ShellSessionsRepository) GetLatestByRunAndType(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	runID uuid.UUID,
+	sessionType string,
 ) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -77,9 +101,11 @@ func (ShellSessionsRepository) GetLatestByRun(
 	if runID == uuid.Nil {
 		return ShellSessionRecord{}, fmt.Errorf("run_id must not be empty")
 	}
+	sessionType = normalizeShellSessionType(sessionType)
 	return scanShellSession(pool.QueryRow(
 		ctx,
 		`SELECT session_ref,
+		        session_type,
 		        org_id,
 		        profile_ref,
 		        workspace_ref,
@@ -101,11 +127,13 @@ func (ShellSessionsRepository) GetLatestByRun(
 		   FROM shell_sessions
 		  WHERE org_id = $1
 		    AND run_id = $2
-		    AND state <> $3
+		    AND session_type = $3
+		    AND state <> $4
 		  ORDER BY last_used_at DESC, updated_at DESC
 		  LIMIT 1`,
 		orgID,
 		runID,
+		sessionType,
 		ShellSessionStateClosed,
 	))
 }
@@ -116,6 +144,17 @@ func (ShellSessionsRepository) GetByDefaultBindingKey(
 	orgID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
+) (ShellSessionRecord, error) {
+	return (ShellSessionsRepository{}).GetByDefaultBindingKeyAndType(ctx, pool, orgID, profileRef, defaultBindingKey, ShellSessionTypeShell)
+}
+
+func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	profileRef string,
+	defaultBindingKey string,
+	sessionType string,
 ) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -134,9 +173,11 @@ func (ShellSessionsRepository) GetByDefaultBindingKey(
 	if defaultBindingKey == "" {
 		return ShellSessionRecord{}, fmt.Errorf("default_binding_key must not be empty")
 	}
+	sessionType = normalizeShellSessionType(sessionType)
 	return scanShellSession(pool.QueryRow(
 		ctx,
 		`SELECT session_ref,
+		        session_type,
 		        org_id,
 		        profile_ref,
 		        workspace_ref,
@@ -159,12 +200,14 @@ func (ShellSessionsRepository) GetByDefaultBindingKey(
 		  WHERE org_id = $1
 		    AND profile_ref = $2
 		    AND default_binding_key = $3
-		    AND state <> $4
+		    AND session_type = $4
+		    AND state <> $5
 		  ORDER BY last_used_at DESC, updated_at DESC
 		  LIMIT 1`,
 		orgID,
 		profileRef,
 		defaultBindingKey,
+		sessionType,
 		ShellSessionStateClosed,
 	))
 }
@@ -189,6 +232,7 @@ func (ShellSessionsRepository) Upsert(
 		ctx,
 		`INSERT INTO shell_sessions (
 			session_ref,
+			session_type,
 			org_id,
 			profile_ref,
 			workspace_ref,
@@ -206,9 +250,10 @@ func (ShellSessionsRepository) Upsert(
 			last_used_at,
 			metadata_json
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16::jsonb
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), $17::jsonb
 		)
 		ON CONFLICT (session_ref) DO UPDATE SET
+			session_type = EXCLUDED.session_type,
 			profile_ref = EXCLUDED.profile_ref,
 			workspace_ref = EXCLUDED.workspace_ref,
 			project_id = EXCLUDED.project_id,
@@ -226,6 +271,7 @@ func (ShellSessionsRepository) Upsert(
 			metadata_json = EXCLUDED.metadata_json,
 			updated_at = now()`,
 		normalized.SessionRef,
+		normalized.SessionType,
 		normalized.OrgID,
 		normalized.ProfileRef,
 		normalized.WorkspaceRef,
@@ -461,7 +507,7 @@ func (ShellSessionsRepository) ReleaseWriterLease(
 	if commandTag.RowsAffected() > 0 {
 		return nil
 	}
-	_, err = getShellSession(ctx, pool, orgID, sessionRef)
+	_, err = getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
 	return err
 }
 
@@ -504,7 +550,7 @@ func (ShellSessionsRepository) ClearFinishedWriterLease(
 	if commandTag.RowsAffected() > 0 {
 		return nil
 	}
-	_, err = getShellSession(ctx, pool, orgID, sessionRef)
+	_, err = getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
 	return err
 }
 
@@ -567,9 +613,11 @@ func (ShellSessionsRepository) GetLiveSessionRefsByRun(
 		   FROM shell_sessions
 		  WHERE org_id = $1
 		    AND run_id = $2
-		    AND state <> $3`,
+		    AND session_type = $3
+		    AND state <> $4`,
 		orgID,
 		runID,
+		ShellSessionTypeShell,
 		ShellSessionStateClosed,
 	)
 	if err != nil {
@@ -596,6 +644,7 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	var metadataRaw []byte
 	err := row.Scan(
 		&record.SessionRef,
+		&record.SessionType,
 		&record.OrgID,
 		&record.ProfileRef,
 		&record.WorkspaceRef,
@@ -625,6 +674,7 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 		record.MetadataJSON = map[string]any{}
 	}
 	record.ShareScope = normalizeShellShareScope(record.ShareScope)
+	record.SessionType = normalizeShellSessionType(record.SessionType)
 	record.State = normalizeShellSessionState(record.State)
 	record.DefaultBindingKey = normalizeOptionalString(record.DefaultBindingKey)
 	record.LeaseOwnerID = normalizeOptionalString(record.LeaseOwnerID)
@@ -632,7 +682,7 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	return record, nil
 }
 
-func getShellSession(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, sessionRef string) (ShellSessionRecord, error) {
+func getShellSessionByType(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, sessionRef string, sessionType string) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -646,9 +696,11 @@ func getShellSession(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, s
 	if sessionRef == "" {
 		return ShellSessionRecord{}, fmt.Errorf("session_ref must not be empty")
 	}
+	sessionType = normalizeShellSessionType(sessionType)
 	return scanShellSession(pool.QueryRow(
 		ctx,
 		`SELECT session_ref,
+		        session_type,
 		        org_id,
 		        profile_ref,
 		        workspace_ref,
@@ -669,9 +721,11 @@ func getShellSession(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, s
 		        updated_at
 		   FROM shell_sessions
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2
+		    AND session_type = $3`,
 		orgID,
 		sessionRef,
+		sessionType,
 	))
 }
 
@@ -683,6 +737,7 @@ func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord,
 	if record.SessionRef == "" {
 		return ShellSessionRecord{}, nil, fmt.Errorf("session_ref must not be empty")
 	}
+	record.SessionType = normalizeShellSessionType(record.SessionType)
 	record.ProfileRef = strings.TrimSpace(record.ProfileRef)
 	if record.ProfileRef == "" {
 		return ShellSessionRecord{}, nil, fmt.Errorf("profile_ref must not be empty")
@@ -717,6 +772,15 @@ func normalizeShellShareScope(value string) string {
 		return strings.TrimSpace(value)
 	default:
 		return ShellShareScopeThread
+	}
+}
+
+func normalizeShellSessionType(value string) string {
+	switch strings.TrimSpace(value) {
+	case ShellSessionTypeBrowser:
+		return ShellSessionTypeBrowser
+	default:
+		return ShellSessionTypeShell
 	}
 }
 
@@ -815,6 +879,7 @@ func acquireWriterLease(
 	}
 	query += `
 	RETURNING session_ref,
+	          session_type,
 	          org_id,
 	          profile_ref,
 	          workspace_ref,
@@ -847,7 +912,7 @@ func detectShellSessionLeaseConflict(ctx context.Context, pool *pgxpool.Pool, or
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	record, err := getShellSession(ctx, pool, orgID, sessionRef)
+	record, err := getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
 	if err != nil {
 		return err
 	}

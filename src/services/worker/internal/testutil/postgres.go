@@ -302,6 +302,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		    ON default_workspace_bindings (workspace_ref)`,
 		`CREATE TABLE shell_sessions (
 			session_ref           TEXT        PRIMARY KEY,
+			session_type          TEXT        NOT NULL DEFAULT 'shell',
 			org_id                UUID        NOT NULL,
 			profile_ref           TEXT        NOT NULL,
 			workspace_ref         TEXT        NOT NULL,
@@ -320,6 +321,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			metadata_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT shell_sessions_session_type_check CHECK (session_type IN ('shell', 'browser')),
 			CONSTRAINT shell_sessions_lease_consistency CHECK (
 				(lease_owner_id IS NULL AND lease_until IS NULL)
 				OR (lease_owner_id IS NOT NULL AND lease_until IS NOT NULL)
@@ -328,11 +330,15 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		`CREATE INDEX idx_shell_sessions_org_thread ON shell_sessions (org_id, thread_id)`,
 		`CREATE INDEX idx_shell_sessions_org_workspace ON shell_sessions (org_id, workspace_ref)`,
 		`CREATE INDEX idx_shell_sessions_org_run ON shell_sessions (org_id, run_id)`,
+		`CREATE INDEX idx_shell_sessions_org_run_type ON shell_sessions (org_id, run_id, session_type)`,
 		`CREATE INDEX idx_shell_sessions_org_lease_until
 		    ON shell_sessions (org_id, lease_until)
 		    WHERE lease_until IS NOT NULL`,
 		`CREATE INDEX idx_shell_sessions_org_profile_default_binding_updated
 		    ON shell_sessions (org_id, profile_ref, default_binding_key, updated_at DESC)
+		    WHERE default_binding_key IS NOT NULL`,
+		`CREATE INDEX idx_shell_sessions_org_profile_binding_type_updated
+		    ON shell_sessions (org_id, profile_ref, session_type, default_binding_key, updated_at DESC)
 		    WHERE default_binding_key IS NOT NULL`,
 		`CREATE TABLE profile_registries (
 			profile_ref             TEXT        PRIMARY KEY,
