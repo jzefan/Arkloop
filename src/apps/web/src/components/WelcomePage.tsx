@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
-import { Glasses, X, Zap } from 'lucide-react'
+import { Glasses } from 'lucide-react'
 import { ChatInput, type Attachment } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
@@ -174,7 +174,7 @@ function FreePlanBadge() {
 }
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentsRef = useRef<Attachment[]>([])
@@ -182,12 +182,23 @@ export function WelcomePage() {
   const [error, setError] = useState<AppError | null>(null)
   const navigate = useNavigate()
   const { t } = useLocale()
+  const draftThreadRef = useRef<ThreadResponse | null>(null)
+  const draftThreadPromiseRef = useRef<Promise<ThreadResponse> | null>(null)
 
   const greeting = useMemo(() => buildGreeting(me?.username ?? null, new Date()), [me?.username])
 
   const revokeDraftAttachment = useCallback((attachment: Attachment) => {
     if (attachment.preview_url) URL.revokeObjectURL(attachment.preview_url)
   }, [])
+
+  const ensureDraftThread = useCallback((): Promise<ThreadResponse> => {
+    if (draftThreadRef.current) return Promise.resolve(draftThreadRef.current)
+    if (draftThreadPromiseRef.current) return draftThreadPromiseRef.current
+    const promise = createThread(accessToken, { title: t.newChatTitle, is_private: isPrivateMode })
+      .then((thread) => { draftThreadRef.current = thread; return thread })
+    draftThreadPromiseRef.current = promise
+    return promise
+  }, [accessToken, isPrivateMode, t.newChatTitle])
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -207,6 +218,7 @@ export function WelcomePage() {
       size: file.size,
       mime_type: file.type || 'application/octet-stream',
       preview_url: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      status: 'uploading' as const,
     }))
     if (newAttachments.length === 0) return
     setAttachments((prev) => {
@@ -214,7 +226,21 @@ export function WelcomePage() {
       const deduped = newAttachments.filter((item) => !existingIDs.has(item.id))
       return [...prev, ...deduped]
     })
-  }, [])
+    for (const att of newAttachments) {
+      ensureDraftThread()
+        .then((thread) => uploadThreadAttachment(accessToken, thread.id, att.file))
+        .then((uploaded) => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+          )
+        })
+        .catch(() => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+          )
+        })
+    }
+  }, [accessToken, ensureDraftThread])
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -242,9 +268,14 @@ export function WelcomePage() {
 
     try {
       const title = deriveTitle(text, t.newChatTitle)
-      const thread = await createThread(accessToken, { title, is_private: isPrivateMode })
+      const thread = draftThreadRef.current
+        ? draftThreadRef.current
+        : await createThread(accessToken, { title, is_private: isPrivateMode })
       const uploaded = await Promise.all(
-        attachments.map(async (attachment) => await uploadThreadAttachment(accessToken, thread.id, attachment.file)),
+        attachments.map(async (attachment) => {
+          if (attachment.uploaded) return attachment.uploaded
+          return await uploadThreadAttachment(accessToken, thread.id, attachment.file)
+        }),
       )
       await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
       const run = await createRun(accessToken, thread.id, personaKey)
@@ -272,10 +303,6 @@ export function WelcomePage() {
     <div className="flex h-full flex-col">
       {/* 顶部 header */}
       <div className="relative z-10 flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        <div className="flex items-center gap-1 text-[var(--c-text-secondary)]" style={{ opacity: 0.8 }}>
-          <Zap size={13} strokeWidth={2.2} />
-          <span className="text-sm font-medium tabular-nums">{creditsBalance.toLocaleString()}</span>
-        </div>
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
         <button
           onClick={onTogglePrivateMode}
@@ -293,7 +320,7 @@ export function WelcomePage() {
 
       {/* 居中内容 */}
       <div
-        className="flex flex-1 flex-col items-center px-5 pt-[16vh]"
+        className="flex flex-1 flex-col items-center px-5 pt-[20vh]"
       >
         {/* FreePlanBadge: 无痕模式折叠收起，搜索模式仅淡出(保持高度避免输入框跳动) */}
         <div

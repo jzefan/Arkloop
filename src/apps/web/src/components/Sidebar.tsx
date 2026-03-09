@@ -321,11 +321,12 @@ export function Sidebar({
                     exit={{ opacity: 0, scale: 0.97 }}
                     transition={{ duration: 0.15, ease: 'easeOut' }}
                     className={[
-                      'group relative flex w-full items-center rounded-[6px] transition-colors',
+                      'group relative flex w-full items-center rounded-[6px]',
                       thread.id === threadId || isMenuOpen
                         ? 'bg-[var(--c-bg-deep)]'
                         : 'hover:bg-[var(--c-bg-deep)]',
                     ].join(' ')}
+                    style={{ transition: 'background-color 60ms ease' }}
                   >
                     {isEditing ? (
                       <input
@@ -341,7 +342,7 @@ export function Sidebar({
                             setEditingThreadId(null)
                           }
                         }}
-                        className="min-w-0 flex-1 bg-transparent px-2 py-[9px] text-[13px] font-[350] text-[var(--c-text-primary)] outline-none"
+                        className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] font-[300] text-[var(--c-text-primary)] outline-none"
                         style={{ border: 'none' }}
                         maxLength={200}
                       />
@@ -349,7 +350,7 @@ export function Sidebar({
                       <button
                         onClick={() => navigate(`/t/${thread.id}`)}
                         className={[
-                          'flex min-w-0 flex-1 items-center gap-2 px-2 py-[9px] text-left text-[13px] font-[350]',
+                          'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[13px] font-[300]',
                           thread.id === threadId
                             ? 'text-[var(--c-text-primary)]'
                             : 'text-[var(--c-text-secondary)]',
