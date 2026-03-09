@@ -313,14 +313,24 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			live_session_id       TEXT        NULL,
 			latest_restore_rev    TEXT        NULL,
 			default_binding_key   TEXT        NULL,
+			lease_owner_id        TEXT        NULL,
+			lease_until           TIMESTAMPTZ NULL,
+			lease_epoch           BIGINT      NOT NULL DEFAULT 0,
 			last_used_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 			metadata_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+			updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT shell_sessions_lease_consistency CHECK (
+				(lease_owner_id IS NULL AND lease_until IS NULL)
+				OR (lease_owner_id IS NOT NULL AND lease_until IS NOT NULL)
+			)
 		)`,
 		`CREATE INDEX idx_shell_sessions_org_thread ON shell_sessions (org_id, thread_id)`,
 		`CREATE INDEX idx_shell_sessions_org_workspace ON shell_sessions (org_id, workspace_ref)`,
 		`CREATE INDEX idx_shell_sessions_org_run ON shell_sessions (org_id, run_id)`,
+		`CREATE INDEX idx_shell_sessions_org_lease_until
+		    ON shell_sessions (org_id, lease_until)
+		    WHERE lease_until IS NOT NULL`,
 		`CREATE INDEX idx_shell_sessions_org_profile_default_binding_updated
 		    ON shell_sessions (org_id, profile_ref, default_binding_key, updated_at DESC)
 		    WHERE default_binding_key IS NOT NULL`,

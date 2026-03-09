@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -268,11 +269,24 @@ func (m *Manager) ForkSession(ctx context.Context, req ForkSessionRequest) (*For
 			}
 		}
 		if err := m.saveRestoreStateLocked(ctx, req.FromSessionID, entry); err != nil {
+			var shellErr *Error
+			if errors.As(err, &shellErr) && shellErr.Code == CodeSessionBusy {
+				entry.mu.Unlock()
+				if _, loadErr := loadLatestRestoreState(ctx, m.stateStore, m.restoreRegistry, req.OrgID, req.FromSessionID); loadErr == nil {
+					goto copyRestoreState
+				} else if objectstore.IsNotFound(loadErr) || errors.Is(loadErr, os.ErrNotExist) {
+					return nil, busyError()
+				} else {
+					return nil, loadErr
+				}
+			}
 			entry.mu.Unlock()
 			return nil, err
 		}
 		entry.mu.Unlock()
 	}
+
+copyRestoreState:
 	revision, err := copyLatestRestoreState(ctx, m.stateStore, m.restoreRegistry, req.OrgID, req.FromSessionID, req.ToSessionID, m.config.RestoreTTL)
 	if err != nil {
 		if objectstore.IsNotFound(err) {

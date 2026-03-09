@@ -240,6 +240,9 @@ func (e *ToolExecutor) executeExecCommand(
 			resolution.Record.LatestRestoreRev = stringPtr(forked)
 		}
 	}
+	if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, reqArgs.TimeoutMs); leaseErr != nil {
+		return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
+	}
 
 	request := execCommandRequest{
 		SessionID:    resolution.SessionRef,
@@ -261,16 +264,25 @@ func (e *ToolExecutor) executeExecCommand(
 		}
 		if fallback != nil {
 			resolution = fallback
+			if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, reqArgs.TimeoutMs); leaseErr != nil {
+				return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
+			}
 			request.SessionID = resolution.SessionRef
 			request.OpenMode = resolution.OpenMode
 			result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
 		}
 	}
 	if result.Error != nil {
+		if isSessionBusy(result.Error) {
+			e.orchestrator.releaseWriterLease(ctx, execCtx, resolution, writerLeaseOwner(execCtx))
+		}
 		return result
 	}
 	resp := decodeExecSessionResult(result.ResultJSON)
 	if resp != nil {
+		if !resp.Running {
+			_ = e.orchestrator.clearFinishedWriterLease(ctx, execCtx, resolution)
+		}
 		e.orchestrator.markResult(ctx, execCtx, resolution, *resp)
 		result.ResultJSON["session_ref"] = resolution.SessionRef
 		result.ResultJSON["share_scope"] = resolution.ShareScope
@@ -296,6 +308,9 @@ func (e *ToolExecutor) executeWriteStdin(
 	if resolveErr != nil {
 		return tools.ExecutionResult{Error: resolveErr, DurationMs: durationMs(started)}
 	}
+	if leaseErr := e.orchestrator.prepareWriteWriterLease(ctx, execCtx, resolution, reqArgs.Chars != ""); leaseErr != nil {
+		return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
+	}
 
 	request := writeStdinRequest{
 		SessionID:   resolution.SessionRef,
@@ -305,10 +320,14 @@ func (e *ToolExecutor) executeWriteStdin(
 	}
 	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/write_stdin", "write_stdin", request, request.OrgID, execCtx.PerToolSoftLimits, started)
 	if result.Error != nil {
+		if reqArgs.Chars != "" && isSessionNotRunning(result.Error) {
+			_ = e.orchestrator.clearFinishedWriterLease(ctx, execCtx, resolution)
+		}
 		return result
 	}
 	resp := decodeExecSessionResult(result.ResultJSON)
 	if resp != nil {
+		e.orchestrator.reconcileWriteWriterLease(ctx, execCtx, resolution, reqArgs.Chars != "", *resp)
 		e.orchestrator.markResult(ctx, execCtx, resolution, *resp)
 		result.ResultJSON["session_ref"] = resolution.SessionRef
 		result.ResultJSON["share_scope"] = resolution.ShareScope
@@ -682,15 +701,19 @@ func mapHTTPError(statusCode int, body []byte, started time.Time) tools.Executio
 	if message == "" {
 		message = fmt.Sprintf("sandbox service returned %d", statusCode)
 	}
+	details := map[string]any{
+		"status_code": statusCode,
+		"code":        parsed.Code,
+	}
+	if strings.TrimSpace(parsed.Code) == "shell.session_busy" {
+		details["retry_via"] = "fork"
+	}
 
 	return tools.ExecutionResult{
 		Error: &tools.ExecutionError{
 			ErrorClass: errorClass,
 			Message:    message,
-			Details: map[string]any{
-				"status_code": statusCode,
-				"code":        parsed.Code,
-			},
+			Details:    details,
 		},
 		DurationMs: durationMs(started),
 	}
@@ -735,4 +758,41 @@ func decodeExecSessionResult(resultJSON map[string]any) *execSessionResponse {
 		return nil
 	}
 	return &result
+}
+
+func shellBusyError(sessionRef string) *tools.ExecutionError {
+	details := map[string]any{
+		"code":      "shell.session_busy",
+		"retry_via": "fork",
+	}
+	if strings.TrimSpace(sessionRef) != "" {
+		details["session_ref"] = strings.TrimSpace(sessionRef)
+	}
+	return &tools.ExecutionError{
+		ErrorClass: errorSandboxError,
+		Message:    "shell session is busy",
+		Details:    details,
+	}
+}
+
+func isSessionBusy(err *tools.ExecutionError) bool {
+	if err == nil {
+		return false
+	}
+	code, _ := err.Details["code"].(string)
+	if strings.TrimSpace(code) == "shell.session_busy" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Message)), "session is busy")
+}
+
+func isSessionNotRunning(err *tools.ExecutionError) bool {
+	if err == nil {
+		return false
+	}
+	code, _ := err.Details["code"].(string)
+	if strings.TrimSpace(code) == "shell.not_running" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Message)), "not running")
 }
