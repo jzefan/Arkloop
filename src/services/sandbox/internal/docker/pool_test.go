@@ -80,3 +80,28 @@ func TestBuildCreatePlan_DefaultNetworkWithEgress(t *testing.T) {
 		t.Fatalf("expected no host port binding, got %v", plan.hostCfg.PortBindings)
 	}
 }
+
+func TestBuildCreatePlan_BrowserUsesBrowserImageAndEgress(t *testing.T) {
+	plan := buildCreatePlan(Config{
+		Image:          "arkloop/sandbox-agent:latest",
+		BrowserImage:   "arkloop/sandbox-browser:dev",
+		AllowEgress:    false,
+		GuestAgentPort: 8080,
+	}, "browser")
+
+	if plan.containerCfg.Image != "arkloop/sandbox-browser:dev" {
+		t.Fatalf("expected browser image, got %q", plan.containerCfg.Image)
+	}
+	if plan.attachNetworkName != defaultAgentEgressNetworkName {
+		t.Fatalf("expected browser egress network %q, got %q", defaultAgentEgressNetworkName, plan.attachNetworkName)
+	}
+	if plan.hostCfg.NetworkMode != container.NetworkMode(defaultAgentEgressNetworkName) {
+		t.Fatalf("expected browser network mode %q, got %q", defaultAgentEgressNetworkName, plan.hostCfg.NetworkMode)
+	}
+	if plan.hostCfg.Resources.Memory != 512*1024*1024 {
+		t.Fatalf("unexpected browser memory limit: %d", plan.hostCfg.Resources.Memory)
+	}
+	if len(plan.hostCfg.PortBindings) != 0 {
+		t.Fatalf("expected browser port bindings empty, got %v", plan.hostCfg.PortBindings)
+	}
+}

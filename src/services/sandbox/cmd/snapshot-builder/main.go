@@ -56,7 +56,7 @@ func run(args []string) error {
 
 func runCreate(cfg app.Config, args []string) error {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
-	templateID := fs.String("template", "", "template ID to build (e.g. python3.12-lite)")
+	templateID := fs.String("template", "", "template ID to build (e.g. python3.12-lite or chromium-browser)")
 	all := fs.Bool("all", false, "build snapshots for all templates that are missing")
 
 	if err := fs.Parse(args); err != nil {

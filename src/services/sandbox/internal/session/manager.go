@@ -45,12 +45,11 @@ type DeleteOptions struct {
 
 // ManagerConfig 持有 Manager 所需的外部配置。
 type ManagerConfig struct {
-	MaxSessions        int
-	Pool               VMPool
-	IdleTimeoutLite    int // 秒
-	IdleTimeoutPro     int
-	MaxLifetimeSeconds int
-	BeforeDelete       BeforeDeleteFunc
+	MaxSessions  int
+	Pool         VMPool
+	IdleTimeouts map[string]int // 秒
+	MaxLifetimes map[string]int // 秒
+	BeforeDelete BeforeDeleteFunc
 }
 
 // Manager 线程安全地管理所有活跃 Session（microVM 实例）。
@@ -147,7 +146,7 @@ func (m *Manager) acquireAndBind(ctx context.Context, sessionID, tier, orgID str
 	s.ID = sessionID
 	s.OrgID = orgID
 	s.IdleTimeout = time.Duration(m.idleTimeoutFor(tier)) * time.Second
-	s.MaxLifetime = time.Duration(m.cfg.MaxLifetimeSeconds) * time.Second
+	s.MaxLifetime = time.Duration(m.maxLifetimeFor(tier)) * time.Second
 	s.StartTimers(m.onSessionExpired)
 
 	m.mu.Lock()
@@ -276,12 +275,17 @@ func (m *Manager) onSessionExpired(sessionID string, reason ExpiryReason) {
 }
 
 func (m *Manager) idleTimeoutFor(tier string) int {
-	switch tier {
-	case "pro":
-		return m.cfg.IdleTimeoutPro
-	default:
-		return m.cfg.IdleTimeoutLite
+	if timeout, ok := m.cfg.IdleTimeouts[tier]; ok {
+		return timeout
 	}
+	return m.cfg.IdleTimeouts[TierLite]
+}
+
+func (m *Manager) maxLifetimeFor(tier string) int {
+	if lifetime, ok := m.cfg.MaxLifetimes[tier]; ok {
+		return lifetime
+	}
+	return m.cfg.MaxLifetimes[TierLite]
 }
 
 // WaitForAgent 轮询等待 Guest Agent vsock 端口就绪。

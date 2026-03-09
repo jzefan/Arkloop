@@ -23,7 +23,7 @@ type ExecRequest struct {
 	OrgID        string `json:"org_id"`
 	ProfileRef   string `json:"profile_ref,omitempty"`
 	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier"`     // "lite" | "pro"
+	Tier         string `json:"tier"`     // "lite" | "pro" | "browser"
 	Language     string `json:"language"` // "python" | "shell"
 	Code         string `json:"code"`
 	TimeoutMs    int    `json:"timeout_ms"` // 0 表示使用服务端默认值（30s）

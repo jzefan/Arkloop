@@ -103,11 +103,18 @@ func run() error {
 	restoreRegistry := shell.NewPGSessionRestoreRegistry(dbPool)
 
 	mgr := session.NewManager(session.ManagerConfig{
-		MaxSessions:        cfg.MaxSessions,
-		Pool:               vmPool,
-		IdleTimeoutLite:    cfg.IdleTimeoutLite,
-		IdleTimeoutPro:     cfg.IdleTimeoutPro,
-		MaxLifetimeSeconds: cfg.MaxLifetimeSeconds,
+		MaxSessions: cfg.MaxSessions,
+		Pool:        vmPool,
+		IdleTimeouts: map[string]int{
+			session.TierLite:    cfg.IdleTimeoutSeconds(session.TierLite),
+			session.TierPro:     cfg.IdleTimeoutSeconds(session.TierPro),
+			session.TierBrowser: cfg.IdleTimeoutSeconds(session.TierBrowser),
+		},
+		MaxLifetimes: map[string]int{
+			session.TierLite:    cfg.MaxLifetimeSecondsFor(session.TierLite),
+			session.TierPro:     cfg.MaxLifetimeSecondsFor(session.TierPro),
+			session.TierBrowser: cfg.MaxLifetimeSecondsFor(session.TierBrowser),
+		},
 	})
 	envMgr := environment.NewManager(envStore, registryWriter, logger, environment.Config{
 		DebounceDelay:       time.Duration(cfg.FlushDebounceMS) * time.Millisecond,
@@ -260,6 +267,7 @@ func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool
 		RefillIntervalSeconds: cfg.RefillIntervalSeconds,
 		MaxRefillConcurrency:  cfg.RefillConcurrency,
 		Image:                 cfg.DockerImage,
+		BrowserImage:          cfg.BrowserDockerImage,
 		AllowEgress:           cfg.AllowEgress,
 		NetworkName:           cfg.DockerNetwork,
 		GuestAgentPort:        cfg.GuestAgentPort,
