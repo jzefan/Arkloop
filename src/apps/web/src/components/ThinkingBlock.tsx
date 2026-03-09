@@ -13,24 +13,29 @@ export type CodeExecution = {
   sessionId?: string
 }
 
-export function CodeExecutionCard({ language, code, output, onOpen }: {
+export function CodeExecutionCard({ language, code, output, onOpen, isActive }: {
   language: 'python' | 'shell'
   code?: string
   output?: string
   exitCode?: number
   onOpen?: () => void
+  isActive?: boolean
 }) {
   const isPython = language === 'python'
   const hasDetail = !!(code || output)
+  const clickable = hasDetail && !!onOpen
 
   return (
     <div
+      className={clickable ? 'code-exec-card-clickable' : undefined}
+      data-active={isActive || undefined}
       style={{
         borderRadius: '7px',
         border: '0.5px solid var(--c-border-subtle)',
         background: 'var(--c-bg-page)',
         width: 'fit-content',
         maxWidth: '100%',
+        boxShadow: isActive ? '0 0 0 1.5px var(--c-text-secondary)' : 'none',
       }}
     >
       <button

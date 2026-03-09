@@ -11,6 +11,7 @@ button:not(:disabled) {
   --c-bg-sidebar: #242422;
   --c-bg-deep: #141413;
   --c-bg-sub: #1e1e1c;
+  --c-bg-card-hover: #2a2a28;
   --c-bg-input: #30302e;
   --c-bg-plus: #363633;
   --c-bg-menu: #2a2a28;
@@ -65,6 +66,7 @@ button:not(:disabled) {
     --c-bg-sidebar: #FAFAFA;
     --c-bg-deep: #EBEBEB;
     --c-bg-sub: #EBEBEB;
+    --c-bg-card-hover: #EFEFED;
     --c-bg-input: #FFFFFF;
     --c-bg-plus: #E5E5E3;
     --c-bg-menu: #FFFFFF;
@@ -119,6 +121,7 @@ button:not(:disabled) {
   --c-bg-sidebar: #FAFAFA;
   --c-bg-deep: #EBEBEB;
   --c-bg-sub: #EBEBEB;
+  --c-bg-card-hover: #EFEFED;
   --c-bg-input: #FFFFFF;
   --c-bg-plus: #E5E5E3;
   --c-bg-menu: #FFFFFF;
@@ -541,5 +544,18 @@ button:not(:disabled) {
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--c-scrollbar) transparent;
+  }
+
+  .shell-exec-trigger:hover .shell-exec-label {
+    color: var(--c-text-secondary) !important;
+  }
+
+  .code-exec-card-clickable {
+    cursor: pointer;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .code-exec-card-clickable:hover {
+    background: var(--c-bg-card-hover) !important;
   }
 }

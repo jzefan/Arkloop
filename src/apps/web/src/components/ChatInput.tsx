@@ -38,12 +38,17 @@ type Props = {
   onPersonaChange?: (personaKey: string) => void
 }
 
+const FALLBACK_SELECTOR_NAMES: Record<string, string> = {
+  [DEFAULT_PERSONA_KEY]: 'Normal',
+  [SEARCH_PERSONA_KEY]: 'Search',
+}
+
 function buildFallbackSelectablePersonas(selectedPersonaKey: string): SelectablePersona[] {
   const keys = [DEFAULT_PERSONA_KEY]
   if (selectedPersonaKey !== DEFAULT_PERSONA_KEY) keys.push(selectedPersonaKey)
   return keys.map((personaKey, index) => ({
     persona_key: personaKey,
-    selector_name: personaKey,
+    selector_name: FALLBACK_SELECTOR_NAMES[personaKey] ?? personaKey,
     selector_order: index,
   }))
 }
@@ -320,8 +325,26 @@ export function ChatInput({
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
+    const from = el.offsetHeight
+    el.style.transition = 'none'
+    el.style.overflow = 'hidden'
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+    const to = Math.min(el.scrollHeight, 200)
+    if (from === to) {
+      el.style.overflow = 'auto'
+      el.style.height = `${to}px`
+      return
+    }
+    el.style.height = `${from}px`
+    requestAnimationFrame(() => {
+      el.style.transition = 'height 30ms cubic-bezier(0.25, 0.1, 0.25, 1)'
+      el.style.height = `${to}px`
+    })
+    const restore = () => {
+      el.style.overflow = 'auto'
+      el.removeEventListener('transitionend', restore)
+    }
+    el.addEventListener('transitionend', restore, { once: true })
   }, [])
 
   useEffect(() => {
