@@ -176,15 +176,21 @@ export function Sidebar({
       ].join(' ')}
       style={{
         transition: 'width 280ms cubic-bezier(0.16,1,0.3,1)',
+        willChange: 'width',
         ...(collapsed ? {} : { borderRight: '0.5px solid rgba(0,0,0,0.16)' }),
       }}
     >
       <div
         className={[
-          'flex min-h-0 flex-1 flex-col transition-opacity',
-          narrow ? 'min-w-[240px]' : 'min-w-[304px]',
-          collapsed ? 'opacity-0 duration-100' : 'opacity-100 delay-150 duration-200',
+          'flex min-h-0 flex-1 flex-col',
+          collapsed ? 'opacity-0' : 'opacity-100',
         ].join(' ')}
+        style={{
+          minWidth: narrow ? '240px' : '304px',
+          transition: collapsed
+            ? 'min-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 100ms'
+            : 'min-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 200ms 150ms',
+        }}
       >
       {/* 顶部标题栏 */}
       <div className="flex min-h-[56px] items-center justify-between px-4 py-3">

@@ -496,7 +496,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
                   transition: 'background 150ms',
                   fontFamily: 'inherit',
                 }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-plus)' }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center' }}>
