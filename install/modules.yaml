@@ -129,6 +129,7 @@ modules:
     description: Self-hosted management console (7 pages)
     compose_service: console-lite
     depends_on: [api, gateway]
+    mutually_exclusive: [console]
     capabilities:
       installable: true
       configurable: false
@@ -148,7 +149,9 @@ modules:
     category: optional
     description: Full management console (~35 pages)
     compose_service: console
+    compose_profile: console-full
     depends_on: [api, gateway]
+    mutually_exclusive: [console-lite]
     capabilities:
       installable: true
       configurable: false
@@ -228,9 +231,10 @@ modules:
   browser:
     category: optional
     description: Browser automation (Node + Chromium, as Sandbox browser tier)
-    compose_service: browser
-    compose_profile: browser
+    compose_service: sandbox-docker
+    compose_profile: docker-sandbox
     depends_on: [sandbox-docker]
+    virtual: true
     platform_constraints:
       requires_docker: true
     capabilities:

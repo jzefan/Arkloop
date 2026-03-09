@@ -32,17 +32,16 @@ The fastest way to experience Arkloop -- zero setup, fully managed.
 
 ### Self-hosting
 
-> System requirements: Docker and Docker Compose installed, 2+ CPU cores, 4+ GiB RAM.
+> System requirements: Docker, Docker Compose, and Python 3 installed, 2+ CPU cores, 4+ GiB RAM.
 
 ```bash
 git clone https://github.com/qqqqqf/Arkloop.git
 cd Arkloop
-cp .env.example .env
-# Edit .env -- set passwords, API keys, and LLM credentials
-docker compose up -d
+./setup.sh install
 ```
 
-Once all services are healthy, access the web interface at `http://localhost:8000`.
+For a non-interactive install, pass explicit parser flags to `./setup.sh install --non-interactive ...`.
+Once the install is healthy, access the Console entry at `http://localhost:8000`.
 
 For host-level debugging ports such as PostgreSQL, API, Sandbox, or OpenViking, opt in explicitly:
 

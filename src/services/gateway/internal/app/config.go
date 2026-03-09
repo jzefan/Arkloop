@@ -14,20 +14,21 @@ import (
 )
 
 const (
-	gatewayAddrEnv         = "ARKLOOP_GATEWAY_ADDR"
-	gatewayUpstreamEnv     = "ARKLOOP_GATEWAY_UPSTREAM"
-	redisURLEnv            = "ARKLOOP_REDIS_URL"
-	gatewayRedisURLEnv     = "ARKLOOP_GATEWAY_REDIS_URL"
-	jwtSecretEnv           = "ARKLOOP_AUTH_JWT_SECRET"
-	enableBenchzEnv        = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
-	redisTimeoutMsEnv      = "ARKLOOP_GATEWAY_REDIS_TIMEOUT_MS"
-	trustTraceIDEnv        = "ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID"
-	corsAllowedOriginsEnv  = "ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS"
-	ipModeEnv              = "ARKLOOP_GATEWAY_IP_MODE"
-	trustedCIDRsEnv        = "ARKLOOP_GATEWAY_TRUSTED_CIDRS"
-	geoIPDBPathEnv         = "ARKLOOP_GEOIP_DB_PATH"
-	geoIPLicenseKeyEnv     = "ARKLOOP_GEOIP_LICENSE_KEY"
-	riskRejectThresholdEnv = "ARKLOOP_GATEWAY_RISK_REJECT_THRESHOLD"
+	gatewayAddrEnv            = "ARKLOOP_GATEWAY_ADDR"
+	gatewayUpstreamEnv        = "ARKLOOP_GATEWAY_UPSTREAM"
+	gatewayFrontendEnv        = "ARKLOOP_GATEWAY_FRONTEND_UPSTREAM"
+	redisURLEnv               = "ARKLOOP_REDIS_URL"
+	gatewayRedisURLEnv        = "ARKLOOP_GATEWAY_REDIS_URL"
+	jwtSecretEnv              = "ARKLOOP_AUTH_JWT_SECRET"
+	enableBenchzEnv           = "ARKLOOP_GATEWAY_ENABLE_BENCHZ"
+	redisTimeoutMsEnv         = "ARKLOOP_GATEWAY_REDIS_TIMEOUT_MS"
+	trustTraceIDEnv           = "ARKLOOP_GATEWAY_TRUST_INCOMING_TRACE_ID"
+	corsAllowedOriginsEnv     = "ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS"
+	ipModeEnv                 = "ARKLOOP_GATEWAY_IP_MODE"
+	trustedCIDRsEnv           = "ARKLOOP_GATEWAY_TRUSTED_CIDRS"
+	geoIPDBPathEnv            = "ARKLOOP_GEOIP_DB_PATH"
+	geoIPLicenseKeyEnv        = "ARKLOOP_GEOIP_LICENSE_KEY"
+	riskRejectThresholdEnv    = "ARKLOOP_GATEWAY_RISK_REJECT_THRESHOLD"
 
 	defaultAddr       = "0.0.0.0:8000"
 	defaultUpstream   = "http://127.0.0.1:8001"
@@ -39,6 +40,7 @@ const (
 var defaultCORSAllowedOrigins = []string{
 	"http://localhost:5173",
 	"http://localhost:5174",
+	"http://localhost:5175",
 }
 
 type IPMode string
@@ -52,6 +54,7 @@ const (
 type Config struct {
 	Addr                 string
 	Upstream             string
+	FrontendUpstream     string
 	RedisURL             string
 	RedisTimeout         time.Duration
 	JWTSecret            string
@@ -86,6 +89,7 @@ func LoadConfigFromEnv() (Config, error) {
 	if raw := strings.TrimSpace(os.Getenv(gatewayUpstreamEnv)); raw != "" {
 		cfg.Upstream = raw
 	}
+	cfg.FrontendUpstream = strings.TrimSpace(os.Getenv(gatewayFrontendEnv))
 	cfg.RedisURL = strings.TrimSpace(os.Getenv(gatewayRedisURLEnv))
 	if cfg.RedisURL == "" {
 		cfg.RedisURL = strings.TrimSpace(os.Getenv(redisURLEnv))
@@ -163,9 +167,13 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Upstream) == "" {
 		return fmt.Errorf("upstream must not be empty")
 	}
-	u, err := url.Parse(c.Upstream)
-	if err != nil || strings.TrimSpace(u.Host) == "" {
-		return fmt.Errorf("upstream must be a valid URL with host: %s", c.Upstream)
+	if err := validateUpstreamURL(c.Upstream, "upstream"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.FrontendUpstream) != "" {
+		if err := validateUpstreamURL(c.FrontendUpstream, "frontend_upstream"); err != nil {
+			return err
+		}
 	}
 
 	switch c.IPMode {
@@ -184,6 +192,14 @@ func (c Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateUpstreamURL(raw string, label string) error {
+	u, err := url.Parse(raw)
+	if err != nil || strings.TrimSpace(u.Host) == "" {
+		return fmt.Errorf("%s must be a valid URL with host: %s", label, raw)
+	}
 	return nil
 }
 

@@ -118,6 +118,7 @@ services:
     environment:
       ARKLOOP_GATEWAY_ADDR: "0.0.0.0:8000"
       ARKLOOP_GATEWAY_UPSTREAM: "${ARKLOOP_GATEWAY_UPSTREAM:-http://api:8001}"
+      ARKLOOP_GATEWAY_FRONTEND_UPSTREAM: "${ARKLOOP_GATEWAY_FRONTEND_UPSTREAM:-http://console-lite:80}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
       ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/1"
       ARKLOOP_AUTH_JWT_SECRET: "${ARKLOOP_AUTH_JWT_SECRET}"
@@ -137,6 +138,30 @@ services:
       interval: 15s
       timeout: 3s
       retries: 20
+
+  console-lite:
+    build:
+      context: .
+      dockerfile: src/apps/console-lite/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+
+  console:
+    build:
+      context: .
+      dockerfile: src/apps/console/Dockerfile
+    restart: unless-stopped
+    profiles:
+      - console-full
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
 
   pgbouncer:
     image: edoburu/pgbouncer:latest

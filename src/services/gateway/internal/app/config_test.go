@@ -7,10 +7,10 @@ import (
 
 func TestDefaultConfigIncludesLocalCORSOrigins(t *testing.T) {
 	cfg := DefaultConfig()
-	if len(cfg.CORSAllowedOrigins) != 2 {
+	if len(cfg.CORSAllowedOrigins) != 3 {
 		t.Fatalf("unexpected default origins: %#v", cfg.CORSAllowedOrigins)
 	}
-	if cfg.CORSAllowedOrigins[0] != "http://localhost:5173" || cfg.CORSAllowedOrigins[1] != "http://localhost:5174" {
+	if cfg.CORSAllowedOrigins[0] != "http://localhost:5173" || cfg.CORSAllowedOrigins[1] != "http://localhost:5174" || cfg.CORSAllowedOrigins[2] != "http://localhost:5175" {
 		t.Fatalf("unexpected default origins: %#v", cfg.CORSAllowedOrigins)
 	}
 }
@@ -34,5 +34,18 @@ func TestLoadConfigFromEnvParsesCORSAllowedOrigins(t *testing.T) {
 	}
 	if cfg.CORSAllowedOrigins[0] != "https://app.example.com" || cfg.CORSAllowedOrigins[1] != "https://console.example.com" {
 		t.Fatalf("unexpected origins: %#v", cfg.CORSAllowedOrigins)
+	}
+}
+
+
+func TestLoadConfigFromEnvParsesFrontendUpstream(t *testing.T) {
+	t.Setenv(gatewayFrontendEnv, "http://console-lite:80")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
+	if cfg.FrontendUpstream != "http://console-lite:80" {
+		t.Fatalf("unexpected frontend upstream: %q", cfg.FrontendUpstream)
 	}
 }
