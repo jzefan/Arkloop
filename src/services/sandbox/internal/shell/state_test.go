@@ -35,7 +35,7 @@ func TestLoadLatestRestoreStateExpiredClearsBinding(t *testing.T) {
 
 func TestManagerSweepExpiredRestoreStatesClearsMissingBinding(t *testing.T) {
 	pool := &fakePool{agent: &fakeAgent{}}
-	compute := session.NewManager(session.ManagerConfig{MaxSessions: 10, Pool: pool, MaxLifetimeSeconds: 3600})
+	compute := session.NewManager(testManagerConfig(pool))
 	store := newMemoryStateStore()
 	registry := NewMemorySessionRestoreRegistry()
 	mgr := NewManager(compute, nil, store, registry, nil, logging.NewJSONLogger("test", nil), Config{})

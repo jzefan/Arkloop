@@ -59,8 +59,25 @@ func TestDefaultConfigAllowEgress(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigBrowserSettings(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.WarmBrowser != 1 {
+		t.Fatalf("unexpected browser warm size: %d", cfg.WarmBrowser)
+	}
+	if cfg.IdleTimeoutBrowser != 120 {
+		t.Fatalf("unexpected browser idle timeout: %d", cfg.IdleTimeoutBrowser)
+	}
+	if cfg.MaxLifetimeBrowserSeconds != 600 {
+		t.Fatalf("unexpected browser max lifetime: %d", cfg.MaxLifetimeBrowserSeconds)
+	}
+	if cfg.BrowserDockerImage != "arkloop/sandbox-browser:dev" {
+		t.Fatalf("unexpected browser docker image: %s", cfg.BrowserDockerImage)
+	}
+}
+
 func TestLoadConfigFromEnvAllowEgress(t *testing.T) {
 	t.Setenv("ARKLOOP_SANDBOX_ALLOW_EGRESS", "false")
+	t.Setenv("ARKLOOP_SANDBOX_WARM_BROWSER", "0")
 	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
 	unsetSandboxConfigRegistryEnv(t)
 
@@ -94,6 +111,52 @@ func TestLoadConfigFromEnvFirecrackerDNS(t *testing.T) {
 	}
 	if len(cfg.FirecrackerDNS) != 2 {
 		t.Fatalf("unexpected dns list: %#v", cfg.FirecrackerDNS)
+	}
+}
+
+func TestLoadConfigFromEnvBrowserSettings(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
+	t.Setenv("ARKLOOP_SANDBOX_BROWSER_DOCKER_IMAGE", "arkloop/sandbox-browser:test")
+	t.Setenv("ARKLOOP_SANDBOX_WARM_BROWSER", "2")
+	t.Setenv("ARKLOOP_SANDBOX_IDLE_TIMEOUT_BROWSER", "90")
+	t.Setenv("ARKLOOP_SANDBOX_MAX_LIFETIME_BROWSER", "480")
+	unsetSandboxConfigRegistryEnv(t)
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.BrowserDockerImage != "arkloop/sandbox-browser:test" {
+		t.Fatalf("unexpected browser image: %s", cfg.BrowserDockerImage)
+	}
+	if cfg.WarmBrowser != 2 || cfg.IdleTimeoutBrowser != 90 || cfg.MaxLifetimeBrowserSeconds != 480 {
+		t.Fatalf("unexpected browser config: %#v", cfg)
+	}
+}
+
+func TestLoadConfigFromEnvBrowserWarmZeroAllowedWhenNoEgress(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
+	t.Setenv("ARKLOOP_SANDBOX_ALLOW_EGRESS", "false")
+	t.Setenv("ARKLOOP_SANDBOX_WARM_BROWSER", "0")
+	unsetSandboxConfigRegistryEnv(t)
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.WarmBrowser != 0 {
+		t.Fatalf("unexpected browser warm size: %d", cfg.WarmBrowser)
+	}
+}
+
+func TestLoadConfigFromEnvBrowserWarmRequiresEgress(t *testing.T) {
+	t.Setenv("ARKLOOP_SANDBOX_ADDR", "127.0.0.1:8002")
+	t.Setenv("ARKLOOP_SANDBOX_ALLOW_EGRESS", "false")
+	t.Setenv("ARKLOOP_SANDBOX_WARM_BROWSER", "1")
+	unsetSandboxConfigRegistryEnv(t)
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatal("expected browser warm pool validation error")
 	}
 }
 

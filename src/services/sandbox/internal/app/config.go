@@ -18,27 +18,28 @@ import (
 
 // 部署级别的 ENV（文件路径、地址、凭证 -- 不进 registry，不能从 console 改）
 const (
-	sandboxAddrEnv        = "ARKLOOP_SANDBOX_ADDR"
-	sandboxAuthTokenEnv   = "ARKLOOP_SANDBOX_AUTH_TOKEN"
-	restoreTTLEnv         = "ARKLOOP_SANDBOX_RESTORE_TTL_DAYS"
-	flushDebounceMSEnv    = "ARKLOOP_SANDBOX_FLUSH_DEBOUNCE_MS"
-	flushMaxDirtyAgeMSEnv = "ARKLOOP_SANDBOX_FLUSH_MAX_DIRTY_AGE_MS"
-	flushForceBytesEnv    = "ARKLOOP_SANDBOX_FLUSH_FORCE_BYTES_THRESHOLD"
-	flushForceCountEnv    = "ARKLOOP_SANDBOX_FLUSH_FORCE_COUNT_THRESHOLD"
-	allowEgressEnv        = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
-	dockerNetworkEnv      = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
-	firecrackerBinEnv     = "ARKLOOP_FIRECRACKER_BIN"
-	kernelImagePathEnv    = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
-	rootfsPathEnv         = "ARKLOOP_SANDBOX_ROOTFS"
-	socketBaseDirEnv      = "ARKLOOP_SANDBOX_SOCKET_DIR"
-	templatesPathEnv      = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
-	firecrackerIfaceEnv   = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
-	firecrackerTapEnv     = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
-	firecrackerCIDREnv    = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
-	firecrackerDNSEnv     = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
-	s3EndpointEnv         = "ARKLOOP_S3_ENDPOINT"
-	s3AccessKeyEnv        = "ARKLOOP_S3_ACCESS_KEY"
-	s3SecretKeyEnv        = "ARKLOOP_S3_SECRET_KEY"
+	sandboxAddrEnv           = "ARKLOOP_SANDBOX_ADDR"
+	sandboxAuthTokenEnv      = "ARKLOOP_SANDBOX_AUTH_TOKEN"
+	restoreTTLEnv            = "ARKLOOP_SANDBOX_RESTORE_TTL_DAYS"
+	legacySessionStateTTLEnv = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
+	flushDebounceMSEnv       = "ARKLOOP_SANDBOX_FLUSH_DEBOUNCE_MS"
+	flushMaxDirtyAgeMSEnv    = "ARKLOOP_SANDBOX_FLUSH_MAX_DIRTY_AGE_MS"
+	flushForceBytesEnv       = "ARKLOOP_SANDBOX_FLUSH_FORCE_BYTES_THRESHOLD"
+	flushForceCountEnv       = "ARKLOOP_SANDBOX_FLUSH_FORCE_COUNT_THRESHOLD"
+	allowEgressEnv           = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
+	dockerNetworkEnv         = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
+	firecrackerBinEnv        = "ARKLOOP_FIRECRACKER_BIN"
+	kernelImagePathEnv       = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	rootfsPathEnv            = "ARKLOOP_SANDBOX_ROOTFS"
+	socketBaseDirEnv         = "ARKLOOP_SANDBOX_SOCKET_DIR"
+	templatesPathEnv         = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	firecrackerIfaceEnv      = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
+	firecrackerTapEnv        = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
+	firecrackerCIDREnv       = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
+	firecrackerDNSEnv        = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
+	s3EndpointEnv            = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv           = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv           = "ARKLOOP_S3_SECRET_KEY"
 )
 
 // Provider 标识 sandbox 后端类型。
@@ -144,7 +145,7 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.Addr = raw
 	}
 	cfg.AuthToken = strings.TrimSpace(os.Getenv(sandboxAuthTokenEnv))
-	if raw, ok := os.LookupEnv(restoreTTLEnv); ok {
+	if raw, ok := lookupEnvFirst(restoreTTLEnv, legacySessionStateTTLEnv); ok {
 		value, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil || value < 0 {
 			return cfg, fmt.Errorf("restore_ttl_days must be zero or positive")

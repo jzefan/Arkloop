@@ -53,7 +53,8 @@ type Config struct {
 	RefillIntervalSeconds int
 	MaxRefillConcurrency  int
 
-	Image          string // sandbox-agent 容器镜像
+	Image          string // sandbox-agent 容器镜像（lite/pro）
+	BrowserImage   string // sandbox-agent 容器镜像（browser）
 	AllowEgress    bool   // 允许派生容器访问外网
 	NetworkName    string // agent 容器加入的 Docker 网络；非空时通过容器 IP 连接
 	GuestAgentPort uint32
@@ -338,22 +339,38 @@ type createPlan struct {
 	agentPort         string
 	dialByContainerIP bool
 	attachNetworkName string
+	image             string
+}
+
+func imageForTier(cfg Config, tier string) string {
+	if tier == session.TierBrowser && strings.TrimSpace(cfg.BrowserImage) != "" {
+		return cfg.BrowserImage
+	}
+	return cfg.Image
+}
+
+func usesEgress(cfg Config, tier string) bool {
+	if tier == session.TierBrowser {
+		return true
+	}
+	return cfg.AllowEgress
 }
 
 func buildCreatePlan(cfg Config, tier string) createPlan {
 	res := resourcesFor(tier)
 	agentPort := strconv.FormatUint(uint64(cfg.GuestAgentPort), 10)
 	exposedPort := nat.Port(agentPort + "/tcp")
+	image := imageForTier(cfg, tier)
 
 	egressNetworkName := dockerEgressNetworkName(cfg.NetworkName)
 	attachNetworkName := dockerInternalNetworkName(egressNetworkName)
-	if cfg.AllowEgress {
+	if usesEgress(cfg, tier) {
 		attachNetworkName = egressNetworkName
 	}
 	dialByContainerIP := attachNetworkName != ""
 
 	containerCfg := &container.Config{
-		Image: cfg.Image,
+		Image: image,
 		User:  "1000:1000",
 		Env: []string{
 			"SANDBOX_AGENT_LISTEN=tcp",
@@ -398,11 +415,16 @@ func buildCreatePlan(cfg Config, tier string) createPlan {
 		agentPort:         agentPort,
 		dialByContainerIP: dialByContainerIP,
 		attachNetworkName: attachNetworkName,
+		image:             image,
 	}
 }
 
 // createContainer 创建并启动一个 sandbox 容器，返回就绪的 entry。
 func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error) {
+	if tier == session.TierBrowser && !p.cfg.AllowEgress {
+		return nil, fmt.Errorf("browser tier requires allow_egress=true")
+	}
+
 	id := generateID()
 
 	socketDir := fmt.Sprintf("%s/%s", p.cfg.SocketBaseDir, id)
@@ -466,7 +488,7 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 	s := &session.Session{
 		ID:         id,
 		Tier:       tier,
-		AgentImage: p.cfg.Image,
+		AgentImage: plan.image,
 		Dial:       session.NewTCPDialer(agentAddr),
 		CreatedAt:  time.Now(),
 		SocketDir:  socketDir,
@@ -485,18 +507,34 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 
 // EnsureImage 确保 sandbox 镜像存在于本地。
 func (p *Pool) EnsureImage(ctx context.Context) error {
-	_, err := p.cli.ImageInspect(ctx, p.cfg.Image)
+	seen := make(map[string]struct{})
+	for _, tier := range []string{session.TierLite, session.TierPro, session.TierBrowser} {
+		imageName := strings.TrimSpace(imageForTier(p.cfg, tier))
+		if imageName == "" {
+			continue
+		}
+		if _, ok := seen[imageName]; ok {
+			continue
+		}
+		seen[imageName] = struct{}{}
+		if err := p.ensureSingleImage(ctx, imageName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Pool) ensureSingleImage(ctx context.Context, imageName string) error {
+	_, err := p.cli.ImageInspect(ctx, imageName)
 	if err == nil {
-		p.cfg.Logger.Info("sandbox image ready", logging.LogFields{}, map[string]any{"image": p.cfg.Image})
+		p.cfg.Logger.Info("sandbox image ready", logging.LogFields{}, map[string]any{"image": imageName})
 		return nil
 	}
 
-	p.cfg.Logger.Info("pulling sandbox image", logging.LogFields{},
-		map[string]any{"image": p.cfg.Image})
-
-	reader, err := p.cli.ImagePull(ctx, p.cfg.Image, image.PullOptions{})
+	p.cfg.Logger.Info("pulling sandbox image", logging.LogFields{}, map[string]any{"image": imageName})
+	reader, err := p.cli.ImagePull(ctx, imageName, image.PullOptions{})
 	if err != nil {
-		return fmt.Errorf("pull image %s: %w", p.cfg.Image, err)
+		return fmt.Errorf("pull image %s: %w", imageName, err)
 	}
 	defer reader.Close()
 	_, _ = io.Copy(io.Discard, reader)

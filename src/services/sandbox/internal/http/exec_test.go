@@ -127,11 +127,18 @@ func TestExecHandler_OrgMismatch_Returns403(t *testing.T) {
 
 func newTestManager() *session.Manager {
 	return session.NewManager(session.ManagerConfig{
-		MaxSessions:        100,
-		Pool:               &noopPool{},
-		IdleTimeoutLite:    0,
-		IdleTimeoutPro:     0,
-		MaxLifetimeSeconds: 3600,
+		MaxSessions: 100,
+		Pool:        &noopPool{},
+		IdleTimeouts: map[string]int{
+			session.TierLite:    0,
+			session.TierPro:     0,
+			session.TierBrowser: 0,
+		},
+		MaxLifetimes: map[string]int{
+			session.TierLite:    3600,
+			session.TierPro:     3600,
+			session.TierBrowser: 600,
+		},
 	})
 }
 
