@@ -74,10 +74,6 @@ func checkpointManifestKey(orgID, sessionID, revision string) string {
 	return strings.TrimSpace(orgID) + "/" + strings.TrimSpace(sessionID) + "/checkpoints/" + strings.TrimSpace(revision) + "/manifest.json"
 }
 
-func checkpointArchiveKey(orgID, sessionID, revision string) string {
-	return strings.TrimSpace(orgID) + "/" + strings.TrimSpace(sessionID) + "/checkpoints/" + strings.TrimSpace(revision) + "/state.tar.zst"
-}
-
 func saveRestoreState(ctx context.Context, store stateStore, registry SessionRestoreRegistry, state SessionRestoreState) error {
 	if store == nil {
 		return fmt.Errorf("restore state store is required")
