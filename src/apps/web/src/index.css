@@ -61,6 +61,16 @@ button:not(:disabled) {
   --c-code-panel-bg: #141413;
   --c-code-panel-output-bg: rgba(255, 255, 255, 0.04);
   --c-artifact-card-bg: rgba(255, 255, 255, 0.04);
+  --c-attachment-bg: #30302E;
+  --c-attachment-border: rgba(255, 255, 255, 0.11);
+  --c-attachment-border-hover: rgba(255, 255, 255, 0.28);
+  --c-attachment-close-bg: #303030;
+  --c-attachment-close-border: rgba(255, 255, 255, 0.14);
+  --c-attachment-close-icon: rgba(255, 255, 255, 0.4);
+  --c-attachment-close-icon-hover: #C2C087;
+  --c-attachment-badge-border: rgba(255, 255, 255, 0.14);
+  --c-attachment-shimmer-from: #3a3a37;
+  --c-attachment-shimmer-mid: #454542;
 }
 
 @media (prefers-color-scheme: light) {
@@ -120,6 +130,16 @@ button:not(:disabled) {
     --c-code-panel-bg: #F6F4F2;
     --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
     --c-artifact-card-bg: rgba(0, 0, 0, 0.02);
+    --c-attachment-bg: #F0EEEC;
+    --c-attachment-border: rgba(0, 0, 0, 0.08);
+    --c-attachment-border-hover: rgba(0, 0, 0, 0.20);
+    --c-attachment-close-bg: #E5E5E3;
+    --c-attachment-close-border: rgba(0, 0, 0, 0.10);
+    --c-attachment-close-icon: rgba(0, 0, 0, 0.35);
+    --c-attachment-close-icon-hover: #6B6B68;
+    --c-attachment-badge-border: rgba(0, 0, 0, 0.10);
+    --c-attachment-shimmer-from: #E5E5E3;
+    --c-attachment-shimmer-mid: #D8D8D6;
   }
 }
 
@@ -179,6 +199,16 @@ button:not(:disabled) {
   --c-code-panel-bg: #F6F4F2;
   --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
   --c-artifact-card-bg: rgba(0, 0, 0, 0.02);
+  --c-attachment-bg: #F0EEEC;
+  --c-attachment-border: rgba(0, 0, 0, 0.08);
+  --c-attachment-border-hover: rgba(0, 0, 0, 0.20);
+  --c-attachment-close-bg: #E5E5E3;
+  --c-attachment-close-border: rgba(0, 0, 0, 0.10);
+  --c-attachment-close-icon: rgba(0, 0, 0, 0.35);
+  --c-attachment-close-icon-hover: #6B6B68;
+  --c-attachment-badge-border: rgba(0, 0, 0, 0.10);
+  --c-attachment-shimmer-from: #E5E5E3;
+  --c-attachment-shimmer-mid: #D8D8D6;
 }
 
 .chat-input-box {
@@ -210,16 +240,16 @@ button:not(:disabled) {
   100% { background-position: 200% 0; }
 }
 .attachment-shimmer {
-  background: linear-gradient(90deg, #3a3a37 25%, #454542 50%, #3a3a37 75%);
+  background: linear-gradient(90deg, var(--c-attachment-shimmer-from) 25%, var(--c-attachment-shimmer-mid) 50%, var(--c-attachment-shimmer-from) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
 .attachment-close-btn svg {
-  color: rgba(255,255,255,0.4);
+  color: var(--c-attachment-close-icon);
   transition: color 0.15s ease;
 }
 .attachment-close-btn:hover svg {
-  color: #C2C087;
+  color: var(--c-attachment-close-icon-hover);
 }
 
 .md-table-wrap {
@@ -365,7 +395,7 @@ button:not(:disabled) {
   padding: 1px 5px;
   font-size: 0.875em;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
-  color: var(--c-text-secondary);
+  color: #ED8784;
   border: 0.5px solid var(--c-border-subtle);
 }
 

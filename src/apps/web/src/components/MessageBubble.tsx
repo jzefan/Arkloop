@@ -16,6 +16,65 @@ function isDocumentArtifact(artifact: ArtifactRef): boolean {
   return !artifact.mime_type.startsWith('image/') && artifact.mime_type !== 'text/html'
 }
 
+function formatShortDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  const month = d.toLocaleString('en-US', { month: 'short' })
+  return `${month}. ${d.getDate()}`
+}
+
+function formatFullDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  return d.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function MessageDate({ createdAt }: { createdAt: string }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <span
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        position: 'relative',
+        fontSize: '11px',
+        lineHeight: 1,
+        color: 'var(--c-text-muted)',
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
+        cursor: 'default',
+      }}
+    >
+      {formatShortDate(createdAt)}
+      {hovered && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            right: 0,
+            fontSize: '11px',
+            lineHeight: 1,
+            color: 'var(--c-text-primary)',
+            background: 'var(--c-bg-deep)',
+            borderRadius: '6px',
+            padding: '4px 8px',
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            zIndex: 10,
+          }}
+        >
+          {formatFullDate(createdAt)}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function isArtifactReferenced(content: string, key: string): boolean {
   return content.includes(`artifact:${key}`)
 }
@@ -239,19 +298,18 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
         className="group"
         style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
       >
-        {/* hover 时左侧操作按钮，外层拉伸以支持 sticky */}
-        <div>
-          <div
-            className="opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-150"
-            style={{
-              position: 'sticky',
-              top: '16px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '2px',
-              marginTop: '6px',
-            }}
-          >
+        {/* hover 时左侧操作按钮 + 日期 */}
+        <div
+          className="opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-150"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            position: 'sticky',
+            top: '6px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
           <button
             onClick={handleCopy}
             title="复制"
@@ -294,6 +352,9 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
           >
             <Pencil size={16} />
           </button>
+          </div>
+          <div style={{ marginTop: '4px', paddingRight: '2px' }}>
+            <MessageDate createdAt={message.created_at} />
           </div>
         </div>
 
@@ -355,13 +416,17 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
                 padding: '10px 16px',
                 color: 'var(--c-text-primary)',
                 fontSize: '16px',
+                fontWeight: 250,
                 lineHeight: 1.6,
                 letterSpacing: '-0.64px',
-                whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
               }}
             >
-              {displayText}
+              {displayText.split(/(\n{2,})/).map((part, i) =>
+                /^\n{2,}$/.test(part)
+                  ? <div key={i} style={{ height: '0.3em' }} />
+                  : <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>
+              )}
             </div>
           )}
         </div>

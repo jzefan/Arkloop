@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, Glasses, Loader2, Paperclip, Share2, X, Zap } from 'lucide-react'
-import { ChatInput, type Attachment, formatFileSize } from './ChatInput'
+import { ArrowDown, Glasses, Loader2, Share2, X } from 'lucide-react'
+import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
@@ -180,7 +180,7 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
 }
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -1078,6 +1078,7 @@ export function ChatPage() {
       size: file.size,
       mime_type: file.type || 'application/octet-stream',
       preview_url: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      status: 'uploading' as const,
     }))
     if (newAttachments.length === 0) return
     setAttachments((prev) => {
@@ -1085,7 +1086,21 @@ export function ChatPage() {
       const deduped = newAttachments.filter((item) => !existingIDs.has(item.id))
       return [...prev, ...deduped]
     })
-  }, [])
+    if (!threadId) return
+    for (const att of newAttachments) {
+      uploadThreadAttachment(accessToken, threadId, att.file)
+        .then((uploaded) => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+          )
+        })
+        .catch(() => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+          )
+        })
+    }
+  }, [accessToken, threadId])
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -1119,7 +1134,10 @@ export function ChatPage() {
     try {
       const uploadAttachments = async (targetThreadId: string) => {
         return await Promise.all(
-          attachments.map(async (attachment) => await uploadThreadAttachment(accessToken, targetThreadId, attachment.file)),
+          attachments.map(async (attachment) => {
+            if (attachment.uploaded) return attachment.uploaded
+            return await uploadThreadAttachment(accessToken, targetThreadId, attachment.file)
+          }),
         )
       }
 
@@ -1421,10 +1439,6 @@ export function ChatPage() {
         {threadId && privateThreadIds.has(threadId) && (
           <span className="text-xs font-medium text-[var(--c-text-muted)]">{t.incognitoLabel}</span>
         )}
-        <div className="flex items-center gap-1 text-[var(--c-text-secondary)]" style={{ opacity: 0.8 }}>
-          <Zap size={13} strokeWidth={2.2} />
-          <span className="text-sm font-medium tabular-nums">{creditsBalance.toLocaleString()}</span>
-        </div>
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
         {threadId && !privateThreadIds.has(threadId) && (
           <button
@@ -1840,44 +1854,6 @@ export function ChatPage() {
             </button>
           </div>
         )}
-        {attachments.length > 0 && (
-          <div className="flex w-full max-w-[756px] flex-wrap gap-2">
-            {attachments.map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5"
-                style={{ background: 'var(--c-bg-sub)', border: '0.5px solid var(--c-border-subtle)' }}
-              >
-                {att.preview_url ? (
-                  <img
-                    src={att.preview_url}
-                    alt={att.name}
-                    style={{ width: '24px', height: '24px', objectFit: 'cover', borderRadius: '6px', flexShrink: 0 }}
-                  />
-                ) : (
-                  <Paperclip size={12} style={{ color: 'var(--c-text-icon)', flexShrink: 0 }} />
-                )}
-                <span
-                  className="text-xs"
-                  style={{ color: 'var(--c-text-secondary)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {att.name}
-                </span>
-                <span className="text-xs" style={{ color: 'var(--c-text-muted)', flexShrink: 0 }}>
-                  {formatFileSize(att.size)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveAttachment(att.id)}
-                  className="flex items-center justify-center rounded transition-opacity duration-100 hover:opacity-100"
-                  style={{ color: 'var(--c-text-muted)', opacity: 0.7, marginLeft: '2px' }}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
         <ChatInput
           value={draft}
           onChange={setDraft}
@@ -1890,6 +1866,7 @@ export function ChatPage() {
           cancelSubmitting={cancelSubmitting}
           attachments={attachments}
           onAttachFiles={handleAttachFiles}
+          onRemoveAttachment={handleRemoveAttachment}
           accessToken={accessToken}
           onAsrError={handleAsrError}
           searchMode={isSearchThread}

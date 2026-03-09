@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
 import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
-import { listSelectablePersonas, transcribeAudio, type SelectablePersona } from '../api'
+import { listSelectablePersonas, transcribeAudio, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import {
   DEFAULT_PERSONA_KEY,
@@ -17,6 +17,8 @@ export type Attachment = {
   size: number
   mime_type: string
   preview_url?: string
+  status: 'uploading' | 'ready' | 'error'
+  uploaded?: UploadedThreadAttachment
 }
 
 type Props = {
@@ -69,20 +71,25 @@ function hasTransferFiles(dataTransfer?: DataTransfer | null): boolean {
 function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): File[] {
   if (!dataTransfer) return []
   const files: File[] = []
-  const seen = new Set<string>()
-  const pushFile = (file: File | null | undefined) => {
-    if (!file) return
-    const key = `${file.name}:${file.size}:${file.lastModified}`
-    if (seen.has(key)) return
-    seen.add(key)
+  const seenTypes = new Set<string>()
+
+  const itemFiles = Array.from(dataTransfer.items)
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((f): f is File => f != null)
+
+  const dtFiles = Array.from(dataTransfer.files)
+
+  const allFiles = itemFiles.length > 0 ? itemFiles : dtFiles
+
+  for (const file of allFiles) {
+    const prefix = file.type.split('/')[0]
+    if (prefix === 'image') {
+      if (seenTypes.has('image')) continue
+      seenTypes.add('image')
+    }
     files.push(file)
   }
-
-  Array.from(dataTransfer.items)
-    .filter((item) => item.kind === 'file')
-    .forEach((item) => pushFile(item.getAsFile()))
-
-  Array.from(dataTransfer.files).forEach((file) => pushFile(file))
   return files
 }
 
@@ -120,7 +127,8 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
   const ext = attachment.name.includes('.')
     ? attachment.name.split('.').pop()!.toUpperCase()
     : ''
-  const ready = isImage ? imageLoaded : lineCount !== null
+  const uploading = attachment.status === 'uploading'
+  const ready = !uploading && (isImage ? imageLoaded : lineCount !== null)
 
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}
@@ -132,11 +140,11 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
           width: '120px',
           height: '120px',
           borderRadius: '10px',
-          background: '#30302E',
+          background: 'var(--c-attachment-bg)',
           overflow: 'hidden',
           borderWidth: '0.7px',
           borderStyle: 'solid',
-          borderColor: cardHovered ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.11)',
+          borderColor: cardHovered ? 'var(--c-attachment-border-hover)' : 'var(--c-attachment-border)',
           transition: 'border-color 0.2s ease',
         }}
       >
@@ -161,7 +169,7 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
               width: '100%',
               height: '100%',
               objectFit: 'cover',
-              opacity: imageLoaded ? 1 : 0,
+              opacity: ready ? 1 : 0,
               transition: 'opacity 0.2s ease',
               display: 'block',
             }}
@@ -171,7 +179,7 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
             padding: '10px',
             display: 'flex', flexDirection: 'column',
             height: '100%',
-            opacity: lineCount !== null ? 1 : 0,
+            opacity: ready ? 1 : 0,
             transition: 'opacity 0.2s ease',
           }}>
             <span style={{
@@ -198,8 +206,8 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
                 alignSelf: 'flex-start',
                 padding: '2px 6px',
                 borderRadius: '5px',
-                background: '#30302E',
-                border: '0.5px solid rgba(255,255,255,0.14)',
+                background: 'var(--c-attachment-bg)',
+                border: '0.5px solid var(--c-attachment-badge-border)',
                 color: 'var(--c-text-secondary)',
                 fontSize: '10px',
                 fontWeight: 500,
@@ -223,8 +231,8 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
           width: '18px',
           height: '18px',
           borderRadius: '50%',
-          background: '#303030',
-          border: '0.5px solid rgba(255,255,255,0.14)',
+          background: 'var(--c-attachment-close-bg)',
+          border: '0.5px solid var(--c-attachment-close-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -300,6 +308,7 @@ export function ChatInput({
   const [isFileDragging, setIsFileDragging] = useState(false)
   const [collapsingGrid, setCollapsingGrid] = useState(false)
   const lastPasteRef = useRef(0)
+  const pasteProcessingRef = useRef(false)
 
   // cleanup on unmount
   useEffect(() => {
@@ -523,11 +532,14 @@ export function ChatInput({
   }, [tierMenuOpen])
 
   const handleAttachTransfer = useCallback((dataTransfer?: DataTransfer | null) => {
+    if (pasteProcessingRef.current) return false
     const files = extractFilesFromTransfer(dataTransfer)
     if (files.length === 0 || !onAttachFiles) return false
+    pasteProcessingRef.current = true
     onAttachFiles(files)
     textareaRef.current?.focus()
     setMenuOpen(false)
+    requestAnimationFrame(() => { pasteProcessingRef.current = false })
     return true
   }, [onAttachFiles])
 
@@ -595,8 +607,9 @@ export function ChatInput({
       if (e.target === textareaRef.current) return
       if (isEditableElement(e.target)) return
       if (!hasTransferFiles(e.clipboardData)) return
+      if (pasteProcessingRef.current) { e.preventDefault(); return }
       const now = Date.now()
-      if (now - lastPasteRef.current < 500) { e.preventDefault(); return }
+      if (now - lastPasteRef.current < 1000) { e.preventDefault(); return }
       lastPasteRef.current = now
       if (!handleAttachTransfer(e.clipboardData)) return
       e.preventDefault()
@@ -623,8 +636,9 @@ export function ChatInput({
 
   const handleTextareaPaste = (e: ReactClipboardEvent<HTMLTextAreaElement>) => {
     if (hasTransferFiles(e.clipboardData)) {
+      if (pasteProcessingRef.current) { e.preventDefault(); return }
       const now = Date.now()
-      if (now - lastPasteRef.current < 500) { e.preventDefault(); return }
+      if (now - lastPasteRef.current < 1000) { e.preventDefault(); return }
       lastPasteRef.current = now
       if (handleAttachTransfer(e.clipboardData)) { e.preventDefault(); return }
     }
@@ -645,12 +659,7 @@ export function ChatInput({
     }
   }
 
-  const cyclePersona = () => {
-    if (personas.length === 0) return
-    const currentIndex = personas.findIndex((persona) => persona.persona_key === selectedPersonaKey)
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % personas.length : 0
-    persistSelectedPersona(personas[nextIndex].persona_key)
-  }
+
 
   const handlePersonaSelect = (personaKey: string) => {
     persistSelectedPersona(personaKey, true)
@@ -895,21 +904,19 @@ export function ChatInput({
           </div>
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
-            {/* tier 按钮 */}
             <button
+              ref={chevronBtnRef}
               type="button"
-              onClick={cyclePersona}
+              onClick={() => setTierMenuOpen((v) => !v)}
               onMouseEnter={() => setTierHovered(true)}
               onMouseLeave={() => setTierHovered(false)}
-              className="relative top-px flex h-8 items-center rounded-lg"
+              className="relative top-px flex h-8 items-center gap-1 rounded-lg"
               style={{
-                padding: '0 10px',
-                justifyContent: 'center',
+                padding: '0 8px 0 10px',
                 overflow: 'hidden',
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
                 cursor: 'pointer',
-                minWidth: '68px',
                 fontWeight: 450,
                 background: selectedPersonaKey === SEARCH_PERSONA_KEY
                   ? 'var(--c-pro-bg)'
@@ -924,16 +931,7 @@ export function ChatInput({
               }}
             >
               {selectedPersona?.selector_name ?? selectedPersonaKey}
-            </button>
-
-            {/* chevron：始终可见，searchMode 下打开下拉可切换其他 tier */}
-            <button
-              ref={chevronBtnRef}
-              type="button"
-              onClick={() => setTierMenuOpen((v) => !v)}
-              className="relative top-px flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] opacity-70 transition-[opacity,background] duration-150 hover:bg-[var(--c-bg-deep)] hover:opacity-100"
-            >
-              <ChevronDown size={16} />
+              <ChevronDown size={14} style={{ opacity: 0.6, flexShrink: 0 }} />
             </button>
 
             {tierMenuOpen && (

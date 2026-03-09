@@ -207,6 +207,7 @@ function CodeBlockWrapper({ children, compact = false }: { children: React.React
 
   return (
     <div
+      className="group/codeblock"
       style={{
         position: 'relative',
         margin: '1em 0',
@@ -259,6 +260,7 @@ function CodeBlockWrapper({ children, compact = false }: { children: React.React
         {children}
       </pre>
       <button
+        className="opacity-0 group-hover/codeblock:opacity-100 transition-opacity duration-150"
         onClick={handleCopy}
         onMouseEnter={() => setCopyHover(true)}
         onMouseLeave={() => setCopyHover(false)}
@@ -275,8 +277,7 @@ function CodeBlockWrapper({ children, compact = false }: { children: React.React
           border: '0.5px solid var(--c-border-subtle)',
           background: copyHover ? 'var(--c-bg-deep)' : 'transparent',
           color: copied ? 'var(--c-text-secondary)' : 'var(--c-text-icon)',
-          opacity: copyHover || copied ? 1 : 0.6,
-          transition: 'opacity 0.15s, background 0.15s',
+          transition: 'background 0.15s',
         }}
       >
         {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -405,31 +406,31 @@ function buildMarkdownComponents(compact: boolean): Components {
     ),
 
     p: ({ children }) => (
-      <p style={{ color: 'var(--c-text-primary)', fontSize: paragraphFontSize, lineHeight: 1.6, letterSpacing: compact ? '0.1px' : '0.16px', margin: '0 0 1em' }}>
+      <p style={{ color: 'var(--c-text-primary)', fontSize: paragraphFontSize, lineHeight: 1.6, letterSpacing: compact ? '0.1px' : '0.16px', margin: '0 0 0.5em' }}>
         <WithCitations prefix="p">{children}</WithCitations>
       </p>
     ),
 
     h1: ({ children }) => (
-      <h1 style={{ color: 'var(--c-text-heading)', fontSize: heading1FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.5em 0 0.5em', letterSpacing: compact ? '-0.2px' : '-0.3px' }}>
+      <h1 style={{ color: 'var(--c-text-heading)', fontSize: heading1FontSize, fontWeight: 450, lineHeight: 1.4, margin: '1.5em 0 0.5em', letterSpacing: compact ? '-0.2px' : '-0.3px' }}>
         {children}
       </h1>
     ),
 
     h2: ({ children }) => (
-      <h2 style={{ color: 'var(--c-text-heading)', fontSize: heading2FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.4em 0 0.5em', letterSpacing: '-0.2px' }}>
+      <h2 style={{ color: 'var(--c-text-heading)', fontSize: heading2FontSize, fontWeight: 450, lineHeight: 1.4, margin: '1.4em 0 0.5em', letterSpacing: '-0.2px' }}>
         {children}
       </h2>
     ),
 
     h3: ({ children }) => (
-      <h3 style={{ color: 'var(--c-text-heading)', fontSize: heading3FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1.2em 0 0.4em' }}>
+      <h3 style={{ color: 'var(--c-text-heading)', fontSize: heading3FontSize, fontWeight: 450, lineHeight: 1.4, margin: '1.2em 0 0.4em' }}>
         {children}
       </h3>
     ),
 
     h4: ({ children }) => (
-      <h4 style={{ color: 'var(--c-text-heading)', fontSize: heading4FontSize, fontWeight: 600, lineHeight: 1.4, margin: '1em 0 0.4em' }}>
+      <h4 style={{ color: 'var(--c-text-heading)', fontSize: heading4FontSize, fontWeight: 450, lineHeight: 1.4, margin: '1em 0 0.4em' }}>
         {children}
       </h4>
     ),
@@ -481,7 +482,7 @@ function buildMarkdownComponents(compact: boolean): Components {
     hr: () => <hr style={{ border: 'none', borderTop: '0.5px solid var(--c-border-subtle)', margin: '1.5em 0' }} />,
 
     strong: ({ children }) => (
-      <strong style={{ color: 'var(--c-text-primary)', fontWeight: 600 }}>{children}</strong>
+      <strong style={{ color: 'var(--c-text-primary)', fontWeight: 450 }}>{children}</strong>
     ),
 
     em: ({ children }) => (
@@ -531,7 +532,7 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
   return (
     <ArtifactsContext.Provider value={artifactsValue}>
       <WebSourcesContext.Provider value={webSources ?? []}>
-        <div className={`md-content${compact ? ' md-content--compact' : ''}`} style={{ maxWidth: '100%' }}>
+        <div className={`md-content${compact ? ' md-content--compact' : ''}`} style={{ maxWidth: '100%', fontWeight: 250 }}>
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}
