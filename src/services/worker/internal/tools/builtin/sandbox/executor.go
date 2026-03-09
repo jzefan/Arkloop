@@ -151,7 +151,6 @@ func (e *ToolExecutor) Execute(
 	execCtx tools.ExecutionContext,
 	toolCallID string,
 ) tools.ExecutionResult {
-	_ = toolCallID
 	started := time.Now()
 
 	if e.baseURL == "" {
@@ -162,11 +161,11 @@ func (e *ToolExecutor) Execute(
 	case "python_execute":
 		return e.executePython(ctx, args, execCtx, started)
 	case "exec_command":
-		return e.executeExecCommand(ctx, args, execCtx, started)
+		return e.executeExecCommand(ctx, args, execCtx, toolCallID, started)
 	case "write_stdin":
-		return e.executeWriteStdin(ctx, args, execCtx, started)
+		return e.executeWriteStdin(ctx, args, execCtx, toolCallID, started)
 	case "browser":
-		return e.executeBrowser(ctx, args, execCtx, started)
+		return e.executeBrowser(ctx, args, execCtx, toolCallID, started)
 	default:
 		return errResult(errorArgsInvalid, fmt.Sprintf("unknown sandbox tool: %s", toolName), started)
 	}
@@ -232,6 +231,7 @@ func (e *ToolExecutor) executeExecCommand(
 	ctx context.Context,
 	args map[string]any,
 	execCtx tools.ExecutionContext,
+	toolCallID string,
 	started time.Time,
 ) tools.ExecutionResult {
 	reqArgs, argErr := parseExecCommandArgs(args)
@@ -251,7 +251,8 @@ func (e *ToolExecutor) executeExecCommand(
 			resolution.Record.LatestRestoreRev = stringPtr(forked)
 		}
 	}
-	if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, reqArgs.TimeoutMs); leaseErr != nil {
+	leaseOwnerID := writerLeaseOwner(execCtx, toolCallID)
+	if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, leaseOwnerID, reqArgs.TimeoutMs); leaseErr != nil {
 		return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
 	}
 
@@ -259,8 +260,8 @@ func (e *ToolExecutor) executeExecCommand(
 		SessionID:    resolution.SessionRef,
 		OpenMode:     resolution.OpenMode,
 		OrgID:        resolveOrgID(execCtx),
-		ProfileRef:   resolveProfileRef(execCtx),
-		WorkspaceRef: resolveWorkspaceRef(execCtx),
+		ProfileRef:   resolution.ProfileRef(resolveProfileRef(execCtx)),
+		WorkspaceRef: resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
 		Tier:         resolveTier("exec_command", execCtx.Budget),
 		Cwd:          reqArgs.Cwd,
 		Command:      reqArgs.Command,
@@ -275,17 +276,19 @@ func (e *ToolExecutor) executeExecCommand(
 		}
 		if fallback != nil {
 			resolution = fallback
-			if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, reqArgs.TimeoutMs); leaseErr != nil {
+			if leaseErr := e.orchestrator.prepareExecWriterLease(ctx, execCtx, resolution, leaseOwnerID, reqArgs.TimeoutMs); leaseErr != nil {
 				return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
 			}
 			request.SessionID = resolution.SessionRef
 			request.OpenMode = resolution.OpenMode
+			request.ProfileRef = resolution.ProfileRef(resolveProfileRef(execCtx))
+			request.WorkspaceRef = resolution.WorkspaceRef(resolveWorkspaceRef(execCtx))
 			result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
 		}
 	}
 	if result.Error != nil {
 		if isSessionBusy(result.Error) {
-			e.orchestrator.releaseWriterLease(ctx, execCtx, resolution, writerLeaseOwner(execCtx))
+			e.orchestrator.releaseWriterLease(ctx, execCtx, resolution, leaseOwnerID)
 		}
 		return result
 	}
@@ -309,6 +312,7 @@ func (e *ToolExecutor) executeWriteStdin(
 	ctx context.Context,
 	args map[string]any,
 	execCtx tools.ExecutionContext,
+	toolCallID string,
 	started time.Time,
 ) tools.ExecutionResult {
 	reqArgs, argErr := parseWriteStdinArgs(args)
@@ -319,7 +323,8 @@ func (e *ToolExecutor) executeWriteStdin(
 	if resolveErr != nil {
 		return tools.ExecutionResult{Error: resolveErr, DurationMs: durationMs(started)}
 	}
-	if leaseErr := e.orchestrator.prepareWriteWriterLease(ctx, execCtx, resolution, reqArgs.Chars != ""); leaseErr != nil {
+	leaseOwnerID := writerLeaseOwner(execCtx, toolCallID)
+	if leaseErr := e.orchestrator.prepareWriteWriterLease(ctx, execCtx, resolution, leaseOwnerID, reqArgs.Chars != ""); leaseErr != nil {
 		return tools.ExecutionResult{Error: leaseErr, DurationMs: durationMs(started)}
 	}
 
@@ -338,7 +343,7 @@ func (e *ToolExecutor) executeWriteStdin(
 	}
 	resp := decodeExecSessionResult(result.ResultJSON)
 	if resp != nil {
-		e.orchestrator.reconcileWriteWriterLease(ctx, execCtx, resolution, reqArgs.Chars != "", *resp)
+		e.orchestrator.reconcileWriteWriterLease(ctx, execCtx, resolution, leaseOwnerID, reqArgs.Chars != "", *resp)
 		e.orchestrator.markResult(ctx, execCtx, resolution, *resp)
 		result.ResultJSON["session_ref"] = resolution.SessionRef
 		result.ResultJSON["share_scope"] = resolution.ShareScope
@@ -354,8 +359,10 @@ func (e *ToolExecutor) executeBrowser(
 	ctx context.Context,
 	args map[string]any,
 	execCtx tools.ExecutionContext,
+	toolCallID string,
 	started time.Time,
 ) tools.ExecutionResult {
+	_ = toolCallID
 	reqArgs, argErr := parseBrowserArgs(args)
 	if argErr != nil {
 		return tools.ExecutionResult{Error: argErr, DurationMs: durationMs(started)}
@@ -368,8 +375,8 @@ func (e *ToolExecutor) executeBrowser(
 		SessionID:    resolution.SessionRef,
 		OpenMode:     resolution.OpenMode,
 		OrgID:        resolveOrgID(execCtx),
-		ProfileRef:   resolveProfileRef(execCtx),
-		WorkspaceRef: resolveWorkspaceRef(execCtx),
+		ProfileRef:   resolution.ProfileRef(resolveProfileRef(execCtx)),
+		WorkspaceRef: resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
 		Tier:         "browser",
 		Command:      buildBrowserCommand(resolution.SessionRef, reqArgs.Command),
 		TimeoutMs:    reqArgs.TimeoutMs,
@@ -384,6 +391,8 @@ func (e *ToolExecutor) executeBrowser(
 			resolution = fallback
 			request.SessionID = resolution.SessionRef
 			request.OpenMode = resolution.OpenMode
+			request.ProfileRef = resolution.ProfileRef(resolveProfileRef(execCtx))
+			request.WorkspaceRef = resolution.WorkspaceRef(resolveWorkspaceRef(execCtx))
 			request.Command = buildBrowserCommand(resolution.SessionRef, reqArgs.Command)
 			result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
 		}
@@ -862,10 +871,14 @@ func decodeExecSessionResult(resultJSON map[string]any) *execSessionResponse {
 	return &result
 }
 
-func shellBusyError(sessionRef string) *tools.ExecutionError {
+func shellBusyError(sessionRef string, retryVia string) *tools.ExecutionError {
+	retryVia = strings.TrimSpace(retryVia)
+	if retryVia == "" {
+		retryVia = "fork"
+	}
 	details := map[string]any{
 		"code":      "shell.session_busy",
-		"retry_via": "fork",
+		"retry_via": retryVia,
 	}
 	if strings.TrimSpace(sessionRef) != "" {
 		details["session_ref"] = strings.TrimSpace(sessionRef)
