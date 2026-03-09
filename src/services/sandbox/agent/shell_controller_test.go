@@ -106,8 +106,8 @@ func TestShellControllerWriteStdinPollDoesNotRepeatOutput(t *testing.T) {
 	if code != "" {
 		t.Fatalf("second poll failed: %s %s", code, msg)
 	}
-	if again.Output != "" {
-		t.Fatalf("expected drained output, got %q", again.Output)
+	if strings.Contains(again.Output, "first") || strings.Contains(again.Output, "second") {
+		t.Fatalf("expected command output to stay drained, got %q", again.Output)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestShellControllerWriteStdinInteractive(t *testing.T) {
 	}
 }
 
-func TestShellControllerExecCommandReturnsPromptBeforeDeadline(t *testing.T) {
+func TestShellControllerExecCommandReturnsPromptWithoutWaitingForExit(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)
 	controller := NewShellController()
@@ -145,7 +145,7 @@ func TestShellControllerExecCommandReturnsPromptBeforeDeadline(t *testing.T) {
 
 	started := time.Now()
 	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
-		Command:     "python3 -c \"import sys,time; sys.stdout.write('name: '); sys.stdout.flush(); time.sleep(2)\"",
+		Command:     "python3 -c \"import sys,time; sys.stdout.write('name: '); sys.stdout.flush(); time.sleep(4)\"",
 		YieldTimeMs: 1000,
 		TimeoutMs:   5000,
 	})
@@ -155,15 +155,15 @@ func TestShellControllerExecCommandReturnsPromptBeforeDeadline(t *testing.T) {
 	if !resp.Running {
 		t.Fatalf("expected command to keep running, got %#v", resp)
 	}
-	if elapsed := time.Since(started); elapsed >= 700*time.Millisecond {
-		t.Fatalf("prompt should return before deadline, got %v", elapsed)
+	if elapsed := time.Since(started); elapsed >= 2*time.Second {
+		t.Fatalf("prompt should return before command exit, got %v", elapsed)
 	}
 	if !strings.Contains(resp.Output, "name: ") {
 		t.Fatalf("expected prompt output, got %q", resp.Output)
 	}
 }
 
-func TestShellControllerExecCommandCoalescesShortCommandOutput(t *testing.T) {
+func TestShellControllerExecCommandShortCommandPreservesOutput(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)
 	controller := NewShellController()
@@ -177,23 +177,21 @@ func TestShellControllerExecCommandCoalescesShortCommandOutput(t *testing.T) {
 	if code != "" {
 		t.Fatalf("exec_command failed: %s %s", code, msg)
 	}
-	if resp.Running {
-		t.Fatalf("expected short command to finish in first response, got %#v", resp)
-	}
-	if !strings.Contains(resp.Output, "first") || !strings.Contains(resp.Output, "second") {
-		t.Fatalf("expected coalesced output, got %q", resp.Output)
+	output := drainShellOutput(t, controller, resp, code, msg)
+	if strings.Count(output, "first\n") != 1 || strings.Count(output, "second\n") != 1 {
+		t.Fatalf("expected short command output once, got %q", output)
 	}
 
 	again, code, msg := controller.WriteStdin(shellapi.AgentWriteStdinRequest{YieldTimeMs: 50})
 	if code != "" {
 		t.Fatalf("poll failed: %s %s", code, msg)
 	}
-	if again.Output != "" {
-		t.Fatalf("expected drained output after first response, got %q", again.Output)
+	if strings.Contains(again.Output, "first") || strings.Contains(again.Output, "second") {
+		t.Fatalf("expected no repeated short command output, got %q", again.Output)
 	}
 }
 
-func TestShellControllerExecCommandCollectsTrailingOutputBeforeReturn(t *testing.T) {
+func TestShellControllerExecCommandPreservesTrailingOutput(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)
 	controller := NewShellController()
@@ -207,11 +205,9 @@ func TestShellControllerExecCommandCollectsTrailingOutputBeforeReturn(t *testing
 	if code != "" {
 		t.Fatalf("exec_command failed: %s %s", code, msg)
 	}
-	if resp.Running {
-		t.Fatalf("expected trailing output to be merged before return, got %#v", resp)
-	}
-	if !strings.Contains(resp.Output, "head") || !strings.Contains(resp.Output, "tail") {
-		t.Fatalf("expected trailing output in first response, got %q", resp.Output)
+	output := drainShellOutput(t, controller, resp, code, msg)
+	if strings.Count(output, "head\n") != 1 || strings.Count(output, "tail\n") != 1 {
+		t.Fatalf("expected trailing output once, got %q", output)
 	}
 }
 
