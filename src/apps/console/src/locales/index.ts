@@ -22,7 +22,7 @@ export interface LocaleStrings {
     credentials: string
     toolProviders: string
     mcpConfigs: string
-    personas: string
+    agents: string
     apiKeys: string
     webhooks: string
     ipRules: string
@@ -294,9 +294,10 @@ export interface LocaleStrings {
       toastSaveFailed: string
       toastDeleteFailed: string
     }
-    personas: {
+    agents: {
       title: string
-      addPersona: string
+      newAgent: string
+      editAgent: string
       colPersonaKey: string
       colDisplayName: string
       colVersion: string
@@ -304,8 +305,6 @@ export interface LocaleStrings {
       colActive: string
       colCreatedAt: string
       empty: string
-      modalTitleCreate: string
-      modalTitleEdit: string
       fieldPersonaKey: string
       fieldVersion: string
       fieldDisplayName: string
@@ -317,8 +316,10 @@ export interface LocaleStrings {
       fieldToolDenylist: string
       toolsSelected: (selected: number, total: number) => string
       enableAllTools: string
+      disableAllTools: string
       clearAllTools: string
       groupEnableAll: string
+      groupDisableAll: string
       groupClearAll: string
       toolModeLabel: string
       toolModeInherit: string
@@ -343,6 +344,17 @@ export interface LocaleStrings {
       toastUpdated: string
       toastLoadFailed: string
       toastSaveFailed: string
+      tabOverview: string
+      tabPrompt: string
+      tabTools: string
+      name: string
+      model: string
+      active: string
+      builtIn: string
+      temperature: string
+      maxOutputTokens: string
+      deleteConfirm: string
+      noAgents: string
     }
     apiKeys: {
       title: string
@@ -1088,6 +1100,7 @@ export interface LocaleStrings {
       sectionUsage: string
       sectionConversation: string
       sectionRawEvents: string
+      sectionBrowser: string
       usageColStage: string
       usageColModel: string
       usageColTokens: string

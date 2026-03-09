@@ -602,11 +602,22 @@ func (r *RunEventRepository) ListRuns(ctx context.Context, params ListRunsParams
 		        r.model, r.persona_id, r.deleted_at,
 		        u.username, u.email,
 		        ur.cache_read_tokens, ur.cache_creation_tokens, ur.cached_tokens,
-		        ABS(ct.amount) AS credits_used
+		        ct.credits_used
 		 FROM runs r
 		 LEFT JOIN users u ON u.id = r.created_by_user_id
-		 LEFT JOIN usage_records ur ON ur.run_id = r.id
-		 LEFT JOIN credit_transactions ct ON ct.reference_id = r.id AND ct.type = 'consumption'%s
+		 LEFT JOIN LATERAL (
+		 	SELECT
+		 		SUM(ur.cache_read_tokens) AS cache_read_tokens,
+		 		SUM(ur.cache_creation_tokens) AS cache_creation_tokens,
+		 		SUM(ur.cached_tokens) AS cached_tokens
+		 	FROM usage_records ur
+		 	WHERE ur.run_id = r.id
+		 ) ur ON true
+		 LEFT JOIN LATERAL (
+		 	SELECT ABS(SUM(ct.amount)) AS credits_used
+		 	FROM credit_transactions ct
+		 	WHERE ct.reference_id = r.id AND ct.type = 'consumption'
+		 ) ct ON true%s
 		 ORDER BY r.created_at DESC, r.id DESC
 		 LIMIT %s OFFSET %s`,
 		where, addArg(limit), addArg(offset),
