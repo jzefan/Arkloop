@@ -21,6 +21,14 @@ import {
   type SmtpProvider,
 } from '../api/settings'
 import { listLlmProviders, type LlmProvider } from '../api/llm-providers'
+import {
+  loadToolProvidersAndCatalog,
+  activateToolProvider,
+  deactivateToolProvider,
+  updateToolProviderCredential,
+  clearToolProviderCredential,
+  type ToolProviderItem,
+} from '../api/tool-providers'
 
 type Section = 'general' | 'email' | 'sandbox' | 'credits'
 
@@ -28,6 +36,10 @@ const SECTIONS: Section[] = ['general', 'email', 'sandbox', 'credits']
 
 const TLS_MODES = ['starttls', 'tls', 'none'] as const
 const SANDBOX_PROVIDERS = ['firecracker', 'docker'] as const
+const SANDBOX_PROVIDER_MAP: Record<(typeof SANDBOX_PROVIDERS)[number], string> = {
+  firecracker: 'sandbox.firecracker',
+  docker: 'sandbox.docker',
+}
 
 const CREDITS_ENABLED_POLICY = '{"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]}'
 const CREDITS_DISABLED_POLICY = '{"tiers":[{"multiplier":0}]}'
@@ -41,6 +53,18 @@ function isCreditsEnabled(policyValue: string): boolean {
     return tiers.some((t: { multiplier?: number }) => (t.multiplier ?? 0) > 0)
   } catch {
     return true
+  }
+}
+
+function sandboxProviderValue(provider: ToolProviderItem | null): string {
+  if (!provider) return ''
+  switch (provider.provider_name) {
+    case 'sandbox.firecracker':
+      return 'firecracker'
+    case 'sandbox.docker':
+      return 'docker'
+    default:
+      return ''
   }
 }
 
@@ -97,6 +121,7 @@ export function SettingsPage() {
   const [sandboxProvider, setSandboxProvider] = useState('')
   const [sandboxBaseUrl, setSandboxBaseUrl] = useState('')
   const [sandboxDockerImage, setSandboxDockerImage] = useState('')
+  const [sandboxProviders, setSandboxProviders] = useState<ToolProviderItem[]>([])
 
   // Credits
   const [creditsOn, setCreditsOn] = useState(true)
@@ -134,19 +159,24 @@ export function SettingsPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [settings, providers, smtp] = await Promise.all([
+      const [settings, providers, smtp, toolProviders] = await Promise.all([
         listPlatformSettings(accessToken),
         listLlmProviders(accessToken),
         listSmtpProviders(accessToken),
+        loadToolProvidersAndCatalog(accessToken),
       ])
       const map: Record<string, string> = {}
       for (const s of settings) map[s.key] = s.value
+      const sandboxGroup = toolProviders.providerGroups.find((group) => group.group_name === 'sandbox')
+      const activeSandbox = sandboxGroup?.providers.find((provider) => provider.is_active) ?? null
+
       setLlmProviders(providers)
       setSmtpList(smtp)
+      setSandboxProviders(sandboxGroup?.providers ?? [])
 
       setTitleModel(map['title_summarizer.model'] ?? '')
-      setSandboxProvider(map['sandbox.provider'] ?? '')
-      setSandboxBaseUrl(map['sandbox.base_url'] ?? '')
+      setSandboxProvider(sandboxProviderValue(activeSandbox))
+      setSandboxBaseUrl(activeSandbox?.base_url ?? '')
       setSandboxDockerImage(map['sandbox.docker_image'] ?? '')
       setCreditsOn(isCreditsEnabled(map['credit.deduction_policy'] ?? ''))
 
@@ -195,18 +225,34 @@ export function SettingsPage() {
   const handleSaveSandbox = useCallback(async () => {
     setSavingSandbox(true)
     try {
-      await Promise.all([
-        saveSetting('sandbox.provider', sandboxProvider, accessToken),
-        saveSetting('sandbox.base_url', sandboxBaseUrl, accessToken),
-        saveSetting('sandbox.docker_image', sandboxDockerImage, accessToken),
-      ])
+      const currentProvider = sandboxProviders.find((provider) => provider.is_active) ?? null
+      const nextProviderName = sandboxProvider
+        ? SANDBOX_PROVIDER_MAP[sandboxProvider as keyof typeof SANDBOX_PROVIDER_MAP]
+        : ''
+      const trimmedBaseUrl = sandboxBaseUrl.trim()
+
+      if (currentProvider && currentProvider.provider_name !== nextProviderName) {
+        await deactivateToolProvider('sandbox', currentProvider.provider_name, accessToken)
+      }
+      if (nextProviderName && currentProvider?.provider_name !== nextProviderName) {
+        await activateToolProvider('sandbox', nextProviderName, accessToken)
+      }
+      if (nextProviderName) {
+        if (trimmedBaseUrl) {
+          await updateToolProviderCredential('sandbox', nextProviderName, { base_url: trimmedBaseUrl }, accessToken)
+        } else {
+          await clearToolProviderCredential('sandbox', nextProviderName, accessToken)
+        }
+      }
+      await saveSetting('sandbox.docker_image', sandboxDockerImage, accessToken)
+      await loadData()
       addToast(tc.toastSaved, 'success')
     } catch {
       addToast(tc.toastFailed, 'error')
     } finally {
       setSavingSandbox(false)
     }
-  }, [sandboxProvider, sandboxBaseUrl, sandboxDockerImage, accessToken, addToast, tc])
+  }, [sandboxProvider, sandboxBaseUrl, sandboxDockerImage, sandboxProviders, accessToken, addToast, tc, loadData])
 
   const handleSaveCredits = useCallback(async () => {
     setSavingCredits(true)
