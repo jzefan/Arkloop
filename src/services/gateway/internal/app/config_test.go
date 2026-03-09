@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestDefaultConfigIncludesLocalCORSOrigins(t *testing.T) {
 	cfg := DefaultConfig()
@@ -9,6 +12,13 @@ func TestDefaultConfigIncludesLocalCORSOrigins(t *testing.T) {
 	}
 	if cfg.CORSAllowedOrigins[0] != "http://localhost:5173" || cfg.CORSAllowedOrigins[1] != "http://localhost:5174" {
 		t.Fatalf("unexpected default origins: %#v", cfg.CORSAllowedOrigins)
+	}
+}
+
+func TestDefaultConfigUsesGatewayRedisTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.RedisTimeout != 150*time.Millisecond {
+		t.Fatalf("unexpected default redis timeout: %s", cfg.RedisTimeout)
 	}
 }
 

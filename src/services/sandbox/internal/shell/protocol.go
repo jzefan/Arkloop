@@ -83,7 +83,7 @@ type AgentRequest struct {
 	Action      string                   `json:"action"`
 	ExecCommand *AgentExecCommandRequest `json:"exec_command,omitempty"`
 	WriteStdin  *AgentWriteStdinRequest  `json:"write_stdin,omitempty"`
-	Checkpoint  *AgentCheckpointRequest  `json:"checkpoint,omitempty"`
+	State       *AgentStateRequest       `json:"state,omitempty"`
 }
 
 type AgentExecCommandRequest struct {
@@ -99,21 +99,18 @@ type AgentWriteStdinRequest struct {
 	YieldTimeMs int    `json:"yield_time_ms,omitempty"`
 }
 
-type AgentCheckpointRequest struct {
-	Archive string `json:"archive,omitempty"`
-}
+type AgentStateRequest struct{}
 
-type AgentCheckpointResponse struct {
-	Cwd     string            `json:"cwd,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Archive string            `json:"archive,omitempty"`
+type AgentStateResponse struct {
+	Cwd string            `json:"cwd,omitempty"`
+	Env map[string]string `json:"env,omitempty"`
 }
 
 type AgentResponse struct {
 	Action     string                   `json:"action"`
 	Session    *AgentSessionResponse    `json:"session,omitempty"`
 	Debug      *AgentDebugResponse      `json:"debug,omitempty"`
-	Checkpoint *AgentCheckpointResponse `json:"checkpoint,omitempty"`
+	State      *AgentStateResponse      `json:"state,omitempty"`
 	Code       string                   `json:"code,omitempty"`
 	Error      string                   `json:"error,omitempty"`
 }
