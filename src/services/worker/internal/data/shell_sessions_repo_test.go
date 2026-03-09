@@ -148,7 +148,15 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 		t.Fatalf("get by default binding key: %v", err)
 	}
 	if bound.SessionRef != newer.SessionRef {
-		t.Fatalf("expected latest bound session %q, got %q", newer.SessionRef, bound.SessionRef)
+		t.Fatalf("expected authoritative bound session %q, got %q", newer.SessionRef, bound.SessionRef)
+	}
+
+	olderStored, err := repo.GetBySessionRef(context.Background(), pool, orgID, older.SessionRef)
+	if err != nil {
+		t.Fatalf("get older session: %v", err)
+	}
+	if olderStored.DefaultBindingKey != nil {
+		t.Fatalf("expected older competing binding cleared, got %#v", olderStored.DefaultBindingKey)
 	}
 }
 

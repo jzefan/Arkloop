@@ -116,9 +116,12 @@ func (m *Manager) ExecCommand(ctx context.Context, req ExecCommandRequest) (*Res
 			}
 			return nil, err
 		}
-	} else if err := m.prepareEnvironment(ctx, req, entry); err != nil {
-		return nil, err
 	} else {
+		prepared := m.boundIdentityRequest(req, entry)
+		if err := m.prepareEnvironment(ctx, prepared, entry); err != nil {
+			return nil, err
+		}
+		req = prepared
 		if ref := strings.TrimSpace(req.ProfileRef); ref != "" {
 			entry.profileRef = ref
 		}
@@ -170,12 +173,8 @@ func (m *Manager) openExecCommandSession(ctx context.Context, req ExecCommandReq
 	if entry.artifactSeen == nil {
 		entry.artifactSeen = make(map[string]artifactVersion)
 	}
-	entry.profileRef = strings.TrimSpace(req.ProfileRef)
-	entry.workspaceRef = strings.TrimSpace(req.WorkspaceRef)
-	if err := m.prepareEnvironment(ctx, req, entry); err != nil {
-		return ExecCommandRequest{}, nil, false, "", true, err
-	}
 	prepared, shellEnv, restored, restoreRevision := m.prepareExecCommandRequest(ctx, req, entry)
+	prepared = m.boundIdentityRequest(prepared, entry)
 	if req.OpenMode == OpenModeAttachOrRestore && !restored {
 		if m.envManager != nil {
 			m.envManager.Drop(req.SessionID)
@@ -184,7 +183,30 @@ func (m *Manager) openExecCommandSession(ctx context.Context, req ExecCommandReq
 		_ = m.compute.DeleteSkipHook(ctx, req.SessionID, req.OrgID)
 		return ExecCommandRequest{}, nil, false, "", true, notFoundError()
 	}
+	if err := m.prepareEnvironment(ctx, prepared, entry); err != nil {
+		return ExecCommandRequest{}, nil, false, "", true, err
+	}
+	if ref := strings.TrimSpace(prepared.ProfileRef); ref != "" {
+		entry.profileRef = ref
+	}
+	if ref := strings.TrimSpace(prepared.WorkspaceRef); ref != "" {
+		entry.workspaceRef = ref
+	}
 	return prepared, shellEnv, restored, restoreRevision, true, nil
+}
+
+func (m *Manager) boundIdentityRequest(req ExecCommandRequest, entry *managedSession) ExecCommandRequest {
+	prepared := req
+	if entry == nil {
+		return prepared
+	}
+	if ref := strings.TrimSpace(entry.profileRef); ref != "" {
+		prepared.ProfileRef = ref
+	}
+	if ref := strings.TrimSpace(entry.workspaceRef); ref != "" {
+		prepared.WorkspaceRef = ref
+	}
+	return prepared
 }
 
 func (m *Manager) WriteStdin(ctx context.Context, req WriteStdinRequest) (*Response, error) {

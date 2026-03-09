@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -202,7 +203,6 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 		    AND default_binding_key = $3
 		    AND session_type = $4
 		    AND state <> $5
-		  ORDER BY last_used_at DESC, updated_at DESC
 		  LIMIT 1`,
 		orgID,
 		profileRef,
@@ -227,8 +227,16 @@ func (ShellSessionsRepository) Upsert(
 	if err != nil {
 		return err
 	}
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := clearCompetingDefaultBindingKeys(ctx, tx, normalized); err != nil {
+		return err
+	}
 
-	_, err = pool.Exec(
+	_, err = tx.Exec(
 		ctx,
 		`INSERT INTO shell_sessions (
 			session_ref,
@@ -288,7 +296,10 @@ func (ShellSessionsRepository) Upsert(
 		normalized.LeaseEpoch,
 		string(metadataRaw),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (ShellSessionsRepository) Touch(
@@ -764,6 +775,36 @@ func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord,
 		return ShellSessionRecord{}, nil, fmt.Errorf("marshal metadata_json: %w", err)
 	}
 	return record, metadataRaw, nil
+}
+
+type defaultBindingKeyQuerier interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord) error {
+	if querier == nil || record.DefaultBindingKey == nil {
+		return nil
+	}
+	_, err := querier.Exec(
+		ctx,
+		`UPDATE shell_sessions
+		    SET default_binding_key = NULL,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE org_id = $1
+		    AND profile_ref = $2
+		    AND session_type = $3
+		    AND default_binding_key = $4
+		    AND session_ref <> $5
+		    AND state <> $6`,
+		record.OrgID,
+		record.ProfileRef,
+		record.SessionType,
+		*record.DefaultBindingKey,
+		record.SessionRef,
+		ShellSessionStateClosed,
+	)
+	return err
 }
 
 func normalizeShellShareScope(value string) string {

@@ -334,12 +334,10 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		`CREATE INDEX idx_shell_sessions_org_lease_until
 		    ON shell_sessions (org_id, lease_until)
 		    WHERE lease_until IS NOT NULL`,
-		`CREATE INDEX idx_shell_sessions_org_profile_default_binding_updated
-		    ON shell_sessions (org_id, profile_ref, default_binding_key, updated_at DESC)
-		    WHERE default_binding_key IS NOT NULL`,
-		`CREATE INDEX idx_shell_sessions_org_profile_binding_type_updated
-		    ON shell_sessions (org_id, profile_ref, session_type, default_binding_key, updated_at DESC)
-		    WHERE default_binding_key IS NOT NULL`,
+		`CREATE UNIQUE INDEX idx_shell_sessions_org_profile_binding_type_unique
+			    ON shell_sessions (org_id, profile_ref, session_type, default_binding_key)
+			    WHERE default_binding_key IS NOT NULL
+			      AND state <> 'closed'`,
 		`CREATE TABLE profile_registries (
 			profile_ref             TEXT        PRIMARY KEY,
 			org_id                  UUID        NOT NULL,

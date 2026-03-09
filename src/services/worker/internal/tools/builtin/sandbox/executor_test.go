@@ -1064,6 +1064,72 @@ func TestExecCommand_AutoFallsBackAfterStaleThreadDefault(t *testing.T) {
 	}
 }
 
+func TestExecCommand_AutoFallsBackAfterStaleWorkspaceDefaultKeepsWorkspaceScope(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_workspace_fallback_scope")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	workspaceRef := "wsref_test"
+	bindingKey := "workspace:" + workspaceRef
+	liveSessionID := "shref_workspace_old"
+	repo := data.ShellSessionsRepository{}
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:        "shref_workspace_old",
+		OrgID:             orgID,
+		ProfileRef:        "pref_test",
+		WorkspaceRef:      workspaceRef,
+		ShareScope:        data.ShellShareScopeWorkspace,
+		State:             data.ShellSessionStateBusy,
+		LiveSessionID:     &liveSessionID,
+		DefaultBindingKey: &bindingKey,
+		MetadataJSON:      map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	var sessionIDs []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		sessionIDs = append(sessionIDs, body.SessionID)
+		w.Header().Set("Content-Type", "application/json")
+		if body.SessionID == "shref_workspace_old" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"code": "sandbox.session_not_found", "message": "session not found"})
+			return
+		}
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: workspaceRef}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "call_workspace_fallback")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	newSessionRef, _ := result.ResultJSON["session_ref"].(string)
+	if len(sessionIDs) != 2 || sessionIDs[1] != newSessionRef {
+		t.Fatalf("unexpected fallback sessions: %#v", sessionIDs)
+	}
+	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, newSessionRef)
+	if err != nil {
+		t.Fatalf("get fallback session: %v", err)
+	}
+	if stored.ShareScope != data.ShellShareScopeWorkspace {
+		t.Fatalf("expected workspace scope, got %s", stored.ShareScope)
+	}
+	if stored.DefaultBindingKey == nil || *stored.DefaultBindingKey != bindingKey {
+		t.Fatalf("expected workspace default binding preserved, got %#v", stored.DefaultBindingKey)
+	}
+}
+
 func TestExecCommand_WorkspaceDefaultUpdatesWorkspaceRegistry(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_workspace_default_registry")
 	pool, err := pgxpool.New(t.Context(), db.DSN)
@@ -1354,6 +1420,63 @@ func TestExecCommand_ResumeOrgScopeAllowedForAdmin(t *testing.T) {
 	}
 }
 
+func TestExecCommand_ResumeOrgScopePreservesSourceWorkspaceIdentity(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_org_resume_identity")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	seedMembership(t, pool, orgID, userID, "org_admin")
+	repo := data.ShellSessionsRepository{}
+	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+		SessionRef:   "shref_org_identity",
+		OrgID:        orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_source",
+		ProjectID:    uuidPtr(uuid.New()),
+		ShareScope:   data.ShellShareScopeOrg,
+		State:        data.ShellSessionStateReady,
+		MetadataJSON: map[string]any{},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	var body execCommandRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_caller"}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{
+		"command":      "pwd",
+		"session_mode": "resume",
+		"session_ref":  "shref_org_identity",
+	}, ctx, "call_org_resume")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if body.WorkspaceRef != "wsref_source" {
+		t.Fatalf("expected source workspace_ref in sandbox request, got %s", body.WorkspaceRef)
+	}
+	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, "shref_org_identity")
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if stored.WorkspaceRef != "wsref_source" {
+		t.Fatalf("expected persisted workspace_ref unchanged, got %s", stored.WorkspaceRef)
+	}
+}
+
 func TestExecCommand_ResumeOrgScopeRejectsCrossProfile(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_acl_org_profile")
 	pool, err := pgxpool.New(t.Context(), db.DSN)
@@ -1510,6 +1633,9 @@ func TestExecCommand_ForkInheritsShareScope(t *testing.T) {
 	if stored.ShareScope != data.ShellShareScopeOrg {
 		t.Fatalf("unexpected stored share_scope: %s", stored.ShareScope)
 	}
+	if stored.ProfileRef != "pref_test" || stored.WorkspaceRef != "wsref_test" {
+		t.Fatalf("expected forked session identity preserved, got profile=%s workspace=%s", stored.ProfileRef, stored.WorkspaceRef)
+	}
 }
 
 func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
@@ -1548,12 +1674,12 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 
 	exec := NewToolExecutorWithPool(server.URL, "", pool)
 	ctx := tools.ExecutionContext{RunID: runID, OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
-	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "python server.py"}, ctx, "")
+	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "python server.py"}, ctx, "call_shared_writer")
 	if first.Error != nil {
 		t.Fatalf("unexpected exec error: %+v", first.Error)
 	}
 	sessionRef, _ := first.ResultJSON["session_ref"].(string)
-	second := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": sessionRef, "chars": "yes\n"}, ctx, "")
+	second := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": sessionRef, "chars": "yes\n"}, ctx, "call_shared_writer")
 	if second.Error != nil {
 		t.Fatalf("unexpected write error: %+v", second.Error)
 	}
@@ -1565,7 +1691,7 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}
-	if stored.LeaseOwnerID == nil || *stored.LeaseOwnerID != "run:"+runID.String() {
+	if stored.LeaseOwnerID == nil || *stored.LeaseOwnerID != "run:"+runID.String()+":call:call_shared_writer" {
 		t.Fatalf("unexpected lease owner: %#v", stored.LeaseOwnerID)
 	}
 	if stored.State != data.ShellSessionStateBusy {
@@ -1573,6 +1699,49 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 	}
 	if stored.LeaseUntil == nil || !stored.LeaseUntil.After(time.Now().UTC()) {
 		t.Fatalf("expected active lease_until, got %#v", stored.LeaseUntil)
+	}
+}
+
+func TestWriteStdin_SameRunDifferentToolCallIDRejected(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_same_run_writer_conflict")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	runID := uuid.New()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/exec_command":
+			var body execCommandRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode exec body: %v", err)
+			}
+			json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "running", Cwd: "/workspace", Running: true})
+		case "/v1/write_stdin":
+			t.Fatalf("write_stdin should be rejected before sandbox")
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{RunID: runID, OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
+	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "python server.py"}, ctx, "call_writer_owner")
+	if first.Error != nil {
+		t.Fatalf("unexpected exec error: %+v", first.Error)
+	}
+	sessionRef, _ := first.ResultJSON["session_ref"].(string)
+	second := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": sessionRef, "chars": "yes\n"}, ctx, "call_other_writer")
+	if second.Error == nil || second.Error.ErrorClass != errorSandboxError {
+		t.Fatalf("expected busy sandbox_error, got %+v", second.Error)
+	}
+	if retryVia, _ := second.Error.Details["retry_via"].(string); retryVia != "wait_for_current_writer" {
+		t.Fatalf("unexpected retry_via: %+v", second.Error.Details)
 	}
 }
 
@@ -1751,7 +1920,7 @@ func TestExecCommand_ExpiredLeaseCanBeTakenOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get stored stale session: %v", err)
 	}
-	if stored.LeaseOwnerID == nil || *stored.LeaseOwnerID != "run:"+runID.String() {
+	if stored.LeaseOwnerID == nil || *stored.LeaseOwnerID != "run:"+runID.String()+":call:direct" {
 		t.Fatalf("unexpected takeover owner: %#v", stored.LeaseOwnerID)
 	}
 	if stored.LeaseEpoch != 3 {

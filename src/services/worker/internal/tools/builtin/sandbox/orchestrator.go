@@ -36,6 +36,36 @@ type resolvedSession struct {
 	Record                   *data.ShellSessionRecord
 }
 
+func (r *resolvedSession) ProfileRef(fallback string) string {
+	if r != nil && r.Record != nil && strings.TrimSpace(r.Record.ProfileRef) != "" {
+		return strings.TrimSpace(r.Record.ProfileRef)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func (r *resolvedSession) WorkspaceRef(fallback string) string {
+	if r != nil && r.Record != nil && strings.TrimSpace(r.Record.WorkspaceRef) != "" {
+		return strings.TrimSpace(r.Record.WorkspaceRef)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func (r *resolvedSession) ProjectID(fallback *uuid.UUID) *uuid.UUID {
+	if r != nil && r.Record != nil && r.Record.ProjectID != nil {
+		copied := *r.Record.ProjectID
+		return &copied
+	}
+	return uuidPtr(fallback)
+}
+
+func (r *resolvedSession) ThreadID(fallback *uuid.UUID) *uuid.UUID {
+	if r != nil && r.Record != nil && r.Record.ThreadID != nil {
+		copied := *r.Record.ThreadID
+		return &copied
+	}
+	return uuidPtr(fallback)
+}
+
 type sessionOrchestrator struct {
 	pool            *pgxpool.Pool
 	sessionType     string
@@ -99,7 +129,7 @@ func (o *sessionOrchestrator) resolveExecSession(
 		if err != nil {
 			return nil, err
 		}
-		created, createErr := o.createSession(ctx, execCtx, base.ShareScope, nil)
+		created, createErr := o.createForkedSession(ctx, execCtx, base)
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -179,6 +209,10 @@ func (o *sessionOrchestrator) resolveFallbackSession(
 	}
 	shareScope := requestedShareScopeOrDefault(execCtx, strings.TrimSpace(req.ShareScope))
 	defaultBindingKey := defaultBindingKeyForShareScope(execCtx, shareScope)
+	if failed.ResolvedVia == "thread_default" || failed.ResolvedVia == "workspace_default" {
+		shareScope = failed.ShareScope
+		defaultBindingKey = failed.DefaultBindingKey
+	}
 	created, err := o.createSession(ctx, execCtx, shareScope, defaultBindingKey)
 	if err != nil {
 		return nil, err
@@ -335,6 +369,40 @@ func (o *sessionOrchestrator) createSessionWithRef(
 	}, nil
 }
 
+func (o *sessionOrchestrator) createForkedSession(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	base *resolvedSession,
+) (*resolvedSession, *tools.ExecutionError) {
+	if base == nil || base.Record == nil {
+		return nil, sandboxArgsError("fork source session is required")
+	}
+	record := *base.Record
+	record.SessionRef = newSessionRef(o.sessionType)
+	record.SessionType = o.sessionType
+	record.OrgID = derefUUID(execCtx.OrgID)
+	record.RunID = uuidPtr(execCtx.RunID)
+	record.State = data.ShellSessionStateReady
+	record.LiveSessionID = nil
+	record.LatestRestoreRev = nil
+	record.DefaultBindingKey = nil
+	record.LeaseOwnerID = nil
+	record.LeaseUntil = nil
+	record.MetadataJSON = cloneMetadata(record.MetadataJSON)
+	if err := o.saveSession(ctx, execCtx, record); err != nil {
+		return nil, sandboxArgsError(err.Error())
+	}
+	return &resolvedSession{
+		SessionRef:        record.SessionRef,
+		ResolvedVia:       "new_session",
+		Reused:            false,
+		ShareScope:        record.ShareScope,
+		OpenMode:          openModeCreate,
+		DefaultBindingKey: record.DefaultBindingKey,
+		Record:            &record,
+	}, nil
+}
+
 func (o *sessionOrchestrator) resolveBrowserSession(
 	ctx context.Context,
 	req browserArgs,
@@ -431,10 +499,9 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 			if strings.TrimSpace(stringPtrValue(record.DefaultBindingKey)) != strings.TrimSpace(defaultBindingKey) || record.State == data.ShellSessionStateClosed {
 				continue
 			}
-			if !found || record.LastUsedAt.After(selected.LastUsedAt) || (record.LastUsedAt.Equal(selected.LastUsedAt) && record.UpdatedAt.After(selected.UpdatedAt)) {
-				selected = record
-				found = true
-			}
+			selected = record
+			found = true
+			break
 		}
 		return selected, found, nil
 	}
@@ -475,13 +542,31 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
+		if record.DefaultBindingKey != nil {
+			bindingKey := stringPtrValue(record.DefaultBindingKey)
+			for sessionRef, existing := range o.memorySessions {
+				if sessionRef == record.SessionRef {
+					continue
+				}
+				if existing.OrgID != record.OrgID || existing.SessionType != record.SessionType || existing.State == data.ShellSessionStateClosed {
+					continue
+				}
+				if strings.TrimSpace(existing.ProfileRef) != strings.TrimSpace(record.ProfileRef) || stringPtrValue(existing.DefaultBindingKey) != bindingKey {
+					continue
+				}
+				existing.DefaultBindingKey = nil
+				existing.LastUsedAt = now
+				existing.UpdatedAt = now
+				o.memorySessions[sessionRef] = existing
+			}
+		}
 		o.memorySessions[record.SessionRef] = record
 		return nil
 	}
 	if err := o.registryService.UpsertProfileRegistry(ctx, record.OrgID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
 		return err
 	}
-	if err := o.registryService.UpsertWorkspaceRegistry(ctx, record.OrgID, execCtx.UserID, execCtx.ProjectID, record.WorkspaceRef, nil); err != nil {
+	if err := o.registryService.UpsertWorkspaceRegistry(ctx, record.OrgID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, nil); err != nil {
 		return err
 	}
 	return o.sessionsRepo.Upsert(ctx, o.pool, record)
@@ -525,10 +610,10 @@ func (o *sessionOrchestrator) markResult(
 		SessionRef:        resolution.SessionRef,
 		SessionType:       o.sessionType,
 		OrgID:             orgID,
-		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
-		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
-		ProjectID:         uuidPtr(execCtx.ProjectID),
-		ThreadID:          execCtx.ThreadID,
+		ProfileRef:        resolution.ProfileRef(execCtx.ProfileRef),
+		WorkspaceRef:      resolution.WorkspaceRef(execCtx.WorkspaceRef),
+		ProjectID:         resolution.ProjectID(execCtx.ProjectID),
+		ThreadID:          resolution.ThreadID(execCtx.ThreadID),
 		RunID:             uuidPtr(execCtx.RunID),
 		ShareScope:        resolution.ShareScope,
 		State:             state,
@@ -540,15 +625,9 @@ func (o *sessionOrchestrator) markResult(
 		record = *resolution.Record
 		record.OrgID = orgID
 		record.SessionType = o.sessionType
-		record.ProfileRef = strings.TrimSpace(execCtx.ProfileRef)
-		record.WorkspaceRef = strings.TrimSpace(execCtx.WorkspaceRef)
-		record.ProjectID = uuidPtr(execCtx.ProjectID)
-		record.ThreadID = execCtx.ThreadID
 		record.RunID = uuidPtr(execCtx.RunID)
-		record.ShareScope = resolution.ShareScope
 		record.State = state
 		record.LiveSessionID = stringPtr(resolution.SessionRef)
-		record.DefaultBindingKey = resolution.DefaultBindingKey
 		if record.MetadataJSON == nil {
 			record.MetadataJSON = map[string]any{}
 		}
@@ -578,7 +657,7 @@ func (o *sessionOrchestrator) markResult(
 	if o.sessionType == data.ShellSessionTypeShell && strings.HasPrefix(stringPtrValue(record.DefaultBindingKey), "workspace:") {
 		defaultShellSessionRef = stringPtr(record.SessionRef)
 	}
-	_ = o.registryService.UpsertWorkspaceRegistry(ctx, orgID, execCtx.UserID, execCtx.ProjectID, record.WorkspaceRef, defaultShellSessionRef)
+	_ = o.registryService.UpsertWorkspaceRegistry(ctx, orgID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, defaultShellSessionRef)
 }
 
 func normalizeSessionMode(value string) string {
@@ -690,6 +769,7 @@ func (o *sessionOrchestrator) prepareExecWriterLease(
 	ctx context.Context,
 	execCtx tools.ExecutionContext,
 	resolution *resolvedSession,
+	ownerID string,
 	timeoutMs int,
 ) *tools.ExecutionError {
 	if resolution == nil {
@@ -697,9 +777,9 @@ func (o *sessionOrchestrator) prepareExecWriterLease(
 	}
 	record := o.sessionRecord(execCtx, resolution)
 	if record.State == data.ShellSessionStateBusy && hasActiveWriterLease(record, time.Now().UTC()) {
-		return shellBusyError(resolution.SessionRef)
+		return shellBusyError(resolution.SessionRef, "fork")
 	}
-	updated, err := o.acquireWriterLease(ctx, execCtx, resolution, writerLeaseOwner(execCtx), execWriterLeaseUntil(timeoutMs))
+	updated, err := o.acquireWriterLease(ctx, execCtx, resolution, ownerID, execWriterLeaseUntil(timeoutMs))
 	if err != nil {
 		return err
 	}
@@ -711,12 +791,12 @@ func (o *sessionOrchestrator) prepareWriteWriterLease(
 	ctx context.Context,
 	execCtx tools.ExecutionContext,
 	resolution *resolvedSession,
+	ownerID string,
 	hasInput bool,
 ) *tools.ExecutionError {
 	if resolution == nil || !hasInput {
 		return nil
 	}
-	ownerID := writerLeaseOwner(execCtx)
 	updated, err := o.acquireWriterLease(ctx, execCtx, resolution, ownerID, writeWriterLeaseUntil())
 	if err != nil {
 		return err
@@ -729,6 +809,7 @@ func (o *sessionOrchestrator) reconcileWriteWriterLease(
 	ctx context.Context,
 	execCtx tools.ExecutionContext,
 	resolution *resolvedSession,
+	ownerID string,
 	hasInput bool,
 	resp execSessionResponse,
 ) {
@@ -742,7 +823,6 @@ func (o *sessionOrchestrator) reconcileWriteWriterLease(
 	if hasInput {
 		return
 	}
-	ownerID := writerLeaseOwner(execCtx)
 	if strings.TrimSpace(stringPtrValue(resolution.RecordLeaseOwnerID())) != ownerID {
 		return
 	}
@@ -860,7 +940,7 @@ func (o *sessionOrchestrator) updateWriterLease(
 		return record, nil
 	}
 	if data.IsShellSessionLeaseConflict(err) {
-		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef, "wait_for_current_writer")
 	}
 	if data.IsShellSessionNotFound(err) {
 		return data.ShellSessionRecord{}, &tools.ExecutionError{ErrorClass: errorSandboxError, Message: "shell session not found", Details: map[string]any{"session_ref": resolution.SessionRef, "code": "shell.session_not_found"}}
@@ -886,10 +966,10 @@ func (o *sessionOrchestrator) updateMemoryWriterLease(
 	active := hasActiveWriterLease(record, now)
 	if renewOnly {
 		if currentOwner != ownerID {
-			return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+			return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef, "wait_for_current_writer")
 		}
 	} else if active && currentOwner != ownerID {
-		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef, "wait_for_current_writer")
 	}
 	if currentOwner != "" && currentOwner != ownerID {
 		record.LeaseEpoch++
@@ -928,11 +1008,26 @@ func (r *resolvedSession) RecordLeaseOwnerID() *string {
 	return r.Record.LeaseOwnerID
 }
 
-func writerLeaseOwner(execCtx tools.ExecutionContext) string {
+func writerLeaseOwner(execCtx tools.ExecutionContext, toolCallID string) string {
 	if execCtx.RunID == uuid.Nil {
 		return ""
 	}
-	return "run:" + execCtx.RunID.String()
+	toolCallID = strings.TrimSpace(toolCallID)
+	if toolCallID == "" {
+		toolCallID = "direct"
+	}
+	return "run:" + execCtx.RunID.String() + ":call:" + toolCallID
+}
+
+func cloneMetadata(source map[string]any) map[string]any {
+	if len(source) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func execWriterLeaseUntil(timeoutMs int) time.Time {
