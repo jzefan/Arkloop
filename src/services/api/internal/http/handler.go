@@ -238,7 +238,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 	mux.HandleFunc(
 		"GET /v1/workspace-files",
-		workspaceFilesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.EnvironmentStore),
+		workspaceFilesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, cfg.EnvironmentStore),
 	)
 
 	mux.HandleFunc(

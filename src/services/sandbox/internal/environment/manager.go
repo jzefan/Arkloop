@@ -385,15 +385,6 @@ func (m *Manager) runScopeFlush(ctx context.Context, sessionID string, carrier C
 	if err := saveManifest(ctx, m.store, nextManifest); err != nil {
 		return "", err
 	}
-	if err := saveLatestPointer(ctx, m.store, LatestPointer{
-		Version:   CurrentManifestVersion,
-		Scope:     scope,
-		Ref:       ref,
-		Revision:  revision,
-		UpdatedAt: now.Format(time.RFC3339Nano),
-	}); err != nil {
-		return "", err
-	}
 	if err := m.registry.CommitFlushSuccess(ctx, scope, ref, holderID, baseRevision, revision, now); err != nil {
 		return "", err
 	}
@@ -411,14 +402,6 @@ func (m *Manager) prepareScope(ctx context.Context, carrier Carrier, state *trac
 		return err
 	}
 	revision = strings.TrimSpace(revision)
-	if revision == "" {
-		pointer, pointerErr := loadLatestPointer(ctx, m.store, scope, ref)
-		if pointerErr == nil {
-			revision = strings.TrimSpace(pointer.Revision)
-		} else if !objectstore.IsNotFound(pointerErr) {
-			return pointerErr
-		}
-	}
 	if revision == "" {
 		if state != nil {
 			state.hydratedRevision = ""

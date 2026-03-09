@@ -32,24 +32,8 @@ type ManifestStats struct {
 	ByteCount int64 `json:"byte_count,omitempty"`
 }
 
-type SessionRestoreState struct {
-	Version        int               `json:"version"`
-	SessionRef     string            `json:"session_ref"`
-	ProfileRef     string            `json:"profile_ref"`
-	WorkspaceRef   string            `json:"workspace_ref"`
-	Cwd            string            `json:"cwd,omitempty"`
-	EnvDelta       map[string]string `json:"env_delta,omitempty"`
-	LastCommandSeq int64             `json:"last_command_seq,omitempty"`
-	CreatedAt      string            `json:"created_at"`
-	ExpiresAt      string            `json:"expires_at,omitempty"`
-}
-
 func ProfileManifestKey(profileRef string, revision string) string {
 	return "profiles/" + strings.TrimSpace(profileRef) + "/manifests/" + strings.TrimSpace(revision) + ".json"
-}
-
-func ProfileLatestKey(profileRef string) string {
-	return "profiles/" + strings.TrimSpace(profileRef) + "/latest.json"
 }
 
 func ProfileBlobKey(profileRef string, sha256 string) string {
@@ -58,10 +42,6 @@ func ProfileBlobKey(profileRef string, sha256 string) string {
 
 func WorkspaceManifestKey(workspaceRef string, revision string) string {
 	return "workspaces/" + strings.TrimSpace(workspaceRef) + "/manifests/" + strings.TrimSpace(revision) + ".json"
-}
-
-func WorkspaceLatestKey(workspaceRef string) string {
-	return "workspaces/" + strings.TrimSpace(workspaceRef) + "/latest.json"
 }
 
 func WorkspaceBlobKey(workspaceRef string, sha256 string) string {

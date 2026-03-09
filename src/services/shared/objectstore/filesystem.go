@@ -11,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -21,21 +19,13 @@ const (
 	defaultContentType   = "application/octet-stream"
 )
 
-var filesystemCleanupInterval = time.Hour
-
 type FilesystemOpener struct {
 	rootDir string
 }
 
 type FilesystemStore struct {
-	rootDir        string
-	bucket         string
-	cleanupEvery   time.Duration
-	now            func() time.Time
-	cleanupOnce    sync.Once
-	cleanupMu      sync.Mutex
-	ttlDaysMu      sync.RWMutex
-	sessionTTLDays int
+	rootDir string
+	bucket  string
 }
 
 type filesystemObjectMetadata struct {
@@ -43,10 +33,6 @@ type filesystemObjectMetadata struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	Size        int64             `json:"size,omitempty"`
 	ETag        string            `json:"etag,omitempty"`
-}
-
-type latestCheckpointMarker struct {
-	UpdatedAt string `json:"updated_at"`
 }
 
 func NewFilesystemOpener(rootDir string) *FilesystemOpener {
@@ -63,10 +49,8 @@ func (o *FilesystemOpener) Open(_ context.Context, bucket string) (Store, error)
 		return nil, fmt.Errorf("filesystem root dir must not be empty")
 	}
 	store := &FilesystemStore{
-		rootDir:      rootDir,
-		bucket:       bucket,
-		cleanupEvery: filesystemCleanupInterval,
-		now:          time.Now,
+		rootDir: rootDir,
+		bucket:  bucket,
 	}
 	if err := os.MkdirAll(store.objectsRoot(), 0o755); err != nil {
 		return nil, fmt.Errorf("create filesystem object dir: %w", err)
@@ -244,87 +228,9 @@ func (s *FilesystemStore) WriteJSONAtomic(ctx context.Context, key string, value
 }
 
 func (s *FilesystemStore) SetLifecycleExpirationDays(ctx context.Context, days int) error {
-	if days <= 0 || s.bucket != SessionStateBucket {
-		return nil
-	}
-	s.ttlDaysMu.Lock()
-	s.sessionTTLDays = days
-	s.ttlDaysMu.Unlock()
-	if err := s.cleanupExpiredSessionState(ctx, days); err != nil {
-		return err
-	}
-	s.cleanupOnce.Do(func() {
-		go s.runSessionStateCleanup(days)
-	})
+	_ = ctx
+	_ = days
 	return nil
-}
-
-func (s *FilesystemStore) runSessionStateCleanup(days int) {
-	ticker := time.NewTicker(s.cleanupEvery)
-	defer ticker.Stop()
-	for range ticker.C {
-		_ = s.cleanupExpiredSessionState(context.Background(), days)
-	}
-}
-
-func (s *FilesystemStore) cleanupExpiredSessionState(ctx context.Context, days int) error {
-	s.cleanupMu.Lock()
-	defer s.cleanupMu.Unlock()
-	cutoff := s.now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
-	return filepath.WalkDir(s.objectsRoot(), func(current string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		if entry.IsDir() || entry.Name() != "latest.json" {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		updatedAt := loadLatestCheckpointUpdatedAt(current, info.ModTime())
-		if updatedAt.After(cutoff) {
-			return nil
-		}
-		rel, err := filepath.Rel(s.objectsRoot(), current)
-		if err != nil {
-			return err
-		}
-		sessionDir := filepath.Dir(rel)
-		if sessionDir == "." || sessionDir == "" {
-			return nil
-		}
-		if err := os.RemoveAll(filepath.Join(s.objectsRoot(), sessionDir)); err != nil {
-			return err
-		}
-		if err := os.RemoveAll(filepath.Join(s.metaRoot(), sessionDir)); err != nil {
-			return err
-		}
-		s.cleanupEmptyParents(s.objectsRoot(), filepath.Join(s.objectsRoot(), filepath.Dir(sessionDir)))
-		s.cleanupEmptyParents(s.metaRoot(), filepath.Join(s.metaRoot(), filepath.Dir(sessionDir)))
-		return filepath.SkipDir
-	})
-}
-
-func loadLatestCheckpointUpdatedAt(path string, fallback time.Time) time.Time {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fallback.UTC()
-	}
-	var marker latestCheckpointMarker
-	if err := json.Unmarshal(data, &marker); err != nil {
-		return fallback.UTC()
-	}
-	updatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(marker.UpdatedAt))
-	if err != nil {
-		return fallback.UTC()
-	}
-	return updatedAt.UTC()
 }
 
 func (s *FilesystemStore) readMetadata(key string) (filesystemObjectMetadata, string, error) {

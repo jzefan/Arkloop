@@ -279,9 +279,6 @@ func TestManagerPrepareRestoresFromManifestState(t *testing.T) {
 	if err := saveManifest(context.Background(), store, manifest); err != nil {
 		t.Fatalf("save manifest: %v", err)
 	}
-	if err := saveLatestPointer(context.Background(), store, LatestPointer{Version: CurrentManifestVersion, Scope: ScopeWorkspace, Ref: binding.WorkspaceRef, Revision: manifest.Revision, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-		t.Fatalf("save latest pointer: %v", err)
-	}
 	if _, err := putBlobIfMissing(context.Background(), store, blobKey(ScopeWorkspace, binding.WorkspaceRef, "sha-chart"), []byte("png-data")); err != nil {
 		t.Fatalf("put blob: %v", err)
 	}
@@ -416,7 +413,7 @@ func TestManagerPrepareRehydratesWhenRevisionChanges(t *testing.T) {
 	}
 }
 
-func TestManagerFlushWritesManifestBlobAndLatestPointer(t *testing.T) {
+func TestManagerFlushWritesManifestAndBlob(t *testing.T) {
 	store := newMemoryStore()
 	registry := newFakeRegistryWriter()
 	mgr := NewManager(store, registry, nil, Config{})
@@ -445,13 +442,6 @@ func TestManagerFlushWritesManifestBlobAndLatestPointer(t *testing.T) {
 	}
 	if len(manifest.Entries) != 1 || manifest.Entries[0].Path != "src/main.go" {
 		t.Fatalf("unexpected manifest entries: %#v", manifest.Entries)
-	}
-	pointer, err := loadLatestPointer(context.Background(), store, ScopeWorkspace, binding.WorkspaceRef)
-	if err != nil {
-		t.Fatalf("load latest pointer: %v", err)
-	}
-	if pointer.Revision != revision {
-		t.Fatalf("unexpected latest pointer revision: %s", pointer.Revision)
 	}
 	decoded, err := loadBlob(context.Background(), store, blobKey(ScopeWorkspace, binding.WorkspaceRef, "sha-main"))
 	if err != nil {
