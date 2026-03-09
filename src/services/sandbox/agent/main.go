@@ -147,12 +147,13 @@ var supportedEnvironmentActions = []string{
 }
 
 type EnvironmentRequest struct {
-	Scope    string                        `json:"scope"`
-	Subtrees []string                      `json:"subtrees,omitempty"`
-	Paths    []string                      `json:"paths,omitempty"`
-	Manifest *environmentcontract.Manifest `json:"manifest,omitempty"`
-	Files    []environment.FilePayload     `json:"files,omitempty"`
-	Reset    bool                          `json:"reset,omitempty"`
+	Scope             string                        `json:"scope"`
+	Subtrees          []string                      `json:"subtrees,omitempty"`
+	Paths             []string                      `json:"paths,omitempty"`
+	Manifest          *environmentcontract.Manifest `json:"manifest,omitempty"`
+	Files             []environment.FilePayload     `json:"files,omitempty"`
+	PrunePaths        []string                      `json:"prune_paths,omitempty"`
+	PruneRootChildren bool                          `json:"prune_root_children,omitempty"`
 }
 
 type EnvironmentResponse struct {
@@ -308,7 +309,7 @@ func handleV2(conn net.Conn, req AgentRequest) {
 			writeJSON(conn, AgentResponse{Action: req.Action, Error: "environment manifest is required"})
 			return
 		}
-		if err := applyEnvironment(strings.TrimSpace(req.Environment.Scope), *req.Environment.Manifest, req.Environment.Files, req.Environment.Reset); err != nil {
+		if err := applyEnvironment(strings.TrimSpace(req.Environment.Scope), *req.Environment.Manifest, req.Environment.Files, req.Environment.PrunePaths, req.Environment.PruneRootChildren); err != nil {
 			writeJSON(conn, AgentResponse{Action: req.Action, Error: err.Error()})
 			return
 		}

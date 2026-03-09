@@ -77,6 +77,8 @@ func shouldHydrateFile(scope, relativePath string, options PrepareOptions) bool 
 	switch strings.TrimSpace(scope) {
 	case ScopeProfile:
 		return shouldHydrateProfileFile(relativePath)
+	case ScopeBrowserState:
+		return true
 	case ScopeWorkspace:
 		if options.WorkspaceMode == WorkspaceHydrationFull {
 			return true

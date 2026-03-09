@@ -53,7 +53,7 @@ func TestReadEnvironmentPathsRejectsTraversal(t *testing.T) {
 	}
 }
 
-func TestApplyEnvironmentResetsRootAndRestoresSelectedFiles(t *testing.T) {
+func TestApplyEnvironmentPrunesRootChildrenAndRestoresSelectedFiles(t *testing.T) {
 	workspaceDir := t.TempDir()
 	oldWorkspace := shellWorkspaceDir
 	shellWorkspaceDir = workspaceDir
@@ -75,7 +75,7 @@ func TestApplyEnvironmentResetsRootAndRestoresSelectedFiles(t *testing.T) {
 	files := []environment.FilePayload{
 		environment.EncodeFilePayload("repo/main.go", data, manifest.Entries[1]),
 	}
-	if err := applyEnvironment(environment.ScopeWorkspace, manifest, files, true); err != nil {
+	if err := applyEnvironment(environment.ScopeWorkspace, manifest, files, nil, true); err != nil {
 		t.Fatalf("apply environment: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(workspaceDir, "stale.txt")); !os.IsNotExist(err) {
@@ -101,8 +101,44 @@ func TestApplyEnvironmentRejectsEscapingSymlink(t *testing.T) {
 		Scope:   environment.ScopeWorkspace,
 		Entries: []environment.ManifestEntry{{Path: "repo/link", Type: environment.EntryTypeSymlink, LinkTarget: "../../etc/passwd"}},
 	}
-	if err := applyEnvironment(environment.ScopeWorkspace, manifest, nil, true); err == nil {
+	if err := applyEnvironment(environment.ScopeWorkspace, manifest, nil, nil, true); err == nil {
 		t.Fatal("expected escaping symlink to be rejected")
+	}
+}
+
+func TestApplyEnvironmentDoesNotDeleteProfileRoot(t *testing.T) {
+	parentDir := t.TempDir()
+	homeParent := filepath.Join(parentDir, "home")
+	homeDir := filepath.Join(homeParent, "arkloop")
+	oldHome := shellHomeDir
+	shellHomeDir = homeDir
+	defer func() { shellHomeDir = oldHome }()
+
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, ".bashrc"), []byte("export FOO=1\n"), 0o644); err != nil {
+		t.Fatalf("write bashrc: %v", err)
+	}
+	if err := os.Chmod(homeParent, 0o555); err != nil {
+		t.Fatalf("chmod home parent: %v", err)
+	}
+	defer os.Chmod(homeParent, 0o755)
+	data := []byte("export FOO=1\n")
+	sum := sha256.Sum256(data)
+
+	manifest := environment.Manifest{
+		Version: environment.CurrentManifestVersion,
+		Scope:   environment.ScopeProfile,
+		Entries: []environment.ManifestEntry{{Path: ".bashrc", Type: environment.EntryTypeFile, Mode: 0o644, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}},
+	}
+	files := []environment.FilePayload{environment.EncodeFilePayload(".bashrc", data, manifest.Entries[0])}
+
+	if err := applyEnvironment(environment.ScopeProfile, manifest, files, nil, false); err != nil {
+		t.Fatalf("apply profile environment: %v", err)
+	}
+	if _, err := os.Stat(homeDir); err != nil {
+		t.Fatalf("expected profile root to remain present: %v", err)
 	}
 }
 

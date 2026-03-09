@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -49,6 +50,9 @@ func restoreRegularFile(reader io.Reader, targetPath string, mode int64) error {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return fmt.Errorf("restore file parent %s: %w", targetPath, err)
 	}
+	if err := os.RemoveAll(targetPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace restore file %s: %w", targetPath, err)
+	}
 	tempFile, err := os.CreateTemp(filepath.Dir(targetPath), ".restore-*")
 	if err != nil {
 		return fmt.Errorf("create restore temp file %s: %w", targetPath, err)
@@ -72,9 +76,67 @@ func restoreRegularFile(reader io.Reader, targetPath string, mode int64) error {
 	return nil
 }
 
-func resetEnvironmentRoot(rootPath string) error {
-	if err := os.RemoveAll(rootPath); err != nil {
+func ensureEnvironmentRoot(rootPath string) error {
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		return fmt.Errorf("ensure environment root %s: %w", rootPath, err)
+	}
+	return nil
+}
+
+func pruneEnvironmentRootChildren(rootPath string) error {
+	if err := ensureEnvironmentRoot(rootPath); err != nil {
 		return err
 	}
-	return os.MkdirAll(rootPath, 0o755)
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		return fmt.Errorf("read environment root %s: %w", rootPath, err)
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(rootPath, entry.Name())); err != nil {
+			return fmt.Errorf("prune environment root %s: %w", rootPath, err)
+		}
+	}
+	return nil
+}
+
+func pruneEnvironmentPaths(rootPath string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	ordered := normalizePrunePaths(paths)
+	for _, relativePath := range ordered {
+		targetPath := filepath.Join(rootPath, filepath.FromSlash(relativePath))
+		if !pathWithinRoot(rootPath, targetPath) {
+			return fmt.Errorf("environment path escapes root: %s", relativePath)
+		}
+		if err := os.RemoveAll(targetPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("prune environment path %s: %w", targetPath, err)
+		}
+	}
+	return nil
+}
+
+func normalizePrunePaths(paths []string) []string {
+	unique := make(map[string]struct{}, len(paths))
+	ordered := make([]string, 0, len(paths))
+	for _, item := range paths {
+		normalized := strings.TrimSpace(filepath.ToSlash(filepath.Clean(strings.TrimPrefix(item, "/"))))
+		if normalized == "" || normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") {
+			continue
+		}
+		if _, ok := unique[normalized]; ok {
+			continue
+		}
+		unique[normalized] = struct{}{}
+		ordered = append(ordered, normalized)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		depthI := strings.Count(ordered[i], "/")
+		depthJ := strings.Count(ordered[j], "/")
+		if depthI == depthJ {
+			return ordered[i] > ordered[j]
+		}
+		return depthI > depthJ
+	})
+	return ordered
 }

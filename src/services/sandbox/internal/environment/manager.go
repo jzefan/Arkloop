@@ -15,18 +15,20 @@ import (
 )
 
 const (
-	ScopeProfile   = "profile"
-	ScopeWorkspace = "workspace"
+	ScopeProfile      = "profile"
+	ScopeWorkspace    = "workspace"
+	ScopeBrowserState = "browser_state"
 
-	flushTimeout      = 2 * time.Minute
-	profileRootPath   = "/home/arkloop"
-	workspaceRootPath = "/workspace"
+	flushTimeout         = 2 * time.Minute
+	profileRootPath      = "/home/arkloop"
+	workspaceRootPath    = "/workspace"
+	browserStateRootPath = "/home/arkloop/.agent-browser"
 )
 
 type Carrier interface {
 	BuildEnvironmentManifest(ctx context.Context, scope string, subtrees []string) (Manifest, error)
 	CollectEnvironmentFiles(ctx context.Context, scope string, paths []string) ([]FilePayload, error)
-	ApplyEnvironment(ctx context.Context, scope string, manifest Manifest, files []FilePayload, reset bool) error
+	ApplyEnvironment(ctx context.Context, scope string, manifest Manifest, files []FilePayload, prunePaths []string, pruneRootChildren bool) error
 }
 
 type Binding struct {
@@ -100,6 +102,9 @@ func (m *Manager) Prepare(ctx context.Context, sessionID string, carrier Carrier
 	if err := m.registry.EnsureProfileRegistry(ctx, binding.OrgID, binding.ProfileRef); err != nil {
 		return err
 	}
+	if err := m.registry.EnsureBrowserStateRegistry(ctx, binding.OrgID, binding.ProfileRef); err != nil {
+		return err
+	}
 	if err := m.registry.EnsureWorkspaceRegistry(ctx, binding.OrgID, binding.WorkspaceRef); err != nil {
 		return err
 	}
@@ -115,13 +120,16 @@ func (m *Manager) Prepare(ctx context.Context, sessionID string, carrier Carrier
 	if err := m.prepareScope(ctx, entry.carrier, entry.scopeLocked(ScopeProfile), ScopeProfile, binding.ProfileRef); err != nil {
 		return err
 	}
+	if err := m.prepareScope(ctx, entry.carrier, entry.scopeLocked(ScopeBrowserState), ScopeBrowserState, binding.ProfileRef); err != nil {
+		return err
+	}
 	if err := m.prepareScope(ctx, entry.carrier, entry.scopeLocked(ScopeWorkspace), ScopeWorkspace, binding.WorkspaceRef); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m *Manager) MarkDirty(sessionID, cwd string) {
+func (m *Manager) MarkAllDirty(sessionID string) {
 	if m == nil || m.store == nil {
 		return
 	}
@@ -129,12 +137,14 @@ func (m *Manager) MarkDirty(sessionID, cwd string) {
 	if entry == nil {
 		return
 	}
-	updates := dirtyScopesForCwd(cwd)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	for scope, subtree := range updates {
+	for _, scope := range []string{ScopeProfile, ScopeBrowserState, ScopeWorkspace} {
+		if strings.TrimSpace(entry.binding.refForScope(scope)) == "" {
+			continue
+		}
 		state := entry.scopeLocked(scope)
-		state.markDirty(subtree)
+		state.markDirty("")
 		m.scheduleScopeLocked(strings.TrimSpace(sessionID), scope, state)
 	}
 }
@@ -168,6 +178,9 @@ func (m *Manager) FlushNow(ctx context.Context, sessionID string) error {
 	entry.mu.Unlock()
 
 	if err := m.flushScope(ctx, sessionID, ScopeProfile, 0, true); err != nil {
+		return err
+	}
+	if err := m.flushScope(ctx, sessionID, ScopeBrowserState, 0, true); err != nil {
 		return err
 	}
 	if err := m.flushScope(ctx, sessionID, ScopeWorkspace, 0, true); err != nil {
@@ -411,7 +424,11 @@ func (m *Manager) prepareScope(ctx context.Context, carrier Carrier, state *trac
 	if state != nil && !state.hasDirty() && state.hydratedRevision == revision {
 		return nil
 	}
-	if err := hydrateScope(ctx, m.store, carrier, scope, ref, revision); err != nil {
+	previousRevision := ""
+	if state != nil {
+		previousRevision = state.hydratedRevision
+	}
+	if err := hydrateScope(ctx, m.store, carrier, scope, ref, previousRevision, revision); err != nil {
 		return err
 	}
 	if state != nil {
@@ -429,8 +446,9 @@ func (m *Manager) ensureSession(sessionID string, carrier Carrier, binding Bindi
 		carrier: carrier,
 		binding: binding,
 		scopes: map[string]*trackedScope{
-			ScopeProfile:   newTrackedScope(),
-			ScopeWorkspace: newTrackedScope(),
+			ScopeProfile:      newTrackedScope(),
+			ScopeBrowserState: newTrackedScope(),
+			ScopeWorkspace:    newTrackedScope(),
 		},
 	}
 	m.sessions[sessionID] = entry
@@ -470,6 +488,8 @@ func normalizeBinding(binding Binding) Binding {
 func (b Binding) refForScope(scope string) string {
 	switch strings.TrimSpace(scope) {
 	case ScopeProfile:
+		return b.ProfileRef
+	case ScopeBrowserState:
 		return b.ProfileRef
 	case ScopeWorkspace:
 		return b.WorkspaceRef
@@ -565,30 +585,6 @@ func addDirtySubtree(target map[string]struct{}, subtree string) {
 		}
 	}
 	target[subtree] = struct{}{}
-}
-
-func dirtyScopesForCwd(cwd string) map[string]string {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return map[string]string{ScopeProfile: "", ScopeWorkspace: ""}
-	}
-	if subtree, ok := subtreeWithinRoot(cwd, workspaceRootPath); ok {
-		return map[string]string{ScopeWorkspace: subtree}
-	}
-	if subtree, ok := subtreeWithinRoot(cwd, profileRootPath); ok {
-		return map[string]string{ScopeProfile: subtree}
-	}
-	return map[string]string{ScopeProfile: "", ScopeWorkspace: ""}
-}
-
-func subtreeWithinRoot(cwd, root string) (string, bool) {
-	if cwd == root || cwd == root+"/" {
-		return "", true
-	}
-	if !strings.HasPrefix(cwd, root+"/") {
-		return "", false
-	}
-	return normalizeRelativePath(strings.TrimPrefix(cwd, root+"/")), true
 }
 
 func nextManifestRevision(now time.Time) string {
