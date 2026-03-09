@@ -24,14 +24,6 @@ type ManifestEntry = contract.ManifestEntry
 
 type ManifestStats = contract.ManifestStats
 
-type LatestPointer struct {
-	Version   int    `json:"version"`
-	Scope     string `json:"scope"`
-	Ref       string `json:"ref"`
-	Revision  string `json:"revision"`
-	UpdatedAt string `json:"updated_at"`
-}
-
 type FilePayload struct {
 	Path   string `json:"path"`
 	Data   string `json:"data,omitempty"`

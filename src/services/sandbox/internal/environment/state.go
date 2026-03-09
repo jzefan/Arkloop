@@ -11,17 +11,6 @@ import (
 	"arkloop/services/shared/workspaceblob"
 )
 
-func latestPointerKey(scope, ref string) string {
-	switch strings.TrimSpace(scope) {
-	case ScopeProfile:
-		return contract.ProfileLatestKey(ref)
-	case ScopeWorkspace:
-		return contract.WorkspaceLatestKey(ref)
-	default:
-		return ""
-	}
-}
-
 func manifestKey(scope, ref, revision string) string {
 	switch strings.TrimSpace(scope) {
 	case ScopeProfile:
@@ -53,41 +42,6 @@ func blobPrefix(scope, ref string) string {
 	default:
 		return ""
 	}
-}
-
-func loadLatestPointer(ctx context.Context, store objectstore.BlobStore, scope, ref string) (*LatestPointer, error) {
-	data, err := store.Get(ctx, latestPointerKey(scope, ref))
-	if err != nil {
-		return nil, err
-	}
-	var pointer LatestPointer
-	if err := json.Unmarshal(data, &pointer); err != nil {
-		return nil, fmt.Errorf("decode latest pointer: %w", err)
-	}
-	pointer.Version = CurrentManifestVersion
-	pointer.Scope = strings.TrimSpace(pointer.Scope)
-	pointer.Ref = strings.TrimSpace(pointer.Ref)
-	pointer.Revision = strings.TrimSpace(pointer.Revision)
-	pointer.UpdatedAt = strings.TrimSpace(pointer.UpdatedAt)
-	if pointer.Scope != strings.TrimSpace(scope) || pointer.Ref != strings.TrimSpace(ref) {
-		return nil, fmt.Errorf("latest pointer identity mismatch")
-	}
-	return &pointer, nil
-}
-
-func saveLatestPointer(ctx context.Context, store objectstore.BlobStore, pointer LatestPointer) error {
-	pointer.Version = CurrentManifestVersion
-	pointer.Scope = strings.TrimSpace(pointer.Scope)
-	pointer.Ref = strings.TrimSpace(pointer.Ref)
-	pointer.Revision = strings.TrimSpace(pointer.Revision)
-	pointer.UpdatedAt = strings.TrimSpace(pointer.UpdatedAt)
-	if pointer.Scope == "" || pointer.Ref == "" || pointer.Revision == "" {
-		return fmt.Errorf("latest pointer is incomplete")
-	}
-	if err := store.WriteJSONAtomic(ctx, latestPointerKey(pointer.Scope, pointer.Ref), pointer); err != nil {
-		return fmt.Errorf("write latest pointer: %w", err)
-	}
-	return nil
 }
 
 func loadManifest(ctx context.Context, store objectstore.BlobStore, scope, ref, revision string) (*Manifest, error) {

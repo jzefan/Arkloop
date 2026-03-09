@@ -2,12 +2,9 @@ package objectstore
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestFilesystemStorePutGetDelete(t *testing.T) {
@@ -142,80 +139,17 @@ func TestFilesystemStoreRejectsEscapingKeys(t *testing.T) {
 	}
 }
 
-func TestFilesystemStoreSessionLifecycleDeletesExpiredPrefix(t *testing.T) {
+func TestFilesystemStoreSetLifecycleExpirationDaysNoop(t *testing.T) {
 	store := openFilesystemStore(t, SessionStateBucket)
-	past := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano)
-	current := time.Now().UTC().Format(time.RFC3339Nano)
-
-	mustPutLifecycleFixture(t, store, "org-a/session-old/latest.json", []byte(`{"revision":"1","updated_at":"`+past+`"}`))
-	mustPutLifecycleFixture(t, store, "org-a/session-old/checkpoints/1/manifest.json", []byte(`{}`))
-	mustPutLifecycleFixture(t, store, "org-a/session-new/latest.json", []byte(`{"revision":"2","updated_at":"`+current+`"}`))
-
+	if err := store.Put(context.Background(), "sessions/sh_1/restore/rev-1.json", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("put restore state: %v", err)
+	}
 	if err := store.SetLifecycleExpirationDays(context.Background(), 1); err != nil {
 		t.Fatalf("set lifecycle: %v", err)
 	}
-	if _, err := store.Get(context.Background(), "org-a/session-old/latest.json"); !IsNotFound(err) {
-		t.Fatalf("expected expired session to be removed, got %v", err)
+	if _, err := store.Get(context.Background(), "sessions/sh_1/restore/rev-1.json"); err != nil {
+		t.Fatalf("expected restore state to remain: %v", err)
 	}
-	if _, err := store.Get(context.Background(), "org-a/session-new/latest.json"); err != nil {
-		t.Fatalf("expected fresh session to remain: %v", err)
-	}
-}
-
-func TestFilesystemStoreSessionLifecycleFallsBackToMtime(t *testing.T) {
-	store := openFilesystemStore(t, SessionStateBucket)
-	mustPutLifecycleFixture(t, store, "org-a/session-old/latest.json", []byte(`not-json`))
-	latestPath, _, _, err := store.objectPaths("org-a/session-old/latest.json")
-	if err != nil {
-		t.Fatalf("resolve latest path: %v", err)
-	}
-	oldTime := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(latestPath, oldTime, oldTime); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-
-	if err := store.SetLifecycleExpirationDays(context.Background(), 1); err != nil {
-		t.Fatalf("set lifecycle: %v", err)
-	}
-	if _, err := store.Get(context.Background(), "org-a/session-old/latest.json"); !IsNotFound(err) {
-		t.Fatalf("expected expired session to be removed by mtime fallback, got %v", err)
-	}
-}
-
-func TestFilesystemStoreSessionLifecycleBackgroundCleanup(t *testing.T) {
-	store := openFilesystemStore(t, SessionStateBucket)
-	store.cleanupEvery = 20 * time.Millisecond
-	mustPutLifecycleFixture(t, store, "org-a/session-live/latest.json", []byte(`not-json`))
-	latestPath, _, _, err := store.objectPaths("org-a/session-live/latest.json")
-	if err != nil {
-		t.Fatalf("resolve latest path: %v", err)
-	}
-	freshTime := time.Now().UTC()
-	if err := os.Chtimes(latestPath, freshTime, freshTime); err != nil {
-		t.Fatalf("set fresh mtime: %v", err)
-	}
-
-	if err := store.SetLifecycleExpirationDays(context.Background(), 1); err != nil {
-		t.Fatalf("set lifecycle: %v", err)
-	}
-	if _, err := store.Get(context.Background(), "org-a/session-live/latest.json"); err != nil {
-		t.Fatalf("expected session to stay before expiration: %v", err)
-	}
-
-	oldTime := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(latestPath, oldTime, oldTime); err != nil {
-		t.Fatalf("set old mtime: %v", err)
-	}
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		_, err := store.Get(context.Background(), "org-a/session-live/latest.json")
-		if IsNotFound(err) {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatal("expected background cleanup to remove expired session")
 }
 
 func openFilesystemStore(t *testing.T, bucket string) *FilesystemStore {
@@ -230,24 +164,4 @@ func openFilesystemStore(t *testing.T, bucket string) *FilesystemStore {
 		t.Fatalf("unexpected store type: %T", rawStore)
 	}
 	return store
-}
-
-func mustPutLifecycleFixture(t *testing.T, store *FilesystemStore, key string, data []byte) {
-	t.Helper()
-	if err := store.Put(context.Background(), key, data); err != nil {
-		t.Fatalf("put lifecycle fixture %s: %v", key, err)
-	}
-	dataPath, metadataPath, _, err := store.objectPaths(key)
-	if err != nil {
-		t.Fatalf("object paths %s: %v", key, err)
-	}
-	if _, err := os.Stat(dataPath); err != nil {
-		t.Fatalf("expected data path %s: %v", dataPath, err)
-	}
-	if _, err := os.Stat(metadataPath); err != nil {
-		t.Fatalf("expected metadata path %s: %v", metadataPath, err)
-	}
-	if rel, err := filepath.Rel(store.objectsRoot(), dataPath); err != nil || filepath.ToSlash(rel) != key {
-		t.Fatalf("unexpected relative path: rel=%q err=%v", rel, err)
-	}
 }

@@ -26,8 +26,8 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
+	setWorkspaceLatestManifest(t, env, workspaceRef, "rev-1")
 
-	env.store.put(workspaceLatestKey(workspaceRef), mustJSON(t, workspaceLatestPointer{Revision: "rev-1"}), "application/json", nil)
 	env.store.put(workspaceManifestKey(workspaceRef, "rev-1"), mustJSON(t, workspaceManifest{Entries: []workspaceManifestEntry{
 		{Path: "report.html", Type: workspaceEntryTypeFile, SHA256: "sha-report"},
 		{Path: "chart.png", Type: workspaceEntryTypeFile, SHA256: "sha-chart"},
@@ -129,8 +129,8 @@ func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
+	setWorkspaceLatestManifest(t, env, workspaceRef, "rev-1")
 
-	env.store.put(workspaceLatestKey(workspaceRef), mustJSON(t, workspaceLatestPointer{Revision: "rev-1"}), "application/json", nil)
 	env.store.put(workspaceManifestKey(workspaceRef, "rev-1"), mustJSON(t, workspaceManifest{Entries: []workspaceManifestEntry{{Path: "chart.png", Type: workspaceEntryTypeFile, SHA256: "sha-chart"}}}), "application/json", nil)
 	env.store.put(workspaceBlobKey(workspaceRef, "sha-chart"), mustWorkspaceBlob(t, []byte("\x89PNG\r\n\x1a\nPNGDATA")), "application/octet-stream", nil)
 
@@ -181,6 +181,18 @@ func mustWorkspaceBlob(t *testing.T, data []byte) []byte {
 		t.Fatalf("encode workspace blob: %v", err)
 	}
 	return encoded
+}
+
+func setWorkspaceLatestManifest(t *testing.T, env artifactTestEnv, workspaceRef, revision string) {
+	t.Helper()
+	if _, err := env.pool.Exec(context.Background(), `
+		INSERT INTO workspace_registries (workspace_ref, org_id, latest_manifest_rev)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (workspace_ref) DO UPDATE SET
+			latest_manifest_rev = EXCLUDED.latest_manifest_rev,
+			updated_at = now()`, workspaceRef, env.aliceOrgID, revision); err != nil {
+		t.Fatalf("upsert workspace registry: %v", err)
+	}
 }
 
 func TestDetectWorkspaceContentTypeFallsBackToSniffing(t *testing.T) {

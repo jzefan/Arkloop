@@ -18,28 +18,27 @@ import (
 
 // 部署级别的 ENV（文件路径、地址、凭证 -- 不进 registry，不能从 console 改）
 const (
-	sandboxAddrEnv           = "ARKLOOP_SANDBOX_ADDR"
-	sandboxAuthTokenEnv      = "ARKLOOP_SANDBOX_AUTH_TOKEN"
-	restoreTTLEnv            = "ARKLOOP_SANDBOX_RESTORE_TTL_DAYS"
-	legacySessionStateTTLEnv = "ARKLOOP_SANDBOX_SESSION_STATE_TTL_DAYS"
-	flushDebounceMSEnv       = "ARKLOOP_SANDBOX_FLUSH_DEBOUNCE_MS"
-	flushMaxDirtyAgeMSEnv    = "ARKLOOP_SANDBOX_FLUSH_MAX_DIRTY_AGE_MS"
-	flushForceBytesEnv       = "ARKLOOP_SANDBOX_FLUSH_FORCE_BYTES_THRESHOLD"
-	flushForceCountEnv       = "ARKLOOP_SANDBOX_FLUSH_FORCE_COUNT_THRESHOLD"
-	allowEgressEnv           = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
-	dockerNetworkEnv         = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
-	firecrackerBinEnv        = "ARKLOOP_FIRECRACKER_BIN"
-	kernelImagePathEnv       = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
-	rootfsPathEnv            = "ARKLOOP_SANDBOX_ROOTFS"
-	socketBaseDirEnv         = "ARKLOOP_SANDBOX_SOCKET_DIR"
-	templatesPathEnv         = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
-	firecrackerIfaceEnv      = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
-	firecrackerTapEnv        = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
-	firecrackerCIDREnv       = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
-	firecrackerDNSEnv        = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
-	s3EndpointEnv            = "ARKLOOP_S3_ENDPOINT"
-	s3AccessKeyEnv           = "ARKLOOP_S3_ACCESS_KEY"
-	s3SecretKeyEnv           = "ARKLOOP_S3_SECRET_KEY"
+	sandboxAddrEnv        = "ARKLOOP_SANDBOX_ADDR"
+	sandboxAuthTokenEnv   = "ARKLOOP_SANDBOX_AUTH_TOKEN"
+	restoreTTLEnv         = "ARKLOOP_SANDBOX_RESTORE_TTL_DAYS"
+	flushDebounceMSEnv    = "ARKLOOP_SANDBOX_FLUSH_DEBOUNCE_MS"
+	flushMaxDirtyAgeMSEnv = "ARKLOOP_SANDBOX_FLUSH_MAX_DIRTY_AGE_MS"
+	flushForceBytesEnv    = "ARKLOOP_SANDBOX_FLUSH_FORCE_BYTES_THRESHOLD"
+	flushForceCountEnv    = "ARKLOOP_SANDBOX_FLUSH_FORCE_COUNT_THRESHOLD"
+	allowEgressEnv        = "ARKLOOP_SANDBOX_ALLOW_EGRESS"
+	dockerNetworkEnv      = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
+	firecrackerBinEnv     = "ARKLOOP_FIRECRACKER_BIN"
+	kernelImagePathEnv    = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	rootfsPathEnv         = "ARKLOOP_SANDBOX_ROOTFS"
+	socketBaseDirEnv      = "ARKLOOP_SANDBOX_SOCKET_DIR"
+	templatesPathEnv      = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
+	firecrackerIfaceEnv   = "ARKLOOP_SANDBOX_EGRESS_INTERFACE"
+	firecrackerTapEnv     = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_PREFIX"
+	firecrackerCIDREnv    = "ARKLOOP_SANDBOX_FIRECRACKER_TAP_CIDR"
+	firecrackerDNSEnv     = "ARKLOOP_SANDBOX_FIRECRACKER_DNS"
+	s3EndpointEnv         = "ARKLOOP_S3_ENDPOINT"
+	s3AccessKeyEnv        = "ARKLOOP_S3_ACCESS_KEY"
+	s3SecretKeyEnv        = "ARKLOOP_S3_SECRET_KEY"
 )
 
 // Provider 标识 sandbox 后端类型。
@@ -70,7 +69,8 @@ type Config struct {
 	FlushForceBytesThreshold   int
 	FlushForceCountThreshold   int
 	TemplatesPath              string
-	DockerImage                string // Docker 后端使用的 sandbox-agent 镜像
+	DockerImage                string // Docker 后端 lite/pro 使用的 sandbox-agent 镜像
+	BrowserDockerImage         string // Docker 后端 browser 使用的 sandbox-agent 镜像
 	AllowEgress                bool
 	DockerNetwork              string // agent 容器加入的 Docker 网络（compose 桥接网络）
 	FirecrackerEgressInterface string
@@ -79,19 +79,22 @@ type Config struct {
 	FirecrackerDNS             []string
 
 	// Warm pool: 各 tier 的预热 VM 数量
-	WarmLite int
-	WarmPro  int
+	WarmLite    int
+	WarmPro     int
+	WarmBrowser int
 
 	// Warm pool: 补充策略
 	RefillIntervalSeconds int
 	RefillConcurrency     int
 
 	// Session 超时: 各 tier 空闲超时（秒）
-	IdleTimeoutLite int
-	IdleTimeoutPro  int
+	IdleTimeoutLite    int
+	IdleTimeoutPro     int
+	IdleTimeoutBrowser int
 
-	// Session 超时: 最大存活时间（秒），所有 tier 统一
-	MaxLifetimeSeconds int
+	// Session 超时: 最大存活时间（秒）
+	MaxLifetimeSeconds        int
+	MaxLifetimeBrowserSeconds int
 }
 
 func DefaultConfig() Config {
@@ -112,6 +115,7 @@ func DefaultConfig() Config {
 		FlushForceCountThreshold:   512,
 		TemplatesPath:              "/opt/sandbox/templates.json",
 		DockerImage:                "arkloop/sandbox-agent:latest",
+		BrowserDockerImage:         "arkloop/sandbox-browser:dev",
 		AllowEgress:                true,
 		DockerNetwork:              "arkloop_sandbox_agent_egress",
 		FirecrackerEgressInterface: "eth0",
@@ -119,13 +123,16 @@ func DefaultConfig() Config {
 		FirecrackerTapCIDR:         "172.29.0.0/16",
 		FirecrackerDNS:             []string{"1.1.1.1", "8.8.8.8"},
 
-		WarmLite:              3,
-		WarmPro:               2,
-		RefillIntervalSeconds: 5,
-		RefillConcurrency:     2,
-		IdleTimeoutLite:       180,
-		IdleTimeoutPro:        300,
-		MaxLifetimeSeconds:    1800,
+		WarmLite:                  3,
+		WarmPro:                   2,
+		WarmBrowser:               1,
+		RefillIntervalSeconds:     5,
+		RefillConcurrency:         2,
+		IdleTimeoutLite:           180,
+		IdleTimeoutPro:            300,
+		IdleTimeoutBrowser:        120,
+		MaxLifetimeSeconds:        1800,
+		MaxLifetimeBrowserSeconds: 600,
 	}
 }
 
@@ -137,7 +144,7 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.Addr = raw
 	}
 	cfg.AuthToken = strings.TrimSpace(os.Getenv(sandboxAuthTokenEnv))
-	if raw, ok := lookupEnvFirst(restoreTTLEnv, legacySessionStateTTLEnv); ok {
+	if raw, ok := os.LookupEnv(restoreTTLEnv); ok {
 		value, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil || value < 0 {
 			return cfg, fmt.Errorf("restore_ttl_days must be zero or positive")
@@ -306,6 +313,9 @@ func LoadConfigFromEnv() (Config, error) {
 	if v := resolveStr("sandbox.docker_image"); v != "" {
 		cfg.DockerImage = v
 	}
+	if v := resolveStr("sandbox.browser_docker_image"); v != "" {
+		cfg.BrowserDockerImage = v
+	}
 	if v := resolveBool("sandbox.allow_egress"); v != nil {
 		cfg.AllowEgress = *v
 	}
@@ -318,11 +328,14 @@ func LoadConfigFromEnv() (Config, error) {
 	if v := resolveInt("sandbox.boot_timeout_s"); v > 0 {
 		cfg.BootTimeoutSeconds = v
 	}
-	if v := resolveInt("sandbox.warm_lite"); v > 0 {
+	if v, ok := resolveNonNegativeInt("sandbox.warm_lite"); ok {
 		cfg.WarmLite = v
 	}
-	if v := resolveInt("sandbox.warm_pro"); v > 0 {
+	if v, ok := resolveNonNegativeInt("sandbox.warm_pro"); ok {
 		cfg.WarmPro = v
+	}
+	if v, ok := resolveNonNegativeInt("sandbox.warm_browser"); ok {
+		cfg.WarmBrowser = v
 	}
 	if v := resolveInt("sandbox.refill_interval_s"); v > 0 {
 		cfg.RefillIntervalSeconds = v
@@ -336,8 +349,14 @@ func LoadConfigFromEnv() (Config, error) {
 	if v := resolveInt("sandbox.idle_timeout_pro_s"); v > 0 {
 		cfg.IdleTimeoutPro = v
 	}
+	if v := resolveInt("sandbox.idle_timeout_browser_s"); v > 0 {
+		cfg.IdleTimeoutBrowser = v
+	}
 	if v := resolveInt("sandbox.max_lifetime_s"); v > 0 {
 		cfg.MaxLifetimeSeconds = v
+	}
+	if v := resolveInt("sandbox.max_lifetime_browser_s"); v > 0 {
+		cfg.MaxLifetimeBrowserSeconds = v
 	}
 	if v, ok := resolveNonNegativeInt("sandbox.restore_ttl_days"); ok {
 		cfg.RestoreTTLDays = v
@@ -382,6 +401,9 @@ func (c Config) Validate() error {
 	if c.MaxLifetimeSeconds <= 0 {
 		return fmt.Errorf("max_lifetime must be positive")
 	}
+	if c.MaxLifetimeBrowserSeconds <= 0 {
+		return fmt.Errorf("max_lifetime_browser must be positive")
+	}
 	if c.RestoreTTLDays < 0 {
 		return fmt.Errorf("restore_ttl_days must be zero or positive")
 	}
@@ -399,6 +421,15 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DockerNetwork) == "" {
 		return fmt.Errorf("docker_network must not be empty")
+	}
+	if strings.TrimSpace(c.DockerImage) == "" {
+		return fmt.Errorf("docker_image must not be empty")
+	}
+	if strings.TrimSpace(c.BrowserDockerImage) == "" {
+		return fmt.Errorf("browser_docker_image must not be empty")
+	}
+	if c.WarmBrowser > 0 && !c.AllowEgress {
+		return fmt.Errorf("browser warm pool requires allow_egress=true")
 	}
 	if strings.TrimSpace(c.FirecrackerEgressInterface) == "" {
 		return fmt.Errorf("firecracker_egress_interface must not be empty")
@@ -423,8 +454,9 @@ func (c Config) Validate() error {
 // WarmSizes 返回各 tier 预热数量的 map。
 func (c Config) WarmSizes() map[string]int {
 	return map[string]int{
-		"lite": c.WarmLite,
-		"pro":  c.WarmPro,
+		"lite":    c.WarmLite,
+		"pro":     c.WarmPro,
+		"browser": c.WarmBrowser,
 	}
 }
 
@@ -433,8 +465,20 @@ func (c Config) IdleTimeoutSeconds(tier string) int {
 	switch tier {
 	case "pro":
 		return c.IdleTimeoutPro
+	case "browser":
+		return c.IdleTimeoutBrowser
 	default:
 		return c.IdleTimeoutLite
+	}
+}
+
+// MaxLifetimeSecondsFor 返回指定 tier 的最大存活时间（秒）。
+func (c Config) MaxLifetimeSecondsFor(tier string) int {
+	switch tier {
+	case "browser":
+		return c.MaxLifetimeBrowserSeconds
+	default:
+		return c.MaxLifetimeSeconds
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/workspaceblob"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const workspaceRootPath = "/workspace"
@@ -26,6 +27,7 @@ func workspaceFilesEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
+	pool *pgxpool.Pool,
 	store environmentStore,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -40,6 +42,10 @@ func workspaceFilesEntry(
 		}
 		if store == nil {
 			WriteError(w, nethttp.StatusServiceUnavailable, "workspace_files.not_configured", "workspace file storage not configured", traceID, nil)
+			return
+		}
+		if pool == nil {
+			WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
 
@@ -77,7 +83,7 @@ func workspaceFilesEntry(
 			return
 		}
 
-		content, contentType, err := readWorkspaceFile(r.Context(), store, strings.TrimSpace(*run.WorkspaceRef), targetPath)
+		content, contentType, err := readWorkspaceFile(r.Context(), pool, store, strings.TrimSpace(*run.WorkspaceRef), targetPath)
 		if err != nil {
 			if errors.Is(err, errWorkspaceFileNotFound) {
 				WriteError(w, nethttp.StatusNotFound, "workspace_files.not_found", "workspace file not found", traceID, nil)
@@ -119,20 +125,12 @@ func normalizeWorkspaceRelativePath(w nethttp.ResponseWriter, traceID string, ra
 	return strings.TrimPrefix(strings.TrimPrefix(cleaned, workspaceRootPath), "/"), true
 }
 
-func workspaceLatestKey(workspaceRef string) string {
-	return "workspaces/" + workspaceRef + "/latest.json"
-}
-
 func workspaceManifestKey(workspaceRef, revision string) string {
 	return "workspaces/" + workspaceRef + "/manifests/" + revision + ".json"
 }
 
 func workspaceBlobKey(workspaceRef, sha256 string) string {
 	return "workspaces/" + workspaceRef + "/blobs/" + sha256
-}
-
-type workspaceLatestPointer struct {
-	Revision string `json:"revision"`
 }
 
 type workspaceManifest struct {
@@ -148,23 +146,15 @@ type workspaceManifestEntry struct {
 
 const workspaceEntryTypeFile = "file"
 
-func readWorkspaceFile(ctx context.Context, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
-	return readWorkspaceFileFromManifest(ctx, store, workspaceRef, relativePath)
+func readWorkspaceFile(ctx context.Context, pool *pgxpool.Pool, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
+	return readWorkspaceFileFromManifest(ctx, pool, store, workspaceRef, relativePath)
 }
 
-func readWorkspaceFileFromManifest(ctx context.Context, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
-	pointerBytes, err := store.Get(ctx, workspaceLatestKey(workspaceRef))
+func readWorkspaceFileFromManifest(ctx context.Context, pool *pgxpool.Pool, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
+	revision, err := loadWorkspaceManifestRevision(ctx, pool, workspaceRef)
 	if err != nil {
-		if objectstore.IsNotFound(err) {
-			return nil, "", errWorkspaceFileNotFound
-		}
 		return nil, "", err
 	}
-	var pointer workspaceLatestPointer
-	if err := json.Unmarshal(pointerBytes, &pointer); err != nil {
-		return nil, "", err
-	}
-	revision := strings.TrimSpace(pointer.Revision)
 	if revision == "" {
 		return nil, "", errWorkspaceFileNotFound
 	}
@@ -200,6 +190,24 @@ func readWorkspaceFileFromManifest(ctx context.Context, store environmentStore, 
 		return content, detectWorkspaceContentType(relativePath, content), nil
 	}
 	return nil, "", errWorkspaceFileNotFound
+}
+
+func loadWorkspaceManifestRevision(ctx context.Context, pool *pgxpool.Pool, workspaceRef string) (string, error) {
+	if pool == nil {
+		return "", errWorkspaceFileNotFound
+	}
+	workspaceRef = strings.TrimSpace(workspaceRef)
+	if workspaceRef == "" {
+		return "", errWorkspaceFileNotFound
+	}
+	var revision *string
+	if err := pool.QueryRow(ctx, `SELECT latest_manifest_rev FROM workspace_registries WHERE workspace_ref = $1`, workspaceRef).Scan(&revision); err != nil {
+		return "", errWorkspaceFileNotFound
+	}
+	if revision == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*revision), nil
 }
 func detectWorkspaceContentType(relativePath string, content []byte) string {
 	if ext := strings.ToLower(path.Ext(relativePath)); ext != "" {
