@@ -171,8 +171,6 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
-  if (!run) return null
-
   // currentRun 可能是子 run，所有渲染基于 currentRun
   const r = currentRun ?? run
   const d = detail
@@ -190,6 +188,25 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
         : undefined
 
   const rawEventsBadge = d ? `${d.events_stats.total} events` : undefined
+
+  // Browser activity summary from turns
+  const browserSummary = useMemo(() => {
+    if (turns.length === 0) return null
+    const browserCalls = turns.flatMap((t) =>
+      t.toolCalls.filter((tc) => tc.toolName === 'browser'),
+    )
+    if (browserCalls.length === 0) return null
+    const commands = browserCalls
+      .map((tc) => (typeof tc.argsJSON?.command === 'string' ? tc.argsJSON.command : null))
+      .filter((c): c is string => c !== null)
+    const screenshotCount = browserCalls.filter(
+      (tc) => tc.resultJSON?.has_screenshot === true,
+    ).length
+    const errorCount = browserCalls.filter((tc) => !!tc.errorClass).length
+    return { total: browserCalls.length, commands, screenshotCount, errorCount }
+  }, [turns])
+
+  if (!r) return null
 
   const usageChildren = d?.children ?? []
   const hasUsageBreakdown = usageChildren.length > 0
@@ -327,6 +344,34 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
                 aggregate={usageAggregate}
                 onOpenRun={navigateToChild}
               />
+            </Section>
+          )}
+
+          {/* BROWSER — 仅在有 browser 调用时显示 */}
+          {browserSummary && (
+            <Section
+              title={rt.sectionBrowser ?? 'Browser'}
+              badge={`${browserSummary.total} commands`}
+              defaultOpen={false}
+            >
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--c-text-secondary)]">
+                  <span>{browserSummary.total} commands</span>
+                  {browserSummary.screenshotCount > 0 && (
+                    <span className="text-green-500">{browserSummary.screenshotCount} screenshots</span>
+                  )}
+                  {browserSummary.errorCount > 0 && (
+                    <span className="text-red-500">{browserSummary.errorCount} errors</span>
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  {browserSummary.commands.map((cmd, i) => (
+                    <div key={i} className="rounded bg-[var(--c-bg-sub)] px-2 py-1 font-mono text-[11px] text-[var(--c-text-secondary)]">
+                      {cmd}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </Section>
           )}
 
