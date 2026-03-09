@@ -33,20 +33,6 @@ services:
       timeout: 3s
       retries: 20
 
-  redis_gateway:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: >
-      redis-server
-      --requirepass ${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}
-      --appendonly no
-      --save ""
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}", "ping"]
-      interval: 30s
-      timeout: 3s
-      retries: 20
-
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
@@ -95,14 +81,14 @@ services:
     env_file:
       - .env
     environment:
-      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
+      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_DATABASE_DIRECT_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
-      ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis_gateway:6379/0"
+      ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/1"
       ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
       ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
       ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
-      ARKLOOP_API_DB_POOL_MAX_CONNS: "${ARKLOOP_API_DB_POOL_MAX_CONNS:-32}"
+      ARKLOOP_API_DB_POOL_MAX_CONNS: "${ARKLOOP_API_DB_POOL_MAX_CONNS:-10}"
       ARKLOOP_API_DB_POOL_MIN_CONNS: "${ARKLOOP_API_DB_POOL_MIN_CONNS:-0}"
       ARKLOOP_API_DB_POOL_STATS_INTERVAL_SECONDS: "${ARKLOOP_API_DB_POOL_STATS_INTERVAL_SECONDS:-10}"
       ARKLOOP_API_MAX_IN_FLIGHT: "${ARKLOOP_API_MAX_IN_FLIGHT:-256}"
@@ -112,11 +98,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      pgbouncer:
+      postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      redis_gateway:
         condition: service_healthy
     volumes:
       - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
@@ -135,7 +119,7 @@ services:
       ARKLOOP_GATEWAY_ADDR: "0.0.0.0:8000"
       ARKLOOP_GATEWAY_UPSTREAM: "${ARKLOOP_GATEWAY_UPSTREAM:-http://api:8001}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
-      ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis_gateway:6379/0"
+      ARKLOOP_GATEWAY_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/1"
       ARKLOOP_AUTH_JWT_SECRET: "${ARKLOOP_AUTH_JWT_SECRET}"
       ARKLOOP_RATELIMIT_CAPACITY: "${ARKLOOP_RATELIMIT_CAPACITY:-600}"
       ARKLOOP_RATELIMIT_RATE_PER_MINUTE: "${ARKLOOP_RATELIMIT_RATE_PER_MINUTE:-300}"
@@ -148,8 +132,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      redis_gateway:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8000/healthz"]
       interval: 15s
@@ -159,6 +141,8 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
+    profiles:
+      - pgbouncer
     environment:
       DB_USER: ${ARKLOOP_POSTGRES_USER:-arkloop}
       DB_PASSWORD: ${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}
@@ -190,8 +174,7 @@ services:
     env_file:
       - .env
     environment:
-      # 以下覆盖 .env 中同名变量，使用 Docker 内部服务名
-      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
+      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_DATABASE_DIRECT_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
       ARKLOOP_WORKER_CONCURRENCY: "${ARKLOOP_WORKER_CONCURRENCY:-4}"
@@ -207,7 +190,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      pgbouncer:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -236,7 +219,7 @@ services:
     profiles:
       - firecracker
     environment:
-      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
+      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_SANDBOX_ADDR: "0.0.0.0:8002"
       ARKLOOP_SANDBOX_PROVIDER: "firecracker"
       ARKLOOP_SANDBOX_ALLOW_EGRESS: "${ARKLOOP_SANDBOX_ALLOW_EGRESS:-true}"
@@ -262,7 +245,7 @@ services:
       - /opt/sandbox/vmlinux:/opt/sandbox/vmlinux:ro
       - /opt/sandbox/rootfs:/opt/sandbox/rootfs:ro
     depends_on:
-      pgbouncer:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/healthz"]
@@ -292,7 +275,7 @@ services:
     profiles:
       - docker-sandbox
     environment:
-      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@pgbouncer:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
+      ARKLOOP_DATABASE_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_SANDBOX_ADDR: "0.0.0.0:8002"
       ARKLOOP_SANDBOX_PROVIDER: "docker"
       ARKLOOP_SANDBOX_ALLOW_EGRESS: "${ARKLOOP_SANDBOX_ALLOW_EGRESS:-true}"
@@ -318,7 +301,7 @@ services:
     depends_on:
       sandbox-agent-image:
         condition: service_completed_successfully
-      pgbouncer:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8002/healthz"]
@@ -329,6 +312,8 @@ services:
   openviking:
     image: ghcr.io/volcengine/openviking:v0.1.18.dev0
     restart: unless-stopped
+    profiles:
+      - openviking
     environment:
       WEB_CONCURRENCY: "${ARKLOOP_OPENVIKING_WORKERS:-1}"
     volumes:
@@ -341,6 +326,73 @@ services:
       retries: 3
       start_period: 30s
 
+  # --- SearXNG: Self-hosted metasearch engine ---
+  # web_search provider, replaces Tavily API
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    profiles:
+      - searxng
+    volumes:
+      - searxng_data:/etc/searxng
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # --- Firecrawl: Self-hosted web scraper ---
+  # web_fetch provider, replaces Jina/Basic fetch
+  firecrawl:
+    image: mendableai/firecrawl:latest
+    restart: unless-stopped
+    profiles:
+      - firecrawl
+    environment:
+      REDIS_URL: "redis://firecrawl-redis:6379"
+      REDIS_RATE_LIMIT_URL: "redis://firecrawl-redis:6379"
+      USE_DB_AUTHENTICATION: "false"
+      PORT: "3002"
+      HOST: "0.0.0.0"
+      NUM_WORKERS_PER_QUEUE: "${ARKLOOP_FIRECRAWL_WORKERS:-4}"
+      PLAYWRIGHT_MICROSERVICE_URL: "http://firecrawl-playwright:3000/chromium"
+    depends_on:
+      firecrawl-redis:
+        condition: service_healthy
+      firecrawl-playwright:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3002/"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  firecrawl-playwright:
+    image: ghcr.io/browserless/chromium:latest
+    restart: unless-stopped
+    profiles:
+      - firecrawl
+    environment:
+      MAX_CONCURRENT_SESSIONS: "${ARKLOOP_FIRECRAWL_MAX_BROWSER_SESSIONS:-5}"
+      CONNECTION_TIMEOUT: "60000"
+
+  firecrawl-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles:
+      - firecrawl
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 20
+
 volumes:
   postgres_data:
   redis_data:
@@ -348,6 +400,7 @@ volumes:
   openviking_data:
   sandbox_sockets:
   arkloop_storage:
+  searxng_data:
 
 networks:
   sandbox_agent_egress:
