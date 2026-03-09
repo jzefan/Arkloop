@@ -141,9 +141,17 @@ func (a *Application) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	p, err := proxy.New(proxy.Config{Upstream: a.config.Upstream})
+	apiProxy, err := proxy.New(proxy.Config{Upstream: a.config.Upstream})
 	if err != nil {
 		return fmt.Errorf("proxy: %w", err)
+	}
+
+	var frontendProxy http.Handler
+	if strings.TrimSpace(a.config.FrontendUpstream) != "" {
+		frontendProxy, err = proxy.New(proxy.Config{Upstream: a.config.FrontendUpstream})
+		if err != nil {
+			return fmt.Errorf("frontend proxy: %w", err)
+		}
 	}
 
 	// GeoIP 初始化
@@ -175,7 +183,7 @@ func (a *Application) Run(ctx context.Context) error {
 	if a.config.EnableBenchz {
 		mux.HandleFunc("/benchz", healthz)
 	}
-	mux.Handle("/", p)
+	mux.Handle("/", routeRequest(apiProxy, frontendProxy))
 
 	var (
 		limiter  ratelimit.Limiter
@@ -259,9 +267,10 @@ func (a *Application) Run(ctx context.Context) error {
 	defer func() { _ = listener.Close() }()
 
 	a.logger.Info("gateway started", LogFields{}, map[string]any{
-		"addr":     a.config.Addr,
-		"upstream": a.config.Upstream,
-		"ip_mode":  string(a.effectiveIPMode()),
+		"addr":              a.config.Addr,
+		"upstream":          a.config.Upstream,
+		"frontend_upstream": a.config.FrontendUpstream,
+		"ip_mode":           string(a.effectiveIPMode()),
 	})
 
 	server := &http.Server{
