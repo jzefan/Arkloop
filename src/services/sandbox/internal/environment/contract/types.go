@@ -48,6 +48,14 @@ func WorkspaceBlobKey(workspaceRef string, sha256 string) string {
 	return "workspaces/" + strings.TrimSpace(workspaceRef) + "/blobs/" + strings.TrimSpace(sha256)
 }
 
+func BrowserStateManifestKey(profileRef string, revision string) string {
+	return "browser-states/" + strings.TrimSpace(profileRef) + "/manifests/" + strings.TrimSpace(revision) + ".json"
+}
+
+func BrowserStateBlobKey(profileRef string, sha256 string) string {
+	return "browser-states/" + strings.TrimSpace(profileRef) + "/blobs/" + strings.TrimSpace(sha256)
+}
+
 func SessionRestoreKey(sessionRef string, revision string) string {
 	return "sessions/" + strings.TrimSpace(sessionRef) + "/restore/" + strings.TrimSpace(revision) + ".json"
 }

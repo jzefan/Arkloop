@@ -108,6 +108,13 @@ func (r *fakeRegistryWriter) EnsureProfileRegistry(_ context.Context, _ string, 
 	return nil
 }
 
+func (r *fakeRegistryWriter) EnsureBrowserStateRegistry(_ context.Context, _ string, profileRef string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensured = append(r.ensured, ScopeBrowserState+":"+profileRef)
+	return nil
+}
+
 func (r *fakeRegistryWriter) EnsureWorkspaceRegistry(_ context.Context, _ string, workspaceRef string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -179,27 +186,29 @@ func (r *fakeRegistryWriter) ListLatestManifestRevisions(_ context.Context, scop
 }
 
 type fakeCarrier struct {
-	mu               sync.Mutex
-	appliedManifest  map[string]Manifest
-	appliedFiles     map[string][]FilePayload
-	appliedCount     map[string]int
-	appliedReset     map[string]bool
-	manifests        map[string]Manifest
-	filePayloads     map[string]map[string][]byte
-	manifestRequests map[string][][]string
-	fileRequests     map[string][][]string
+	mu                sync.Mutex
+	appliedManifest   map[string]Manifest
+	appliedFiles      map[string][]FilePayload
+	appliedCount      map[string]int
+	appliedPrunePaths map[string][]string
+	appliedPruneRoot  map[string]bool
+	manifests         map[string]Manifest
+	filePayloads      map[string]map[string][]byte
+	manifestRequests  map[string][][]string
+	fileRequests      map[string][][]string
 }
 
 func newFakeCarrier() *fakeCarrier {
 	return &fakeCarrier{
-		appliedManifest:  make(map[string]Manifest),
-		appliedFiles:     make(map[string][]FilePayload),
-		appliedCount:     make(map[string]int),
-		appliedReset:     make(map[string]bool),
-		manifests:        make(map[string]Manifest),
-		filePayloads:     make(map[string]map[string][]byte),
-		manifestRequests: make(map[string][][]string),
-		fileRequests:     make(map[string][][]string),
+		appliedManifest:   make(map[string]Manifest),
+		appliedFiles:      make(map[string][]FilePayload),
+		appliedCount:      make(map[string]int),
+		appliedPrunePaths: make(map[string][]string),
+		appliedPruneRoot:  make(map[string]bool),
+		manifests:         make(map[string]Manifest),
+		filePayloads:      make(map[string]map[string][]byte),
+		manifestRequests:  make(map[string][][]string),
+		fileRequests:      make(map[string][][]string),
 	}
 }
 
@@ -235,14 +244,27 @@ func (c *fakeCarrier) CollectEnvironmentFiles(_ context.Context, scope string, p
 	return result, nil
 }
 
-func (c *fakeCarrier) ApplyEnvironment(_ context.Context, scope string, manifest Manifest, files []FilePayload, reset bool) error {
+func (c *fakeCarrier) ApplyEnvironment(_ context.Context, scope string, manifest Manifest, files []FilePayload, prunePaths []string, pruneRootChildren bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.appliedManifest[scope] = CloneManifest(manifest)
 	c.appliedFiles[scope] = append([]FilePayload(nil), files...)
 	c.appliedCount[scope]++
-	c.appliedReset[scope] = reset
+	c.appliedPrunePaths[scope] = append([]string(nil), prunePaths...)
+	c.appliedPruneRoot[scope] = pruneRootChildren
 	return nil
+}
+
+func markScopeDirty(mgr *Manager, sessionID, scope, subtree string) {
+	entry := mgr.lookupSession(sessionID)
+	if entry == nil {
+		return
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	state := entry.scopeLocked(scope)
+	state.markDirty(subtree)
+	mgr.scheduleScopeLocked(sessionID, scope, state)
 }
 
 func TestManagerPrepareWithoutManifestOnlyEnsuresRegistries(t *testing.T) {
@@ -255,10 +277,10 @@ func TestManagerPrepareWithoutManifestOnlyEnsuresRegistries(t *testing.T) {
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if carrier.appliedCount[ScopeProfile] != 0 || carrier.appliedCount[ScopeWorkspace] != 0 {
+	if carrier.appliedCount[ScopeProfile] != 0 || carrier.appliedCount[ScopeBrowserState] != 0 || carrier.appliedCount[ScopeWorkspace] != 0 {
 		t.Fatalf("did not expect hydrate without manifest: %#v", carrier.appliedCount)
 	}
-	if len(registry.ensured) != 2 {
+	if len(registry.ensured) != 3 {
 		t.Fatalf("expected registry ensure calls, got %v", registry.ensured)
 	}
 }
@@ -293,8 +315,60 @@ func TestManagerPrepareRestoresFromManifestState(t *testing.T) {
 	if len(carrier.appliedFiles[ScopeWorkspace]) != 1 {
 		t.Fatalf("unexpected applied files: %#v", carrier.appliedFiles[ScopeWorkspace])
 	}
-	if !carrier.appliedReset[ScopeWorkspace] {
-		t.Fatal("expected reset apply for workspace hydrate")
+	if !carrier.appliedPruneRoot[ScopeWorkspace] {
+		t.Fatal("expected workspace hydrate to prune root children")
+	}
+}
+
+func TestManagerPrepareRestoresBrowserStateFromProfileRef(t *testing.T) {
+	store := newMemoryStore()
+	registry := newFakeRegistryWriter()
+	mgr := NewManager(store, registry, nil, Config{})
+	binding := Binding{OrgID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProfileRef: "pref_a", WorkspaceRef: "wsref_a"}
+	carrier := newFakeCarrier()
+
+	manifest := NormalizeManifest(Manifest{
+		Scope:    ScopeBrowserState,
+		Ref:      binding.ProfileRef,
+		Revision: "rev-browser-1",
+		Entries:  []ManifestEntry{{Path: "sessions/test/state.json", Type: EntryTypeFile, Mode: 0o644, Size: 2, SHA256: "sha-browser"}},
+	})
+	if err := saveManifest(context.Background(), store, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	if _, err := putBlobIfMissing(context.Background(), store, blobKey(ScopeBrowserState, binding.ProfileRef, "sha-browser"), []byte("{}")); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	registry.latest[ScopeBrowserState+":"+binding.ProfileRef] = manifest.Revision
+
+	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if got := carrier.appliedManifest[ScopeBrowserState]; len(got.Entries) != 1 || got.Entries[0].Path != "sessions/test/state.json" {
+		t.Fatalf("unexpected browser state manifest: %#v", got)
+	}
+	if !carrier.appliedPruneRoot[ScopeBrowserState] {
+		t.Fatal("expected browser_state hydrate to prune root children")
+	}
+}
+
+func TestManagerMarkAllDirtyMarksAllBoundScopes(t *testing.T) {
+	store := newMemoryStore()
+	registry := newFakeRegistryWriter()
+	mgr := NewManager(store, registry, nil, Config{})
+	binding := Binding{OrgID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ProfileRef: "pref_a", WorkspaceRef: "wsref_a"}
+	carrier := newFakeCarrier()
+	entry := mgr.ensureSession("sess-1", carrier, binding)
+
+	mgr.MarkAllDirty("sess-1")
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	for _, scope := range []string{ScopeProfile, ScopeBrowserState, ScopeWorkspace} {
+		state := entry.scopeLocked(scope)
+		if !state.hasRootDirty() {
+			t.Fatalf("expected %s to be root-dirty", scope)
+		}
 	}
 }
 
@@ -427,7 +501,7 @@ func TestManagerFlushWritesManifestAndBlob(t *testing.T) {
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	mgr.MarkDirty("sess-1", "/workspace/src")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "src")
 	if err := mgr.FlushNow(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("flush now: %v", err)
 	}
@@ -466,7 +540,7 @@ func TestManagerFlushReusesExistingBlobAcrossRevisions(t *testing.T) {
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	mgr.MarkDirty("sess-1", "/workspace/src")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "src")
 	if err := mgr.FlushNow(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("first flush: %v", err)
 	}
@@ -476,7 +550,7 @@ func TestManagerFlushReusesExistingBlobAcrossRevisions(t *testing.T) {
 		Entries: []ManifestEntry{{Path: "src/main.go", Type: EntryTypeFile, Mode: 0o644, Size: 5, SHA256: "sha-main"}, {Path: "src/extra.go", Type: EntryTypeFile, Mode: 0o644, Size: 5, SHA256: "sha-extra"}},
 	})
 	carrier.filePayloads[ScopeWorkspace]["src/extra.go"] = []byte("extra")
-	mgr.MarkDirty("sess-1", "/workspace/src")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "src")
 	if err := mgr.FlushNow(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("second flush: %v", err)
 	}
@@ -507,7 +581,7 @@ func TestManagerFlushMergesDirtySubtreeWithoutRewritingWholeManifest(t *testing.
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	mgr.MarkDirty("sess-1", "/workspace")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "")
 	if err := mgr.FlushNow(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("seed flush: %v", err)
 	}
@@ -516,7 +590,7 @@ func TestManagerFlushMergesDirtySubtreeWithoutRewritingWholeManifest(t *testing.
 		Entries: []ManifestEntry{{Path: "src/main.go", Type: EntryTypeFile, Mode: 0o644, Size: 7, SHA256: "sha-main-2"}},
 	})
 	carrier.filePayloads[ScopeWorkspace]["src/main.go"] = []byte("hello-2")
-	mgr.MarkDirty("sess-1", "/workspace/src")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "src")
 	entry := mgr.lookupSession("sess-1")
 	entry.mu.Lock()
 	version := entry.scopeLocked(ScopeWorkspace).version
@@ -585,7 +659,7 @@ func TestManagerFlushLogsStructuredFields(t *testing.T) {
 	if err := mgr.Prepare(context.Background(), "sess-1", carrier, binding); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	mgr.MarkDirty("sess-1", "/workspace/src")
+	markScopeDirty(mgr, "sess-1", ScopeWorkspace, "src")
 	if err := mgr.FlushNow(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("flush now: %v", err)
 	}

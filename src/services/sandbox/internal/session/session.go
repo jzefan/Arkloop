@@ -66,12 +66,13 @@ type AgentCapabilities struct {
 }
 
 type EnvironmentRequest struct {
-	Scope    string                        `json:"scope"`
-	Subtrees []string                      `json:"subtrees,omitempty"`
-	Paths    []string                      `json:"paths,omitempty"`
-	Manifest *environmentcontract.Manifest `json:"manifest,omitempty"`
-	Files    []environment.FilePayload     `json:"files,omitempty"`
-	Reset    bool                          `json:"reset,omitempty"`
+	Scope             string                        `json:"scope"`
+	Subtrees          []string                      `json:"subtrees,omitempty"`
+	Paths             []string                      `json:"paths,omitempty"`
+	Manifest          *environmentcontract.Manifest `json:"manifest,omitempty"`
+	Files             []environment.FilePayload     `json:"files,omitempty"`
+	PrunePaths        []string                      `json:"prune_paths,omitempty"`
+	PruneRootChildren bool                          `json:"prune_root_children,omitempty"`
 }
 
 type EnvironmentResponse struct {
@@ -303,15 +304,16 @@ func (s *Session) CollectEnvironmentFiles(ctx context.Context, scope string, pat
 	return append([]environment.FilePayload(nil), payload.Files...), nil
 }
 
-func (s *Session) ApplyEnvironment(ctx context.Context, scope string, manifest environmentcontract.Manifest, files []environment.FilePayload, reset bool) error {
+func (s *Session) ApplyEnvironment(ctx context.Context, scope string, manifest environmentcontract.Manifest, files []environment.FilePayload, prunePaths []string, pruneRootChildren bool) error {
 	if err := s.EnsureEnvironmentProtocol(ctx); err != nil {
 		return err
 	}
 	_, err := s.callEnvironment(ctx, "environment_apply", EnvironmentRequest{
-		Scope:    scope,
-		Manifest: &manifest,
-		Files:    append([]environment.FilePayload(nil), files...),
-		Reset:    reset,
+		Scope:             scope,
+		Manifest:          &manifest,
+		Files:             append([]environment.FilePayload(nil), files...),
+		PrunePaths:        append([]string(nil), prunePaths...),
+		PruneRootChildren: pruneRootChildren,
 	})
 	return err
 }

@@ -43,7 +43,7 @@ func (m *Manager) SweepUnreferencedBlobs(ctx context.Context) error {
 		return nil
 	}
 	totalDeleted := 0
-	for _, scope := range []string{ScopeProfile, ScopeWorkspace} {
+	for _, scope := range []string{ScopeProfile, ScopeBrowserState, ScopeWorkspace} {
 		bindings, err := m.registry.ListLatestManifestRevisions(ctx, scope)
 		if err != nil {
 			return err

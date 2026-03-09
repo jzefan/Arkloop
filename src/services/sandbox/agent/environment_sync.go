@@ -141,7 +141,7 @@ func readEnvironmentPaths(scope string, paths []string) ([]environment.FilePaylo
 	return result, nil
 }
 
-func applyEnvironment(scope string, manifest environmentcontract.Manifest, files []environment.FilePayload, reset bool) error {
+func applyEnvironment(scope string, manifest environmentcontract.Manifest, files []environment.FilePayload, prunePaths []string, pruneRootChildren bool) error {
 	root, err := singleEnvironmentRoot(scope)
 	if err != nil {
 		return err
@@ -150,12 +150,16 @@ func applyEnvironment(scope string, manifest environmentcontract.Manifest, files
 	if normalized.Scope != "" && normalized.Scope != scope {
 		return fmt.Errorf("environment scope mismatch: %s", normalized.Scope)
 	}
-	if reset {
-		if err := resetEnvironmentRoot(root.HostPath); err != nil {
+	if err := ensureEnvironmentRoot(root.HostPath); err != nil {
+		return err
+	}
+	if pruneRootChildren {
+		if err := pruneEnvironmentRootChildren(root.HostPath); err != nil {
 			return err
 		}
-	} else if err := os.MkdirAll(root.HostPath, 0o755); err != nil {
-		return fmt.Errorf("ensure environment root %s: %w", root.HostPath, err)
+	}
+	if err := pruneEnvironmentPaths(root.HostPath, prunePaths); err != nil {
+		return err
 	}
 
 	fileData := make(map[string][]byte, len(files))
@@ -179,6 +183,11 @@ func applyEnvironment(scope string, manifest environmentcontract.Manifest, files
 		targetPath, err := environmentTargetPath(root.HostPath, entry.Path)
 		if err != nil {
 			return err
+		}
+		if info, statErr := os.Lstat(targetPath); statErr == nil && !info.IsDir() {
+			if err := os.RemoveAll(targetPath); err != nil {
+				return fmt.Errorf("replace environment dir %s: %w", targetPath, err)
+			}
 		}
 		if err := os.MkdirAll(targetPath, fileModeOrDefault(entry.Mode, 0o755)); err != nil {
 			return fmt.Errorf("restore environment dir %s: %w", targetPath, err)

@@ -154,10 +154,10 @@ func TestHandleV2EnvironmentFilesCollectAndApply(t *testing.T) {
 		t.Fatalf("remove workspace file: %v", err)
 	}
 	applyResp := invokeAgentRequest(t, AgentRequest{Action: "environment_apply", Environment: &EnvironmentRequest{
-		Scope:    "workspace",
-		Manifest: &environmentcontract.Manifest{Scope: "workspace", Entries: []environmentcontract.ManifestEntry{{Path: "chart.png", Type: "file", Mode: 0o644, Size: 8, SHA256: collectResp.Environment.Files[0].SHA256}}},
-		Files:    collectResp.Environment.Files,
-		Reset:    true,
+		Scope:             "workspace",
+		Manifest:          &environmentcontract.Manifest{Scope: "workspace", Entries: []environmentcontract.ManifestEntry{{Path: "chart.png", Type: "file", Mode: 0o644, Size: 8, SHA256: collectResp.Environment.Files[0].SHA256}}},
+		Files:             collectResp.Environment.Files,
+		PruneRootChildren: true,
 	}})
 	if applyResp.Error != "" {
 		t.Fatalf("unexpected apply error: %s", applyResp.Error)
