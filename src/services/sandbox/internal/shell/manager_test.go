@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
@@ -831,5 +832,82 @@ func TestManagerExecCommand_AttachOrRestoreRestoresState(t *testing.T) {
 	}
 	if agent.lastExecEnv["FOO"] != "bar" {
 		t.Fatalf("unexpected restored env: %#v", agent.lastExecEnv)
+	}
+}
+
+func TestManagerForkSession_UsesLatestCheckpointWhenSourceBusy(t *testing.T) {
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		switch req.Action {
+		case "shell_capture_state":
+			return AgentResponse{Action: req.Action, Code: CodeSessionBusy, Error: "shell session is busy"}
+		default:
+			return completedShellAction(req)
+		}
+	}}
+	pool := &fakePool{agent: agent}
+	state := newMemoryStateStore()
+	registry := NewMemorySessionRestoreRegistry()
+	mgr := session.NewManager(testManagerConfig(pool))
+	shellMgr := NewManager(mgr, nil, state, registry, nil, logging.NewJSONLogger("test", nil), Config{})
+
+	if _, err := shellMgr.ExecCommand(context.Background(), ExecCommandRequest{SessionID: "sess-source", Tier: "lite", OrgID: "org-a", Command: "pwd"}); err != nil {
+		t.Fatalf("seed exec_command failed: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := saveRestoreState(context.Background(), state, registry, SessionRestoreState{
+		Version:      shellStateVersion,
+		Revision:     "rev-1",
+		OrgID:        "org-a",
+		SessionID:    "sess-source",
+		Cwd:          "/workspace/demo",
+		CreatedAt:    now.Format(time.RFC3339Nano),
+		ExpiresAt:    restoreExpiryString(now, time.Hour),
+		ArtifactSeen: map[string]artifactVersion{},
+	}); err != nil {
+		t.Fatalf("save restore state: %v", err)
+	}
+
+	resp, err := shellMgr.ForkSession(context.Background(), ForkSessionRequest{OrgID: "org-a", FromSessionID: "sess-source", ToSessionID: "sess-copy"})
+	if err != nil {
+		t.Fatalf("fork session failed: %v", err)
+	}
+	if strings.TrimSpace(resp.RestoreRevision) == "" || resp.RestoreRevision == "rev-1" {
+		t.Fatalf("unexpected fork restore revision: %#v", resp)
+	}
+	stateCopy, err := loadLatestRestoreState(context.Background(), state, registry, "org-a", "sess-copy")
+	if err != nil {
+		t.Fatalf("load copied restore state: %v", err)
+	}
+	if stateCopy.Cwd != "/workspace/demo" {
+		t.Fatalf("unexpected copied cwd: %#v", stateCopy)
+	}
+}
+
+func TestManagerForkSession_BusyWithoutCheckpointReturnsBusy(t *testing.T) {
+	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
+		switch req.Action {
+		case "shell_capture_state":
+			return AgentResponse{Action: req.Action, Code: CodeSessionBusy, Error: "shell session is busy"}
+		default:
+			return completedShellAction(req)
+		}
+	}}
+	pool := &fakePool{agent: agent}
+	state := newMemoryStateStore()
+	registry := NewMemorySessionRestoreRegistry()
+	mgr := session.NewManager(testManagerConfig(pool))
+	shellMgr := NewManager(mgr, nil, state, registry, nil, logging.NewJSONLogger("test", nil), Config{})
+
+	if _, err := shellMgr.ExecCommand(context.Background(), ExecCommandRequest{SessionID: "sess-source", Tier: "lite", OrgID: "org-a", Command: "pwd"}); err != nil {
+		t.Fatalf("seed exec_command failed: %v", err)
+	}
+
+	_, err := shellMgr.ForkSession(context.Background(), ForkSessionRequest{OrgID: "org-a", FromSessionID: "sess-source", ToSessionID: "sess-copy"})
+	if err == nil {
+		t.Fatal("expected busy error")
+	}
+	shellErr, ok := err.(*Error)
+	if !ok || shellErr.Code != CodeSessionBusy {
+		t.Fatalf("expected busy shell error, got %#v", err)
 	}
 }

@@ -18,6 +18,9 @@ const (
 	sessionModeNew    = "new"
 	sessionModeResume = "resume"
 	sessionModeFork   = "fork"
+
+	minimumWriterLeaseTTL = 2 * time.Minute
+	execWriterLeasePad    = 5 * time.Second
 )
 
 type resolvedSession struct {
@@ -426,6 +429,8 @@ func (o *sessionOrchestrator) clearLiveSession(ctx context.Context, execCtx tool
 			return nil
 		}
 		record.LiveSessionID = nil
+		record.LeaseOwnerID = nil
+		record.LeaseUntil = nil
 		record.State = data.ShellSessionStateReady
 		record.LastUsedAt = time.Now().UTC()
 		record.UpdatedAt = record.LastUsedAt
@@ -478,6 +483,10 @@ func (o *sessionOrchestrator) markResult(
 		if record.MetadataJSON == nil {
 			record.MetadataJSON = map[string]any{}
 		}
+	}
+	if !resp.Running {
+		record.LeaseOwnerID = nil
+		record.LeaseUntil = nil
 	}
 	if strings.TrimSpace(resp.RestoreRevision) != "" {
 		record.LatestRestoreRev = stringPtr(strings.TrimSpace(resp.RestoreRevision))
@@ -595,4 +604,281 @@ func stringPtr(value string) *string {
 	}
 	copied := value
 	return &copied
+}
+
+func (o *sessionOrchestrator) prepareExecWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	timeoutMs int,
+) *tools.ExecutionError {
+	if resolution == nil {
+		return nil
+	}
+	record := o.sessionRecord(execCtx, resolution)
+	if record.State == data.ShellSessionStateBusy && hasActiveWriterLease(record, time.Now().UTC()) {
+		return shellBusyError(resolution.SessionRef)
+	}
+	updated, err := o.acquireWriterLease(ctx, execCtx, resolution, writerLeaseOwner(execCtx), execWriterLeaseUntil(timeoutMs))
+	if err != nil {
+		return err
+	}
+	resolution.Record = &updated
+	return nil
+}
+
+func (o *sessionOrchestrator) prepareWriteWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	hasInput bool,
+) *tools.ExecutionError {
+	if resolution == nil || !hasInput {
+		return nil
+	}
+	ownerID := writerLeaseOwner(execCtx)
+	updated, err := o.acquireWriterLease(ctx, execCtx, resolution, ownerID, writeWriterLeaseUntil())
+	if err != nil {
+		return err
+	}
+	resolution.Record = &updated
+	return nil
+}
+
+func (o *sessionOrchestrator) reconcileWriteWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	hasInput bool,
+	resp execSessionResponse,
+) {
+	if resolution == nil {
+		return
+	}
+	if !resp.Running {
+		_ = o.clearFinishedWriterLease(ctx, execCtx, resolution)
+		return
+	}
+	if hasInput {
+		return
+	}
+	ownerID := writerLeaseOwner(execCtx)
+	if strings.TrimSpace(stringPtrValue(resolution.RecordLeaseOwnerID())) != ownerID {
+		return
+	}
+	updated, err := o.renewWriterLease(ctx, execCtx, resolution, ownerID, writeWriterLeaseUntil())
+	if err != nil {
+		return
+	}
+	resolution.Record = &updated
+}
+
+func (o *sessionOrchestrator) releaseWriterLease(ctx context.Context, execCtx tools.ExecutionContext, resolution *resolvedSession, ownerID string) {
+	if resolution == nil || strings.TrimSpace(ownerID) == "" {
+		return
+	}
+	if o.pool == nil {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		record, ok := o.memorySessions[resolution.SessionRef]
+		if !ok || strings.TrimSpace(stringPtrValue(record.LeaseOwnerID)) != strings.TrimSpace(ownerID) {
+			return
+		}
+		record.LeaseOwnerID = nil
+		record.LeaseUntil = nil
+		record.LastUsedAt = time.Now().UTC()
+		record.UpdatedAt = record.LastUsedAt
+		o.memorySessions[resolution.SessionRef] = record
+		resolution.Record = &record
+		return
+	}
+	if err := o.sessionsRepo.ReleaseWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID); err != nil {
+		return
+	}
+	if resolution.Record != nil {
+		resolution.Record.LeaseOwnerID = nil
+		resolution.Record.LeaseUntil = nil
+	}
+}
+
+func (o *sessionOrchestrator) clearFinishedWriterLease(ctx context.Context, execCtx tools.ExecutionContext, resolution *resolvedSession) error {
+	if resolution == nil {
+		return nil
+	}
+	if o.pool == nil {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		record, ok := o.memorySessions[resolution.SessionRef]
+		if !ok {
+			return nil
+		}
+		record.LeaseOwnerID = nil
+		record.LeaseUntil = nil
+		record.State = data.ShellSessionStateReady
+		record.LastUsedAt = time.Now().UTC()
+		record.UpdatedAt = record.LastUsedAt
+		o.memorySessions[resolution.SessionRef] = record
+		resolution.Record = &record
+		return nil
+	}
+	if err := o.sessionsRepo.ClearFinishedWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef); err != nil && !data.IsShellSessionNotFound(err) {
+		return err
+	}
+	if resolution.Record != nil {
+		resolution.Record.LeaseOwnerID = nil
+		resolution.Record.LeaseUntil = nil
+		resolution.Record.State = data.ShellSessionStateReady
+	}
+	return nil
+}
+
+func (o *sessionOrchestrator) acquireWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	ownerID string,
+	leaseUntil time.Time,
+) (data.ShellSessionRecord, *tools.ExecutionError) {
+	return o.updateWriterLease(ctx, execCtx, resolution, ownerID, leaseUntil, false)
+}
+
+func (o *sessionOrchestrator) renewWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	ownerID string,
+	leaseUntil time.Time,
+) (data.ShellSessionRecord, *tools.ExecutionError) {
+	return o.updateWriterLease(ctx, execCtx, resolution, ownerID, leaseUntil, true)
+}
+
+func (o *sessionOrchestrator) updateWriterLease(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	ownerID string,
+	leaseUntil time.Time,
+	renewOnly bool,
+) (data.ShellSessionRecord, *tools.ExecutionError) {
+	ownerID = strings.TrimSpace(ownerID)
+	if resolution == nil || ownerID == "" {
+		return data.ShellSessionRecord{}, sandboxArgsError("run_id is required for shell writer lease")
+	}
+	if o.pool == nil {
+		return o.updateMemoryWriterLease(execCtx, resolution, ownerID, leaseUntil, renewOnly)
+	}
+	var (
+		record data.ShellSessionRecord
+		err    error
+	)
+	if renewOnly {
+		record, err = o.sessionsRepo.RenewWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+	} else {
+		record, err = o.sessionsRepo.AcquireWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+	}
+	if err == nil {
+		return record, nil
+	}
+	if data.IsShellSessionLeaseConflict(err) {
+		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+	}
+	if data.IsShellSessionNotFound(err) {
+		return data.ShellSessionRecord{}, &tools.ExecutionError{ErrorClass: errorSandboxError, Message: "shell session not found", Details: map[string]any{"session_ref": resolution.SessionRef, "code": "shell.session_not_found"}}
+	}
+	return data.ShellSessionRecord{}, sandboxArgsError(err.Error())
+}
+
+func (o *sessionOrchestrator) updateMemoryWriterLease(
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	ownerID string,
+	leaseUntil time.Time,
+	renewOnly bool,
+) (data.ShellSessionRecord, *tools.ExecutionError) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	record, ok := o.memorySessions[resolution.SessionRef]
+	if !ok {
+		record = o.sessionRecord(execCtx, resolution)
+	}
+	now := time.Now().UTC()
+	currentOwner := strings.TrimSpace(stringPtrValue(record.LeaseOwnerID))
+	active := hasActiveWriterLease(record, now)
+	if renewOnly {
+		if currentOwner != ownerID {
+			return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+		}
+	} else if active && currentOwner != ownerID {
+		return data.ShellSessionRecord{}, shellBusyError(resolution.SessionRef)
+	}
+	if currentOwner != "" && currentOwner != ownerID {
+		record.LeaseEpoch++
+	}
+	record.LeaseOwnerID = stringPtr(ownerID)
+	record.LeaseUntil = timePtr(leaseUntil)
+	record.LastUsedAt = now
+	record.UpdatedAt = now
+	o.memorySessions[resolution.SessionRef] = record
+	return record, nil
+}
+
+func (o *sessionOrchestrator) sessionRecord(execCtx tools.ExecutionContext, resolution *resolvedSession) data.ShellSessionRecord {
+	if resolution != nil && resolution.Record != nil {
+		return *resolution.Record
+	}
+	return data.ShellSessionRecord{
+		SessionRef:        resolution.SessionRef,
+		OrgID:             derefUUID(execCtx.OrgID),
+		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
+		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
+		ProjectID:         uuidPtr(execCtx.ProjectID),
+		ThreadID:          execCtx.ThreadID,
+		RunID:             uuidPtr(execCtx.RunID),
+		ShareScope:        resolution.ShareScope,
+		State:             data.ShellSessionStateReady,
+		DefaultBindingKey: resolution.DefaultBindingKey,
+		MetadataJSON:      map[string]any{},
+	}
+}
+
+func (r *resolvedSession) RecordLeaseOwnerID() *string {
+	if r == nil || r.Record == nil {
+		return nil
+	}
+	return r.Record.LeaseOwnerID
+}
+
+func writerLeaseOwner(execCtx tools.ExecutionContext) string {
+	if execCtx.RunID == uuid.Nil {
+		return ""
+	}
+	return "run:" + execCtx.RunID.String()
+}
+
+func execWriterLeaseUntil(timeoutMs int) time.Time {
+	now := time.Now().UTC()
+	leaseTTL := minimumWriterLeaseTTL
+	if timeoutMs > 0 {
+		candidate := time.Duration(timeoutMs)*time.Millisecond + execWriterLeasePad
+		if candidate > leaseTTL {
+			leaseTTL = candidate
+		}
+	}
+	return now.Add(leaseTTL)
+}
+
+func writeWriterLeaseUntil() time.Time {
+	return time.Now().UTC().Add(minimumWriterLeaseTTL)
+}
+
+func hasActiveWriterLease(record data.ShellSessionRecord, now time.Time) bool {
+	return record.LeaseOwnerID != nil && record.LeaseUntil != nil && record.LeaseUntil.After(now.UTC())
+}
+
+func timePtr(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copyValue := value.UTC()
+	return &copyValue
 }

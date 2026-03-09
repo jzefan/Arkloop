@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ const (
 	ShellShareScopeOrg       = "org"
 )
 
+var ErrShellSessionLeaseConflict = errors.New("shell session writer lease conflict")
+
 type ShellSessionRecord struct {
 	SessionRef        string
 	OrgID             uuid.UUID
@@ -36,6 +39,9 @@ type ShellSessionRecord struct {
 	LiveSessionID     *string
 	LatestRestoreRev  *string
 	DefaultBindingKey *string
+	LeaseOwnerID      *string
+	LeaseUntil        *time.Time
+	LeaseEpoch        int64
 	LastUsedAt        time.Time
 	MetadataJSON      map[string]any
 	CreatedAt         time.Time
@@ -85,6 +91,9 @@ func (ShellSessionsRepository) GetLatestByRun(
 		        live_session_id,
 		        latest_restore_rev,
 		        default_binding_key,
+		        lease_owner_id,
+		        lease_until,
+		        lease_epoch,
 		        last_used_at,
 		        metadata_json,
 		        created_at,
@@ -139,6 +148,9 @@ func (ShellSessionsRepository) GetByDefaultBindingKey(
 		        live_session_id,
 		        latest_restore_rev,
 		        default_binding_key,
+		        lease_owner_id,
+		        lease_until,
+		        lease_epoch,
 		        last_used_at,
 		        metadata_json,
 		        created_at,
@@ -188,10 +200,13 @@ func (ShellSessionsRepository) Upsert(
 			live_session_id,
 			latest_restore_rev,
 			default_binding_key,
+			lease_owner_id,
+			lease_until,
+			lease_epoch,
 			last_used_at,
 			metadata_json
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), $13::jsonb
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16::jsonb
 		)
 		ON CONFLICT (session_ref) DO UPDATE SET
 			profile_ref = EXCLUDED.profile_ref,
@@ -204,6 +219,9 @@ func (ShellSessionsRepository) Upsert(
 			live_session_id = EXCLUDED.live_session_id,
 			latest_restore_rev = COALESCE(EXCLUDED.latest_restore_rev, shell_sessions.latest_restore_rev),
 			default_binding_key = COALESCE(EXCLUDED.default_binding_key, shell_sessions.default_binding_key),
+			lease_owner_id = EXCLUDED.lease_owner_id,
+			lease_until = EXCLUDED.lease_until,
+			lease_epoch = EXCLUDED.lease_epoch,
 			last_used_at = now(),
 			metadata_json = EXCLUDED.metadata_json,
 			updated_at = now()`,
@@ -219,6 +237,9 @@ func (ShellSessionsRepository) Upsert(
 		normalized.LiveSessionID,
 		normalized.LatestRestoreRev,
 		normalized.DefaultBindingKey,
+		normalized.LeaseOwnerID,
+		normalized.LeaseUntil,
+		normalized.LeaseEpoch,
 		string(metadataRaw),
 	)
 	return err
@@ -360,6 +381,8 @@ func (ShellSessionsRepository) ClearLiveSession(
 		ctx,
 		`UPDATE shell_sessions
 		    SET live_session_id = NULL,
+		        lease_owner_id = NULL,
+		        lease_until = NULL,
 		        state = $3,
 		        updated_at = now(),
 		        last_used_at = now()
@@ -369,6 +392,119 @@ func (ShellSessionsRepository) ClearLiveSession(
 		sessionRef,
 		ShellSessionStateReady,
 	)
+	return err
+}
+
+func (ShellSessionsRepository) AcquireWriterLease(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	ownerID string,
+	leaseUntil time.Time,
+) (ShellSessionRecord, error) {
+	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, false)
+}
+
+func (ShellSessionsRepository) RenewWriterLease(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	ownerID string,
+	leaseUntil time.Time,
+) (ShellSessionRecord, error) {
+	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, true)
+}
+
+func (ShellSessionsRepository) ReleaseWriterLease(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	ownerID string,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return fmt.Errorf("pool must not be nil")
+	}
+	if orgID == uuid.Nil {
+		return fmt.Errorf("org_id must not be empty")
+	}
+	sessionRef = strings.TrimSpace(sessionRef)
+	ownerID = strings.TrimSpace(ownerID)
+	if sessionRef == "" {
+		return fmt.Errorf("session_ref must not be empty")
+	}
+	if ownerID == "" {
+		return fmt.Errorf("lease owner_id must not be empty")
+	}
+	commandTag, err := pool.Exec(
+		ctx,
+		`UPDATE shell_sessions
+		    SET lease_owner_id = NULL,
+		        lease_until = NULL,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE org_id = $1
+		    AND session_ref = $2
+		    AND lease_owner_id = $3`,
+		orgID,
+		sessionRef,
+		ownerID,
+	)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() > 0 {
+		return nil
+	}
+	_, err = getShellSession(ctx, pool, orgID, sessionRef)
+	return err
+}
+
+func (ShellSessionsRepository) ClearFinishedWriterLease(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return fmt.Errorf("pool must not be nil")
+	}
+	if orgID == uuid.Nil {
+		return fmt.Errorf("org_id must not be empty")
+	}
+	sessionRef = strings.TrimSpace(sessionRef)
+	if sessionRef == "" {
+		return fmt.Errorf("session_ref must not be empty")
+	}
+	commandTag, err := pool.Exec(
+		ctx,
+		`UPDATE shell_sessions
+		    SET lease_owner_id = NULL,
+		        lease_until = NULL,
+		        state = $3,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE org_id = $1
+		    AND session_ref = $2`,
+		orgID,
+		sessionRef,
+		ShellSessionStateReady,
+	)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() > 0 {
+		return nil
+	}
+	_, err = getShellSession(ctx, pool, orgID, sessionRef)
 	return err
 }
 
@@ -471,6 +607,9 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 		&record.LiveSessionID,
 		&record.LatestRestoreRev,
 		&record.DefaultBindingKey,
+		&record.LeaseOwnerID,
+		&record.LeaseUntil,
+		&record.LeaseEpoch,
 		&record.LastUsedAt,
 		&metadataRaw,
 		&record.CreatedAt,
@@ -488,6 +627,8 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	record.ShareScope = normalizeShellShareScope(record.ShareScope)
 	record.State = normalizeShellSessionState(record.State)
 	record.DefaultBindingKey = normalizeOptionalString(record.DefaultBindingKey)
+	record.LeaseOwnerID = normalizeOptionalString(record.LeaseOwnerID)
+	record.LeaseUntil = normalizeOptionalTime(record.LeaseUntil)
 	return record, nil
 }
 
@@ -519,6 +660,9 @@ func getShellSession(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, s
 		        live_session_id,
 		        latest_restore_rev,
 		        default_binding_key,
+		        lease_owner_id,
+		        lease_until,
+		        lease_epoch,
 		        last_used_at,
 		        metadata_json,
 		        created_at,
@@ -550,6 +694,13 @@ func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord,
 	record.ShareScope = normalizeShellShareScope(record.ShareScope)
 	record.State = normalizeShellSessionState(record.State)
 	record.DefaultBindingKey = normalizeOptionalString(record.DefaultBindingKey)
+	record.LeaseOwnerID = normalizeOptionalString(record.LeaseOwnerID)
+	record.LeaseUntil = normalizeOptionalTime(record.LeaseUntil)
+	if record.LeaseOwnerID == nil {
+		record.LeaseUntil = nil
+	} else if record.LeaseUntil == nil {
+		return ShellSessionRecord{}, nil, fmt.Errorf("lease_until must not be empty when lease_owner_id is set")
+	}
 	if record.MetadataJSON == nil {
 		record.MetadataJSON = map[string]any{}
 	}
@@ -578,6 +729,14 @@ func normalizeShellSessionState(value string) string {
 	}
 }
 
+func normalizeOptionalTime(value *time.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	trimmed := value.UTC()
+	return &trimmed
+}
+
 func ShellDefaultBindingKeyForThread(threadID *uuid.UUID) string {
 	if threadID == nil || *threadID == uuid.Nil {
 		return ""
@@ -595,4 +754,105 @@ func ShellDefaultBindingKeyForWorkspace(workspaceRef string) string {
 
 func IsShellSessionNotFound(err error) bool {
 	return err != nil && err == pgx.ErrNoRows
+}
+
+func IsShellSessionLeaseConflict(err error) bool {
+	return errors.Is(err, ErrShellSessionLeaseConflict)
+}
+
+func acquireWriterLease(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	sessionRef string,
+	ownerID string,
+	leaseUntil time.Time,
+	renewOnly bool,
+) (ShellSessionRecord, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return ShellSessionRecord{}, fmt.Errorf("pool must not be nil")
+	}
+	if orgID == uuid.Nil {
+		return ShellSessionRecord{}, fmt.Errorf("org_id must not be empty")
+	}
+	sessionRef = strings.TrimSpace(sessionRef)
+	ownerID = strings.TrimSpace(ownerID)
+	if sessionRef == "" {
+		return ShellSessionRecord{}, fmt.Errorf("session_ref must not be empty")
+	}
+	if ownerID == "" {
+		return ShellSessionRecord{}, fmt.Errorf("lease owner_id must not be empty")
+	}
+	if leaseUntil.IsZero() {
+		return ShellSessionRecord{}, fmt.Errorf("lease_until must not be zero")
+	}
+	query := `UPDATE shell_sessions
+	    SET lease_owner_id = $3,
+	        lease_until = $4,
+	        lease_epoch = CASE
+	            WHEN COALESCE(lease_owner_id, '') = '' THEN lease_epoch
+	            WHEN lease_owner_id = $3 THEN lease_epoch
+	            ELSE lease_epoch + 1
+	        END,
+	        updated_at = now(),
+	        last_used_at = now()
+	  WHERE org_id = $1
+	    AND session_ref = $2
+	    AND (
+	        lease_owner_id = $3`
+	if renewOnly {
+		query += `
+	    )`
+	} else {
+		query += `
+	        OR lease_owner_id IS NULL
+	        OR lease_until IS NULL
+	        OR lease_until <= now()
+	    )`
+	}
+	query += `
+	RETURNING session_ref,
+	          org_id,
+	          profile_ref,
+	          workspace_ref,
+	          project_id,
+	          thread_id,
+	          run_id,
+	          share_scope,
+	          state,
+	          live_session_id,
+	          latest_restore_rev,
+	          default_binding_key,
+	          lease_owner_id,
+	          lease_until,
+	          lease_epoch,
+	          last_used_at,
+	          metadata_json,
+	          created_at,
+	          updated_at`
+	record, err := scanShellSession(pool.QueryRow(ctx, query, orgID, sessionRef, ownerID, leaseUntil.UTC()))
+	if err == nil {
+		return record, nil
+	}
+	if err != pgx.ErrNoRows {
+		return ShellSessionRecord{}, err
+	}
+	return ShellSessionRecord{}, detectShellSessionLeaseConflict(ctx, pool, orgID, sessionRef)
+}
+
+func detectShellSessionLeaseConflict(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, sessionRef string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	record, err := getShellSession(ctx, pool, orgID, sessionRef)
+	if err != nil {
+		return err
+	}
+	if record.LeaseOwnerID != nil && record.LeaseUntil != nil && record.LeaseUntil.After(time.Now().UTC()) {
+		return ErrShellSessionLeaseConflict
+	}
+	return ErrShellSessionLeaseConflict
 }
