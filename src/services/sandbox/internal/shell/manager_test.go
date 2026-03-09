@@ -166,10 +166,10 @@ func TestManagerExecCommand_RecreatesSessionAfterClose(t *testing.T) {
 	}
 }
 
-func TestManagerClose_CheckpointFailureKeepsComputeSession(t *testing.T) {
+func TestManagerClose_CaptureStateFailureKeepsComputeSession(t *testing.T) {
 	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
-		if req.Action == "shell_checkpoint_export" {
-			return AgentResponse{Action: req.Action, Error: "checkpoint failed"}
+		if req.Action == "shell_capture_state" {
+			return AgentResponse{Action: req.Action, Error: "capture state failed"}
 		}
 		return idleShellResponse(req)
 	}}
@@ -189,14 +189,11 @@ func TestManagerClose_CheckpointFailureKeepsComputeSession(t *testing.T) {
 	}
 }
 
-func TestManagerRestoreFromCheckpointOnReopen(t *testing.T) {
-	archive := base64.StdEncoding.EncodeToString([]byte("archive"))
+func TestManagerRestoreFromStateOnReopen(t *testing.T) {
 	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
 		switch req.Action {
-		case "shell_checkpoint_export":
-			return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}, Archive: archive}}
-		case "shell_restore_import":
-			return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{}}
+		case "shell_capture_state":
+			return AgentResponse{Action: req.Action, State: &AgentStateResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}}}
 		case "exec_command":
 			code := 0
 			return AgentResponse{Action: req.Action, Session: &AgentSessionResponse{Status: StatusIdle, Cwd: "/workspace/demo", ExitCode: &code}}
@@ -225,9 +222,6 @@ func TestManagerRestoreFromCheckpointOnReopen(t *testing.T) {
 
 	if _, err := shellMgr.ExecCommand(context.Background(), ExecCommandRequest{SessionID: "sess-1", Tier: "lite", OrgID: "org-a", Command: "echo again"}); err != nil {
 		t.Fatalf("reopen exec_command failed: %v", err)
-	}
-	if agent.restoreCalls != 0 {
-		t.Fatalf("expected no archive restore call, got %d", agent.restoreCalls)
 	}
 	if agent.lastExecCwd != "/workspace/demo" {
 		t.Fatalf("unexpected restored cwd: %s", agent.lastExecCwd)
@@ -403,16 +397,13 @@ func TestManagerArtifactsRetryFailedUploadsOnPoll(t *testing.T) {
 	}
 }
 
-func TestManagerCheckpointManifestSkipsRawArtifactDataAndRestoresSequence(t *testing.T) {
-	archive := base64.StdEncoding.EncodeToString([]byte("archive"))
+func TestManagerRestoreStateSkipsRawArtifactDataAndRestoresSequence(t *testing.T) {
 	call := 0
 	agent := &fakeAgent{
 		actionHandler: func(req AgentRequest) AgentResponse {
 			switch req.Action {
-			case "shell_checkpoint_export":
-				return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}, Archive: archive}}
-			case "shell_restore_import":
-				return AgentResponse{Action: req.Action, Checkpoint: &AgentCheckpointResponse{}}
+			case "shell_capture_state":
+				return AgentResponse{Action: req.Action, State: &AgentStateResponse{Cwd: "/workspace/demo", Env: map[string]string{"FOO": "bar"}}}
 			default:
 				return completedShellAction(req)
 			}
@@ -461,10 +452,10 @@ func TestManagerCheckpointManifestSkipsRawArtifactDataAndRestoresSequence(t *tes
 	}
 }
 
-func TestManagerReclaimIgnoresCheckpointFailure(t *testing.T) {
+func TestManagerReclaimIgnoresCaptureStateFailure(t *testing.T) {
 	agent := &fakeAgent{actionHandler: func(req AgentRequest) AgentResponse {
-		if req.Action == "shell_checkpoint_export" {
-			return AgentResponse{Action: req.Action, Error: "checkpoint failed"}
+		if req.Action == "shell_capture_state" {
+			return AgentResponse{Action: req.Action, Error: "capture state failed"}
 		}
 		return idleShellResponse(req)
 	}}
@@ -519,7 +510,6 @@ type fakeAgent struct {
 	execHandler           func(job session.ExecJob) session.ExecResult
 	lastExecEnv           map[string]string
 	lastExecCwd           string
-	restoreCalls          int
 }
 
 func (a *fakeAgent) Dial(_ context.Context) (net.Conn, error) {
@@ -571,9 +561,6 @@ func (a *fakeAgent) handleAction(req AgentRequest) AgentResponse {
 	if req.Action == "exec_command" && req.ExecCommand != nil {
 		a.lastExecCwd = req.ExecCommand.Cwd
 		a.lastExecEnv = cloneMap(req.ExecCommand.Env)
-	}
-	if req.Action == "shell_restore_import" {
-		a.restoreCalls++
 	}
 	custom := a.actionHandler
 	a.mu.Unlock()

@@ -159,14 +159,3 @@ func loadHydratedScope(ctx context.Context, store objectstore.BlobStore, scope, 
 	}
 	return hydrated, files, nil
 }
-
-func legacyArchiveKey(scope, ref string) string {
-	switch strings.TrimSpace(scope) {
-	case ScopeProfile:
-		return profileKey(ref)
-	case ScopeWorkspace:
-		return workspaceKey(ref)
-	default:
-		return ""
-	}
-}

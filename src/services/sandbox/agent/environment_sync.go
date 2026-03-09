@@ -151,7 +151,7 @@ func applyEnvironment(scope string, manifest environmentcontract.Manifest, files
 		return fmt.Errorf("environment scope mismatch: %s", normalized.Scope)
 	}
 	if reset {
-		if err := resetCheckpointRoot(root.HostPath); err != nil {
+		if err := resetEnvironmentRoot(root.HostPath); err != nil {
 			return err
 		}
 	} else if err := os.MkdirAll(root.HostPath, 0o755); err != nil {
@@ -230,13 +230,13 @@ func applyEnvironment(scope string, manifest environmentcontract.Manifest, files
 	return chownTreeIfPossible(root.HostPath)
 }
 
-func singleEnvironmentRoot(scope string) (checkpointRoot, error) {
+func singleEnvironmentRoot(scope string) (environmentRoot, error) {
 	roots, err := environmentRoots(scope)
 	if err != nil {
-		return checkpointRoot{}, err
+		return environmentRoot{}, err
 	}
 	if len(roots) != 1 {
-		return checkpointRoot{}, fmt.Errorf("environment scope %s must map to exactly one root", scope)
+		return environmentRoot{}, fmt.Errorf("environment scope %s must map to exactly one root", scope)
 	}
 	return roots[0], nil
 }

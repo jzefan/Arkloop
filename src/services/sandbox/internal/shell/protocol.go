@@ -107,12 +107,12 @@ type AgentStateResponse struct {
 }
 
 type AgentResponse struct {
-	Action     string                   `json:"action"`
-	Session    *AgentSessionResponse    `json:"session,omitempty"`
-	Debug      *AgentDebugResponse      `json:"debug,omitempty"`
-	State      *AgentStateResponse      `json:"state,omitempty"`
-	Code       string                   `json:"code,omitempty"`
-	Error      string                   `json:"error,omitempty"`
+	Action  string                `json:"action"`
+	Session *AgentSessionResponse `json:"session,omitempty"`
+	Debug   *AgentDebugResponse   `json:"debug,omitempty"`
+	State   *AgentStateResponse   `json:"state,omitempty"`
+	Code    string                `json:"code,omitempty"`
+	Error   string                `json:"error,omitempty"`
 }
 
 type AgentSessionResponse struct {

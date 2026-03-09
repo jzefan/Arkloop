@@ -3,7 +3,6 @@ package session
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,7 +67,6 @@ type AgentCapabilities struct {
 
 type EnvironmentRequest struct {
 	Scope    string                        `json:"scope"`
-	Archive  string                        `json:"archive,omitempty"`
 	Subtrees []string                      `json:"subtrees,omitempty"`
 	Paths    []string                      `json:"paths,omitempty"`
 	Manifest *environmentcontract.Manifest `json:"manifest,omitempty"`
@@ -77,7 +75,6 @@ type EnvironmentRequest struct {
 }
 
 type EnvironmentResponse struct {
-	Archive  string                        `json:"archive,omitempty"`
 	Manifest *environmentcontract.Manifest `json:"manifest,omitempty"`
 	Files    []environment.FilePayload     `json:"files,omitempty"`
 }
@@ -315,29 +312,6 @@ func (s *Session) ApplyEnvironment(ctx context.Context, scope string, manifest e
 		Manifest: &manifest,
 		Files:    append([]environment.FilePayload(nil), files...),
 		Reset:    reset,
-	})
-	return err
-}
-
-func (s *Session) ExportEnvironment(ctx context.Context, scope string) ([]byte, error) {
-	payload, err := s.callEnvironment(ctx, "environment_export", EnvironmentRequest{Scope: scope})
-	if err != nil {
-		return nil, err
-	}
-	if payload.Archive == "" {
-		return nil, fmt.Errorf("environment archive is empty")
-	}
-	archive, err := base64.StdEncoding.DecodeString(payload.Archive)
-	if err != nil {
-		return nil, fmt.Errorf("decode environment archive: %w", err)
-	}
-	return archive, nil
-}
-
-func (s *Session) ImportEnvironment(ctx context.Context, scope string, archive []byte) error {
-	_, err := s.callEnvironment(ctx, "environment_import", EnvironmentRequest{
-		Scope:   scope,
-		Archive: base64.StdEncoding.EncodeToString(archive),
 	})
 	return err
 }
