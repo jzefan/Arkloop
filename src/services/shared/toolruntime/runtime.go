@@ -21,6 +21,7 @@ type EnvConfig struct {
 type ResolveInput struct {
 	HasConversationSearch  bool
 	ArtifactStoreAvailable bool
+	BrowserEnabled         bool
 	Env                    EnvConfig
 	PlatformProviders      []ProviderConfig
 }
@@ -54,6 +55,9 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 	if sandboxBaseURL != "" {
 		for _, name := range []string{"python_execute", "exec_command", "write_stdin"} {
 			available[name] = struct{}{}
+		}
+		if input.BrowserEnabled {
+			available["browser"] = struct{}{}
 		}
 	}
 

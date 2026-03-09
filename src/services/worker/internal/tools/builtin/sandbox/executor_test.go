@@ -1120,6 +1120,7 @@ func seedInMemorySession(orchestrator *sessionOrchestrator, sessionRef string) {
 	defer orchestrator.mu.Unlock()
 	orchestrator.memorySessions[sessionRef] = data.ShellSessionRecord{
 		SessionRef:   sessionRef,
+		SessionType:  orchestrator.sessionType,
 		ShareScope:   data.ShellShareScopeRun,
 		State:        data.ShellSessionStateReady,
 		MetadataJSON: map[string]any{},
@@ -1770,5 +1771,150 @@ func seedMembership(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, userID uu
 	)
 	if err != nil {
 		t.Fatalf("insert membership: %v", err)
+	}
+}
+
+func TestBrowser_UsesBrowserTierAndAgentBrowserCommand(t *testing.T) {
+	orgID := uuid.New()
+	runID := uuid.New()
+	ctx := tools.ExecutionContext{
+		RunID:        runID,
+		OrgID:        &orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+	}
+	var seen execCommandRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/exec_command" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: seen.SessionID, Status: "idle", Cwd: "/workspace", Output: "ok", ExitCode: intPtr(0)})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(t.Context(), "browser", map[string]any{"command": "navigate https://example.com"}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if seen.Tier != "browser" {
+		t.Fatalf("expected browser tier, got %q", seen.Tier)
+	}
+	if !strings.HasPrefix(seen.SessionID, "brref_") {
+		t.Fatalf("expected browser session ref, got %q", seen.SessionID)
+	}
+	if !strings.HasPrefix(seen.Command, "agent-browser --session '") {
+		t.Fatalf("unexpected browser command: %q", seen.Command)
+	}
+	if !strings.Contains(seen.Command, "navigate https://example.com") {
+		t.Fatalf("missing browser subcommand: %q", seen.Command)
+	}
+	if result.ResultJSON["session_ref"] != seen.SessionID {
+		t.Fatalf("unexpected session_ref: %v", result.ResultJSON["session_ref"])
+	}
+}
+
+func TestBrowser_AutoSessionDoesNotReuseShellSession(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_browser_shell_type_isolation")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	runID := uuid.New()
+	ctx := tools.ExecutionContext{
+		RunID:        runID,
+		OrgID:        &orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+	}
+	var calls []execCommandRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/exec_command" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		calls = append(calls, body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", ExitCode: intPtr(0)})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	firstShell := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "")
+	if firstShell.Error != nil {
+		t.Fatalf("unexpected shell error: %+v", firstShell.Error)
+	}
+	firstBrowser := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx, "")
+	if firstBrowser.Error != nil {
+		t.Fatalf("unexpected browser error: %+v", firstBrowser.Error)
+	}
+	secondBrowser := exec.Execute(t.Context(), "browser", map[string]any{"command": "console"}, ctx, "")
+	if secondBrowser.Error != nil {
+		t.Fatalf("unexpected second browser error: %+v", secondBrowser.Error)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 calls, got %d", len(calls))
+	}
+	if calls[0].Tier != "pro" {
+		t.Fatalf("expected shell pro tier, got %q", calls[0].Tier)
+	}
+	if calls[1].Tier != "browser" || calls[2].Tier != "browser" {
+		t.Fatalf("expected browser tier calls, got %#v", calls)
+	}
+	if calls[0].SessionID == calls[1].SessionID {
+		t.Fatalf("browser session reused shell session: %q", calls[1].SessionID)
+	}
+	if calls[1].SessionID != calls[2].SessionID {
+		t.Fatalf("expected browser auto reuse, got %q and %q", calls[1].SessionID, calls[2].SessionID)
+	}
+	if firstBrowser.ResultJSON["resolved_via"] != "new_session" {
+		t.Fatalf("unexpected first browser resolution: %v", firstBrowser.ResultJSON["resolved_via"])
+	}
+	if secondBrowser.ResultJSON["resolved_via"] != "run_default" {
+		t.Fatalf("unexpected second browser resolution: %v", secondBrowser.ResultJSON["resolved_via"])
+	}
+}
+
+func TestBrowser_ExplicitSessionRefCreatesWhenMissing(t *testing.T) {
+	orgID := uuid.New()
+	ctx := tools.ExecutionContext{
+		RunID:        uuid.New(),
+		OrgID:        &orgID,
+		ProfileRef:   "pref_test",
+		WorkspaceRef: "wsref_test",
+	}
+	var seen execCommandRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: seen.SessionID, Status: "idle", Cwd: "/workspace", ExitCode: intPtr(0)})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutor(server.URL, "")
+	result := exec.Execute(t.Context(), "browser", map[string]any{
+		"session_ref": "brref_manual",
+		"command":     "snapshot",
+	}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if seen.SessionID != "brref_manual" {
+		t.Fatalf("expected explicit session ref, got %q", seen.SessionID)
+	}
+	if result.ResultJSON["resolved_via"] != "explicit_new" {
+		t.Fatalf("unexpected resolved_via: %v", result.ResultJSON["resolved_via"])
 	}
 }

@@ -53,6 +53,9 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 	if stored.LiveSessionID == nil || *stored.LiveSessionID != liveSessionID {
 		t.Fatalf("unexpected live_session_id: %#v", stored.LiveSessionID)
 	}
+	if stored.SessionType != ShellSessionTypeShell {
+		t.Fatalf("expected shell session type, got %q", stored.SessionType)
+	}
 	if stored.State != ShellSessionStateBusy {
 		t.Fatalf("unexpected state: %s", stored.State)
 	}
@@ -146,6 +149,79 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 	}
 	if bound.SessionRef != newer.SessionRef {
 		t.Fatalf("expected latest bound session %q, got %q", newer.SessionRef, bound.SessionRef)
+	}
+}
+
+func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_shell_sessions_types")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	repo := ShellSessionsRepository{}
+	orgID := uuid.New()
+	runID := uuid.New()
+	threadID := uuid.New()
+	bindingKey := "thread:" + threadID.String()
+	shellRecord := ShellSessionRecord{
+		SessionRef:        "shref_shell",
+		SessionType:       ShellSessionTypeShell,
+		OrgID:             orgID,
+		ProfileRef:        "pref_test",
+		WorkspaceRef:      "wsref_test",
+		ThreadID:          &threadID,
+		RunID:             &runID,
+		ShareScope:        ShellShareScopeThread,
+		State:             ShellSessionStateReady,
+		DefaultBindingKey: &bindingKey,
+		MetadataJSON:      map[string]any{},
+	}
+	browserRecord := shellRecord
+	browserRecord.SessionRef = "brref_browser"
+	browserRecord.SessionType = ShellSessionTypeBrowser
+	if err := repo.Upsert(context.Background(), pool, shellRecord); err != nil {
+		t.Fatalf("upsert shell: %v", err)
+	}
+	if err := repo.Upsert(context.Background(), pool, browserRecord); err != nil {
+		t.Fatalf("upsert browser: %v", err)
+	}
+
+	latestShell, err := repo.GetLatestByRunAndType(context.Background(), pool, orgID, runID, ShellSessionTypeShell)
+	if err != nil {
+		t.Fatalf("get latest shell: %v", err)
+	}
+	if latestShell.SessionRef != shellRecord.SessionRef {
+		t.Fatalf("expected shell session %q, got %q", shellRecord.SessionRef, latestShell.SessionRef)
+	}
+
+	latestBrowser, err := repo.GetLatestByRunAndType(context.Background(), pool, orgID, runID, ShellSessionTypeBrowser)
+	if err != nil {
+		t.Fatalf("get latest browser: %v", err)
+	}
+	if latestBrowser.SessionRef != browserRecord.SessionRef {
+		t.Fatalf("expected browser session %q, got %q", browserRecord.SessionRef, latestBrowser.SessionRef)
+	}
+
+	boundShell, err := repo.GetByDefaultBindingKeyAndType(context.Background(), pool, orgID, "pref_test", bindingKey, ShellSessionTypeShell)
+	if err != nil {
+		t.Fatalf("get shell binding: %v", err)
+	}
+	if boundShell.SessionRef != shellRecord.SessionRef {
+		t.Fatalf("expected shell binding %q, got %q", shellRecord.SessionRef, boundShell.SessionRef)
+	}
+
+	boundBrowser, err := repo.GetByDefaultBindingKeyAndType(context.Background(), pool, orgID, "pref_test", bindingKey, ShellSessionTypeBrowser)
+	if err != nil {
+		t.Fatalf("get browser binding: %v", err)
+	}
+	if boundBrowser.SessionRef != browserRecord.SessionRef {
+		t.Fatalf("expected browser binding %q, got %q", browserRecord.SessionRef, boundBrowser.SessionRef)
+	}
+
+	if _, err := repo.GetBySessionRefAndType(context.Background(), pool, orgID, browserRecord.SessionRef, ShellSessionTypeShell); !IsShellSessionNotFound(err) {
+		t.Fatalf("expected typed lookup miss, got %v", err)
 	}
 }
 

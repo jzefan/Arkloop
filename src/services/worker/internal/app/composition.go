@@ -124,7 +124,8 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	if err != nil {
 		slog.WarnContext(ctx, "message attachments: store init failed", "err", err.Error())
 	}
-	builtinAvailability := resolveBuiltinAvailability(platformProviders, pool != nil, artifactStore != nil)
+	browserEnabled := resolveBrowserToolEnabled(ctx, configResolver)
+	builtinAvailability := resolveBuiltinAvailability(platformProviders, pool != nil, artifactStore != nil, browserEnabled)
 
 	// -- Memory (OpenViking) --
 	ovCfg := openviking.Config{
@@ -161,7 +162,8 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	sandboxBaseURL := builtinAvailability.SandboxBaseURL
 	if sandboxBaseURL != "" {
 		sandboxAuthToken := sandboxtool.AuthTokenFromEnv()
-		var sandboxExec tools.Executor = sandboxtool.NewToolExecutorWithPool(sandboxBaseURL, sandboxAuthToken, pool)
+		rawSandboxExec := sandboxtool.NewToolExecutorWithPool(sandboxBaseURL, sandboxAuthToken, pool)
+		var sandboxExec tools.Executor = rawSandboxExec
 
 		// 当 DB 可用时，包装计费装饰器
 		if pool != nil {
@@ -177,6 +179,13 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 			executors[spec.Name] = sandboxExec
 		}
 		allLlmSpecs = append(allLlmSpecs, sandboxtool.LlmSpecs()...)
+		if browserEnabled {
+			if err := toolRegistry.Register(sandboxtool.BrowserSpec); err != nil {
+				return nil, err
+			}
+			executors[sandboxtool.BrowserSpec.Name] = rawSandboxExec
+			allLlmSpecs = append(allLlmSpecs, sandboxtool.BrowserLlmSpec)
+		}
 		slog.InfoContext(ctx, "sandbox: tools registered", "base_url", sandboxBaseURL)
 	}
 
@@ -299,6 +308,7 @@ func resolveBuiltinAvailability(
 	platformProviders []toolprovider.ActiveProviderConfig,
 	hasConversationSearch bool,
 	artifactStoreAvailable bool,
+	browserEnabled bool,
 ) sharedtoolruntime.BuiltinAvailability {
 	providers := make([]sharedtoolruntime.ProviderConfig, 0, len(platformProviders))
 	for _, provider := range platformProviders {
@@ -312,6 +322,7 @@ func resolveBuiltinAvailability(
 	return sharedtoolruntime.ResolveBuiltin(sharedtoolruntime.ResolveInput{
 		HasConversationSearch:  hasConversationSearch,
 		ArtifactStoreAvailable: artifactStoreAvailable,
+		BrowserEnabled:         browserEnabled,
 		Env: sharedtoolruntime.EnvConfig{
 			SandboxBaseURL:   sandboxtool.BaseURLFromEnv(),
 			MemoryBaseURL:    strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL")),
@@ -319,6 +330,22 @@ func resolveBuiltinAvailability(
 		},
 		PlatformProviders: providers,
 	})
+}
+
+func resolveBrowserToolEnabled(ctx context.Context, resolver sharedconfig.Resolver) bool {
+	if resolver == nil {
+		return false
+	}
+	value, err := resolver.Resolve(ctx, "browser.enabled", sharedconfig.Scope{})
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveBaseToolAllowlistNames(ctx context.Context, toolRegistry *tools.Registry) []string {

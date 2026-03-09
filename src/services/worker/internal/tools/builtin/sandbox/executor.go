@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -108,6 +109,12 @@ type writeStdinArgs struct {
 	YieldTimeMs int
 }
 
+type browserArgs struct {
+	SessionRef string
+	Command    string
+	TimeoutMs  int
+}
+
 type artifactRef struct {
 	Key      string `json:"key"`
 	Filename string `json:"filename"`
@@ -116,10 +123,11 @@ type artifactRef struct {
 }
 
 type ToolExecutor struct {
-	baseURL      string
-	authToken    string
-	client       *http.Client
-	orchestrator *sessionOrchestrator
+	baseURL             string
+	authToken           string
+	client              *http.Client
+	orchestrator        *sessionOrchestrator
+	browserOrchestrator *sessionOrchestrator
 }
 
 func NewToolExecutor(baseURL, authToken string) *ToolExecutor {
@@ -128,10 +136,11 @@ func NewToolExecutor(baseURL, authToken string) *ToolExecutor {
 
 func NewToolExecutorWithPool(baseURL, authToken string, pool *pgxpool.Pool) *ToolExecutor {
 	return &ToolExecutor{
-		baseURL:      baseURL,
-		authToken:    authToken,
-		client:       &http.Client{Timeout: httpClientTimeout},
-		orchestrator: newSessionOrchestrator(pool),
+		baseURL:             baseURL,
+		authToken:           authToken,
+		client:              &http.Client{Timeout: httpClientTimeout},
+		orchestrator:        newSessionOrchestrator(pool),
+		browserOrchestrator: newSessionOrchestratorWithType(pool, data.ShellSessionTypeBrowser),
 	}
 }
 
@@ -156,6 +165,8 @@ func (e *ToolExecutor) Execute(
 		return e.executeExecCommand(ctx, args, execCtx, started)
 	case "write_stdin":
 		return e.executeWriteStdin(ctx, args, execCtx, started)
+	case "browser":
+		return e.executeBrowser(ctx, args, execCtx, started)
 	default:
 		return errResult(errorArgsInvalid, fmt.Sprintf("unknown sandbox tool: %s", toolName), started)
 	}
@@ -337,6 +348,72 @@ func (e *ToolExecutor) executeWriteStdin(
 	}
 	delete(result.ResultJSON, "session_id")
 	return result
+}
+
+func (e *ToolExecutor) executeBrowser(
+	ctx context.Context,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	started time.Time,
+) tools.ExecutionResult {
+	reqArgs, argErr := parseBrowserArgs(args)
+	if argErr != nil {
+		return tools.ExecutionResult{Error: argErr, DurationMs: durationMs(started)}
+	}
+	resolution, resolveErr := e.browserOrchestrator.resolveBrowserSession(ctx, reqArgs, execCtx)
+	if resolveErr != nil {
+		return tools.ExecutionResult{Error: resolveErr, DurationMs: durationMs(started)}
+	}
+	request := execCommandRequest{
+		SessionID:    resolution.SessionRef,
+		OpenMode:     resolution.OpenMode,
+		OrgID:        resolveOrgID(execCtx),
+		ProfileRef:   resolveProfileRef(execCtx),
+		WorkspaceRef: resolveWorkspaceRef(execCtx),
+		Tier:         "browser",
+		Command:      buildBrowserCommand(resolution.SessionRef, reqArgs.Command),
+		TimeoutMs:    reqArgs.TimeoutMs,
+	}
+	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
+	if result.Error != nil && isSessionUnavailable(result.Error) {
+		fallback, fallbackErr := e.browserOrchestrator.resolveFallbackSession(ctx, execCommandArgs{}, execCtx, resolution)
+		if fallbackErr != nil {
+			return tools.ExecutionResult{Error: fallbackErr, DurationMs: durationMs(started)}
+		}
+		if fallback != nil {
+			resolution = fallback
+			request.SessionID = resolution.SessionRef
+			request.OpenMode = resolution.OpenMode
+			request.Command = buildBrowserCommand(resolution.SessionRef, reqArgs.Command)
+			result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
+		}
+	}
+	if result.Error != nil {
+		return result
+	}
+	resp := decodeExecSessionResult(result.ResultJSON)
+	if resp != nil {
+		e.browserOrchestrator.markResult(ctx, execCtx, resolution, *resp)
+		result.ResultJSON["session_ref"] = resolution.SessionRef
+		result.ResultJSON["share_scope"] = resolution.ShareScope
+		result.ResultJSON["resolved_via"] = resolution.ResolvedVia
+		result.ResultJSON["reused"] = resolution.Reused
+		result.ResultJSON["restored_from_restore_state"] = resp.Restored || resolution.RestoredFromRestoreState
+	}
+	delete(result.ResultJSON, "session_id")
+	return result
+}
+
+func buildBrowserCommand(sessionRef string, command string) string {
+	return "agent-browser --session " + shellQuote(sessionRef) + " " + strings.TrimSpace(command)
+}
+
+func shellQuote(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func (e *ToolExecutor) forkSessionCheckpoint(
@@ -533,6 +610,23 @@ func parseWriteStdinArgs(args map[string]any) (writeStdinArgs, *tools.ExecutionE
 	return request, nil
 }
 
+func parseBrowserArgs(args map[string]any) (browserArgs, *tools.ExecutionError) {
+	request := browserArgs{
+		SessionRef: readStringArg(args, "session_ref"),
+		Command:    readStringArg(args, "command"),
+		TimeoutMs:  resolveTimeoutMs(args),
+	}
+	if strings.TrimSpace(request.Command) == "" {
+		return browserArgs{}, sandboxArgsError("parameter command is required")
+	}
+	for _, key := range []string{"session_mode", "share_scope", "from_session_ref", "yield_time_ms", "cwd", "session_id"} {
+		if _, ok := args[key]; ok {
+			return browserArgs{}, sandboxArgsError(fmt.Sprintf("parameter %s is not supported for browser", key))
+		}
+	}
+	return request, nil
+}
+
 func sandboxArgsError(message string) *tools.ExecutionError {
 	return &tools.ExecutionError{ErrorClass: errorArgsInvalid, Message: message}
 }
@@ -587,6 +681,9 @@ func readIntArg(args map[string]any, key string) int {
 }
 
 func resolveTier(toolName string, budget map[string]any) string {
+	if strings.TrimSpace(toolName) == "browser" {
+		return "browser"
+	}
 	if tier, ok := resolveTierOverride(budget, toolName); ok {
 		return tier
 	}
@@ -597,6 +694,9 @@ func resolveTier(toolName string, budget map[string]any) string {
 }
 
 func defaultTierForTool(toolName string) string {
+	if strings.TrimSpace(toolName) == "browser" {
+		return "browser"
+	}
 	switch sandboxWorkloadClass(toolName) {
 	case "interactive_shell":
 		return "pro"
@@ -607,6 +707,8 @@ func defaultTierForTool(toolName string) string {
 
 func sandboxWorkloadClass(toolName string) string {
 	switch strings.TrimSpace(toolName) {
+	case "browser":
+		return "browser"
 	case "exec_command", "write_stdin":
 		return "interactive_shell"
 	case "python_execute":
@@ -638,7 +740,7 @@ func normalizeTierValue(value any) (string, bool) {
 		return "", false
 	}
 	switch strings.TrimSpace(raw) {
-	case "lite", "pro":
+	case "lite", "pro", "browser":
 		return strings.TrimSpace(raw), true
 	default:
 		return "", false
