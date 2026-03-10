@@ -14,6 +14,7 @@ import (
 	"arkloop/services/sandbox/internal/environment"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	sandboxskills "arkloop/services/sandbox/internal/skills"
 	"arkloop/services/shared/objectstore"
 )
 
@@ -31,6 +32,7 @@ type Manager struct {
 	stateStore      stateStore
 	restoreRegistry SessionRestoreRegistry
 	envManager      *environment.Manager
+	skillOverlay    *sandboxskills.OverlayManager
 	logger          *logging.JSONLogger
 	config          Config
 
@@ -62,18 +64,20 @@ func (e *transportError) Unwrap() error {
 	return e.err
 }
 
-func NewManager(compute *session.Manager, artifactStore artifactStore, stateStore stateStore, restoreRegistry SessionRestoreRegistry, envManager *environment.Manager, logger *logging.JSONLogger, cfg Config) *Manager {
+func NewManager(compute *session.Manager, artifactStore artifactStore, stateStore stateStore, restoreRegistry SessionRestoreRegistry, envManager *environment.Manager, skillOverlay *sandboxskills.OverlayManager, logger *logging.JSONLogger, cfg Config) *Manager {
 	if restoreRegistry == nil {
 		restoreRegistry = NewMemorySessionRestoreRegistry()
 	}
+	normalized := normalizeConfig(cfg)
 	mgr := &Manager{
 		compute:         compute,
 		artifactStore:   artifactStore,
 		stateStore:      stateStore,
 		restoreRegistry: restoreRegistry,
 		envManager:      envManager,
+		skillOverlay:    skillOverlay,
 		logger:          logger,
-		config:          normalizeConfig(cfg),
+		config:          normalized,
 		sessions:        make(map[string]*managedSession),
 	}
 	if compute != nil {
@@ -421,15 +425,22 @@ func (m *Manager) prepareExecCommandRequest(ctx context.Context, req ExecCommand
 }
 
 func (m *Manager) prepareEnvironment(ctx context.Context, req ExecCommandRequest, entry *managedSession) error {
-	if m.envManager == nil || entry.compute == nil {
+	if entry.compute == nil {
 		return nil
 	}
-	if err := m.envManager.Prepare(ctx, req.SessionID, entry.compute, environment.Binding{
-		OrgID:        req.OrgID,
-		ProfileRef:   req.ProfileRef,
-		WorkspaceRef: req.WorkspaceRef,
-	}); err != nil {
-		return fmt.Errorf("prepare environment: %w", err)
+	if m.envManager != nil {
+		if err := m.envManager.Prepare(ctx, req.SessionID, entry.compute, environment.Binding{
+			OrgID:        req.OrgID,
+			ProfileRef:   req.ProfileRef,
+			WorkspaceRef: req.WorkspaceRef,
+		}); err != nil {
+			return fmt.Errorf("prepare environment: %w", err)
+		}
+	}
+	if m.skillOverlay != nil {
+		if err := m.skillOverlay.Apply(ctx, entry.compute, req.EnabledSkills); err != nil {
+			return fmt.Errorf("apply skill overlay: %w", err)
+		}
 	}
 	return nil
 }

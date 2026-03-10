@@ -25,6 +25,8 @@ const (
 	PermDataSecrets           = "data.secrets.manage"
 	PermDataProjectsRead      = "data.projects.read"
 	PermDataProjectsManage    = "data.projects.manage"
+	PermDataSkillsRead        = "data.skills.read"
+	PermDataSkillsManage      = "data.skills.manage"
 	PermDataWebhooksManage    = "data.webhooks.manage"
 	PermDataSubscriptionsRead = "data.subscriptions.read"
 	PermDataUsageRead         = "data.usage.read"
@@ -56,6 +58,8 @@ var allPermissions = []string{
 	PermDataSecrets,
 	PermDataProjectsRead,
 	PermDataProjectsManage,
+	PermDataSkillsRead,
+	PermDataSkillsManage,
 	PermDataWebhooksManage,
 	PermDataSubscriptionsRead,
 	PermDataUsageRead,

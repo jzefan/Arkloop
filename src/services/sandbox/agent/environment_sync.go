@@ -45,6 +45,9 @@ func buildEnvironmentManifest(scope string, subtrees []string) (*environmentcont
 			if rel == "" {
 				return nil
 			}
+			if strings.TrimSpace(scope) == "profile" && rel == ".arkloop/enabled-skills.json" {
+				return nil
+			}
 			mode := info.Mode()
 			switch {
 			case mode.IsDir():

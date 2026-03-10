@@ -10,14 +10,15 @@ import (
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
+	sandboxskills "arkloop/services/sandbox/internal/skills"
 )
 
 // NewHandler 注册所有路由并返回 HTTP handler。
-func NewHandler(mgr *session.Manager, envMgr *environment.Manager, shellSvc shell.Service, artifactStore artifactStore, logger *logging.JSONLogger, authToken string) http.Handler {
+func NewHandler(mgr *session.Manager, envMgr *environment.Manager, skillMgr *sandboxskills.OverlayManager, shellSvc shell.Service, artifactStore artifactStore, logger *logging.JSONLogger, authToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz(mgr))
 	mux.HandleFunc("GET /v1/stats", stats(mgr))
-	mux.HandleFunc("POST /v1/exec", handleExec(mgr, envMgr, artifactStore, logger))
+	mux.HandleFunc("POST /v1/exec", handleExec(mgr, envMgr, skillMgr, artifactStore, logger))
 	mux.HandleFunc("POST /v1/exec_command", handleExecCommand(shellSvc, logger))
 	mux.HandleFunc("POST /v1/write_stdin", handleWriteStdin(shellSvc, logger))
 	mux.HandleFunc("POST /v1/sessions/fork", handleForkSession(shellSvc))

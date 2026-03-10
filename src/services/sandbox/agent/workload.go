@@ -20,6 +20,7 @@ const (
 	chartPreludeStmt     = "try:\n exec(open('" + chartPreludePath + "').read())\nexcept FileNotFoundError:\n pass\n"
 	defaultWorkloadCwd   = "/workspace"
 	defaultWorkloadHome  = "/home/arkloop"
+	defaultSkillsRoot    = "/opt/arkloop/skills"
 	defaultWorkloadTmp   = "/tmp/arkloop"
 	defaultWorkloadPath  = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	defaultWorkloadLang  = "C.UTF-8"
@@ -28,10 +29,11 @@ const (
 
 var shellWorkspaceDir = defaultWorkloadCwd
 var shellHomeDir = defaultWorkloadHome
+var shellSkillsDir = defaultSkillsRoot
 var shellTempDir = defaultWorkloadTmp
 
 func ensureWorkloadBaseDirs() error {
-	for _, dir := range []string{shellWorkspaceDir, shellHomeDir, shellTempDir, artifactOutputDir, matplotlibConfigDir} {
+	for _, dir := range []string{shellWorkspaceDir, shellHomeDir, shellSkillsDir, shellTempDir, artifactOutputDir, matplotlibConfigDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create workload dir %s: %w", dir, err)
 		}

@@ -408,22 +408,6 @@ func (o *sessionOrchestrator) resolveBrowserSession(
 	req browserArgs,
 	execCtx tools.ExecutionContext,
 ) (*resolvedSession, *tools.ExecutionError) {
-	requestedRef := strings.TrimSpace(req.SessionRef)
-	if requestedRef != "" {
-		resolved, err := o.lookupExplicit(ctx, execCtx, requestedRef, "explicit_resume")
-		if err == nil {
-			return resolved, nil
-		}
-		if err.ErrorClass != errorSandboxError || err.Message != "shell session not found" {
-			return nil, err
-		}
-		created, createErr := o.createSessionWithRef(ctx, execCtx, defaultShareScope(execCtx), nil, requestedRef)
-		if createErr != nil {
-			return nil, createErr
-		}
-		created.ResolvedVia = "explicit_new"
-		return created, nil
-	}
 	if resolved := o.lookupRunDefault(ctx, execCtx, ""); resolved != nil {
 		resolved.Reused = true
 		resolved.ResolvedVia = "run_default"

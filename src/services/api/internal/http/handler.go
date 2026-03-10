@@ -66,6 +66,11 @@ type HandlerConfig struct {
 	ToolProviderConfigsRepo      *data.ToolProviderConfigsRepository
 	ToolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
 	PersonasRepo                 *data.PersonasRepository
+	SkillPackagesRepo            *data.SkillPackagesRepository
+	ProfileSkillInstallsRepo     *data.ProfileSkillInstallsRepository
+	WorkspaceSkillEnableRepo     *data.WorkspaceSkillEnablementsRepository
+	ProfileRegistriesRepo        *data.ProfileRegistriesRepository
+	WorkspaceRegistriesRepo      *data.WorkspaceRegistriesRepository
 	IPRulesRepo                  *data.IPRulesRepository
 	APIKeysRepo                  *data.APIKeysRepository
 	OrgInvitationsRepo           *data.OrgInvitationsRepository
@@ -103,6 +108,7 @@ type HandlerConfig struct {
 	ArtifactStore          artifactStore
 	MessageAttachmentStore messageAttachmentStore
 	EnvironmentStore       environmentStore
+	SkillStore             skillStore
 
 	EmailFrom string
 
@@ -137,6 +143,11 @@ type messageAttachmentStore interface {
 
 type environmentStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
+}
+
+type skillStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+	Head(ctx context.Context, key string) (objectstore.ObjectInfo, error)
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
@@ -295,12 +306,40 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	)
 
 	mux.HandleFunc(
+		"/v1/skill-packages",
+		skillPackagesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.SkillStore),
+	)
+	mux.HandleFunc(
+		"/v1/skill-packages/",
+		skillPackageEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo),
+	)
+	mux.HandleFunc(
+		"/v1/profiles/me/skills",
+		profileSkillsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
+	)
+	mux.HandleFunc(
+		"/v1/profiles/me/skills/",
+		profileSkillEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
+	)
+	mux.HandleFunc(
+		"/v1/workspaces/",
+		workspaceSkillsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.WorkspaceSkillEnableRepo, cfg.WorkspaceRegistriesRepo, cfg.ProfileRegistriesRepo, cfg.Pool),
+	)
+	mux.HandleFunc(
 		"/v1/personas",
 		personasEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.RepoPersonas),
 	)
 	mux.HandleFunc(
 		"/v1/personas/",
 		personaEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo),
+	)
+	mux.HandleFunc(
+		"/v1/admin/skill-packages",
+		adminSkillPackagesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.SkillStore),
+	)
+	mux.HandleFunc(
+		"/v1/profiles/me/skills/install",
+		profileSkillsInstallEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
 	)
 
 	mux.HandleFunc(

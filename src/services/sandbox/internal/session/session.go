@@ -14,6 +14,7 @@ import (
 
 	"arkloop/services/sandbox/internal/environment"
 	environmentcontract "arkloop/services/sandbox/internal/environment/contract"
+	sandboxskills "arkloop/services/sandbox/internal/skills"
 )
 
 // ExecJob 是发送给 Guest Agent 的执行任务。
@@ -46,9 +47,10 @@ type FetchArtifactsResult struct {
 
 // agentRequest 是 v2 协议的请求格式。
 type agentRequest struct {
-	Action      string               `json:"action"`
-	Network     *GuestNetworkRequest `json:"network,omitempty"`
-	Environment *EnvironmentRequest  `json:"environment,omitempty"`
+	Action       string               `json:"action"`
+	Network      *GuestNetworkRequest `json:"network,omitempty"`
+	Environment  *EnvironmentRequest  `json:"environment,omitempty"`
+	SkillOverlay *SkillOverlayRequest `json:"skill_overlay,omitempty"`
 }
 
 // agentResponse 是 v2 协议的响应格式。
@@ -80,6 +82,18 @@ type EnvironmentResponse struct {
 	Files    []environment.FilePayload     `json:"files,omitempty"`
 }
 
+type SkillOverlayRequest struct {
+	Skills    []SkillOverlayItem `json:"skills,omitempty"`
+	IndexJSON string             `json:"index_json,omitempty"`
+}
+
+type SkillOverlayItem struct {
+	SkillKey         string `json:"skill_key"`
+	Version          string `json:"version"`
+	MountPath        string `json:"mount_path"`
+	InstructionPath  string `json:"instruction_path,omitempty"`
+	BundleDataBase64 string `json:"bundle_data_base64"`
+}
 type GuestNetworkRequest struct {
 	Interface   string   `json:"interface"`
 	GuestCIDR   string   `json:"guest_cidr"`
@@ -483,4 +497,44 @@ type vsockConn struct {
 
 func (c *vsockConn) Read(b []byte) (int, error) {
 	return c.reader.Read(b)
+}
+
+func (s *Session) ApplySkillOverlay(ctx context.Context, req sandboxskills.ApplyRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.TouchActivity()
+	callCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	conn, err := s.Dial(callCtx)
+	if err != nil {
+		return fmt.Errorf("connect to agent: %w", err)
+	}
+	defer conn.Close()
+
+	items := make([]SkillOverlayItem, 0, len(req.Skills))
+	for _, item := range req.Skills {
+		items = append(items, SkillOverlayItem{
+			SkillKey:         item.SkillKey,
+			Version:          item.Version,
+			MountPath:        item.MountPath,
+			InstructionPath:  item.InstructionPath,
+			BundleDataBase64: item.BundleDataBase64,
+		})
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Minute))
+	payload := agentRequest{Action: "skill_overlay_apply", SkillOverlay: &SkillOverlayRequest{Skills: items, IndexJSON: req.IndexJSON}}
+	if err := json.NewEncoder(conn).Encode(payload); err != nil {
+		return fmt.Errorf("send skill_overlay_apply request: %w", err)
+	}
+	var resp agentResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return fmt.Errorf("read skill_overlay_apply response: %w", err)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("agent error: %s", resp.Error)
+	}
+	return nil
 }

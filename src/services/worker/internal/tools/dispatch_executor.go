@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/memory"
@@ -26,6 +27,7 @@ type ExecutionContext struct {
 	UserID              *uuid.UUID
 	ProfileRef          string
 	WorkspaceRef        string
+	EnabledSkills       []skillstore.ResolvedSkill
 	AgentID             string
 	TimeoutMs           *int
 	Budget              map[string]any

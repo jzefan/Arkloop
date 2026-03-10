@@ -14,13 +14,16 @@ func bindShellDirs(t *testing.T, workspace string) {
 	t.Helper()
 	home := filepath.Join(workspace, "home")
 	temp := filepath.Join(workspace, "tmp")
+	skills := filepath.Join(workspace, "skills")
 	shellWorkspaceDir = workspace
 	shellHomeDir = home
 	shellTempDir = temp
+	shellSkillsDir = skills
 	t.Cleanup(func() {
 		shellWorkspaceDir = defaultWorkloadCwd
 		shellHomeDir = defaultWorkloadHome
 		shellTempDir = defaultWorkloadTmp
+		shellSkillsDir = defaultSkillsRoot
 	})
 }
 

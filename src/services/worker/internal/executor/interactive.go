@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -103,6 +104,7 @@ func (e *InteractiveExecutor) Execute(
 		ProjectID:              rc.Run.ProjectID,
 		ProfileRef:             rc.ProfileRef,
 		WorkspaceRef:           rc.WorkspaceRef,
+		EnabledSkills:          append([]skillstore.ResolvedSkill(nil), rc.EnabledSkills...),
 		TraceID:                rc.TraceID,
 		InputJSON:              rc.InputJSON,
 		ReasoningIterations:    rc.ReasoningIterations,

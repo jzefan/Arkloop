@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,14 +30,15 @@ const (
 )
 
 type execRequest struct {
-	SessionID    string `json:"session_id"`
-	OrgID        string `json:"org_id,omitempty"`
-	ProfileRef   string `json:"profile_ref,omitempty"`
-	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier"`
-	Language     string `json:"language"`
-	Code         string `json:"code"`
-	TimeoutMs    int    `json:"timeout_ms"`
+	SessionID     string                     `json:"session_id"`
+	OrgID         string                     `json:"org_id,omitempty"`
+	ProfileRef    string                     `json:"profile_ref,omitempty"`
+	WorkspaceRef  string                     `json:"workspace_ref,omitempty"`
+	EnabledSkills []skillstore.ResolvedSkill `json:"enabled_skills,omitempty"`
+	Tier          string                     `json:"tier"`
+	Language      string                     `json:"language"`
+	Code          string                     `json:"code"`
+	TimeoutMs     int                        `json:"timeout_ms"`
 }
 
 type execResponse struct {
@@ -49,16 +51,17 @@ type execResponse struct {
 }
 
 type execCommandRequest struct {
-	SessionID    string `json:"session_id"`
-	OpenMode     string `json:"open_mode,omitempty"`
-	OrgID        string `json:"org_id,omitempty"`
-	ProfileRef   string `json:"profile_ref,omitempty"`
-	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	Command      string `json:"command"`
-	TimeoutMs    int    `json:"timeout_ms,omitempty"`
-	YieldTimeMs  int    `json:"yield_time_ms,omitempty"`
+	SessionID     string                     `json:"session_id"`
+	OpenMode      string                     `json:"open_mode,omitempty"`
+	OrgID         string                     `json:"org_id,omitempty"`
+	ProfileRef    string                     `json:"profile_ref,omitempty"`
+	WorkspaceRef  string                     `json:"workspace_ref,omitempty"`
+	EnabledSkills []skillstore.ResolvedSkill `json:"enabled_skills,omitempty"`
+	Tier          string                     `json:"tier,omitempty"`
+	Cwd           string                     `json:"cwd,omitempty"`
+	Command       string                     `json:"command"`
+	TimeoutMs     int                        `json:"timeout_ms,omitempty"`
+	YieldTimeMs   int                        `json:"yield_time_ms,omitempty"`
 }
 
 type writeStdinRequest struct {
@@ -110,9 +113,7 @@ type writeStdinArgs struct {
 }
 
 type browserArgs struct {
-	SessionRef  string
 	Command     string
-	TimeoutMs   int
 	YieldTimeMs int
 }
 
@@ -184,14 +185,15 @@ func (e *ToolExecutor) executePython(
 	}
 
 	payload, err := json.Marshal(execRequest{
-		SessionID:    execCtx.RunID.String(),
-		OrgID:        resolveOrgID(execCtx),
-		ProfileRef:   resolveProfileRef(execCtx),
-		WorkspaceRef: resolveWorkspaceRef(execCtx),
-		Tier:         resolveTier("python_execute", execCtx.Budget),
-		Language:     "python",
-		Code:         code,
-		TimeoutMs:    resolveTimeoutMs(args),
+		SessionID:     execCtx.RunID.String(),
+		OrgID:         resolveOrgID(execCtx),
+		ProfileRef:    resolveProfileRef(execCtx),
+		WorkspaceRef:  resolveWorkspaceRef(execCtx),
+		EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
+		Tier:          resolveTier("python_execute", execCtx.Budget),
+		Language:      "python",
+		Code:          code,
+		TimeoutMs:     resolveTimeoutMs(args),
 	})
 	if err != nil {
 		return errResult(errorSandboxError, fmt.Sprintf("marshal request failed: %s", err.Error()), started)
@@ -258,16 +260,17 @@ func (e *ToolExecutor) executeExecCommand(
 	}
 
 	request := execCommandRequest{
-		SessionID:    resolution.SessionRef,
-		OpenMode:     resolution.OpenMode,
-		OrgID:        resolveOrgID(execCtx),
-		ProfileRef:   resolution.ProfileRef(resolveProfileRef(execCtx)),
-		WorkspaceRef: resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
-		Tier:         resolveTier("exec_command", execCtx.Budget),
-		Cwd:          reqArgs.Cwd,
-		Command:      reqArgs.Command,
-		TimeoutMs:    reqArgs.TimeoutMs,
-		YieldTimeMs:  reqArgs.YieldTimeMs,
+		SessionID:     resolution.SessionRef,
+		OpenMode:      resolution.OpenMode,
+		OrgID:         resolveOrgID(execCtx),
+		ProfileRef:    resolution.ProfileRef(resolveProfileRef(execCtx)),
+		WorkspaceRef:  resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
+		EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
+		Tier:          resolveTier("exec_command", execCtx.Budget),
+		Cwd:           reqArgs.Cwd,
+		Command:       reqArgs.Command,
+		TimeoutMs:     reqArgs.TimeoutMs,
+		YieldTimeMs:   reqArgs.YieldTimeMs,
 	}
 	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
 	if result.Error != nil && isSessionUnavailable(result.Error) {
@@ -372,85 +375,61 @@ func (e *ToolExecutor) executeBrowser(
 	if resolveErr != nil {
 		return tools.ExecutionResult{Error: resolveErr, DurationMs: durationMs(started)}
 	}
+	preparedCommand := preparedBrowserCommand(reqArgs.Command)
 	request := execCommandRequest{
-		SessionID:    resolution.SessionRef,
-		OpenMode:     resolution.OpenMode,
-		OrgID:        resolveOrgID(execCtx),
-		ProfileRef:   resolution.ProfileRef(resolveProfileRef(execCtx)),
-		WorkspaceRef: resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
-		Tier:         "browser",
-		Command:      buildBrowserCommand(resolution.SessionRef, reqArgs.Command),
-		TimeoutMs:    reqArgs.TimeoutMs,
-		YieldTimeMs:  effectiveBrowserYieldTimeMs(reqArgs.Command, reqArgs.YieldTimeMs),
+		SessionID:     resolution.SessionRef,
+		OpenMode:      resolution.OpenMode,
+		OrgID:         resolveOrgID(execCtx),
+		ProfileRef:    resolution.ProfileRef(resolveProfileRef(execCtx)),
+		WorkspaceRef:  resolution.WorkspaceRef(resolveWorkspaceRef(execCtx)),
+		EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
+		Tier:          "browser",
+		Command:       buildBrowserCommand(resolution.SessionRef, preparedCommand),
+		TimeoutMs:     defaultTimeoutMs,
+		YieldTimeMs:   effectiveBrowserYieldTimeMs(reqArgs.Command, reqArgs.YieldTimeMs),
 	}
 	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
-	if result.Error != nil && isSessionUnavailable(result.Error) {
-		fallback, fallbackErr := e.browserOrchestrator.resolveFallbackSession(ctx, execCommandArgs{}, execCtx, resolution)
-		if fallbackErr != nil {
-			return tools.ExecutionResult{Error: fallbackErr, DurationMs: durationMs(started)}
-		}
-		if fallback != nil {
-			resolution = fallback
-			request.SessionID = resolution.SessionRef
-			request.OpenMode = resolution.OpenMode
-			request.ProfileRef = resolution.ProfileRef(resolveProfileRef(execCtx))
-			request.WorkspaceRef = resolution.WorkspaceRef(resolveWorkspaceRef(execCtx))
-			request.Command = buildBrowserCommand(resolution.SessionRef, reqArgs.Command)
-			request.YieldTimeMs = effectiveBrowserYieldTimeMs(reqArgs.Command, reqArgs.YieldTimeMs)
-			result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
-		}
-	}
-	if result.Error != nil && isSessionBusy(result.Error) {
-		busyRetried, retriedResult := e.retryBusyBrowserCommand(ctx, execCtx, resolution.SessionRef, request, reqArgs.YieldTimeMs, started)
-		if busyRetried {
-			result = retriedResult
-			if result.Error != nil && isSessionUnavailable(result.Error) {
-				fallback, fallbackErr := e.browserOrchestrator.resolveFallbackSession(ctx, execCommandArgs{}, execCtx, resolution)
-				if fallbackErr != nil {
-					return tools.ExecutionResult{Error: fallbackErr, DurationMs: durationMs(started)}
-				}
-				if fallback != nil {
-					resolution = fallback
-					request.SessionID = resolution.SessionRef
-					request.OpenMode = resolution.OpenMode
-					request.ProfileRef = resolution.ProfileRef(resolveProfileRef(execCtx))
-					request.WorkspaceRef = resolution.WorkspaceRef(resolveWorkspaceRef(execCtx))
-					request.Command = buildBrowserCommand(resolution.SessionRef, reqArgs.Command)
-					request.YieldTimeMs = effectiveBrowserYieldTimeMs(reqArgs.Command, reqArgs.YieldTimeMs)
-					result = e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
-				}
-			}
+	if result.Error != nil {
+		switch {
+		case isSessionBusy(result.Error):
+			result = e.retryBusyBrowserCommand(ctx, execCtx, resolution.SessionRef, request, reqArgs.YieldTimeMs, started)
+		case isSessionUnavailable(result.Error):
+			resolution, result = e.retryUnavailableBrowserCommand(ctx, execCtx, resolution, request, preparedCommand, started)
+		default:
+			return normalizeBrowserExecutionFailure(result.Error, started)
 		}
 	}
 	if result.Error != nil {
 		return result
 	}
 	result = e.settleBrowserResult(ctx, result, execCtx, resolution.SessionRef, reqArgs.YieldTimeMs, started)
-	resp := decodeExecSessionResult(result.ResultJSON)
-	if resp != nil {
-		e.browserOrchestrator.markResult(ctx, execCtx, resolution, *resp)
-		result.ResultJSON["session_ref"] = resolution.SessionRef
-		result.ResultJSON["share_scope"] = resolution.ShareScope
-		result.ResultJSON["resolved_via"] = resolution.ResolvedVia
-		result.ResultJSON["reused"] = resolution.Reused
-		result.ResultJSON["restored_from_restore_state"] = resp.Restored || resolution.RestoredFromRestoreState
+	if result.Error != nil {
+		return result
 	}
-	delete(result.ResultJSON, "session_id")
-
-	if resp != nil && !resp.Running && shouldAutoScreenshot(reqArgs.Command) {
+	resp := decodeExecSessionResult(result.ResultJSON)
+	if resp == nil {
+		return errResult(errorSandboxError, "decode response failed", started)
+	}
+	e.browserOrchestrator.markResult(ctx, execCtx, resolution, *resp)
+	publicResult, publicErr := buildBrowserPublicResult(reqArgs.Command, resp, execCtx.PerToolSoftLimits, started)
+	if publicErr != nil {
+		return tools.ExecutionResult{Error: publicErr, DurationMs: durationMs(started)}
+	}
+	result = tools.ExecutionResult{ResultJSON: publicResult, DurationMs: durationMs(started)}
+	if shouldAutoScreenshot(reqArgs.Command) {
 		screenshotReq := execCommandRequest{
-			SessionID: resolution.SessionRef,
-			OrgID:     resolveOrgID(execCtx),
-			Tier:      "browser",
-			Command:   buildBrowserCommand(resolution.SessionRef, buildAutoScreenshotCommand()),
-			TimeoutMs: screenshotTimeoutMs,
+			SessionID:     resolution.SessionRef,
+			OrgID:         resolveOrgID(execCtx),
+			EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
+			Tier:          "browser",
+			Command:       buildBrowserCommand(resolution.SessionRef, buildAutoScreenshotCommand()),
+			TimeoutMs:     screenshotTimeoutMs,
 		}
 		screenshotResult := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", screenshotReq, screenshotReq.OrgID, execCtx.PerToolSoftLimits, started)
 		if screenshotResult.Error == nil {
 			mergeScreenshotArtifacts(&result.ResultJSON, screenshotResult.ResultJSON)
 		}
 	}
-
 	return result
 }
 
@@ -466,10 +445,9 @@ func (e *ToolExecutor) settleBrowserResult(
 	if resp == nil || !resp.Running {
 		return result
 	}
-
-	pollResult, ok := e.waitForBrowserSessionIdle(ctx, execCtx, sessionRef, requestedYieldTimeMs, started)
-	if !ok {
-		return result
+	pollResult, waitErr := e.waitForBrowserSessionIdle(ctx, execCtx, sessionRef, requestedYieldTimeMs, started)
+	if waitErr != nil {
+		return normalizeBrowserExecutionFailure(waitErr, started)
 	}
 	return pollResult
 }
@@ -481,13 +459,16 @@ func (e *ToolExecutor) retryBusyBrowserCommand(
 	request execCommandRequest,
 	requestedYieldTimeMs int,
 	started time.Time,
-) (bool, tools.ExecutionResult) {
-	_, ok := e.waitForBrowserSessionIdle(ctx, execCtx, sessionRef, requestedYieldTimeMs, started)
-	if !ok {
-		return false, tools.ExecutionResult{}
+) tools.ExecutionResult {
+	_, waitErr := e.waitForBrowserSessionIdle(ctx, execCtx, sessionRef, requestedYieldTimeMs, started)
+	if waitErr != nil {
+		return normalizeBrowserExecutionFailure(waitErr, started)
 	}
 	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
-	return true, result
+	if result.Error != nil {
+		return normalizeBrowserExecutionFailure(result.Error, started)
+	}
+	return result
 }
 
 func (e *ToolExecutor) waitForBrowserSessionIdle(
@@ -496,7 +477,7 @@ func (e *ToolExecutor) waitForBrowserSessionIdle(
 	sessionRef string,
 	requestedYieldTimeMs int,
 	started time.Time,
-) (tools.ExecutionResult, bool) {
+) (tools.ExecutionResult, *tools.ExecutionError) {
 	pollReq := writeStdinRequest{
 		SessionID:   sessionRef,
 		OrgID:       resolveOrgID(execCtx),
@@ -505,14 +486,42 @@ func (e *ToolExecutor) waitForBrowserSessionIdle(
 	for attempt := 0; attempt < browserAutoPollAttempts; attempt++ {
 		pollResult := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/write_stdin", "write_stdin", pollReq, pollReq.OrgID, execCtx.PerToolSoftLimits, started)
 		if pollResult.Error != nil {
-			return tools.ExecutionResult{}, false
+			return tools.ExecutionResult{}, pollResult.Error
 		}
 		resp := decodeExecSessionResult(pollResult.ResultJSON)
 		if resp == nil || !resp.Running {
-			return pollResult, true
+			return pollResult, nil
 		}
 	}
-	return tools.ExecutionResult{}, false
+	return tools.ExecutionResult{}, &tools.ExecutionError{ErrorClass: errorSandboxTimeout, Message: "browser action did not settle in time", Details: map[string]any{"reason": "timeout"}}
+}
+
+func (e *ToolExecutor) retryUnavailableBrowserCommand(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	request execCommandRequest,
+	preparedCommand string,
+	started time.Time,
+) (*resolvedSession, tools.ExecutionResult) {
+	fallback, fallbackErr := e.browserOrchestrator.resolveFallbackSession(ctx, execCommandArgs{}, execCtx, resolution)
+	if fallbackErr != nil {
+		return resolution, normalizeBrowserExecutionFailure(fallbackErr, started)
+	}
+	if fallback == nil {
+		return resolution, browserUnavailableResult(started)
+	}
+	resolution = fallback
+	request.SessionID = resolution.SessionRef
+	request.OpenMode = resolution.OpenMode
+	request.ProfileRef = resolution.ProfileRef(resolveProfileRef(execCtx))
+	request.WorkspaceRef = resolution.WorkspaceRef(resolveWorkspaceRef(execCtx))
+	request.Command = buildBrowserCommand(resolution.SessionRef, preparedCommand)
+	result := e.executeExecSessionRequest(ctx, e.baseURL+"/v1/exec_command", "exec_command", request, request.OrgID, execCtx.PerToolSoftLimits, started)
+	if result.Error != nil {
+		return resolution, normalizeBrowserExecutionFailure(result.Error, started)
+	}
+	return resolution, result
 }
 
 func buildBrowserCommand(sessionRef string, command string) string {
@@ -723,16 +732,16 @@ func parseWriteStdinArgs(args map[string]any) (writeStdinArgs, *tools.ExecutionE
 
 func parseBrowserArgs(args map[string]any) (browserArgs, *tools.ExecutionError) {
 	request := browserArgs{
-		SessionRef:  readStringArg(args, "session_ref"),
 		Command:     readStringArg(args, "command"),
-		TimeoutMs:   resolveTimeoutMs(args),
 		YieldTimeMs: readIntArg(args, "yield_time_ms"),
 	}
 	if strings.TrimSpace(request.Command) == "" {
 		return browserArgs{}, sandboxArgsError("parameter command is required")
 	}
-	for _, key := range []string{"session_mode", "share_scope", "from_session_ref", "cwd", "session_id"} {
-		if _, ok := args[key]; ok {
+	for key := range args {
+		switch key {
+		case "command", "yield_time_ms":
+		default:
 			return browserArgs{}, sandboxArgsError(fmt.Sprintf("parameter %s is not supported for browser", key))
 		}
 	}
@@ -979,6 +988,55 @@ func decodeExecSessionResult(resultJSON map[string]any) *execSessionResponse {
 	return &result
 }
 
+func normalizeBrowserExecutionFailure(err *tools.ExecutionError, started time.Time) tools.ExecutionResult {
+	if err == nil {
+		return tools.ExecutionResult{DurationMs: durationMs(started)}
+	}
+	if isSessionBusy(err) || err.ErrorClass == errorSandboxTimeout {
+		return browserTimeoutResult(started)
+	}
+	if isSessionUnavailable(err) || err.ErrorClass == errorSandboxUnavailable {
+		return browserUnavailableResult(started)
+	}
+	if reason, _ := err.Details["reason"].(string); strings.TrimSpace(reason) == "snapshot_parse_failed" {
+		return browserSnapshotParseResult(started)
+	}
+	return tools.ExecutionResult{Error: err, DurationMs: durationMs(started)}
+}
+
+func browserUnavailableResult(started time.Time) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: errorSandboxUnavailable,
+			Message:    "browser session unavailable",
+			Details:    map[string]any{"reason": "unavailable"},
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func browserTimeoutResult(started time.Time) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: errorSandboxTimeout,
+			Message:    "browser action did not settle in time",
+			Details:    map[string]any{"reason": "timeout"},
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func browserSnapshotParseResult(started time.Time) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: errorSandboxError,
+			Message:    "browser snapshot parsing failed",
+			Details:    map[string]any{"reason": "snapshot_parse_failed"},
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
 func shellBusyError(sessionRef string, retryVia string) *tools.ExecutionError {
 	retryVia = strings.TrimSpace(retryVia)
 	if retryVia == "" {
@@ -1018,4 +1076,15 @@ func isSessionNotRunning(err *tools.ExecutionError) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Message)), "not running")
+}
+
+func (e *ToolExecutor) resolveEnabledSkills(ctx context.Context, execCtx tools.ExecutionContext) ([]skillstore.ResolvedSkill, error) {
+	if e == nil || e.orchestrator == nil || e.orchestrator.pool == nil || execCtx.OrgID == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(execCtx.ProfileRef) == "" || strings.TrimSpace(execCtx.WorkspaceRef) == "" {
+		return nil, nil
+	}
+	repo := data.SkillsRepository{}
+	return repo.ResolveEnabledSkills(ctx, e.orchestrator.pool, *execCtx.OrgID, execCtx.ProfileRef, execCtx.WorkspaceRef)
 }

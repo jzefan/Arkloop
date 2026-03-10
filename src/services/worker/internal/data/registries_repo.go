@@ -293,10 +293,13 @@ func upsertProfileRegistry(ctx context.Context, pool *pgxpool.Pool, record Regis
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9::jsonb)
 		ON CONFLICT (profile_ref) DO UPDATE SET
 			owner_user_id = COALESCE(EXCLUDED.owner_user_id, profile_registries.owner_user_id),
-			default_workspace_ref = COALESCE(EXCLUDED.default_workspace_ref, profile_registries.default_workspace_ref),
+			default_workspace_ref = COALESCE(profile_registries.default_workspace_ref, EXCLUDED.default_workspace_ref),
 			store_key = COALESCE(EXCLUDED.store_key, profile_registries.store_key),
 			last_used_at = EXCLUDED.last_used_at,
-			metadata_json = EXCLUDED.metadata_json,
+			metadata_json = CASE
+				WHEN EXCLUDED.metadata_json = '{}'::jsonb THEN profile_registries.metadata_json
+				ELSE EXCLUDED.metadata_json
+			END,
 			updated_at = now()`,
 		normalized.Ref,
 		normalized.OrgID,
@@ -343,7 +346,10 @@ func upsertWorkspaceRegistry(ctx context.Context, pool *pgxpool.Pool, record Reg
 			default_shell_session_ref = COALESCE(EXCLUDED.default_shell_session_ref, workspace_registries.default_shell_session_ref),
 			store_key = COALESCE(EXCLUDED.store_key, workspace_registries.store_key),
 			last_used_at = EXCLUDED.last_used_at,
-			metadata_json = EXCLUDED.metadata_json,
+			metadata_json = CASE
+				WHEN EXCLUDED.metadata_json = '{}'::jsonb THEN workspace_registries.metadata_json
+				ELSE EXCLUDED.metadata_json
+			END,
 			updated_at = now()`,
 		normalized.Ref,
 		normalized.OrgID,

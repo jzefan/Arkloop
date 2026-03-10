@@ -137,17 +137,13 @@ var BrowserLlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"command": map[string]any{
 				"type":        "string",
-				"description": "raw agent-browser CLI subcommand to execute, such as navigate <url>, snapshot, screenshot, click <ref>, or type <ref> <text>; for actions that may need the page to settle, prefer a realistic yield_time_ms instead of tiny values",
-			},
-			"session_ref": map[string]any{
-				"type":        "string",
-				"description": "stable browser session reference; omit to reuse the default browser session. This is not a mode flag, so do not pass placeholder values such as new, resume, or fork, and do not emulate modes with extra fields like session_mode or share_scope",
+				"description": "raw agent-browser CLI subcommand to execute, such as navigate <url>, snapshot, screenshot, click <ref>, or type <ref> <text>; browser session reuse, waiting, retry, and recovery are handled by the backend",
 			},
 			"yield_time_ms": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     30000,
-				"description": "time to wait for browser command output before returning; increase this for navigation, snapshot after navigation, and render-heavy interactions to reduce premature running=true responses",
+				"description": "time to wait for the page to settle before the backend gives up; increase this for navigation, snapshot after navigation, and render-heavy interactions",
 			},
 		},
 		"required":             []string{"command"},

@@ -1,5 +1,7 @@
 package shell
 
+import "arkloop/services/shared/skillstore"
+
 const (
 	StatusIdle    = "idle"
 	StatusRunning = "running"
@@ -11,16 +13,17 @@ const (
 )
 
 type ExecCommandRequest struct {
-	SessionID    string `json:"session_id"`
-	OpenMode     string `json:"open_mode,omitempty"`
-	OrgID        string `json:"org_id,omitempty"`
-	ProfileRef   string `json:"profile_ref,omitempty"`
-	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	Command      string `json:"command"`
-	TimeoutMs    int    `json:"timeout_ms,omitempty"`
-	YieldTimeMs  int    `json:"yield_time_ms,omitempty"`
+	SessionID     string                     `json:"session_id"`
+	OpenMode      string                     `json:"open_mode,omitempty"`
+	OrgID         string                     `json:"org_id,omitempty"`
+	ProfileRef    string                     `json:"profile_ref,omitempty"`
+	WorkspaceRef  string                     `json:"workspace_ref,omitempty"`
+	EnabledSkills []skillstore.ResolvedSkill `json:"enabled_skills,omitempty"`
+	Tier          string                     `json:"tier,omitempty"`
+	Cwd           string                     `json:"cwd,omitempty"`
+	Command       string                     `json:"command"`
+	TimeoutMs     int                        `json:"timeout_ms,omitempty"`
+	YieldTimeMs   int                        `json:"yield_time_ms,omitempty"`
 }
 
 type WriteStdinRequest struct {

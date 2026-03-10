@@ -117,6 +117,7 @@ type AgentRequest struct {
 	State       *shellapi.AgentStateRequest       `json:"state,omitempty"`
 	Environment *EnvironmentRequest               `json:"environment,omitempty"`
 	Network     *GuestNetworkRequest              `json:"network,omitempty"`
+	SkillOverlay *SkillOverlayRequest             `json:"skill_overlay,omitempty"`
 }
 
 // AgentResponse 是 v2 协议的统一响应。
@@ -144,6 +145,7 @@ var supportedEnvironmentActions = []string{
 	"environment_manifest_build",
 	"environment_files_collect",
 	"environment_apply",
+	"skill_overlay_apply",
 }
 
 type EnvironmentRequest struct {
@@ -159,6 +161,19 @@ type EnvironmentRequest struct {
 type EnvironmentResponse struct {
 	Manifest *environmentcontract.Manifest `json:"manifest,omitempty"`
 	Files    []environment.FilePayload     `json:"files,omitempty"`
+}
+
+type SkillOverlayRequest struct {
+	Skills    []SkillOverlayItem `json:"skills,omitempty"`
+	IndexJSON string             `json:"index_json,omitempty"`
+}
+
+type SkillOverlayItem struct {
+	SkillKey         string `json:"skill_key"`
+	Version          string `json:"version"`
+	MountPath        string `json:"mount_path"`
+	InstructionPath  string `json:"instruction_path,omitempty"`
+	BundleDataBase64 string `json:"bundle_data_base64"`
 }
 
 type ArtifactEntry struct {
@@ -314,6 +329,17 @@ func handleV2(conn net.Conn, req AgentRequest) {
 			return
 		}
 		writeJSON(conn, AgentResponse{Action: req.Action, Environment: &EnvironmentResponse{}})
+
+	case "skill_overlay_apply":
+		if req.SkillOverlay == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "skill_overlay is required"})
+			return
+		}
+		if err := applySkillOverlay(*req.SkillOverlay); err != nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: err.Error()})
+			return
+		}
+		writeJSON(conn, AgentResponse{Action: req.Action})
 
 	case "configure_guest_network":
 		if req.Network == nil {

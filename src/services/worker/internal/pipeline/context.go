@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 
+	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -50,8 +51,9 @@ type RunContext struct {
 	// agent_id 约定：默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]，adapter 层 sanitize
 	UserID *uuid.UUID
 	// 长期环境绑定，由 EngineV1.Execute 在 run 启动时解析并注入。
-	ProfileRef   string
-	WorkspaceRef string
+	ProfileRef    string
+	WorkspaceRef  string
+	EnabledSkills []skillstore.ResolvedSkill
 
 	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 --
 	FinalAssistantOutput string

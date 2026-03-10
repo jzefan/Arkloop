@@ -87,5 +87,5 @@ if ! id -u arkloop >/dev/null 2>&1; then
     useradd -u 1000 -g 1000 -m -d /home/arkloop -s /bin/bash arkloop
 fi
 
-mkdir -p /tmp/output /tmp/arkloop /tmp/matplotlib /workspace /home/arkloop /usr/local/share/arkloop
-chown 1000:1000 /tmp/output /tmp/arkloop /workspace /home/arkloop /tmp/matplotlib
+mkdir -p /tmp/output /tmp/arkloop /tmp/matplotlib /workspace /home/arkloop /home/arkloop/.arkloop /opt/arkloop /opt/arkloop/skills /usr/local/share/arkloop
+chown 1000:1000 /tmp/output /tmp/arkloop /workspace /home/arkloop /home/arkloop/.arkloop /tmp/matplotlib /opt/arkloop /opt/arkloop/skills

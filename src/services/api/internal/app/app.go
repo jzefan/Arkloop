@@ -177,6 +177,7 @@ func (a *Application) Run(ctx context.Context) error {
 	var artifactStore objectstore.Store
 	var messageAttachmentStore objectstore.Store
 	var environmentStore objectstore.Store
+	var skillStore objectstore.Store
 	bucketOpener, err := buildStorageBucketOpener(a.config)
 	if err != nil {
 		return err
@@ -202,6 +203,13 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 		environmentStore = es
 		a.logger.Info("environment store connected", observability.LogFields{}, nil)
+
+		ss, err := bucketOpener.Open(ctx, objectstore.SkillStoreBucket)
+		if err != nil {
+			return fmt.Errorf("skill store: %w", err)
+		}
+		skillStore = ss
+		a.logger.Info("skill store connected", observability.LogFields{}, nil)
 	}
 
 	var (
@@ -225,6 +233,11 @@ func (a *Application) Run(ctx context.Context) error {
 		toolProviderConfigsRepo      *data.ToolProviderConfigsRepository
 		toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
 		personasRepo                 *data.PersonasRepository
+		skillPackagesRepo            *data.SkillPackagesRepository
+		profileSkillInstallsRepo     *data.ProfileSkillInstallsRepository
+		workspaceSkillEnableRepo     *data.WorkspaceSkillEnablementsRepository
+		profileRegistriesRepo        *data.ProfileRegistriesRepository
+		workspaceRegistriesRepo      *data.WorkspaceRegistriesRepository
 		ipRulesRepo                  *data.IPRulesRepository
 		apiKeysRepo                  *data.APIKeysRepository
 		orgInvitationsRepo           *data.OrgInvitationsRepository
@@ -339,6 +352,26 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		personasRepo, err = data.NewPersonasRepository(pool)
+		if err != nil {
+			return err
+		}
+		skillPackagesRepo, err = data.NewSkillPackagesRepository(pool)
+		if err != nil {
+			return err
+		}
+		profileSkillInstallsRepo, err = data.NewProfileSkillInstallsRepository(pool)
+		if err != nil {
+			return err
+		}
+		workspaceSkillEnableRepo, err = data.NewWorkspaceSkillEnablementsRepository(pool)
+		if err != nil {
+			return err
+		}
+		profileRegistriesRepo, err = data.NewProfileRegistriesRepository(pool)
+		if err != nil {
+			return err
+		}
+		workspaceRegistriesRepo, err = data.NewWorkspaceRegistriesRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -605,6 +638,11 @@ func (a *Application) Run(ctx context.Context) error {
 			ToolProviderConfigsRepo:      toolProviderConfigsRepo,
 			ToolDescriptionOverridesRepo: toolDescriptionOverridesRepo,
 			PersonasRepo:                 personasRepo,
+			SkillPackagesRepo:            skillPackagesRepo,
+			ProfileSkillInstallsRepo:     profileSkillInstallsRepo,
+			WorkspaceSkillEnableRepo:     workspaceSkillEnableRepo,
+			ProfileRegistriesRepo:        profileRegistriesRepo,
+			WorkspaceRegistriesRepo:      workspaceRegistriesRepo,
 			IPRulesRepo:                  ipRulesRepo,
 			APIKeysRepo:                  apiKeysRepo,
 			OrgInvitationsRepo:           orgInvitationsRepo,
@@ -639,6 +677,7 @@ func (a *Application) Run(ctx context.Context) error {
 			ArtifactStore:                artifactStore,
 			MessageAttachmentStore:       messageAttachmentStore,
 			EnvironmentStore:             environmentStore,
+			SkillStore:                   skillStore,
 			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
 			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,
