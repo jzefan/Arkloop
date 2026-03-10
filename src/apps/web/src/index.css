@@ -46,6 +46,7 @@ button:not(:disabled) {
   --c-md-table-bg: #1E1D1C;
   --c-md-table-head-bg: #242322;
   --c-md-inline-code-bg: #242322;
+  --c-md-inline-code-color: #ED8784;
   --c-input-shadow: 0 2px 3px -1px rgba(0, 0, 0, 0.08);
   --c-input-border: 0.5px solid rgba(255, 255, 255, 0.08);
   --c-input-border-color: rgba(255, 255, 255, 0.06);
@@ -120,6 +121,7 @@ button:not(:disabled) {
     --c-md-table-bg: #FEFDFD;
     --c-md-table-head-bg: #F8F7F6;
     --c-md-inline-code-bg: #F0EEEC;
+    --c-md-inline-code-color: #7F2C29;
     --c-input-shadow: 0 2px 16px -4px rgba(0, 0, 0, 0.06);
     --c-input-border: 0.5px solid rgba(0, 0, 0, 0.16);
     --c-input-border-color: rgba(0, 0, 0, 0.16);
@@ -195,6 +197,7 @@ button:not(:disabled) {
   --c-md-table-bg: #FEFDFD;
   --c-md-table-head-bg: #F8F7F6;
   --c-md-inline-code-bg: #F0EEEC;
+  --c-md-inline-code-color: #7F2C29;
   --c-input-shadow: 0 2px 16px -4px rgba(0, 0, 0, 0.06);
   --c-input-border: 0.5px solid rgba(0, 0, 0, 0.16);
   --c-input-border-color: rgba(0, 0, 0, 0.16);
@@ -415,7 +418,7 @@ button:not(:disabled) {
   padding: 1px 5px;
   font-size: 0.875em;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
-  color: #ED8784;
+  color: var(--c-md-inline-code-color, #ED8784);
   border: 0.5px solid var(--c-border-subtle);
 }
 

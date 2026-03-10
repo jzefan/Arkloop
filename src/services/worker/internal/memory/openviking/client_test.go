@@ -448,3 +448,71 @@ func TestNewClient_AllowsInternalServiceHTTPBaseURL(t *testing.T) {
 		t.Fatalf("unexpected normalized base URL: %q", c.baseURL)
 	}
 }
+
+func TestClient_Content_OverviewFallsBackToReadForLeafURI(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/api/v1/content/overview":
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{
+				"status": "error",
+				"result": nil,
+				"error": map[string]any{
+					"code":    "INTERNAL",
+					"message": "viking://user/memories/preferences/foo.md is not a directory",
+				},
+			})
+		case "/api/v1/content/read":
+			writeJSON(w, apiResp("full leaf content"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := newClient(srv.URL, "")
+	content, err := c.Content(context.Background(), newIdent(), "viking://user/memories/preferences/foo.md", memory.MemoryLayerOverview)
+	if err != nil {
+		t.Fatalf("Content failed: %v", err)
+	}
+	if content != "full leaf content" {
+		t.Fatalf("unexpected content: %q", content)
+	}
+	if len(paths) != maxReadRetries+2 {
+		t.Fatalf("expected %d requests, got %d", maxReadRetries+2, len(paths))
+	}
+	for i := 0; i <= maxReadRetries; i++ {
+		if !strings.HasPrefix(paths[i], "/api/v1/content/overview?") {
+			t.Fatalf("request[%d] should hit overview, got %q", i, paths[i])
+		}
+	}
+	if !strings.HasPrefix(paths[len(paths)-1], "/api/v1/content/read?") {
+		t.Fatalf("last request should hit read, got %q", paths[len(paths)-1])
+	}
+}
+
+func TestClient_Content_OverviewDoesNotFallbackForOtherErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{
+			"status": "error",
+			"result": nil,
+			"error": map[string]any{
+				"code":    "INTERNAL",
+				"message": "unexpected backend failure",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := newClient(srv.URL, "")
+	_, err := c.Content(context.Background(), newIdent(), "viking://user/memories/preferences/foo.md", memory.MemoryLayerOverview)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unexpected backend failure") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -1,3 +1,4 @@
+import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, MessageThinkingRef } from './storage'
 
@@ -287,6 +288,32 @@ export function selectFreshRunEvents(params: {
   }
 }
 
+export function findAssistantMessageForRun(
+  messages: MessageResponse[],
+  runId: string | null | undefined,
+): MessageResponse | undefined {
+  const normalizedRunId = typeof runId === 'string' ? runId.trim() : ''
+  if (!normalizedRunId) return undefined
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role !== 'assistant') continue
+    if (typeof message.run_id === 'string' && message.run_id === normalizedRunId) {
+      return message
+    }
+  }
+  return undefined
+}
+
+export function shouldRefetchCompletedRunMessages(params: {
+  messages: MessageResponse[]
+  latestRun: Pick<ThreadRunResponse, 'run_id' | 'status'> | null | undefined
+}): boolean {
+  const { messages, latestRun } = params
+  if (!latestRun || latestRun.status !== 'completed') return false
+  return findAssistantMessageForRun(messages, latestRun.run_id) == null
+}
+
 export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageThinkingRef | null {
   let topLevelThinking = ''
   let activeSegmentId: string | null = null
@@ -391,15 +418,15 @@ function extractBrowserScreenshotArtifact(result: unknown): ArtifactRef | undefi
   }
 }
 
-function extractBrowserOutput(result: unknown): { output?: string; exitCode?: number; url?: string; sessionRef?: string } {
+function extractBrowserOutput(result: unknown): { output?: string; exitCode?: number; url?: string } {
   if (!result || typeof result !== 'object') return {}
-  const typed = result as { output?: unknown; stdout?: unknown; exit_code?: unknown; session_ref?: unknown }
+  const typed = result as { output?: unknown; stdout?: unknown; exit_code?: unknown; url?: unknown }
   const output = typeof typed.output === 'string' ? typed.output
     : typeof typed.stdout === 'string' ? typed.stdout
     : undefined
   const exitCode = typeof typed.exit_code === 'number' ? typed.exit_code : undefined
-  const sessionRef = typeof typed.session_ref === 'string' ? typed.session_ref : undefined
-  return { output, exitCode, sessionRef }
+  const url = typeof typed.url === 'string' ? typed.url : undefined
+  return { output, exitCode, url }
 }
 
 export function applyBrowserToolCall(
@@ -434,7 +461,7 @@ export function applyBrowserToolResult(
     : undefined
   const result = data?.result
   const toolCallId = pickToolCallId(event)
-  const { output, exitCode, sessionRef } = extractBrowserOutput(result)
+  const { output, exitCode, url } = extractBrowserOutput(result)
   const screenshotArtifact = extractBrowserScreenshotArtifact(result)
 
   const targetIndex = actions.findIndex((a) => a.id === toolCallId)
@@ -443,7 +470,7 @@ export function applyBrowserToolResult(
       ...actions[targetIndex],
       output,
       exitCode,
-      sessionRef,
+      url,
       screenshotArtifact,
     }
     return {
@@ -458,7 +485,7 @@ export function applyBrowserToolResult(
     command: '',
     output,
     exitCode,
-    sessionRef,
+    url,
     screenshotArtifact,
   }
   return { updated: appended, nextActions: [...actions, appended] }

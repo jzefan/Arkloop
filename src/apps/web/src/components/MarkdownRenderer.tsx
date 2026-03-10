@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement, useMemo } from 'react'
+import { Children, useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -20,7 +20,7 @@ type ArtifactsContextValue = {
   artifacts: ArtifactRef[]
   accessToken: string
   runId?: string
-  onOpenDocument?: (artifact: ArtifactRef) => void
+  onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
 }
 
 const ArtifactsContext = createContext<ArtifactsContextValue>({ artifacts: [], accessToken: '' })
@@ -173,6 +173,22 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
       {children}
     </a>
   )
+}
+
+function hasStandaloneBlockPreview(children: ReactNode): boolean {
+  const nodes = Children.toArray(children).filter((child) => {
+    return typeof child !== 'string' || child.trim() !== ''
+  })
+
+  if (nodes.length !== 1) return false
+
+  const child = nodes[0]
+  if (!isValidElement<{ href?: string }>(child)) return false
+
+  const href = typeof child.props?.href === 'string' ? child.props.href : ''
+  if (href.startsWith(ARTIFACT_PREFIX) || href.startsWith(WORKSPACE_PREFIX)) return true
+
+  return child.type === ArtifactHtmlPreview || child.type === WorkspaceResource
 }
 
 const CODE_LANGUAGE_CLASS_RE = /(?:^|\s)language-([a-z0-9_-]+)(?:\s|$)/i
@@ -420,11 +436,21 @@ function buildMarkdownComponents(compact: boolean): Components {
       <code className={className}>{children}</code>
     ),
 
-    p: ({ children }) => (
-      <p style={{ color: 'var(--c-text-primary)', fontSize: paragraphFontSize, lineHeight: 1.6, letterSpacing: '0.01px', margin: '0 0 0.5em' }}>
-        <WithCitations prefix="p">{children}</WithCitations>
-      </p>
-    ),
+    p: ({ children }) => {
+      if (hasStandaloneBlockPreview(children)) {
+        return (
+          <div style={{ margin: '0 0 0.5em' }}>
+            <WithCitations prefix="p">{children}</WithCitations>
+          </div>
+        )
+      }
+
+      return (
+        <p style={{ color: 'var(--c-text-primary)', fontSize: paragraphFontSize, lineHeight: 1.6, letterSpacing: '0.01px', margin: '0 0 0.5em' }}>
+          <WithCitations prefix="p">{children}</WithCitations>
+        </p>
+      )
+    },
 
     h1: ({ children }) => (
       <h1 style={{ color: 'var(--c-text-heading)', fontSize: heading1FontSize, fontWeight: 400, lineHeight: 1.35, margin: '1.5em 0 0.5em', letterSpacing: '-0.3px' }}>
@@ -529,7 +555,7 @@ type Props = {
   artifacts?: ArtifactRef[]
   accessToken?: string
   runId?: string
-  onOpenDocument?: (artifact: ArtifactRef) => void
+  onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   compact?: boolean
 }
 

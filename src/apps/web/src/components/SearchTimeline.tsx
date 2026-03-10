@@ -136,6 +136,8 @@ function SourceItem({ source }: { source: WebSource }) {
 
 const DOT_TOP = 5
 const DOT_SIZE = 8
+const SHELL_DOT_TOP = 8
+const SHELL_DOT_CENTER = SHELL_DOT_TOP + DOT_SIZE / 2
 
 export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, headerOverride, shimmer }: Props) {
   const [collapsed, setCollapsed] = useState(() => isComplete)
@@ -357,22 +359,52 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
               })}
               </AnimatePresence>
 
-              {/* Streaming 中的代码执行：无 dots，只有连续线 + 入场动画 */}
+              {/* 仅代码执行时也保留时间轴节点 */}
               {codeExecutions && codeExecutions.length > 0 && !steps.some((s) => s.kind === 'finished') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: steps.length > 0 ? '8px' : '0', position: 'relative' }}>
-                  {/* 从上一步骤的 dot 延伸的连线 */}
-                  {steps.length > 0 && (
-                    <div style={{ position: 'absolute', left: '-16px', top: 0, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                  )}
-                  <AnimatePresence initial={false}>
-                    {codeExecutions.map((ce) => (
-                      <motion.div
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0px', paddingTop: steps.length > 0 ? '8px' : '0' }}>
+                  {codeExecutions.map((ce, idx) => {
+                    const isLast = idx === codeExecutions.length - 1
+                    const showDot = codeExecutions.length > 0
+                    const showLine = codeExecutions.length >= 2
+                    const isShell = ce.language === 'shell'
+                    return (
+                      <div
                         key={ce.id}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        style={{
+                          position: 'relative',
+                          paddingBottom: isLast ? 0 : '8px',
+                        }}
                       >
+                        {showLine && !isLast && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: '-15.75px',
+                              top: isShell ? `${SHELL_DOT_CENTER}px` : '13px',
+                              bottom: isShell ? `-${SHELL_DOT_CENTER}px` : '-13px',
+                              width: '1.5px',
+                              background: 'var(--c-border-subtle)',
+                            }}
+                          />
+                        )}
+                        {showDot && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: '-19px',
+                              top: isShell ? `${SHELL_DOT_TOP}px` : '50%',
+                              transform: isShell ? undefined : 'translateY(-50%)',
+                              width: `${DOT_SIZE}px`,
+                              height: `${DOT_SIZE}px`,
+                              borderRadius: '50%',
+                              background: ce.exitCode != null
+                                ? ce.exitCode === 0 ? 'var(--c-border-subtle)' : '#ef4444'
+                                : 'var(--c-text-secondary)',
+                              border: '2px solid var(--c-bg-page)',
+                              zIndex: 1,
+                            }}
+                          />
+                        )}
                         {ce.language === 'shell'
                           ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={!isComplete} />
                           : <CodeExecutionCard
@@ -384,9 +416,9 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                               isActive={activeCodeExecutionId === ce.id}
                             />
                         }
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

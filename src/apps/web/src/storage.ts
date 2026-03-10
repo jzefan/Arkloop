@@ -213,7 +213,6 @@ export type BrowserActionRef = {
   screenshotArtifact?: ArtifactRef
   url?: string
   exitCode?: number
-  sessionRef?: string
 }
 
 function messageBrowserActionsKey(messageId: string): string {

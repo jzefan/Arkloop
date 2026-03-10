@@ -3,14 +3,21 @@ import type { ArtifactRef } from '../storage'
 
 type Props = {
   artifact: ArtifactRef
-  onClick: () => void
+  onClick: (trigger: HTMLButtonElement) => void
   active?: boolean
 }
 
 export function DocumentCard({ artifact, onClick, active }: Props) {
+  const restingBackground = active ? 'var(--c-bg-page)' : 'var(--c-bg-sub)'
+  const iconBackground = active ? 'transparent' : 'var(--c-bg-page)'
+  const iconBorder = active ? '0.5px solid transparent' : '0.5px solid var(--c-border-subtle)'
+  const ring = active ? 'inset 0 0 0 1px var(--c-border-subtle)' : 'none'
+
   return (
     <button
-      onClick={onClick}
+      type="button"
+      onClick={(event) => onClick(event.currentTarget)}
+      aria-pressed={active}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -18,19 +25,21 @@ export function DocumentCard({ artifact, onClick, active }: Props) {
         padding: '10px 14px',
         borderRadius: '12px',
         border: '0.5px solid var(--c-border-subtle)',
-        background: 'var(--c-bg-sub)',
+        background: restingBackground,
         cursor: 'pointer',
         fontFamily: 'inherit',
-        transition: 'background 150ms',
+        transition: 'background 150ms, box-shadow 150ms, border-color 150ms',
         maxWidth: '320px',
         textAlign: 'left',
-        boxShadow: active ? '0 0 0 1.5px var(--c-border-mid)' : 'none',
+        boxShadow: ring,
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
+        if (!active) {
+          e.currentTarget.style.background = 'var(--c-bg-deep)'
+        }
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)'
+        e.currentTarget.style.background = restingBackground
       }}
     >
       <div
@@ -38,12 +47,13 @@ export function DocumentCard({ artifact, onClick, active }: Props) {
           width: '36px',
           height: '36px',
           borderRadius: '8px',
-          background: 'var(--c-bg-page)',
-          border: '0.5px solid var(--c-border-subtle)',
+          background: iconBackground,
+          border: iconBorder,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
+          transition: 'background 150ms, border-color 150ms',
         }}
       >
         <FileText size={18} style={{ color: 'var(--c-text-icon)' }} />
