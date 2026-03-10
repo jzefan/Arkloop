@@ -24,7 +24,9 @@ import {
   buildMessageCodeExecutionsFromRunEvents,
   patchCodeExecutionList,
   buildMessageThinkingFromRunEvents,
+  findAssistantMessageForRun,
   selectFreshRunEvents,
+  shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
   applyBrowserToolCall,
   applyBrowserToolResult,
@@ -117,6 +119,12 @@ type OutletContext = {
 }
 
 type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
+
+type DocumentPanelState = {
+  artifact: ArtifactRef
+  artifacts: ArtifactRef[]
+  runId?: string
+}
 
 const SHOW_EXPLICIT_THINKING = false
 
@@ -245,8 +253,8 @@ export function ChatPage() {
   const [codePanelExecution, setCodePanelExecution] = useState<CodeExecution | null>(null)
   const lastCodePanelRef = useRef<CodeExecution | null>(null)
   // 文档预览侧边面板
-  const [documentPanelArtifact, setDocumentPanelArtifact] = useState<ArtifactRef | null>(null)
-  const lastDocumentPanelRef = useRef<ArtifactRef | null>(null)
+  const [documentPanelArtifact, setDocumentPanelArtifact] = useState<DocumentPanelState | null>(null)
+  const lastDocumentPanelRef = useRef<DocumentPanelState | null>(null)
   // 关闭动画期间保留上一次的数据
   const lastPanelSourcesRef = useRef<WebSource[] | undefined>(undefined)
   const lastPanelQueryRef = useRef<string | undefined>(undefined)
@@ -349,7 +357,9 @@ export function ChatPage() {
     try {
       await updateThreadTitle(accessToken, threadId, trimmed)
       onThreadTitleUpdated(threadId, trimmed)
-    } catch {}
+    } catch {
+      // 忽略重命名失败，输入框已回收
+    }
   }, [accessToken, threadId, onThreadTitleUpdated])
 
   const confirmDelete = useCallback(() => {
@@ -363,7 +373,9 @@ export function ChatPage() {
     try {
       await deleteThread(accessToken, threadId)
       onThreadDeleted(threadId)
-    } catch {}
+    } catch {
+      // 忽略删除失败，保留当前页
+    }
   }, [accessToken, threadId, onThreadDeleted])
 
   const handleShareFromMenu = useCallback(() => {
@@ -387,8 +399,10 @@ export function ChatPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const copCodeExecScrollRef = useRef<HTMLDivElement>(null)
   const lastUserMsgRef = useRef<HTMLDivElement>(null)
+  const documentPanelScrollFrameRef = useRef<number | null>(null)
   const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
+  const messageSyncVersionRef = useRef(0)
   const pendingMessageRef = useRef<string | null>(null)
   // 仅在当前 run 的 SSE 确认进入过连接态后，才允许触发终端兜底。
   const sseTerminalFallbackRunIdRef = useRef<string | null>(null)
@@ -405,12 +419,93 @@ export function ChatPage() {
     thinkingDraftRef.current = thinkingDraft
   }, [thinkingDraft])
 
-  const handleScrollContainerScroll = useCallback(() => {
-    const el = scrollContainerRef.current
-    if (!el) return
+  const beginMessageSync = useCallback(() => {
+    messageSyncVersionRef.current += 1
+    return messageSyncVersionRef.current
+  }, [])
+
+  const isMessageSyncCurrent = useCallback((version: number) => {
+    return messageSyncVersionRef.current === version
+  }, [])
+
+  const invalidateMessageSync = useCallback(() => {
+    messageSyncVersionRef.current += 1
+  }, [])
+
+  const readConsistentMessages = useCallback(async (requiredCompletedRunId?: string): Promise<MessageResponse[]> => {
+    if (!threadId) return []
+
+    let items = await listMessages(accessToken, threadId)
+    if (requiredCompletedRunId && !findAssistantMessageForRun(items, requiredCompletedRunId)) {
+      const retriedItems = await listMessages(accessToken, threadId)
+      if (
+        findAssistantMessageForRun(retriedItems, requiredCompletedRunId) ||
+        retriedItems.length >= items.length
+      ) {
+        items = retriedItems
+      }
+    }
+    return items
+  }, [accessToken, threadId])
+
+  const syncBottomState = useCallback((el: HTMLDivElement) => {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
     isAtBottomRef.current = atBottom
     setIsAtBottom(atBottom)
+  }, [])
+
+  const handleScrollContainerScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    syncBottomState(el)
+  }, [syncBottomState])
+
+  const stabilizeDocumentPanelScroll = useCallback((trigger?: HTMLElement | null) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    if (documentPanelScrollFrameRef.current !== null) {
+      cancelAnimationFrame(documentPanelScrollFrameRef.current)
+      documentPanelScrollFrameRef.current = null
+    }
+
+    const anchor = trigger && container.contains(trigger) ? trigger : null
+    const anchorTop = anchor
+      ? anchor.getBoundingClientRect().top - container.getBoundingClientRect().top
+      : null
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    const startedAt = performance.now()
+
+    const step = () => {
+      const currentContainer = scrollContainerRef.current
+      if (!currentContainer) return
+
+      if (anchor && anchorTop !== null && anchor.isConnected && currentContainer.contains(anchor)) {
+        const nextTop = anchor.getBoundingClientRect().top - currentContainer.getBoundingClientRect().top
+        currentContainer.scrollTop += nextTop - anchorTop
+      } else {
+        currentContainer.scrollTop = Math.max(0, currentContainer.scrollHeight - currentContainer.clientHeight - distanceFromBottom)
+      }
+
+      syncBottomState(currentContainer)
+
+      if (performance.now() - startedAt < 360) {
+        documentPanelScrollFrameRef.current = requestAnimationFrame(step)
+        return
+      }
+
+      documentPanelScrollFrameRef.current = null
+    }
+
+    documentPanelScrollFrameRef.current = requestAnimationFrame(step)
+  }, [syncBottomState])
+
+  useEffect(() => {
+    return () => {
+      if (documentPanelScrollFrameRef.current !== null) {
+        cancelAnimationFrame(documentPanelScrollFrameRef.current)
+      }
+    }
   }, [])
 
   const buildLiveThinkingSnapshot = useCallback((): MessageThinkingRef | null => {
@@ -434,23 +529,29 @@ export function ChatPage() {
   }, [])
 
   const sse = useSSE({ runId: activeRunId ?? '', accessToken, baseUrl })
+  const disconnectSSE = sse.disconnect
 
   const isStreaming = activeRunId != null
   const canCancel =
     activeRunId != null &&
     (sse.state === 'connecting' || sse.state === 'connected' || sse.state === 'reconnecting')
 
-  const refreshMessages = useCallback(async (): Promise<MessageResponse[]> => {
+  const refreshMessages = useCallback(async (options?: {
+    syncVersion?: number
+    requiredCompletedRunId?: string
+  }): Promise<MessageResponse[]> => {
     if (!threadId) return []
+    const syncVersion = options?.syncVersion ?? beginMessageSync()
     try {
-      const items = await listMessages(accessToken, threadId)
+      const items = await readConsistentMessages(options?.requiredCompletedRunId)
+      if (!isMessageSyncCurrent(syncVersion)) return []
       setMessages(items)
       return items
     } catch (err) {
       setError(normalizeError(err))
       return []
     }
-  }, [accessToken, threadId])
+  }, [threadId, beginMessageSync, readConsistentMessages, isMessageSyncCurrent])
 
   // 仅用于 streaming 结束后自动发送排队消息（无附件）
   const sendMessage = useCallback(async (text: string) => {
@@ -459,6 +560,7 @@ export function ChatPage() {
     setError(null)
     try {
       const message = await createMessage(accessToken, threadId, { content: text })
+      invalidateMessageSync()
       setMessages((prev) => [...prev, message])
       setAssistantDraft('')
       const run = await createRun(accessToken, threadId)
@@ -473,7 +575,7 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, onLoggedOut, onRunStarted])
+  }, [accessToken, threadId, onLoggedOut, onRunStarted, invalidateMessageSync])
 
   // 用 ref 持有最新的 sendMessage，避免 SSE 事件闭包中捕获旧引用
   const sendMessageRef = useRef(sendMessage)
@@ -482,6 +584,8 @@ export function ChatPage() {
   // 加载 thread 数据
   useEffect(() => {
     if (!threadId) return
+    const syncVersion = beginMessageSync()
+    let disposed = false
 
     setMessagesLoading(true)
     setError(null)
@@ -489,10 +593,18 @@ export function ChatPage() {
 
     void (async () => {
       try {
-        const [items, runs] = await Promise.all([
+        const [initialItems, runs] = await Promise.all([
           listMessages(accessToken, threadId),
           listThreadRuns(accessToken, threadId, 1),
         ])
+        if (disposed || !isMessageSyncCurrent(syncVersion)) return
+
+        const latest = runs[0]
+        const items = shouldRefetchCompletedRunMessages({ messages: initialItems, latestRun: latest })
+          ? await readConsistentMessages(latest.run_id)
+          : initialItems
+        if (disposed || !isMessageSyncCurrent(syncVersion)) return
+
         setMessages(items)
 
         // 加载各消息缓存的 web 来源
@@ -524,8 +636,9 @@ export function ChatPage() {
         }
 
         // 服务端回放：补齐最新一轮的 thinking / 代码执行缓存
-        const latest = runs[0]
-        const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
+        const lastAssistant = latest
+          ? findAssistantMessageForRun(items, latest.run_id)
+          : [...items].reverse().find((m) => m.role === 'assistant')
         const replayThinkingNeeded = !!(lastAssistant && !thinkingMap.has(lastAssistant.id))
         const replayCodeExecNeeded = !!(lastAssistant && shouldReplayMessageCodeExecutions(codeExecMap.get(lastAssistant.id)))
         const replayBrowserActionsNeeded = !!(lastAssistant && !browserActionsMap.has(lastAssistant.id))
@@ -565,7 +678,10 @@ export function ChatPage() {
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
-        if (locationState?.initialRunId) {
+        if (
+          locationState?.initialRunId &&
+          (!latest || (latest.run_id === locationState.initialRunId && latest.status === 'running'))
+        ) {
           setActiveRunId(locationState.initialRunId)
           if (threadId) onRunStarted(threadId)
         } else {
@@ -581,9 +697,14 @@ export function ChatPage() {
         }
         setError(normalizeError(err))
       } finally {
-        setMessagesLoading(false)
+        if (!disposed && isMessageSyncCurrent(syncVersion)) {
+          setMessagesLoading(false)
+        }
       }
     })()
+    return () => {
+      disposed = true
+    }
   // 只在 threadId 变化时重新加载，避免依赖 locationState 导致重复触发
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, threadId])
@@ -616,7 +737,7 @@ export function ChatPage() {
     setMessageThinkingMap(new Map())
     setMessageSearchStepsMap(new Map())
     setSourcePanelMessageId(null)
-    sse.disconnect()
+    disconnectSSE()
     sse.clearEvents()
     // 不重置 processedEventCountRef: clearEvents 是异步的，若此处归零，
     // 同一 effects 阶段内事件处理 effect 会重放旧事件导致 thinkingDraft 串线。
@@ -933,6 +1054,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.completed') {
+        const completedRunId = event.run_id
         const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
@@ -967,33 +1089,33 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         const runBrowserActions = [...currentRunBrowserActionsRef.current]
         currentRunBrowserActionsRef.current = []
-        void refreshMessages().then((items) => {
+        void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           // setMessages 已在 refreshMessages 内完成，同一微任务中清除 draft
           // React 18+ 自动批处理保证二者在同一帧渲染，无闪烁
-          setAssistantDraft('')
-          const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
-          if (lastAssistant) {
+          const completedAssistant = findAssistantMessageForRun(items, completedRunId)
+          if (completedAssistant) {
+            setAssistantDraft('')
             if (runSources.length > 0) {
-              writeMessageSources(lastAssistant.id, runSources)
-              setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+              writeMessageSources(completedAssistant.id, runSources)
+              setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
             }
             if (runSearchSteps.length > 0) {
-              writeMessageSearchSteps(lastAssistant.id, runSearchSteps)
-              setMessageSearchStepsMap((prev) => new Map(prev).set(lastAssistant.id, runSearchSteps))
+              writeMessageSearchSteps(completedAssistant.id, runSearchSteps)
+              setMessageSearchStepsMap((prev) => new Map(prev).set(completedAssistant.id, runSearchSteps))
             }
             if (runArtifacts.length > 0) {
-              writeMessageArtifacts(lastAssistant.id, runArtifacts)
-              setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
+              writeMessageArtifacts(completedAssistant.id, runArtifacts)
+              setMessageArtifactsMap((prev) => new Map(prev).set(completedAssistant.id, runArtifacts))
             }
-            writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
-            setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
+            writeMessageCodeExecutions(completedAssistant.id, runCodeExecs)
+            setMessageCodeExecutionsMap((prev) => new Map(prev).set(completedAssistant.id, runCodeExecs))
             if (runBrowserActions.length > 0) {
-              writeMessageBrowserActions(lastAssistant.id, runBrowserActions)
-              setMessageBrowserActionsMap((prev) => new Map(prev).set(lastAssistant.id, runBrowserActions))
+              writeMessageBrowserActions(completedAssistant.id, runBrowserActions)
+              setMessageBrowserActionsMap((prev) => new Map(prev).set(completedAssistant.id, runBrowserActions))
             }
             if (runThinking) {
-              writeMessageThinking(lastAssistant.id, runThinking)
-              setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
+              writeMessageThinking(completedAssistant.id, runThinking)
+              setMessageThinkingMap((prev) => new Map(prev).set(completedAssistant.id, runThinking))
             }
           }
           const pending = pendingMessageRef.current
@@ -1077,6 +1199,7 @@ export function ChatPage() {
     if (sse.state !== 'closed' && sse.state !== 'error') return
     if (!sseTerminalFallbackArmedRef.current) return
     if (sseTerminalFallbackRunIdRef.current !== activeRunId) return
+    const terminalRunId = activeRunId
 
     // run.completed 等终端事件处理中会同步 setActiveRunId(null)，
     // React 批量更新后 activeRunId 已经为 null，不会到达此处。
@@ -1107,30 +1230,30 @@ export function ChatPage() {
     if (threadId) onRunEnded(threadId)
     refreshCredits()
 
-    void refreshMessages().then((items) => {
-      const lastAssistant = [...items].reverse().find((m) => m.role === 'assistant')
-      if (lastAssistant) {
+    void refreshMessages({ requiredCompletedRunId: terminalRunId }).then((items) => {
+      const completedAssistant = findAssistantMessageForRun(items, terminalRunId)
+      if (completedAssistant) {
         if (runSources.length > 0) {
-          writeMessageSources(lastAssistant.id, runSources)
-          setMessageSourcesMap((prev) => new Map(prev).set(lastAssistant.id, runSources))
+          writeMessageSources(completedAssistant.id, runSources)
+          setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
         }
         if (runSearchSteps.length > 0) {
-          writeMessageSearchSteps(lastAssistant.id, runSearchSteps)
-          setMessageSearchStepsMap((prev) => new Map(prev).set(lastAssistant.id, runSearchSteps))
+          writeMessageSearchSteps(completedAssistant.id, runSearchSteps)
+          setMessageSearchStepsMap((prev) => new Map(prev).set(completedAssistant.id, runSearchSteps))
         }
         if (runArtifacts.length > 0) {
-          writeMessageArtifacts(lastAssistant.id, runArtifacts)
-          setMessageArtifactsMap((prev) => new Map(prev).set(lastAssistant.id, runArtifacts))
+          writeMessageArtifacts(completedAssistant.id, runArtifacts)
+          setMessageArtifactsMap((prev) => new Map(prev).set(completedAssistant.id, runArtifacts))
         }
-        writeMessageCodeExecutions(lastAssistant.id, runCodeExecs)
-        setMessageCodeExecutionsMap((prev) => new Map(prev).set(lastAssistant.id, runCodeExecs))
+        writeMessageCodeExecutions(completedAssistant.id, runCodeExecs)
+        setMessageCodeExecutionsMap((prev) => new Map(prev).set(completedAssistant.id, runCodeExecs))
         if (runBrowserActions.length > 0) {
-          writeMessageBrowserActions(lastAssistant.id, runBrowserActions)
-          setMessageBrowserActionsMap((prev) => new Map(prev).set(lastAssistant.id, runBrowserActions))
+          writeMessageBrowserActions(completedAssistant.id, runBrowserActions)
+          setMessageBrowserActionsMap((prev) => new Map(prev).set(completedAssistant.id, runBrowserActions))
         }
         if (runThinking) {
-          writeMessageThinking(lastAssistant.id, runThinking)
-          setMessageThinkingMap((prev) => new Map(prev).set(lastAssistant.id, runThinking))
+          writeMessageThinking(completedAssistant.id, runThinking)
+          setMessageThinkingMap((prev) => new Map(prev).set(completedAssistant.id, runThinking))
         }
       }
     })
@@ -1278,6 +1401,7 @@ export function ChatPage() {
 
       const uploaded = await uploadAttachments(threadId)
       const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
+      invalidateMessageSync()
       setMessages((prev) => [...prev, message])
       attachments.forEach((attachment) => revokeDraftAttachment(attachment))
       setDraft('')
@@ -1308,6 +1432,7 @@ export function ChatPage() {
     try {
       const run = await editMessage(accessToken, threadId, messageId, newContent)
       // 乐观更新：替换消息内容，移除其后所有消息
+      invalidateMessageSync()
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === messageId)
         if (idx === -1) return prev
@@ -1327,7 +1452,7 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom])
+  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom, invalidateMessageSync])
 
   const handleRetry = useCallback(async () => {
     if (isStreaming || sending || !threadId) return
@@ -1337,6 +1462,7 @@ export function ChatPage() {
     try {
       const run = await retryThread(accessToken, threadId)
       // 乐观地移除最后一条 assistant 消息（后端已标记 hidden）
+      invalidateMessageSync()
       setMessages((prev) => {
         const lastAssistantIdx = prev.map((m) => m.role).lastIndexOf('assistant')
         if (lastAssistantIdx === -1) return prev
@@ -1354,7 +1480,7 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom])
+  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom, invalidateMessageSync])
 
   const handleAsrError = useCallback((err: unknown) => {
     if (isApiError(err) && err.status === 401) {
@@ -1407,7 +1533,7 @@ export function ChatPage() {
     if (!activeRunId || cancelSubmitting) return
     const runId = activeRunId
 
-    sse.disconnect()
+    disconnectSSE()
     setActiveRunId(null)
     setAssistantDraft('')
     setAwaitingInput(false)
@@ -1421,7 +1547,7 @@ export function ChatPage() {
     void cancelRun(accessToken, runId).catch((err: unknown) => {
       setError(normalizeError(err))
     })
-  }, [activeRunId, cancelSubmitting, sse.disconnect, accessToken, threadId, onRunEnded])
+  }, [activeRunId, cancelSubmitting, disconnectSSE, accessToken, threadId, onRunEnded])
 
   const terminalSseError = useMemo(() => {
     if (!sse.error) return null
@@ -1506,18 +1632,23 @@ export function ChatPage() {
     })
   }, [onRightPanelChange])
 
-  const openDocumentPanel = useCallback((artifact: ArtifactRef) => {
+  const openDocumentPanel = useCallback((artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => {
+    stabilizeDocumentPanelScroll(options?.trigger)
     setDocumentPanelArtifact((prev) => {
-      if (prev?.key === artifact.key) {
+      if (prev?.artifact.key === artifact.key) {
         onRightPanelChange?.(false)
         return null
       }
       setSourcePanelMessageId(null)
       setCodePanelExecution(null)
       onRightPanelChange?.(true)
-      return artifact
+      return {
+        artifact,
+        artifacts: options?.artifacts ?? [],
+        runId: options?.runId,
+      }
     })
-  }, [onRightPanelChange])
+  }, [onRightPanelChange, stabilizeDocumentPanelScroll])
 
   // COP step 计数：timeline 中所有非 finished 的点
   const dedupedTopLevelCodeExecutions = useMemo(() => {
@@ -1769,7 +1900,7 @@ export function ChatPage() {
                         : undefined
                     }
                     onOpenDocument={msg.role === 'assistant' ? openDocumentPanel : undefined}
-                    activePanelArtifactKey={documentPanelArtifact?.key ?? null}
+                    activePanelArtifactKey={documentPanelArtifact?.artifact.key ?? null}
                   />
                   {/* 无痕分割线：固定在 fork 基点之后 */}
                   {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
@@ -2107,9 +2238,15 @@ export function ChatPage() {
           {isDocumentPanelOpen && documentPanelDisplay && (
             <div style={{ width: `${documentPanelWidth}px`, height: '100%', contain: 'layout style' }}>
               <DocumentPanel
-                artifact={documentPanelDisplay}
+                artifact={documentPanelDisplay.artifact}
+                artifacts={documentPanelDisplay.artifacts}
                 accessToken={accessToken}
-                onClose={() => { setDocumentPanelArtifact(null); onRightPanelChange?.(false) }}
+                runId={documentPanelDisplay.runId}
+                onClose={() => {
+                  stabilizeDocumentPanelScroll()
+                  setDocumentPanelArtifact(null)
+                  onRightPanelChange?.(false)
+                }}
               />
             </div>
           )}

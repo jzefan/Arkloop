@@ -260,6 +260,17 @@ func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, scope me
 // --- Content ---
 
 func (c *client) Content(ctx context.Context, ident memory.MemoryIdentity, uri string, layer memory.MemoryLayer) (string, error) {
+	content, err := c.contentAtLayer(ctx, ident, uri, layer)
+	if err == nil {
+		return content, nil
+	}
+	if layer == memory.MemoryLayerOverview && shouldFallbackOverviewToRead(err) {
+		return c.contentAtLayer(ctx, ident, uri, memory.MemoryLayerRead)
+	}
+	return "", err
+}
+
+func (c *client) contentAtLayer(ctx context.Context, ident memory.MemoryIdentity, uri string, layer memory.MemoryLayer) (string, error) {
 	path := fmt.Sprintf("/api/v1/content/%s?uri=%s", string(layer), url.QueryEscape(uri))
 
 	// GET 请求无 body，doJSONWithRetry 的 body 参数传 nil
@@ -278,6 +289,18 @@ func (c *client) Content(ctx context.Context, ident memory.MemoryIdentity, uri s
 	}
 	// fallback：将 result 原样返回为 JSON 字符串
 	return string(resp.Result), nil
+}
+
+func shouldFallbackOverviewToRead(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.Status < 500 {
+		return false
+	}
+	body := strings.ToLower(strings.TrimSpace(statusErr.Body))
+	return strings.Contains(body, "is not a directory")
 }
 
 // --- AppendSessionMessages ---

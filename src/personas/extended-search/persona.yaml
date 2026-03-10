@@ -6,8 +6,6 @@ soul_file: soul.md
 user_selectable: true
 selector_name: Search
 selector_order: 2
-tool_denylist:
-  - spawn_agent
 executor_type: agent.lua
 executor_config:
   script_file: agent.lua

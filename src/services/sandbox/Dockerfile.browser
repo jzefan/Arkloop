@@ -50,8 +50,8 @@ RUN npm install -g agent-browser@latest && \
 RUN existing_group="$(getent group 1000 | cut -d: -f1 || true)" && \
     if [ -z "$existing_group" ]; then groupadd -g 1000 arkloop && existing_group=arkloop; fi && \
     if ! getent passwd 1000 >/dev/null 2>&1; then useradd -u 1000 -g "$existing_group" -m -d /home/arkloop -s /bin/bash arkloop; fi && \
-    mkdir -p /workspace /tmp/output /home/arkloop/.agent-browser && \
-    chown -R 1000:1000 /workspace /tmp/output /home/arkloop
+    mkdir -p /workspace /tmp/output /opt/arkloop/skills /home/arkloop/.agent-browser && \
+    chown -R 1000:1000 /workspace /tmp/output /opt/arkloop /home/arkloop
 COPY --from=builder /sandbox-agent /usr/local/bin/sandbox-agent
 ENV SANDBOX_AGENT_LISTEN=tcp
 ENV HOME=/home/arkloop

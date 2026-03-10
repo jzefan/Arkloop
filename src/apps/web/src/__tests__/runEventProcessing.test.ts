@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMessageCodeExecutionsFromRunEvents,
   buildMessageThinkingFromRunEvents,
+  findAssistantMessageForRun,
   patchCodeExecutionList,
   selectFreshRunEvents,
+  shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
 } from '../runEventProcessing'
+import type { MessageResponse } from '../api'
 import type { RunEvent } from '../sse'
 
 function makeRunEvent(params: {
@@ -21,6 +24,24 @@ function makeRunEvent(params: {
     ts: '2024-01-01T00:00:00.000Z',
     type: params.type,
     data: params.data ?? {},
+  }
+}
+
+function makeMessage(params: {
+  id: string
+  role: string
+  content: string
+  runId?: string
+}): MessageResponse {
+  return {
+    id: params.id,
+    org_id: 'org_1',
+    thread_id: 'thread_1',
+    created_by_user_id: 'user_1',
+    role: params.role,
+    content: params.content,
+    created_at: '2026-01-01T00:00:00.000Z',
+    run_id: params.runId,
   }
 }
 
@@ -101,6 +122,41 @@ describe('selectFreshRunEvents', () => {
 
     expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
     expect(result.nextProcessedCount).toBe(2)
+  })
+})
+
+describe('completed run message sync', () => {
+  it('应按 run_id 命中对应 assistant 消息', () => {
+    const messages = [
+      makeMessage({ id: 'm1', role: 'assistant', content: '旧回答', runId: 'run_1' }),
+      makeMessage({ id: 'm2', role: 'assistant', content: '新回答', runId: 'run_2' }),
+    ]
+
+    expect(findAssistantMessageForRun(messages, 'run_2')?.id).toBe('m2')
+    expect(findAssistantMessageForRun(messages, 'run_x')).toBeUndefined()
+  })
+
+  it('completed 但缺少对应 assistant 消息时应触发补拉', () => {
+    const messages = [
+      makeMessage({ id: 'm1', role: 'user', content: '问题' }),
+      makeMessage({ id: 'm2', role: 'assistant', content: '旧回答', runId: 'run_1' }),
+    ]
+
+    expect(shouldRefetchCompletedRunMessages({
+      messages,
+      latestRun: { run_id: 'run_2', status: 'completed' },
+    })).toBe(true)
+  })
+
+  it('completed 且已包含对应 assistant 消息时不应补拉', () => {
+    const messages = [
+      makeMessage({ id: 'm1', role: 'assistant', content: '回答', runId: 'run_2' }),
+    ]
+
+    expect(shouldRefetchCompletedRunMessages({
+      messages,
+      latestRun: { run_id: 'run_2', status: 'completed' },
+    })).toBe(false)
   })
 })
 

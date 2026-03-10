@@ -68,7 +68,9 @@ type ViewMode = 'preview' | 'source'
 
 type Props = {
   artifact: ArtifactRef
+  artifacts?: ArtifactRef[]
   accessToken: string
+  runId?: string
   onClose: () => void
 }
 
@@ -78,7 +80,7 @@ type LoadState =
   | { status: 'binary' }
   | { status: 'error'; message: string }
 
-export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
+export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose }: Props) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
   const [downloading, setDownloading] = useState(false)
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -100,7 +102,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
       .catch((err: unknown) => {
         setLoadState({ status: 'error', message: err instanceof Error ? err.message : '加载失败' })
       })
-  }, [artifact.key, artifact.mime_type, accessToken])
+  }, [artifact.filename, artifact.key, artifact.mime_type, accessToken])
 
   const handleDownload = useCallback(async () => {
     if (downloading) return
@@ -305,7 +307,7 @@ export function DocumentPanel({ artifact, accessToken, onClose }: Props) {
 
         {loadState.status === 'text' && mode === 'preview' && (
           <div style={{ padding: '20px 28px' }}>
-            <MarkdownRenderer content={loadState.content} compact />
+            <MarkdownRenderer content={loadState.content} artifacts={artifacts} accessToken={accessToken} runId={runId} compact />
           </div>
         )}
 

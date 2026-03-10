@@ -92,7 +92,7 @@ type Props = {
   browserActions?: BrowserActionRef[]
   accessToken?: string
   onShowSources?: () => void
-  onOpenDocument?: (artifact: ArtifactRef) => void
+  onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   activePanelArtifactKey?: string | null
 }
 
@@ -447,7 +447,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
                 <DocumentCard
                   key={artifact.key}
                   artifact={artifact}
-                  onClick={() => onOpenDocument(artifact)}
+                  onClick={(trigger) => onOpenDocument(artifact, { trigger, artifacts, runId: message.run_id })}
                   active={activePanelArtifactKey === artifact.key}
                 />
               ))}
