@@ -36,6 +36,14 @@ function clientTypeToBackend(ct: ClientType): { provider: string; openai_api_mod
   }
 }
 
+function parseObjectJSON(raw: string): Record<string, unknown> {
+  const parsed = JSON.parse(raw.trim() || '{}') as unknown
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('json must be object')
+  }
+  return parsed as Record<string, unknown>
+}
+
 
 export function ModelsPage() {
   const { accessToken } = useOutletContext<LiteOutletContext>()
@@ -73,6 +81,7 @@ export function ModelsPage() {
   const [newModelTags, setNewModelTags] = useState<string[]>([])
   const [newModelTagInput, setNewModelTagInput] = useState('')
   const [newModelDefault, setNewModelDefault] = useState(false)
+  const [newModelAdvancedJSON, setNewModelAdvancedJSON] = useState('{}')
   const [newModelError, setNewModelError] = useState('')
   const [addingModel, setAddingModel] = useState(false)
 
@@ -82,6 +91,7 @@ export function ModelsPage() {
   const [editModelTags, setEditModelTags] = useState<string[]>([])
   const [editModelTagInput, setEditModelTagInput] = useState('')
   const [editModelDefault, setEditModelDefault] = useState(false)
+  const [editModelAdvancedJSON, setEditModelAdvancedJSON] = useState('{}')
   const [editModelError, setEditModelError] = useState('')
   const [savingModel, setSavingModel] = useState(false)
 
@@ -230,6 +240,13 @@ export function ModelsPage() {
     if (!selected || addingModel) return
     const model = newModelName.trim()
     if (!model) { setNewModelError(tc.errModelRequired); return }
+    let advancedJSON: Record<string, unknown>
+    try {
+      advancedJSON = parseObjectJSON(newModelAdvancedJSON)
+    } catch {
+      setNewModelError(tc.errAdvancedJsonInvalid)
+      return
+    }
     setAddingModel(true)
     setNewModelError('')
     try {
@@ -238,12 +255,14 @@ export function ModelsPage() {
         tags: newModelTags,
         is_default: newModelDefault,
         priority: 1,
+        advanced_json: advancedJSON,
       }, accessToken)
       setShowAddModel(false)
       setNewModelName('')
       setNewModelTags([])
       setNewModelTagInput('')
       setNewModelDefault(false)
+      setNewModelAdvancedJSON('{}')
       addToast(tc.toastCreated, 'success')
       await fetchProviders()
     } catch {
@@ -251,7 +270,7 @@ export function ModelsPage() {
     } finally {
       setAddingModel(false)
     }
-  }, [selected, addingModel, newModelName, newModelTags, newModelDefault, accessToken, fetchProviders, addToast, tc])
+  }, [selected, addingModel, newModelName, newModelTags, newModelDefault, newModelAdvancedJSON, accessToken, fetchProviders, addToast, tc])
 
   const openEditModel = useCallback((m: LlmProviderModel) => {
     setEditModel(m)
@@ -259,6 +278,7 @@ export function ModelsPage() {
     setEditModelTags([...m.tags])
     setEditModelTagInput('')
     setEditModelDefault(m.is_default)
+    setEditModelAdvancedJSON(JSON.stringify(m.advanced_json ?? {}, null, 2))
     setEditModelError('')
   }, [])
 
@@ -266,6 +286,13 @@ export function ModelsPage() {
     if (!selected || !editModel || savingModel) return
     const model = editModelName.trim()
     if (!model) { setEditModelError(tc.errModelRequired); return }
+    let advancedJSON: Record<string, unknown>
+    try {
+      advancedJSON = parseObjectJSON(editModelAdvancedJSON)
+    } catch {
+      setEditModelError(tc.errAdvancedJsonInvalid)
+      return
+    }
     setSavingModel(true)
     setEditModelError('')
     try {
@@ -273,6 +300,7 @@ export function ModelsPage() {
         model,
         tags: editModelTags,
         is_default: editModelDefault,
+        advanced_json: advancedJSON,
       }, accessToken)
       setEditModel(null)
       addToast(tc.toastUpdated, 'success')
@@ -282,7 +310,7 @@ export function ModelsPage() {
     } finally {
       setSavingModel(false)
     }
-  }, [selected, editModel, savingModel, editModelName, editModelTags, editModelDefault, accessToken, fetchProviders, addToast, tc])
+  }, [selected, editModel, savingModel, editModelName, editModelTags, editModelDefault, editModelAdvancedJSON, accessToken, fetchProviders, addToast, tc])
 
   const handleDeleteModel = useCallback(async () => {
     if (!selected || !deleteModelTarget) return
@@ -503,6 +531,7 @@ export function ModelsPage() {
                           setNewModelTags([])
                           setNewModelTagInput('')
                           setNewModelDefault(false)
+                          setNewModelAdvancedJSON('{}')
                           setNewModelError('')
                         }}
                         className="rounded-md bg-[var(--c-btn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--c-btn-text)] transition-colors hover:opacity-90"
@@ -541,6 +570,9 @@ export function ModelsPage() {
                                   </span>
                                 ))}
                               </div>
+                            )}
+                            {m.advanced_json && Object.keys(m.advanced_json).length > 0 && (
+                              <p className="mt-1 text-[11px] text-[var(--c-text-muted)]">{tc.advancedJsonConfigured}</p>
                             )}
                           </div>
                           <div className="flex items-center gap-1">
@@ -684,6 +716,13 @@ export function ModelsPage() {
             />
             {tc.setDefault}
           </label>
+          <FormField label={tc.advancedJson}>
+            <textarea
+              value={newModelAdvancedJSON}
+              onChange={(e) => { setNewModelAdvancedJSON(e.target.value); setNewModelError('') }}
+              className={`${editInputCls} min-h-28 font-mono text-xs leading-relaxed`}
+            />
+          </FormField>
           <div className="mt-2 flex justify-end gap-2">
             <button
               onClick={() => setShowAddModel(false)}
@@ -737,6 +776,13 @@ export function ModelsPage() {
               />
               {tc.setDefault}
             </label>
+            <FormField label={tc.advancedJson}>
+              <textarea
+                value={editModelAdvancedJSON}
+                onChange={(e) => { setEditModelAdvancedJSON(e.target.value); setEditModelError('') }}
+                className={`${editInputCls} min-h-28 font-mono text-xs leading-relaxed`}
+              />
+            </FormField>
             <div className="mt-2 flex justify-end gap-2">
               <button
                 onClick={() => setEditModel(null)}

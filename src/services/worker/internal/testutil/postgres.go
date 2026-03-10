@@ -238,6 +238,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			is_default          BOOLEAN     NOT NULL DEFAULT false,
 			tags                TEXT[]      NOT NULL DEFAULT '{}',
 			when_json           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			advanced_json       JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			multiplier          DOUBLE PRECISION NOT NULL DEFAULT 1.0,
 			cost_per_1k_input      DOUBLE PRECISION NULL,
 			cost_per_1k_output     DOUBLE PRECISION NULL,

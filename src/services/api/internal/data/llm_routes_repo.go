@@ -27,6 +27,7 @@ type LlmRoute struct {
 	IsDefault           bool
 	Tags                []string
 	WhenJSON            json.RawMessage
+	AdvancedJSON        map[string]any
 	Multiplier          float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -52,6 +53,7 @@ type CreateLlmRouteParams struct {
 	IsDefault           bool
 	Tags                []string
 	WhenJSON            json.RawMessage
+	AdvancedJSON        map[string]any
 	Multiplier          float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -67,6 +69,7 @@ type UpdateLlmRouteParams struct {
 	IsDefault           bool
 	Tags                []string
 	WhenJSON            json.RawMessage
+	AdvancedJSON        map[string]any
 	Multiplier          float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -104,27 +107,35 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	if len(params.WhenJSON) == 0 {
 		params.WhenJSON = json.RawMessage("{}")
 	}
+	advancedJSONBytes, err := json.Marshal(params.AdvancedJSON)
+	if err != nil {
+		return LlmRoute{}, fmt.Errorf("marshal advanced_json: %w", err)
+	}
 	if params.Multiplier <= 0 {
 		params.Multiplier = 1.0
 	}
 
 	var route LlmRoute
-	err := r.db.QueryRow(
+	var rawAdvancedJSON []byte
+	err = r.db.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
-		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		params.OrgID, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), params.Multiplier,
-		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
+		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
+		params.OrgID, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON),
+		string(advancedJSONBytes), params.Multiplier, params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
 	).Scan(
 		&route.ID, &route.OrgID, &route.CredentialID, &route.Model,
-		&route.Priority, &route.IsDefault, &route.Tags, &route.WhenJSON,
+		&route.Priority, &route.IsDefault, &route.Tags, &route.WhenJSON, &rawAdvancedJSON,
 		&route.Multiplier, &route.CostPer1kInput, &route.CostPer1kOutput,
 		&route.CostPer1kCacheWrite, &route.CostPer1kCacheRead,
 		&route.CreatedAt,
 	)
 	if err != nil {
 		return LlmRoute{}, mapLlmRouteWriteError(err, params.CredentialID, params.Model)
+	}
+	if len(rawAdvancedJSON) > 0 {
+		_ = json.Unmarshal(rawAdvancedJSON, &route.AdvancedJSON)
 	}
 	return route, nil
 }
@@ -137,7 +148,7 @@ func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, orgID, crede
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		 FROM llm_routes
 		 WHERE org_id = $1 AND credential_id = $2
 		 ORDER BY priority DESC, created_at ASC`,
@@ -167,7 +178,7 @@ func (r *LlmRoutesRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
+		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
 		 FROM llm_routes r
 		 JOIN llm_credentials c ON c.id = r.credential_id
 		 WHERE r.org_id = $1 AND c.revoked_at IS NULL
@@ -198,7 +209,7 @@ func (r *LlmRoutesRepository) ListAllActive(ctx context.Context) ([]LlmRoute, er
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
+		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
 		 FROM llm_routes r
 		 JOIN llm_credentials c ON c.id = r.credential_id
 		 WHERE c.revoked_at IS NULL
@@ -228,7 +239,7 @@ func (r *LlmRoutesRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) 
 
 	route, err := scanLlmRoute(r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		 FROM llm_routes
 		 WHERE id = $1 AND org_id = $2`,
 		id, orgID,
@@ -255,6 +266,10 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 	if len(params.WhenJSON) == 0 {
 		params.WhenJSON = json.RawMessage("{}")
 	}
+	advancedJSONBytes, err := json.Marshal(params.AdvancedJSON)
+	if err != nil {
+		return LlmRoute{}, fmt.Errorf("marshal advanced_json: %w", err)
+	}
 	if params.Multiplier <= 0 {
 		params.Multiplier = 1.0
 	}
@@ -263,11 +278,11 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 		ctx,
 		`UPDATE llm_routes
 		 SET model = $3, priority = $4, is_default = $5, tags = $6, when_json = $7::jsonb,
-		     multiplier = $8, cost_per_1k_input = $9, cost_per_1k_output = $10,
-		     cost_per_1k_cache_write = $11, cost_per_1k_cache_read = $12
+		     advanced_json = $8::jsonb, multiplier = $9, cost_per_1k_input = $10, cost_per_1k_output = $11,
+		     cost_per_1k_cache_write = $12, cost_per_1k_cache_read = $13
 		 WHERE id = $1 AND org_id = $2
-		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		params.RouteID, params.OrgID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), params.Multiplier,
+		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
+		params.RouteID, params.OrgID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
 		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
 	))
 	if err != nil {
@@ -294,9 +309,9 @@ func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, orgID,
 			UPDATE llm_routes
 			SET is_default = (id = $3)
 			WHERE org_id = $1 AND credential_id = $2
-			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		)
-		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		FROM updated
 		WHERE id = $3`,
 		orgID, credentialID, routeID,
@@ -331,9 +346,9 @@ func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Contex
 			UPDATE llm_routes
 			SET is_default = (id = (SELECT id FROM candidate))
 			WHERE org_id = $1 AND credential_id = $2
-			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		)
-		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		FROM updated
 		WHERE id = (SELECT id FROM candidate)`,
 		orgID, credentialID,
@@ -381,13 +396,17 @@ type llmRouteScanner interface {
 
 func scanLlmRoute(row llmRouteScanner) (LlmRoute, error) {
 	var route LlmRoute
+	var rawAdvancedJSON []byte
 	err := row.Scan(
 		&route.ID, &route.OrgID, &route.CredentialID, &route.Model,
-		&route.Priority, &route.IsDefault, &route.Tags, &route.WhenJSON,
+		&route.Priority, &route.IsDefault, &route.Tags, &route.WhenJSON, &rawAdvancedJSON,
 		&route.Multiplier, &route.CostPer1kInput, &route.CostPer1kOutput,
 		&route.CostPer1kCacheWrite, &route.CostPer1kCacheRead,
 		&route.CreatedAt,
 	)
+	if err == nil && len(rawAdvancedJSON) > 0 {
+		_ = json.Unmarshal(rawAdvancedJSON, &route.AdvancedJSON)
+	}
 	return route, err
 }
 

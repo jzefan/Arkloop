@@ -54,6 +54,7 @@ type CreateModelInput struct {
 	IsDefault           bool
 	Tags                []string
 	WhenJSON            json.RawMessage
+	AdvancedJSON        map[string]any
 	Multiplier          *float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -72,6 +73,8 @@ type UpdateModelInput struct {
 	Tags                   []string
 	WhenJSONSet            bool
 	WhenJSON               json.RawMessage
+	AdvancedJSONSet        bool
+	AdvancedJSON           map[string]any
 	MultiplierSet          bool
 	Multiplier             *float64
 	CostPer1kInputSet      bool
@@ -314,6 +317,9 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 	if provider == nil {
 		return data.LlmRoute{}, ProviderNotFoundError{ID: providerID}
 	}
+	if err := ValidateAdvancedJSONForProvider(provider.Provider, input.AdvancedJSON); err != nil {
+		return data.LlmRoute{}, err
+	}
 	existing, err := s.routes.ListByCredential(ctx, orgID, providerID)
 	if err != nil {
 		return data.LlmRoute{}, err
@@ -338,6 +344,7 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 		IsDefault:           insertDefault,
 		Tags:                input.Tags,
 		WhenJSON:            input.WhenJSON,
+		AdvancedJSON:        input.AdvancedJSON,
 		Multiplier:          multiplier,
 		CostPer1kInput:      input.CostPer1kInput,
 		CostPer1kOutput:     input.CostPer1kOutput,
@@ -408,6 +415,13 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 	if input.WhenJSONSet {
 		whenJSON = input.WhenJSON
 	}
+	advancedJSON := current.AdvancedJSON
+	if input.AdvancedJSONSet {
+		advancedJSON = input.AdvancedJSON
+	}
+	if err := ValidateAdvancedJSONForProvider(provider.Provider, advancedJSON); err != nil {
+		return data.LlmRoute{}, err
+	}
 	multiplier := current.Multiplier
 	if input.MultiplierSet {
 		multiplier = derefFloat(input.Multiplier, 1.0)
@@ -449,6 +463,7 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 		IsDefault:           isDefault,
 		Tags:                tags,
 		WhenJSON:            whenJSON,
+		AdvancedJSON:        advancedJSON,
 		Multiplier:          multiplier,
 		CostPer1kInput:      costPer1kInput,
 		CostPer1kOutput:     costPer1kOutput,

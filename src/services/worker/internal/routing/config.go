@@ -75,6 +75,7 @@ type ProviderRouteRule struct {
 	Model               string
 	CredentialID        string
 	When                map[string]any
+	AdvancedJSON        map[string]any
 	Multiplier          float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -112,6 +113,7 @@ func DefaultRoutingConfig() ProviderRoutingConfig {
 		Model:        "stub",
 		CredentialID: credential.ID,
 		When:         map[string]any{},
+		AdvancedJSON: map[string]any{},
 	}
 	return ProviderRoutingConfig{
 		DefaultRouteID: route.ID,
@@ -291,11 +293,21 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			when = mapped
 		}
 
+		advancedJSON := map[string]any{}
+		if rawAdvanced, ok := obj["advanced_json"]; ok && rawAdvanced != nil {
+			mapped, ok := rawAdvanced.(map[string]any)
+			if !ok {
+				return ProviderRoutingConfig{}, fmt.Errorf("route.advanced_json must be a JSON object")
+			}
+			advancedJSON = mapped
+		}
+
 		routes = append(routes, ProviderRouteRule{
 			ID:           routeID,
 			Model:        model,
 			CredentialID: credID,
 			When:         when,
+			AdvancedJSON: advancedJSON,
 		})
 	}
 
@@ -467,7 +479,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 	// 一次 JOIN 拿到所有需要的字段，包含 secrets 的加密值
 	rows, err := pool.Query(ctx, `
 		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
-		       r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
+		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
 		       c.id, c.name, c.provider, c.base_url, c.openai_api_mode, c.advanced_json,
 		       s.encrypted_value, s.key_version
@@ -488,6 +500,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		model               string
 		whenJSON            []byte
 		isDefault           bool
+		routeAdvancedJSON   []byte
 		multiplier          float64
 		costPer1kInput      *float64
 		costPer1kOutput     *float64
@@ -508,7 +521,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		var rd rowData
 		if err := rows.Scan(
 			&rd.routeID, &rd.credentialID, &rd.model, &rd.whenJSON, &rd.isDefault,
-			&rd.multiplier, &rd.costPer1kInput, &rd.costPer1kOutput,
+			&rd.routeAdvancedJSON, &rd.multiplier, &rd.costPer1kInput, &rd.costPer1kOutput,
 			&rd.costPer1kCacheWrite, &rd.costPer1kCacheRead,
 			&rd.credID, &rd.credName, &rd.provider, &rd.baseURL, &rd.openaiAPIMode, &rd.advancedJSON,
 			&rd.encryptedValue, &rd.keyVersion,
@@ -589,6 +602,11 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 			_ = json.Unmarshal(rd.whenJSON, &when)
 		}
 
+		routeAdvancedJSON := map[string]any{}
+		if len(rd.routeAdvancedJSON) > 0 {
+			_ = json.Unmarshal(rd.routeAdvancedJSON, &routeAdvancedJSON)
+		}
+
 		multiplier := rd.multiplier
 		if multiplier <= 0 {
 			multiplier = 1.0
@@ -599,6 +617,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 			Model:               rd.model,
 			CredentialID:        credIDStr,
 			When:                when,
+			AdvancedJSON:        routeAdvancedJSON,
 			Multiplier:          multiplier,
 			CostPer1kInput:      rd.costPer1kInput,
 			CostPer1kOutput:     rd.costPer1kOutput,

@@ -48,6 +48,7 @@ type ModelFormState = {
   isDefault: boolean
   tags: string
   whenJSON: string
+  advancedJSON: string
   multiplier: string
   costInput: string
   costOutput: string
@@ -73,6 +74,7 @@ function emptyModelForm(): ModelFormState {
     isDefault: false,
     tags: '',
     whenJSON: '{}',
+    advancedJSON: '{}',
     multiplier: '1',
     costInput: '',
     costOutput: '',
@@ -99,6 +101,7 @@ function modelToForm(model: LlmProviderModel): ModelFormState {
     isDefault: model.is_default,
     tags: (model.tags ?? []).join(', '),
     whenJSON: JSON.stringify(model.when ?? {}, null, 2),
+    advancedJSON: JSON.stringify(model.advanced_json ?? {}, null, 2),
     multiplier: String(model.multiplier ?? 1),
     costInput: model.cost_per_1k_input != null ? String(model.cost_per_1k_input) : '',
     costOutput: model.cost_per_1k_output != null ? String(model.cost_per_1k_output) : '',
@@ -328,10 +331,17 @@ export function ProvidersPage() {
     }
 
     let whenJSON: Record<string, unknown>
+    let advancedJSON: Record<string, unknown>
     try {
       whenJSON = parseObjectJSON(modelForm.whenJSON)
     } catch {
       setModelError(tc.errInvalidJson(modelName))
+      return
+    }
+    try {
+      advancedJSON = parseObjectJSON(modelForm.advancedJSON)
+    } catch {
+      setModelError(tc.errInvalidAdvancedJson)
       return
     }
 
@@ -341,6 +351,7 @@ export function ProvidersPage() {
       is_default: modelForm.isDefault,
       tags: parseTags(modelForm.tags),
       when: whenJSON,
+      advanced_json: advancedJSON,
       multiplier: parseOptionalNumber(modelForm.multiplier),
       cost_per_1k_input: parseOptionalNumber(modelForm.costInput),
       cost_per_1k_output: parseOptionalNumber(modelForm.costOutput),
@@ -625,6 +636,7 @@ export function ProvidersPage() {
                             </button>
                             <div className="mt-2 grid gap-1 text-xs text-[var(--c-text-secondary)] md:grid-cols-2">
                               <div>{tc.routeWhen}: {JSON.stringify(model.when ?? {})}</div>
+                              <div>{tc.routeAdvancedJson}: {model.advanced_json && Object.keys(model.advanced_json).length > 0 ? tc.routeAdvancedConfigured : '--'}</div>
                               <div>{tc.routeMultiplier}: {model.multiplier ?? 1}</div>
                               <div>{tc.routeCostInput}: {model.cost_per_1k_input ?? '--'}</div>
                               <div>{tc.routeCostOutput}: {model.cost_per_1k_output ?? '--'}</div>
@@ -710,6 +722,9 @@ export function ProvidersPage() {
           </label>
           <FormField label={tc.routeWhen}>
             <textarea className={TEXTAREA_CLS} rows={5} value={modelForm.whenJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, whenJSON: e.target.value })); setModelError('') }} />
+          </FormField>
+          <FormField label={tc.routeAdvancedJson}>
+            <textarea className={TEXTAREA_CLS} rows={6} value={modelForm.advancedJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, advancedJSON: e.target.value })); setModelError('') }} />
           </FormField>
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label={tc.routeCostInput}>

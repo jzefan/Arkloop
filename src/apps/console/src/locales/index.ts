@@ -118,6 +118,8 @@ export interface LocaleStrings {
       routePriority: string
       routeDefault: string
       routeWhen: string
+      routeAdvancedJson: string
+      routeAdvancedConfigured: string
       routeMultiplier: string
       routeCostInput: string
       routeCostOutput: string
@@ -134,6 +136,7 @@ export interface LocaleStrings {
       // errors
       errRequired: string
       errInvalidJson: (model: string) => string
+      errInvalidAdvancedJson: string
       errEncryptionKey: string
       // toasts
       toastCreated: string
