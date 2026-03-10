@@ -78,3 +78,9 @@ export function ensureContent(value?: MessageContent): MessageContent | undefine
   if (!value?.parts?.length) return undefined
   return value
 }
+
+const PASTED_FILENAME_RE = /^pasted-\d+\.txt$/
+
+export function isPastedFile(filename: string): boolean {
+  return PASTED_FILENAME_RE.test(filename)
+}

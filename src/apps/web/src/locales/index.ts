@@ -19,6 +19,7 @@ export interface LocaleStrings {
   nav: {
     account: string
     settings: string
+    skills: string
     credits: string
   }
   // settings
@@ -36,6 +37,94 @@ export interface LocaleStrings {
   themeSystem: string
   themeLight: string
   themeDark: string
+  skills: {
+    title: string
+    subtitle: string
+    searchPlaceholder: string
+    officialOnly: string
+    officialOnlyShort: string
+    officialUnconfigured: string
+    marketUnconfiguredTitle: string
+    marketUnconfiguredBody: string
+    marketLoading: string
+    add: string
+    addFromUpload: string
+    addFromSkillsmp: string
+    addFromSkillsmpDesc: string
+    addFromGitHub: string
+    addFromGitHubDesc: string
+    createWithArkloop: string
+    createWithArkloopHint: string
+    uploadTitle: string
+    githubTitle: string
+    officialImportTitle: string
+    localSectionTitle: string
+    localSectionDesc: string
+    emptyTitle: string
+    emptyDesc: string
+    emptyBodyNoMarket: string
+    sourceOfficial: string
+    sourceCustom: string
+    sourceGitHub: string
+    installed: string
+    notInstalled: string
+    enabledByDefault: string
+    install: string
+    installing: string
+    remove: string
+    removing: string
+    update: string
+    viewDetail: string
+    more: string
+    updatedAt: (value: string) => string
+    importFailed: string
+    repositoryMissing: string
+    loadFailed: string
+    officialSearchFailed: string
+    uploadFileLabel: string
+    uploadFileHint: string
+    uploadImmediateInstall: string
+    uploadAction: string
+    uploading: string
+    githubUrlLabel: string
+    githubRefLabel: string
+    githubAction: string
+    githubInvalidUrl: string
+    githubSkillNotFound: string
+    importing: string
+    importOfficialAction: string
+    noResults: string
+    searchResults: (count: number) => string
+    deleteConflict: string
+    candidatesTitle: string
+    chooseCandidate: string
+    installSuccess: (name: string) => string
+    removeSuccess: (name: string) => string
+    updateSuccess: (name: string) => string
+    importSuccess: (name: string) => string
+    updateFailed: string
+    updateBadge: string
+    descriptionFallback: string
+    githubLabel: string
+    githubUrlRequired: string
+    githubUrlPlaceholder: string
+    githubRefPlaceholder: string
+    githubDialogTitle: string
+    githubDialogSubtitle: string
+    uploadDialogTitle: string
+    uploadDialogSubtitle: string
+    uploadArchive: string
+    uploadArchiveDesc: string
+    uploadFolder: string
+    uploadFolderDesc: string
+    uploadSelect: string
+    uploadSelected: (count: number) => string
+    officialDialogTitle: string
+    officialDialogSubtitle: string
+    officialDialogHintTitle: string
+    officialDialogHintBody: string
+    cancelAction: string
+  }
   // invite code
   inviteCode: string
   inviteCodeDesc: string
@@ -209,6 +298,9 @@ export interface LocaleStrings {
   shellSuccess: string
   shellFailed: string
   shellNoOutput: string
+  // pasted content
+  pastedContent: string
+  pastedLines: (n: number) => string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

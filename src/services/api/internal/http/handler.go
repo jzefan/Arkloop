@@ -156,6 +156,7 @@ type environmentStore interface {
 type skillStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	Head(ctx context.Context, key string) (objectstore.ObjectInfo, error)
+	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
@@ -258,6 +259,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		WorkspaceSkillEnableRepo:     cfg.WorkspaceSkillEnableRepo,
 		ProfileRegistriesRepo:        cfg.ProfileRegistriesRepo,
 		WorkspaceRegistriesRepo:      cfg.WorkspaceRegistriesRepo,
+		PlatformSettingsRepo:         cfg.PlatformSettingsRepo,
 		APIKeysRepo:                  cfg.APIKeysRepo,
 		AuditWriter:                  cfg.AuditWriter,
 		SkillStore:                   cfg.SkillStore,

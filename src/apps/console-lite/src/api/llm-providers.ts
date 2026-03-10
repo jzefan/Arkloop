@@ -1,5 +1,12 @@
 import { apiFetch } from './client'
 
+export type LlmProviderScope = 'org' | 'platform'
+
+function withScope(path: string, scope: LlmProviderScope): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}scope=${scope}`
+}
+
 export type LlmProviderModel = {
   id: string
   provider_id: string
@@ -18,7 +25,8 @@ export type LlmProviderModel = {
 
 export type LlmProvider = {
   id: string
-  org_id: string
+  org_id?: string | null
+  scope: LlmProviderScope
   provider: string
   name: string
   key_prefix: string | null
@@ -30,6 +38,7 @@ export type LlmProvider = {
 }
 
 export type CreateLlmProviderRequest = {
+  scope?: LlmProviderScope
   name: string
   provider: string
   api_key: string
@@ -39,6 +48,7 @@ export type CreateLlmProviderRequest = {
 }
 
 export type UpdateLlmProviderRequest = {
+  scope?: LlmProviderScope
   name?: string
   provider?: string
   api_key?: string
@@ -48,6 +58,7 @@ export type UpdateLlmProviderRequest = {
 }
 
 export type CreateModelRequest = {
+  scope?: LlmProviderScope
   model: string
   priority?: number
   is_default?: boolean
@@ -58,6 +69,7 @@ export type CreateModelRequest = {
 }
 
 export type UpdateModelRequest = {
+  scope?: LlmProviderScope
   model?: string
   priority?: number
   is_default?: boolean
@@ -73,17 +85,18 @@ export type AvailableModel = {
   configured: boolean
 }
 
-export async function listLlmProviders(accessToken: string): Promise<LlmProvider[]> {
-  return apiFetch<LlmProvider[]>('/v1/llm-providers', { accessToken })
+export async function listLlmProviders(accessToken: string, scope: LlmProviderScope): Promise<LlmProvider[]> {
+  return apiFetch<LlmProvider[]>(withScope('/v1/llm-providers', scope), { accessToken })
 }
 
 export async function createLlmProvider(
   req: CreateLlmProviderRequest,
   accessToken: string,
 ): Promise<LlmProvider> {
-  return apiFetch<LlmProvider>('/v1/llm-providers', {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<LlmProvider>(withScope('/v1/llm-providers', scope), {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
 }
@@ -93,18 +106,20 @@ export async function updateLlmProvider(
   req: UpdateLlmProviderRequest,
   accessToken: string,
 ): Promise<LlmProvider> {
-  return apiFetch<LlmProvider>(`/v1/llm-providers/${id}`, {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<LlmProvider>(withScope(`/v1/llm-providers/${id}`, scope), {
     method: 'PATCH',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
 }
 
 export async function deleteLlmProvider(
   id: string,
+  scope: LlmProviderScope,
   accessToken: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/v1/llm-providers/${id}`, {
+  return apiFetch<{ ok: boolean }>(withScope(`/v1/llm-providers/${id}`, scope), {
     method: 'DELETE',
     accessToken,
   })
@@ -115,9 +130,10 @@ export async function createProviderModel(
   req: CreateModelRequest,
   accessToken: string,
 ): Promise<LlmProviderModel> {
-  return apiFetch<LlmProviderModel>(`/v1/llm-providers/${providerId}/models`, {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<LlmProviderModel>(withScope(`/v1/llm-providers/${providerId}/models`, scope), {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
 }
@@ -128,9 +144,10 @@ export async function updateProviderModel(
   req: UpdateModelRequest,
   accessToken: string,
 ): Promise<LlmProviderModel> {
-  return apiFetch<LlmProviderModel>(`/v1/llm-providers/${providerId}/models/${modelId}`, {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<LlmProviderModel>(withScope(`/v1/llm-providers/${providerId}/models/${modelId}`, scope), {
     method: 'PATCH',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
 }
@@ -138,9 +155,10 @@ export async function updateProviderModel(
 export async function deleteProviderModel(
   providerId: string,
   modelId: string,
+  scope: LlmProviderScope,
   accessToken: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/v1/llm-providers/${providerId}/models/${modelId}`, {
+  return apiFetch<{ ok: boolean }>(withScope(`/v1/llm-providers/${providerId}/models/${modelId}`, scope), {
     method: 'DELETE',
     accessToken,
   })
@@ -148,9 +166,10 @@ export async function deleteProviderModel(
 
 export async function listAvailableModels(
   providerId: string,
+  scope: LlmProviderScope,
   accessToken: string,
 ): Promise<{ models: AvailableModel[] }> {
-  return apiFetch<{ models: AvailableModel[] }>(`/v1/llm-providers/${providerId}/available-models`, {
+  return apiFetch<{ models: AvailableModel[] }>(withScope(`/v1/llm-providers/${providerId}/available-models`, scope), {
     accessToken,
   })
 }

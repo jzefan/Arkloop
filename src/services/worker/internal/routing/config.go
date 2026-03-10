@@ -468,7 +468,7 @@ func parseScope(value string) (CredentialScope, error) {
 // LoadRoutingConfigFromDB 从数据库加载路由配置。
 // 查询所有未吊销凭证的路由，解密 API Key 后构建 ProviderRoutingConfig。
 // 若数据库中无路由配置（len(Routes)==0），调用方应回退到环境变量。
-func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderRoutingConfig, error) {
+func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) (ProviderRoutingConfig, error) {
 	if pool == nil {
 		return ProviderRoutingConfig{}, fmt.Errorf("pool must not be nil")
 	}
@@ -481,20 +481,28 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
 		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
-		       c.id, c.name, c.provider, c.base_url, c.openai_api_mode, c.advanced_json,
+		       c.id, c.scope, c.name, c.provider, c.base_url, c.openai_api_mode, c.advanced_json,
 		       s.encrypted_value, s.key_version
 		FROM llm_routes r
 		JOIN llm_credentials c ON c.id = r.credential_id
 		LEFT JOIN secrets s ON s.id = c.secret_id
 		WHERE c.revoked_at IS NULL
-		ORDER BY r.priority DESC, r.is_default DESC
-	`)
+		  AND (
+			(c.scope = 'platform' AND c.org_id IS NULL AND r.org_id IS NULL)
+			OR (c.scope = 'org' AND c.org_id = $1 AND r.org_id = $1)
+		  )
+		ORDER BY CASE WHEN c.scope = 'org' THEN 0 ELSE 1 END ASC,
+		         r.is_default DESC,
+		         r.priority DESC,
+		         r.created_at ASC,
+		         r.id ASC
+	`, orgID)
 	if err != nil {
 		return ProviderRoutingConfig{}, fmt.Errorf("routing: db query: %w", err)
 	}
 	defer rows.Close()
 
-	type rowData struct {
+		type rowData struct {
 		routeID             uuid.UUID
 		credentialID        uuid.UUID
 		model               string
@@ -504,10 +512,11 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		multiplier          float64
 		costPer1kInput      *float64
 		costPer1kOutput     *float64
-		costPer1kCacheWrite *float64
-		costPer1kCacheRead  *float64
-		credID              uuid.UUID
-		credName            string
+			costPer1kCacheWrite *float64
+			costPer1kCacheRead  *float64
+			credID              uuid.UUID
+			scope               string
+			credName            string
 		provider            string
 		baseURL             *string
 		openaiAPIMode       *string
@@ -523,7 +532,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 			&rd.routeID, &rd.credentialID, &rd.model, &rd.whenJSON, &rd.isDefault,
 			&rd.routeAdvancedJSON, &rd.multiplier, &rd.costPer1kInput, &rd.costPer1kOutput,
 			&rd.costPer1kCacheWrite, &rd.costPer1kCacheRead,
-			&rd.credID, &rd.credName, &rd.provider, &rd.baseURL, &rd.openaiAPIMode, &rd.advancedJSON,
+			&rd.credID, &rd.scope, &rd.credName, &rd.provider, &rd.baseURL, &rd.openaiAPIMode, &rd.advancedJSON,
 			&rd.encryptedValue, &rd.keyVersion,
 		); err != nil {
 			return ProviderRoutingConfig{}, fmt.Errorf("routing: scan: %w", err)
@@ -539,9 +548,14 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 	}
 
 	credentialsByID := map[string]ProviderCredential{}
+	credentialOrder := make([]string, 0, len(allRows))
+	defaultRouteID := ""
 	for _, rd := range allRows {
 		credIDStr := rd.credID.String()
 		if _, exists := credentialsByID[credIDStr]; exists {
+			if rd.isDefault && defaultRouteID == "" {
+				defaultRouteID = rd.routeID.String()
+			}
 			continue
 		}
 
@@ -550,6 +564,15 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 			slog.WarnContext(ctx, "routing: skipping credential with unsupported provider",
 				"credential_id", credIDStr,
 				"provider", rd.provider,
+			)
+			continue
+		}
+
+		scope, err := parseScope(rd.scope)
+		if err != nil {
+			slog.WarnContext(ctx, "routing: skipping credential with unsupported scope",
+				"credential_id", credIDStr,
+				"scope", rd.scope,
 			)
 			continue
 		}
@@ -572,7 +595,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		cred := ProviderCredential{
 			ID:           credIDStr,
 			Name:         rd.credName,
-			Scope:        CredentialScopeOrg,
+			Scope:        scope,
 			ProviderKind: kind,
 			APIKeyValue:  apiKeyValue,
 			BaseURL:      rd.baseURL,
@@ -580,6 +603,10 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 			AdvancedJSON: advancedJSON,
 		}
 		credentialsByID[credIDStr] = cred
+		credentialOrder = append(credentialOrder, credIDStr)
+		if rd.isDefault && defaultRouteID == "" {
+			defaultRouteID = rd.routeID.String()
+		}
 	}
 
 	var routes []ProviderRouteRule
@@ -631,13 +658,16 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool) (ProviderR
 		return ProviderRoutingConfig{}, nil
 	}
 
-	defaultRouteID := ""
-	if len(routes) > 0 {
+	if defaultRouteID == "" && len(routes) > 0 {
 		defaultRouteID = routes[0].ID
 	}
 
-	credentials := make([]ProviderCredential, 0, len(credentialsByID))
-	for _, cred := range credentialsByID {
+	credentials := make([]ProviderCredential, 0, len(credentialOrder))
+	for _, credID := range credentialOrder {
+		cred, ok := credentialsByID[credID]
+		if !ok {
+			continue
+		}
 		credentials = append(credentials, cred)
 	}
 

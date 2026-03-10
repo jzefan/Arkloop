@@ -13,9 +13,10 @@ import (
 
 func TestListOpenAIModelsRejectsUnsafeBaseURL(t *testing.T) {
 	baseURL := "https://10.0.0.1/v1"
+	orgID := uuid.New()
 	provider := data.LlmCredential{
 		ID:       uuid.New(),
-		OrgID:    uuid.New(),
+		OrgID:    &orgID,
 		Provider: "openai",
 		Name:     "unsafe",
 		BaseURL:  &baseURL,
@@ -46,9 +47,10 @@ func TestListOpenAIModelsAllowsLoopbackHTTPInTests(t *testing.T) {
 	defer server.Close()
 
 	baseURL := server.URL + "/v1"
+	orgID := uuid.New()
 	provider := data.LlmCredential{
 		ID:       uuid.New(),
-		OrgID:    uuid.New(),
+		OrgID:    &orgID,
 		Provider: "openai",
 		Name:     "safe",
 		BaseURL:  &baseURL,

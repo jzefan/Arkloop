@@ -125,7 +125,7 @@ export function RunsPage() {
 
     const [runsResult, agentsResult] = await Promise.allSettled([
       listRuns({ limit: PAGE_SIZE, offset: currentOffset }, accessToken),
-      agentsLoaded ? Promise.resolve<LiteAgent[] | null>(null) : listLiteAgents(accessToken),
+      agentsLoaded ? Promise.resolve<LiteAgent[] | null>(null) : listLiteAgents(accessToken, 'platform'),
     ])
 
     if (agentsResult.status === 'fulfilled' && agentsResult.value) {

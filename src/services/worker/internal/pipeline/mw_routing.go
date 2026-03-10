@@ -31,7 +31,7 @@ func NewRoutingMiddleware(
 			selectorConfig = staticRouter.Config()
 		}
 		if configLoader != nil {
-			loaded, dbErr := configLoader.Load(ctx)
+			loaded, dbErr := configLoader.Load(ctx, rc.Run.OrgID)
 			if dbErr != nil {
 				slog.WarnContext(ctx, "routing: per-run load failed, using static", "err", dbErr.Error())
 			} else if len(loaded.Routes) > 0 {

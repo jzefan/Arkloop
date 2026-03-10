@@ -19,6 +19,7 @@ import (
 )
 
 type createLlmProviderRequest struct {
+	Scope         string         `json:"scope"`
 	Name          string         `json:"name"`
 	Provider      string         `json:"provider"`
 	APIKey        string         `json:"api_key"`
@@ -28,6 +29,7 @@ type createLlmProviderRequest struct {
 }
 
 type createLlmProviderModelRequest struct {
+	Scope               string          `json:"scope"`
 	Model               string          `json:"model"`
 	Priority            int             `json:"priority"`
 	IsDefault           bool            `json:"is_default"`
@@ -43,7 +45,8 @@ type createLlmProviderModelRequest struct {
 
 type llmProviderResponse struct {
 	ID            string                     `json:"id"`
-	OrgID         string                     `json:"org_id"`
+	OrgID         *string                    `json:"org_id,omitempty"`
+	Scope         string                     `json:"scope"`
 	Provider      string                     `json:"provider"`
 	Name          string                     `json:"name"`
 	KeyPrefix     *string                    `json:"key_prefix"`
@@ -195,7 +198,11 @@ func listLlmProviders(
 	if !ok {
 		return
 	}
-	providers, err := service.ListProviders(r.Context(), actor.OrgID)
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	providers, err := service.ListProviders(r.Context(), actor.OrgID, scope)
 	if err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
@@ -233,7 +240,11 @@ func createLlmProvider(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 		return
 	}
-	provider, err := service.CreateProvider(r.Context(), actor.OrgID, llmproviders.CreateProviderInput{
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, &req.Scope)
+	if !ok {
+		return
+	}
+	provider, err := service.CreateProvider(r.Context(), actor.OrgID, scope, llmproviders.CreateProviderInput{
 		Provider:      strings.TrimSpace(req.Provider),
 		Name:          strings.TrimSpace(req.Name),
 		APIKey:        strings.TrimSpace(req.APIKey),
@@ -261,7 +272,12 @@ func patchLlmProvider(
 	if !ok {
 		return
 	}
-	current, err := service.GetProvider(r.Context(), actor.OrgID, providerID)
+	currentScope := data.LlmCredentialScopePlatform
+	current, err := service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
+	if err != nil {
+		currentScope = data.LlmCredentialScopeOrg
+		current, err = service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
+	}
 	if err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
@@ -299,6 +315,22 @@ func patchLlmProvider(
 	advancedJSON, advancedJSONSet, err := readOptionalJSONObject(body, "advanced_json")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "advanced_json must be an object or null", traceID, nil)
+		return
+	}
+	scopeText, _, err := readOptionalString(body, "scope")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be a string", traceID, nil)
+		return
+	}
+	if scopeText == nil {
+		scopeText = &currentScope
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, scopeText)
+	if !ok {
+		return
+	}
+	if scope != currentScope {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope change is not supported", traceID, nil)
 		return
 	}
 	mergedProvider := current.Credential.Provider
@@ -342,7 +374,7 @@ func patchLlmProvider(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 		return
 	}
-	provider, err := service.UpdateProvider(r.Context(), actor.OrgID, providerID, llmproviders.UpdateProviderInput{
+	provider, err := service.UpdateProvider(r.Context(), actor.OrgID, providerID, scope, llmproviders.UpdateProviderInput{
 		Provider:         normalizeOptionalString(providerText),
 		Name:             normalizeOptionalString(nameText),
 		BaseURLSet:       baseURLSet,
@@ -373,7 +405,11 @@ func deleteLlmProvider(
 	if !ok {
 		return
 	}
-	if err := service.DeleteProvider(r.Context(), actor.OrgID, providerID); err != nil {
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	if err := service.DeleteProvider(r.Context(), actor.OrgID, providerID, scope); err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
 	}
@@ -398,7 +434,11 @@ func createLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
-	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID)
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, &req.Scope)
+	if !ok {
+		return
+	}
+	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID, scope)
 	if err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
@@ -417,7 +457,7 @@ func createLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "when must be valid JSON", traceID, nil)
 		return
 	}
-	model, err := service.CreateModel(r.Context(), actor.OrgID, providerID, llmproviders.CreateModelInput{
+	model, err := service.CreateModel(r.Context(), actor.OrgID, providerID, scope, llmproviders.CreateModelInput{
 		Model:               req.Model,
 		Priority:            req.Priority,
 		IsDefault:           req.IsDefault,
@@ -486,6 +526,28 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "advanced_json must be an object or null", traceID, nil)
 		return
 	}
+	scopeText, _, err := readOptionalString(body, "scope")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be a string", traceID, nil)
+		return
+	}
+	currentScope := data.LlmCredentialScopePlatform
+	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
+	if err != nil {
+		currentScope = data.LlmCredentialScopeOrg
+		provider, err = service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
+	}
+	if err != nil {
+		writeLlmProviderServiceError(w, traceID, err)
+		return
+	}
+	if scopeText == nil {
+		scopeText = &currentScope
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, scopeText)
+	if !ok {
+		return
+	}
 	multiplier, multiplierSet, err := readOptionalFloat(body, "multiplier")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "multiplier must be a number", traceID, nil)
@@ -515,9 +577,8 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model must not be empty", traceID, nil)
 		return
 	}
-	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID)
-	if err != nil {
-		writeLlmProviderServiceError(w, traceID, err)
+	if scope != currentScope {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope change is not supported", traceID, nil)
 		return
 	}
 	if advancedJSONSet {
@@ -526,7 +587,7 @@ func patchLlmProviderModel(
 			return
 		}
 	}
-	model, err := service.UpdateModel(r.Context(), actor.OrgID, providerID, modelID, llmproviders.UpdateModelInput{
+	model, err := service.UpdateModel(r.Context(), actor.OrgID, providerID, modelID, scope, llmproviders.UpdateModelInput{
 		ModelSet:               modelSet,
 		Model:                  normalizeOptionalString(modelText),
 		PrioritySet:            prioritySet,
@@ -571,7 +632,11 @@ func deleteLlmProviderModel(
 	if !ok {
 		return
 	}
-	if err := service.DeleteModel(r.Context(), actor.OrgID, providerID, modelID); err != nil {
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	if err := service.DeleteModel(r.Context(), actor.OrgID, providerID, modelID, scope); err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
 	}
@@ -591,7 +656,11 @@ func listLlmProviderAvailableModels(
 	if !ok {
 		return
 	}
-	models, err := service.ListAvailableModels(r.Context(), actor.OrgID, providerID)
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	models, err := service.ListAvailableModels(r.Context(), actor.OrgID, providerID, scope)
 	if err != nil {
 		writeLlmProviderServiceError(w, traceID, err)
 		return
@@ -622,18 +691,49 @@ func authenticateLLMProviderActor(
 	if !ok {
 		return nil, false
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-		return nil, false
-	}
 	return actor, true
+}
+
+func resolveLlmProviderScope(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	actor *httpkit.Actor,
+	bodyScope *string,
+) (string, bool) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" && bodyScope != nil {
+		scope = strings.TrimSpace(*bodyScope)
+	}
+	if scope == "" {
+		scope = data.LlmCredentialScopePlatform
+	}
+	if scope != data.LlmCredentialScopeOrg && scope != data.LlmCredentialScopePlatform {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+		return "", false
+	}
+	if scope == data.LlmCredentialScopePlatform {
+		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return "", false
+		}
+		return scope, true
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
+		return "", false
+	}
+	return scope, true
 }
 
 func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 	name := strings.TrimSpace(req.Name)
 	provider := strings.TrimSpace(req.Provider)
 	apiKey := strings.TrimSpace(req.APIKey)
+	scope := strings.TrimSpace(req.Scope)
 	if name == "" || provider == "" || apiKey == "" {
 		return errors.New("name, provider and api_key are required")
+	}
+	if scope != "" && scope != data.LlmCredentialScopeOrg && scope != data.LlmCredentialScopePlatform {
+		return errors.New("scope must be org or platform")
 	}
 	if strings.Contains(name, "^") {
 		return errors.New("name must not contain ^")
@@ -717,9 +817,15 @@ func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 	for _, model := range provider.Models {
 		models = append(models, toLlmProviderModelResponse(model))
 	}
+	var orgID *string
+	if provider.Credential.OrgID != nil {
+		value := provider.Credential.OrgID.String()
+		orgID = &value
+	}
 	return llmProviderResponse{
 		ID:            provider.Credential.ID.String(),
-		OrgID:         provider.Credential.OrgID.String(),
+		OrgID:         orgID,
+		Scope:         provider.Credential.Scope,
 		Provider:      provider.Credential.Provider,
 		Name:          provider.Credential.Name,
 		KeyPrefix:     provider.Credential.KeyPrefix,

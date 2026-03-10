@@ -19,6 +19,7 @@ import {
   Coins,
   Pencil,
   Flag,
+  Puzzle,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -38,15 +39,17 @@ import { useLocale } from '../contexts/LocaleContext'
 import { useTheme } from '../contexts/ThemeContext'
 import type { Locale } from '../locales'
 import type { Theme } from '../storage'
+import { SkillsSettingsContent } from './SkillsSettingsContent'
 
 
-export type SettingsTab = 'account' | 'settings' | 'credits'
+export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'account',  icon: User     },
   { key: 'settings', icon: Settings },
+  { key: 'skills',   icon: Puzzle   },
   { key: 'credits',  icon: Coins    },
 ]
 
@@ -80,8 +83,12 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
-        className="modal-enter flex h-[624px] w-[832px] overflow-hidden rounded-2xl shadow-2xl bg-[var(--c-bg-page)]"
-        style={{ boxShadow: 'inset 0 0 0 0.5px var(--c-modal-ring)' }}
+        className="modal-enter flex overflow-hidden rounded-2xl shadow-2xl bg-[var(--c-bg-page)]"
+        style={{
+          width: '832px',
+          height: '624px',
+          boxShadow: 'inset 0 0 0 0.5px var(--c-modal-ring)',
+        }}
       >
         {/* 左侧导航 */}
         <div
@@ -165,6 +172,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
                   <ReportFeedbackContent accessToken={accessToken} />
                 </div>
               </div>
+            )}
+            {activeKey === 'skills' && (
+              <SkillsSettingsContent accessToken={accessToken} />
             )}
             {activeKey === 'credits' && (
               <CreditsContent accessToken={accessToken} onCreditsChanged={onCreditsChanged} />
@@ -336,7 +346,7 @@ function ProfileContent({
     } finally {
       setVerifying(false)
     }
-  }, [verifyCode, accessToken, me, onMeUpdated, t])
+  }, [verifyCode, me, onMeUpdated, t])
 
   return (
     <div className="flex flex-col gap-6">
@@ -874,7 +884,7 @@ function CreditsContent({ accessToken, onCreditsChanged }: { accessToken: string
         setBalanceLoading(false)
       }
     })()
-  }, [accessToken])
+  }, [accessToken, onCreditsChanged])
 
   const handleRedeem = useCallback(async () => {
     const code = redeemInput.trim()
@@ -894,7 +904,7 @@ function CreditsContent({ accessToken, onCreditsChanged }: { accessToken: string
     } finally {
       setRedeemLoading(false)
     }
-  }, [accessToken, redeemInput, t])
+  }, [accessToken, onCreditsChanged, redeemInput, t])
 
   const handleQueryUsage = useCallback(async () => {
     setTxLoading(true)

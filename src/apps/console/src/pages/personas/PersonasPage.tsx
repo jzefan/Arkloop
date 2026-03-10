@@ -16,6 +16,7 @@ import {
   patchPersona,
   deletePersona,
   type Persona,
+  type PersonaScope,
 } from '../../api/personas'
 import { listEffectiveToolCatalog, type ToolCatalogGroup, type ToolCatalogItem } from '../../api/tool-catalog'
 import { notifyToolCatalogChanged, subscribeToolCatalogRefresh } from '../../lib/toolCatalogRefresh'
@@ -137,6 +138,7 @@ export function PersonasPage() {
   const tc = t.pages.agents
 
   const [personas, setPersonas] = useState<Persona[]>([])
+  const [scope, setScope] = useState<PersonaScope>('platform')
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -157,7 +159,7 @@ export function PersonasPage() {
     setLoading(true)
     try {
       const [list, catalog] = await Promise.all([
-        listPersonas(accessToken),
+        listPersonas(accessToken, scope),
         listEffectiveToolCatalog(accessToken),
       ])
       setPersonas(list)
@@ -169,7 +171,7 @@ export function PersonasPage() {
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, tc.toastLoadFailed])
+  }, [accessToken, addToast, scope, tc.toastLoadFailed])
 
   useEffect(() => {
     void load()
@@ -205,6 +207,7 @@ export function PersonasPage() {
     setCreating(true)
     try {
       const persona = await createPersona({
+        scope,
         persona_key: key,
         version: '1.0.0',
         display_name: name,
@@ -224,7 +227,7 @@ export function PersonasPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, createKey, createName, load, selectAgent, tc.toastSaveFailed])
+  }, [accessToken, addToast, createKey, createName, load, scope, selectAgent, tc.toastSaveFailed])
 
   const handleSave = useCallback(async () => {
     if (!selected || !form || !form.displayName.trim()) return
@@ -255,11 +258,12 @@ export function PersonasPage() {
       const saved = selected.source === 'builtin'
         ? await createPersona({
             copy_from_repo_persona_key: selected.persona_key,
+            scope,
             persona_key: form.personaKey.trim(),
             version: form.version.trim(),
             ...payload,
           }, accessToken)
-        : await patchPersona(selected.id, payload, accessToken)
+        : await patchPersona(selected.id, { ...payload, scope }, accessToken)
 
       addToast(tc.toastUpdated, 'success')
       notifyToolCatalogChanged()
@@ -275,13 +279,13 @@ export function PersonasPage() {
     } finally {
       setSaving(false)
     }
-  }, [accessToken, addToast, form, load, selected, tc])
+  }, [accessToken, addToast, form, load, scope, selected, tc])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return
     setDeleting(true)
     try {
-      await deletePersona(selected.id, accessToken)
+      await deletePersona(selected.id, scope, accessToken)
       setDeleteOpen(false)
       goBack()
       void load()
@@ -290,7 +294,7 @@ export function PersonasPage() {
     } finally {
       setDeleting(false)
     }
-  }, [accessToken, addToast, goBack, load, selected, tc.toastSaveFailed])
+  }, [accessToken, addToast, goBack, load, scope, selected, tc.toastSaveFailed])
 
   const replaceTools = useCallback((tools: string[]) => {
     setForm((prev) => (prev ? { ...prev, toolSelectionMode: 'custom', tools: uniqToolNames(tools) } : prev))
@@ -725,17 +729,28 @@ export function PersonasPage() {
       <PageHeader
         title={tc.title}
         actions={(
-          <button
-            onClick={() => {
-              setCreateOpen(true)
-              setCreateKey('')
-              setCreateName('')
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
-          >
-            <Plus size={13} />
-            {tc.newAgent}
-          </button>
+          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+            <label className="shrink-0 text-xs text-[var(--c-text-muted)]">{tc.fieldScope}</label>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as PersonaScope)}
+              className="w-[112px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1 text-xs text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]"
+            >
+              <option value="platform">{tc.scopePlatform}</option>
+              <option value="org">{tc.scopeOrg}</option>
+            </select>
+            <button
+              onClick={() => {
+                setCreateOpen(true)
+                setCreateKey('')
+                setCreateName('')
+              }}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+            >
+              <Plus size={13} />
+              {tc.newAgent}
+            </button>
+          </div>
         )}
       />
 

@@ -460,7 +460,7 @@ func asBudgets(value any) (Budgets, error) {
 	}, nil
 }
 
-// LoadFromDB 从数据库加载 orgID 对应的活跃 persona，用于 per-run 动态覆盖。
+// LoadFromDB 从数据库加载运行期有效 persona：platform 为基础层，org 为覆盖层。
 func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Definition, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
@@ -473,8 +473,8 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]Def
 		        executor_type, executor_config_json,
 		        preferred_credential, model, reasoning_mode, prompt_cache_control
 		 FROM personas
-		 WHERE org_id = $1 AND is_active = TRUE
-		 ORDER BY created_at ASC`,
+		 WHERE is_active = TRUE AND (org_id IS NULL OR org_id = $1)
+		 ORDER BY CASE WHEN org_id IS NULL THEN 0 ELSE 1 END ASC, created_at ASC`,
 		orgID,
 	)
 	if err != nil {

@@ -43,6 +43,9 @@ export interface LocaleStrings {
     persona: string
     builtIn: string
     platformDefault: string
+    fieldScope: string
+    scopePlatform: string
+    scopeOrg: string
     hybrid: string
     toolsSelected: (selected: number, total: number) => string
     enableAllTools: string
@@ -227,6 +230,7 @@ export interface LocaleStrings {
     sectionGeneral: string
     sectionEmail: string
     sectionSandbox: string
+    sectionSkills: string
     sectionCredits: string
     titleSummarizer: string
     titleSummarizerHint: string
@@ -249,6 +253,9 @@ export interface LocaleStrings {
     sandboxProvider: string
     sandboxBaseUrl: string
     sandboxDockerImage: string
+    skillsApiKey: string
+    skillsBaseUrl: string
+    skillsBaseUrlHint: string
     creditsEnabled: string
     creditsDisabledHint: string
     toastSaved: string

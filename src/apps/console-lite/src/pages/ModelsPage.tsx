@@ -19,6 +19,7 @@ import {
   updateProviderModel,
   deleteProviderModel,
   listAvailableModels,
+  type LlmProviderScope,
   type LlmProvider,
   type LlmProviderModel,
   type AvailableModel,
@@ -50,6 +51,7 @@ export function ModelsPage() {
   const { addToast } = useToast()
   const { t } = useLocale()
   const tc = t.models
+  const scope: LlmProviderScope = 'platform'
 
   const [providers, setProviders] = useState<LlmProvider[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
@@ -135,7 +137,7 @@ export function ModelsPage() {
   const fetchProviders = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listLlmProviders(accessToken)
+      const data = await listLlmProviders(accessToken, scope)
       setProviders(data)
       if (firstLoadRef.current && data.length > 0) {
         setSelectedId(data[0].id)
@@ -176,7 +178,7 @@ export function ModelsPage() {
       if (formApiKey.trim()) req.api_key = formApiKey.trim()
       const baseUrl = formBaseUrl.trim()
       req.base_url = baseUrl || null
-      await updateLlmProvider(selected.id, req, accessToken)
+      await updateLlmProvider(selected.id, { ...req, scope }, accessToken)
       addToast(tc.toastUpdated, 'success')
       await fetchProviders()
     } catch {
@@ -197,6 +199,7 @@ export function ModelsPage() {
       const backend = clientTypeToBackend(newClientType)
       const baseUrl = newBaseUrl.trim()
       const created = await createLlmProvider({
+        scope,
         name,
         provider: backend.provider,
         api_key: apiKey,
@@ -222,7 +225,7 @@ export function ModelsPage() {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await deleteLlmProvider(deleteTarget.id, accessToken)
+      await deleteLlmProvider(deleteTarget.id, scope, accessToken)
       addToast(tc.toastDeleted, 'success')
       setDeleteTarget(null)
       if (selectedId === deleteTarget.id) {
@@ -251,6 +254,7 @@ export function ModelsPage() {
     setNewModelError('')
     try {
       await createProviderModel(selected.id, {
+        scope,
         model,
         tags: newModelTags,
         is_default: newModelDefault,
@@ -297,6 +301,7 @@ export function ModelsPage() {
     setEditModelError('')
     try {
       await updateProviderModel(selected.id, editModel.id, {
+        scope,
         model,
         tags: editModelTags,
         is_default: editModelDefault,
@@ -316,7 +321,7 @@ export function ModelsPage() {
     if (!selected || !deleteModelTarget) return
     setDeletingModel(true)
     try {
-      await deleteProviderModel(selected.id, deleteModelTarget.id, accessToken)
+      await deleteProviderModel(selected.id, deleteModelTarget.id, scope, accessToken)
       setDeleteModelTarget(null)
       addToast(tc.toastDeleted, 'success')
       await fetchProviders()
@@ -335,7 +340,7 @@ export function ModelsPage() {
     setImportSelected(new Set())
     setImportSearchQuery('')
     try {
-      const data = await listAvailableModels(selected.id, accessToken)
+      const data = await listAvailableModels(selected.id, scope, accessToken)
       setAvailableModels(data.models.filter((m) => !m.configured))
     } catch {
       setImportError(tc.importModelsError)
@@ -351,6 +356,7 @@ export function ModelsPage() {
     try {
       for (const modelId of importSelected) {
         await createProviderModel(selected.id, {
+          scope,
           model: modelId,
           priority: 1,
         }, accessToken)

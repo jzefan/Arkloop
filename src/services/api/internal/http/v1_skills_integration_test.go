@@ -127,6 +127,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 	workspaceSkillEnableRepo, _ := data.NewWorkspaceSkillEnablementsRepository(pool)
 	profileRegistriesRepo, _ := data.NewProfileRegistriesRepository(pool)
 	workspaceRegistriesRepo, _ := data.NewWorkspaceRegistriesRepository(pool)
+	platformSettingsRepo, _ := data.NewPlatformSettingsRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
@@ -146,6 +147,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		WorkspaceSkillEnableRepo: workspaceSkillEnableRepo,
 		ProfileRegistriesRepo:    profileRegistriesRepo,
 		WorkspaceRegistriesRepo:  workspaceRegistriesRepo,
+		PlatformSettingsRepo:     platformSettingsRepo,
 		ArtifactStore:            store,
 		MessageAttachmentStore:   store,
 		EnvironmentStore:         store,

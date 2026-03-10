@@ -16,4 +16,3 @@ budgets:
 title_summarize:
   prompt: "Keep it under 5 Chinese characters. Extract the search intent."
   max_tokens: 10
-model: openai/gpt-oss-120b

@@ -3,6 +3,7 @@ import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2 }
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, transcribeAudio, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { PastedContentModal } from './PastedContentModal'
 import {
   DEFAULT_PERSONA_KEY,
   SEARCH_PERSONA_KEY,
@@ -19,6 +20,7 @@ export type Attachment = {
   preview_url?: string
   status: 'uploading' | 'ready' | 'error'
   uploaded?: UploadedThreadAttachment
+  pasted?: { text: string; lineCount: number }
 }
 
 type Props = {
@@ -35,6 +37,7 @@ type Props = {
   searchMode?: boolean
   attachments?: Attachment[]
   onAttachFiles?: (files: File[]) => void
+  onPasteContent?: (text: string) => void
   onRemoveAttachment?: (id: string) => void
   accessToken?: string
   onAsrError?: (error: unknown) => void
@@ -249,6 +252,122 @@ function AttachmentCard({ attachment, onRemove }: { attachment: Attachment; onRe
   )
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function PastedContentCard({
+  attachment,
+  onRemove,
+  onClick,
+}: {
+  attachment: Attachment
+  onRemove: () => void
+  onClick: () => void
+}) {
+  const [cardHovered, setCardHovered] = useState(false)
+  const uploading = attachment.status === 'uploading'
+  const text = attachment.pasted?.text ?? ''
+
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}
+      onMouseEnter={() => setCardHovered(true)}
+      onMouseLeave={() => setCardHovered(false)}
+    >
+      <div
+        onClick={onClick}
+        style={{
+          width: '120px',
+          height: '120px',
+          borderRadius: '10px',
+          background: uploading ? 'var(--c-attachment-bg)' : 'var(--c-bg-page)',
+          overflow: 'hidden',
+          borderWidth: '0.7px',
+          borderStyle: 'solid',
+          borderColor: cardHovered ? 'var(--c-attachment-border-hover)' : 'var(--c-attachment-border)',
+          transition: 'border-color 0.2s ease, background 0.2s ease',
+          cursor: 'pointer',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '10px',
+        }}
+      >
+        {uploading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+            <div className="attachment-shimmer" style={{ width: '90%', height: '10px', borderRadius: '5px' }} />
+            <div className="attachment-shimmer" style={{ width: '70%', height: '10px', borderRadius: '5px' }} />
+            <div className="attachment-shimmer" style={{ width: '50%', height: '10px', borderRadius: '5px' }} />
+          </div>
+        ) : (
+          <>
+            <div style={{
+              flex: 1,
+              overflow: 'hidden',
+              color: 'var(--c-text-secondary)',
+              fontSize: '11px',
+              lineHeight: '1.4',
+              display: '-webkit-box',
+              WebkitLineClamp: 4,
+              WebkitBoxOrient: 'vertical',
+              wordBreak: 'break-all',
+            }}>
+              {text}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+              <span style={{
+                fontSize: '9px',
+                color: 'var(--c-text-muted)',
+                whiteSpace: 'nowrap',
+              }}>
+                {formatSize(attachment.size)}
+              </span>
+              <span style={{
+                padding: '1px 6px',
+                borderRadius: '5px',
+                background: 'var(--c-attachment-bg)',
+                border: '0.5px solid var(--c-attachment-badge-border)',
+                color: 'var(--c-text-secondary)',
+                fontSize: '10px',
+                fontWeight: 500,
+              }}>
+                PASTED
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="attachment-close-btn"
+        onClick={(e) => { e.stopPropagation(); onRemove() }}
+        style={{
+          position: 'absolute',
+          top: '-5px',
+          left: '-5px',
+          width: '18px',
+          height: '18px',
+          borderRadius: '50%',
+          background: 'var(--c-attachment-close-bg)',
+          border: '0.5px solid var(--c-attachment-close-border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          opacity: cardHovered ? 1 : 0,
+          transition: 'opacity 0.15s ease',
+          pointerEvents: cardHovered ? 'auto' : 'none',
+          zIndex: 1,
+        }}
+      >
+        <X size={9} />
+      </button>
+    </div>
+  )
+}
+
 export function ChatInput({
   value,
   onChange,
@@ -263,6 +382,7 @@ export function ChatInput({
   searchMode = false,
   attachments = [],
   onAttachFiles,
+  onPasteContent,
   onRemoveAttachment,
   accessToken,
   onAsrError,
@@ -307,6 +427,7 @@ export function ChatInput({
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(BAR_COUNT).fill(0))
   const [isFileDragging, setIsFileDragging] = useState(false)
   const [collapsingGrid, setCollapsingGrid] = useState(false)
+  const [pastedModalAttachment, setPastedModalAttachment] = useState<Attachment | null>(null)
   const lastPasteRef = useRef(0)
   const pasteProcessingRef = useRef(false)
 
@@ -634,6 +755,8 @@ export function ChatInput({
     setMenuOpen(false)
   }
 
+  const PASTE_LINE_THRESHOLD = 20
+
   const handleTextareaPaste = (e: ReactClipboardEvent<HTMLTextAreaElement>) => {
     if (hasTransferFiles(e.clipboardData)) {
       if (pasteProcessingRef.current) { e.preventDefault(); return }
@@ -643,7 +766,16 @@ export function ChatInput({
       if (handleAttachTransfer(e.clipboardData)) { e.preventDefault(); return }
     }
     const text = e.clipboardData.getData('text/plain')
-    if (text && /\n{2,}/.test(text)) {
+    if (!text) return
+
+    const lineCount = text.split('\n').length
+    if (lineCount >= PASTE_LINE_THRESHOLD && onPasteContent) {
+      e.preventDefault()
+      onPasteContent(text)
+      return
+    }
+
+    if (/\n{2,}/.test(text)) {
       e.preventDefault()
       const cleaned = text.replace(/\n{2,}/g, '\n')
       const el = e.currentTarget
@@ -805,23 +937,36 @@ export function ChatInput({
       >
         <div style={{ minHeight: 0, padding: '14px 16px 0' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', paddingBottom: '8px' }}>
-            {attachments.map((att) => (
-              <AttachmentCard
-                key={att.id}
-                attachment={att}
-                onRemove={() => {
-                  if (attachments.length === 1) {
-                    setCollapsingGrid(true)
-                    setTimeout(() => {
-                      onRemoveAttachment?.(att.id)
-                      setCollapsingGrid(false)
-                    }, 350)
-                  } else {
+            {attachments.map((att) => {
+              const removeHandler = () => {
+                if (attachments.length === 1) {
+                  setCollapsingGrid(true)
+                  setTimeout(() => {
                     onRemoveAttachment?.(att.id)
-                  }
-                }}
-              />
-            ))}
+                    setCollapsingGrid(false)
+                  }, 350)
+                } else {
+                  onRemoveAttachment?.(att.id)
+                }
+              }
+              if (att.pasted) {
+                return (
+                  <PastedContentCard
+                    key={att.id}
+                    attachment={att}
+                    onRemove={removeHandler}
+                    onClick={() => setPastedModalAttachment(att)}
+                  />
+                )
+              }
+              return (
+                <AttachmentCard
+                  key={att.id}
+                  attachment={att}
+                  onRemove={removeHandler}
+                />
+              )
+            })}
           </div>
         </div>
       </div>
@@ -1010,6 +1155,15 @@ export function ChatInput({
         onChange={handleFileChange}
       />
       </div>
+
+      {pastedModalAttachment?.pasted && (
+        <PastedContentModal
+          text={pastedModalAttachment.pasted.text}
+          size={pastedModalAttachment.size}
+          lineCount={pastedModalAttachment.pasted.lineCount}
+          onClose={() => setPastedModalAttachment(null)}
+        />
+      )}
     </div>
   )
 }

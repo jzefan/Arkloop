@@ -102,13 +102,13 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("create member user: %v", err)
 	}
-	if _, err := membershipRepo.Create(ctx, org.ID, adminUser.ID, auth.RoleOrgAdmin); err != nil {
+	if _, err := membershipRepo.Create(ctx, org.ID, adminUser.ID, auth.RolePlatformAdmin); err != nil {
 		t.Fatalf("create admin membership: %v", err)
 	}
 	if _, err := membershipRepo.Create(ctx, org.ID, memberUser.ID, auth.RoleOrgMember); err != nil {
 		t.Fatalf("create member membership: %v", err)
 	}
-	adminToken, err := tokenService.Issue(adminUser.ID, org.ID, auth.RoleOrgAdmin, time.Now().UTC())
+	adminToken, err := tokenService.Issue(adminUser.ID, org.ID, auth.RolePlatformAdmin, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue admin token: %v", err)
 	}

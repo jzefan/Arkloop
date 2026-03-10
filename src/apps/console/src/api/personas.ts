@@ -1,8 +1,16 @@
 import { apiFetch } from './client'
 
+export type PersonaScope = 'org' | 'platform'
+
+function withScope(path: string, scope: PersonaScope): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}scope=${scope}`
+}
+
 export type Persona = {
   id: string
   org_id: string | null
+  scope: PersonaScope
   source?: 'builtin' | 'custom'
   persona_key: string
   version: string
@@ -27,6 +35,7 @@ export type Persona = {
 
 export type CreatePersonaRequest = {
   copy_from_repo_persona_key?: string
+  scope?: PersonaScope
   persona_key: string
   version: string
   display_name: string
@@ -45,6 +54,7 @@ export type CreatePersonaRequest = {
 }
 
 export type PatchPersonaRequest = {
+  scope?: PersonaScope
   display_name?: string
   description?: string
   prompt_md?: string
@@ -60,17 +70,18 @@ export type PatchPersonaRequest = {
   executor_config?: Record<string, unknown>
 }
 
-export async function listPersonas(accessToken: string): Promise<Persona[]> {
-  return apiFetch<Persona[]>('/v1/personas', { accessToken })
+export async function listPersonas(accessToken: string, scope: PersonaScope): Promise<Persona[]> {
+  return apiFetch<Persona[]>(withScope('/v1/personas', scope), { accessToken })
 }
 
 export async function createPersona(
   req: CreatePersonaRequest,
   accessToken: string,
 ): Promise<Persona> {
-  return apiFetch<Persona>('/v1/personas', {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<Persona>(withScope('/v1/personas', scope), {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
 }
@@ -80,7 +91,8 @@ export async function patchPersona(
   req: PatchPersonaRequest,
   accessToken: string,
 ): Promise<Persona> {
-  return apiFetch<Persona>(`/v1/personas/${id}`, {
+  const scope = req.scope ?? 'platform'
+  return apiFetch<Persona>(withScope(`/v1/personas/${id}`, scope), {
     method: 'PATCH',
     body: JSON.stringify(req),
     accessToken,
@@ -89,9 +101,10 @@ export async function patchPersona(
 
 export async function deletePersona(
   id: string,
+  scope: PersonaScope,
   accessToken: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/v1/personas/${id}`, {
+  return apiFetch<{ ok: boolean }>(withScope(`/v1/personas/${id}`, scope), {
     method: 'DELETE',
     accessToken,
   })
