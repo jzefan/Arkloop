@@ -61,6 +61,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/profiles/me/skills", profileSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.ProfileRegistriesRepo))
 	mux.HandleFunc("/v1/profiles/me/skills/", profileSkillEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.ProfileSkillInstallsRepo, deps.ProfileRegistriesRepo))
 	mux.HandleFunc("/v1/profiles/me/default-skills", profileDefaultSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.WorkspaceSkillEnableRepo, deps.ProfileRegistriesRepo, deps.WorkspaceRegistriesRepo, deps.Pool))
+	mux.HandleFunc("/v1/me/selectable-personas", selectablePersonasEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PersonasRepo, deps.RepoPersonas))
 	mux.HandleFunc("/v1/workspaces/", workspaceSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.WorkspaceSkillEnableRepo, deps.WorkspaceRegistriesRepo, deps.ProfileRegistriesRepo, deps.Pool))
 	mux.HandleFunc("/v1/personas", personasEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PersonasRepo, deps.RepoPersonas))
 	mux.HandleFunc("/v1/personas/", personaEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PersonasRepo))

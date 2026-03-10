@@ -1,8 +1,10 @@
 package catalogapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 
 	"arkloop/services/api/internal/auth"
@@ -157,7 +159,7 @@ func createPersona(
 		return
 	}
 
-	scope, ok := requirePersonaScope(actor, w, traceID, req.Scope, true)
+	scope, ok := requirePersonaScope(actor, w, traceID, req.Scope, true, true)
 	if !ok {
 		return
 	}
@@ -258,7 +260,7 @@ func listPersonas(
 		return
 	}
 
-	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false, false)
 	if !ok {
 		return
 	}
@@ -285,6 +287,113 @@ func listPersonas(
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
 }
 
+func selectablePersonasEntry(
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	personasRepo *data.PersonasRepository,
+	repoPersonas []repopersonas.RepoPersona,
+) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		traceID := observability.TraceIDFromContext(r.Context())
+		if r.Method != nethttp.MethodGet {
+			httpkit.WriteMethodNotAllowed(w, r)
+			return
+		}
+		if authService == nil {
+			httpkit.WriteAuthNotConfigured(w, traceID)
+			return
+		}
+		if personasRepo == nil {
+			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+
+		actor, ok := httpkit.AuthenticateActor(w, r, traceID, authService, membershipRepo)
+		if !ok {
+			return
+		}
+
+		resp, err := buildSelectablePersonaResponses(r.Context(), actor.OrgID, personasRepo, repoPersonas)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+	}
+}
+
+func buildSelectablePersonaResponses(
+	ctx context.Context,
+	orgID uuid.UUID,
+	personasRepo *data.PersonasRepository,
+	repoPersonas []repopersonas.RepoPersona,
+) ([]personaResponse, error) {
+	builtinByKey := make(map[string]personaResponse, len(repoPersonas))
+	for _, persona := range repoPersonas {
+		if !persona.UserSelectable {
+			continue
+		}
+		builtinByKey[persona.ID] = toBuiltinPersonaResponse(persona, data.PersonaScopePlatform)
+	}
+
+	effectiveByKey := make(map[string]personaResponse, len(builtinByKey))
+	for key, persona := range builtinByKey {
+		effectiveByKey[key] = persona
+	}
+
+	dbPersonas, err := personasRepo.ListActiveEffective(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for _, persona := range dbPersonas {
+		response := toPersonaResponse(persona)
+		if previous, ok := effectiveByKey[persona.PersonaKey]; ok {
+			response.UserSelectable = previous.UserSelectable
+			response.SelectorName = previous.SelectorName
+			response.SelectorOrder = previous.SelectorOrder
+		}
+		effectiveByKey[persona.PersonaKey] = response
+	}
+
+	resp := make([]personaResponse, 0, len(effectiveByKey))
+	for _, persona := range effectiveByKey {
+		if !persona.UserSelectable {
+			continue
+		}
+		resp = append(resp, persona)
+	}
+
+	sort.Slice(resp, func(i, j int) bool {
+		leftOrder := selectablePersonaOrder(resp[i])
+		rightOrder := selectablePersonaOrder(resp[j])
+		if leftOrder != rightOrder {
+			return leftOrder < rightOrder
+		}
+		leftName := strings.TrimSpace(selectablePersonaLabel(resp[i]))
+		rightName := strings.TrimSpace(selectablePersonaLabel(resp[j]))
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return resp[i].PersonaKey < resp[j].PersonaKey
+	})
+
+	return resp, nil
+}
+
+func selectablePersonaOrder(persona personaResponse) int {
+	if persona.SelectorOrder == nil {
+		return 99
+	}
+	return *persona.SelectorOrder
+}
+
+func selectablePersonaLabel(persona personaResponse) string {
+	if persona.SelectorName != nil && strings.TrimSpace(*persona.SelectorName) != "" {
+		return strings.TrimSpace(*persona.SelectorName)
+	}
+	return strings.TrimSpace(persona.DisplayName)
+}
+
 func patchPersona(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
@@ -308,7 +417,7 @@ func patchPersona(
 		return
 	}
 
-	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false, true)
 	if !ok {
 		return
 	}
@@ -381,7 +490,7 @@ func deletePersona(
 		return
 	}
 
-	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false, true)
 	if !ok {
 		return
 	}
@@ -526,7 +635,7 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 	}
 }
 
-func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID, rawScope string, fromBody bool) (string, bool) {
+func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID, rawScope string, fromBody bool, write bool) (string, bool) {
 	scope := strings.TrimSpace(rawScope)
 	if scope == "" {
 		scope = data.PersonaScopePlatform
@@ -547,7 +656,11 @@ func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID
 		}
 		return normalized, true
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+	requiredPerm := auth.PermDataPersonasRead
+	if write {
+		requiredPerm = auth.PermDataPersonasManage
+	}
+	if !httpkit.RequirePerm(actor, requiredPerm, w, traceID) {
 		return "", false
 	}
 	return normalized, true

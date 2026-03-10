@@ -106,28 +106,36 @@ describe('ChatInput persona selector', () => {
 
     expect(mockedListSelectablePersonas).toHaveBeenCalledWith('token')
 
-    const normalButton = findButtonByText(container, 'Normal')
-    expect(normalButton).not.toBeNull()
-    if (!normalButton) return
+    const selectorButton = findButtonByText(container, 'Normal')
+    expect(selectorButton).not.toBeNull()
+    if (!selectorButton) return
 
     await act(async () => {
-      normalButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      selectorButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const searchButton = findButtonByText(container, 'Search')
-    expect(searchButton).not.toBeNull()
-    if (!searchButton) return
-
-    const chevronButton = searchButton.nextElementSibling as HTMLButtonElement | null
-    expect(chevronButton).not.toBeNull()
-    if (!chevronButton) return
+    const searchMenuButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button !== selectorButton && button.textContent?.trim() === 'Search',
+    ) as HTMLButtonElement | null
+    expect(searchMenuButton).not.toBeNull()
+    if (!searchMenuButton) return
 
     await act(async () => {
-      chevronButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      searchMenuButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(findButtonByText(container, 'Search')).not.toBeNull()
+
+    const searchSelectorButton = findButtonByText(container, 'Search')
+    expect(searchSelectorButton).not.toBeNull()
+    if (!searchSelectorButton) return
+
+    await act(async () => {
+      searchSelectorButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     const menuNormalButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button !== searchButton && button.textContent?.trim() === 'Normal',
+      (button) => button !== searchSelectorButton && button.textContent?.trim() === 'Normal',
     ) as HTMLButtonElement | null
     expect(menuNormalButton).not.toBeNull()
     if (!menuNormalButton) return
