@@ -43,7 +43,7 @@ type Deps struct {
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/me/feedback", meFeedback(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadReportRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/threads", threadsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.APIKeysRepo, deps.AuditWriter))
+	mux.HandleFunc("/v1/threads", threadsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.ProjectRepo, deps.Pool, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/threads/search", searchThreads(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/threads/starred", listStarredThreads(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadStarRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc(

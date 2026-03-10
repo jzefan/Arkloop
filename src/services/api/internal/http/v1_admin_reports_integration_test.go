@@ -52,6 +52,10 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	threadReportRepo, err := data.NewThreadReportRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread report repo: %v", err)
@@ -71,11 +75,13 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	}
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		ThreadReportRepo:    threadReportRepo,
 	})
 

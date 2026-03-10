@@ -158,6 +158,10 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	threadShareRepo, err := data.NewThreadShareRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread share repo: %v", err)
@@ -196,6 +200,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		RegistrationService:    registrationService,
 		OrgMembershipRepo:      membershipRepo,
 		ThreadRepo:             threadRepo,
+		ProjectRepo:            projectRepo,
 		ThreadShareRepo:        threadShareRepo,
 		RunEventRepo:           runRepo,
 		ShellSessionRepo:       shellSessionRepo,
@@ -255,8 +260,9 @@ func doArtifactRequest(t *testing.T, handler nethttp.Handler, path string, heade
 
 func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "artifact-thread-read")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
@@ -327,8 +333,9 @@ func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 
 func TestThreadAttachmentsUploadAndRead(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "artifact-attachments")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
@@ -384,8 +391,9 @@ func TestThreadAttachmentsUploadAndRead(t *testing.T) {
 
 func TestArtifactsAuthorizationByBrowserSessionOwnerFallback(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "artifact-browser-session")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}

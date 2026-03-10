@@ -13,8 +13,9 @@ import (
 
 func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "workspace-files-owner")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
@@ -116,8 +117,9 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 
 func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "workspace-files-manifest")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
@@ -145,8 +147,9 @@ func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 
 func TestWorkspaceFilesRejectLegacyArchiveOnly(t *testing.T) {
 	env := buildArtifactEnv(t)
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "workspace-files-json")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}

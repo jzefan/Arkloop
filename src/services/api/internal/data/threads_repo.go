@@ -58,6 +58,7 @@ func (r *ThreadRepository) Create(
 	ctx context.Context,
 	orgID uuid.UUID,
 	createdByUserID *uuid.UUID,
+	projectID uuid.UUID,
 	title *string,
 	isPrivate bool,
 ) (Thread, error) {
@@ -67,15 +68,19 @@ func (r *ThreadRepository) Create(
 	if orgID == uuid.Nil {
 		return Thread{}, fmt.Errorf("org_id must not be empty")
 	}
+	if projectID == uuid.Nil {
+		return Thread{}, fmt.Errorf("project_id must not be empty")
+	}
 
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (org_id, created_by_user_id, title, is_private, expires_at)
-		 VALUES ($1, $2, $3, $4, CASE WHEN $4 THEN now() + INTERVAL '24 hours' ELSE NULL END)
+		`INSERT INTO threads (org_id, created_by_user_id, project_id, title, is_private, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN now() + INTERVAL '24 hours' ELSE NULL END)
 		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		orgID,
 		createdByUserID,
+		projectID,
 		title,
 		isPrivate,
 	).Scan(&thread.ID, &thread.OrgID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
@@ -511,8 +516,8 @@ func (r *ThreadRepository) Fork(
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (org_id, created_by_user_id, title, is_private, expires_at, parent_thread_id, branched_from_message_id)
-		 SELECT $1, $2, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, $4, $5
+		`INSERT INTO threads (org_id, created_by_user_id, project_id, title, is_private, expires_at, parent_thread_id, branched_from_message_id)
+		 SELECT $1, $2, project_id, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, $4, $5
 		 FROM threads WHERE id = $4 AND deleted_at IS NULL
 		 RETURNING id, org_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		orgID,

@@ -60,6 +60,10 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	messageRepo, err := data.NewMessageRepository(pool)
 	if err != nil {
 		t.Fatalf("new message repo: %v", err)
@@ -81,11 +85,13 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
 		AuditWriter:         auditWriter,
 	})
@@ -204,6 +210,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	threadRepo, _ := data.NewThreadRepository(pool)
+	projectRepo, _ := data.NewProjectRepository(pool)
 	messageRepo, _ := data.NewMessageRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -217,11 +224,13 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
 		AuditWriter:         auditWriter,
 	})

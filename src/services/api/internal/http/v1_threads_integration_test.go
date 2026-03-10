@@ -62,6 +62,10 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	if err != nil {
@@ -79,11 +83,13 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
 	})
 
@@ -107,6 +113,9 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	threadPayload := decodeJSONBody[threadResponse](t, threadResp.Body.Bytes())
 	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.OrgID == "" {
 		t.Fatalf("unexpected thread payload: %#v", threadPayload)
+	}
+	if threadPayload.ProjectID == nil || *threadPayload.ProjectID == "" {
+		t.Fatalf("expected project_id in thread payload: %#v", threadPayload)
 	}
 
 	cursorIncomplete := doJSON(handler, nethttp.MethodGet, "/v1/threads?before_id="+threadPayload.ID, nil, headers)
@@ -203,6 +212,10 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
@@ -219,11 +232,13 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
 	})
 
@@ -321,7 +336,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerTitle := "no-owner"
-	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceOrgID, nil, &noOwnerTitle, false)
+	noOwnerPatchProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-patch")
+	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerPatchProject.ID, &noOwnerTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner patch thread: %v", err)
 	}
@@ -393,7 +409,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerDeleteTitle := "no-owner-delete"
-	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceOrgID, nil, &noOwnerDeleteTitle, false)
+	noOwnerDeleteProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-delete")
+	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerDeleteProject.ID, &noOwnerDeleteTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner delete thread: %v", err)
 	}
@@ -438,6 +455,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	threadRepo, _ := data.NewThreadRepository(pool)
+	projectRepo, _ := data.NewProjectRepository(pool)
 	runRepo, _ := data.NewRunEventRepository(pool)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -452,6 +470,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 		RegistrationService:  registrationService,
 		OrgMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
+		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
 		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,
