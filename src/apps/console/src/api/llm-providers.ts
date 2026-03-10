@@ -8,6 +8,7 @@ export type LlmProviderModel = {
   is_default: boolean
   tags: string[]
   when: Record<string, unknown>
+  advanced_json?: Record<string, unknown> | null
   multiplier: number
   cost_per_1k_input?: number | null
   cost_per_1k_output?: number | null
@@ -58,6 +59,7 @@ export type CreateProviderModelRequest = {
   is_default: boolean
   tags?: string[]
   when?: Record<string, unknown>
+  advanced_json?: Record<string, unknown> | null
   multiplier?: number
   cost_per_1k_input?: number
   cost_per_1k_output?: number
@@ -71,6 +73,7 @@ export type UpdateProviderModelRequest = {
   is_default?: boolean
   tags?: string[]
   when?: Record<string, unknown>
+  advanced_json?: Record<string, unknown> | null
   multiplier?: number
   cost_per_1k_input?: number
   cost_per_1k_output?: number

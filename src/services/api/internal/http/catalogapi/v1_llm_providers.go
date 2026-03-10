@@ -33,6 +33,7 @@ type createLlmProviderModelRequest struct {
 	IsDefault           bool            `json:"is_default"`
 	Tags                []string        `json:"tags"`
 	WhenJSON            json.RawMessage `json:"when"`
+	AdvancedJSON        map[string]any  `json:"advanced_json"`
 	Multiplier          *float64        `json:"multiplier"`
 	CostPer1kInput      *float64        `json:"cost_per_1k_input"`
 	CostPer1kOutput     *float64        `json:"cost_per_1k_output"`
@@ -61,6 +62,7 @@ type llmProviderModelResponse struct {
 	IsDefault           bool            `json:"is_default"`
 	Tags                []string        `json:"tags"`
 	WhenJSON            json.RawMessage `json:"when"`
+	AdvancedJSON        map[string]any  `json:"advanced_json,omitempty"`
 	Multiplier          float64         `json:"multiplier"`
 	CostPer1kInput      *float64        `json:"cost_per_1k_input,omitempty"`
 	CostPer1kOutput     *float64        `json:"cost_per_1k_output,omitempty"`
@@ -89,49 +91,8 @@ var validOpenAIAPIModes = map[string]bool{
 	"chat_completions": true,
 }
 
-const (
-	anthropicAdvancedVersionKey      = "anthropic_version"
-	anthropicAdvancedExtraHeadersKey = "extra_headers"
-	anthropicBetaHeaderName          = "anthropic-beta"
-)
-
 func validateAdvancedJSONForProvider(provider string, advancedJSON map[string]any) error {
-	if strings.TrimSpace(provider) != "anthropic" || advancedJSON == nil {
-		return nil
-	}
-	return validateAnthropicAdvancedJSON(advancedJSON)
-}
-
-func validateAnthropicAdvancedJSON(advancedJSON map[string]any) error {
-	if advancedJSON == nil {
-		return nil
-	}
-	if rawVersion, ok := advancedJSON[anthropicAdvancedVersionKey]; ok {
-		version, ok := rawVersion.(string)
-		if !ok || strings.TrimSpace(version) == "" {
-			return errors.New("advanced_json.anthropic_version must be a non-empty string")
-		}
-	}
-
-	rawHeaders, ok := advancedJSON[anthropicAdvancedExtraHeadersKey]
-	if !ok {
-		return nil
-	}
-	headers, ok := rawHeaders.(map[string]any)
-	if !ok {
-		return errors.New("advanced_json.extra_headers must be an object")
-	}
-	for key, value := range headers {
-		headerName := strings.ToLower(strings.TrimSpace(key))
-		if headerName != anthropicBetaHeaderName {
-			return errors.New("advanced_json.extra_headers only supports anthropic-beta")
-		}
-		headerValue, ok := value.(string)
-		if !ok || strings.TrimSpace(headerValue) == "" {
-			return errors.New("advanced_json.extra_headers.anthropic-beta must be a non-empty string")
-		}
-	}
-	return nil
+	return llmproviders.ValidateAdvancedJSONForProvider(provider, advancedJSON)
 }
 
 func llmProvidersEntry(
@@ -437,9 +398,18 @@ func createLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
+	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID)
+	if err != nil {
+		writeLlmProviderServiceError(w, traceID, err)
+		return
+	}
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model is required", traceID, nil)
+		return
+	}
+	if err := validateAdvancedJSONForProvider(provider.Credential.Provider, req.AdvancedJSON); err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 		return
 	}
 	whenJSON, _, err := normalizeJSONRequest(req.WhenJSON)
@@ -453,6 +423,7 @@ func createLlmProviderModel(
 		IsDefault:           req.IsDefault,
 		Tags:                req.Tags,
 		WhenJSON:            whenJSON,
+		AdvancedJSON:        req.AdvancedJSON,
 		Multiplier:          req.Multiplier,
 		CostPer1kInput:      req.CostPer1kInput,
 		CostPer1kOutput:     req.CostPer1kOutput,
@@ -510,6 +481,11 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "when must be valid JSON", traceID, nil)
 		return
 	}
+	advancedJSON, advancedJSONSet, err := readOptionalJSONObject(body, "advanced_json")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "advanced_json must be an object or null", traceID, nil)
+		return
+	}
 	multiplier, multiplierSet, err := readOptionalFloat(body, "multiplier")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "multiplier must be a number", traceID, nil)
@@ -539,6 +515,17 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model must not be empty", traceID, nil)
 		return
 	}
+	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID)
+	if err != nil {
+		writeLlmProviderServiceError(w, traceID, err)
+		return
+	}
+	if advancedJSONSet {
+		if err := validateAdvancedJSONForProvider(provider.Credential.Provider, advancedJSON); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+	}
 	model, err := service.UpdateModel(r.Context(), actor.OrgID, providerID, modelID, llmproviders.UpdateModelInput{
 		ModelSet:               modelSet,
 		Model:                  normalizeOptionalString(modelText),
@@ -550,6 +537,8 @@ func patchLlmProviderModel(
 		Tags:                   tags,
 		WhenJSONSet:            whenJSONSet,
 		WhenJSON:               whenJSON,
+		AdvancedJSONSet:        advancedJSONSet,
+		AdvancedJSON:           advancedJSON,
 		MultiplierSet:          multiplierSet,
 		Multiplier:             multiplier,
 		CostPer1kInputSet:      costPer1kInputSet,
@@ -755,6 +744,7 @@ func toLlmProviderModelResponse(model data.LlmRoute) llmProviderModelResponse {
 		IsDefault:           model.IsDefault,
 		Tags:                model.Tags,
 		WhenJSON:            whenJSON,
+		AdvancedJSON:        model.AdvancedJSON,
 		Multiplier:          model.Multiplier,
 		CostPer1kInput:      model.CostPer1kInput,
 		CostPer1kOutput:     model.CostPer1kOutput,

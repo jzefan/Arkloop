@@ -36,6 +36,7 @@ GET /v1/llm-providers
         "is_default": true,
         "tags": [],
         "when": {},
+        "advanced_json": {},
         "multiplier": 1.0,
         "cost_per_1k_input": 0.003,
         "cost_per_1k_output": 0.015,
@@ -112,6 +113,7 @@ POST /v1/llm-providers/{provider_id}/models
 | `is_default` | `bool` | No | Whether this is the default model under the provider |
 | `tags` | `string[]` | No | Extra tags |
 | `when` | `object` | No | Conditional routing rules |
+| `advanced_json` | `object` | No | Model-level advanced config; merged over provider-level keys |
 | `multiplier` | `float64` | No | Cost multiplier |
 | `cost_per_1k_input` | `float64` | No | Cost per 1k input tokens |
 | `cost_per_1k_output` | `float64` | No | Cost per 1k output tokens |
@@ -129,6 +131,8 @@ PATCH /v1/llm-providers/{provider_id}/models/{model_id}
 ```
 
 Updates the same fields as Create Provider Model.
+
+When both provider-level and model-level `advanced_json` are set, Arkloop merges them by key and the model-level value wins on conflicts.
 
 ---
 

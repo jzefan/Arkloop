@@ -65,6 +65,7 @@ type llmProviderModelResponse struct {
 	IsDefault           bool            `json:"is_default"`
 	Tags                []string        `json:"tags"`
 	WhenJSON            json.RawMessage `json:"when"`
+	AdvancedJSON        map[string]any  `json:"advanced_json,omitempty"`
 	Multiplier          float64         `json:"multiplier"`
 	CostPer1kInput      *float64        `json:"cost_per_1k_input,omitempty"`
 	CostPer1kOutput     *float64        `json:"cost_per_1k_output,omitempty"`

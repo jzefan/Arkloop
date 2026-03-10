@@ -197,6 +197,9 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 		"model":    "gpt-4o",
 		"priority": 1,
 		"tags":     []string{"chat"},
+		"advanced_json": map[string]any{
+			"provider": "primary",
+		},
 	}, authHeader(env.adminToken))
 	if createModelOneResp.Code != nethttp.StatusCreated {
 		t.Fatalf("create model one: %d %s", createModelOneResp.Code, createModelOneResp.Body.String())
@@ -207,6 +210,9 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 	}
 	if len(modelOne.Tags) != 1 || modelOne.Tags[0] != "chat" {
 		t.Fatalf("unexpected model tags: %#v", modelOne.Tags)
+	}
+	if modelOne.AdvancedJSON["provider"] != "primary" {
+		t.Fatalf("unexpected model advanced_json: %#v", modelOne.AdvancedJSON)
 	}
 
 	createModelTwoResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/models", map[string]any{
@@ -224,6 +230,9 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 	patchModelResp := doJSON(env.handler, nethttp.MethodPatch, "/v1/llm-providers/"+provider.ID+"/models/"+modelTwo.ID, map[string]any{
 		"is_default": true,
 		"tags":       []string{"fast", "chat"},
+		"advanced_json": map[string]any{
+			"provider": "backup",
+		},
 	}, authHeader(env.adminToken))
 	if patchModelResp.Code != nethttp.StatusOK {
 		t.Fatalf("patch model: %d %s", patchModelResp.Code, patchModelResp.Body.String())
@@ -231,6 +240,9 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 	modelTwo = decodeJSONBody[llmProviderModelResponse](t, patchModelResp.Body.Bytes())
 	if !modelTwo.IsDefault {
 		t.Fatal("expected second model to become default")
+	}
+	if modelTwo.AdvancedJSON["provider"] != "backup" {
+		t.Fatalf("unexpected patched model advanced_json: %#v", modelTwo.AdvancedJSON)
 	}
 
 	listAfterModelsResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers", nil, authHeader(env.adminToken))
@@ -249,6 +261,12 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 		if item.ID == modelTwo.ID {
 			listedTwo = item
 		}
+	}
+	if listedOne.AdvancedJSON["provider"] != "primary" {
+		t.Fatalf("unexpected listed modelOne advanced_json: %#v", listedOne.AdvancedJSON)
+	}
+	if listedTwo.AdvancedJSON["provider"] != "backup" {
+		t.Fatalf("unexpected listed modelTwo advanced_json: %#v", listedTwo.AdvancedJSON)
 	}
 	if listedOne.IsDefault {
 		t.Fatal("expected first model default cleared")
@@ -396,6 +414,30 @@ func TestLlmProvidersAvailableModelsAnthropicHeadersAndAuthFailure(t *testing.T)
 	if lastBeta != "beta-test" {
 		t.Fatalf("unexpected anthropic beta header: %q", lastBeta)
 	}
+}
+
+func TestLlmProvidersModelAdvancedJSONValidation(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+
+	createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers", map[string]any{
+		"name":     "anthropic-model-advanced",
+		"provider": "anthropic",
+		"api_key":  "sk-ant-model-123456",
+	}, authHeader(env.adminToken))
+	if createProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+	}
+	provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+
+	resp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/models", map[string]any{
+		"model": "claude-sonnet-4",
+		"advanced_json": map[string]any{
+			"extra_headers": map[string]any{
+				"x-custom": "bad",
+			},
+		},
+	}, authHeader(env.adminToken))
+	assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 }
 
 func TestLlmProvidersAvailableModelsUpstreamRequestFailure(t *testing.T) {

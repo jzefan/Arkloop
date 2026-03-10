@@ -98,7 +98,7 @@ func resolveTitleGateway(
 		return fallbackGateway, fallbackModel
 	}
 
-	gw, err := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents, llmMaxResponseBytes)
+	gw, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		slog.Warn("title_summarizer: build gateway failed", "err", err.Error())
 		return fallbackGateway, fallbackModel

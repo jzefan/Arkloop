@@ -86,6 +86,54 @@ func TestLlmRoutesCreateStoresTags(t *testing.T) {
 	}
 }
 
+func TestLlmRoutesCreateAndUpdateStoresAdvancedJSON(t *testing.T) {
+	routesRepo, credentialsRepo, orgRepo, ctx := setupLlmRoutesTestRepos(t)
+	orgID, credentialID := createLlmRouteTestCredential(t, ctx, orgRepo, credentialsRepo, "advanced-json")
+
+	route, err := routesRepo.Create(ctx, CreateLlmRouteParams{
+		OrgID:        orgID,
+		CredentialID: credentialID,
+		Model:        "gpt-4o",
+		IsDefault:    true,
+		AdvancedJSON: map[string]any{"provider": "primary", "metadata": map[string]any{"tier": "gold"}},
+	})
+	if err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+	if route.AdvancedJSON["provider"] != "primary" {
+		t.Fatalf("unexpected create advanced_json: %#v", route.AdvancedJSON)
+	}
+
+	updated, err := routesRepo.Update(ctx, UpdateLlmRouteParams{
+		OrgID:        orgID,
+		RouteID:      route.ID,
+		Model:        route.Model,
+		Priority:     route.Priority,
+		IsDefault:    route.IsDefault,
+		Tags:         route.Tags,
+		WhenJSON:     route.WhenJSON,
+		AdvancedJSON: map[string]any{"provider": "backup"},
+		Multiplier:   route.Multiplier,
+	})
+	if err != nil {
+		t.Fatalf("update route: %v", err)
+	}
+	if updated.AdvancedJSON["provider"] != "backup" {
+		t.Fatalf("unexpected updated advanced_json: %#v", updated.AdvancedJSON)
+	}
+
+	stored, err := routesRepo.GetByID(ctx, orgID, route.ID)
+	if err != nil {
+		t.Fatalf("get route: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected stored route")
+	}
+	if stored.AdvancedJSON["provider"] != "backup" {
+		t.Fatalf("unexpected stored advanced_json: %#v", stored.AdvancedJSON)
+	}
+}
+
 func TestLlmRoutesSetDefaultByCredential(t *testing.T) {
 	routesRepo, credentialsRepo, orgRepo, ctx := setupLlmRoutesTestRepos(t)
 	orgID, credentialID := createLlmRouteTestCredential(t, ctx, orgRepo, credentialsRepo, "set-default")

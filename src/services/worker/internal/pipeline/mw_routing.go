@@ -66,7 +66,7 @@ func NewRoutingMiddleware(
 				return nil, nil, fmt.Errorf("route not found: %s", cleaned)
 			}
 
-			gw, gwErr := gatewayFromCredential(routeDecision.Selected.Credential, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			gw, gwErr := gatewayFromSelectedRoute(*routeDecision.Selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if gwErr != nil {
 				return nil, nil, gwErr
 			}
@@ -89,7 +89,7 @@ func NewRoutingMiddleware(
 			if selected == nil {
 				return nil, nil, fmt.Errorf("route not found for selector: %s", cleanedSelector)
 			}
-			gw, gwErr := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			gw, gwErr := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if gwErr != nil {
 				return nil, nil, gwErr
 			}
@@ -163,7 +163,7 @@ func NewRoutingMiddleware(
 			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
-		gateway, err := gatewayFromCredential(selected.Credential, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+		gateway, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 		if err != nil {
 			failed := rc.Emitter.Emit(
 				"run.failed",
@@ -237,7 +237,9 @@ func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routin
 	return nil
 }
 
-func gatewayFromCredential(credential routing.ProviderCredential, stubGateway llm.Gateway, emitDebugEvents bool, llmMaxResponseBytes int) (llm.Gateway, error) {
+func gatewayFromSelectedRoute(selected routing.SelectedProviderRoute, stubGateway llm.Gateway, emitDebugEvents bool, llmMaxResponseBytes int) (llm.Gateway, error) {
+	credential := selected.Credential
+	advancedJSON := mergeAdvancedJSON(credential.AdvancedJSON, selected.Route.AdvancedJSON)
 	switch credential.ProviderKind {
 	case routing.ProviderKindStub:
 		return stubGateway, nil
@@ -258,7 +260,7 @@ func gatewayFromCredential(credential routing.ProviderCredential, stubGateway ll
 			APIKey:          apiKey,
 			BaseURL:         baseURL,
 			APIMode:         apiMode,
-			AdvancedJSON:    credential.AdvancedJSON,
+			AdvancedJSON:    advancedJSON,
 			EmitDebugEvents: emitDebugEvents,
 		}), nil
 	case routing.ProviderKindAnthropic:
@@ -273,13 +275,27 @@ func gatewayFromCredential(credential routing.ProviderCredential, stubGateway ll
 		return llm.NewAnthropicGateway(llm.AnthropicGatewayConfig{
 			APIKey:           apiKey,
 			BaseURL:          baseURL,
-			AdvancedJSON:     credential.AdvancedJSON,
+			AdvancedJSON:     advancedJSON,
 			EmitDebugEvents:  emitDebugEvents,
 			MaxResponseBytes: llmMaxResponseBytes,
 		}), nil
 	default:
 		return nil, fmt.Errorf("unknown provider_kind: %s", credential.ProviderKind)
 	}
+}
+
+func mergeAdvancedJSON(providerAdvancedJSON map[string]any, modelAdvancedJSON map[string]any) map[string]any {
+	if len(providerAdvancedJSON) == 0 && len(modelAdvancedJSON) == 0 {
+		return map[string]any{}
+	}
+	merged := make(map[string]any, len(providerAdvancedJSON)+len(modelAdvancedJSON))
+	for key, value := range providerAdvancedJSON {
+		merged[key] = value
+	}
+	for key, value := range modelAdvancedJSON {
+		merged[key] = value
+	}
+	return merged
 }
 
 func resolveAPIKey(credential routing.ProviderCredential) (string, error) {

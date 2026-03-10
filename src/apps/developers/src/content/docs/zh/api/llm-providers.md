@@ -36,6 +36,7 @@ GET /v1/llm-providers
         "is_default": true,
         "tags": [],
         "when": {},
+        "advanced_json": {},
         "multiplier": 1.0,
         "cost_per_1k_input": 0.003,
         "cost_per_1k_output": 0.015,
@@ -112,6 +113,7 @@ POST /v1/llm-providers/{provider_id}/models
 | `is_default` | `bool` | 否 | 是否为该 Provider 下的默认模型 |
 | `tags` | `string[]` | 否 | 扩展标签 |
 | `when` | `object` | 否 | 条件路由规则 |
+| `advanced_json` | `object` | 否 | 模型级高级配置；与 provider 级按键合并，模型级优先 |
 | `multiplier` | `float64` | 否 | 成本倍率 |
 | `cost_per_1k_input` | `float64` | 否 | 每 1k input token 成本 |
 | `cost_per_1k_output` | `float64` | 否 | 每 1k output token 成本 |
@@ -129,6 +131,8 @@ PATCH /v1/llm-providers/{provider_id}/models/{model_id}
 ```
 
 可更新的字段与“创建 Provider Model”一致。
+
+当 provider 级和模型级同时设置 `advanced_json` 时，Arkloop 会按键合并，冲突时以模型级为准。
 
 ---
 

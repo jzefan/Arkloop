@@ -84,6 +84,8 @@ export interface LocaleStrings {
     tags: string
     addTag: string
     setDefault: string
+    advancedJson: string
+    advancedJsonConfigured: string
     deleteModel: string
     deleteModelConfirm: (model: string) => string
     modelSettings: string
@@ -91,6 +93,7 @@ export interface LocaleStrings {
     errNameRequired: string
     errApiKeyRequired: string
     errModelRequired: string
+    errAdvancedJsonInvalid: string
     errProviderRequired: string
     noProviders: string
     toastCreated: string
