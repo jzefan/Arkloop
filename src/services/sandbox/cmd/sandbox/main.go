@@ -18,6 +18,7 @@ import (
 	"arkloop/services/sandbox/internal/pool"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
+	"arkloop/services/sandbox/internal/skills"
 	"arkloop/services/sandbox/internal/snapshot"
 	"arkloop/services/sandbox/internal/storage"
 	"arkloop/services/sandbox/internal/template"
@@ -48,6 +49,7 @@ func run() error {
 	var artifactStore objectstore.Store
 	var stateStore objectstore.Store
 	var envStore objectstore.BlobStore
+	var skillStore objectstore.Store
 	bucketOpener, err := buildStorageBucketOpener(cfg)
 	if err != nil {
 		return err
@@ -75,6 +77,11 @@ func run() error {
 			return fmt.Errorf("environment store does not implement blob store")
 		}
 		envStore = blobStore
+		kStore, err := bucketOpener.Open(context.Background(), objectstore.SkillStoreBucket)
+		if err != nil {
+			return err
+		}
+		skillStore = kStore
 		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
@@ -122,11 +129,12 @@ func run() error {
 		ForceBytesThreshold: int64(cfg.FlushForceBytesThreshold),
 		ForceCountThreshold: cfg.FlushForceCountThreshold,
 	})
-	shellMgr := shell.NewManager(mgr, artifactStore, stateStore, restoreRegistry, envMgr, logger, shell.Config{
+	skillOverlay := skills.NewOverlayManager(skillStore)
+	shellMgr := shell.NewManager(mgr, artifactStore, stateStore, restoreRegistry, envMgr, skillOverlay, logger, shell.Config{
 		RestoreTTL: time.Duration(cfg.RestoreTTLDays) * 24 * time.Hour,
 	})
 
-	handler := sandboxhttp.NewHandler(mgr, envMgr, shellMgr, artifactStore, logger, cfg.AuthToken)
+	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, artifactStore, logger, cfg.AuthToken)
 
 	if cfg.AuthToken == "" {
 		logger.Warn("ARKLOOP_SANDBOX_AUTH_TOKEN not set, auth disabled", logging.LogFields{}, nil)

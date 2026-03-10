@@ -21,6 +21,7 @@ import (
 const ArtifactBucket = "sandbox-artifacts"
 const SessionStateBucket = "sandbox-session-state"
 const EnvironmentStateBucket = "sandbox-environments"
+const SkillStoreBucket = "sandbox-skills"
 
 type Store interface {
 	Put(ctx context.Context, key string, data []byte) error

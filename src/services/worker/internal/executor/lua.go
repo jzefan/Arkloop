@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -434,6 +435,9 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		ThreadID:            &rt.rc.Run.ThreadID,
 		ProjectID:           rt.rc.Run.ProjectID,
 		UserID:              rt.rc.UserID,
+		ProfileRef:          rt.rc.ProfileRef,
+		WorkspaceRef:        rt.rc.WorkspaceRef,
+		EnabledSkills:       append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
 		AgentID:             agentIDFromPersona(rt.rc),
 		TimeoutMs:           rt.rc.ToolTimeoutMs,
 		Budget:              rt.rc.ToolBudget,
@@ -1333,6 +1337,9 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				ThreadID:            &rt.rc.Run.ThreadID,
 				ProjectID:           rt.rc.Run.ProjectID,
 				UserID:              rt.rc.UserID,
+				ProfileRef:          rt.rc.ProfileRef,
+				WorkspaceRef:        rt.rc.WorkspaceRef,
+				EnabledSkills:       append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
 				AgentID:             agentIDFromPersona(rt.rc),
 				TimeoutMs:           rt.rc.ToolTimeoutMs,
 				Budget:              rt.rc.ToolBudget,

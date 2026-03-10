@@ -26,29 +26,29 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	bindingScope string,
 	bindingTargetID uuid.UUID,
 	workspaceRef string,
-) (string, error) {
+) (string, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if tx == nil {
-		return "", fmt.Errorf("tx must not be nil")
+		return "", false, fmt.Errorf("tx must not be nil")
 	}
 	if orgID == uuid.Nil {
-		return "", fmt.Errorf("org_id must not be empty")
+		return "", false, fmt.Errorf("org_id must not be empty")
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	if profileRef == "" {
-		return "", fmt.Errorf("profile_ref must not be empty")
+		return "", false, fmt.Errorf("profile_ref must not be empty")
 	}
 	if bindingTargetID == uuid.Nil {
-		return "", fmt.Errorf("binding_target_id must not be empty")
+		return "", false, fmt.Errorf("binding_target_id must not be empty")
 	}
 	if bindingScope != BindingScopeProject && bindingScope != BindingScopeThread {
-		return "", fmt.Errorf("binding_scope must be project or thread")
+		return "", false, fmt.Errorf("binding_scope must be project or thread")
 	}
 	workspaceRef = strings.TrimSpace(workspaceRef)
 	if workspaceRef == "" {
-		return "", fmt.Errorf("workspace_ref must not be empty")
+		return "", false, fmt.Errorf("workspace_ref must not be empty")
 	}
 
 	var existing string
@@ -67,10 +67,10 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		bindingTargetID,
 	).Scan(&existing)
 	if err == nil {
-		return existing, nil
+		return existing, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", err
+		return "", false, err
 	}
 
 	result, err := tx.Exec(
@@ -92,10 +92,10 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		workspaceRef,
 	)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if result.RowsAffected() > 0 {
-		return workspaceRef, nil
+		return workspaceRef, true, nil
 	}
 
 	err = tx.QueryRow(
@@ -113,7 +113,7 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		bindingTargetID,
 	).Scan(&existing)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return existing, nil
+	return existing, false, nil
 }

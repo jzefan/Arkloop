@@ -1,6 +1,7 @@
 package runengine
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -140,6 +141,83 @@ func TestResolveAndPersistEnvironmentBindings_ThreadFallback(t *testing.T) {
 
 	if derefString(first.WorkspaceRef) != derefString(second.WorkspaceRef) {
 		t.Fatalf("expected thread fallback workspace_ref reused, got %q vs %q", derefString(first.WorkspaceRef), derefString(second.WorkspaceRef))
+	}
+}
+
+func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_wg09_runtime_bindings_inherit_skills")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New failed: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	threadID1 := uuid.New()
+	threadID2 := uuid.New()
+	runID1 := uuid.New()
+	runID2 := uuid.New()
+
+	seedThreadAndRun(t, pool, orgID, threadID1, nil, &userID, runID1)
+	seedThreadAndRun(t, pool, orgID, threadID2, nil, &userID, runID2)
+
+	first, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+		ID:              runID1,
+		OrgID:           orgID,
+		ThreadID:        threadID1,
+		CreatedByUserID: &userID,
+	})
+	if err != nil {
+		t.Fatalf("resolve first run failed: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO workspace_skill_enablements (workspace_ref, org_id, enabled_by_user_id, skill_key, version)
+		 VALUES ($1, $2, $3, 'deep-research', '1.0.0')`,
+		derefString(first.WorkspaceRef),
+		orgID,
+		userID,
+	); err != nil {
+		t.Fatalf("seed workspace skill enablement: %v", err)
+	}
+
+	second, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+		ID:              runID2,
+		OrgID:           orgID,
+		ThreadID:        threadID2,
+		CreatedByUserID: &userID,
+	})
+	if err != nil {
+		t.Fatalf("resolve second run failed: %v", err)
+	}
+	if derefString(first.WorkspaceRef) == derefString(second.WorkspaceRef) {
+		t.Fatalf("expected new thread workspace_ref, got %q", derefString(second.WorkspaceRef))
+	}
+
+	var skillKey string
+	var version string
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT skill_key, version FROM workspace_skill_enablements WHERE workspace_ref = $1`,
+		derefString(second.WorkspaceRef),
+	).Scan(&skillKey, &version); err != nil {
+		t.Fatalf("load inherited workspace skill: %v", err)
+	}
+	if skillKey != "deep-research" || version != "1.0.0" {
+		t.Fatalf("unexpected inherited skill: %s@%s", skillKey, version)
+	}
+
+	var metadata []byte
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT metadata_json FROM workspace_registries WHERE workspace_ref = $1`,
+		derefString(second.WorkspaceRef),
+	).Scan(&metadata); err != nil {
+		t.Fatalf("load workspace metadata: %v", err)
+	}
+	if !bytes.Contains(metadata, []byte("deep-research@1.0.0")) {
+		t.Fatalf("expected inherited skill ref in workspace metadata, got %s", string(metadata))
 	}
 }
 

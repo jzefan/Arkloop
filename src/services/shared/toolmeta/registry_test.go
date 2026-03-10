@@ -24,14 +24,14 @@ func TestSandboxToolDescriptionsExplainWorkspaceAndArtifacts(t *testing.T) {
 	}
 
 	browserDesc := Must("browser").LLMDescription
-	if !strings.Contains(browserDesc, "running=true") || !strings.Contains(browserDesc, "yield_time_ms") {
-		t.Fatalf("browser description should explain running=true and yield_time_ms: %s", browserDesc)
+	if strings.Contains(browserDesc, "running=true") || !strings.Contains(browserDesc, "yield_time_ms") {
+		t.Fatalf("browser description should hide running=true and explain yield_time_ms: %s", browserDesc)
 	}
-	if !strings.Contains(browserDesc, "not a mode flag") {
-		t.Fatalf("browser description should explain session_ref semantics: %s", browserDesc)
+	if strings.Contains(browserDesc, "session_ref") || !strings.Contains(browserDesc, "backend") {
+		t.Fatalf("browser description should hide session_ref and explain backend session handling: %s", browserDesc)
 	}
-	if !strings.Contains(browserDesc, "snapshot to inspect DOM/text") || !strings.Contains(browserDesc, "Use screenshot only when you need a visual image") {
-		t.Fatalf("browser description should distinguish snapshot and screenshot usage: %s", browserDesc)
+	if !strings.Contains(browserDesc, "Snapshot results are compact by default") || !strings.Contains(browserDesc, "Use screenshot only when you need a visual image") {
+		t.Fatalf("browser description should explain compact snapshot and screenshot usage: %s", browserDesc)
 	}
 	if !strings.Contains(browserDesc, "avoid tiny values such as 50ms") || !strings.Contains(browserDesc, "1500-5000ms") {
 		t.Fatalf("browser description should guide practical yield_time_ms values: %s", browserDesc)

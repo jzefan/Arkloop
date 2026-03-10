@@ -407,6 +407,42 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			)
 		)`,
 		`CREATE INDEX idx_workspace_registries_org_id ON workspace_registries (org_id)`,
+		`CREATE TABLE skill_packages (
+			org_id           UUID        NOT NULL,
+			skill_key        TEXT        NOT NULL,
+			version          TEXT        NOT NULL,
+			display_name     TEXT        NOT NULL,
+			description      TEXT        NULL,
+			instruction_path TEXT        NOT NULL DEFAULT 'SKILL.md',
+			manifest_key     TEXT        NOT NULL,
+			bundle_key       TEXT        NOT NULL,
+			files_prefix     TEXT        NOT NULL,
+			platforms        TEXT[]      NOT NULL DEFAULT '{}',
+			is_active        BOOLEAN     NOT NULL DEFAULT TRUE,
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (org_id, skill_key, version)
+		)`,
+		`CREATE TABLE profile_skill_installs (
+			profile_ref      TEXT        NOT NULL,
+			org_id           UUID        NOT NULL,
+			owner_user_id    UUID        NOT NULL,
+			skill_key        TEXT        NOT NULL,
+			version          TEXT        NOT NULL,
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (profile_ref, skill_key, version)
+		)`,
+		`CREATE TABLE workspace_skill_enablements (
+			workspace_ref    TEXT        NOT NULL,
+			org_id           UUID        NOT NULL,
+			enabled_by_user_id UUID      NOT NULL,
+			skill_key        TEXT        NOT NULL,
+			version          TEXT        NOT NULL,
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (workspace_ref, skill_key)
+		)`,
 		`CREATE TABLE run_events (
 			event_id    UUID        NOT NULL DEFAULT gen_random_uuid(),
 			run_id      UUID        NOT NULL,

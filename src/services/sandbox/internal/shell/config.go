@@ -1,10 +1,15 @@
 package shell
 
-import "time"
+import (
+	"time"
+
+	sandboxskills "arkloop/services/sandbox/internal/skills"
+)
 
 type Config struct {
 	RestoreTTL         time.Duration
 	GovernanceInterval time.Duration
+	SkillOverlay       *sandboxskills.OverlayManager
 }
 
 func DefaultConfig() Config {

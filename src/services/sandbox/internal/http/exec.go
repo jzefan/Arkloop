@@ -13,20 +13,23 @@ import (
 	"arkloop/services/sandbox/internal/environment"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/session"
+	sandboxskills "arkloop/services/sandbox/internal/skills"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
 )
 
 // ExecRequest 是 POST /v1/exec 的请求体。
 type ExecRequest struct {
-	SessionID    string `json:"session_id"`
-	OrgID        string `json:"org_id"`
-	ProfileRef   string `json:"profile_ref,omitempty"`
-	WorkspaceRef string `json:"workspace_ref,omitempty"`
-	Tier         string `json:"tier"`     // "lite" | "pro" | "browser"
-	Language     string `json:"language"` // "python" | "shell"
-	Code         string `json:"code"`
-	TimeoutMs    int    `json:"timeout_ms"` // 0 表示使用服务端默认值（30s）
+	SessionID     string                     `json:"session_id"`
+	OrgID         string                     `json:"org_id"`
+	ProfileRef    string                     `json:"profile_ref,omitempty"`
+	WorkspaceRef  string                     `json:"workspace_ref,omitempty"`
+	EnabledSkills []skillstore.ResolvedSkill `json:"enabled_skills,omitempty"`
+	Tier          string                     `json:"tier"`     // "lite" | "pro" | "browser"
+	Language      string                     `json:"language"` // "python" | "shell"
+	Code          string                     `json:"code"`
+	TimeoutMs     int                        `json:"timeout_ms"` // 0 表示使用服务端默认值（30s）
 }
 
 // ArtifactRef 描述一个已上传到对象存储的执行产物。
@@ -51,7 +54,7 @@ type artifactStore interface {
 	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
 }
 
-func handleExec(mgr *session.Manager, envMgr *environment.Manager, artifactStore artifactStore, logger *logging.JSONLogger) http.HandlerFunc {
+func handleExec(mgr *session.Manager, envMgr *environment.Manager, skillMgr *sandboxskills.OverlayManager, artifactStore artifactStore, logger *logging.JSONLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ExecRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -109,6 +112,13 @@ func handleExec(mgr *session.Manager, envMgr *environment.Manager, artifactStore
 			}); err != nil {
 				logger.Error("prepare environment failed", logging.LogFields{SessionID: &sid}, map[string]any{"error": err.Error()})
 				writeError(w, http.StatusInternalServerError, "sandbox.environment_error", err.Error())
+				return
+			}
+		}
+		if skillMgr != nil {
+			if err := skillMgr.Apply(r.Context(), sn, req.EnabledSkills); err != nil {
+				logger.Error("apply skills overlay failed", logging.LogFields{SessionID: &sid}, map[string]any{"error": err.Error()})
+				writeError(w, http.StatusInternalServerError, "sandbox.skill_overlay_error", err.Error())
 				return
 			}
 		}

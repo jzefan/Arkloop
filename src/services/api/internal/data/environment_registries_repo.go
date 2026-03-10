@@ -1,0 +1,172 @@
+package data
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+type ProfileRegistry struct {
+	ProfileRef   string
+	OrgID        uuid.UUID
+	OwnerUserID  *uuid.UUID
+	MetadataJSON map[string]any
+}
+
+type WorkspaceRegistry struct {
+	WorkspaceRef string
+	OrgID        uuid.UUID
+	OwnerUserID  *uuid.UUID
+	ProjectID    *uuid.UUID
+	MetadataJSON map[string]any
+}
+
+type ProfileRegistriesRepository struct {
+	db Querier
+}
+
+type WorkspaceRegistriesRepository struct {
+	db Querier
+}
+
+func NewProfileRegistriesRepository(db Querier) (*ProfileRegistriesRepository, error) {
+	if db == nil {
+		return nil, errors.New("db must not be nil")
+	}
+	return &ProfileRegistriesRepository{db: db}, nil
+}
+
+func NewWorkspaceRegistriesRepository(db Querier) (*WorkspaceRegistriesRepository, error) {
+	if db == nil {
+		return nil, errors.New("db must not be nil")
+	}
+	return &WorkspaceRegistriesRepository{db: db}, nil
+}
+
+func (r *ProfileRegistriesRepository) Get(ctx context.Context, profileRef string) (*ProfileRegistry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var record ProfileRegistry
+	var metadataRaw []byte
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT profile_ref, org_id, owner_user_id, metadata_json
+		   FROM profile_registries
+		  WHERE profile_ref = $1`,
+		strings.TrimSpace(profileRef),
+	).Scan(&record.ProfileRef, &record.OrgID, &record.OwnerUserID, &metadataRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal(metadataRaw, &record.MetadataJSON)
+	return &record, nil
+}
+
+func (r *WorkspaceRegistriesRepository) Get(ctx context.Context, workspaceRef string) (*WorkspaceRegistry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var record WorkspaceRegistry
+	var metadataRaw []byte
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT workspace_ref, org_id, owner_user_id, project_id, metadata_json
+		   FROM workspace_registries
+		  WHERE workspace_ref = $1`,
+		strings.TrimSpace(workspaceRef),
+	).Scan(&record.WorkspaceRef, &record.OrgID, &record.OwnerUserID, &record.ProjectID, &metadataRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal(metadataRaw, &record.MetadataJSON)
+	return &record, nil
+}
+
+func (r *ProfileRegistriesRepository) UpdateInstalledSkillRefs(ctx context.Context, profileRef string, refs []string) error {
+	return updateRegistrySkillRefs(ctx, r.db, "profile_registries", "profile_ref", strings.TrimSpace(profileRef), "installed_skill_refs", refs)
+}
+
+func (r *ProfileRegistriesRepository) SetDefaultWorkspaceRef(ctx context.Context, profileRef string, workspaceRef string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.db == nil {
+		return fmt.Errorf("db must not be nil")
+	}
+	profileRef = strings.TrimSpace(profileRef)
+	workspaceRef = strings.TrimSpace(workspaceRef)
+	if profileRef == "" || workspaceRef == "" {
+		return fmt.Errorf("profile_ref and workspace_ref must not be empty")
+	}
+	_, err := r.db.Exec(
+		ctx,
+		`UPDATE profile_registries
+		    SET default_workspace_ref = $2,
+		        updated_at = now()
+		  WHERE profile_ref = $1`,
+		profileRef,
+		workspaceRef,
+	)
+	return err
+}
+
+func (r *WorkspaceRegistriesRepository) UpdateEnabledSkillRefs(ctx context.Context, workspaceRef string, refs []string) error {
+	return updateRegistrySkillRefs(ctx, r.db, "workspace_registries", "workspace_ref", strings.TrimSpace(workspaceRef), "enabled_skill_refs", refs)
+}
+
+func updateRegistrySkillRefs(ctx context.Context, db Querier, table string, idColumn string, idValue string, field string, refs []string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil {
+		return fmt.Errorf("db must not be nil")
+	}
+	if idValue == "" {
+		return fmt.Errorf("registry id must not be empty")
+	}
+	payload, err := json.Marshal(dedupeSortedStrings(refs))
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(
+		ctx,
+		fmt.Sprintf(`UPDATE %s
+		    SET metadata_json = jsonb_set(COALESCE(metadata_json, '{}'::jsonb), '{%s}', $2::jsonb, true),
+		        updated_at = now()
+		  WHERE %s = $1`, table, field, idColumn),
+		idValue,
+		payload,
+	)
+	return err
+}
+
+func dedupeSortedStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		cleaned := strings.TrimSpace(value)
+		if cleaned == "" {
+			continue
+		}
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		out = append(out, cleaned)
+	}
+	sort.Strings(out)
+	return out
+}

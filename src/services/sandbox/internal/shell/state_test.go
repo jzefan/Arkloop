@@ -38,7 +38,7 @@ func TestManagerSweepExpiredRestoreStatesClearsMissingBinding(t *testing.T) {
 	compute := session.NewManager(testManagerConfig(pool))
 	store := newMemoryStateStore()
 	registry := NewMemorySessionRestoreRegistry()
-	mgr := NewManager(compute, nil, store, registry, nil, logging.NewJSONLogger("test", nil), Config{})
+	mgr := NewManager(compute, nil, store, registry, nil, nil, logging.NewJSONLogger("test", nil), Config{})
 	if err := registry.BindLatestRestoreRevision(context.Background(), "org-a", "sess-missing", "rev-missing"); err != nil {
 		t.Fatalf("bind restore revision: %v", err)
 	}

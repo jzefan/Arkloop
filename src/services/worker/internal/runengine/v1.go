@@ -170,6 +170,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewAgentConfigMiddleware(deps.DBPool),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
+		pipeline.NewSkillContextMiddleware(deps.DBPool, nil),
 		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),

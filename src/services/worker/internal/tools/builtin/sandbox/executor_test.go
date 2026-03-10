@@ -33,6 +33,19 @@ func testContextWithOrg(runID uuid.UUID, orgID uuid.UUID) tools.ExecutionContext
 	return tools.ExecutionContext{RunID: runID, OrgID: &orgID}
 }
 
+func browserSnapshotJSON(url string, title string, snapshot string, refs map[string]any) string {
+	payload, _ := json.Marshal(map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"url":      url,
+			"title":    title,
+			"snapshot": snapshot,
+			"refs":     refs,
+		},
+	})
+	return string(payload)
+}
+
 func TestPythonExecute_Success(t *testing.T) {
 	fixedRunID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1998,8 +2011,8 @@ func TestBrowser_UsesBrowserTierAndAgentBrowserCommand(t *testing.T) {
 	if !strings.Contains(primary.Command, "navigate https://example.com") {
 		t.Fatalf("missing browser subcommand: %q", primary.Command)
 	}
-	if result.ResultJSON["session_ref"] != primary.SessionID {
-		t.Fatalf("unexpected session_ref: %v", result.ResultJSON["session_ref"])
+	if _, ok := result.ResultJSON["session_ref"]; ok {
+		t.Fatalf("browser result should hide session_ref: %#v", result.ResultJSON)
 	}
 	// navigate triggers auto-screenshot
 	if len(calls) != 2 {
@@ -2035,7 +2048,12 @@ func TestBrowser_ForwardsYieldTimeMs(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: seen.SessionID, Status: "idle", Cwd: "/workspace", ExitCode: intPtr(0)})
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: seen.SessionID, Status: "idle", Cwd: "/workspace", Output: browserSnapshotJSON(
+			"https://example.com",
+			"Example Domain",
+			"- heading \"Example Domain\" [ref=e1]",
+			map[string]any{"e1": map[string]any{"role": "heading", "text": "Example Domain"}},
+		), ExitCode: intPtr(0)})
 	}))
 	defer server.Close()
 
@@ -2049,6 +2067,9 @@ func TestBrowser_ForwardsYieldTimeMs(t *testing.T) {
 	}
 	if seen.YieldTimeMs != 2500 {
 		t.Fatalf("expected yield_time_ms=2500, got %d", seen.YieldTimeMs)
+	}
+	if !strings.Contains(seen.Command, browserCompactSnapshotCommand) {
+		t.Fatalf("expected compact snapshot command, got %q", seen.Command)
 	}
 }
 
@@ -2135,9 +2156,6 @@ func TestBrowser_AutoPollsRunningResultBeforeScreenshot(t *testing.T) {
 	if pollSeen.YieldTimeMs != autoScreenshotMinYieldTimeMs {
 		t.Fatalf("expected poll yield_time_ms=%d, got %d", autoScreenshotMinYieldTimeMs, pollSeen.YieldTimeMs)
 	}
-	if result.ResultJSON["running"] != false {
-		t.Fatalf("expected settled browser result, got %#v", result.ResultJSON)
-	}
 	if result.ResultJSON["has_screenshot"] != true {
 		t.Fatalf("expected has_screenshot=true, got %#v", result.ResultJSON["has_screenshot"])
 	}
@@ -2186,8 +2204,8 @@ func TestBrowser_DoesNotAutoScreenshotWhileRunning(t *testing.T) {
 
 	exec := NewToolExecutor(server.URL, "")
 	result := exec.Execute(t.Context(), "browser", map[string]any{"command": "navigate https://example.com", "yield_time_ms": float64(50)}, ctx, "")
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %+v", result.Error)
+	if result.Error == nil || result.Error.ErrorClass != errorSandboxTimeout {
+		t.Fatalf("expected sandbox_timeout, got %+v", result.Error)
 	}
 	if execCalls != 1 {
 		t.Fatalf("expected exactly one primary exec command, got %d", execCalls)
@@ -2195,8 +2213,8 @@ func TestBrowser_DoesNotAutoScreenshotWhileRunning(t *testing.T) {
 	if pollCalls != browserAutoPollAttempts {
 		t.Fatalf("expected %d browser polls, got %d", browserAutoPollAttempts, pollCalls)
 	}
-	if _, ok := result.ResultJSON["has_screenshot"]; ok {
-		t.Fatalf("did not expect screenshot marker on running result: %#v", result.ResultJSON)
+	if result.Error.Message != "browser action did not settle in time" {
+		t.Fatalf("unexpected timeout message: %+v", result.Error)
 	}
 }
 
@@ -2227,7 +2245,16 @@ func TestBrowser_AutoSessionDoesNotReuseShellSession(t *testing.T) {
 		}
 		calls = append(calls, body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", ExitCode: intPtr(0)})
+		output := ""
+		if strings.Contains(body.Command, browserCompactSnapshotCommand) {
+			output = browserSnapshotJSON(
+				"https://example.com",
+				"Example Domain",
+				"- heading \"Example Domain\" [ref=e1]",
+				map[string]any{"e1": map[string]any{"role": "heading", "text": "Example Domain"}},
+			)
+		}
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: output, ExitCode: intPtr(0)})
 	}))
 	defer server.Close()
 
@@ -2259,45 +2286,19 @@ func TestBrowser_AutoSessionDoesNotReuseShellSession(t *testing.T) {
 	if calls[1].SessionID != calls[2].SessionID {
 		t.Fatalf("expected browser auto reuse, got %q and %q", calls[1].SessionID, calls[2].SessionID)
 	}
-	if firstBrowser.ResultJSON["resolved_via"] != "new_session" {
-		t.Fatalf("unexpected first browser resolution: %v", firstBrowser.ResultJSON["resolved_via"])
-	}
-	if secondBrowser.ResultJSON["resolved_via"] != "run_default" {
-		t.Fatalf("unexpected second browser resolution: %v", secondBrowser.ResultJSON["resolved_via"])
+	if !strings.Contains(calls[1].Command, browserCompactSnapshotCommand) {
+		t.Fatalf("expected compact snapshot command, got %q", calls[1].Command)
 	}
 }
 
-func TestBrowser_ExplicitSessionRefCreatesWhenMissing(t *testing.T) {
-	orgID := uuid.New()
-	ctx := tools.ExecutionContext{
-		RunID:        uuid.New(),
-		OrgID:        &orgID,
-		ProfileRef:   "pref_test",
-		WorkspaceRef: "wsref_test",
-	}
-	var seen execCommandRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: seen.SessionID, Status: "idle", Cwd: "/workspace", ExitCode: intPtr(0)})
-	}))
-	defer server.Close()
-
-	exec := NewToolExecutor(server.URL, "")
+func TestBrowser_RejectsSessionRefArgument(t *testing.T) {
+	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(t.Context(), "browser", map[string]any{
 		"session_ref": "brref_manual",
 		"command":     "snapshot",
-	}, ctx, "")
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %+v", result.Error)
-	}
-	if seen.SessionID != "brref_manual" {
-		t.Fatalf("expected explicit session ref, got %q", seen.SessionID)
-	}
-	if result.ResultJSON["resolved_via"] != "explicit_new" {
-		t.Fatalf("unexpected resolved_via: %v", result.ResultJSON["resolved_via"])
+	}, testContext(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got %+v", result.Error)
 	}
 }
 
@@ -2346,7 +2347,12 @@ func TestBrowser_AutoFallsBackAfterDisconnectedThreadDefault(t *testing.T) {
 			return
 		}
 		statuses = append(statuses, http.StatusOK)
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: "ok", ExitCode: intPtr(0)})
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: browserSnapshotJSON(
+			"https://example.com",
+			"Example Domain",
+			"- heading \"Example Domain\" [ref=e1]",
+			map[string]any{"e1": map[string]any{"role": "heading", "text": "Example Domain"}},
+		), ExitCode: intPtr(0)})
 	}))
 	defer server.Close()
 
@@ -2405,7 +2411,15 @@ func TestBrowser_RetriesAfterSessionBusy(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"code": "shell.session_busy", "message": "shell session is busy"})
 				return
 			}
-			json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: "- document", ExitCode: intPtr(0)})
+			json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: browserSnapshotJSON(
+				"https://example.com",
+				"Example Domain",
+				"- heading \"Example Domain\" [ref=e1]\n- link \"More information\" [ref=e2]",
+				map[string]any{
+					"e1": map[string]any{"role": "heading", "text": "Example Domain"},
+					"e2": map[string]any{"role": "link", "text": "More information"},
+				},
+			), ExitCode: intPtr(0)})
 		case "/v1/write_stdin":
 			if err := json.NewDecoder(r.Body).Decode(&pollSeen); err != nil {
 				t.Fatalf("decode poll body: %v", err)
@@ -2428,7 +2442,11 @@ func TestBrowser_RetriesAfterSessionBusy(t *testing.T) {
 	if pollSeen.YieldTimeMs != 5000 {
 		t.Fatalf("expected poll yield_time_ms=5000, got %d", pollSeen.YieldTimeMs)
 	}
-	if got := result.ResultJSON["output"]; got != "- document" {
-		t.Fatalf("expected retried snapshot output, got %#v", got)
+	if got := result.ResultJSON["title"]; got != "Example Domain" {
+		t.Fatalf("expected compact snapshot title, got %#v", got)
+	}
+	clickables, ok := result.ResultJSON["clickables"].([]browserClickable)
+	if !ok || len(clickables) != 1 {
+		t.Fatalf("expected compact snapshot clickables, got %#v", result.ResultJSON["clickables"])
 	}
 }

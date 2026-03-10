@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -32,6 +33,7 @@ type RunContext struct {
 	ProjectID              *uuid.UUID
 	ProfileRef             string
 	WorkspaceRef           string
+	EnabledSkills          []skillstore.ResolvedSkill
 	TraceID                string
 	InputJSON              map[string]any
 	ReasoningIterations    int
@@ -339,6 +341,7 @@ func (l *Loop) executeToolCall(
 		UserID:              runCtx.UserID,
 		ProfileRef:          runCtx.ProfileRef,
 		WorkspaceRef:        runCtx.WorkspaceRef,
+		EnabledSkills:       append([]skillstore.ResolvedSkill(nil), runCtx.EnabledSkills...),
 		AgentID:             runCtx.AgentID,
 		TimeoutMs:           runCtx.ToolTimeoutMs,
 		Budget:              copyMap(runCtx.ToolBudget),
