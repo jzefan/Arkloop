@@ -31,4 +31,3 @@ func TestResolveActorAuthServiceNilReturns503(t *testing.T) {
 		t.Fatalf("unexpected trace_id: %q", payload.TraceID)
 	}
 }
-
