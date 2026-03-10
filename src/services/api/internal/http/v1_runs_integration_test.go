@@ -63,6 +63,10 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
@@ -90,6 +94,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		RegistrationService:  registrationService,
 		OrgMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
+		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
 		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,
@@ -627,6 +632,10 @@ func TestStreamRunEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
@@ -654,6 +663,7 @@ func TestStreamRunEvents(t *testing.T) {
 		RegistrationService: registrationService,
 		OrgMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
+		ProjectRepo:         projectRepo,
 		RunEventRepo:        runRepo,
 		AuditWriter:         auditWriter,
 		SSEConfig: SSEConfig{
@@ -831,6 +841,10 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
@@ -858,6 +872,7 @@ func TestListGlobalRuns(t *testing.T) {
 		RegistrationService:  registrationService,
 		OrgMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
+		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
 		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,

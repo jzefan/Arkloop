@@ -112,13 +112,27 @@ export type GitHubImportResponse = {
 export type Persona = {
   id: string
   org_id: string | null
+  scope: 'org' | 'platform'
   source?: 'builtin' | 'custom'
   persona_key: string
   version: string
   display_name: string
+  description?: string
   user_selectable: boolean
   selector_name?: string
   selector_order?: number
+  prompt_md: string
+  tool_allowlist: string[]
+  tool_denylist: string[]
+  budgets: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  preferred_credential?: string
+  model?: string
+  reasoning_mode: string
+  prompt_cache_control: string
+  executor_type: string
+  executor_config: Record<string, unknown>
 }
 
 export type SelectablePersona = {
@@ -251,7 +265,7 @@ export async function importSkillFromUpload(
 }
 
 export async function listSelectablePersonas(accessToken: string): Promise<SelectablePersona[]> {
-  const personas = await apiFetch<Persona[]>('/v1/personas', {
+  const personas = await apiFetch<Persona[]>('/v1/me/selectable-personas', {
     method: 'GET',
     accessToken,
   })
@@ -341,6 +355,7 @@ export async function logout(accessToken: string): Promise<LogoutResponse> {
 export type CreateThreadRequest = {
   title?: string
   is_private?: boolean
+  project_id?: string
 }
 
 export type ThreadResponse = {
@@ -348,6 +363,7 @@ export type ThreadResponse = {
   org_id: string
   created_by_user_id: string
   title: string | null
+  project_id: string
   created_at: string
   active_run_id: string | null
   is_private: boolean

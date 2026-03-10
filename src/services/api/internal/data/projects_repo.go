@@ -8,17 +8,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+const DefaultProjectName = "Default"
 
 type Project struct {
 	ID          uuid.UUID
 	OrgID       uuid.UUID
 	TeamID      *uuid.UUID
+	OwnerUserID *uuid.UUID
 	Name        string
 	Description *string
 	Visibility  string
+	IsDefault   bool
 	DeletedAt   *time.Time
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type ProjectRepository struct {
@@ -52,19 +58,116 @@ func (r *ProjectRepository) Create(
 	if visibility == "" {
 		visibility = "private"
 	}
+	return r.createWithOwner(ctx, orgID, teamID, nil, name, description, visibility, false)
+}
+
+func (r *ProjectRepository) CreateDefaultForOwner(
+	ctx context.Context,
+	orgID uuid.UUID,
+	ownerUserID uuid.UUID,
+) (Project, error) {
+	if ownerUserID == uuid.Nil {
+		return Project{}, fmt.Errorf("owner_user_id must not be empty")
+	}
+	return r.createWithOwner(ctx, orgID, nil, &ownerUserID, DefaultProjectName, nil, "private", true)
+}
+
+func (r *ProjectRepository) createWithOwner(
+	ctx context.Context,
+	orgID uuid.UUID,
+	teamID *uuid.UUID,
+	ownerUserID *uuid.UUID,
+	name string,
+	description *string,
+	visibility string,
+	isDefault bool,
+) (Project, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if orgID == uuid.Nil {
+		return Project{}, fmt.Errorf("org_id must not be empty")
+	}
+	if name == "" {
+		return Project{}, fmt.Errorf("name must not be empty")
+	}
+	if visibility == "" {
+		visibility = "private"
+	}
 
 	var p Project
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO projects (org_id, team_id, name, description, visibility)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, org_id, team_id, name, description, visibility, deleted_at, created_at`,
-		orgID, teamID, name, description, visibility,
-	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.Name, &p.Description, &p.Visibility, &p.DeletedAt, &p.CreatedAt)
+		`INSERT INTO projects (org_id, team_id, owner_user_id, name, description, visibility, is_default, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+		 RETURNING id, org_id, team_id, owner_user_id, name, description, visibility, is_default, deleted_at, created_at, updated_at`,
+		orgID, teamID, ownerUserID, name, description, visibility, isDefault,
+	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Project{}, err
 	}
 	return p, nil
+}
+
+func (r *ProjectRepository) GetDefaultByOwner(ctx context.Context, orgID uuid.UUID, ownerUserID uuid.UUID) (*Project, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("org_id must not be empty")
+	}
+	if ownerUserID == uuid.Nil {
+		return nil, fmt.Errorf("owner_user_id must not be empty")
+	}
+
+	var p Project
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id, org_id, team_id, owner_user_id, name, description, visibility, is_default, deleted_at, created_at, updated_at
+		 FROM projects
+		 WHERE org_id = $1
+		   AND owner_user_id = $2
+		   AND is_default = true
+		   AND deleted_at IS NULL
+		 LIMIT 1`,
+		orgID,
+		ownerUserID,
+	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *ProjectRepository) GetOrCreateDefaultByOwner(ctx context.Context, orgID uuid.UUID, ownerUserID uuid.UUID) (Project, error) {
+	existing, err := r.GetDefaultByOwner(ctx, orgID, ownerUserID)
+	if err != nil {
+		return Project{}, err
+	}
+	if existing != nil {
+		return *existing, nil
+	}
+
+	created, err := r.CreateDefaultForOwner(ctx, orgID, ownerUserID)
+	if err == nil {
+		return created, nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		existing, getErr := r.GetDefaultByOwner(ctx, orgID, ownerUserID)
+		if getErr != nil {
+			return Project{}, getErr
+		}
+		if existing != nil {
+			return *existing, nil
+		}
+	}
+
+	return Project{}, err
 }
 
 func (r *ProjectRepository) GetByID(ctx context.Context, projectID uuid.UUID) (*Project, error) {
@@ -75,11 +178,11 @@ func (r *ProjectRepository) GetByID(ctx context.Context, projectID uuid.UUID) (*
 	var p Project
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, team_id, name, description, visibility, deleted_at, created_at
+		`SELECT id, org_id, team_id, owner_user_id, name, description, visibility, is_default, deleted_at, created_at, updated_at
 		 FROM projects
 		 WHERE id = $1 AND deleted_at IS NULL`,
 		projectID,
-	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.Name, &p.Description, &p.Visibility, &p.DeletedAt, &p.CreatedAt)
+	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -99,7 +202,7 @@ func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]P
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, team_id, name, description, visibility, deleted_at, created_at
+		`SELECT id, org_id, team_id, owner_user_id, name, description, visibility, is_default, deleted_at, created_at, updated_at
 		 FROM projects
 		 WHERE org_id = $1 AND deleted_at IS NULL
 		 ORDER BY created_at ASC`,
@@ -114,7 +217,7 @@ func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]P
 	for rows.Next() {
 		var p Project
 		if err := rows.Scan(
-			&p.ID, &p.OrgID, &p.TeamID, &p.Name, &p.Description, &p.Visibility, &p.DeletedAt, &p.CreatedAt,
+			&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

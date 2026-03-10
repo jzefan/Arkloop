@@ -23,8 +23,9 @@ import (
 )
 
 type createThreadRequest struct {
-	Title     *string `json:"title"`
-	IsPrivate bool    `json:"is_private"`
+	Title     *string      `json:"title"`
+	IsPrivate bool         `json:"is_private"`
+	ProjectID optionalUUID `json:"project_id"`
 }
 
 type updateThreadRequest struct {
@@ -96,6 +97,8 @@ func createThread(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	projectRepo *data.ProjectRepository,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -111,6 +114,10 @@ func createThread(
 			return
 		}
 		if threadRepo == nil {
+			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+		if projectRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -133,9 +140,56 @@ func createThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
+		if body.ProjectID.Present && body.ProjectID.Value == nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
 
-		thread, err := threadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, body.Title, body.IsPrivate)
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		defer tx.Rollback(r.Context()) //nolint:errcheck
+
+		txProjectRepo, err := data.NewProjectRepository(tx)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+
+		var projectID uuid.UUID
+		if body.ProjectID.Present {
+			project, err := txProjectRepo.GetByID(r.Context(), *body.ProjectID.Value)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if project == nil || project.OrgID != actor.OrgID {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "project not found in org", traceID, nil)
+				return
+			}
+			projectID = project.ID
+		} else {
+			project, err := txProjectRepo.GetOrCreateDefaultByOwner(r.Context(), actor.OrgID, actor.UserID)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			projectID = project.ID
+		}
+
+		thread, err := txThreadRepo.Create(r.Context(), actor.OrgID, &actor.UserID, projectID, body.Title, body.IsPrivate)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
@@ -292,6 +346,10 @@ func patchThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
+		if body.ProjectID.Present && body.ProjectID.Value == nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
 
 		params := data.ThreadUpdateFields{
 			SetTitle:       body.Title.Present,
@@ -436,10 +494,12 @@ func threadsEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
+	projectRepo *data.ProjectRepository,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	create := createThread(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)
+	create := createThread(authService, membershipRepo, threadRepo, projectRepo, pool, apiKeysRepo, auditWriter)
 	list := listThreads(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
@@ -675,7 +735,7 @@ func threadEntry(
 	uploadAttachment := uploadThreadAttachment(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo, attachmentStore)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
-			threadsEntry(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter)(w, r)
+			threadsEntry(authService, membershipRepo, threadRepo, projectRepo, pool, apiKeysRepo, auditWriter)(w, r)
 			return
 		}
 

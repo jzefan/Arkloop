@@ -18,9 +18,11 @@ type projectResponse struct {
 	ID          string  `json:"id"`
 	OrgID       string  `json:"org_id"`
 	TeamID      *string `json:"team_id,omitempty"`
+	OwnerUserID *string `json:"owner_user_id,omitempty"`
 	Name        string  `json:"name"`
 	Description *string `json:"description,omitempty"`
 	Visibility  string  `json:"visibility"`
+	IsDefault   bool    `json:"is_default"`
 	CreatedAt   string  `json:"created_at"`
 }
 
@@ -246,11 +248,16 @@ func toProjectResponse(p data.Project) projectResponse {
 		Name:        p.Name,
 		Description: p.Description,
 		Visibility:  p.Visibility,
+		IsDefault:   p.IsDefault,
 		CreatedAt:   p.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if p.TeamID != nil {
 		s := p.TeamID.String()
 		resp.TeamID = &s
+	}
+	if p.OwnerUserID != nil {
+		s := p.OwnerUserID.String()
+		resp.OwnerUserID = &s
 	}
 	return resp
 }
