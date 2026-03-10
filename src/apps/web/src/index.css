@@ -71,6 +71,8 @@ button:not(:disabled) {
   --c-attachment-badge-border: rgba(255, 255, 255, 0.14);
   --c-attachment-shimmer-from: #3a3a37;
   --c-attachment-shimmer-mid: #454542;
+  --title-btn-dim: rgba(255, 255, 255, 0.04);
+  --title-btn-hover: rgba(255, 255, 255, 0.09);
 }
 
 @media (prefers-color-scheme: light) {
@@ -140,6 +142,8 @@ button:not(:disabled) {
     --c-attachment-badge-border: rgba(0, 0, 0, 0.10);
     --c-attachment-shimmer-from: #E5E5E3;
     --c-attachment-shimmer-mid: #D8D8D6;
+    --title-btn-dim: rgba(0, 0, 0, 0.06);
+    --title-btn-hover: rgba(0, 0, 0, 0.10);
   }
 }
 
@@ -209,6 +213,8 @@ button:not(:disabled) {
   --c-attachment-badge-border: rgba(0, 0, 0, 0.10);
   --c-attachment-shimmer-from: #E5E5E3;
   --c-attachment-shimmer-mid: #D8D8D6;
+  --title-btn-dim: rgba(0, 0, 0, 0.06);
+  --title-btn-hover: rgba(0, 0, 0, 0.10);
 }
 
 .chat-input-box {
@@ -669,5 +675,18 @@ button:not(:disabled) {
 
   .code-exec-card-clickable:hover {
     background: var(--c-bg-card-hover) !important;
+  }
+
+  /* 对话标题双按钮：hover 联动背景 */
+  .title-group .title-part {
+    transition: color 60ms, background 60ms;
+    color: var(--c-text-secondary);
+  }
+  .title-group:hover .title-part {
+    background: var(--title-btn-dim);
+    color: var(--c-text-primary);
+  }
+  .title-group .title-part:hover {
+    background: var(--title-btn-hover);
   }
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, Glasses, Loader2, Share2, X } from 'lucide-react'
+import { ArrowDown, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2, X } from 'lucide-react'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
@@ -44,6 +45,11 @@ import {
   listThreadRuns,
   createThreadShare,
   uploadThreadAttachment,
+  starThread,
+  unstarThread,
+  updateThreadTitle,
+  deleteThread,
+  listStarredThreadIds,
   isApiError,
   type MessageResponse,
   type ThreadResponse,
@@ -106,6 +112,8 @@ type OutletContext = {
   privateThreadIds: Set<string>
   onSetPendingIncognito: (v: boolean) => void
   onRightPanelChange?: (open: boolean) => void
+  threads: ThreadResponse[]
+  onThreadDeleted: (threadId: string) => void
 }
 
 type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
@@ -180,7 +188,7 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
 }
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange, threads, onThreadDeleted } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -257,6 +265,112 @@ export function ChatPage() {
   const searchStepsRef = useRef<SearchStep[]>([])
   const [liveTimelineExiting, setLiveTimelineExiting] = useState(false)
   const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // --- 标题下拉菜单 ---
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false)
+  const [titleMenuPos, setTitleMenuPos] = useState({ x: 0, y: 0 })
+  const [starredIds, setStarredIds] = useState<string[]>([])
+  const [editingTitle, setEditingTitle] = useState<string | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const titleMenuRef = useRef<HTMLDivElement>(null)
+  const titleContainerRef = useRef<HTMLDivElement>(null)
+  const titleChevronRef = useRef<HTMLButtonElement>(null)
+  const editTitleInputRef = useRef<HTMLInputElement>(null)
+  const renameCancelledRef = useRef(false)
+
+  const currentThread = threadId ? threads.find(th => th.id === threadId) : undefined
+  const currentTitle = currentThread ? ((currentThread.title ?? '').trim() || t.untitled) : null
+
+  useEffect(() => {
+    listStarredThreadIds(accessToken)
+      .then((ids) => setStarredIds(ids))
+      .catch(() => {})
+  }, [accessToken])
+
+  useEffect(() => {
+    setTitleMenuOpen(false)
+    setEditingTitle(null)
+  }, [threadId])
+
+  useEffect(() => {
+    if (!titleMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (titleMenuRef.current && !titleMenuRef.current.contains(e.target as Node) &&
+          titleContainerRef.current && !titleContainerRef.current.contains(e.target as Node)) {
+        setTitleMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [titleMenuOpen])
+
+  useEffect(() => {
+    if (editingTitle !== null && editTitleInputRef.current) {
+      editTitleInputRef.current.focus()
+      editTitleInputRef.current.select()
+    }
+  }, [editingTitle])
+
+  const openTitleMenu = useCallback(() => {
+    if (titleChevronRef.current) {
+      const rect = titleChevronRef.current.getBoundingClientRect()
+      setTitleMenuPos({ x: rect.right, y: rect.bottom + 4 })
+    }
+    setTitleMenuOpen(prev => !prev)
+  }, [])
+
+  const toggleStar = useCallback(() => {
+    if (!threadId) return
+    const wasStarred = starredIds.includes(threadId)
+    setStarredIds(prev =>
+      wasStarred ? prev.filter(x => x !== threadId) : [threadId, ...prev]
+    )
+    setTitleMenuOpen(false)
+    const req = wasStarred ? unstarThread(accessToken, threadId) : starThread(accessToken, threadId)
+    req.catch(() => {
+      setStarredIds(prev =>
+        wasStarred ? [threadId, ...prev] : prev.filter(x => x !== threadId)
+      )
+    })
+  }, [accessToken, threadId, starredIds])
+
+  const startRename = useCallback(() => {
+    if (!currentThread) return
+    setTitleMenuOpen(false)
+    const title = (currentThread.title ?? '').trim()
+    setEditingTitle(title || '')
+  }, [currentThread])
+
+  const commitRename = useCallback(async (newTitle: string) => {
+    if (!threadId) return
+    setEditingTitle(null)
+    const trimmed = newTitle.trim()
+    if (!trimmed) return
+    try {
+      await updateThreadTitle(accessToken, threadId, trimmed)
+      onThreadTitleUpdated(threadId, trimmed)
+    } catch {}
+  }, [accessToken, threadId, onThreadTitleUpdated])
+
+  const confirmDelete = useCallback(() => {
+    setTitleMenuOpen(false)
+    setDeleteConfirmOpen(true)
+  }, [])
+
+  const handleDeleteThread = useCallback(async () => {
+    if (!threadId) return
+    setDeleteConfirmOpen(false)
+    try {
+      await deleteThread(accessToken, threadId)
+      onThreadDeleted(threadId)
+    } catch {}
+  }, [accessToken, threadId, onThreadDeleted])
+
+  const handleShareFromMenu = useCallback(() => {
+    setTitleMenuOpen(false)
+    setShareModalOpen(true)
+  }, [])
+
   const applySearchSteps = useCallback((updater: (prev: SearchStep[]) => SearchStep[]) => {
     setSearchSteps((prev) => {
       const next = updater(prev)
@@ -1435,41 +1549,119 @@ export function ChatPage() {
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
-      <div className="flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        {threadId && privateThreadIds.has(threadId) && (
-          <span className="text-xs font-medium text-[var(--c-text-muted)]">{t.incognitoLabel}</span>
-        )}
-        <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
-        {threadId && !privateThreadIds.has(threadId) && (
+      <div className="flex min-h-[51px] items-center justify-between gap-2 px-[15px] py-[15px]">
+        {/* 左侧：对话标题 */}
+        <div className="flex min-w-0 flex-1 items-center">
+          {threadId && currentTitle && (
+            editingTitle !== null ? (
+              <input
+                ref={editTitleInputRef}
+                value={editingTitle}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renameCancelledRef.current = false
+                    void commitRename(editingTitle)
+                  } else if (e.key === 'Escape') {
+                    renameCancelledRef.current = true
+                    setEditingTitle(null)
+                  }
+                }}
+                onBlur={() => {
+                  if (!renameCancelledRef.current) {
+                    void commitRename(editingTitle)
+                  }
+                  renameCancelledRef.current = false
+                }}
+                style={{
+                  fontSize: '14px',
+                  fontWeight: 450,
+                  color: 'var(--c-text-primary)',
+                  background: 'var(--c-bg-deep)',
+                  border: '0.5px solid var(--c-border-subtle)',
+                  borderRadius: '8px',
+                  padding: '5px 10px',
+                  outline: 'none',
+                  minWidth: 0,
+                  maxWidth: '320px',
+                  width: '100%',
+                }}
+              />
+            ) : (
+              <div ref={titleContainerRef} className="title-group flex items-stretch gap-[3px]">
+                {/* 标题文字 */}
+                <button
+                  onClick={openTitleMenu}
+                  className="title-part"
+                  style={{
+                    borderRadius: '7px 0 0 7px',
+                    padding: '5px 10px',
+                    fontSize: '14px',
+                    fontWeight: 450,
+                    maxWidth: '280px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {currentTitle}
+                </button>
+                {/* 展开箭头 */}
+                <button
+                  ref={titleChevronRef}
+                  onClick={openTitleMenu}
+                  className="title-part"
+                  style={{
+                    borderRadius: '0 7px 7px 0',
+                    padding: '5px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <ChevronDown size={14} style={{ flexShrink: 0 }} />
+                </button>
+              </div>
+            )
+          )}
+        </div>
+
+        {/* 右侧：操作按钮 */}
+        <div className="flex items-center gap-2">
+          {threadId && privateThreadIds.has(threadId) && (
+            <span className="text-xs font-medium text-[var(--c-text-muted)]">{t.incognitoLabel}</span>
+          )}
+          <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+          {threadId && !privateThreadIds.has(threadId) && (
+            <button
+              onClick={() => setShareModalOpen(true)}
+              title={t.shareTitle}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Share2 size={18} />
+            </button>
+          )}
           <button
-            onClick={() => setShareModalOpen(true)}
-            title={t.shareTitle}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            onClick={
+              threadId && privateThreadIds.has(threadId)
+                ? undefined
+                : pendingIncognito
+                  ? () => setPendingIncognito(false)
+                  : messages.length > 0
+                    ? () => setPendingIncognito(true)
+                    : onTogglePrivateMode
+            }
+            title={threadId && privateThreadIds.has(threadId) ? t.thisThreadIsIncognito : t.toggleIncognito}
+            className={[
+              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+              threadId && privateThreadIds.has(threadId) || pendingIncognito
+                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+              threadId && privateThreadIds.has(threadId) ? 'cursor-default' : 'cursor-pointer',
+            ].join(' ')}
           >
-            <Share2 size={18} />
+            <Glasses size={18} />
           </button>
-        )}
-        <button
-          onClick={
-            threadId && privateThreadIds.has(threadId)
-              ? undefined
-              : pendingIncognito
-                ? () => setPendingIncognito(false)
-                : messages.length > 0
-                  ? () => setPendingIncognito(true)
-                  : onTogglePrivateMode
-          }
-          title={threadId && privateThreadIds.has(threadId) ? t.thisThreadIsIncognito : t.toggleIncognito}
-          className={[
-            'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
-            threadId && privateThreadIds.has(threadId) || pendingIncognito
-              ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
-              : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
-            threadId && privateThreadIds.has(threadId) ? 'cursor-default' : 'cursor-pointer',
-          ].join(' ')}
-        >
-          <Glasses size={18} />
-        </button>
+        </div>
       </div>
 
       {/* 主体区域：消息 + 输入 + 可选的 sources 侧边面板 */}
@@ -1940,6 +2132,130 @@ export function ChatPage() {
           open={reportModalOpen}
           onClose={() => setReportModalOpen(false)}
         />
+      )}
+
+      {/* 标题下拉菜单 */}
+      {titleMenuOpen && threadId && createPortal(
+        <div
+          ref={titleMenuRef}
+          className="dropdown-menu"
+          style={{
+            position: 'fixed',
+            right: `calc(100vw - ${titleMenuPos.x}px)`,
+            top: titleMenuPos.y,
+            zIndex: 9999,
+            border: '0.5px solid var(--c-border-subtle)',
+            borderRadius: '10px',
+            padding: '4px',
+            background: 'var(--c-bg-menu)',
+            minWidth: '140px',
+            boxShadow: 'var(--c-dropdown-shadow)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <button
+              onClick={startRename}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Pencil size={13} style={{ flexShrink: 0 }} />
+              {t.renameThread}
+            </button>
+            <button
+              onClick={toggleStar}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Star
+                size={13}
+                style={{
+                  flexShrink: 0,
+                  fill: starredIds.includes(threadId) ? 'var(--c-text-secondary)' : 'none',
+                }}
+              />
+              {starredIds.includes(threadId) ? t.unstarThread : t.starThread}
+            </button>
+            {!privateThreadIds.has(threadId) && (
+              <button
+                onClick={handleShareFromMenu}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+              >
+                <Share2 size={13} style={{ flexShrink: 0 }} />
+                {t.shareThread}
+              </button>
+            )}
+            <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
+            <button
+              onClick={confirmDelete}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[#ef4444] hover:bg-[rgba(239,68,68,0.08)] hover:text-[#f87171]"
+            >
+              <Trash2 size={13} style={{ flexShrink: 0 }} />
+              {t.deleteThread}
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* 删除确认弹窗 */}
+      {deleteConfirmOpen && createPortal(
+        <div
+          className="overlay-fade-in fixed inset-0 flex items-center justify-center"
+          style={{ zIndex: 10000, background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmOpen(false) }}
+        >
+          <div
+            className="modal-enter"
+            style={{
+              background: 'var(--c-bg-page)',
+              border: '0.5px solid var(--c-border-subtle)',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '320px',
+              boxShadow: 'var(--c-dropdown-shadow)',
+            }}
+          >
+            <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px' }}>
+              {t.deleteThreadConfirmTitle}
+            </p>
+            <p style={{ fontSize: '13px', color: 'var(--c-text-secondary)', lineHeight: 1.55, marginBottom: '20px' }}>
+              {t.deleteThreadConfirmBody}
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="hover:bg-[var(--c-bg-deep)]"
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  color: 'var(--c-text-secondary)',
+                  background: 'transparent',
+                  border: '0.5px solid var(--c-border-subtle)',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.deleteThreadCancel}
+              </button>
+              <button
+                onClick={handleDeleteThread}
+                className="hover:opacity-85 active:opacity-70"
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  color: '#fff',
+                  background: '#ef4444',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.deleteThreadConfirm}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
