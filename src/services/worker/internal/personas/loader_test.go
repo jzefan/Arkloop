@@ -237,6 +237,94 @@ func TestLoadPersonaInvalidExecutorType(t *testing.T) {
 	}
 }
 
+func TestLoadPersonaDefaultSoulMissingKeepsCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "no_soul",
+		"id: no_soul\nversion: \"1\"\ntitle: No Soul\n",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("no_soul")
+	if !ok {
+		t.Fatal("expected no_soul persona loaded")
+	}
+	if def.SoulMD != "" {
+		t.Fatalf("expected empty SoulMD, got %q", def.SoulMD)
+	}
+}
+
+func TestLoadPersonaDefaultSoulLoadedWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFilesWithSoul(t, dir, "with_soul",
+		"id: with_soul\nversion: \"1\"\ntitle: With Soul\n",
+		"soul content",
+		"# prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("with_soul")
+	if !ok {
+		t.Fatal("expected with_soul persona loaded")
+	}
+	if def.SoulMD != "soul content" {
+		t.Fatalf("unexpected SoulMD: %q", def.SoulMD)
+	}
+}
+
+func TestLoadPersonaExplicitSoulFileMissingFails(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "missing_soul",
+		"id: missing_soul\nversion: \"1\"\ntitle: Missing Soul\nsoul_file: custom-soul.md\n",
+		"# prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil {
+		t.Fatal("expected explicit soul_file error")
+	}
+}
+
+func TestLoadPersonaExplicitSoulFileEmptyFails(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFilesWithNamedSoul(t, dir, "empty_soul",
+		"id: empty_soul\nversion: \"1\"\ntitle: Empty Soul\nsoul_file: custom-soul.md\n",
+		"custom-soul.md",
+		"   \n",
+		"# prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil {
+		t.Fatal("expected empty explicit soul_file error")
+	}
+	if err.Error() != "soul_file: file must not be empty" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPersonaExplicitSoulFileEscapeFails(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "escape_soul",
+		"id: escape_soul\nversion: \"1\"\ntitle: Escape Soul\nsoul_file: ../soul.md\n",
+		"# prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil {
+		t.Fatal("expected soul_file escape error")
+	}
+	if err.Error() != "soul_file: path escapes persona directory" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func writePersonaFiles(t *testing.T, root, name, yamlContent, promptContent string) {
 	t.Helper()
 	dir := filepath.Join(root, name)
@@ -248,6 +336,19 @@ func writePersonaFiles(t *testing.T, root, name, yamlContent, promptContent stri
 	}
 	if err := os.WriteFile(filepath.Join(dir, "prompt.md"), []byte(promptContent), 0644); err != nil {
 		t.Fatalf("WriteFile prompt.md failed: %v", err)
+	}
+}
+
+func writePersonaFilesWithSoul(t *testing.T, root, name, yamlContent, soulContent, promptContent string) {
+	t.Helper()
+	writePersonaFilesWithNamedSoul(t, root, name, yamlContent, "soul.md", soulContent, promptContent)
+}
+
+func writePersonaFilesWithNamedSoul(t *testing.T, root, name, yamlContent, soulFileName, soulContent, promptContent string) {
+	t.Helper()
+	writePersonaFiles(t, root, name, yamlContent, promptContent)
+	if err := os.WriteFile(filepath.Join(root, name, soulFileName), []byte(soulContent), 0644); err != nil {
+		t.Fatalf("WriteFile %s failed: %v", soulFileName, err)
 	}
 }
 
@@ -330,6 +431,22 @@ func TestMergeRegistryKeepsBaseTitleSummarizerWhenOverrideMissing(t *testing.T) 
 	}
 	if def.Title != "Normal Override" {
 		t.Fatalf("expected override title, got %q", def.Title)
+	}
+}
+
+func TestMergeRegistryKeepsBaseSoulWhenOverrideMissing(t *testing.T) {
+	base := NewRegistry()
+	if err := base.Register(Definition{ID: "normal", Version: "1", Title: "Normal", SoulMD: "base soul"}); err != nil {
+		t.Fatalf("register base failed: %v", err)
+	}
+
+	merged := MergeRegistry(base, []Definition{{ID: "normal", Version: "1", Title: "Normal Override"}})
+	def, ok := merged.Get("normal")
+	if !ok {
+		t.Fatal("expected merged registry has normal")
+	}
+	if def.SoulMD != "base soul" {
+		t.Fatalf("expected base soul preserved, got %q", def.SoulMD)
 	}
 }
 

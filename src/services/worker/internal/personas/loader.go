@@ -77,15 +77,11 @@ func LoadRegistry(root string) (*Registry, error) {
 	for _, name := range dirs {
 		dir := filepath.Join(root, name)
 		yamlPath := filepath.Join(dir, "persona.yaml")
-		promptPath := filepath.Join(dir, "prompt.md")
 		if _, err := os.Stat(yamlPath); err != nil {
 			continue
 		}
-		if _, err := os.Stat(promptPath); err != nil {
-			continue
-		}
 
-		def, err := loadSinglePersona(yamlPath, promptPath)
+		def, err := loadSinglePersona(yamlPath)
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +93,7 @@ func LoadRegistry(root string) (*Registry, error) {
 	return registry, nil
 }
 
-func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
+func loadSinglePersona(yamlPath string) (Definition, error) {
 	rawYAML, err := os.ReadFile(yamlPath)
 	if err != nil {
 		return Definition{}, err
@@ -145,6 +141,22 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		return Definition{}, err
 	}
 
+	personaDir := filepath.Dir(yamlPath)
+	promptPath := filepath.Join(personaDir, "prompt.md")
+	prompt, err := loadRequiredPersonaMarkdown(promptPath, "prompt.md")
+	if err != nil {
+		return Definition{}, err
+	}
+
+	soulFile, soulExplicit, err := parsePersonaSoulFile(obj)
+	if err != nil {
+		return Definition{}, err
+	}
+	soulMD, err := loadOptionalPersonaMarkdown(personaDir, soulFile, soulExplicit, "soul_file")
+	if err != nil {
+		return Definition{}, err
+	}
+
 	executorType := defaultExecutorType
 	if raw := asOptionalString(obj["executor_type"]); raw != nil {
 		if !idRegex.MatchString(*raw) {
@@ -152,7 +164,7 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		}
 		executorType = *raw
 	}
-	executorConfig, err := parseExecutorConfig(obj["executor_config"], executorType, filepath.Dir(yamlPath))
+	executorConfig, err := parseExecutorConfig(obj["executor_config"], executorType, personaDir)
 	if err != nil {
 		return Definition{}, err
 	}
@@ -163,15 +175,6 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 	titleSummarizer, err := asTitleSummarizer(obj["title_summarize"])
 	if err != nil {
 		return Definition{}, err
-	}
-
-	rawPrompt, err := os.ReadFile(promptPath)
-	if err != nil {
-		return Definition{}, err
-	}
-	prompt := strings.TrimSpace(string(rawPrompt))
-	if prompt == "" {
-		return Definition{}, fmt.Errorf("prompt.md must not be empty: %s", promptPath)
 	}
 
 	return Definition{
@@ -185,6 +188,7 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		ToolAllowlist:       allowlist,
 		ToolDenylist:        denylist,
 		Budgets:             budgets,
+		SoulMD:              soulMD,
 		PromptMD:            prompt,
 		ExecutorType:        executorType,
 		ExecutorConfig:      executorConfig,
@@ -194,6 +198,53 @@ func loadSinglePersona(yamlPath string, promptPath string) (Definition, error) {
 		PromptCacheControl:  promptCacheControl,
 		TitleSummarizer:     titleSummarizer,
 	}, nil
+}
+
+func loadRequiredPersonaMarkdown(path string, label string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	content := strings.TrimSpace(string(raw))
+	if content == "" {
+		return "", fmt.Errorf("%s must not be empty: %s", label, path)
+	}
+	return content, nil
+}
+
+func parsePersonaSoulFile(obj map[string]any) (string, bool, error) {
+	const defaultSoulFile = "soul.md"
+	rawSoulFile, ok := obj["soul_file"]
+	if !ok {
+		return defaultSoulFile, false, nil
+	}
+	soulFile, err := asNonEmptyString(rawSoulFile, "soul_file")
+	if err != nil {
+		return "", true, err
+	}
+	return soulFile, true, nil
+}
+
+func loadOptionalPersonaMarkdown(personaDir string, fileName string, required bool, label string) (string, error) {
+	path, err := resolvePersonaLocalPath(personaDir, fileName)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", label, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !required && os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("%s: %w", label, err)
+	}
+	content := strings.TrimSpace(string(raw))
+	if content == "" {
+		if required {
+			return "", fmt.Errorf("%s: file must not be empty", label)
+		}
+		return "", nil
+	}
+	return content, nil
 }
 
 func asOptionalBool(value any) bool {
@@ -515,6 +566,9 @@ func mergeDefinition(base Definition, override Definition) Definition {
 	merged := override
 	if merged.TitleSummarizer == nil {
 		merged.TitleSummarizer = base.TitleSummarizer
+	}
+	if strings.TrimSpace(merged.SoulMD) == "" {
+		merged.SoulMD = base.SoulMD
 	}
 	return merged
 }

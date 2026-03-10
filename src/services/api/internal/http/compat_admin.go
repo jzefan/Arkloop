@@ -28,6 +28,7 @@ type executionGovernancePersona struct {
 }
 
 type executionGovernancePersonaEffective struct {
+	SystemPrompt           string                       `json:"system_prompt,omitempty"`
 	ReasoningIterations    int                          `json:"reasoning_iterations"`
 	ToolContinuationBudget int                          `json:"tool_continuation_budget"`
 	MaxOutputTokens        *int                         `json:"max_output_tokens,omitempty"`

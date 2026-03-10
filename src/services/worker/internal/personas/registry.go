@@ -35,6 +35,7 @@ type Definition struct {
 	ToolAllowlist       []string
 	ToolDenylist        []string
 	Budgets             Budgets
+	SoulMD              string
 	PromptMD            string
 	ExecutorType        string         // 执行策略类型，默认 "agent.simple"
 	ExecutorConfig      map[string]any // Executor 配置，默认 {}

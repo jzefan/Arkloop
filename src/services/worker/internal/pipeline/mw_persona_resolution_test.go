@@ -16,6 +16,7 @@ func TestPersonaResolutionPreferredCredentialSet(t *testing.T) {
 		ID:                  "test-persona",
 		Version:             "1",
 		Title:               "Test Persona",
+		SoulMD:              "persona soul",
 		PromptMD:            "# test",
 		ExecutorType:        "agent.simple",
 		ExecutorConfig:      map[string]any{},
@@ -46,6 +47,7 @@ func TestPersonaResolutionNoPreferredCredentialEmpty(t *testing.T) {
 		ID:             "test-persona",
 		Version:        "1",
 		Title:          "Test Persona",
+		SoulMD:         "persona soul",
 		PromptMD:       "# test",
 		ExecutorType:   "agent.simple",
 		ExecutorConfig: map[string]any{},
@@ -77,6 +79,7 @@ func TestPersonaResolutionUserRouteIDNotAffectedByPersonaCredential(t *testing.T
 		ID:                  "test-persona",
 		Version:             "1",
 		Title:               "Test Persona",
+		SoulMD:              "persona soul",
 		PromptMD:            "# test",
 		ExecutorType:        "agent.simple",
 		ExecutorConfig:      map[string]any{},
@@ -113,6 +116,7 @@ func TestPersonaResolutionLoadsModelReasoningAndPromptCache(t *testing.T) {
 		ID:                 "test-persona",
 		Version:            "1",
 		Title:              "Test Persona",
+		SoulMD:             "persona soul",
 		PromptMD:           "system prompt",
 		ExecutorType:       "agent.simple",
 		ExecutorConfig:     map[string]any{},
@@ -149,7 +153,7 @@ func TestPersonaResolutionLoadsModelReasoningAndPromptCache(t *testing.T) {
 	if gotConfig.PromptCacheControl != "system_prompt" {
 		t.Fatalf("unexpected prompt_cache_control: %q", gotConfig.PromptCacheControl)
 	}
-	if gotSystemPrompt != "system prompt" {
+	if gotSystemPrompt != "persona soul\n\nsystem prompt" {
 		t.Fatalf("unexpected system prompt: %q", gotSystemPrompt)
 	}
 }
@@ -159,6 +163,7 @@ func TestPersonaResolutionAppliesBudgets(t *testing.T) {
 		ID:             "p1",
 		Version:        "1",
 		Title:          "Test",
+		SoulMD:         "persona soul",
 		PromptMD:       "test",
 		ExecutorType:   "agent.simple",
 		ExecutorConfig: map[string]any{},

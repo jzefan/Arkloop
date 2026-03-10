@@ -37,6 +37,7 @@ type AgentConfigProfile struct {
 }
 
 type PersonaProfile struct {
+	SoulMD                  string
 	PromptMD                string
 	PreferredCredentialName *string
 	ResolvedAgentConfigName *string
@@ -97,17 +98,11 @@ func ResolveEffectiveProfile(
 	}
 
 	if persona == nil {
-		profile.SystemPrompt = agentConfigPromptPrefix
+		profile.SystemPrompt = strings.TrimSpace(agentConfigPromptPrefix)
 		return profile
 	}
 
-	if agentConfigPromptPrefix != "" && persona.PromptMD != "" {
-		profile.SystemPrompt = agentConfigPromptPrefix + "\n\n" + persona.PromptMD
-	} else if persona.PromptMD != "" {
-		profile.SystemPrompt = persona.PromptMD
-	} else {
-		profile.SystemPrompt = agentConfigPromptPrefix
-	}
+	profile.SystemPrompt = joinPromptSegments(agentConfigPromptPrefix, persona.SoulMD, persona.PromptMD)
 
 	if value := persona.Budgets.ReasoningIterations; value != nil && *value > 0 {
 		if normalized.AgentReasoningIterations == 0 || *value < normalized.AgentReasoningIterations {
@@ -145,6 +140,18 @@ func ResolveEffectiveProfile(
 	}
 
 	return profile
+}
+
+func joinPromptSegments(parts ...string) string {
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		segments = append(segments, trimmed)
+	}
+	return strings.Join(segments, "\n\n")
 }
 
 func ParseRequestedBudgetsJSON(raw []byte) (RequestedBudgets, error) {
