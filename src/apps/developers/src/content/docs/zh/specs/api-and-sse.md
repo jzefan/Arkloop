@@ -145,9 +145,12 @@ SSE 约定：
 
 说明：对外命名已从 `skills` 迁移为 `personas`（`/v1/skills` -> `/v1/personas`，`skill_key/skill_id` -> `persona_key/persona_id`）。执行配置直接收敛到 Persona，因此不再存在独立的 Agent Config / Prompt Template 层。
 
+- `GET /v1/me/selectable-personas` -- 当前用户可选的人格有效结果，按 `org > platform > builtin` 解析
 - `GET /v1/personas`
 - `POST /v1/personas`
 - `PATCH /v1/personas/{id}`
+
+说明：`/v1/personas` 为原始管理接口；`/v1/me/selectable-personas` 为运行时有效人格接口。
 
 ### 3.11 组织与团队
 

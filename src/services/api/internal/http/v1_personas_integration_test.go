@@ -325,7 +325,347 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	assertErrorEnvelope(t, ghostPatchResp, nethttp.StatusNotFound, "personas.not_found")
 }
 
+func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_personas_member_read")
+	ctx := context.Background()
+
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(pool)
+	if err != nil {
+		t.Fatalf("new personas repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+
+	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
+		PersonasRepo:        personasRepo,
+		RepoPersonas: []repopersonas.RepoPersona{
+			{
+				ID:             "normal",
+				Version:        "1",
+				Title:          "Normal",
+				UserSelectable: true,
+				SelectorName:   "Normal",
+				SelectorOrder:  intPtrPersonaLocal(1),
+				PromptMD:       "normal prompt",
+			},
+			{
+				ID:             "extended-search",
+				Version:        "1",
+				Title:          "Search",
+				UserSelectable: true,
+				SelectorName:   "Search",
+				SelectorOrder:  intPtrPersonaLocal(2),
+				PromptMD:       "search prompt",
+			},
+		},
+	})
+
+	reg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "member-persona@test.com",
+		"password": "personapass123",
+		"email":    "member-persona@test.com",
+	}, nil)
+	if reg.Code != nethttp.StatusCreated {
+		t.Fatalf("register: %d %s", reg.Code, reg.Body.String())
+	}
+	regBody := decodeJSONBody[registerResponse](t, reg.Body.Bytes())
+	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleOrgMember); err != nil {
+		t.Fatalf("set member role: %v", err)
+	}
+
+	headers := authHeader(regBody.AccessToken)
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=org", nil, headers)
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list personas: %d %s", listResp.Code, listResp.Body.String())
+	}
+	platformResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=platform", nil, headers)
+	assertErrorEnvelope(t, platformResp, nethttp.StatusForbidden, "auth.forbidden")
+
+	body := decodeJSONBody[[]personaResponse](t, listResp.Body.Bytes())
+	if len(body) != 2 {
+		t.Fatalf("unexpected persona count: %d", len(body))
+	}
+
+	byKey := make(map[string]personaResponse, len(body))
+	for _, persona := range body {
+		byKey[persona.PersonaKey] = persona
+	}
+	if byKey["normal"].SelectorName == nil || *byKey["normal"].SelectorName != "Normal" {
+		t.Fatalf("unexpected normal selector: %#v", byKey["normal"].SelectorName)
+	}
+	if byKey["extended-search"].SelectorName == nil || *byKey["extended-search"].SelectorName != "Search" {
+		t.Fatalf("unexpected search selector: %#v", byKey["extended-search"].SelectorName)
+	}
+}
+
+func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_selectable_personas")
+	ctx := context.Background()
+
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(pool)
+	if err != nil {
+		t.Fatalf("new personas repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+
+	handler := NewHandler(HandlerConfig{
+		Pool:                pool,
+		Logger:              logger,
+		AuthService:         authService,
+		RegistrationService: registrationService,
+		AuditWriter:         auditWriter,
+		OrgMembershipRepo:   membershipRepo,
+		PersonasRepo:        personasRepo,
+		RepoPersonas: []repopersonas.RepoPersona{
+			{
+				ID:             "normal",
+				Version:        "1",
+				Title:          "Normal",
+				UserSelectable: true,
+				SelectorName:   "Normal",
+				SelectorOrder:  intPtrPersonaLocal(1),
+				PromptMD:       "normal prompt",
+			},
+			{
+				ID:             "extended-search",
+				Version:        "1",
+				Title:          "Search",
+				UserSelectable: true,
+				SelectorName:   "Search",
+				SelectorOrder:  intPtrPersonaLocal(2),
+				PromptMD:       "search prompt",
+			},
+			{
+				ID:             "hidden-builtin",
+				Version:        "1",
+				Title:          "Hidden Builtin",
+				UserSelectable: false,
+				PromptMD:       "hidden prompt",
+			},
+		},
+	})
+
+	reg := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "effective-persona@test.com",
+		"password": "personapass123",
+		"email":    "effective-persona@test.com",
+	}, nil)
+	if reg.Code != nethttp.StatusCreated {
+		t.Fatalf("register: %d %s", reg.Code, reg.Body.String())
+	}
+	regBody := decodeJSONBody[registerResponse](t, reg.Body.Bytes())
+	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleOrgMember); err != nil {
+		t.Fatalf("set member role: %v", err)
+	}
+
+	meResp := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(regBody.AccessToken))
+	if meResp.Code != nethttp.StatusOK {
+		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
+	}
+	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
+	orgID := uuid.MustParse(me.OrgID)
+
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "extended-search", "1", "Platform Search", nil, "platform search prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^search"), "auto", "none", "agent.simple", nil); err != nil {
+		t.Fatalf("create platform search: %v", err)
+	}
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "hidden-builtin", "1", "Platform Hidden", nil, "platform hidden prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^hidden"), "auto", "none", "agent.simple", nil); err != nil {
+		t.Fatalf("create platform hidden: %v", err)
+	}
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "platform-custom", "1", "Platform Custom", nil, "platform custom prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^custom"), "auto", "none", "agent.simple", nil); err != nil {
+		t.Fatalf("create platform custom: %v", err)
+	}
+	if _, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "normal", "1", "Org Normal", nil, "org normal prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^normal"), "high", "system_prompt", "agent.simple", nil); err != nil {
+		t.Fatalf("create org normal: %v", err)
+	}
+	if _, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "org-custom", "1", "Org Custom", nil, "org custom prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^custom"), "high", "system_prompt", "agent.simple", nil); err != nil {
+		t.Fatalf("create org custom: %v", err)
+	}
+	inactive, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "extended-search", "1", "Org Search Inactive", nil, "org inactive search prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^search"), "high", "system_prompt", "agent.simple", nil)
+	if err != nil {
+		t.Fatalf("create org search inactive: %v", err)
+	}
+	if _, err := personasRepo.PatchInScope(ctx, orgID, inactive.ID, data.PersonaScopeOrg, data.PersonaPatch{IsActive: boolPtrPersonaLocal(false)}); err != nil {
+		t.Fatalf("deactivate org search: %v", err)
+	}
+
+	type selectablePersonaHTTPResponse struct {
+		personaResponse
+		Scope string `json:"scope"`
+	}
+
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/me/selectable-personas", nil, authHeader(regBody.AccessToken))
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list selectable personas: %d %s", listResp.Code, listResp.Body.String())
+	}
+
+	body := decodeJSONBody[[]selectablePersonaHTTPResponse](t, listResp.Body.Bytes())
+	if len(body) != 2 {
+		t.Fatalf("unexpected persona count: %d", len(body))
+	}
+
+	byKey := make(map[string]selectablePersonaHTTPResponse, len(body))
+	for _, persona := range body {
+		byKey[persona.PersonaKey] = persona
+	}
+	if _, exists := byKey["hidden-builtin"]; exists {
+		t.Fatal("expected hidden builtin excluded from selectable list")
+	}
+	if _, exists := byKey["platform-custom"]; exists {
+		t.Fatal("expected platform custom excluded from selectable list")
+	}
+	if _, exists := byKey["org-custom"]; exists {
+		t.Fatal("expected org custom excluded from selectable list")
+	}
+
+	normal, ok := byKey["normal"]
+	if !ok {
+		t.Fatal("expected normal persona in selectable list")
+	}
+	if normal.DisplayName != "Org Normal" {
+		t.Fatalf("unexpected normal display name: %q", normal.DisplayName)
+	}
+	if normal.Scope != data.PersonaScopeOrg {
+		t.Fatalf("unexpected normal scope: %q", normal.Scope)
+	}
+	if normal.Source != "custom" {
+		t.Fatalf("unexpected normal source: %q", normal.Source)
+	}
+	if !normal.UserSelectable {
+		t.Fatal("expected normal to remain selectable")
+	}
+	if normal.SelectorName == nil || *normal.SelectorName != "Normal" {
+		t.Fatalf("unexpected normal selector: %#v", normal.SelectorName)
+	}
+
+	search, ok := byKey["extended-search"]
+	if !ok {
+		t.Fatal("expected search persona in selectable list")
+	}
+	if search.DisplayName != "Platform Search" {
+		t.Fatalf("unexpected search display name: %q", search.DisplayName)
+	}
+	if search.Scope != data.PersonaScopePlatform {
+		t.Fatalf("unexpected search scope: %q", search.Scope)
+	}
+	if search.Source != "custom" {
+		t.Fatalf("unexpected search source: %q", search.Source)
+	}
+	if !search.UserSelectable {
+		t.Fatal("expected search to remain selectable")
+	}
+	if search.SelectorName == nil || *search.SelectorName != "Search" {
+		t.Fatalf("unexpected search selector: %#v", search.SelectorName)
+	}
+}
+
 func intPtrPersonaLocal(value int) *int {
+	return &value
+}
+
+func boolPtrPersonaLocal(value bool) *bool {
 	return &value
 }
 

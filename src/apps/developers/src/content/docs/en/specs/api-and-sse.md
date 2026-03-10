@@ -145,9 +145,12 @@ SSE Conventions:
 
 Note: External naming has migrated from `skills` to `personas` (`/v1/skills` -> `/v1/personas`, `skill_key/skill_id` -> `persona_key/persona_id`). Execution now reads model selectors directly from Persona, so there is no separate Agent Config or Prompt Template layer.
 
+- `GET /v1/me/selectable-personas` -- Effective selectable personas for the current user, resolved as `org > platform > builtin`
 - `GET /v1/personas`
 - `POST /v1/personas`
 - `PATCH /v1/personas/{id}`
+
+Note: `/v1/personas` is the raw management API; `/v1/me/selectable-personas` is the runtime effective persona API.
 
 ### 3.11 Organizations and Teams
 
