@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const watchInterval = 2 * time.Second
@@ -64,7 +67,7 @@ func (w *WatchedRegistry) collectMtimes() map[string]time.Time {
 		if !entry.IsDir() {
 			continue
 		}
-		for _, name := range []string{"persona.yaml", "prompt.md"} {
+		for _, name := range watchedPersonaFiles(w.root, entry.Name()) {
 			p := filepath.Join(w.root, entry.Name(), name)
 			info, err := os.Stat(p)
 			if err == nil {
@@ -73,6 +76,36 @@ func (w *WatchedRegistry) collectMtimes() map[string]time.Time {
 		}
 	}
 	return out
+}
+
+func watchedPersonaFiles(root string, personaDir string) []string {
+	files := []string{"persona.yaml", "prompt.md"}
+	yamlPath := filepath.Join(root, personaDir, "persona.yaml")
+	raw, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return append(files, "soul.md")
+	}
+	var obj map[string]any
+	if err := yaml.Unmarshal(raw, &obj); err != nil {
+		return append(files, "soul.md")
+	}
+	rawSoulFile, ok := obj["soul_file"]
+	if !ok {
+		return append(files, "soul.md")
+	}
+	soulFile, ok := rawSoulFile.(string)
+	if !ok {
+		return files
+	}
+	soulFile = strings.TrimSpace(soulFile)
+	if soulFile == "" || filepath.IsAbs(soulFile) {
+		return files
+	}
+	cleaned := filepath.Clean(soulFile)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return files
+	}
+	return append(files, cleaned)
 }
 
 func mtimesEqual(a, b map[string]time.Time) bool {

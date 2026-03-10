@@ -7,6 +7,7 @@ func TestResolveEffectiveProfileClampsBudgets(t *testing.T) {
 		PlatformLimits{AgentReasoningIterations: 10, ToolContinuationBudget: 32},
 		&AgentConfigProfile{Name: "org-default", MaxOutputTokens: intPtr(4096), Temperature: floatPtr(0.2), TopP: floatPtr(0.8), ReasoningMode: "auto"},
 		&PersonaProfile{
+			SoulMD:                  "persona soul",
 			PromptMD:                "persona prompt",
 			PreferredCredentialName: strPtr("cred-a"),
 			Budgets: RequestedBudgets{
@@ -20,6 +21,10 @@ func TestResolveEffectiveProfileClampsBudgets(t *testing.T) {
 			},
 		},
 	)
+
+	if profile.SystemPrompt != "persona soul\n\npersona prompt" {
+		t.Fatalf("unexpected system_prompt: %q", profile.SystemPrompt)
+	}
 
 	if profile.ReasoningIterations != 10 {
 		t.Fatalf("unexpected reasoning_iterations: %d", profile.ReasoningIterations)
@@ -41,6 +46,63 @@ func TestResolveEffectiveProfileClampsBudgets(t *testing.T) {
 	}
 	if writeLimit := profile.PerToolSoftLimits["write_stdin"]; writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 9 {
 		t.Fatalf("unexpected write_stdin limit: %#v", writeLimit)
+	}
+}
+
+func TestResolveEffectiveProfileJoinsPromptSegments(t *testing.T) {
+	tests := []struct {
+		name     string
+		agent    *AgentConfigProfile
+		persona  *PersonaProfile
+		expected string
+	}{
+		{
+			name:     "agent config only",
+			agent:    &AgentConfigProfile{SystemPrompt: strPtr("agent prompt")},
+			expected: "agent prompt",
+		},
+		{
+			name:     "soul only",
+			persona:  &PersonaProfile{SoulMD: "persona soul"},
+			expected: "persona soul",
+		},
+		{
+			name:     "prompt only",
+			persona:  &PersonaProfile{PromptMD: "persona prompt"},
+			expected: "persona prompt",
+		},
+		{
+			name:     "soul and prompt",
+			persona:  &PersonaProfile{SoulMD: "persona soul", PromptMD: "persona prompt"},
+			expected: "persona soul\n\npersona prompt",
+		},
+		{
+			name:     "full chain",
+			agent:    &AgentConfigProfile{SystemPrompt: strPtr("agent prompt")},
+			persona:  &PersonaProfile{SoulMD: "persona soul", PromptMD: "persona prompt"},
+			expected: "agent prompt\n\npersona soul\n\npersona prompt",
+		},
+		{
+			name:     "skip blank soul",
+			agent:    &AgentConfigProfile{SystemPrompt: strPtr("agent prompt")},
+			persona:  &PersonaProfile{SoulMD: "   ", PromptMD: "persona prompt"},
+			expected: "agent prompt\n\npersona prompt",
+		},
+		{
+			name:     "nil persona keeps old behavior",
+			agent:    &AgentConfigProfile{SystemPrompt: strPtr(" agent prompt ")},
+			persona:  nil,
+			expected: "agent prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := ResolveEffectiveProfile(PlatformLimits{}, tt.agent, tt.persona)
+			if profile.SystemPrompt != tt.expected {
+				t.Fatalf("unexpected system_prompt: %q", profile.SystemPrompt)
+			}
+		})
 	}
 }
 

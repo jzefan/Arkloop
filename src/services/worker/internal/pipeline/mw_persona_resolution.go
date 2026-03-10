@@ -135,6 +135,7 @@ func toExecutionPersonaProfile(def *personas.Definition) *sharedexec.PersonaProf
 		return nil
 	}
 	return &sharedexec.PersonaProfile{
+		SoulMD:                  def.SoulMD,
 		PromptMD:                def.PromptMD,
 		PreferredCredentialName: def.PreferredCredential,
 		Budgets: sharedexec.RequestedBudgets{

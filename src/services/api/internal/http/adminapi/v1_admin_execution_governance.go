@@ -50,6 +50,7 @@ type executionGovernancePersona struct {
 }
 
 type executionGovernancePersonaEffective struct {
+	SystemPrompt           string                       `json:"system_prompt,omitempty"`
 	ReasoningIterations    int                          `json:"reasoning_iterations"`
 	ToolContinuationBudget int                          `json:"tool_continuation_budget"`
 	MaxOutputTokens        *int                         `json:"max_output_tokens,omitempty"`
@@ -256,6 +257,7 @@ func buildBuiltinExecutionGovernancePersona(
 		platformLimits,
 		governanceAgentProfile(persona.ReasoningMode),
 		&sharedexec.PersonaProfile{
+			SoulMD:                  persona.SoulMD,
 			PreferredCredentialName: executionGovernanceOptionalTrimmedString(persona.PreferredCredential),
 			PromptMD:                persona.PromptMD,
 			Budgets:                 requested,
@@ -286,6 +288,7 @@ func governanceAgentProfile(reasoningMode string) *sharedexec.AgentConfigProfile
 
 func toExecutionGovernancePersonaEffective(profile sharedexec.EffectiveProfile) executionGovernancePersonaEffective {
 	return executionGovernancePersonaEffective{
+		SystemPrompt:           profile.SystemPrompt,
 		ReasoningIterations:    profile.ReasoningIterations,
 		ToolContinuationBudget: profile.ToolContinuationBudget,
 		MaxOutputTokens:        profile.MaxOutputTokens,

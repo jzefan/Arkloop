@@ -88,6 +88,8 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 				ID:                  "builtin-ops",
 				Version:             "1",
 				Title:               "Builtin Ops",
+				SoulMD:              "builtin soul",
+				PromptMD:            "builtin prompt",
 				PreferredCredential: "cred-builtin",
 				Model:               "builtin-cred^gpt-builtin",
 				ReasoningMode:       "low",
@@ -270,6 +272,9 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	}
 	if builtin.Effective.ReasoningMode != "low" {
 		t.Fatalf("unexpected builtin effective reasoning_mode: %q", builtin.Effective.ReasoningMode)
+	}
+	if builtin.Effective.SystemPrompt != "builtin soul\n\nbuiltin prompt" {
+		t.Fatalf("unexpected builtin effective system_prompt: %q", builtin.Effective.SystemPrompt)
 	}
 	limit := builtin.Effective.PerToolSoftLimits["write_stdin"]
 	if limit.MaxContinuations == nil || *limit.MaxContinuations != 7 {

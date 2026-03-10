@@ -49,6 +49,8 @@ type RepoPersona struct {
 	PromptCacheControl  string         `yaml:"prompt_cache_control"`
 	ExecutorType        string         `yaml:"executor_type"`
 	ExecutorConfig      map[string]any `yaml:"executor_config"`
+	SoulFile            string         `yaml:"soul_file"`
+	SoulMD              string         `yaml:"-"`
 	PromptMD            string         `yaml:"-"`
 }
 
@@ -80,6 +82,10 @@ func LoadFromDir(root string) ([]RepoPersona, error) {
 		if err := yaml.Unmarshal(yamlData, &p); err != nil {
 			continue
 		}
+		var rawObj map[string]any
+		if err := yaml.Unmarshal(yamlData, &rawObj); err != nil {
+			continue
+		}
 		if p.ID == "" {
 			continue
 		}
@@ -87,10 +93,56 @@ func LoadFromDir(root string) ([]RepoPersona, error) {
 			p.Version = "1"
 		}
 		if promptData, err := os.ReadFile(promptPath); err == nil {
-			p.PromptMD = string(promptData)
+			p.PromptMD = strings.TrimSpace(string(promptData))
+		}
+
+		soulFile, soulExplicit, err := parseSoulFile(rawObj)
+		if err != nil {
+			return nil, fmt.Errorf("persona %s: %w", p.ID, err)
+		}
+		soulPath, err := resolvePersonaLocalPath(dir, soulFile)
+		if err != nil {
+			if soulExplicit {
+				return nil, fmt.Errorf("persona %s soul_file: %w", p.ID, err)
+			}
+		} else if soulData, err := os.ReadFile(soulPath); err == nil {
+			p.SoulMD = strings.TrimSpace(string(soulData))
+		} else if soulExplicit || !os.IsNotExist(err) {
+			return nil, fmt.Errorf("persona %s soul_file: %w", p.ID, err)
+		}
+		if soulExplicit && p.SoulMD == "" {
+			return nil, fmt.Errorf("persona %s soul_file: file must not be empty", p.ID)
 		}
 
 		result = append(result, p)
 	}
 	return result, nil
+}
+
+func parseSoulFile(obj map[string]any) (string, bool, error) {
+	const defaultSoulFile = "soul.md"
+	rawSoulFile, ok := obj["soul_file"]
+	if !ok {
+		return defaultSoulFile, false, nil
+	}
+	soulFile, ok := rawSoulFile.(string)
+	if !ok {
+		return "", true, fmt.Errorf("soul_file must be a string")
+	}
+	soulFile = strings.TrimSpace(soulFile)
+	if soulFile == "" {
+		return "", true, fmt.Errorf("soul_file must not be empty")
+	}
+	return soulFile, true, nil
+}
+
+func resolvePersonaLocalPath(personaDir string, pathValue string) (string, error) {
+	if filepath.IsAbs(pathValue) {
+		return "", fmt.Errorf("must be a relative path")
+	}
+	cleaned := filepath.Clean(pathValue)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes persona directory")
+	}
+	return filepath.Join(personaDir, cleaned), nil
 }
