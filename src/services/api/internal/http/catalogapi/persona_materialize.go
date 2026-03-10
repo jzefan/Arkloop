@@ -50,6 +50,7 @@ func materializeRepoPersonaForCreate(
 	ctx context.Context,
 	personasRepo *data.PersonasRepository,
 	orgID uuid.UUID,
+	scope string,
 	repoPersona repopersonas.RepoPersona,
 	req createPersonaRequest,
 ) (data.Persona, error) {
@@ -113,9 +114,10 @@ func materializeRepoPersonaForCreate(
 		executorConfigJSON = req.ExecutorConfigJSON
 	}
 
-	return personasRepo.Create(
+	return personasRepo.CreateInScope(
 		ctx,
 		orgID,
+		scope,
 		repoPersona.ID,
 		repoPersona.Version,
 		displayName,
@@ -137,6 +139,7 @@ func materializeRepoPersonaForLiteAgent(
 	ctx context.Context,
 	personasRepo *data.PersonasRepository,
 	orgID uuid.UUID,
+	scope string,
 	repoPersona repopersonas.RepoPersona,
 	req createLiteAgentRequest,
 ) (data.Persona, error) {
@@ -172,9 +175,10 @@ func materializeRepoPersonaForLiteAgent(
 
 	budgetsJSON := mergeLiteAgentBudgets(repoPersonaBudgetsJSON(repoPersona.Budgets), req.Temperature, req.MaxOutputTokens)
 
-	return personasRepo.Create(
+	return personasRepo.CreateInScope(
 		ctx,
 		orgID,
+		scope,
 		repoPersona.ID,
 		repoPersona.Version,
 		displayName,

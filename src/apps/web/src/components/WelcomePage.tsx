@@ -191,6 +191,36 @@ export function WelcomePage() {
     }
   }, [accessToken, ensureDraftThread])
 
+  const handlePasteContent = useCallback((text: string) => {
+    const ts = Math.floor(Date.now() / 1000)
+    const filename = `pasted-${ts}.txt`
+    const blob = new Blob([text], { type: 'text/plain' })
+    const file = new File([blob], filename, { type: 'text/plain', lastModified: Date.now() })
+    const lineCount = text.split('\n').length
+    const att: Attachment = {
+      id: `${filename}-${file.size}-${Date.now()}`,
+      file,
+      name: filename,
+      size: file.size,
+      mime_type: 'text/plain',
+      status: 'uploading',
+      pasted: { text, lineCount },
+    }
+    setAttachments((prev) => [...prev, att])
+    ensureDraftThread()
+      .then((thread) => uploadThreadAttachment(accessToken, thread.id, file))
+      .then((uploaded) => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+        )
+      })
+      .catch(() => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+        )
+      })
+  }, [accessToken, ensureDraftThread])
+
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
       const target = prev.find((item) => item.id === id)
@@ -312,6 +342,7 @@ export function WelcomePage() {
             searchMode={isSearchMode}
             attachments={attachments}
             onAttachFiles={handleAttachFiles}
+            onPasteContent={handlePasteContent}
             onRemoveAttachment={handleRemoveAttachment}
             accessToken={accessToken}
             onAsrError={handleAsrError}

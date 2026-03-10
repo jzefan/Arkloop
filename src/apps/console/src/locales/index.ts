@@ -47,6 +47,7 @@ export interface LocaleStrings {
     asrCredentials: string
     email: string
     titleSummarizer: string
+    skills: string
     tools: string
     sandboxConfig: string
     memoryConfig: string
@@ -106,6 +107,9 @@ export interface LocaleStrings {
       empty: string
       // create modal
       modalTitle: string
+      fieldScope: string
+      scopePlatform: string
+      scopeOrg: string
       fieldName: string
       fieldProvider: string
       fieldApiKey: string
@@ -206,6 +210,7 @@ export interface LocaleStrings {
       title: string
       sectionProvider: string
       sectionConfig: string
+      sectionSkillsMarket: string
       sectionToolDescriptions: string
       fieldScope: string
       statusActive: string
@@ -249,6 +254,10 @@ export interface LocaleStrings {
       sectionTimeout: string
       fieldCostPerCommit: string
       fieldCostPerCommitHint: string
+      fieldSkillsMpApiKey: string
+      fieldSkillsMpBaseUrl: string
+      fieldSkillsMpBaseUrlHint: string
+      skillsMarketNotConfigured: string
       toastLoadFailed: string
       toastUpdated: string
       toastUpdateFailed: string
@@ -334,6 +343,9 @@ export interface LocaleStrings {
       fieldPreferredCredential: string
       fieldReasoningMode: string
       fieldPromptCacheControl: string
+      fieldScope: string
+      scopePlatform: string
+      scopeOrg: string
       selectorMeta: (name: string, order: number) => string
       valuePlatformDefault: string
       labelGlobal: string
@@ -452,6 +464,18 @@ export interface LocaleStrings {
       save: string
       toastSaved: string
       toastLoadFailed: string
+      toastSaveFailed: string
+    }
+    skills: {
+      title: string
+      sectionMarket: string
+      hint: string
+      fieldApiKey: string
+      fieldBaseUrl: string
+      fieldBaseUrlHint: string
+      save: string
+      toastLoadFailed: string
+      toastSaved: string
       toastSaveFailed: string
     }
     titleSummarizer: {

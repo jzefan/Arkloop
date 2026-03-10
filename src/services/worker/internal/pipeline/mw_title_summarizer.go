@@ -28,6 +28,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 		}
 
 		threadID := rc.Run.ThreadID
+		orgID := rc.Run.OrgID
 		firstRun, err := isFirstRunOfThread(ctx, pool, threadID)
 		if err != nil {
 			slog.WarnContext(ctx, "title_summarizer: check failed", "err", err.Error())
@@ -50,7 +51,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 
 		go func() {
 			bgCtx := context.Background()
-			gateway, model := resolveTitleGateway(bgCtx, pool, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
+			gateway, model := resolveTitleGateway(bgCtx, pool, orgID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
 			if gateway == nil {
 				return
 			}
@@ -64,6 +65,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 func resolveTitleGateway(
 	ctx context.Context,
 	pool *pgxpool.Pool,
+	orgID uuid.UUID,
 	fallbackGateway llm.Gateway,
 	fallbackModel string,
 	stubGateway llm.Gateway,
@@ -84,7 +86,7 @@ func resolveTitleGateway(
 	if configLoader == nil {
 		return fallbackGateway, fallbackModel
 	}
-	routingCfg, err := configLoader.Load(ctx)
+	routingCfg, err := configLoader.Load(ctx, orgID)
 	if err != nil {
 		slog.Warn("title_summarizer: load routing config failed", "err", err.Error())
 		return fallbackGateway, fallbackModel

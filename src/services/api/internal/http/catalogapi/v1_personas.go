@@ -1,19 +1,19 @@
 package catalogapi
 
 import (
-	httpkit "arkloop/services/api/internal/http/httpkit"
 	"encoding/json"
 	"errors"
 	"strings"
 
-	nethttp "net/http"
-
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 
 	"github.com/google/uuid"
+
+	nethttp "net/http"
 )
 
 type createPersonaRequest struct {
@@ -32,6 +32,7 @@ type createPersonaRequest struct {
 	PromptCacheControl     string          `json:"prompt_cache_control"`
 	ExecutorType           string          `json:"executor_type"`
 	ExecutorConfigJSON     json.RawMessage `json:"executor_config"`
+	Scope                  string          `json:"scope"`
 }
 
 type patchPersonaRequest struct {
@@ -53,6 +54,7 @@ type patchPersonaRequest struct {
 type personaResponse struct {
 	ID                  string          `json:"id"`
 	OrgID               *string         `json:"org_id"`
+	Scope               string          `json:"scope"`
 	PersonaKey          string          `json:"persona_key"`
 	Version             string          `json:"version"`
 	DisplayName         string          `json:"display_name"`
@@ -118,6 +120,8 @@ func personaEntry(
 		switch r.Method {
 		case nethttp.MethodPatch:
 			patchPersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo)
+		case nethttp.MethodDelete:
+			deletePersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -146,13 +150,15 @@ func createPersona(
 	if !ok {
 		return
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
-		return
-	}
 
 	var req createPersonaRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+		return
+	}
+
+	scope, ok := requirePersonaScope(actor, w, traceID, req.Scope, true)
+	if !ok {
 		return
 	}
 
@@ -163,8 +169,8 @@ func createPersona(
 	req.CopyFromRepoPersonaKey = strings.TrimSpace(req.CopyFromRepoPersonaKey)
 
 	if req.CopyFromRepoPersonaKey != "" {
-		repoPersona, ok := findRepoPersonaByKey(repoPersonas, req.CopyFromRepoPersonaKey)
-		if !ok {
+		repoPersona, exists := findRepoPersonaByKey(repoPersonas, req.CopyFromRepoPersonaKey)
+		if !exists {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "copy_from_repo_persona_key is invalid", traceID, nil)
 			return
 		}
@@ -177,7 +183,7 @@ func createPersona(
 			return
 		}
 
-		persona, err := materializeRepoPersonaForCreate(r.Context(), personasRepo, actor.OrgID, *repoPersona, req)
+		persona, err := materializeRepoPersonaForCreate(r.Context(), personasRepo, actor.OrgID, scope, *repoPersona, req)
 		if err != nil {
 			var conflict data.PersonaConflictError
 			if errors.As(err, &conflict) {
@@ -197,9 +203,10 @@ func createPersona(
 		return
 	}
 
-	persona, err := personasRepo.Create(
+	persona, err := personasRepo.CreateInScope(
 		r.Context(),
 		actor.OrgID,
+		scope,
 		req.PersonaKey,
 		req.Version,
 		req.DisplayName,
@@ -251,7 +258,12 @@ func listPersonas(
 		return
 	}
 
-	dbPersonas, err := personasRepo.ListByOrg(r.Context(), actor.OrgID)
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
+		return
+	}
+
+	dbPersonas, err := personasRepo.ListByScope(r.Context(), actor.OrgID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -267,7 +279,7 @@ func listPersonas(
 		if _, exists := dbPersonaKeys[persona.ID]; exists {
 			continue
 		}
-		resp = append(resp, toBuiltinPersonaResponse(persona))
+		resp = append(resp, toBuiltinPersonaResponse(persona, scope))
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
@@ -295,11 +307,13 @@ func patchPersona(
 	if !ok {
 		return
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
 		return
 	}
 
-	existing, err := personasRepo.GetByID(r.Context(), actor.OrgID, personaID)
+	existing, err := personasRepo.GetByIDInScope(r.Context(), actor.OrgID, personaID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -331,7 +345,7 @@ func patchPersona(
 		ExecutorConfigJSON:  req.ExecutorConfigJSON,
 	}
 
-	updated, err := personasRepo.Patch(r.Context(), actor.OrgID, personaID, patch)
+	updated, err := personasRepo.PatchInScope(r.Context(), actor.OrgID, personaID, scope, patch)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -342,6 +356,47 @@ func patchPersona(
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toPersonaResponse(*updated))
+}
+
+func deletePersona(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	personaID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.OrgMembershipRepository,
+	personasRepo *data.PersonasRepository,
+) {
+	if authService == nil {
+		httpkit.WriteAuthNotConfigured(w, traceID)
+		return
+	}
+	if personasRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := httpkit.AuthenticateActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
+		return
+	}
+
+	deleted, err := personasRepo.DeleteInScope(r.Context(), actor.OrgID, personaID, scope)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if !deleted {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "personas.not_found", "persona not found", traceID, nil)
+		return
+	}
+
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]any{"ok": true})
 }
 
 func toPersonaResponse(s data.Persona) personaResponse {
@@ -383,6 +438,7 @@ func toPersonaResponse(s data.Persona) personaResponse {
 	return personaResponse{
 		ID:                  s.ID.String(),
 		OrgID:               orgIDStr,
+		Scope:               personaScopeFromOrgID(s.OrgID),
 		PersonaKey:          s.PersonaKey,
 		Version:             s.Version,
 		DisplayName:         s.DisplayName,
@@ -404,7 +460,7 @@ func toPersonaResponse(s data.Persona) personaResponse {
 	}
 }
 
-func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
+func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaResponse {
 	allowlist := s.ToolAllowlist
 	if allowlist == nil {
 		allowlist = []string{}
@@ -446,6 +502,7 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 	return personaResponse{
 		ID:                  "builtin:" + s.ID + ":" + s.Version,
 		OrgID:               nil,
+		Scope:               scope,
 		PersonaKey:          s.ID,
 		Version:             s.Version,
 		DisplayName:         s.Title,
@@ -467,6 +524,40 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona) personaResponse {
 		ExecutorConfigJSON:  executorConfig,
 		Source:              "builtin",
 	}
+}
+
+func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID, rawScope string, fromBody bool) (string, bool) {
+	scope := strings.TrimSpace(rawScope)
+	if scope == "" {
+		scope = data.PersonaScopePlatform
+	}
+	normalized, err := data.NormalizePersonaScope(scope)
+	if err != nil {
+		message := "scope must be org or platform"
+		if fromBody {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
+		} else {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
+		}
+		return "", false
+	}
+	if normalized == data.PersonaScopePlatform {
+		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return "", false
+		}
+		return normalized, true
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+		return "", false
+	}
+	return normalized, true
+}
+
+func personaScopeFromOrgID(orgID *uuid.UUID) string {
+	if orgID == nil {
+		return data.PersonaScopePlatform
+	}
+	return data.PersonaScopeOrg
 }
 
 func optionalTrimmedStringPtr(value *string) *string {

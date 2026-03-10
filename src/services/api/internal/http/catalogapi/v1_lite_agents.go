@@ -1,23 +1,24 @@
 package catalogapi
 
 import (
-	httpkit "arkloop/services/api/internal/http/httpkit"
 	"encoding/json"
 	"errors"
 	"strings"
 
-	nethttp "net/http"
-
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/personas"
 
 	"github.com/google/uuid"
+
+	nethttp "net/http"
 )
 
 type liteAgentResponse struct {
 	ID              string          `json:"id"`
+	Scope           string          `json:"scope"`
 	PersonaKey      string          `json:"persona_key"`
 	DisplayName     string          `json:"display_name"`
 	Description     *string         `json:"description,omitempty"`
@@ -47,6 +48,7 @@ type createLiteAgentRequest struct {
 	ToolAllowlist          []string `json:"tool_allowlist"`
 	ToolDenylist           []string `json:"tool_denylist"`
 	ExecutorType           string   `json:"executor_type"`
+	Scope                  string   `json:"scope"`
 }
 
 type patchLiteAgentRequest struct {
@@ -126,7 +128,12 @@ func listLiteAgents(
 		return
 	}
 
-	dbPersonas, err := personasRepo.ListByOrg(r.Context(), actor.OrgID)
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
+		return
+	}
+
+	dbPersonas, err := personasRepo.ListByScope(r.Context(), actor.OrgID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -142,7 +149,7 @@ func listLiteAgents(
 		if dbPersonaKeys[rp.ID] {
 			continue
 		}
-		resp = append(resp, toLiteAgentFromRepo(rp))
+		resp = append(resp, toLiteAgentFromRepo(rp, scope))
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
@@ -165,26 +172,29 @@ func createLiteAgent(
 	if !ok {
 		return
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
-		return
-	}
 
 	var req createLiteAgentRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
+
+	scope, ok := requirePersonaScope(actor, w, traceID, req.Scope, true)
+	if !ok {
+		return
+	}
+
 	req.Name = strings.TrimSpace(req.Name)
 	req.PromptMD = strings.TrimSpace(req.PromptMD)
 	req.CopyFromRepoPersonaKey = strings.TrimSpace(req.CopyFromRepoPersonaKey)
 	if req.CopyFromRepoPersonaKey != "" {
-		repoPersona, ok := findRepoPersonaByKey(repoPersonas, req.CopyFromRepoPersonaKey)
-		if !ok {
+		repoPersona, exists := findRepoPersonaByKey(repoPersonas, req.CopyFromRepoPersonaKey)
+		if !exists {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "copy_from_repo_persona_key is invalid", traceID, nil)
 			return
 		}
 
-		persona, err := materializeRepoPersonaForLiteAgent(r.Context(), personasRepo, actor.OrgID, *repoPersona, req)
+		persona, err := materializeRepoPersonaForLiteAgent(r.Context(), personasRepo, actor.OrgID, scope, *repoPersona, req)
 		if err != nil {
 			var conflict data.PersonaConflictError
 			if errors.As(err, &conflict) {
@@ -202,9 +212,10 @@ func createLiteAgent(
 		return
 	}
 
-	persona, err := personasRepo.Create(
+	persona, err := personasRepo.CreateInScope(
 		r.Context(),
 		actor.OrgID,
+		scope,
 		slugify(req.Name),
 		"1.0",
 		req.Name,
@@ -244,11 +255,13 @@ func patchLiteAgent(
 	if !ok {
 		return
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
 		return
 	}
 
-	existing, err := personasRepo.GetByID(r.Context(), actor.OrgID, personaID)
+	existing, err := personasRepo.GetByIDInScope(r.Context(), actor.OrgID, personaID, scope)
 	if err != nil || existing == nil {
 		httpkit.WriteError(w, nethttp.StatusNotFound, "lite_agents.not_found", "agent not found", traceID, nil)
 		return
@@ -276,7 +289,7 @@ func patchLiteAgent(
 		patch.ToolDenylist = *req.ToolDenylist
 	}
 
-	updated, err := personasRepo.Patch(r.Context(), actor.OrgID, personaID, patch)
+	updated, err := personasRepo.PatchInScope(r.Context(), actor.OrgID, personaID, scope, patch)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -305,10 +318,12 @@ func deleteLiteAgent(
 	if !ok {
 		return
 	}
-	if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+
+	scope, ok := requirePersonaScope(actor, w, traceID, r.URL.Query().Get("scope"), false)
+	if !ok {
 		return
 	}
-	deleted, err := personasRepo.Delete(r.Context(), actor.OrgID, personaID)
+	deleted, err := personasRepo.DeleteInScope(r.Context(), actor.OrgID, personaID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -350,6 +365,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              p.ID.String(),
+		Scope:           personaScopeFromOrgID(p.OrgID),
 		PersonaKey:      p.PersonaKey,
 		DisplayName:     p.DisplayName,
 		Description:     p.Description,
@@ -369,7 +385,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	}
 }
 
-func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
+func toLiteAgentFromRepo(rp personas.RepoPersona, scope string) liteAgentResponse {
 	allowlist := rp.ToolAllowlist
 	if allowlist == nil {
 		allowlist = []string{}
@@ -406,6 +422,7 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              rp.ID,
+		Scope:           scope,
 		PersonaKey:      rp.ID,
 		DisplayName:     rp.Title,
 		Description:     descPtr,

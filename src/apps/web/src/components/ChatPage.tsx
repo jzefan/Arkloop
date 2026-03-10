@@ -874,14 +874,18 @@ export function ChatPage() {
         const isThinking = obj.channel === 'thinking'
         const activeSeg = activeSegmentIdRef.current
         if (activeSeg) {
-          // segment 内：主内容和 thinking 都属于该规划轮，追加到 segment buffer
-          setSegments((prev) =>
-            prev.map((s) =>
-              s.segmentId === activeSeg && s.mode !== 'hidden'
-                ? { ...s, content: s.content + delta }
-                : s,
-            ),
-          )
+          if (!isThinking && !SHOW_EXPLICIT_THINKING) {
+            // segment 未渲染时，主内容直接送入 draft 以保证流式可见
+            setAssistantDraft((prev) => prev + delta)
+          } else {
+            setSegments((prev) =>
+              prev.map((s) =>
+                s.segmentId === activeSeg && s.mode !== 'hidden'
+                  ? { ...s, content: s.content + delta }
+                  : s,
+              ),
+            )
+          }
         } else if (isThinking) {
           setThinkingDraft((prev) => prev + delta)
         } else {
@@ -1337,6 +1341,36 @@ export function ChatPage() {
           )
         })
     }
+  }, [accessToken, threadId])
+
+  const handlePasteContent = useCallback((text: string) => {
+    const ts = Math.floor(Date.now() / 1000)
+    const filename = `pasted-${ts}.txt`
+    const blob = new Blob([text], { type: 'text/plain' })
+    const file = new File([blob], filename, { type: 'text/plain', lastModified: Date.now() })
+    const lineCount = text.split('\n').length
+    const att: Attachment = {
+      id: `${filename}-${file.size}-${Date.now()}`,
+      file,
+      name: filename,
+      size: file.size,
+      mime_type: 'text/plain',
+      status: 'uploading',
+      pasted: { text, lineCount },
+    }
+    setAttachments((prev) => [...prev, att])
+    if (!threadId) return
+    uploadThreadAttachment(accessToken, threadId, file)
+      .then((uploaded) => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+        )
+      })
+      .catch(() => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+        )
+      })
   }, [accessToken, threadId])
 
   const handleRemoveAttachment = useCallback((id: string) => {
@@ -1965,6 +1999,8 @@ export function ChatPage() {
                         const isLast = idx === dedupedTopLevelCodeExecutions.length - 1
                         const showDot = dedupedTopLevelCodeExecutions.length > 0
                         const multiItems = dedupedTopLevelCodeExecutions.length >= 2
+                        const isShell = ce.language === 'shell'
+                        const dotTop = isShell ? 8 : 16
                         return (
                           <motion.div
                             key={ce.id}
@@ -1976,19 +2012,20 @@ export function ChatPage() {
                               paddingBottom: isLast ? 0 : '8px',
                             }}
                           >
-                            {/* Per-item line segments */}
+                            {/* bottom connector: dot bottom → container bottom */}
                             {multiItems && !isLast && (
-                              <div style={{ position: 'absolute', left: '-15px', top: '16px', bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                              <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
+                            {/* top connector: container top → dot top */}
                             {multiItems && !isFirst && (
-                              <div style={{ position: 'absolute', left: '-15px', top: 0, height: '12px', width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                              <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             {showDot && (
                               <div
                                 style={{
                                   position: 'absolute',
                                   left: '-19px',
-                                  top: '8px',
+                                  top: `${dotTop}px`,
                                   width: '8px',
                                   height: '8px',
                                   borderRadius: '50%',
@@ -2189,6 +2226,7 @@ export function ChatPage() {
           cancelSubmitting={cancelSubmitting}
           attachments={attachments}
           onAttachFiles={handleAttachFiles}
+          onPasteContent={handlePasteContent}
           onRemoveAttachment={handleRemoveAttachment}
           accessToken={accessToken}
           onAsrError={handleAsrError}

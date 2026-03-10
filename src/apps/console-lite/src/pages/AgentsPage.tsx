@@ -15,6 +15,7 @@ import {
   patchLiteAgent,
   deleteLiteAgent,
   listToolCatalog,
+  type AgentScope,
   type LiteAgent,
   type ToolCatalogGroup,
   type ToolCatalogItem,
@@ -199,6 +200,7 @@ export function AgentsPage() {
   const ta = t.agents
 
   const [agents, setAgents] = useState<LiteAgent[]>([])
+  const [scope, setScope] = useState<AgentScope>('platform')
   const [modelOptions, setModelOptions] = useState<ModelSelectorOption[]>([])
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [loading, setLoading] = useState(false)
@@ -220,8 +222,8 @@ export function AgentsPage() {
     setLoading(true)
     try {
       const [liteAgents, providers, catalogResp] = await Promise.all([
-        listLiteAgents(accessToken),
-        listLlmProviders(accessToken),
+        listLiteAgents(accessToken, scope),
+        listLlmProviders(accessToken, scope),
         listToolCatalog(accessToken),
       ])
 
@@ -235,7 +237,7 @@ export function AgentsPage() {
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, t.requestFailed])
+  }, [accessToken, addToast, scope, t.requestFailed])
 
   useEffect(() => {
     void load()
@@ -270,6 +272,7 @@ export function AgentsPage() {
     setCreating(true)
     try {
       const agent = await createLiteAgent({
+        scope,
         name: createName.trim(),
         prompt_md: createName.trim(),
         model: createModel.trim(),
@@ -289,7 +292,7 @@ export function AgentsPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, createModel, createName, load, selectAgent, t.requestFailed])
+  }, [accessToken, addToast, createModel, createName, load, scope, selectAgent, t.requestFailed])
 
   const handleSave = useCallback(async () => {
     if (!selected || !form || !form.name.trim()) return
@@ -298,6 +301,7 @@ export function AgentsPage() {
       const saved = selected.source === 'repo'
         ? await createLiteAgent({
           copy_from_repo_persona_key: selected.persona_key,
+          scope,
           name: form.name.trim(),
           prompt_md: form.systemPrompt.trim(),
           model: form.model.trim() || undefined,
@@ -309,6 +313,7 @@ export function AgentsPage() {
           executor_type: selected.executor_type,
         }, accessToken)
         : await patchLiteAgent(selected.id, {
+          scope,
           name: form.name.trim(),
           prompt_md: form.systemPrompt.trim() || undefined,
           model: form.model.trim() || undefined,
@@ -333,13 +338,13 @@ export function AgentsPage() {
     } finally {
       setSaving(false)
     }
-  }, [accessToken, addToast, form, load, selected, t.requestFailed])
+  }, [accessToken, addToast, form, load, scope, selected, t.requestFailed])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return
     setDeleting(true)
     try {
-      await deleteLiteAgent(selected.id, accessToken)
+      await deleteLiteAgent(selected.id, scope, accessToken)
       setDeleteOpen(false)
       goBack()
       void load()
@@ -348,7 +353,7 @@ export function AgentsPage() {
     } finally {
       setDeleting(false)
     }
-  }, [accessToken, addToast, goBack, load, selected, t.requestFailed])
+  }, [accessToken, addToast, goBack, load, scope, selected, t.requestFailed])
 
   const replaceTools = useCallback((tools: string[]) => {
     setForm((prev) => (prev ? { ...prev, toolSelectionMode: 'custom', tools: uniqToolNames(tools) } : prev))
@@ -738,17 +743,28 @@ export function AgentsPage() {
       <PageHeader
         title={ta.title}
         actions={(
-          <button
-            onClick={() => {
-              setCreateOpen(true)
-              setCreateName('')
-              setCreateModel('')
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
-          >
-            <Plus size={13} />
-            {ta.newAgent}
-          </button>
+          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+            <label className="shrink-0 text-xs text-[var(--c-text-muted)]">{ta.fieldScope}</label>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as AgentScope)}
+              className="w-[112px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1 text-xs text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]"
+            >
+              <option value="platform">{ta.scopePlatform}</option>
+              <option value="org">{ta.scopeOrg}</option>
+            </select>
+            <button
+              onClick={() => {
+                setCreateOpen(true)
+                setCreateName('')
+                setCreateModel('')
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+            >
+              <Plus size={13} />
+              {ta.newAgent}
+            </button>
+          </div>
         )}
       />
 

@@ -152,6 +152,22 @@ func RegisterTrackB(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},
+		{
+			Key:         "skills.market.skillsmp_api_key",
+			Type:        TypeString,
+			Default:     "",
+			Description: "SkillsMP 官方市场 API Key",
+			Sensitive:   true,
+			Scope:       ScopePlatform,
+		},
+		{
+			Key:         "skills.market.skillsmp_base_url",
+			Type:        TypeString,
+			Default:     "https://skillsmp.com",
+			Description: "SkillsMP 官方市场基础地址",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+		},
 
 		{
 			Key:         "quota.runs_per_month",

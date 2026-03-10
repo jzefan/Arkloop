@@ -245,7 +245,7 @@ export function ExecutionGovernancePage() {
                             <div className="mt-1 font-mono text-xs text-[var(--c-text-muted)]">{item.persona_key}</div>
                             {item.preferred_credential && (
                               <div className="mt-1 text-xs text-[var(--c-text-muted)]">
-                                {t.pages.personas.fieldPreferredCredential}: {item.preferred_credential}
+                                {t.pages.agents.fieldPreferredCredential}: {item.preferred_credential}
                               </div>
                             )}
                           </td>

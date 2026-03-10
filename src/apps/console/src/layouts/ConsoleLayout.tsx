@@ -11,7 +11,7 @@ import {
   Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail, AlignLeft,
   PanelLeftClose, PanelLeftOpen, ChevronDown,
   Settings, ScrollText,
-  Wrench, SlidersHorizontal,
+  Wrench, SlidersHorizontal, Puzzle,
 } from 'lucide-react'
 import { getMe, logout, isApiError, type MeResponse } from '../api'
 import { ConsoleSettingsModal } from '../components/SettingsModal'
@@ -71,6 +71,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
         { label: t.nav.agents,           path: '/personas',           icon: <Sparkles size={17} /> },
         { label: t.nav.asrCredentials,   path: '/asr-credentials',  icon: <Mic size={17} /> },
         { label: t.nav.titleSummarizer,  path: '/title-summarizer', icon: <AlignLeft size={17} /> },
+        { label: t.nav.skills,             path: '/skills',           icon: <Puzzle size={17} /> },
 
         { label: t.nav.executionGovernance, path: '/execution-governance', icon: <SlidersHorizontal size={17} /> },
       ],

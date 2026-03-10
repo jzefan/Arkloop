@@ -13,10 +13,11 @@ import (
 )
 
 type ProfileRegistry struct {
-	ProfileRef   string
-	OrgID        uuid.UUID
-	OwnerUserID  *uuid.UUID
-	MetadataJSON map[string]any
+	ProfileRef          string
+	OrgID               uuid.UUID
+	OwnerUserID         *uuid.UUID
+	DefaultWorkspaceRef *string
+	MetadataJSON        map[string]any
 }
 
 type WorkspaceRegistry struct {
@@ -57,11 +58,11 @@ func (r *ProfileRegistriesRepository) Get(ctx context.Context, profileRef string
 	var metadataRaw []byte
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT profile_ref, org_id, owner_user_id, metadata_json
+		`SELECT profile_ref, org_id, owner_user_id, default_workspace_ref, metadata_json
 		   FROM profile_registries
 		  WHERE profile_ref = $1`,
 		strings.TrimSpace(profileRef),
-	).Scan(&record.ProfileRef, &record.OrgID, &record.OwnerUserID, &metadataRaw)
+	).Scan(&record.ProfileRef, &record.OrgID, &record.OwnerUserID, &record.DefaultWorkspaceRef, &metadataRaw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -99,6 +100,31 @@ func (r *ProfileRegistriesRepository) UpdateInstalledSkillRefs(ctx context.Conte
 	return updateRegistrySkillRefs(ctx, r.db, "profile_registries", "profile_ref", strings.TrimSpace(profileRef), "installed_skill_refs", refs)
 }
 
+func (r *ProfileRegistriesRepository) Ensure(ctx context.Context, profileRef string, orgID uuid.UUID, ownerUserID uuid.UUID) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.db == nil {
+		return fmt.Errorf("db must not be nil")
+	}
+	profileRef = strings.TrimSpace(profileRef)
+	if profileRef == "" || orgID == uuid.Nil {
+		return fmt.Errorf("profile_ref and org_id must not be empty")
+	}
+	_, err := r.db.Exec(
+		ctx,
+		`INSERT INTO profile_registries (profile_ref, org_id, owner_user_id, metadata_json)
+		 VALUES ($1, $2, $3, '{}'::jsonb)
+		 ON CONFLICT (profile_ref)
+		 DO UPDATE SET owner_user_id = COALESCE(profile_registries.owner_user_id, EXCLUDED.owner_user_id),
+		               updated_at = now()`,
+		profileRef,
+		orgID,
+		ownerUserID,
+	)
+	return err
+}
+
 func (r *ProfileRegistriesRepository) SetDefaultWorkspaceRef(ctx context.Context, profileRef string, workspaceRef string) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -125,6 +151,31 @@ func (r *ProfileRegistriesRepository) SetDefaultWorkspaceRef(ctx context.Context
 
 func (r *WorkspaceRegistriesRepository) UpdateEnabledSkillRefs(ctx context.Context, workspaceRef string, refs []string) error {
 	return updateRegistrySkillRefs(ctx, r.db, "workspace_registries", "workspace_ref", strings.TrimSpace(workspaceRef), "enabled_skill_refs", refs)
+}
+
+func (r *WorkspaceRegistriesRepository) Ensure(ctx context.Context, workspaceRef string, orgID uuid.UUID, ownerUserID uuid.UUID) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.db == nil {
+		return fmt.Errorf("db must not be nil")
+	}
+	workspaceRef = strings.TrimSpace(workspaceRef)
+	if workspaceRef == "" || orgID == uuid.Nil {
+		return fmt.Errorf("workspace_ref and org_id must not be empty")
+	}
+	_, err := r.db.Exec(
+		ctx,
+		`INSERT INTO workspace_registries (workspace_ref, org_id, owner_user_id, metadata_json)
+		 VALUES ($1, $2, $3, '{}'::jsonb)
+		 ON CONFLICT (workspace_ref)
+		 DO UPDATE SET owner_user_id = COALESCE(workspace_registries.owner_user_id, EXCLUDED.owner_user_id),
+		               updated_at = now()`,
+		workspaceRef,
+		orgID,
+		ownerUserID,
+	)
+	return err
 }
 
 func updateRegistrySkillRefs(ctx context.Context, db Querier, table string, idColumn string, idValue string, field string, refs []string) error {

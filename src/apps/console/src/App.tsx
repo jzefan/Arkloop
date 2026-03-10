@@ -28,6 +28,7 @@ import { RegistrationPage } from './pages/registration/RegistrationPage'
 import { AsrCredentialsPage } from './pages/asr-credentials/AsrCredentialsPage'
 import { EmailPage } from './pages/email/EmailPage'
 import { TitleSummarizerPage } from './pages/title-summarizer/TitleSummarizerPage'
+import { SkillsPage } from './pages/skills/SkillsPage'
 import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 
 import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionGovernancePage'
@@ -119,6 +120,7 @@ function App() {
         <Route path="personas" element={<PersonasPage />} />
         <Route path="asr-credentials" element={<AsrCredentialsPage />} />
         <Route path="title-summarizer" element={<TitleSummarizerPage />} />
+        <Route path="skills" element={<SkillsPage />} />
 
         <Route path="execution-governance" element={<ExecutionGovernancePage />} />
         {/* Integration */}

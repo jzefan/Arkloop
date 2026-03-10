@@ -20,7 +20,7 @@ func (r *LlmRoutesRepository) WithTx(tx pgx.Tx) *LlmRoutesRepository {
 
 type LlmRoute struct {
 	ID                  uuid.UUID
-	OrgID               uuid.UUID
+	OrgID               *uuid.UUID
 	CredentialID        uuid.UUID
 	Model               string
 	Priority            int
@@ -47,6 +47,7 @@ func (e LlmRouteModelConflictError) Error() string {
 
 type CreateLlmRouteParams struct {
 	OrgID               uuid.UUID
+	Scope               string
 	CredentialID        uuid.UUID
 	Model               string
 	Priority            int
@@ -63,6 +64,7 @@ type CreateLlmRouteParams struct {
 
 type UpdateLlmRouteParams struct {
 	OrgID               uuid.UUID
+	Scope               string
 	RouteID             uuid.UUID
 	Model               string
 	Priority            int
@@ -88,16 +90,18 @@ func NewLlmRoutesRepository(db Querier) (*LlmRoutesRepository, error) {
 	return &LlmRoutesRepository{db: db}, nil
 }
 
-// Create 为指定凭证创建路由规则。
 func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteParams) (LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if params.OrgID == uuid.Nil {
-		return LlmRoute{}, fmt.Errorf("org_id must not be nil")
-	}
 	if params.CredentialID == uuid.Nil {
 		return LlmRoute{}, fmt.Errorf("credential_id must not be nil")
+	}
+	if params.Scope != LlmCredentialScopeOrg && params.Scope != LlmCredentialScopePlatform {
+		return LlmRoute{}, fmt.Errorf("scope must be org or platform")
+	}
+	if params.Scope == LlmCredentialScopeOrg && params.OrgID == uuid.Nil {
+		return LlmRoute{}, fmt.Errorf("org_id must not be nil for org scope")
 	}
 	params.Model = strings.TrimSpace(params.Model)
 	if params.Model == "" {
@@ -115,6 +119,11 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 		params.Multiplier = 1.0
 	}
 
+	orgIDParam := any(params.OrgID)
+	if params.Scope == LlmCredentialScopePlatform {
+		orgIDParam = nil
+	}
+
 	var route LlmRoute
 	var rawAdvancedJSON []byte
 	err = r.db.QueryRow(
@@ -122,7 +131,7 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
 		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		params.OrgID, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON),
+		orgIDParam, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON),
 		string(advancedJSONBytes), params.Multiplier, params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
 	).Scan(
 		&route.ID, &route.OrgID, &route.CredentialID, &route.Model,
@@ -140,110 +149,68 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	return route, nil
 }
 
-// ListByCredential 返回指定凭证的所有路由，按 priority 降序。
-func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, orgID, credentialID uuid.UUID) ([]LlmRoute, error) {
+func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, orgID, credentialID uuid.UUID, scope string) ([]LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	rows, err := r.db.Query(
-		ctx,
-		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+	query := `SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		 FROM llm_routes
-		 WHERE org_id = $1 AND credential_id = $2
-		 ORDER BY priority DESC, created_at ASC`,
-		orgID, credentialID,
-	)
+		 WHERE credential_id = $1`
+	args := []any{credentialID}
+	var err error
+	query, args, err = appendLlmRouteScopeFilter(query, args, orgID, scope)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	routes := []LlmRoute{}
-	for rows.Next() {
-		route, err := scanLlmRoute(rows)
-		if err != nil {
-			return nil, err
-		}
-		routes = append(routes, route)
-	}
-	return routes, rows.Err()
+	query += ` ORDER BY priority DESC, created_at ASC`
+	return r.list(ctx, query, args...)
 }
 
-// ListByOrg 返回 org 下所有路由，按 priority 降序。
-func (r *LlmRoutesRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]LlmRoute, error) {
+func (r *LlmRoutesRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	rows, err := r.db.Query(
-		ctx,
-		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
-		 FROM llm_routes r
-		 JOIN llm_credentials c ON c.id = r.credential_id
-		 WHERE r.org_id = $1 AND c.revoked_at IS NULL
-		 ORDER BY r.priority DESC, r.created_at ASC`,
-		orgID,
-	)
+	query := `SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		 FROM llm_routes`
+	args := []any{}
+	var err error
+	query, args, err = appendLlmRouteScopeWhere(query, args, orgID, scope)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	routes := []LlmRoute{}
-	for rows.Next() {
-		route, err := scanLlmRoute(rows)
-		if err != nil {
-			return nil, err
-		}
-		routes = append(routes, route)
-	}
-	return routes, rows.Err()
+	query += ` ORDER BY priority DESC, created_at ASC`
+	return r.list(ctx, query, args...)
 }
 
-// ListAllActive 返回所有 org 中关联未吊销凭证的路由（供 Worker 启动时加载）。
 func (r *LlmRoutesRepository) ListAllActive(ctx context.Context) ([]LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	rows, err := r.db.Query(
-		ctx,
+	return r.list(ctx,
 		`SELECT r.id, r.org_id, r.credential_id, r.model, r.priority, r.is_default, r.tags, r.when_json, r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output, r.cost_per_1k_cache_write, r.cost_per_1k_cache_read, r.created_at
 		 FROM llm_routes r
 		 JOIN llm_credentials c ON c.id = r.credential_id
 		 WHERE c.revoked_at IS NULL
 		 ORDER BY r.priority DESC, r.created_at ASC`,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	routes := []LlmRoute{}
-	for rows.Next() {
-		route, err := scanLlmRoute(rows)
-		if err != nil {
-			return nil, err
-		}
-		routes = append(routes, route)
-	}
-	return routes, rows.Err()
 }
 
-// GetByID 按 ID 查询，找不到返回 nil。
-func (r *LlmRoutesRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) GetByID(ctx context.Context, orgID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	route, err := scanLlmRoute(r.db.QueryRow(
-		ctx,
-		`SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+	query := `SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		 FROM llm_routes
-		 WHERE id = $1 AND org_id = $2`,
-		id, orgID,
-	))
+		 WHERE id = $1`
+	args := []any{routeID}
+	var err error
+	query, args, err = appendLlmRouteScopeFilter(query, args, orgID, scope)
+	if err != nil {
+		return nil, err
+	}
+	query += ` LIMIT 1`
+
+	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -253,10 +220,12 @@ func (r *LlmRoutesRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) 
 	return &route, nil
 }
 
-// Update 更新路由的可变字段。
 func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteParams) (LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if params.RouteID == uuid.Nil {
+		return LlmRoute{}, fmt.Errorf("route_id must not be nil")
 	}
 	params.Model = strings.TrimSpace(params.Model)
 	if params.Model == "" {
@@ -274,17 +243,20 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 		params.Multiplier = 1.0
 	}
 
-	route, err := scanLlmRoute(r.db.QueryRow(
-		ctx,
-		`UPDATE llm_routes
-		 SET model = $3, priority = $4, is_default = $5, tags = $6, when_json = $7::jsonb,
-		     advanced_json = $8::jsonb, multiplier = $9, cost_per_1k_input = $10, cost_per_1k_output = $11,
-		     cost_per_1k_cache_write = $12, cost_per_1k_cache_read = $13
-		 WHERE id = $1 AND org_id = $2
-		 RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		params.RouteID, params.OrgID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
-		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
-	))
+	query := `UPDATE llm_routes
+		 SET model = $2, priority = $3, is_default = $4, tags = $5, when_json = $6::jsonb,
+		     advanced_json = $7::jsonb, multiplier = $8, cost_per_1k_input = $9, cost_per_1k_output = $10,
+		     cost_per_1k_cache_write = $11, cost_per_1k_cache_read = $12
+		 WHERE id = $1`
+	args := []any{params.RouteID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
+		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead}
+	query, args, err = appendLlmRouteScopeFilter(query, args, params.OrgID, params.Scope)
+	if err != nil {
+		return LlmRoute{}, err
+	}
+	query += ` RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`
+
+	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return LlmRoute{}, fmt.Errorf("route not found")
@@ -294,28 +266,29 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 	return route, nil
 }
 
-// SetDefaultByCredential 将指定凭证的默认路由切换为 routeID。
-func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, orgID, credentialID, routeID uuid.UUID) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, orgID, credentialID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil || credentialID == uuid.Nil || routeID == uuid.Nil {
-		return nil, fmt.Errorf("org_id, credential_id and route_id must not be nil")
+	if credentialID == uuid.Nil || routeID == uuid.Nil {
+		return nil, fmt.Errorf("credential_id and route_id must not be nil")
+	}
+	where, args, err := llmRouteScopeClause(orgID, scope, 3)
+	if err != nil {
+		return nil, err
 	}
 
-	route, err := scanLlmRoute(r.db.QueryRow(
-		ctx,
-		`WITH updated AS (
+	query := fmt.Sprintf(`WITH updated AS (
 			UPDATE llm_routes
-			SET is_default = (id = $3)
-			WHERE org_id = $1 AND credential_id = $2
+			SET is_default = (id = $2)
+			WHERE credential_id = $1 AND %s
 			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		)
 		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		FROM updated
-		WHERE id = $3`,
-		orgID, credentialID, routeID,
-	))
+		WHERE id = $2`, where)
+	fullArgs := append([]any{credentialID, routeID}, args...)
+	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -325,34 +298,35 @@ func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, orgID,
 	return &route, nil
 }
 
-// PromoteHighestPriorityToDefault 将优先级最高的路由提升为默认，找不到返回 nil。
-func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Context, orgID, credentialID uuid.UUID) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Context, orgID, credentialID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil || credentialID == uuid.Nil {
-		return nil, fmt.Errorf("org_id and credential_id must not be nil")
+	if credentialID == uuid.Nil {
+		return nil, fmt.Errorf("credential_id must not be nil")
+	}
+	where, args, err := llmRouteScopeClause(orgID, scope, 2)
+	if err != nil {
+		return nil, err
 	}
 
-	route, err := scanLlmRoute(r.db.QueryRow(
-		ctx,
-		`WITH candidate AS (
+	query := fmt.Sprintf(`WITH candidate AS (
 			SELECT id
 			FROM llm_routes
-			WHERE org_id = $1 AND credential_id = $2
+			WHERE credential_id = $1 AND %s
 			ORDER BY priority DESC, created_at ASC, id ASC
 			LIMIT 1
 		), updated AS (
 			UPDATE llm_routes
 			SET is_default = (id = (SELECT id FROM candidate))
-			WHERE org_id = $1 AND credential_id = $2
+			WHERE credential_id = $1 AND %s
 			RETURNING id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		)
 		SELECT id, org_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
 		FROM updated
-		WHERE id = (SELECT id FROM candidate)`,
-		orgID, credentialID,
-	))
+		WHERE id = (SELECT id FROM candidate)`, where, where)
+	fullArgs := append([]any{credentialID}, args...)
+	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -362,31 +336,33 @@ func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Contex
 	return &route, nil
 }
 
-// DeleteByID 删除单个路由。找不到时静默成功。
-func (r *LlmRoutesRepository) DeleteByID(ctx context.Context, orgID, routeID uuid.UUID) error {
+func (r *LlmRoutesRepository) DeleteByID(ctx context.Context, orgID, routeID uuid.UUID, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	_, err := r.db.Exec(
-		ctx,
-		`DELETE FROM llm_routes WHERE id = $1 AND org_id = $2`,
-		routeID, orgID,
-	)
+	query := `DELETE FROM llm_routes WHERE id = $1`
+	args := []any{routeID}
+	var err error
+	query, args, err = appendLlmRouteScopeFilter(query, args, orgID, scope)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(ctx, query, args...)
 	return err
 }
 
-// DeleteByCredential 删除凭证的所有路由。
-func (r *LlmRoutesRepository) DeleteByCredential(ctx context.Context, orgID, credentialID uuid.UUID) error {
+func (r *LlmRoutesRepository) DeleteByCredential(ctx context.Context, orgID, credentialID uuid.UUID, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	_, err := r.db.Exec(
-		ctx,
-		`DELETE FROM llm_routes WHERE credential_id = $1 AND org_id = $2`,
-		credentialID, orgID,
-	)
+	query := `DELETE FROM llm_routes WHERE credential_id = $1`
+	args := []any{credentialID}
+	var err error
+	query, args, err = appendLlmRouteScopeFilter(query, args, orgID, scope)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(ctx, query, args...)
 	return err
 }
 
@@ -408,6 +384,59 @@ func scanLlmRoute(row llmRouteScanner) (LlmRoute, error) {
 		_ = json.Unmarshal(rawAdvancedJSON, &route.AdvancedJSON)
 	}
 	return route, err
+}
+
+func (r *LlmRoutesRepository) list(ctx context.Context, query string, args ...any) ([]LlmRoute, error) {
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	routes := []LlmRoute{}
+	for rows.Next() {
+		route, err := scanLlmRoute(rows)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
+	}
+	return routes, rows.Err()
+}
+
+func appendLlmRouteScopeWhere(base string, args []any, orgID uuid.UUID, scope string) (string, []any, error) {
+	if scope == LlmCredentialScopePlatform {
+		return base + ` WHERE org_id IS NULL`, args, nil
+	}
+	if scope != LlmCredentialScopeOrg {
+		return "", nil, fmt.Errorf("scope must be org or platform")
+	}
+	if orgID == uuid.Nil {
+		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+	}
+	args = append(args, orgID)
+	return base + fmt.Sprintf(` WHERE org_id = $%d`, len(args)), args, nil
+}
+
+func appendLlmRouteScopeFilter(base string, args []any, orgID uuid.UUID, scope string) (string, []any, error) {
+	where, extraArgs, err := llmRouteScopeClause(orgID, scope, len(args)+1)
+	if err != nil {
+		return "", nil, err
+	}
+	return base + ` AND ` + where, append(args, extraArgs...), nil
+}
+
+func llmRouteScopeClause(orgID uuid.UUID, scope string, index int) (string, []any, error) {
+	if scope == LlmCredentialScopePlatform {
+		return `org_id IS NULL`, nil, nil
+	}
+	if scope != LlmCredentialScopeOrg {
+		return "", nil, fmt.Errorf("scope must be org or platform")
+	}
+	if orgID == uuid.Nil {
+		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+	}
+	return fmt.Sprintf(`org_id = $%d`, index), []any{orgID}, nil
 }
 
 func normalizeRouteTags(tags []string) []string {

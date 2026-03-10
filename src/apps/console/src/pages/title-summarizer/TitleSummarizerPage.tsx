@@ -31,7 +31,7 @@ export function TitleSummarizerPage() {
     setLoading(true)
     try {
       const [providers, setting] = await Promise.all([
-        listLlmProviders(accessToken),
+        listLlmProviders(accessToken, 'platform'),
         getPlatformSetting(SETTING_KEY, accessToken).catch(() => null),
       ])
 

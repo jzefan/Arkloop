@@ -132,15 +132,15 @@ func NewService(
 	}
 }
 
-func (s *Service) ListProviders(ctx context.Context, orgID uuid.UUID) ([]Provider, error) {
+func (s *Service) ListProviders(ctx context.Context, orgID uuid.UUID, scope string) ([]Provider, error) {
 	if err := s.requireListReady(); err != nil {
 		return nil, err
 	}
-	creds, err := s.credentials.ListByOrg(ctx, orgID)
+	creds, err := s.credentials.ListByScope(ctx, orgID, scope)
 	if err != nil {
 		return nil, err
 	}
-	routes, err := s.routes.ListByOrg(ctx, orgID)
+	routes, err := s.routes.ListByScope(ctx, orgID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -158,25 +158,25 @@ func (s *Service) ListProviders(ctx context.Context, orgID uuid.UUID) ([]Provide
 	return providers, nil
 }
 
-func (s *Service) GetProvider(ctx context.Context, orgID, providerID uuid.UUID) (Provider, error) {
+func (s *Service) GetProvider(ctx context.Context, orgID, providerID uuid.UUID, scope string) (Provider, error) {
 	if err := s.requireListReady(); err != nil {
 		return Provider{}, err
 	}
-	cred, err := s.credentials.GetByID(ctx, orgID, providerID)
+	cred, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return Provider{}, err
 	}
 	if cred == nil {
 		return Provider{}, ProviderNotFoundError{ID: providerID}
 	}
-	models, err := s.routes.ListByCredential(ctx, orgID, providerID)
+	models, err := s.routes.ListByCredential(ctx, orgID, providerID, scope)
 	if err != nil {
 		return Provider{}, err
 	}
 	return Provider{Credential: *cred, Models: models}, nil
 }
 
-func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, input CreateProviderInput) (Provider, error) {
+func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, scope string, input CreateProviderInput) (Provider, error) {
 	if err := s.requireWriteReady(); err != nil {
 		return Provider{}, err
 	}
@@ -188,7 +188,7 @@ func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, input Cre
 
 	providerID := uuid.New()
 	secretName := providerSecretName(providerID)
-	secret, err := s.secrets.WithTx(tx).Create(ctx, orgID, secretName, strings.TrimSpace(input.APIKey))
+	secret, err := upsertProviderSecret(ctx, tx, s.secrets, orgID, scope, secretName, strings.TrimSpace(input.APIKey))
 	if err != nil {
 		return Provider{}, err
 	}
@@ -197,6 +197,7 @@ func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, input Cre
 		ctx,
 		providerID,
 		orgID,
+		scope,
 		strings.TrimSpace(input.Provider),
 		strings.TrimSpace(input.Name),
 		&secret.ID,
@@ -214,11 +215,11 @@ func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, input Cre
 	return Provider{Credential: cred, Models: []data.LlmRoute{}}, nil
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, orgID, providerID uuid.UUID, input UpdateProviderInput) (Provider, error) {
+func (s *Service) UpdateProvider(ctx context.Context, orgID, providerID uuid.UUID, scope string, input UpdateProviderInput) (Provider, error) {
 	if err := s.requireWriteReady(); err != nil {
 		return Provider{}, err
 	}
-	current, err := s.credentials.GetByID(ctx, orgID, providerID)
+	current, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -255,30 +256,30 @@ func (s *Service) UpdateProvider(ctx context.Context, orgID, providerID uuid.UUI
 
 	if input.APIKey != nil {
 		trimmedKey := strings.TrimSpace(*input.APIKey)
-		secret, err := s.secrets.WithTx(tx).Upsert(ctx, orgID, providerSecretName(providerID), trimmedKey)
+		secret, err := upsertProviderSecret(ctx, tx, s.secrets, orgID, scope, providerSecretName(providerID), trimmedKey)
 		if err != nil {
 			return Provider{}, err
 		}
 		keyPrefix := computeKeyPrefix(trimmedKey)
-		if err := s.credentials.WithTx(tx).UpdateSecret(ctx, orgID, providerID, &secret.ID, &keyPrefix); err != nil {
+		if err := s.credentials.WithTx(tx).UpdateSecret(ctx, orgID, providerID, scope, &secret.ID, &keyPrefix); err != nil {
 			return Provider{}, err
 		}
 	}
 
-	if _, err := s.credentials.WithTx(tx).Update(ctx, orgID, providerID, provider, name, baseURL, openAIAPIMode, advancedJSON); err != nil {
+	if _, err := s.credentials.WithTx(tx).Update(ctx, orgID, providerID, scope, provider, name, baseURL, openAIAPIMode, advancedJSON); err != nil {
 		return Provider{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Provider{}, err
 	}
-	return s.GetProvider(ctx, orgID, providerID)
+	return s.GetProvider(ctx, orgID, providerID, scope)
 }
 
-func (s *Service) DeleteProvider(ctx context.Context, orgID, providerID uuid.UUID) error {
+func (s *Service) DeleteProvider(ctx context.Context, orgID, providerID uuid.UUID, scope string) error {
 	if err := s.requireWriteReady(); err != nil {
 		return err
 	}
-	current, err := s.credentials.GetByID(ctx, orgID, providerID)
+	current, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return err
 	}
@@ -292,11 +293,11 @@ func (s *Service) DeleteProvider(ctx context.Context, orgID, providerID uuid.UUI
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.credentials.WithTx(tx).Delete(ctx, orgID, providerID); err != nil {
+	if err := s.credentials.WithTx(tx).Delete(ctx, orgID, providerID, scope); err != nil {
 		return err
 	}
 	if current.SecretID != nil {
-		if err := s.secrets.WithTx(tx).Delete(ctx, orgID, providerSecretName(providerID)); err != nil {
+		if err := deleteProviderSecret(ctx, tx, s.secrets, orgID, scope, providerSecretName(providerID)); err != nil {
 			var notFound data.SecretNotFoundError
 			if !errors.As(err, &notFound) {
 				return err
@@ -306,11 +307,11 @@ func (s *Service) DeleteProvider(ctx context.Context, orgID, providerID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, input CreateModelInput) (data.LlmRoute, error) {
+func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, scope string, input CreateModelInput) (data.LlmRoute, error) {
 	if err := s.requireWriteReady(); err != nil {
 		return data.LlmRoute{}, err
 	}
-	provider, err := s.credentials.GetByID(ctx, orgID, providerID)
+	provider, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -320,7 +321,7 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 	if err := ValidateAdvancedJSONForProvider(provider.Provider, input.AdvancedJSON); err != nil {
 		return data.LlmRoute{}, err
 	}
-	existing, err := s.routes.ListByCredential(ctx, orgID, providerID)
+	existing, err := s.routes.ListByCredential(ctx, orgID, providerID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -338,6 +339,7 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 	txRoutes := s.routes.WithTx(tx)
 	created, err := txRoutes.Create(ctx, data.CreateLlmRouteParams{
 		OrgID:               orgID,
+		Scope:               scope,
 		CredentialID:        providerID,
 		Model:               input.Model,
 		Priority:            input.Priority,
@@ -355,18 +357,18 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 		return data.LlmRoute{}, err
 	}
 	if desiredDefault && len(existing) > 0 {
-		if _, err := txRoutes.SetDefaultByCredential(ctx, orgID, providerID, created.ID); err != nil {
+		if _, err := txRoutes.SetDefaultByCredential(ctx, orgID, providerID, created.ID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	} else if !desiredDefault && !hasDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return data.LlmRoute{}, err
 	}
-	stored, err := s.routes.GetByID(ctx, orgID, created.ID)
+	stored, err := s.routes.GetByID(ctx, orgID, created.ID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -376,18 +378,18 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 	return *stored, nil
 }
 
-func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uuid.UUID, input UpdateModelInput) (data.LlmRoute, error) {
+func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uuid.UUID, scope string, input UpdateModelInput) (data.LlmRoute, error) {
 	if err := s.requireWriteReady(); err != nil {
 		return data.LlmRoute{}, err
 	}
-	provider, err := s.credentials.GetByID(ctx, orgID, providerID)
+	provider, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
 	if provider == nil {
 		return data.LlmRoute{}, ProviderNotFoundError{ID: providerID}
 	}
-	current, err := s.routes.GetByID(ctx, orgID, modelID)
+	current, err := s.routes.GetByID(ctx, orgID, modelID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -451,12 +453,13 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 
 	txRoutes := s.routes.WithTx(tx)
 	if input.IsDefaultSet && input.IsDefault != nil && *input.IsDefault && !current.IsDefault {
-		if _, err := txRoutes.SetDefaultByCredential(ctx, orgID, providerID, modelID); err != nil {
+		if _, err := txRoutes.SetDefaultByCredential(ctx, orgID, providerID, modelID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if _, err := txRoutes.Update(ctx, data.UpdateLlmRouteParams{
 		OrgID:               orgID,
+		Scope:               scope,
 		RouteID:             modelID,
 		Model:               model,
 		Priority:            priority,
@@ -473,14 +476,14 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 		return data.LlmRoute{}, err
 	}
 	if current.IsDefault && input.IsDefaultSet && input.IsDefault != nil && !*input.IsDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return data.LlmRoute{}, err
 	}
-	stored, err := s.routes.GetByID(ctx, orgID, modelID)
+	stored, err := s.routes.GetByID(ctx, orgID, modelID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -490,18 +493,18 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 	return *stored, nil
 }
 
-func (s *Service) DeleteModel(ctx context.Context, orgID, providerID, modelID uuid.UUID) error {
+func (s *Service) DeleteModel(ctx context.Context, orgID, providerID, modelID uuid.UUID, scope string) error {
 	if err := s.requireWriteReady(); err != nil {
 		return err
 	}
-	provider, err := s.credentials.GetByID(ctx, orgID, providerID)
+	provider, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return err
 	}
 	if provider == nil {
 		return ProviderNotFoundError{ID: providerID}
 	}
-	current, err := s.routes.GetByID(ctx, orgID, modelID)
+	current, err := s.routes.GetByID(ctx, orgID, modelID, scope)
 	if err != nil {
 		return err
 	}
@@ -516,22 +519,22 @@ func (s *Service) DeleteModel(ctx context.Context, orgID, providerID, modelID uu
 	defer tx.Rollback(ctx)
 
 	txRoutes := s.routes.WithTx(tx)
-	if err := txRoutes.DeleteByID(ctx, orgID, modelID); err != nil {
+	if err := txRoutes.DeleteByID(ctx, orgID, modelID, scope); err != nil {
 		return err
 	}
 	if current.IsDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, orgID, providerID, scope); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Service) ListAvailableModels(ctx context.Context, orgID, providerID uuid.UUID) ([]AvailableModel, error) {
+func (s *Service) ListAvailableModels(ctx context.Context, orgID, providerID uuid.UUID, scope string) ([]AvailableModel, error) {
 	if err := s.requireWriteReady(); err != nil {
 		return nil, err
 	}
-	provider, err := s.credentials.GetByID(ctx, orgID, providerID)
+	provider, err := s.credentials.GetByID(ctx, orgID, providerID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +551,7 @@ func (s *Service) ListAvailableModels(ctx context.Context, orgID, providerID uui
 	if apiKey == nil || strings.TrimSpace(*apiKey) == "" {
 		return nil, ProviderSecretMissingError{ProviderID: providerID}
 	}
-	configuredRoutes, err := s.routes.ListByCredential(ctx, orgID, providerID)
+	configuredRoutes, err := s.routes.ListByCredential(ctx, orgID, providerID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -578,6 +581,20 @@ func (s *Service) requireWriteReady() error {
 		return ErrNotConfigured
 	}
 	return nil
+}
+
+func upsertProviderSecret(ctx context.Context, tx pgx.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string, plaintext string) (data.Secret, error) {
+	if scope == data.LlmCredentialScopePlatform {
+		return repo.WithTx(tx).UpsertPlatform(ctx, name, plaintext)
+	}
+	return repo.WithTx(tx).Upsert(ctx, orgID, name, plaintext)
+}
+
+func deleteProviderSecret(ctx context.Context, tx pgx.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string) error {
+	if scope == data.LlmCredentialScopePlatform {
+		return repo.WithTx(tx).DeletePlatform(ctx, name)
+	}
+	return repo.WithTx(tx).Delete(ctx, orgID, name)
 }
 
 func providerSecretName(providerID uuid.UUID) string {

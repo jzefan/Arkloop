@@ -51,6 +51,64 @@ export type MeResponse = {
   email_verification_required: boolean
 }
 
+export type SkillReference = {
+  skill_key: string
+  version: string
+}
+
+export type SkillPackageResponse = {
+  skill_key: string
+  version: string
+  display_name: string
+  description?: string
+  instruction_path: string
+  manifest_key: string
+  bundle_key: string
+  platforms?: string[]
+  is_active: boolean
+}
+
+export type InstalledSkill = SkillPackageResponse & {
+  profile_ref?: string
+  workspace_ref?: string
+  source?: 'official' | 'custom' | 'github'
+  created_at?: string
+  updated_at?: string
+}
+
+export type DefaultSkillsResponse = {
+  items: InstalledSkill[]
+}
+
+export type MarketSkill = {
+  skill_key: string
+  version?: string
+  display_name: string
+  description?: string
+  source: 'official'
+  updated_at?: string
+  detail_url?: string
+  repository_url?: string
+  installed: boolean
+  enabled_by_default: boolean
+}
+
+export type MarketSkillsResponse = {
+  items: MarketSkill[]
+}
+
+export type SkillImportCandidate = {
+  path: string
+  skill_key?: string
+  version?: string
+  display_name?: string
+}
+
+export type GitHubImportResponse = {
+  skill: SkillPackageResponse
+  candidates?: SkillImportCandidate[]
+}
+
 export type Persona = {
   id: string
   org_id: string | null
@@ -93,6 +151,102 @@ export async function getMe(accessToken: string): Promise<MeResponse> {
   return await apiFetch<MeResponse>('/v1/me', {
     method: 'GET',
     accessToken,
+  })
+}
+
+export async function listInstalledSkills(accessToken: string): Promise<InstalledSkill[]> {
+  const response = await apiFetch<{ items: InstalledSkill[] }>('/v1/profiles/me/skills', {
+    method: 'GET',
+    accessToken,
+  })
+  return response.items ?? []
+}
+
+export async function listDefaultSkills(accessToken: string): Promise<InstalledSkill[]> {
+  const response = await apiFetch<DefaultSkillsResponse>('/v1/profiles/me/default-skills', {
+    method: 'GET',
+    accessToken,
+  })
+  return response.items ?? []
+}
+
+export async function replaceDefaultSkills(accessToken: string, skills: SkillReference[]): Promise<InstalledSkill[]> {
+  const response = await apiFetch<DefaultSkillsResponse>('/v1/profiles/me/default-skills', {
+    method: 'PUT',
+    accessToken,
+    body: JSON.stringify({ skills }),
+  })
+  return response.items ?? []
+}
+
+export async function searchMarketSkills(accessToken: string, query: string, officialOnly = false): Promise<MarketSkill[]> {
+  const sp = new URLSearchParams()
+  if (query.trim()) sp.set('q', query.trim())
+  if (officialOnly) sp.set('official_only', 'true')
+  const suffix = sp.toString() ? `?${sp.toString()}` : ''
+  const response = await apiFetch<MarketSkillsResponse>(`/v1/market/skills${suffix}`, {
+    method: 'GET',
+    accessToken,
+  })
+  return response.items ?? []
+}
+
+export async function importSkillsMPSkill(
+  accessToken: string,
+  payload: { skill_key: string; detail_url: string; repository_url?: string },
+): Promise<SkillPackageResponse> {
+  return await apiFetch<SkillPackageResponse>('/v1/skill-packages/import/skillsmp', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function importMarketSkill(
+  accessToken: string,
+  payload: { skill_key: string; detail_url: string; repository_url?: string },
+): Promise<SkillPackageResponse> {
+  return await importSkillsMPSkill(accessToken, payload)
+}
+
+export async function installSkill(accessToken: string, skill: SkillReference): Promise<void> {
+  await apiFetch<void>('/v1/profiles/me/skills/install', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(skill),
+  })
+}
+
+export async function deleteSkill(accessToken: string, skill: SkillReference): Promise<void> {
+  await apiFetch<void>(`/v1/profiles/me/skills/${encodeURIComponent(skill.skill_key)}/${encodeURIComponent(skill.version)}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+export async function importSkillFromGitHub(
+  accessToken: string,
+  payload: { repository_url: string; ref?: string; candidate_path?: string },
+): Promise<GitHubImportResponse> {
+  return await apiFetch<GitHubImportResponse>('/v1/skill-packages/import/github', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function importSkillFromUpload(
+  accessToken: string,
+  payload: { file: File; install_after_import?: boolean },
+): Promise<SkillPackageResponse> {
+  const body = new FormData()
+  body.append('file', payload.file)
+  if (payload.install_after_import) body.append('install_after_import', 'true')
+  return await apiFetch<SkillPackageResponse>('/v1/skill-packages/import/upload', {
+    method: 'POST',
+    accessToken,
+    body,
+    headers: {},
   })
 }
 

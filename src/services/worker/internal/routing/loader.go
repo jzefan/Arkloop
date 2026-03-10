@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,12 +17,12 @@ func NewConfigLoader(pool *pgxpool.Pool, fallback ProviderRoutingConfig) *Config
 	return &ConfigLoader{pool: pool, fallback: fallback}
 }
 
-func (l *ConfigLoader) Load(ctx context.Context) (ProviderRoutingConfig, error) {
+func (l *ConfigLoader) Load(ctx context.Context, orgID uuid.UUID) (ProviderRoutingConfig, error) {
 	if l == nil {
 		return ProviderRoutingConfig{}, nil
 	}
 	if l.pool != nil {
-		loaded, err := LoadRoutingConfigFromDB(ctx, l.pool)
+		loaded, err := LoadRoutingConfigFromDB(ctx, l.pool, orgID)
 		if err != nil {
 			slog.WarnContext(ctx, "routing: db load failed, using fallback", "err", err.Error())
 		} else if len(loaded.Routes) > 0 {

@@ -29,6 +29,7 @@ type Deps struct {
 	WorkspaceSkillEnableRepo     *data.WorkspaceSkillEnablementsRepository
 	ProfileRegistriesRepo        *data.ProfileRegistriesRepository
 	WorkspaceRegistriesRepo      *data.WorkspaceRegistriesRepository
+	PlatformSettingsRepo         *data.PlatformSettingsRepository
 	APIKeysRepo                  *data.APIKeysRepository
 	AuditWriter                  *audit.Writer
 	SkillStore                   skillStore
@@ -52,8 +53,14 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/tool-providers/", toolProviderEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ToolProviderConfigsRepo, deps.SecretsRepo, deps.Pool, deps.DirectPool))
 	mux.HandleFunc("/v1/skill-packages", skillPackagesEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.SkillStore))
 	mux.HandleFunc("/v1/skill-packages/", skillPackageEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo))
+	mux.HandleFunc("/v1/skill-packages/import/github", githubSkillImportEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.SkillStore))
+	mux.HandleFunc("/v1/skill-packages/import/upload", uploadSkillImportEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.SkillStore))
+	mux.HandleFunc("/v1/market/skills", marketSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.PlatformSettingsRepo, deps.ProfileSkillInstallsRepo, deps.ProfileRegistriesRepo, deps.WorkspaceSkillEnableRepo))
+	mux.HandleFunc("/v1/market/skills/import", marketSkillsImportEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.SkillStore))
+	mux.HandleFunc("/v1/skill-packages/import/skillsmp", marketSkillsImportEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.SkillStore))
 	mux.HandleFunc("/v1/profiles/me/skills", profileSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.ProfileRegistriesRepo))
 	mux.HandleFunc("/v1/profiles/me/skills/", profileSkillEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.ProfileSkillInstallsRepo, deps.ProfileRegistriesRepo))
+	mux.HandleFunc("/v1/profiles/me/default-skills", profileDefaultSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.WorkspaceSkillEnableRepo, deps.ProfileRegistriesRepo, deps.WorkspaceRegistriesRepo, deps.Pool))
 	mux.HandleFunc("/v1/workspaces/", workspaceSkillsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.AuditWriter, deps.SkillPackagesRepo, deps.ProfileSkillInstallsRepo, deps.WorkspaceSkillEnableRepo, deps.WorkspaceRegistriesRepo, deps.ProfileRegistriesRepo, deps.Pool))
 	mux.HandleFunc("/v1/personas", personasEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PersonasRepo, deps.RepoPersonas))
 	mux.HandleFunc("/v1/personas/", personaEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PersonasRepo))

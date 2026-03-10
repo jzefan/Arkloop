@@ -19,6 +19,7 @@ import {
   updateProviderModel,
   deleteProviderModel,
   listAvailableModels,
+  type LlmProviderScope,
   type LlmProvider,
   type LlmProviderModel,
   type AvailableModel,
@@ -137,10 +138,11 @@ export function ProvidersPage() {
   const { accessToken } = useOutletContext<ConsoleOutletContext>()
   const { addToast } = useToast()
   const { t } = useLocale()
-  const tc = t.pages.credentials
+	const tc = t.pages.credentials
 
-  const [providers, setProviders] = useState<LlmProvider[]>([])
-  const [selectedId, setSelectedId] = useState('')
+	const [providers, setProviders] = useState<LlmProvider[]>([])
+	const [scope, setScope] = useState<LlmProviderScope>('platform')
+	const [selectedId, setSelectedId] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -175,7 +177,7 @@ export function ProvidersPage() {
   const load = useCallback(async (keepSelectedId?: string) => {
     setLoading(true)
     try {
-      const data = await listLlmProviders(accessToken)
+		const data = await listLlmProviders(accessToken, scope)
       setProviders(data)
       const preferredId = keepSelectedId?.trim() ?? ''
       if (preferredId && data.some((item) => item.id === preferredId)) {
@@ -190,7 +192,7 @@ export function ProvidersPage() {
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, tc.toastLoadFailed])
+	}, [accessToken, addToast, scope, tc.toastLoadFailed])
 
   useEffect(() => {
     void load()
@@ -238,6 +240,7 @@ export function ProvidersPage() {
     setSavingProvider(true)
     try {
       await updateLlmProvider(selectedProvider.id, {
+		scope,
         name,
         provider: providerForm.provider,
         api_key: providerForm.apiKey.trim() || undefined,
@@ -253,7 +256,7 @@ export function ProvidersPage() {
     } finally {
       setSavingProvider(false)
     }
-  }, [accessToken, addToast, load, providerForm, selectedProvider, tc])
+  }, [accessToken, addToast, load, providerForm, scope, selectedProvider, tc])
 
   const handleCreateProvider = useCallback(async () => {
     const name = createForm.name.trim()
@@ -274,6 +277,7 @@ export function ProvidersPage() {
     setCreating(true)
     try {
       const provider = await createLlmProvider({
+		scope,
         name,
         provider: createForm.provider,
         api_key: apiKey,
@@ -291,13 +295,13 @@ export function ProvidersPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, createForm, load, tc])
+  }, [accessToken, addToast, createForm, load, scope, tc])
 
   const handleDeleteProvider = useCallback(async () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await deleteLlmProvider(deleteTarget.id, accessToken)
+		await deleteLlmProvider(deleteTarget.id, scope, accessToken)
       setDeleteTarget(null)
       await load(selectedId === deleteTarget.id ? '' : selectedId)
       addToast(tc.toastDeleted, 'success')
@@ -306,7 +310,7 @@ export function ProvidersPage() {
     } finally {
       setDeleting(false)
     }
-  }, [accessToken, addToast, deleteTarget, load, selectedId, tc])
+  }, [accessToken, addToast, deleteTarget, load, scope, selectedId, tc])
 
   const openCreateModel = useCallback(() => {
     setEditingModel(null)
@@ -362,10 +366,10 @@ export function ProvidersPage() {
     setSavingModel(true)
     try {
       if (editingModel) {
-        await updateProviderModel(selectedProvider.id, editingModel.id, payload, accessToken)
+		await updateProviderModel(selectedProvider.id, editingModel.id, { ...payload, scope }, accessToken)
         addToast(tc.toastRouteUpdated, 'success')
       } else {
-        await createProviderModel(selectedProvider.id, payload, accessToken)
+		await createProviderModel(selectedProvider.id, { ...payload, scope }, accessToken)
         addToast(tc.toastRouteCreated, 'success')
       }
       setModelOpen(false)
@@ -377,13 +381,13 @@ export function ProvidersPage() {
     } finally {
       setSavingModel(false)
     }
-  }, [accessToken, addToast, editingModel, load, modelForm, selectedProvider, tc])
+  }, [accessToken, addToast, editingModel, load, modelForm, scope, selectedProvider, tc])
 
   const handleDeleteModel = useCallback(async () => {
     if (!selectedProvider || !deleteModelTarget) return
     setDeletingModel(true)
     try {
-      await deleteProviderModel(selectedProvider.id, deleteModelTarget.id, accessToken)
+		await deleteProviderModel(selectedProvider.id, deleteModelTarget.id, scope, accessToken)
       setDeleteModelTarget(null)
       await load(selectedProvider.id)
       addToast(tc.toastDeletedRoute, 'success')
@@ -392,7 +396,7 @@ export function ProvidersPage() {
     } finally {
       setDeletingModel(false)
     }
-  }, [accessToken, addToast, deleteModelTarget, load, selectedProvider, tc])
+  }, [accessToken, addToast, deleteModelTarget, load, scope, selectedProvider, tc])
 
   const openImport = useCallback(async () => {
     if (!selectedProvider) return
@@ -403,7 +407,7 @@ export function ProvidersPage() {
     setImportSearchQuery('')
     setImportSelected(new Set())
     try {
-      const data = await listAvailableModels(selectedProvider.id, accessToken)
+		const data = await listAvailableModels(selectedProvider.id, scope, accessToken)
       setAvailableModels(data.models.filter((item) => !item.configured))
     } catch (err) {
       setAvailableModels([])
@@ -411,7 +415,7 @@ export function ProvidersPage() {
     } finally {
       setImportLoading(false)
     }
-  }, [accessToken, selectedProvider, tc.importModelsError])
+  }, [accessToken, scope, selectedProvider, tc.importModelsError])
 
   const toggleImportModel = useCallback((modelID: string) => {
     setImportSelected((prev) => {
@@ -426,9 +430,10 @@ export function ProvidersPage() {
     if (!selectedProvider || importing || importSelected.size === 0) return
     setImporting(true)
     try {
-      for (const modelID of importSelected) {
-        await createProviderModel(selectedProvider.id, {
-          model: modelID,
+		for (const modelID of importSelected) {
+			await createProviderModel(selectedProvider.id, {
+				scope,
+				model: modelID,
           priority: 1,
           is_default: false,
         }, accessToken)
@@ -441,7 +446,7 @@ export function ProvidersPage() {
     } finally {
       setImporting(false)
     }
-  }, [accessToken, addToast, importSelected, importing, load, selectedProvider, tc])
+  }, [accessToken, addToast, importSelected, importing, load, scope, selectedProvider, tc])
 
   const copySelector = useCallback(async (providerName: string, modelName: string) => {
     try {
@@ -457,17 +462,28 @@ export function ProvidersPage() {
       <PageHeader
         title={tc.title}
         actions={(
-          <button
-            onClick={() => {
-              setCreateForm(emptyProviderForm())
-              setCreateError('')
-              setCreateOpen(true)
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
-          >
-            <Plus size={13} />
-            {tc.addCredential}
-          </button>
+          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+            <label className="shrink-0 text-xs text-[var(--c-text-muted)]">{tc.fieldScope}</label>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as LlmProviderScope)}
+              className={`${INPUT_CLS} w-[112px] py-1 text-xs`}
+            >
+              <option value="platform">{tc.scopePlatform}</option>
+              <option value="org">{tc.scopeOrg}</option>
+            </select>
+            <button
+              onClick={() => {
+                setCreateForm(emptyProviderForm())
+                setCreateError('')
+                setCreateOpen(true)
+              }}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+            >
+              <Plus size={13} />
+              {tc.addCredential}
+            </button>
+          </div>
         )}
       />
 
@@ -527,7 +543,7 @@ export function ProvidersPage() {
               <section className="rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-card)] p-5">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.editCredTitle}</h3>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       onClick={() => setDeleteTarget(selectedProvider)}
                       className={BUTTON_DANGER_CLS}
@@ -605,7 +621,7 @@ export function ProvidersPage() {
               <section className="rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-card)] p-5">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.fieldRoutes}</h3>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button onClick={() => void openImport()} className={BUTTON_PRIMARY_CLS}>
                       {tc.importModels}
                     </button>
@@ -644,7 +660,7 @@ export function ProvidersPage() {
                               <div>{tc.routeCostCacheRead}: {model.cost_per_1k_cache_read ?? '--'}</div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex shrink-0 items-center gap-2">
                             <button onClick={() => openEditModel(model)} className={BUTTON_PRIMARY_CLS}>
                               <Settings size={14} />
                             </button>

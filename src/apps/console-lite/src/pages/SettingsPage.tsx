@@ -30,9 +30,9 @@ import {
   type ToolProviderItem,
 } from '../api/tool-providers'
 
-type Section = 'general' | 'email' | 'sandbox' | 'credits'
+type Section = 'general' | 'email' | 'sandbox' | 'skills' | 'credits'
 
-const SECTIONS: Section[] = ['general', 'email', 'sandbox', 'credits']
+const SECTIONS: Section[] = ['general', 'email', 'sandbox', 'skills', 'credits']
 
 const TLS_MODES = ['starttls', 'tls', 'none'] as const
 const SANDBOX_PROVIDERS = ['firecracker', 'docker'] as const
@@ -126,6 +126,10 @@ export function SettingsPage() {
   // Credits
   const [creditsOn, setCreditsOn] = useState(true)
 
+  // Skills
+  const [skillsMarketApiKey, setSkillsMarketApiKey] = useState('')
+  const [skillsMarketBaseUrl, setSkillsMarketBaseUrl] = useState('https://skillsmp.com')
+
   // SMTP
   const [selectedSmtpId, setSelectedSmtpId] = useState<string>('')
   const [showAddSmtp, setShowAddSmtp] = useState(false)
@@ -140,6 +144,7 @@ export function SettingsPage() {
   // Save states
   const [savingGeneral, setSavingGeneral] = useState(false)
   const [savingSandbox, setSavingSandbox] = useState(false)
+  const [savingSkills, setSavingSkills] = useState(false)
   const [savingCredits, setSavingCredits] = useState(false)
 
   const allModels = useMemo(() => {
@@ -161,7 +166,7 @@ export function SettingsPage() {
     try {
       const [settings, providers, smtp, toolProviders] = await Promise.all([
         listPlatformSettings(accessToken),
-        listLlmProviders(accessToken),
+        listLlmProviders(accessToken, 'platform'),
         listSmtpProviders(accessToken),
         loadToolProvidersAndCatalog(accessToken),
       ])
@@ -178,6 +183,8 @@ export function SettingsPage() {
       setSandboxProvider(sandboxProviderValue(activeSandbox))
       setSandboxBaseUrl(activeSandbox?.base_url ?? '')
       setSandboxDockerImage(map['sandbox.docker_image'] ?? '')
+      setSkillsMarketApiKey(map['skills.market.skillsmp_api_key'] ?? '')
+      setSkillsMarketBaseUrl(map['skills.market.skillsmp_base_url'] ?? 'https://skillsmp.com')
       setCreditsOn(isCreditsEnabled(map['credit.deduction_policy'] ?? ''))
 
       // 默认选中第一个 SMTP provider
@@ -253,6 +260,21 @@ export function SettingsPage() {
       setSavingSandbox(false)
     }
   }, [sandboxProvider, sandboxBaseUrl, sandboxDockerImage, sandboxProviders, accessToken, addToast, tc, loadData])
+
+  const handleSaveSkills = useCallback(async () => {
+    setSavingSkills(true)
+    try {
+      await Promise.all([
+        updatePlatformSetting('skills.market.skillsmp_api_key', skillsMarketApiKey.trim(), accessToken),
+        updatePlatformSetting('skills.market.skillsmp_base_url', skillsMarketBaseUrl.trim() || 'https://skillsmp.com', accessToken),
+      ])
+      addToast(tc.toastSaved, 'success')
+    } catch {
+      addToast(tc.toastFailed, 'error')
+    } finally {
+      setSavingSkills(false)
+    }
+  }, [skillsMarketApiKey, skillsMarketBaseUrl, accessToken, addToast, tc])
 
   const handleSaveCredits = useCallback(async () => {
     setSavingCredits(true)
@@ -352,6 +374,7 @@ export function SettingsPage() {
     general: tc.sectionGeneral,
     email: tc.sectionEmail,
     sandbox: tc.sectionSandbox,
+    skills: tc.sectionSkills,
     credits: tc.sectionCredits,
   }
 
@@ -478,6 +501,18 @@ export function SettingsPage() {
                     setSandboxDockerImage={setSandboxDockerImage}
                     saving={savingSandbox}
                     onSave={handleSaveSandbox}
+                    tc={tc}
+                    tCommon={t.common}
+                  />
+                )}
+                {section === 'skills' && (
+                  <SkillsSection
+                    apiKey={skillsMarketApiKey}
+                    setApiKey={setSkillsMarketApiKey}
+                    baseUrl={skillsMarketBaseUrl}
+                    setBaseUrl={setSkillsMarketBaseUrl}
+                    saving={savingSkills}
+                    onSave={handleSaveSkills}
                     tc={tc}
                     tCommon={t.common}
                   />
@@ -846,6 +881,54 @@ function CreditsSection({
           />
         </button>
       </div>
+      <div className="flex justify-end">
+        <button onClick={onSave} disabled={saving} className={btnPrimaryCls}>
+          {saving ? '...' : tCommon.save}
+        </button>
+      </div>
+    </>
+  )
+}
+
+function SkillsSection({
+  apiKey,
+  setApiKey,
+  baseUrl,
+  setBaseUrl,
+  saving,
+  onSave,
+  tc,
+  tCommon,
+}: {
+  apiKey: string
+  setApiKey: (value: string) => void
+  baseUrl: string
+  setBaseUrl: (value: string) => void
+  saving: boolean
+  onSave: () => void
+  tc: SettingsLocale
+  tCommon: CommonLocale
+}) {
+  return (
+    <>
+      <FormField label={tc.skillsApiKey}>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          className={inputCls}
+          placeholder="sk_live_..."
+        />
+      </FormField>
+      <FormField label={tc.skillsBaseUrl}>
+        <input
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          className={inputCls}
+          placeholder="https://skillsmp.com"
+        />
+        <p className="text-xs text-[var(--c-text-muted)]">{tc.skillsBaseUrlHint}</p>
+      </FormField>
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving} className={btnPrimaryCls}>
           {saving ? '...' : tCommon.save}

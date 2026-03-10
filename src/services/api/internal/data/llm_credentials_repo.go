@@ -10,7 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+)
+
+const (
+	LlmCredentialScopeOrg      = "org"
+	LlmCredentialScopePlatform = "platform"
 )
 
 // WithTx 返回一个使用给定事务的 LlmCredentialsRepository 副本。
@@ -28,7 +32,8 @@ func (e LlmCredentialNameConflictError) Error() string {
 
 type LlmCredential struct {
 	ID            uuid.UUID
-	OrgID         uuid.UUID
+	OrgID         *uuid.UUID
+	Scope         string
 	Provider      string
 	Name          string
 	SecretID      *uuid.UUID
@@ -53,12 +58,11 @@ func NewLlmCredentialsRepository(db Querier) (*LlmCredentialsRepository, error) 
 	return &LlmCredentialsRepository{db: db}, nil
 }
 
-// Create 插入一条凭证记录，id 必须由调用方预生成（保证 secret 命名可引用此 id）。
-// name 在同 org 下唯一，重复返回 LlmCredentialNameConflictError。
 func (r *LlmCredentialsRepository) Create(
 	ctx context.Context,
 	id uuid.UUID,
 	orgID uuid.UUID,
+	scope string,
 	provider string,
 	name string,
 	secretID *uuid.UUID,
@@ -73,8 +77,11 @@ func (r *LlmCredentialsRepository) Create(
 	if id == uuid.Nil {
 		return LlmCredential{}, fmt.Errorf("id must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return LlmCredential{}, fmt.Errorf("org_id must not be nil")
+	if scope != LlmCredentialScopeOrg && scope != LlmCredentialScopePlatform {
+		return LlmCredential{}, fmt.Errorf("scope must be org or platform")
+	}
+	if scope == LlmCredentialScopeOrg && orgID == uuid.Nil {
+		return LlmCredential{}, fmt.Errorf("org_id must not be nil for org scope")
 	}
 	if strings.TrimSpace(provider) == "" {
 		return LlmCredential{}, fmt.Errorf("provider must not be empty")
@@ -88,18 +95,25 @@ func (r *LlmCredentialsRepository) Create(
 		return LlmCredential{}, fmt.Errorf("marshal advanced_json: %w", err)
 	}
 
+	var orgIDParam any
+	if scope == LlmCredentialScopePlatform {
+		orgIDParam = nil
+	} else {
+		orgIDParam = orgID
+	}
+
 	var c LlmCredential
 	var advJSON []byte
 	err = r.db.QueryRow(
 		ctx,
 		`INSERT INTO llm_credentials
-		    (id, org_id, provider, name, secret_id, key_prefix, base_url, openai_api_mode, advanced_json)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-		 RETURNING id, org_id, provider, name, secret_id, key_prefix,
+		    (id, org_id, scope, provider, name, secret_id, key_prefix, base_url, openai_api_mode, advanced_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+		 RETURNING id, org_id, scope, provider, name, secret_id, key_prefix,
 		           base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at`,
-		id, orgID, provider, name, secretID, keyPrefix, baseURL, openaiAPIMode, string(advJSONBytes),
+		id, orgIDParam, scope, provider, name, secretID, keyPrefix, baseURL, openaiAPIMode, string(advJSONBytes),
 	).Scan(
-		&c.ID, &c.OrgID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
+		&c.ID, &c.OrgID, &c.Scope, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
 		&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
@@ -114,23 +128,27 @@ func (r *LlmCredentialsRepository) Create(
 	return c, nil
 }
 
-// GetByID 按 ID 查询，要求属于指定 org，找不到返回 nil。
-func (r *LlmCredentialsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*LlmCredential, error) {
+func (r *LlmCredentialsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID, scope string) (*LlmCredential, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	query, args, err := llmCredentialScopeQuery(
+		`SELECT id, org_id, scope, provider, name, secret_id, key_prefix,
+		        base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at
+		 FROM llm_credentials
+		 WHERE id = $1 AND revoked_at IS NULL`,
+		id,
+		orgID,
+		scope,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	var c LlmCredential
 	var advJSON []byte
-	err := r.db.QueryRow(
-		ctx,
-		`SELECT id, org_id, provider, name, secret_id, key_prefix,
-		        base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at
-		 FROM llm_credentials
-		 WHERE id = $1 AND org_id = $2`,
-		id, orgID,
-	).Scan(
-		&c.ID, &c.OrgID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
+	err = r.db.QueryRow(ctx, query, args...).Scan(
+		&c.ID, &c.OrgID, &c.Scope, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
 		&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
@@ -145,21 +163,23 @@ func (r *LlmCredentialsRepository) GetByID(ctx context.Context, orgID, id uuid.U
 	return &c, nil
 }
 
-// ListByOrg 返回 org 下所有未吊销的凭证，按创建时间降序。
-func (r *LlmCredentialsRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]LlmCredential, error) {
+func (r *LlmCredentialsRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]LlmCredential, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	query := `SELECT id, org_id, scope, provider, name, secret_id, key_prefix,
+	        base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at
+	 FROM llm_credentials
+	 WHERE revoked_at IS NULL`
+	args := []any{}
+	var err error
+	query, args, err = appendLlmCredentialScopeFilter(query, args, orgID, scope)
+	if err != nil {
+		return nil, err
+	}
+	query += ` ORDER BY created_at DESC`
 
-	rows, err := r.db.Query(
-		ctx,
-		`SELECT id, org_id, provider, name, secret_id, key_prefix,
-		        base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at
-		 FROM llm_credentials
-		 WHERE org_id = $1 AND revoked_at IS NULL
-		 ORDER BY created_at DESC`,
-		orgID,
-	)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +190,7 @@ func (r *LlmCredentialsRepository) ListByOrg(ctx context.Context, orgID uuid.UUI
 		var c LlmCredential
 		var advJSON []byte
 		if err := rows.Scan(
-			&c.ID, &c.OrgID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
+			&c.ID, &c.OrgID, &c.Scope, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
 			&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -183,7 +203,6 @@ func (r *LlmCredentialsRepository) ListByOrg(ctx context.Context, orgID uuid.UUI
 	return creds, rows.Err()
 }
 
-// ListAllActive 返回所有 org 中未吊销的凭证（供 Worker 启动时加载全局路由配置）。
 func (r *LlmCredentialsRepository) ListAllActive(ctx context.Context) ([]LlmCredential, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -191,7 +210,7 @@ func (r *LlmCredentialsRepository) ListAllActive(ctx context.Context) ([]LlmCred
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, provider, name, secret_id, key_prefix,
+		`SELECT id, org_id, scope, provider, name, secret_id, key_prefix,
 		        base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at
 		 FROM llm_credentials
 		 WHERE revoked_at IS NULL`,
@@ -206,7 +225,7 @@ func (r *LlmCredentialsRepository) ListAllActive(ctx context.Context) ([]LlmCred
 		var c LlmCredential
 		var advJSON []byte
 		if err := rows.Scan(
-			&c.ID, &c.OrgID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
+			&c.ID, &c.OrgID, &c.Scope, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
 			&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -219,89 +238,131 @@ func (r *LlmCredentialsRepository) ListAllActive(ctx context.Context) ([]LlmCred
 	return creds, rows.Err()
 }
 
-// Delete 物理删除（级联删除关联的 llm_routes）。找不到时静默成功。
-func (r *LlmCredentialsRepository) Delete(ctx context.Context, orgID, id uuid.UUID) error {
+func (r *LlmCredentialsRepository) Delete(ctx context.Context, orgID, id uuid.UUID, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	_, err := r.db.Exec(
-		ctx,
-		`DELETE FROM llm_credentials WHERE id = $1 AND org_id = $2`,
-		id, orgID,
+	query, args, err := llmCredentialScopeQuery(
+		`DELETE FROM llm_credentials WHERE id = $1`,
+		id,
+		orgID,
+		scope,
 	)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(ctx, query, args...)
 	return err
 }
 
-// Update 更新凭证的可编辑字段（名称、base_url、openai_api_mode、advanced_json）。
 func (r *LlmCredentialsRepository) Update(
 	ctx context.Context,
-	orgID uuid.UUID,
-	id uuid.UUID,
+	orgID, id uuid.UUID,
+	scope string,
 	provider string,
 	name string,
 	baseURL *string,
 	openAIAPIMode *string,
 	advancedJSON map[string]any,
-) (LlmCredential, error) {
+) (*LlmCredential, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
 	advJSONBytes, err := json.Marshal(advancedJSON)
 	if err != nil {
-		return LlmCredential{}, fmt.Errorf("marshal advanced_json: %w", err)
+		return nil, fmt.Errorf("marshal advanced_json: %w", err)
 	}
+	query := `UPDATE llm_credentials
+		 SET provider = $2, name = $3, base_url = $4, openai_api_mode = $5,
+		     advanced_json = $6::jsonb, updated_at = now()
+		 WHERE id = $1`
+	args := []any{id, provider, name, baseURL, openAIAPIMode, string(advJSONBytes)}
+	if scope == LlmCredentialScopePlatform {
+		query += ` AND scope = 'platform'`
+	} else if scope == LlmCredentialScopeOrg {
+		if orgID == uuid.Nil {
+			return nil, fmt.Errorf("org_id must not be nil for org scope")
+		}
+		args = append(args, orgID)
+		query += ` AND org_id = $7 AND scope = 'org'`
+	} else {
+		return nil, fmt.Errorf("scope must be org or platform")
+	}
+	query += ` RETURNING id, org_id, scope, provider, name, secret_id, key_prefix, base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at`
 
 	var c LlmCredential
 	var advJSON []byte
-	err = r.db.QueryRow(
-		ctx,
-		`UPDATE llm_credentials
-		 SET provider = COALESCE(NULLIF($3, ''), provider), name = $4, base_url = $5,
-		     openai_api_mode = $6, advanced_json = $7::jsonb, updated_at = NOW()
-		 WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
-		 RETURNING id, org_id, provider, name, secret_id, key_prefix, base_url, openai_api_mode,
-		           advanced_json, revoked_at, last_used_at, created_at, updated_at`,
-		id, orgID, provider, name, baseURL, openAIAPIMode, string(advJSONBytes),
-	).Scan(
-		&c.ID, &c.OrgID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
+	err = r.db.QueryRow(ctx, query, args...).Scan(
+		&c.ID, &c.OrgID, &c.Scope, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
 		&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return LlmCredential{}, fmt.Errorf("credential not found")
+			return nil, nil
 		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return LlmCredential{}, LlmCredentialNameConflictError{Name: name}
+		if isUniqueViolation(err) {
+			return nil, LlmCredentialNameConflictError{Name: name}
 		}
-		return LlmCredential{}, err
+		return nil, err
 	}
 	if len(advJSON) > 0 {
 		_ = json.Unmarshal(advJSON, &c.AdvancedJSON)
 	}
-	return c, nil
+	return &c, nil
 }
 
-// UpdateSecret 更新凭证关联的 secret_id 和 key_prefix。
 func (r *LlmCredentialsRepository) UpdateSecret(
 	ctx context.Context,
-	orgID uuid.UUID,
-	id uuid.UUID,
+	orgID, id uuid.UUID,
+	scope string,
 	secretID *uuid.UUID,
 	keyPrefix *string,
 ) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	_, err := r.db.Exec(
-		ctx,
-		`UPDATE llm_credentials
-		 SET secret_id = $3, key_prefix = $4, updated_at = NOW()
-		 WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL`,
-		id, orgID, secretID, keyPrefix,
-	)
+	query := `UPDATE llm_credentials
+		 SET secret_id = $2, key_prefix = $3, updated_at = now()
+		 WHERE id = $1`
+	args := []any{id, secretID, keyPrefix}
+	if scope == LlmCredentialScopePlatform {
+		query += ` AND scope = 'platform'`
+	} else if scope == LlmCredentialScopeOrg {
+		if orgID == uuid.Nil {
+			return fmt.Errorf("org_id must not be nil for org scope")
+		}
+		args = append(args, orgID)
+		query += ` AND org_id = $4 AND scope = 'org'`
+	} else {
+		return fmt.Errorf("scope must be org or platform")
+	}
+	_, err := r.db.Exec(ctx, query, args...)
 	return err
+}
+
+func llmCredentialScopeQuery(base string, id uuid.UUID, orgID uuid.UUID, scope string) (string, []any, error) {
+	if scope == LlmCredentialScopePlatform {
+		return base + ` AND scope = 'platform'`, []any{id}, nil
+	}
+	if scope != LlmCredentialScopeOrg {
+		return "", nil, fmt.Errorf("scope must be org or platform")
+	}
+	if orgID == uuid.Nil {
+		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+	}
+	return base + ` AND org_id = $2 AND scope = 'org'`, []any{id, orgID}, nil
+}
+
+func appendLlmCredentialScopeFilter(base string, args []any, orgID uuid.UUID, scope string) (string, []any, error) {
+	if scope == LlmCredentialScopePlatform {
+		return base + ` AND scope = 'platform'`, args, nil
+	}
+	if scope != LlmCredentialScopeOrg {
+		return "", nil, fmt.Errorf("scope must be org or platform")
+	}
+	if orgID == uuid.Nil {
+		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+	}
+	args = append(args, orgID)
+	return base + fmt.Sprintf(` AND org_id = $%d AND scope = 'org'`, len(args)), args, nil
 }

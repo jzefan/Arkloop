@@ -7,6 +7,7 @@ import (
 	"errors"
 	nethttp "net/http"
 	"strings"
+	"time"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
@@ -43,6 +44,14 @@ type skillReferenceRequest struct {
 
 type workspaceSkillsReplaceRequest struct {
 	Skills []skillReferenceRequest `json:"skills"`
+}
+
+type installedSkillResponse struct {
+	SkillKey    string  `json:"skill_key"`
+	Version     string  `json:"version"`
+	DisplayName string  `json:"display_name"`
+	Description *string `json:"description,omitempty"`
+	CreatedAt   string  `json:"created_at,omitempty"`
 }
 
 func skillPackagesEntry(
@@ -201,7 +210,7 @@ func profileSkillsEntry(
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
-		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]any{"items": items})
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]any{"items": toInstalledSkillResponses(items)})
 	}
 }
 
@@ -427,6 +436,20 @@ func toSkillPackageResponses(items []data.SkillPackage) []skillPackageResponse {
 	out := make([]skillPackageResponse, 0, len(items))
 	for _, item := range items {
 		out = append(out, toSkillPackageResponse(item))
+	}
+	return out
+}
+
+func toInstalledSkillResponses(items []data.ProfileSkillInstall) []installedSkillResponse {
+	out := make([]installedSkillResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, installedSkillResponse{
+			SkillKey:    item.SkillKey,
+			Version:     item.Version,
+			DisplayName: item.DisplayName,
+			Description: item.Description,
+			CreatedAt:   item.CreatedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	return out
 }

@@ -1,16 +1,16 @@
-import { useState, useRef, useEffect } from 'react'
-import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil, MoreHorizontal, Flag } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil, MoreHorizontal, Flag, X, Download, ExternalLink } from 'lucide-react'
 import type { MessageResponse } from '../api'
 import type { WebSource, ArtifactRef } from '../storage'
 import type { BrowserActionRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { useTypewriter } from '../hooks/useTypewriter'
-import { ArtifactImage } from './ArtifactImage'
 import { ArtifactDownload } from './ArtifactDownload'
 import { DocumentCard } from './DocumentCard'
 import { BrowserScreenshotCard } from './BrowserScreenshotCard'
+import { PastedContentModal } from './PastedContentModal'
 import { useLocale } from '../contexts/LocaleContext'
-import { extractLegacyFilesFromContent, isFilePart, isImagePart, messageAttachmentParts, messageTextContent } from '../messageContent'
+import { extractLegacyFilesFromContent, isFilePart, isImagePart, isPastedFile, messageAttachmentParts, messageTextContent } from '../messageContent'
 
 function isDocumentArtifact(artifact: ArtifactRef): boolean {
   return !artifact.mime_type.startsWith('image/') && artifact.mime_type !== 'text/html'
@@ -104,6 +104,248 @@ function getDomain(url: string): string {
   }
 }
 
+function apiBaseUrl(): string {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
+  return raw.replace(/\/$/, '')
+}
+
+const LIGHTBOX_ANIM_MS = 120
+
+function ImageThumbnailCard({
+  artifact,
+  accessToken,
+  pathPrefix = '/v1/artifacts',
+}: {
+  artifact: ArtifactRef
+  accessToken: string
+  pathPrefix?: string
+}) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const [lbVisible, setLbVisible] = useState(false)
+  const [lbShow, setLbShow] = useState(false)
+  const closingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key}`
+    fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((res) => {
+        if (!res.ok) throw new Error(`${res.status}`)
+        return res.blob()
+      })
+      .then((blob) => {
+        if (!cancelled) setBlobUrl(URL.createObjectURL(blob))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [artifact.key, accessToken, pathPrefix])
+
+  useEffect(() => {
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl) }
+  }, [blobUrl])
+
+  useEffect(() => {
+    return () => { if (closingTimer.current) clearTimeout(closingTimer.current) }
+  }, [])
+
+  const openLightbox = useCallback(() => {
+    if (closingTimer.current) clearTimeout(closingTimer.current)
+    setLbVisible(true)
+    requestAnimationFrame(() => requestAnimationFrame(() => setLbShow(true)))
+  }, [])
+
+  const closeLightbox = useCallback(() => {
+    setLbShow(false)
+    closingTimer.current = setTimeout(() => setLbVisible(false), LIGHTBOX_ANIM_MS)
+  }, [])
+
+  useEffect(() => {
+    if (!lbVisible) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeLightbox() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [lbVisible, closeLightbox])
+
+  const handleDownload = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!blobUrl) return
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = artifact.filename
+    a.click()
+  }, [blobUrl, artifact.filename])
+
+  const transition = `all ${LIGHTBOX_ANIM_MS}ms ease-out`
+
+  return (
+    <>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={openLightbox}
+        style={{
+          width: '120px',
+          height: '120px',
+          borderRadius: '10px',
+          overflow: 'hidden',
+          borderWidth: '0.7px',
+          borderStyle: 'solid',
+          borderColor: hovered ? 'var(--c-attachment-border-hover)' : 'var(--c-attachment-border)',
+          transition: 'border-color 0.2s ease',
+          background: 'var(--c-attachment-bg)',
+          flexShrink: 0,
+          cursor: 'pointer',
+        }}
+      >
+        {!loaded && (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="attachment-shimmer" style={{ width: '80%', height: '80%', borderRadius: '6px' }} />
+          </div>
+        )}
+        {blobUrl && (
+          <img
+            src={blobUrl}
+            alt={artifact.filename}
+            onLoad={() => setLoaded(true)}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              opacity: loaded ? 1 : 0,
+              transition: 'opacity 0.2s ease',
+            }}
+          />
+        )}
+      </div>
+
+      {lbVisible && blobUrl && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) closeLightbox() }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: lbShow ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+            backdropFilter: lbShow ? 'blur(12px)' : 'blur(0px)',
+            WebkitBackdropFilter: lbShow ? 'blur(12px)' : 'blur(0px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'default',
+            transition,
+          }}
+        >
+          <button
+            onClick={closeLightbox}
+            style={{
+              position: 'absolute',
+              top: 16,
+              right: 16,
+              width: '28px',
+              height: '28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--c-text-muted)',
+              cursor: 'pointer',
+              opacity: lbShow ? 1 : 0,
+              transition,
+            }}
+          >
+            <X size={16} />
+          </button>
+
+          <img
+            src={blobUrl}
+            alt={artifact.filename}
+            draggable={false}
+            onClick={closeLightbox}
+            style={{
+              maxWidth: '90vw',
+              maxHeight: 'calc(90vh - 64px)',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              transform: lbShow ? 'scale(1)' : 'scale(0.94)',
+              opacity: lbShow ? 1 : 0,
+              transition,
+            }}
+          />
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              marginTop: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              cursor: 'default',
+              transform: lbShow ? 'translateY(0)' : 'translateY(6px)',
+              opacity: lbShow ? 1 : 0,
+              transition,
+            }}
+          >
+            <a
+              href={blobUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              draggable={false}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 14px',
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-sub)',
+                color: 'var(--c-text-primary)',
+                fontSize: 14,
+                textDecoration: 'none',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = 'var(--c-bg-deep)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = 'var(--c-bg-sub)' }}
+            >
+              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {artifact.filename}
+              </span>
+              <ExternalLink size={14} style={{ color: 'var(--c-text-icon)', flexShrink: 0 }} />
+            </a>
+            <button
+              onClick={handleDownload}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-sub)',
+                color: 'var(--c-text-icon)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)' }}
+            >
+              <Download size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
   if (!browserActions || browserActions.length === 0 || !accessToken) return null
   const withScreenshot = browserActions.filter((action) => action.screenshotArtifact)
@@ -121,6 +363,90 @@ function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessTok
         />
       ))}
     </div>
+  )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function PastedBubbleCard({
+  preview,
+  fullText,
+  size,
+}: {
+  preview: string
+  fullText: string
+  size: number
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const lineCount = fullText.split('\n').length
+
+  return (
+    <>
+      <div
+        onClick={() => setModalOpen(true)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width: '120px',
+          height: '120px',
+          borderRadius: '10px',
+          background: 'var(--c-bg-page)',
+          overflow: 'hidden',
+          borderWidth: '0.7px',
+          borderStyle: 'solid',
+          borderColor: hovered ? 'var(--c-attachment-border-hover)' : 'var(--c-border-subtle)',
+          transition: 'border-color 0.2s ease',
+          cursor: 'pointer',
+          padding: '10px',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{
+          color: 'var(--c-text-secondary)',
+          fontSize: '11px',
+          lineHeight: '1.4',
+          display: '-webkit-box',
+          WebkitLineClamp: 4,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          wordBreak: 'break-all',
+          flex: 1,
+        }}>
+          {preview}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+          <span style={{ fontSize: '9px', color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>
+            {formatSize(size)}
+          </span>
+          <span style={{
+            padding: '1px 6px',
+            borderRadius: '5px',
+            background: 'var(--c-attachment-bg)',
+            border: '0.5px solid var(--c-attachment-badge-border)',
+            color: 'var(--c-text-secondary)',
+            fontSize: '10px',
+            fontWeight: 500,
+          }}>
+            PASTED
+          </span>
+        </div>
+      </div>
+
+      {modalOpen && (
+        <PastedContentModal
+          text={fullText}
+          size={size}
+          lineCount={lineCount}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -193,11 +519,13 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
     const legacy = extractLegacyFilesFromContent(message.content)
     const attachmentParts = messageAttachmentParts(message)
     const imageAttachments = attachmentParts.filter(isImagePart)
-    const fileAttachments = attachmentParts.filter(isFilePart)
+    const allFileAttachments = attachmentParts.filter(isFilePart)
+    const pastedAttachments = allFileAttachments.filter((p) => isPastedFile(p.attachment.filename))
+    const fileAttachments = allFileAttachments.filter((p) => !isPastedFile(p.attachment.filename))
     const text = messageTextContent(message)
     const displayText = !accessToken && attachmentParts.length > 0 ? message.content : text
     const fileNames = attachmentParts.length > 0
-      ? [...imageAttachments, ...fileAttachments].map((part) => part.attachment.filename)
+      ? [...imageAttachments, ...allFileAttachments].map((part) => part.attachment.filename)
       : legacy.fileNames
 
     if (editing) {
@@ -359,16 +687,28 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, onRep
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', maxWidth: '663px' }}>
-          {imageAttachments.length > 0 && accessToken && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
+          {(imageAttachments.length > 0 || pastedAttachments.length > 0) && accessToken && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'flex-end' }}>
               {imageAttachments.map((part) => (
-                <ArtifactImage
+                <ImageThumbnailCard
                   key={part.attachment.key}
                   artifact={part.attachment as ArtifactRef}
                   accessToken={accessToken}
                   pathPrefix="/v1/attachments"
                 />
               ))}
+              {pastedAttachments.map((part) => {
+                const fullText = part.extracted_text || ''
+                const preview = fullText.split('\n').slice(0, 4).join('\n')
+                return (
+                  <PastedBubbleCard
+                    key={part.attachment.key}
+                    preview={preview}
+                    fullText={fullText}
+                    size={part.attachment.size}
+                  />
+                )
+              })}
             </div>
           )}
           {fileAttachments.length > 0 && accessToken && (
