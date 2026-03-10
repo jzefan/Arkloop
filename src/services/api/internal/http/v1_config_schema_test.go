@@ -37,4 +37,3 @@ func TestFilterSchemaEntriesPlatformAdminSeesAll(t *testing.T) {
 		t.Fatalf("unexpected order/keys: %#v", filtered)
 	}
 }
-

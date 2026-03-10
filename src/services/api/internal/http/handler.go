@@ -5,6 +5,14 @@ import (
 	nethttp "net/http"
 	"time"
 
+	"arkloop/services/api/internal/http/adminapi"
+	"arkloop/services/api/internal/http/authapi"
+	"arkloop/services/api/internal/http/billingapi"
+	"arkloop/services/api/internal/http/catalogapi"
+	"arkloop/services/api/internal/http/conversationapi"
+	"arkloop/services/api/internal/http/orgapi"
+	"arkloop/services/api/internal/http/platformapi"
+
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
@@ -177,7 +185,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		gatewayRedis = cfg.RedisClient
 	}
 
-	effectiveToolCatalogCache := newEffectiveToolCatalogCache(effectiveToolCatalogTTL)
+	effectiveToolCatalogCache := catalogapi.NewEffectiveToolCatalogCache(catalogapi.EffectiveToolCatalogTTL)
 	listenerCtx := cfg.InvalidationListenerCtx
 	if listenerCtx == nil {
 		listenerCtx = context.Background()
@@ -187,459 +195,161 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(cfg.SchemaRepository, cfg.Logger))
-
-	mux.HandleFunc("GET /v1/auth/captcha-config", captchaConfig(resolver))
-	mux.HandleFunc("/v1/auth/login", login(cfg.AuthService, cfg.AuditWriter, resolver))
-	mux.HandleFunc("/v1/auth/refresh", refreshToken(cfg.AuthService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/auth/logout", logout(cfg.AuthService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/auth/register", register(cfg.RegistrationService, cfg.AuthService, cfg.FeatureFlagService, cfg.AuditWriter, resolver))
-	mux.HandleFunc("/v1/auth/registration-mode", registrationMode(cfg.FeatureFlagService))
-	mux.HandleFunc("POST /v1/auth/check", checkUser(cfg.UserCredentialRepo, cfg.UsersRepo))
-	mux.HandleFunc("/v1/auth/email/verify/send", emailVerifySend(cfg.AuthService, cfg.EmailVerifyService))
-	mux.HandleFunc("/v1/auth/email/verify/confirm", emailVerifyConfirm(cfg.EmailVerifyService))
-	mux.HandleFunc("/v1/auth/email/otp/send", emailOTPSend(cfg.EmailOTPLoginService, resolver))
-	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(cfg.EmailOTPLoginService, cfg.AuthService, cfg.AuditWriter))
-	mux.HandleFunc("/v1/me", me(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.UserCredentialRepo, cfg.UsersRepo, cfg.FeatureFlagService))
-	mux.HandleFunc("/v1/me/usage", meUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
-	mux.HandleFunc("/v1/me/usage/daily", meDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
-	mux.HandleFunc("/v1/me/usage/by-model", meUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo))
-	mux.HandleFunc("/v1/me/feedback", meFeedback(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadReportRepo, cfg.APIKeysRepo))
-	mux.HandleFunc("/v1/threads", threadsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
-	mux.HandleFunc("/v1/threads/search", searchThreads(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.APIKeysRepo, cfg.AuditWriter))
-	mux.HandleFunc("/v1/threads/starred", listStarredThreads(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadStarRepo, cfg.APIKeysRepo, cfg.AuditWriter))
-	mux.HandleFunc(
-		"/v1/threads/",
-		threadEntry(
-			cfg.AuthService,
-			cfg.OrgMembershipRepo,
-			cfg.ThreadRepo,
-			cfg.ThreadStarRepo,
-			cfg.ThreadShareRepo,
-			cfg.ThreadReportRepo,
-			cfg.MessageRepo,
-			cfg.RunEventRepo,
-			cfg.ProjectRepo,
-			cfg.TeamRepo,
-			cfg.AuditWriter,
-			cfg.Pool,
-			cfg.APIKeysRepo,
-			cfg.RunLimiter,
-			cfg.EntitlementService,
-			cfg.RedisClient,
-			cfg.MessageAttachmentStore,
-		),
-	)
-
-	mux.HandleFunc(
-		"/v1/s/",
-		publicShareEntry(cfg.ThreadShareRepo, cfg.ThreadRepo, cfg.MessageRepo),
-	)
-
 	sseConfig := cfg.SSEConfig
 	if sseConfig.BatchLimit <= 0 {
 		sseConfig = defaultSSEConfig()
 	}
 
-	mux.HandleFunc(
-		"/v1/runs",
-		listGlobalRuns(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/runs/",
-		runEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, cfg.DirectPool, cfg.DirectPoolAcquireTimeout, sseConfig, cfg.APIKeysRepo, resolver, cfg.RedisClient),
-	)
-	mux.HandleFunc(
-		"GET /v1/workspace-files",
-		workspaceFilesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.RunEventRepo, cfg.AuditWriter, cfg.Pool, cfg.EnvironmentStore),
-	)
+	authapi.RegisterRoutes(mux, authapi.Deps{
+		AuthService:          cfg.AuthService,
+		RegistrationService:  cfg.RegistrationService,
+		EmailVerifyService:   cfg.EmailVerifyService,
+		EmailOTPLoginService: cfg.EmailOTPLoginService,
+		FeatureFlagService:   cfg.FeatureFlagService,
+		AuditWriter:          cfg.AuditWriter,
+		OrgMembershipRepo:    cfg.OrgMembershipRepo,
+		OrgRepo:              cfg.OrgRepo,
+		UserCredentialRepo:   cfg.UserCredentialRepo,
+		UsersRepo:            cfg.UsersRepo,
+		ConfigResolver:       resolver,
+	})
 
-	mux.HandleFunc(
-		"/v1/llm-providers",
-		llmProvidersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.LlmCredentialsRepo, cfg.LlmRoutesRepo, cfg.SecretsRepo, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/llm-providers/",
-		llmProviderEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.LlmCredentialsRepo, cfg.LlmRoutesRepo, cfg.SecretsRepo, cfg.Pool),
-	)
+	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
+		AuthService:              cfg.AuthService,
+		OrgMembershipRepo:        cfg.OrgMembershipRepo,
+		ThreadRepo:               cfg.ThreadRepo,
+		ThreadStarRepo:           cfg.ThreadStarRepo,
+		ThreadShareRepo:          cfg.ThreadShareRepo,
+		ThreadReportRepo:         cfg.ThreadReportRepo,
+		MessageRepo:              cfg.MessageRepo,
+		RunEventRepo:             cfg.RunEventRepo,
+		ShellSessionRepo:         cfg.ShellSessionRepo,
+		ProjectRepo:              cfg.ProjectRepo,
+		TeamRepo:                 cfg.TeamRepo,
+		AuditWriter:              cfg.AuditWriter,
+		Pool:                     cfg.Pool,
+		DirectPool:               cfg.DirectPool,
+		DirectPoolAcquireTimeout: cfg.DirectPoolAcquireTimeout,
+		APIKeysRepo:              cfg.APIKeysRepo,
+		RunLimiter:               cfg.RunLimiter,
+		EntitlementService:       cfg.EntitlementService,
+		RedisClient:              cfg.RedisClient,
+		ConfigResolver:           resolver,
+		SSEConfig:                conversationapi.SSEConfig(sseConfig),
+		MessageAttachmentStore:   cfg.MessageAttachmentStore,
+		ArtifactStore:            cfg.ArtifactStore,
+	})
 
-	mux.HandleFunc(
-		"/v1/asr-credentials",
-		asrCredentialsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AsrCredentialsRepo, cfg.SecretsRepo, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/asr-credentials/",
-		asrCredentialEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AsrCredentialsRepo),
-	)
-	mux.HandleFunc(
-		"/v1/asr/transcribe",
-		asrTranscribeEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AsrCredentialsRepo, cfg.SecretsRepo),
-	)
+	catalogapi.RegisterRoutes(mux, catalogapi.Deps{
+		AuthService:                  cfg.AuthService,
+		OrgMembershipRepo:            cfg.OrgMembershipRepo,
+		LlmCredentialsRepo:           cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:                cfg.LlmRoutesRepo,
+		SecretsRepo:                  cfg.SecretsRepo,
+		Pool:                         cfg.Pool,
+		DirectPool:                   cfg.DirectPool,
+		AsrCredentialsRepo:           cfg.AsrCredentialsRepo,
+		MCPConfigsRepo:               cfg.MCPConfigsRepo,
+		ToolProviderConfigsRepo:      cfg.ToolProviderConfigsRepo,
+		ToolDescriptionOverridesRepo: cfg.ToolDescriptionOverridesRepo,
+		PersonasRepo:                 cfg.PersonasRepo,
+		SkillPackagesRepo:            cfg.SkillPackagesRepo,
+		ProfileSkillInstallsRepo:     cfg.ProfileSkillInstallsRepo,
+		WorkspaceSkillEnableRepo:     cfg.WorkspaceSkillEnableRepo,
+		ProfileRegistriesRepo:        cfg.ProfileRegistriesRepo,
+		WorkspaceRegistriesRepo:      cfg.WorkspaceRegistriesRepo,
+		APIKeysRepo:                  cfg.APIKeysRepo,
+		AuditWriter:                  cfg.AuditWriter,
+		SkillStore:                   cfg.SkillStore,
+		RepoPersonas:                 cfg.RepoPersonas,
+		EffectiveToolCatalogCache:    effectiveToolCatalogCache,
+		ArtifactStoreAvailable:       cfg.ArtifactStore != nil,
+	})
 
-	mux.HandleFunc(
-		"/v1/mcp-configs",
-		mcpConfigsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/mcp-configs/",
-		mcpConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.MCPConfigsRepo, cfg.SecretsRepo, cfg.Pool),
-	)
+	billingapi.RegisterRoutes(mux, billingapi.Deps{
+		AuthService:         cfg.AuthService,
+		OrgMembershipRepo:   cfg.OrgMembershipRepo,
+		PlansRepo:           cfg.PlansRepo,
+		EntitlementsRepo:    cfg.EntitlementsRepo,
+		APIKeysRepo:         cfg.APIKeysRepo,
+		SubscriptionsRepo:   cfg.SubscriptionsRepo,
+		EntitlementService:  cfg.EntitlementService,
+		UsageRepo:           cfg.UsageRepo,
+		CreditsRepo:         cfg.CreditsRepo,
+		InviteCodesRepo:     cfg.InviteCodesRepo,
+		ReferralsRepo:       cfg.ReferralsRepo,
+		RedemptionCodesRepo: cfg.RedemptionCodesRepo,
+		AuditWriter:         cfg.AuditWriter,
+		Pool:                cfg.Pool,
+	})
 
-	mux.HandleFunc(
-		"/v1/tool-catalog/effective",
-		toolCatalogEffectiveEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolDescriptionOverridesRepo, cfg.Pool, effectiveToolCatalogCache, cfg.ArtifactStore != nil),
-	)
-	mux.HandleFunc(
-		"/v1/tool-catalog",
-		toolCatalogEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolDescriptionOverridesRepo),
-	)
-	mux.HandleFunc(
-		"/v1/tool-catalog/",
-		toolCatalogItemEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolDescriptionOverridesRepo),
-	)
-	mux.HandleFunc(
-		"/v1/tool-providers",
-		toolProvidersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolProviderConfigsRepo, cfg.SecretsRepo, cfg.Pool, cfg.DirectPool),
-	)
-	mux.HandleFunc(
-		"/v1/tool-providers/",
-		toolProviderEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ToolProviderConfigsRepo, cfg.SecretsRepo, cfg.Pool, cfg.DirectPool),
-	)
+	orgapi.RegisterRoutes(mux, orgapi.Deps{
+		AuthService:        cfg.AuthService,
+		OrgMembershipRepo:  cfg.OrgMembershipRepo,
+		TeamRepo:           cfg.TeamRepo,
+		ProjectRepo:        cfg.ProjectRepo,
+		APIKeysRepo:        cfg.APIKeysRepo,
+		AuditWriter:        cfg.AuditWriter,
+		EntitlementService: cfg.EntitlementService,
+		Pool:               cfg.Pool,
+		OrgRepo:            cfg.OrgRepo,
+		OrgService:         cfg.OrgService,
+		OrgInvitationsRepo: cfg.OrgInvitationsRepo,
+		WebhookRepo:        cfg.WebhookRepo,
+		SecretsRepo:        cfg.SecretsRepo,
+		EnvironmentStore:   cfg.EnvironmentStore,
+		RunEventRepo:       cfg.RunEventRepo,
+		GatewayRedisClient: gatewayRedis,
+	})
 
-	mux.HandleFunc(
-		"/v1/skill-packages",
-		skillPackagesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.SkillStore),
-	)
-	mux.HandleFunc(
-		"/v1/skill-packages/",
-		skillPackageEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo),
-	)
-	mux.HandleFunc(
-		"/v1/profiles/me/skills",
-		profileSkillsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
-	)
-	mux.HandleFunc(
-		"/v1/profiles/me/skills/",
-		profileSkillEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
-	)
-	mux.HandleFunc(
-		"/v1/workspaces/",
-		workspaceSkillsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.WorkspaceSkillEnableRepo, cfg.WorkspaceRegistriesRepo, cfg.ProfileRegistriesRepo, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/personas",
-		personasEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.RepoPersonas),
-	)
-	mux.HandleFunc(
-		"/v1/personas/",
-		personaEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/skill-packages",
-		adminSkillPackagesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.SkillStore),
-	)
-	mux.HandleFunc(
-		"/v1/profiles/me/skills/install",
-		profileSkillsInstallEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.SkillPackagesRepo, cfg.ProfileSkillInstallsRepo, cfg.ProfileRegistriesRepo),
-	)
+	platformapi.RegisterRoutes(mux, platformapi.Deps{
+		AuthService:          cfg.AuthService,
+		OrgMembershipRepo:    cfg.OrgMembershipRepo,
+		FeatureFlagsRepo:     cfg.FeatureFlagsRepo,
+		FeatureFlagService:   cfg.FeatureFlagService,
+		APIKeysRepo:          cfg.APIKeysRepo,
+		AuditWriter:          cfg.AuditWriter,
+		IPRulesRepo:          cfg.IPRulesRepo,
+		GatewayRedisClient:   gatewayRedis,
+		NotificationsRepo:    cfg.NotificationsRepo,
+		AuditLogRepo:         cfg.AuditLogRepo,
+		PlatformSettingsRepo: cfg.PlatformSettingsRepo,
+		RedisClient:          cfg.RedisClient,
+		ConfigInvalidator:    invalidator,
+		ConfigRegistry:       registry,
+	})
 
-	mux.HandleFunc(
-		"/v1/ip-rules",
-		ipRulesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.IPRulesRepo, gatewayRedis),
-	)
-	mux.HandleFunc(
-		"/v1/ip-rules/",
-		ipRuleEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.IPRulesRepo, gatewayRedis),
-	)
-
-	mux.HandleFunc(
-		"/v1/api-keys",
-		apiKeysEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, gatewayRedis),
-	)
-	mux.HandleFunc(
-		"/v1/api-keys/",
-		apiKeyEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.AuditWriter, gatewayRedis),
-	)
-
-	mux.HandleFunc(
-		"/v1/teams",
-		teamsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.TeamRepo, cfg.APIKeysRepo, cfg.EntitlementService, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/teams/",
-		teamEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.TeamRepo, cfg.APIKeysRepo, cfg.EntitlementService, cfg.Pool),
-	)
-
-	mux.HandleFunc(
-		"/v1/projects",
-		projectsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ProjectRepo, cfg.TeamRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/projects/",
-		projectEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ProjectRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/orgs",
-		orgsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.OrgService, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/orgs/me",
-		orgsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgRepo, cfg.OrgService, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/orgs/",
-		orgsInvitationsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter, cfg.OrgRepo),
-	)
-	mux.HandleFunc(
-		"/v1/org-invitations/",
-		orgInvitationEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.OrgInvitationsRepo, cfg.AuditWriter, cfg.Pool),
-	)
-
-	mux.HandleFunc(
-		"/v1/webhook-endpoints",
-		webhookEndpointsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.WebhookRepo, cfg.APIKeysRepo, cfg.SecretsRepo, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/webhook-endpoints/",
-		webhookEndpointEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.WebhookRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/lite/agents",
-		liteAgentsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo, cfg.RepoPersonas),
-	)
-	mux.HandleFunc(
-		"/v1/lite/agents/",
-		liteAgentEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PersonasRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/plans",
-		plansEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlansRepo, cfg.EntitlementsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/plans/",
-		planEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlansRepo, cfg.EntitlementsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/subscriptions",
-		subscriptionsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.SubscriptionsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/subscriptions/",
-		subscriptionEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.SubscriptionsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/entitlement-overrides",
-		entitlementOverridesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/entitlement-overrides/",
-		entitlementOverrideEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.EntitlementsRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-
-	mux.HandleFunc(
-		"/v1/feature-flags",
-		featureFlagsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/feature-flags/",
-		featureFlagEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.FeatureFlagsRepo, cfg.FeatureFlagService, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-
-	mux.HandleFunc(
-		"/v1/orgs/{id}/usage",
-		orgUsageEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/orgs/{id}/usage/daily",
-		orgDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/orgs/{id}/usage/by-model",
-		orgUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/notifications",
-		notificationsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/notifications/",
-		notificationEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/audit-logs",
-		auditLogsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.AuditLogRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/dashboard",
-		adminDashboard(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.RunEventRepo, cfg.UsageRepo, cfg.OrgRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/runs/",
-		adminRunsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RunEventRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.MessageRepo, cfg.LlmCredentialsRepo, cfg.ThreadRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/reports",
-		adminReportsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadReportRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/usage/daily",
-		adminGlobalDailyUsage(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/usage/summary",
-		adminGlobalUsageSummary(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/usage/by-model",
-		adminGlobalUsageByModel(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsageRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/users",
-		adminUsersEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.UserCredentialRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/users/",
-		adminUserEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.UsersRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.InviteCodesRepo, cfg.UserCredentialRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/me/invite-code/reset",
-		meInviteCodeReset(cfg.AuthService, cfg.OrgMembershipRepo, cfg.InviteCodesRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/me/invite-code",
-		meInviteCode(cfg.AuthService, cfg.OrgMembershipRepo, cfg.InviteCodesRepo, cfg.EntitlementService, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/admin/invite-codes",
-		adminInviteCodesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.InviteCodesRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/invite-codes/",
-		adminInviteCodeEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.InviteCodesRepo, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/admin/referrals/tree",
-		adminReferralTree(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ReferralsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/referrals",
-		adminReferralsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ReferralsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/me/credits",
-		meCredits(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/credits/adjust",
-		adminCreditsAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/admin/credits/bulk-adjust",
-		adminCreditsBulkAdjust(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/admin/credits/reset-all",
-		adminCreditsResetAll(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter),
-	)
-	mux.HandleFunc(
-		"/v1/admin/credits",
-		adminCreditsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.CreditsRepo, cfg.APIKeysRepo),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/redemption-codes/batch",
-		adminRedemptionCodesBatch(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool),
-	)
-	mux.HandleFunc(
-		"/v1/admin/redemption-codes/",
-		adminRedemptionCodeEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/redemption-codes",
-		adminRedemptionCodesEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/me/redeem",
-		meRedeem(cfg.AuthService, cfg.OrgMembershipRepo, cfg.RedemptionCodesRepo, cfg.CreditsRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/notifications/broadcasts/",
-		adminBroadcastEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/notifications/broadcasts",
-		adminBroadcastsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.NotificationsRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.Pool, cfg.Logger),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/gateway-config",
-		adminGatewayConfigEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, gatewayRedis, resolver, invalidator),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/access-log",
-		adminAccessLogEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.UsersRepo, gatewayRedis),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/platform-settings",
-		platformSettingsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, registry),
-	)
-	mux.HandleFunc(
-		"/v1/admin/platform-settings/",
-		platformSettingEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.PlatformSettingsRepo, cfg.APIKeysRepo, cfg.RedisClient, invalidator, registry),
-	)
-	mux.HandleFunc(
-		"/v1/admin/execution-governance",
-		adminExecutionGovernance(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PersonasRepo, cfg.RepoPersonas, registry, cfg.Pool),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/email/status",
-		adminEmailStatus(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, resolver),
-	)
-	mux.HandleFunc(
-		"/v1/admin/email/config",
-		adminEmailConfig(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.PlatformSettingsRepo, resolver, invalidator),
-	)
-	mux.HandleFunc(
-		"/v1/admin/email/test",
-		adminEmailTest(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.JobRepo, cfg.PlatformSettingsRepo, resolver),
-	)
-
-	mux.HandleFunc(
-		"/v1/admin/smtp-providers",
-		adminSmtpProviders(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.SmtpProviderRepo),
-	)
-	mux.HandleFunc(
-		"/v1/admin/smtp-providers/",
-		adminSmtpProviderEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.SmtpProviderRepo, cfg.JobRepo),
-	)
-
-	mux.HandleFunc(
-		"GET /v1/config/schema",
-		configSchemaEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, registry),
-	)
-
-	mux.HandleFunc(
-		"/v1/artifacts/",
-		artifactsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.APIKeysRepo, cfg.RunEventRepo, cfg.ShellSessionRepo, cfg.ThreadShareRepo, cfg.AuditWriter, cfg.ArtifactStore),
-	)
-	mux.HandleFunc(
-		"/v1/attachments/",
-		messageAttachmentsEntry(cfg.AuthService, cfg.OrgMembershipRepo, cfg.ThreadRepo, cfg.ThreadShareRepo, cfg.ProjectRepo, cfg.TeamRepo, cfg.APIKeysRepo, cfg.AuditWriter, cfg.MessageAttachmentStore),
-	)
+	adminapi.RegisterRoutes(mux, adminapi.Deps{
+		AuthService:          cfg.AuthService,
+		OrgMembershipRepo:    cfg.OrgMembershipRepo,
+		UsersRepo:            cfg.UsersRepo,
+		RunEventRepo:         cfg.RunEventRepo,
+		UsageRepo:            cfg.UsageRepo,
+		OrgRepo:              cfg.OrgRepo,
+		APIKeysRepo:          cfg.APIKeysRepo,
+		MessageRepo:          cfg.MessageRepo,
+		LlmCredentialsRepo:   cfg.LlmCredentialsRepo,
+		ThreadRepo:           cfg.ThreadRepo,
+		ThreadReportRepo:     cfg.ThreadReportRepo,
+		AuditWriter:          cfg.AuditWriter,
+		InviteCodesRepo:      cfg.InviteCodesRepo,
+		ReferralsRepo:        cfg.ReferralsRepo,
+		CreditsRepo:          cfg.CreditsRepo,
+		RedemptionCodesRepo:  cfg.RedemptionCodesRepo,
+		NotificationsRepo:    cfg.NotificationsRepo,
+		Pool:                 cfg.Pool,
+		Logger:               cfg.Logger,
+		GatewayRedisClient:   gatewayRedis,
+		PlatformSettingsRepo: cfg.PlatformSettingsRepo,
+		ConfigResolver:       resolver,
+		ConfigInvalidator:    invalidator,
+		ConfigRegistry:       registry,
+		PersonasRepo:         cfg.PersonasRepo,
+		RepoPersonas:         cfg.RepoPersonas,
+		JobRepo:              cfg.JobRepo,
+		SmtpProviderRepo:     cfg.SmtpProviderRepo,
+		UserCredentialRepo:   cfg.UserCredentialRepo,
+	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())

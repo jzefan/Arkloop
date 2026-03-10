@@ -49,4 +49,3 @@ func TestMaskIfSensitiveUnknownKeyUnchanged(t *testing.T) {
 		t.Fatalf("expected original value, got %q", got)
 	}
 }
-
