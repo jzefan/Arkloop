@@ -17,6 +17,7 @@ import { ModeSwitch } from './ModeSwitch'
 import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
+import { ClawRightPanel } from './ClawRightPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
 import {
@@ -1654,7 +1655,7 @@ export function ChatPage() {
   const isSourcePanelOpen = !!(sourcePanelSources && sourcePanelSources.length > 0)
   const isCodePanelOpen = !!codePanelExecution
   const isDocumentPanelOpen = !!documentPanelArtifact
-  const isPanelOpen = isSourcePanelOpen || isCodePanelOpen || isDocumentPanelOpen
+  const isPanelOpen = isSourcePanelOpen || isCodePanelOpen || isDocumentPanelOpen || appMode === 'claw'
 
   const openCodePanel = useCallback((ce: CodeExecution) => {
     setCodePanelExecution((prev) => {
@@ -2254,6 +2255,9 @@ export function ChatPage() {
 
         </div>
         {/* 右侧面板 - width 过渡驱动整体布局动画 */}
+        {appMode === 'claw' ? (
+          <ClawRightPanel />
+        ) : (
         <div
           style={{
             width: isDocumentPanelOpen ? `${documentPanelWidth}px` : (isSourcePanelOpen || isCodePanelOpen) ? `${sidePanelWidth}px` : '0px',
@@ -2297,6 +2301,7 @@ export function ChatPage() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {threadId && (

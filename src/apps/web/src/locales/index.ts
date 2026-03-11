@@ -240,6 +240,21 @@ export interface LocaleStrings {
   // mode switch
   modeChat: string
   modeClaw: string
+  // claw right panel
+  claw: {
+    progress: string
+    progressEmpty: string
+    workingFolder: string
+    workingFolderEmpty: string
+    context: string
+    contextDesc: string
+    contextEmpty: string
+    stepComplete: string
+    stepInProgress: string
+    stepPending: string
+    toolsCalled: string
+    filesReferenced: string
+  }
   // thread context menu
   starThread: string
   unstarThread: string
