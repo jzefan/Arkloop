@@ -289,6 +289,7 @@ export const zh: LocaleStrings = {
   shellRanCommand: '已运行命令',
   shellSuccess: '成功',
   shellFailed: '失败',
+  shellCompleted: '完成',
   shellNoOutput: '无输出',
   // pasted content
   pastedContent: '粘贴内容',

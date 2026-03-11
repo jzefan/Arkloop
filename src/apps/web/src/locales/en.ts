@@ -289,6 +289,7 @@ export const en: LocaleStrings = {
   shellRanCommand: 'Ran command',
   shellSuccess: 'Success',
   shellFailed: 'Failed',
+  shellCompleted: 'Completed',
   shellNoOutput: 'No output',
   // pasted content
   pastedContent: 'Pasted content',
