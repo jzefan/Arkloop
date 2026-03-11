@@ -81,16 +81,10 @@ export const zh: LocaleStrings = {
   otpSendingCountdown: (s: number) => `${s}s 后可重发`,
   otpVerifyBtn: '登录',
   loading: '加载中...',
-  projectSwitcherLabel: '当前项目',
-  projectSwitcherLoading: '加载项目中...',
-  projectSwitcherEmpty: '暂无项目',
   pages: {
     projects: {
       title: '项目',
       refresh: '刷新',
-      currentLabel: '当前选择',
-      currentHint: '用于新配置和后续项目级视图。',
-      activeBadge: '当前',
       defaultBadge: '默认',
       noDescription: '暂无说明',
       empty: '暂无项目',
