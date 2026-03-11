@@ -310,4 +310,13 @@ export const zh: LocaleStrings = {
   // pasted content
   pastedContent: '粘贴内容',
   pastedLines: (n: number) => `${n} 行`,
+  // user input card
+  userInput: {
+    dismiss: '忽略',
+    submit: '提交',
+    submitting: '提交中...',
+    next: '继续',
+    otherPlaceholder: '输入你的答案...',
+    recommended: '推荐',
+  },
 }

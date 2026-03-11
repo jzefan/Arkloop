@@ -4,6 +4,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/askuser"
 	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
 	summarizethread "arkloop/services/worker/internal/tools/builtin/summarize_thread"
 	webfetch "arkloop/services/worker/internal/tools/builtin/web_fetch"
@@ -25,6 +26,7 @@ func AgentSpecs() []tools.AgentToolSpec {
 		webfetch.AgentSpecBasic,
 		spawnagent.AgentSpec,
 		summarizethread.AgentSpec,
+		askuser.AgentSpec,
 	}
 }
 
@@ -35,6 +37,7 @@ func LlmSpecs() []llm.ToolSpec {
 		webfetch.LlmSpec,
 		// spawn_agent 由 NewSpawnAgentMiddleware 按需动态注入，不在此处静态注册
 		summarizethread.LlmSpec,
+		askuser.LlmSpec,
 	}
 }
 
@@ -51,5 +54,6 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		webfetch.AgentSpecFirecrawl.Name: webfetch.NewFirecrawlExecutor(resolver),
 		webfetch.AgentSpecBasic.Name:     webfetch.NewBasicExecutor(resolver),
 		summarizethread.AgentSpec.Name:   &summarizethread.ToolExecutor{Pool: pool, RDB: rdb},
+		askuser.AgentSpec.Name:           askuser.ToolExecutor{},
 	}
 }

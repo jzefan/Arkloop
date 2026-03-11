@@ -9,6 +9,7 @@ import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
+import UserInputCard from './UserInputCard'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { ShareModal } from './ShareModal'
@@ -34,6 +35,7 @@ import {
   buildMessageBrowserActionsFromRunEvents,
 } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
+import type { UserInputRequest, UserInputResponse } from '../userInputTypes'
 import {
   createMessage,
   createRun,
@@ -225,6 +227,7 @@ export function ChatPage() {
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
+  const [pendingUserInput, setPendingUserInput] = useState<UserInputRequest | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [sharingMessageId, setSharingMessageId] = useState<string | null>(null)
@@ -724,6 +727,7 @@ export function ChatPage() {
     clearTimeout(liveTimelineExitTimerRef.current)
     setCancelSubmitting(false)
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     pendingMessageRef.current = null
     setQueuedDraft(null)
@@ -1054,7 +1058,16 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.input_requested') {
-        setAwaitingInput(true)
+        const data = event.data as Record<string, unknown> | undefined
+        const questions = data?.questions
+        if (Array.isArray(questions) && questions.length > 0) {
+          setPendingUserInput({
+            request_id: (data?.request_id as string) ?? '',
+            questions: questions as UserInputRequest['questions'],
+          })
+        } else {
+          setAwaitingInput(true)
+        }
         continue
       }
 
@@ -1082,6 +1095,7 @@ export function ChatPage() {
         }
         setQueuedDraft(null)
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
@@ -1158,6 +1172,7 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const data = event.data as { trace_id?: unknown }
@@ -1178,6 +1193,7 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const obj = event.data as { message?: unknown; error_class?: unknown }
@@ -1231,6 +1247,7 @@ export function ChatPage() {
     if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
     setQueuedDraft(null)
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     if (threadId) onRunEnded(threadId)
     refreshCredits()
@@ -1553,6 +1570,7 @@ export function ChatPage() {
       await provideInput(accessToken, activeRunId, text)
       setCheckInDraft('')
       setAwaitingInput(false)
+      setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -1564,6 +1582,43 @@ export function ChatPage() {
     }
   }, [activeRunId, accessToken, checkInDraft, checkInSubmitting, onLoggedOut])
 
+  const handleUserInputSubmit = useCallback(async (response: UserInputResponse) => {
+    if (!activeRunId) return
+    setError(null)
+    try {
+      await provideInput(accessToken, activeRunId, JSON.stringify(response))
+      setPendingUserInput(null)
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    }
+  }, [accessToken, activeRunId, onLoggedOut])
+
+  const handleUserInputDismiss = useCallback(async () => {
+    if (!activeRunId) return
+    const req = pendingUserInput
+    if (!req) return
+    setError(null)
+    try {
+      const empty: UserInputResponse = {
+        type: 'user_input_response',
+        request_id: req.request_id,
+        answers: {},
+      }
+      await provideInput(accessToken, activeRunId, JSON.stringify(empty))
+      setPendingUserInput(null)
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    }
+  }, [accessToken, activeRunId, pendingUserInput, onLoggedOut])
+
   const handleCancel = useCallback(() => {
     if (!activeRunId || cancelSubmitting) return
     const runId = activeRunId
@@ -1572,6 +1627,7 @@ export function ChatPage() {
     setActiveRunId(null)
     setAssistantDraft('')
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     setCancelSubmitting(true)
     setError(null)
@@ -2213,25 +2269,43 @@ export function ChatPage() {
             </button>
           </div>
         )}
-        <ChatInput
-          value={draft}
-          onChange={setDraft}
-          onSubmit={handleSend}
-          onCancel={handleCancel}
-          placeholder="Reply..."
-          disabled={sending}
-          isStreaming={isStreaming}
-          canCancel={canCancel}
-          cancelSubmitting={cancelSubmitting}
-          attachments={attachments}
-          onAttachFiles={handleAttachFiles}
-          onPasteContent={handlePasteContent}
-          onRemoveAttachment={handleRemoveAttachment}
-          accessToken={accessToken}
-          onAsrError={handleAsrError}
-          searchMode={isSearchThread}
-          onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
-        />
+        {pendingUserInput ? (
+          <motion.div
+            key="user-input-card"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="w-full max-w-[840px]"
+          >
+            <UserInputCard
+              request={pendingUserInput}
+              onSubmit={handleUserInputSubmit}
+              onDismiss={handleUserInputDismiss}
+              disabled={!activeRunId}
+            />
+          </motion.div>
+        ) : (
+          <ChatInput
+            value={draft}
+            onChange={setDraft}
+            onSubmit={handleSend}
+            onCancel={handleCancel}
+            placeholder="Reply..."
+            disabled={sending}
+            isStreaming={isStreaming}
+            canCancel={canCancel}
+            cancelSubmitting={cancelSubmitting}
+            attachments={attachments}
+            onAttachFiles={handleAttachFiles}
+            onPasteContent={handlePasteContent}
+            onRemoveAttachment={handleRemoveAttachment}
+            accessToken={accessToken}
+            onAsrError={handleAsrError}
+            searchMode={isSearchThread}
+            onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
+          />
+        )}
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>
           Arkloop is AI and can make mistakes. Please double-check responses.
         </p>
