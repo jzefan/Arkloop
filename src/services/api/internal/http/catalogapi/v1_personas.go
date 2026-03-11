@@ -676,13 +676,13 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 }
 
 func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID, rawScope string, fromBody bool, write bool) (string, bool) {
-	scope := normalizeRequestedProjectScope(strings.TrimSpace(rawScope))
+	scope := strings.TrimSpace(rawScope)
 	if scope == "" {
 		scope = data.PersonaScopePlatform
 	}
 	normalized, err := data.NormalizePersonaScope(scope)
 	if err != nil {
-		message := "scope must be org or platform"
+		message := "scope must be project or platform"
 		if fromBody {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
 		} else {
@@ -772,22 +772,7 @@ func personaScopeFromOrgID(orgID *uuid.UUID) string {
 	if orgID == nil {
 		return data.PersonaScopePlatform
 	}
-	return projectScopeValue()
-}
-
-func normalizeRequestedProjectScope(scope string) string {
-	if scope == projectScopeValue() {
-		return legacyScopedProjectValue()
-	}
-	return scope
-}
-
-func projectScopeValue() string {
-	return "project"
-}
-
-func legacyScopedProjectValue() string {
-	return strings.Join([]string{"o", "rg"}, "")
+	return data.PersonaScopeProject
 }
 
 func optionalTrimmedStringPtr(value *string) *string {
