@@ -80,6 +80,41 @@ type createdLocalAccount struct {
 	Org  data.Org
 }
 
+type BootstrapAlreadyInitializedError struct{}
+
+func (BootstrapAlreadyInitializedError) Error() string {
+	return "bootstrap already initialized"
+}
+
+type BootstrapInvalidTokenError struct{}
+
+func (BootstrapInvalidTokenError) Error() string {
+	return "invalid bootstrap token"
+}
+
+type BootstrapInitResult struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+type BootstrapVerifyResult struct {
+	Valid     bool
+	ExpiresAt time.Time
+}
+
+type BootstrapSetupResult struct {
+	UserID       uuid.UUID
+	AccessToken  string
+	RefreshToken string
+}
+
+const (
+	bootstrapTokenSettingKey          = "bootstrap.init.token"
+	bootstrapTokenExpiresAtSettingKey = "bootstrap.init.expires_at"
+	bootstrapPlatformAdminSettingKey  = "bootstrap.platform_admin.user_id"
+	bootstrapTokenTTL                 = 30 * time.Minute
+)
+
 type RegistrationService struct {
 	pool             *pgxpool.Pool
 	passwordHasher   *BcryptPasswordHasher
@@ -497,6 +532,168 @@ func (s *RegistrationService) createLocalAccountTx(
 	}
 
 	return createdLocalAccount{User: user, Org: org}, nil
+}
+
+
+func (s *RegistrationService) InitBootstrapToken(ctx context.Context) (BootstrapInitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil || s.pool == nil {
+		return BootstrapInitResult{}, fmt.Errorf("registration service not configured")
+	}
+
+	membershipRepo, err := data.NewOrgMembershipRepository(s.pool)
+	if err != nil {
+		return BootstrapInitResult{}, err
+	}
+	hasAdmin, err := membershipRepo.HasPlatformAdmin(ctx)
+	if err != nil {
+		return BootstrapInitResult{}, err
+	}
+	if hasAdmin {
+		return BootstrapInitResult{}, BootstrapAlreadyInitializedError{}
+	}
+
+	settingsRepo, err := data.NewPlatformSettingsRepository(s.pool)
+	if err != nil {
+		return BootstrapInitResult{}, err
+	}
+
+	token := uuid.NewString() + uuid.NewString()
+	expiresAt := s.now().Add(bootstrapTokenTTL)
+	if _, err := settingsRepo.Set(ctx, bootstrapTokenSettingKey, token); err != nil {
+		return BootstrapInitResult{}, err
+	}
+	if _, err := settingsRepo.Set(ctx, bootstrapTokenExpiresAtSettingKey, expiresAt.UTC().Format(time.RFC3339Nano)); err != nil {
+		return BootstrapInitResult{}, err
+	}
+
+	return BootstrapInitResult{Token: token, ExpiresAt: expiresAt.UTC()}, nil
+}
+
+func (s *RegistrationService) VerifyBootstrapToken(ctx context.Context, token string) (BootstrapVerifyResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil || s.pool == nil {
+		return BootstrapVerifyResult{}, fmt.Errorf("registration service not configured")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return BootstrapVerifyResult{Valid: false}, nil
+	}
+
+	membershipRepo, err := data.NewOrgMembershipRepository(s.pool)
+	if err != nil {
+		return BootstrapVerifyResult{}, err
+	}
+	hasAdmin, err := membershipRepo.HasPlatformAdmin(ctx)
+	if err != nil {
+		return BootstrapVerifyResult{}, err
+	}
+	if hasAdmin {
+		return BootstrapVerifyResult{Valid: false}, nil
+	}
+
+	settingsRepo, err := data.NewPlatformSettingsRepository(s.pool)
+	if err != nil {
+		return BootstrapVerifyResult{}, err
+	}
+	storedToken, err := settingsRepo.Get(ctx, bootstrapTokenSettingKey)
+	if err != nil {
+		return BootstrapVerifyResult{}, err
+	}
+	expiresSetting, err := settingsRepo.Get(ctx, bootstrapTokenExpiresAtSettingKey)
+	if err != nil {
+		return BootstrapVerifyResult{}, err
+	}
+	if storedToken == nil || expiresSetting == nil || strings.TrimSpace(storedToken.Value) != token {
+		return BootstrapVerifyResult{Valid: false}, nil
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(expiresSetting.Value))
+	if err != nil {
+		return BootstrapVerifyResult{Valid: false}, nil
+	}
+	if !expiresAt.After(s.now()) {
+		return BootstrapVerifyResult{Valid: false, ExpiresAt: expiresAt.UTC()}, nil
+	}
+	return BootstrapVerifyResult{Valid: true, ExpiresAt: expiresAt.UTC()}, nil
+}
+
+func (s *RegistrationService) SetupBootstrapAdmin(ctx context.Context, token string, login string, password string, email string, locale string) (BootstrapSetupResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil || s.pool == nil {
+		return BootstrapSetupResult{}, fmt.Errorf("registration service not configured")
+	}
+	if err := ValidateRegistrationPassword(password); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	verify, err := s.VerifyBootstrapToken(ctx, token)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if !verify.Valid {
+		return BootstrapSetupResult{}, BootstrapInvalidTokenError{}
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	settingsRepo, err := data.NewPlatformSettingsRepository(tx)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(tx)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	hasAdmin, err := membershipRepo.HasPlatformAdmin(ctx)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if hasAdmin {
+		return BootstrapSetupResult{}, BootstrapAlreadyInitializedError{}
+	}
+
+	created, err := s.createLocalAccountTx(ctx, tx, login, password, email, locale)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if err := membershipRepo.SetRoleForUser(ctx, created.User.ID, RolePlatformAdmin); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if _, err := settingsRepo.Set(ctx, bootstrapPlatformAdminSettingKey, created.User.ID.String()); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if err := settingsRepo.Delete(ctx, bootstrapTokenSettingKey); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if err := settingsRepo.Delete(ctx, bootstrapTokenExpiresAtSettingKey); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+
+	now := s.now()
+	accessToken, err := s.tokenService.Issue(created.User.ID, created.Org.ID, RolePlatformAdmin, now)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	refreshPlain, refreshHash, expiresAt, err := s.tokenService.IssueRefreshToken(now)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if _, err := s.refreshTokenRepo.Create(ctx, created.User.ID, refreshHash, expiresAt); err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	return BootstrapSetupResult{UserID: created.User.ID, AccessToken: accessToken, RefreshToken: refreshPlain}, nil
 }
 
 func uuidHexPrefix(value uuid.UUID, n int) string {

@@ -41,7 +41,9 @@ cd Arkloop
 ```
 
 For a non-interactive install, pass explicit parser flags to `./setup.sh install --non-interactive ...`.
-Once the install is healthy, access the Console entry at `http://localhost:8000`.
+If port `8000` is already in use, set another gateway port, for example `./setup.sh install --gateway-port 8100`.
+If you want English prompts and logs, pass `--lang en`.
+Once the install is healthy, access the Console entry at `http://localhost:8000` or your custom gateway port.
 
 For host-level debugging ports such as PostgreSQL, API, Sandbox, or OpenViking, opt in explicitly:
 
