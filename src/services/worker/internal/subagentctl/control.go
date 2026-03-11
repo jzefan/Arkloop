@@ -28,55 +28,6 @@ type Control interface {
 	ListChildren(ctx context.Context) ([]StatusSnapshot, error)
 }
 
-type SpawnRequest struct {
-	PersonaID string
-	Input     string
-}
-
-type SendInputRequest struct {
-	SubAgentID uuid.UUID
-	Input      string
-	Interrupt  bool
-}
-
-type WaitRequest struct {
-	SubAgentID uuid.UUID
-	Timeout    time.Duration
-}
-
-type ResumeRequest struct {
-	SubAgentID uuid.UUID
-}
-
-type CloseRequest struct {
-	SubAgentID uuid.UUID
-}
-
-type InterruptRequest struct {
-	SubAgentID uuid.UUID
-	Reason     string
-}
-
-type StatusSnapshot struct {
-	SubAgentID         uuid.UUID  `json:"sub_agent_id"`
-	ParentRunID        uuid.UUID  `json:"parent_run_id"`
-	RootRunID          uuid.UUID  `json:"root_run_id"`
-	Depth              int        `json:"depth"`
-	Status             string     `json:"status"`
-	PersonaID          *string    `json:"persona_id,omitempty"`
-	Nickname           *string    `json:"nickname,omitempty"`
-	CurrentRunID       *uuid.UUID `json:"current_run_id,omitempty"`
-	LastCompletedRunID *uuid.UUID `json:"last_completed_run_id,omitempty"`
-	LastOutputRef      *string    `json:"last_output_ref,omitempty"`
-	LastOutput         *string    `json:"output,omitempty"`
-	LastError          *string    `json:"last_error,omitempty"`
-	LastEventSeq       *int64     `json:"last_event_seq,omitempty"`
-	LastEventType      *string    `json:"last_event_type,omitempty"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"`
-	ClosedAt           *time.Time `json:"closed_at,omitempty"`
-}
-
 type Service struct {
 	pool             *pgxpool.Pool
 	rdb              *redis.Client
@@ -87,6 +38,8 @@ type Service struct {
 	planner          *ChildRunPlanner
 	factory          *SubAgentRunFactory
 	projector        *SubAgentStateProjector
+	snapshotBuilder  *SnapshotBuilder
+	snapshotStorage  *SnapshotStorage
 }
 
 func CreateInitialRun(
@@ -101,12 +54,13 @@ func CreateInitialRun(
 	input string,
 ) error {
 	service := NewService(pool, rdb, jobQueue, parentRun, traceID)
-	_, err := service.spawn(ctx, SpawnRequest{PersonaID: personaID, Input: input}, &forcedRunID)
+	_, err := service.spawn(ctx, SpawnRequest{PersonaID: personaID, ContextMode: data.SubAgentContextModeIsolated, Input: input}, &forcedRunID)
 	return err
 }
 
 func NewService(pool *pgxpool.Pool, rdb *redis.Client, jobQueue queue.JobQueue, parentRun data.Run, traceID string) *Service {
-	factory := NewSubAgentRunFactory(pool)
+	snapshotStorage := NewSnapshotStorage()
+	factory := NewSubAgentRunFactory(pool, snapshotStorage)
 	projector := NewSubAgentStateProjector(pool, rdb, jobQueue)
 	projector.factory = factory
 	return &Service{
@@ -119,6 +73,8 @@ func NewService(pool *pgxpool.Pool, rdb *redis.Client, jobQueue queue.JobQueue, 
 		planner:          NewChildRunPlanner(),
 		factory:          factory,
 		projector:        projector,
+		snapshotBuilder:  NewSnapshotBuilder(),
+		snapshotStorage:  snapshotStorage,
 	}
 }
 
@@ -142,6 +98,9 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
+	if plan.Spawn == nil {
+		return StatusSnapshot{}, fmt.Errorf("spawn plan missing resolved request")
+	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -149,7 +108,11 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	}
 	defer tx.Rollback(ctx)
 
-	record, childRunID, err := s.factory.CreateSpawnRun(ctx, tx, s.parentRun, plan.PersonaID, plan.Input, forcedRunID)
+	snapshot, err := s.snapshotBuilder.Build(ctx, tx, s.parentRun, *plan.Spawn)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	record, childRunID, err := s.factory.CreateSpawnRun(ctx, tx, s.parentRun, *plan.Spawn, snapshot, forcedRunID)
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
@@ -446,6 +409,12 @@ func (s *Service) validateReady() error {
 	}
 	if s.jobQueue == nil {
 		return fmt.Errorf("sub-agent control job queue must not be nil")
+	}
+	if s.snapshotBuilder == nil {
+		return fmt.Errorf("sub-agent snapshot builder must not be nil")
+	}
+	if s.snapshotStorage == nil {
+		return fmt.Errorf("sub-agent snapshot storage must not be nil")
 	}
 	return nil
 }

@@ -68,6 +68,7 @@ func NewPersonaResolutionMiddleware(
 
 		rc.ToolBudget = map[string]any{}
 		rc.PerToolSoftLimits = tools.DefaultPerToolSoftLimits()
+		rc.ToolDenylist = nil
 		rc.PersonaDefinition = resolution.Definition
 		rc.AgentConfig = nil
 		rc.AgentConfigID = nil
@@ -109,6 +110,7 @@ func NewPersonaResolutionMiddleware(
 
 		if resolution.Definition != nil {
 			def := resolution.Definition
+			rc.ToolDenylist = append([]string(nil), def.ToolDenylist...)
 			if len(def.ToolAllowlist) > 0 {
 				narrowed := make(map[string]struct{}, len(def.ToolAllowlist))
 				for _, name := range def.ToolAllowlist {

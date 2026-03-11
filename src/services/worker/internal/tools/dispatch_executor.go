@@ -28,6 +28,11 @@ type ExecutionContext struct {
 	ProfileRef          string
 	WorkspaceRef        string
 	EnabledSkills       []skillstore.ResolvedSkill
+	ToolAllowlist       []string
+	ToolDenylist        []string
+	RouteID             string
+	Model               string
+	MemoryScope         string
 	AgentID             string
 	TimeoutMs           *int
 	Budget              map[string]any

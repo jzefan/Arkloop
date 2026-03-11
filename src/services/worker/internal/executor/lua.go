@@ -193,7 +193,7 @@ func (rt *luaRuntime) agentRun(L *lua.LState) int {
 		return 2
 	}
 
-	snapshot, err := rt.rc.SubAgentControl.Spawn(rt.ctx, subagentctl.SpawnRequest{PersonaID: personaID, Input: input})
+	snapshot, err := rt.rc.SubAgentControl.Spawn(rt.ctx, subagentctl.SpawnRequest{PersonaID: personaID, ContextMode: data.SubAgentContextModeIsolated, Input: input})
 	if err == nil {
 		snapshot, err = rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentID: snapshot.SubAgentID})
 	}
@@ -295,7 +295,7 @@ func (rt *luaRuntime) agentRunParallel(L *lua.LState) int {
 		i, t := i, t
 		go func() {
 			defer wg.Done()
-			snapshot, err := rt.rc.SubAgentControl.Spawn(rt.ctx, subagentctl.SpawnRequest{PersonaID: t.personaID, Input: t.input})
+			snapshot, err := rt.rc.SubAgentControl.Spawn(rt.ctx, subagentctl.SpawnRequest{PersonaID: t.personaID, ContextMode: data.SubAgentContextModeIsolated, Input: t.input})
 			if err == nil {
 				snapshot, err = rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentID: snapshot.SubAgentID})
 			}
@@ -451,6 +451,11 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		ProfileRef:          rt.rc.ProfileRef,
 		WorkspaceRef:        rt.rc.WorkspaceRef,
 		EnabledSkills:       append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
+		ToolAllowlist:       sortedToolNames(rt.rc.AllowlistSet),
+		ToolDenylist:        append([]string(nil), rt.rc.ToolDenylist...),
+		RouteID:             routeIDFromRunContext(rt.rc),
+		Model:               modelFromRunContext(rt.rc),
+		MemoryScope:         "same_user",
 		AgentID:             agentIDFromPersona(rt.rc),
 		TimeoutMs:           rt.rc.ToolTimeoutMs,
 		Budget:              rt.rc.ToolBudget,
@@ -1182,6 +1187,14 @@ func (rt *luaRuntime) runAgentLoop(
 		AgentID:                agentIDFromPersona(rt.rc),
 		ThreadID:               &rt.rc.Run.ThreadID,
 		ProjectID:              rt.rc.Run.ProjectID,
+		ProfileRef:             rt.rc.ProfileRef,
+		WorkspaceRef:           rt.rc.WorkspaceRef,
+		EnabledSkills:          append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
+		ToolAllowlist:          sortedToolNames(rt.rc.AllowlistSet),
+		ToolDenylist:           append([]string(nil), rt.rc.ToolDenylist...),
+		RouteID:                routeIDFromRunContext(rt.rc),
+		Model:                  modelFromRunContext(rt.rc),
+		MemoryScope:            "same_user",
 		TraceID:                rt.rc.TraceID,
 		InputJSON:              rt.rc.InputJSON,
 		ReasoningIterations:    maxIter,
@@ -1353,6 +1366,11 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				ProfileRef:          rt.rc.ProfileRef,
 				WorkspaceRef:        rt.rc.WorkspaceRef,
 				EnabledSkills:       append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
+				ToolAllowlist:       sortedToolNames(rt.rc.AllowlistSet),
+				ToolDenylist:        append([]string(nil), rt.rc.ToolDenylist...),
+				RouteID:             routeIDFromRunContext(rt.rc),
+				Model:               modelFromRunContext(rt.rc),
+				MemoryScope:         "same_user",
 				AgentID:             agentIDFromPersona(rt.rc),
 				TimeoutMs:           rt.rc.ToolTimeoutMs,
 				Budget:              rt.rc.ToolBudget,

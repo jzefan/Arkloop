@@ -44,15 +44,30 @@ func TestToolExecutorSpawnReturnsHandle(t *testing.T) {
 	subAgentID := uuid.New()
 	runID := uuid.New()
 	exec := &ToolExecutor{Control: stubControl{spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
-		if req.PersonaID != "researcher@1" || req.Input != "collect facts" {
+		if req.PersonaID != "researcher@1" || req.Input != "collect facts" || req.ContextMode != "fork_recent" {
 			t.Fatalf("unexpected spawn request: %#v", req)
+		}
+		if req.Role == nil || *req.Role != "worker" {
+			t.Fatalf("unexpected role: %#v", req.Role)
+		}
+		if req.Nickname == nil || *req.Nickname != "Atlas" {
+			t.Fatalf("unexpected nickname: %#v", req.Nickname)
 		}
 		return subagentctl.StatusSnapshot{SubAgentID: subAgentID, ParentRunID: uuid.New(), RootRunID: uuid.New(), Depth: 1, Status: "queued", CurrentRunID: &runID}, nil
 	}, wait: func(_ context.Context, _ subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
 		return subagentctl.StatusSnapshot{}, nil
 	}}}
 
-	result := exec.Execute(context.Background(), AgentSpec.Name, map[string]any{"persona_id": "researcher@1", "input": "collect facts"}, tools.ExecutionContext{}, "")
+	result := exec.Execute(context.Background(), AgentSpec.Name, map[string]any{
+		"persona_id":   "researcher@1",
+		"role":         "worker",
+		"nickname":     "Atlas",
+		"context_mode": "fork_recent",
+		"inherit": map[string]any{
+			"runtime": true,
+		},
+		"input": "collect facts",
+	}, tools.ExecutionContext{ToolAllowlist: []string{"browser"}, RouteID: "route_parent", Model: "gpt-4.1"}, "")
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
@@ -64,6 +79,22 @@ func TestToolExecutorSpawnReturnsHandle(t *testing.T) {
 	}
 	if got := result.ResultJSON["status"]; got != "queued" {
 		t.Fatalf("unexpected status: %#v", got)
+	}
+}
+
+func TestToolExecutorSpawnRejectsMissingContextMode(t *testing.T) {
+	exec := &ToolExecutor{Control: stubControl{spawn: func(_ context.Context, _ subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+		return subagentctl.StatusSnapshot{}, nil
+	}, wait: func(_ context.Context, _ subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+		return subagentctl.StatusSnapshot{}, nil
+	}}}
+
+	result := exec.Execute(context.Background(), AgentSpec.Name, map[string]any{"persona_id": "researcher@1", "input": "collect facts"}, tools.ExecutionContext{}, "")
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+	if result.Error.Message != "context_mode must be a non-empty string" {
+		t.Fatalf("unexpected error: %+v", result.Error)
 	}
 }
 

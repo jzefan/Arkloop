@@ -354,6 +354,13 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			CONSTRAINT uq_sub_agent_pending_inputs_sub_agent_id_seq UNIQUE (sub_agent_id, seq)
 		)`,
 		`CREATE INDEX idx_sub_agent_pending_inputs_sub_agent_id_seq ON sub_agent_pending_inputs (sub_agent_id, priority DESC, seq ASC)`,
+		`CREATE TABLE sub_agent_context_snapshots (
+			sub_agent_id  UUID        PRIMARY KEY REFERENCES sub_agents(id) ON DELETE CASCADE,
+			snapshot_json JSONB       NOT NULL,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX idx_sub_agent_context_snapshots_updated_at ON sub_agent_context_snapshots (updated_at)`,
 		`CREATE TABLE default_workspace_bindings (
 			profile_ref       TEXT        NOT NULL,
 			owner_user_id     UUID        NULL,
@@ -530,6 +537,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			role               TEXT        NOT NULL,
 			content            TEXT        NOT NULL,
 			content_json       JSONB       NULL,
+			metadata_json      JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
