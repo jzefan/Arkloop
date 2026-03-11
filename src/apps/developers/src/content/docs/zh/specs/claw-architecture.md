@@ -488,7 +488,7 @@ func ResolveProvider() string {
 
 **需求**：展示 sandbox 内的文件树。
 
-- 数据来源：`GET /v1/workspaces/{id}/files`（Workspace API，见 1.9）
+- 数据来源：`GET /v1/projects/{project_id}/workspace/files?path=`（Workspace API，见 1.9）
 - 树形展示，支持展开/折叠目录
 - 点击文件可预览内容（文本文件直接显示，二进制文件显示类型信息）
 - 文件树定时轮询刷新（或由 SSE event 触发刷新）
