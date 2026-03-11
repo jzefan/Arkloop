@@ -2,9 +2,11 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
   Github,
   Loader2,
+  MessageSquare,
   MoreHorizontal,
   PackagePlus,
   RefreshCw,
@@ -36,6 +38,7 @@ import { useLocale } from '../contexts/LocaleContext'
 
 type Props = {
   accessToken: string
+  onTrySkill?: (prompt: string) => void
 }
 
 type BrowseMode = 'registry' | 'local'
@@ -163,7 +166,7 @@ function mergeSkills(installed: InstalledSkill[], defaults: InstalledSkill[], ma
   return sourceItems.filter((item) => matchesSkillQuery(item, normalized))
 }
 
-export function SkillsSettingsContent({ accessToken }: Props) {
+export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
   const { t, locale } = useLocale()
   const skillText = t.skills
   const [query, setQuery] = useState('')
@@ -187,6 +190,7 @@ export function SkillsSettingsContent({ accessToken }: Props) {
   const [githubUrl, setGitHubUrl] = useState('')
   const [githubRef, setGitHubRef] = useState('')
   const [importing, setImporting] = useState(false)
+  const [detailSkill, setDetailSkill] = useState<ViewSkill | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const cardMenuRef = useRef<HTMLDivElement>(null)
@@ -344,6 +348,20 @@ export function SkillsSettingsContent({ accessToken }: Props) {
       setBusySkillId(null)
     }
   }, [accessToken, refreshInstalled, skillText.deleteConflict, skillText.importFailed, syncDefaultSkills])
+
+  const handleDisable = useCallback(async (item: ViewSkill) => {
+    if (!item.version) return
+    setBusySkillId(item.id)
+    setError('')
+    try {
+      await syncDefaultSkills((current) => current.filter((skill) => !(skill.skill_key === item.skill_key && skill.version === item.version)))
+      await refreshInstalled()
+    } catch {
+      setError(skillText.disableFailed)
+    } finally {
+      setBusySkillId(null)
+    }
+  }, [refreshInstalled, skillText.disableFailed, syncDefaultSkills])
 
   const handleGitHubImport = useCallback(async (candidatePath?: string) => {
     setImporting(true)
@@ -561,8 +579,11 @@ export function SkillsSettingsContent({ accessToken }: Props) {
               return (
                 <div
                   key={item.id}
-                  className="flex items-start gap-3 rounded-xl p-3"
+                  className="flex items-start gap-3 rounded-xl p-3 cursor-pointer transition-colors duration-100"
                   style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+                  onClick={() => setDetailSkill(item)}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--c-bg-deep)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--c-bg-menu)' }}
                 >
                   <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                     <div className="flex flex-wrap items-center gap-2">
@@ -617,28 +638,28 @@ export function SkillsSettingsContent({ accessToken }: Props) {
                     )}
                   </div>
 
-                  <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                  <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={enabled}
                       disabled={busy}
                       onChange={() => {
-                        if (enabled) void handleRemove(item)
+                        if (enabled) void handleDisable(item)
                         else void handleEnable(item)
                       }}
                       className="peer sr-only"
                     />
                     <span
                       className="h-5 w-9 rounded-full transition-colors"
-                      style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-bg-deep)' }}
+                      style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }}
                     />
                     <span
                       className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
-                      style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-text-muted)' }}
+                      style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
                     />
                   </label>
 
-                  <div className="relative" ref={menuSkillId === item.id ? cardMenuRef : undefined}>
+                  <div className="relative" ref={menuSkillId === item.id ? cardMenuRef : undefined} onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => setMenuSkillId((v) => (v === item.id ? null : item.id))}
@@ -659,14 +680,26 @@ export function SkillsSettingsContent({ accessToken }: Props) {
                         }}
                       >
                         <DropdownAction
-                          icon={<ExternalLink size={14} />}
-                          label={skillText.viewDetail}
+                          icon={<MessageSquare size={14} />}
+                          label={skillText.trySkill}
+                          disabled={!item.installed || !item.enabled_by_default}
+                          onClick={() => {
+                            setMenuSkillId(null)
+                            onTrySkill?.(skillText.trySkillPrompt(item.skill_key))
+                          }}
+                        />
+                        <DropdownAction
+                          icon={<Download size={14} />}
+                          label={skillText.download}
                           disabled={!item.detail_url}
-                          onClick={() => { setMenuSkillId(null); if (item.detail_url) window.open(item.detail_url, '_blank', 'noopener,noreferrer') }}
+                          onClick={() => {
+                            setMenuSkillId(null)
+                            if (item.detail_url) window.open(item.detail_url, '_blank', 'noopener,noreferrer')
+                          }}
                         />
                         <DropdownAction
                           icon={<RefreshCw size={14} />}
-                          label={skillText.update}
+                          label={skillText.replace}
                           disabled={item.source === 'custom' || (!item.detail_url && !item.repository_url)}
                           onClick={() => { setMenuSkillId(null); void handleEnable(item) }}
                         />
@@ -875,6 +908,156 @@ export function SkillsSettingsContent({ accessToken }: Props) {
           </div>
         </div>
       )}
+
+      {/* 技能详情 Modal */}
+      {detailSkill && (() => {
+        const item = detailSkill
+        const enabled = active(item)
+        const scanBadge = scanStatusBadge(item)
+        const providerLabel = item.registry_provider?.trim().toLowerCase() === 'clawhub'
+          ? 'ClawHub'
+          : item.registry_provider?.trim() || (item.source === 'official' ? skillText.sourceOfficial : item.source === 'github' ? skillText.sourceGitHub : skillText.sourceCustom)
+        return (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailSkill(null) }}
+          >
+            <div
+              className="modal-enter flex w-full max-w-lg flex-col overflow-hidden rounded-2xl"
+              style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)', maxHeight: '80vh' }}
+            >
+              {/* header */}
+              <div className="flex items-center justify-between gap-3 border-b px-5 py-4" style={{ borderColor: 'var(--c-border-subtle)' }}>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-base font-semibold text-[var(--c-text-heading)]">{item.display_name}</span>
+                    {item.source === 'official' && (
+                      <span className="shrink-0 rounded px-1.5 py-px text-[10px] font-medium leading-tight" style={{ background: 'var(--c-pro-bg)', color: '#6ba3f6' }}>
+                        {providerLabel}
+                      </span>
+                    )}
+                    {item.source === 'github' && (
+                      <span className="flex shrink-0 items-center gap-0.5 rounded px-1.5 py-px text-[10px] font-medium leading-tight text-[var(--c-text-tertiary)]" style={{ background: 'var(--c-bg-deep)' }}>
+                        <Github size={9} />
+                        {skillText.sourceGitHub}
+                      </span>
+                    )}
+                    {scanBadge && (
+                      <span className="shrink-0 rounded px-1.5 py-px text-[10px] font-medium leading-tight" style={scanBadge.style}>
+                        {scanBadge.label}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-[var(--c-text-tertiary)]">{item.skill_key}{item.version ? ` v${item.version}` : ''}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetailSkill(null)
+                      onTrySkill?.(skillText.trySkillPrompt(item.skill_key))
+                    }}
+                    disabled={!item.installed || !enabled}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40"
+                    style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-heading)' }}
+                  >
+                    <MessageSquare size={13} />
+                    {skillText.trySkill}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailSkill(null)}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* body */}
+              <div className="flex-1 overflow-auto p-5">
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-[var(--c-text-tertiary)]">{skillText.detailDescription}</span>
+                    <p className="text-sm leading-relaxed text-[var(--c-text-secondary)]">
+                      {item.description || skillText.noDescription}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1 rounded-lg p-3" style={{ background: 'var(--c-bg-deep)' }}>
+                      <span className="text-[10px] font-medium text-[var(--c-text-muted)]">{skillText.detailVersion}</span>
+                      <span className="text-sm text-[var(--c-text-heading)]">{item.version || '-'}</span>
+                    </div>
+                    <div className="flex flex-col gap-1 rounded-lg p-3" style={{ background: 'var(--c-bg-deep)' }}>
+                      <span className="text-[10px] font-medium text-[var(--c-text-muted)]">{skillText.detailSource}</span>
+                      <span className="text-sm text-[var(--c-text-heading)]">{providerLabel || item.source}</span>
+                    </div>
+                  </div>
+
+                  {item.updated_at && (
+                    <div className="flex flex-col gap-1 rounded-lg p-3" style={{ background: 'var(--c-bg-deep)' }}>
+                      <span className="text-[10px] font-medium text-[var(--c-text-muted)]">{skillText.detailUpdatedAt}</span>
+                      <span className="text-sm text-[var(--c-text-heading)]">{formatDate(item.updated_at, locale)}</span>
+                    </div>
+                  )}
+
+                  {item.scan_summary && (
+                    <div className="rounded-lg p-3" style={{ background: 'var(--c-bg-deep)' }}>
+                      <p className="text-xs leading-relaxed text-[var(--c-text-tertiary)]">{item.scan_summary}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* footer */}
+              <div className="flex items-center justify-between border-t px-5 py-3" style={{ borderColor: 'var(--c-border-subtle)' }}>
+                <div className="flex items-center gap-2">
+                  {item.detail_url && (
+                    <button
+                      type="button"
+                      onClick={() => window.open(item.detail_url!, '_blank', 'noopener,noreferrer')}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+                      style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                    >
+                      <Download size={12} />
+                      {skillText.download}
+                    </button>
+                  )}
+                  {item.installed && item.version && (
+                    <button
+                      type="button"
+                      onClick={() => { setDetailSkill(null); void handleRemove(item) }}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--c-error-bg)]"
+                      style={{ color: 'var(--c-status-error-text, #ef4444)' }}
+                    >
+                      <Trash2 size={12} />
+                      {skillText.remove}
+                    </button>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs text-[var(--c-text-tertiary)]">{enabled ? skillText.enabledByDefault : skillText.disable}</span>
+                  <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => {
+                        if (enabled) void handleDisable(item)
+                        else void handleEnable(item)
+                      }}
+                      className="peer sr-only"
+                    />
+                    <span className="h-5 w-9 rounded-full transition-colors" style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }} />
+                    <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4" style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }} />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
