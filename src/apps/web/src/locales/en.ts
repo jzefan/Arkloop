@@ -312,10 +312,11 @@ export const en: LocaleStrings = {
   pastedLines: (n: number) => `${n} lines`,
   // user input card
   userInput: {
-    dismiss: 'Dismiss',
+    dismiss: 'Skip',
     submit: 'Submit',
     submitting: 'Submitting...',
     next: 'Next',
+    selected: 'selected',
     otherPlaceholder: 'Type your answer...',
     recommended: 'Recommended',
   },

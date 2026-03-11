@@ -312,10 +312,11 @@ export const zh: LocaleStrings = {
   pastedLines: (n: number) => `${n} 行`,
   // user input card
   userInput: {
-    dismiss: '忽略',
+    dismiss: '跳过',
     submit: '提交',
     submitting: '提交中...',
     next: '继续',
+    selected: '已选',
     otherPlaceholder: '输入你的答案...',
     recommended: '推荐',
   },

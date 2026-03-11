@@ -324,6 +324,7 @@ export interface LocaleStrings {
     submit: string
     submitting: string
     next: string
+    selected: string
     otherPlaceholder: string
     recommended: string
   }
