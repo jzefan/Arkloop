@@ -72,6 +72,7 @@ func (e *SimpleExecutor) Execute(
 		Runtime:                rc.Runtime,
 		LlmRetryMaxAttempts:    rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:    rc.LlmRetryBaseDelayMs,
+		WaitForInput:           rc.WaitForInput,
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},

@@ -310,4 +310,13 @@ export const en: LocaleStrings = {
   // pasted content
   pastedContent: 'Pasted content',
   pastedLines: (n: number) => `${n} lines`,
+  // user input card
+  userInput: {
+    dismiss: 'Dismiss',
+    submit: 'Submit',
+    submitting: 'Submitting...',
+    next: 'Next',
+    otherPlaceholder: 'Type your answer...',
+    recommended: 'Recommended',
+  },
 }
