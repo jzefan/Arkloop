@@ -146,7 +146,7 @@ services:
       dockerfile: src/apps/console-lite/Dockerfile
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 15s
       timeout: 3s
       retries: 10
@@ -159,7 +159,7 @@ services:
     profiles:
       - console-full
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 15s
       timeout: 3s
       retries: 10
