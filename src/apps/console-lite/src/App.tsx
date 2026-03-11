@@ -8,6 +8,7 @@ import { ModelsPage } from './pages/ModelsPage'
 import { ToolsPage } from './pages/ToolsPage'
 import { RunsPage } from './pages/RunsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { BootstrapPage } from './pages/BootstrapPage'
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
@@ -53,25 +54,27 @@ function App() {
 
   if (!authChecked) return null
 
-  if (!accessToken) {
-    return <AuthPage onLoggedIn={handleLoggedIn} />
-  }
-
   return (
     <Routes>
-      <Route
-        element={<LiteLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />}
-      >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="agents" element={<AgentsPage />} />
-        <Route path="models" element={<ModelsPage />} />
-        <Route path="tools" element={<ToolsPage />} />
-        <Route path="memory" element={<Navigate to="/tools" replace />} />
-        <Route path="runs" element={<RunsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Route>
+      <Route path="/bootstrap/:token" element={<BootstrapPage onLoggedIn={handleLoggedIn} />} />
+
+      {!accessToken ? (
+        <Route path="*" element={<AuthPage onLoggedIn={handleLoggedIn} />} />
+      ) : (
+        <Route
+          element={<LiteLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />}
+        >
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="agents" element={<AgentsPage />} />
+          <Route path="models" element={<ModelsPage />} />
+          <Route path="tools" element={<ToolsPage />} />
+          <Route path="memory" element={<Navigate to="/tools" replace />} />
+          <Route path="runs" element={<RunsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
+      )}
     </Routes>
   )
 }

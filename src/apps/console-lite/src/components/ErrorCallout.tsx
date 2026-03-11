@@ -27,6 +27,8 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, FriendlyText> = {
   'auth.invalid_token': { zh: '登录已过期，请重新登录', en: 'Session expired. Please log in again.' },
   'auth.missing_token': { zh: '未登录', en: 'Not authenticated.' },
   'auth.invalid_authorization': { zh: '未登录', en: 'Not authenticated.' },
+  'bootstrap.invalid_token': { zh: '初始化链接已失效', en: 'Bootstrap link expired.' },
+  'bootstrap.already_initialized': { zh: '平台管理员已初始化', en: 'Platform admin already initialized.' },
 }
 
 function hasCjk(text: string): boolean {

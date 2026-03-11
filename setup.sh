@@ -462,7 +462,7 @@ compose_ps_lines() {
     return 0
   fi
   local raw
-  raw="$(${COMPOSE_BASE_CMD[@]} ps --format json 2>/dev/null || true)"
+  raw="$(${COMPOSE_BASE_CMD[@]} ps -a --format json 2>/dev/null || true)"
   python3 - <<'PY' "$raw"
 import json, sys
 raw = sys.argv[1].strip()
@@ -548,6 +548,39 @@ wait_for_http() {
     fi
     sleep 2
   done
+}
+
+bootstrap_init_url() {
+  local gateway_port="$1"
+  local endpoint="http://127.0.0.1:${gateway_port}/v1/bootstrap/init"
+  local tmp_file http_code payload token expires_at
+  tmp_file="$(mktemp)"
+  http_code="$(curl -sS -o "$tmp_file" -w '%{http_code}' -X POST "$endpoint" || true)"
+  payload="$(cat "$tmp_file" 2>/dev/null || true)"
+  rm -f "$tmp_file"
+
+  case "$http_code" in
+    201)
+      token="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("token", ""))' <<<"$payload" 2>/dev/null || true)"
+      expires_at="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("expires_at", ""))' <<<"$payload" 2>/dev/null || true)"
+      if [ -z "$token" ]; then
+        warn "bootstrap token 创建失败：响应缺少 token"
+        return 0
+      fi
+      printf '管理员初始化地址：http://localhost:%s/bootstrap/%s
+' "$gateway_port" "$token"
+      if [ -n "$expires_at" ]; then
+        printf '过期时间：%s
+' "$expires_at"
+      fi
+      ;;
+    409)
+      log "已存在平台管理员，跳过 bootstrap URL"
+      ;;
+    *)
+      warn "bootstrap token 创建失败（status=${http_code:-unknown}）"
+      ;;
+  esac
 }
 
 wait_for_services() {
@@ -728,6 +761,11 @@ run_install() {
   ensure_secret ARKLOOP_AUTH_JWT_SECRET base64_48
   ensure_secret ARKLOOP_ENCRYPTION_KEY hex32
   ensure_secret ARKLOOP_SANDBOX_AUTH_TOKEN hex32
+  ensure_secret ARKLOOP_S3_SECRET_KEY hex32
+  set_if_empty ARKLOOP_S3_ACCESS_KEY arkloop
+  if [ -n "${ARKLOOP_GATEWAY_PORT:-}" ]; then
+    set_value ARKLOOP_GATEWAY_PORT "$ARKLOOP_GATEWAY_PORT"
+  fi
   detect_host
   check_docker_tools
   detect_docker_socket
@@ -779,9 +817,12 @@ run_install() {
   if [ "$RESOLVED_GATEWAY" = "on" ]; then
     wait_for_http "http://127.0.0.1:${gateway_port}/healthz" 60 || fail "Gateway 健康检查失败"
     wait_for_http "http://127.0.0.1:${gateway_port}/" 60 || fail "Console 入口未就绪"
+    bootstrap_init_url "$gateway_port"
     log "安装完成"
-    printf '入口地址：http://localhost:%s\n' "$gateway_port"
-    printf '下一步：使用 Console 完成平台配置；bootstrap token 会在 PR3 补齐。\n'
+    printf '入口地址：http://localhost:%s
+' "$gateway_port"
+    printf '下一步：打开 Console 完成平台配置。
+'
   else
     log "安装完成（未启用 Gateway）"
   fi

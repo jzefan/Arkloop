@@ -36,7 +36,7 @@ func TestSecurityHeadersMiddlewareAllowsConfiguredOrigin(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
+	if got := rec.Header().Get("Content-Security-Policy"); got != frontendCSPHeaderValue {
 		t.Fatalf("unexpected CSP header: %q", got)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
@@ -127,7 +127,31 @@ func TestSecurityHeadersMiddlewareRejectsUnknownOrigin(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("unexpected allow-origin: %q", got)
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
+	if got := rec.Header().Get("Content-Security-Policy"); got != frontendCSPHeaderValue {
 		t.Fatalf("unexpected CSP header: %q", got)
+	}
+}
+
+func TestSecurityHeadersMiddlewareKeepsStrictCSPForAPI(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := traceMiddleware(
+		securityHeadersMiddleware(DefaultConfig().CORSAllowedOrigins, next),
+		nil,
+		geoip.Noop{},
+		nil,
+		0,
+		nil,
+		false,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/bootstrap/init", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != cspHeaderValue {
+		t.Fatalf("unexpected API CSP header: %q", got)
 	}
 }

@@ -264,6 +264,21 @@ export interface LocaleStrings {
     toastTestFailed: string
     toastDeleted: string
   }
+  bootstrap: {
+    title: string
+    subtitle: string
+    username: string
+    usernamePlaceholder: string
+    password: string
+    passwordPlaceholder: string
+    submit: string
+    verifying: string
+    successTitle: string
+    successBody: string
+    invalidTitle: string
+    invalidBody: string
+    expiresAt: (value: string) => string
+  }
   loginMode: string
   enterYourPasswordTitle: string
   fieldIdentity: string

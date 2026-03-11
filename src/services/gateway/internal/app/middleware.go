@@ -25,6 +25,7 @@ import (
 const (
 	traceIDHeader          = "X-Trace-Id"
 	cspHeaderValue         = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'"
+	frontendCSPHeaderValue = "default-src 'self'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com"
 	corsAllowMethodsValue  = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
 	corsAllowHeadersValue  = "Authorization,Content-Type,Accept,X-Client-App,X-Trace-Id"
 	corsExposeHeadersValue = traceIDHeader
@@ -157,7 +158,11 @@ func securityHeadersMiddleware(allowedOrigins []string, next http.Handler) http.
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", cspHeaderValue)
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.Header().Set("Content-Security-Policy", cspHeaderValue)
+		} else {
+			w.Header().Set("Content-Security-Policy", frontendCSPHeaderValue)
+		}
 
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin != "" {

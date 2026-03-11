@@ -75,6 +75,11 @@ type RegisterResult struct {
 	InviteCodeID  uuid.UUID
 }
 
+type createdLocalAccount struct {
+	User data.User
+	Org  data.Org
+}
+
 type RegistrationService struct {
 	pool             *pgxpool.Pool
 	passwordHasher   *BcryptPasswordHasher
@@ -382,6 +387,116 @@ func (s *RegistrationService) Register(
 	}
 
 	return result, nil
+}
+
+func (s *RegistrationService) createLocalAccountTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	login string,
+	password string,
+	email string,
+	locale string,
+) (createdLocalAccount, error) {
+	credentialRepo, err := data.NewUserCredentialRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	userRepo, err := data.NewUserRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	orgRepo, err := data.NewOrgRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	membershipRepo, err := data.NewOrgMembershipRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	existing, err := credentialRepo.GetByLogin(ctx, login)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	if existing != nil {
+		return createdLocalAccount{}, LoginExistsError{}
+	}
+
+	user, err := userRepo.Create(ctx, login, email, locale)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	passwordHash, err := s.passwordHasher.HashPassword(password)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	_, err = credentialRepo.Create(ctx, user.ID, login, passwordHash)
+	if err != nil {
+		if isUniqueViolation(err, "uq_user_credentials_login") {
+			return createdLocalAccount{}, LoginExistsError{}
+		}
+		return createdLocalAccount{}, err
+	}
+
+	slugSuffix := uuidHexPrefix(user.ID, 8)
+	org, err := orgRepo.Create(ctx, fmt.Sprintf("personal-%s", slugSuffix), fmt.Sprintf("%s's workspace", login), "personal")
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	if _, err := membershipRepo.Create(ctx, org.ID, user.ID, "owner"); err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	notifRepo, err := data.NewNotificationsRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	if _, err := notifRepo.BackfillBroadcastsForMembership(ctx, user.ID, org.ID); err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	creditsRepo, err := data.NewCreditsRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	initialGrant := int64(1000)
+	if s.entitlementSvc != nil {
+		val, resolveErr := s.entitlementSvc.Resolve(ctx, org.ID, "credit.initial_grant")
+		if resolveErr == nil {
+			if v := val.Int(); v > 0 {
+				initialGrant = v
+			}
+		}
+	}
+	if _, err := creditsRepo.InitBalance(ctx, org.ID, initialGrant); err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	inviteCodeRepo, err := data.NewInviteCodeRepository(tx)
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	maxUses := 1
+	if s.entitlementSvc != nil {
+		val, resolveErr := s.entitlementSvc.Resolve(ctx, org.ID, "invite.default_max_uses")
+		if resolveErr == nil {
+			if v := val.Int(); v > 0 {
+				maxUses = int(v)
+			}
+		}
+	}
+	code, err := data.GenerateCode()
+	if err != nil {
+		return createdLocalAccount{}, err
+	}
+	if _, err := inviteCodeRepo.Create(ctx, user.ID, code, maxUses); err != nil {
+		return createdLocalAccount{}, err
+	}
+
+	return createdLocalAccount{User: user, Org: org}, nil
 }
 
 func uuidHexPrefix(value uuid.UUID, n int) string {
