@@ -297,6 +297,7 @@ export interface LocaleStrings {
   shellRanCommand: string
   shellSuccess: string
   shellFailed: string
+  shellCompleted: string
   shellNoOutput: string
   // pasted content
   pastedContent: string
