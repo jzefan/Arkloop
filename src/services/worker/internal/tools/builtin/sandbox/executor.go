@@ -12,7 +12,9 @@ import (
 
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/environmentbindings"
 	"arkloop/services/worker/internal/tools"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -179,6 +181,12 @@ func (e *ToolExecutor) executePython(
 	execCtx tools.ExecutionContext,
 	started time.Time,
 ) tools.ExecutionResult {
+	resolvedCtx, bindingErr := e.ensureEnvironmentBindings(ctx, execCtx)
+	if bindingErr != nil {
+		return tools.ExecutionResult{Error: bindingErr, DurationMs: durationMs(started)}
+	}
+	execCtx = resolvedCtx
+
 	code, _ := args["code"].(string)
 	if code == "" {
 		return errResult(errorArgsInvalid, "parameter code is required", started)
@@ -237,6 +245,12 @@ func (e *ToolExecutor) executeExecCommand(
 	toolCallID string,
 	started time.Time,
 ) tools.ExecutionResult {
+	resolvedCtx, bindingErr := e.ensureEnvironmentBindings(ctx, execCtx)
+	if bindingErr != nil {
+		return tools.ExecutionResult{Error: bindingErr, DurationMs: durationMs(started)}
+	}
+	execCtx = resolvedCtx
+
 	reqArgs, argErr := parseExecCommandArgs(args)
 	if argErr != nil {
 		return tools.ExecutionResult{Error: argErr, DurationMs: durationMs(started)}
@@ -319,6 +333,12 @@ func (e *ToolExecutor) executeWriteStdin(
 	toolCallID string,
 	started time.Time,
 ) tools.ExecutionResult {
+	resolvedCtx, bindingErr := e.ensureEnvironmentBindings(ctx, execCtx)
+	if bindingErr != nil {
+		return tools.ExecutionResult{Error: bindingErr, DurationMs: durationMs(started)}
+	}
+	execCtx = resolvedCtx
+
 	reqArgs, argErr := parseWriteStdinArgs(args)
 	if argErr != nil {
 		return tools.ExecutionResult{Error: argErr, DurationMs: durationMs(started)}
@@ -367,6 +387,12 @@ func (e *ToolExecutor) executeBrowser(
 	started time.Time,
 ) tools.ExecutionResult {
 	_ = toolCallID
+	resolvedCtx, bindingErr := e.ensureEnvironmentBindings(ctx, execCtx)
+	if bindingErr != nil {
+		return tools.ExecutionResult{Error: bindingErr, DurationMs: durationMs(started)}
+	}
+	execCtx = resolvedCtx
+
 	reqArgs, argErr := parseBrowserArgs(args)
 	if argErr != nil {
 		return tools.ExecutionResult{Error: argErr, DurationMs: durationMs(started)}
@@ -754,6 +780,45 @@ func sandboxArgsError(message string) *tools.ExecutionError {
 
 func sandboxPermissionDenied(message string, details map[string]any) *tools.ExecutionError {
 	return &tools.ExecutionError{ErrorClass: errorPermissionDenied, Message: message, Details: details}
+}
+
+func (e *ToolExecutor) ensureEnvironmentBindings(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+) (tools.ExecutionContext, *tools.ExecutionError) {
+	if e == nil || e.orchestrator == nil || e.orchestrator.pool == nil {
+		return execCtx, nil
+	}
+	if strings.TrimSpace(execCtx.ProfileRef) != "" && strings.TrimSpace(execCtx.WorkspaceRef) != "" {
+		return execCtx, nil
+	}
+	if execCtx.OrgID == nil || *execCtx.OrgID == uuid.Nil {
+		return execCtx, nil
+	}
+
+	run := data.Run{
+		ID:              execCtx.RunID,
+		OrgID:           *execCtx.OrgID,
+		ProjectID:       execCtx.ProjectID,
+		CreatedByUserID: execCtx.UserID,
+		ProfileRef:      stringPtr(execCtx.ProfileRef),
+		WorkspaceRef:    stringPtr(execCtx.WorkspaceRef),
+	}
+	if execCtx.ThreadID != nil {
+		run.ThreadID = *execCtx.ThreadID
+	}
+
+	resolvedRun, err := environmentbindings.ResolveAndPersistRun(ctx, e.orchestrator.pool, run)
+	if err != nil {
+		return execCtx, &tools.ExecutionError{
+			ErrorClass: errorSandboxError,
+			Message:    "resolve environment bindings failed",
+			Details:    map[string]any{"error": err.Error()},
+		}
+	}
+	execCtx.ProfileRef = strings.TrimSpace(stringPtrValue(resolvedRun.ProfileRef))
+	execCtx.WorkspaceRef = strings.TrimSpace(stringPtrValue(resolvedRun.WorkspaceRef))
+	return execCtx, nil
 }
 
 func resolveOrgID(execCtx tools.ExecutionContext) string {

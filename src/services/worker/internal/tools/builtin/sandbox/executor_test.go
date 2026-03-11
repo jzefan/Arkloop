@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/worker/internal/data"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +33,40 @@ func testContextWithRun(runID uuid.UUID) tools.ExecutionContext {
 
 func testContextWithOrg(runID uuid.UUID, orgID uuid.UUID) tools.ExecutionContext {
 	return tools.ExecutionContext{RunID: runID, OrgID: &orgID}
+}
+
+func seedSandboxThreadAndRun(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	orgID uuid.UUID,
+	threadID uuid.UUID,
+	projectID *uuid.UUID,
+	userID *uuid.UUID,
+	runID uuid.UUID,
+) {
+	t.Helper()
+	if _, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO threads (id, org_id, created_by_user_id, project_id)
+		 VALUES ($1, $2, $3, $4)`,
+		threadID,
+		orgID,
+		userID,
+		projectID,
+	); err != nil {
+		t.Fatalf("insert thread failed: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO runs (id, org_id, thread_id, created_by_user_id, status)
+		 VALUES ($1, $2, $3, $4, 'running')`,
+		runID,
+		orgID,
+		threadID,
+		userID,
+	); err != nil {
+		t.Fatalf("insert run failed: %v", err)
+	}
 }
 
 func browserSnapshotJSON(url string, title string, snapshot string, refs map[string]any) string {
@@ -914,6 +950,69 @@ func TestExecCommand_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 	}
 	if second.ResultJSON["resolved_via"] != "thread_default" {
 		t.Fatalf("unexpected resolved_via: %v", second.ResultJSON["resolved_via"])
+	}
+}
+
+func TestExecCommand_ResolvesMissingEnvironmentBindingsFromRunContext(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_sandbox_exec_bindings_fallback")
+	pool, err := pgxpool.New(t.Context(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	orgID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedSandboxThreadAndRun(t, pool, orgID, threadID, nil, &userID, runID)
+
+	expectedProfileRef := sharedenvironmentref.BuildProfileRef(orgID, &userID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/exec_command" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body execCommandRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.ProfileRef != expectedProfileRef {
+			t.Fatalf("unexpected profile_ref: %s", body.ProfileRef)
+		}
+		if !strings.HasPrefix(body.WorkspaceRef, "wsref_") {
+			t.Fatalf("unexpected workspace_ref: %s", body.WorkspaceRef)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+	}))
+	defer server.Close()
+
+	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	ctx := tools.ExecutionContext{
+		RunID:    runID,
+		OrgID:    &orgID,
+		ThreadID: &threadID,
+		UserID:   &userID,
+	}
+	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+
+	var storedProfileRef string
+	var storedWorkspaceRef string
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT profile_ref, workspace_ref FROM runs WHERE id = $1`,
+		runID,
+	).Scan(&storedProfileRef, &storedWorkspaceRef); err != nil {
+		t.Fatalf("load run bindings failed: %v", err)
+	}
+	if storedProfileRef != expectedProfileRef {
+		t.Fatalf("unexpected stored profile_ref: %s", storedProfileRef)
+	}
+	if !strings.HasPrefix(storedWorkspaceRef, "wsref_") {
+		t.Fatalf("unexpected stored workspace_ref: %s", storedWorkspaceRef)
 	}
 }
 
