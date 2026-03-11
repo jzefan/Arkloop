@@ -34,6 +34,11 @@ type RunContext struct {
 	ProfileRef             string
 	WorkspaceRef           string
 	EnabledSkills          []skillstore.ResolvedSkill
+	ToolAllowlist          []string
+	ToolDenylist           []string
+	RouteID                string
+	Model                  string
+	MemoryScope            string
 	TraceID                string
 	InputJSON              map[string]any
 	ReasoningIterations    int
@@ -342,6 +347,11 @@ func (l *Loop) executeToolCall(
 		ProfileRef:          runCtx.ProfileRef,
 		WorkspaceRef:        runCtx.WorkspaceRef,
 		EnabledSkills:       append([]skillstore.ResolvedSkill(nil), runCtx.EnabledSkills...),
+		ToolAllowlist:       append([]string(nil), runCtx.ToolAllowlist...),
+		ToolDenylist:        append([]string(nil), runCtx.ToolDenylist...),
+		RouteID:             runCtx.RouteID,
+		Model:               runCtx.Model,
+		MemoryScope:         runCtx.MemoryScope,
 		AgentID:             runCtx.AgentID,
 		TimeoutMs:           runCtx.ToolTimeoutMs,
 		Budget:              copyMap(runCtx.ToolBudget),

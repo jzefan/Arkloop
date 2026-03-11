@@ -2,6 +2,7 @@ package subagentctl
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -28,6 +29,14 @@ func (s *stubJobQueue) Heartbeat(context.Context, queue.JobLease, int) error { r
 func (s *stubJobQueue) Ack(context.Context, queue.JobLease) error            { return nil }
 func (s *stubJobQueue) Nack(context.Context, queue.JobLease, *int) error     { return nil }
 
+func isolatedSpawnRequest(input string) SpawnRequest {
+	return SpawnRequest{
+		PersonaID:   "researcher@1",
+		ContextMode: data.SubAgentContextModeIsolated,
+		Input:       input,
+	}
+}
+
 func TestServiceSpawnAndWaitCompleted(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_spawn_wait")
 	pool, err := pgxpool.New(context.Background(), db.DSN)
@@ -47,7 +56,7 @@ func TestServiceSpawnAndWaitCompleted(t *testing.T) {
 	jobQueue := &stubJobQueue{}
 	service := NewService(pool, nil, jobQueue, parentRun, "trace-1")
 
-	snapshot, err := service.Spawn(context.Background(), SpawnRequest{PersonaID: "researcher@1", Input: "collect facts"})
+	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("collect facts"))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -93,7 +102,7 @@ func TestServiceSendInputCreatesQueuedRunDirectly(t *testing.T) {
 	jobQueue := &stubJobQueue{}
 	service := NewService(pool, nil, jobQueue, parentRun, "trace-2")
 
-	snapshot, err := service.Spawn(context.Background(), SpawnRequest{PersonaID: "researcher@1", Input: "phase one"})
+	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -133,7 +142,7 @@ func TestServiceResumeRequeuesCompletedSubAgent(t *testing.T) {
 	jobQueue := &stubJobQueue{}
 	service := NewService(pool, nil, jobQueue, parentRun, "trace-2b")
 
-	snapshot, err := service.Spawn(context.Background(), SpawnRequest{PersonaID: "researcher@1", Input: "phase one"})
+	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -173,7 +182,7 @@ func TestServiceSendInputQueuesRunningSubAgentAndMergesPendingBatch(t *testing.T
 	jobQueue := &stubJobQueue{}
 	service := NewService(pool, nil, jobQueue, parentRun, "trace-3")
 
-	snapshot, err := service.Spawn(context.Background(), SpawnRequest{PersonaID: "researcher@1", Input: "phase one"})
+	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -254,6 +263,180 @@ func TestServiceSendInputQueuesRunningSubAgentAndMergesPendingBatch(t *testing.T
 	}
 	if pendingCount != 0 {
 		t.Fatalf("expected pending queue drained, got %d", pendingCount)
+	}
+}
+
+func TestServiceSpawnForkRecentCopiesHistoryAndStoresSnapshot(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_fork_recent")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	orgID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	userID := uuid.New()
+	seedThreadAndRun(t, pool, orgID, threadID, &projectID, &userID, runID)
+	seedThreadMessages(t, pool, orgID, threadID, []string{"u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4", "u5", "a5", "u6", "a6", "u7", "a7"})
+
+	profileRef := "profile_parent"
+	workspaceRef := "workspace_parent"
+	if _, err := pool.Exec(context.Background(), `UPDATE runs SET profile_ref = $2, workspace_ref = $3 WHERE id = $1`, runID, profileRef, workspaceRef); err != nil {
+		t.Fatalf("update parent bindings: %v", err)
+	}
+
+	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID, ProfileRef: &profileRef, WorkspaceRef: &workspaceRef}
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-fork")
+
+	role := "worker"
+	nickname := "Atlas"
+	snapshot, err := service.Spawn(context.Background(), SpawnRequest{
+		PersonaID:   "researcher@1",
+		Role:        &role,
+		Nickname:    &nickname,
+		ContextMode: data.SubAgentContextModeForkRecent,
+		Input:       "summarize it",
+		ParentContext: SpawnParentContext{
+			ToolAllowlist: []string{"browser", "web_fetch"},
+			ToolDenylist:  []string{"memory_write"},
+			RouteID:       "route_parent",
+			Model:         "gpt-4.1",
+			ProfileRef:    profileRef,
+			WorkspaceRef:  workspaceRef,
+			MemoryScope:   MemoryScopeSameUser,
+		},
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if snapshot.Role == nil || *snapshot.Role != role {
+		t.Fatalf("unexpected role: %#v", snapshot.Role)
+	}
+	if snapshot.ContextMode != data.SubAgentContextModeForkRecent {
+		t.Fatalf("unexpected context mode: %s", snapshot.ContextMode)
+	}
+
+	var childThreadID uuid.UUID
+	if err := pool.QueryRow(context.Background(), `SELECT thread_id FROM runs WHERE id = $1`, *snapshot.CurrentRunID).Scan(&childThreadID); err != nil {
+		t.Fatalf("load child thread: %v", err)
+	}
+	rows, err := pool.Query(context.Background(), `SELECT content FROM messages WHERE thread_id = $1 ORDER BY created_at ASC, id ASC`, childThreadID)
+	if err != nil {
+		t.Fatalf("load child messages: %v", err)
+	}
+	defer rows.Close()
+	contents := make([]string, 0)
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			t.Fatalf("scan child message: %v", err)
+		}
+		contents = append(contents, content)
+	}
+	expected := []string{"u2", "a2", "u3", "a3", "u4", "a4", "u5", "a5", "u6", "a6", "u7", "a7", "summarize it"}
+	if len(contents) != len(expected) {
+		t.Fatalf("unexpected child message count: %#v", contents)
+	}
+	for idx := range expected {
+		if contents[idx] != expected[idx] {
+			t.Fatalf("unexpected child messages: %#v", contents)
+		}
+	}
+
+	var raw []byte
+	if err := pool.QueryRow(context.Background(), `SELECT snapshot_json FROM sub_agent_context_snapshots WHERE sub_agent_id = $1`, snapshot.SubAgentID).Scan(&raw); err != nil {
+		t.Fatalf("load snapshot_json: %v", err)
+	}
+	var stored ContextSnapshot
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal snapshot_json: %v", err)
+	}
+	if stored.Runtime.RouteID != "route_parent" {
+		t.Fatalf("unexpected stored route: %#v", stored.Runtime)
+	}
+	if stored.Environment.WorkspaceRef != workspaceRef {
+		t.Fatalf("unexpected stored environment: %#v", stored.Environment)
+	}
+	if len(stored.Messages) != 12 {
+		t.Fatalf("unexpected stored message count: %d", len(stored.Messages))
+	}
+}
+
+func TestServiceSpawnSharedWorkspaceOnlyOmitsHistory(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_shared_workspace")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	orgID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	userID := uuid.New()
+	seedThreadAndRun(t, pool, orgID, threadID, &projectID, &userID, runID)
+	seedThreadMessages(t, pool, orgID, threadID, []string{"parent one", "parent two"})
+
+	profileRef := "profile_parent"
+	workspaceRef := "workspace_parent"
+	if _, err := pool.Exec(context.Background(), `UPDATE runs SET profile_ref = $2, workspace_ref = $3 WHERE id = $1`, runID, profileRef, workspaceRef); err != nil {
+		t.Fatalf("update parent bindings: %v", err)
+	}
+
+	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID, ProfileRef: &profileRef, WorkspaceRef: &workspaceRef}
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-shared")
+
+	snapshot, err := service.Spawn(context.Background(), SpawnRequest{
+		PersonaID:   "researcher@1",
+		ContextMode: data.SubAgentContextModeSharedWorkspaceOnly,
+		Input:       "run build",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+
+	var (
+		childThreadID uuid.UUID
+		gotProfile    *string
+		gotWorkspace  *string
+	)
+	if err := pool.QueryRow(context.Background(), `SELECT thread_id, profile_ref, workspace_ref FROM runs WHERE id = $1`, *snapshot.CurrentRunID).Scan(&childThreadID, &gotProfile, &gotWorkspace); err != nil {
+		t.Fatalf("load child run: %v", err)
+	}
+	if gotProfile == nil || *gotProfile != profileRef || gotWorkspace == nil || *gotWorkspace != workspaceRef {
+		t.Fatalf("unexpected inherited bindings: %#v %#v", gotProfile, gotWorkspace)
+	}
+
+	var count int
+	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM messages WHERE thread_id = $1`, childThreadID).Scan(&count); err != nil {
+		t.Fatalf("count child messages: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected only explicit input, got %d", count)
+	}
+	var content string
+	if err := pool.QueryRow(context.Background(), `SELECT content FROM messages WHERE thread_id = $1 LIMIT 1`, childThreadID).Scan(&content); err != nil {
+		t.Fatalf("load child message: %v", err)
+	}
+	if content != "run build" {
+		t.Fatalf("unexpected child message: %q", content)
+	}
+}
+
+func seedThreadMessages(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, threadID uuid.UUID, contents []string) {
+	t.Helper()
+	for idx, content := range contents {
+		role := "user"
+		if idx%2 == 1 {
+			role = "assistant"
+		}
+		if _, err := pool.Exec(context.Background(), `INSERT INTO messages (org_id, thread_id, role, content) VALUES ($1, $2, $3, $4)`, orgID, threadID, role, content); err != nil {
+			t.Fatalf("insert message %q failed: %v", content, err)
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/skillstore"
 	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/subagentctl"
@@ -75,10 +76,29 @@ var LlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"persona_id": map[string]any{"type": "string"},
-			"input":      map[string]any{"type": "string"},
+			"persona_id":   map[string]any{"type": "string"},
+			"role":         map[string]any{"type": "string"},
+			"nickname":     map[string]any{"type": "string"},
+			"context_mode": map[string]any{"type": "string", "enum": []string{"isolated", "fork_recent", "fork_thread", "fork_selected", "shared_workspace_only"}},
+			"inherit": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"messages":     map[string]any{"type": "boolean"},
+					"attachments":  map[string]any{"type": "boolean"},
+					"workspace":    map[string]any{"type": "boolean"},
+					"skills":       map[string]any{"type": "boolean"},
+					"runtime":      map[string]any{"type": "boolean"},
+					"memory_scope": map[string]any{"type": "string", "enum": []string{"same_user"}},
+					"message_ids": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+				},
+				"additionalProperties": false,
+			},
+			"input": map[string]any{"type": "string"},
 		},
-		"required":             []string{"persona_id", "input"},
+		"required":             []string{"persona_id", "context_mode", "input"},
 		"additionalProperties": false,
 	},
 }
@@ -160,7 +180,7 @@ func (e *ToolExecutor) Execute(
 	ctx context.Context,
 	toolName string,
 	args map[string]any,
-	_ tools.ExecutionContext,
+	execCtx tools.ExecutionContext,
 	_ string,
 ) tools.ExecutionResult {
 	started := time.Now()
@@ -174,10 +194,10 @@ func (e *ToolExecutor) Execute(
 	)
 	switch strings.TrimSpace(toolName) {
 	case AgentSpec.Name:
-		var personaID, input string
-		personaID, input, err = parseSpawnArgs(args)
+		var req subagentctl.SpawnRequest
+		req, err = parseSpawnArgs(args, execCtx)
 		if err == nil {
-			snapshot, err = e.Control.Spawn(ctx, subagentctl.SpawnRequest{PersonaID: personaID, Input: input})
+			snapshot, err = e.Control.Spawn(ctx, req)
 		}
 	case SendInputSpec.Name:
 		var req subagentctl.SendInputRequest
@@ -224,21 +244,69 @@ func (e *ToolExecutor) Execute(
 	return tools.ExecutionResult{ResultJSON: snapshotJSON(snapshot), DurationMs: durationMs(started)}
 }
 
-func parseSpawnArgs(args map[string]any) (string, string, error) {
+func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subagentctl.SpawnRequest, error) {
 	for key := range args {
-		if key != "persona_id" && key != "input" {
-			return "", "", argsError("unknown parameter: " + key)
+		switch key {
+		case "persona_id", "role", "nickname", "context_mode", "inherit", "input":
+		default:
+			return subagentctl.SpawnRequest{}, argsError("unknown parameter: " + key)
 		}
 	}
 	personaID, ok := args["persona_id"].(string)
 	if !ok || strings.TrimSpace(personaID) == "" {
-		return "", "", argsError("persona_id must be a non-empty string")
+		return subagentctl.SpawnRequest{}, argsError("persona_id must be a non-empty string")
+	}
+	contextMode, ok := args["context_mode"].(string)
+	if !ok || strings.TrimSpace(contextMode) == "" {
+		return subagentctl.SpawnRequest{}, argsError("context_mode must be a non-empty string")
 	}
 	input, ok := args["input"].(string)
 	if !ok || strings.TrimSpace(input) == "" {
-		return "", "", argsError("input must be a non-empty string")
+		return subagentctl.SpawnRequest{}, argsError("input must be a non-empty string")
 	}
-	return strings.TrimSpace(personaID), strings.TrimSpace(input), nil
+	req := subagentctl.SpawnRequest{
+		PersonaID:   strings.TrimSpace(personaID),
+		ContextMode: strings.TrimSpace(contextMode),
+		Input:       strings.TrimSpace(input),
+		ParentContext: subagentctl.SpawnParentContext{
+			ToolAllowlist: append([]string(nil), execCtx.ToolAllowlist...),
+			ToolDenylist:  append([]string(nil), execCtx.ToolDenylist...),
+			RouteID:       strings.TrimSpace(execCtx.RouteID),
+			Model:         strings.TrimSpace(execCtx.Model),
+			ProfileRef:    strings.TrimSpace(execCtx.ProfileRef),
+			WorkspaceRef:  strings.TrimSpace(execCtx.WorkspaceRef),
+			EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
+			MemoryScope:   firstNonEmpty(strings.TrimSpace(execCtx.MemoryScope), subagentctl.MemoryScopeSameUser),
+		},
+	}
+	if raw, ok := args["role"]; ok {
+		value, ok := raw.(string)
+		if !ok {
+			return subagentctl.SpawnRequest{}, argsError("role must be a string")
+		}
+		cleaned := strings.TrimSpace(value)
+		if cleaned != "" {
+			req.Role = &cleaned
+		}
+	}
+	if raw, ok := args["nickname"]; ok {
+		value, ok := raw.(string)
+		if !ok {
+			return subagentctl.SpawnRequest{}, argsError("nickname must be a string")
+		}
+		cleaned := strings.TrimSpace(value)
+		if cleaned != "" {
+			req.Nickname = &cleaned
+		}
+	}
+	if raw, ok := args["inherit"]; ok {
+		parsed, err := parseSpawnInherit(raw)
+		if err != nil {
+			return subagentctl.SpawnRequest{}, err
+		}
+		req.Inherit = parsed
+	}
+	return req, nil
 }
 
 func parseSendInputArgs(args map[string]any) (subagentctl.SendInputRequest, error) {
@@ -332,6 +400,86 @@ func parsePositiveInt(raw any) (int, error) {
 	}
 }
 
+func parseSpawnInherit(raw any) (subagentctl.SpawnInheritRequest, error) {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return subagentctl.SpawnInheritRequest{}, argsError("inherit must be an object")
+	}
+	result := subagentctl.SpawnInheritRequest{}
+	for key, value := range obj {
+		switch key {
+		case "messages":
+			parsed, err := parseOptionalBool(value, "inherit.messages")
+			if err != nil {
+				return subagentctl.SpawnInheritRequest{}, err
+			}
+			result.Messages = parsed
+		case "attachments":
+			parsed, err := parseOptionalBool(value, "inherit.attachments")
+			if err != nil {
+				return subagentctl.SpawnInheritRequest{}, err
+			}
+			result.Attachments = parsed
+		case "workspace":
+			parsed, err := parseOptionalBool(value, "inherit.workspace")
+			if err != nil {
+				return subagentctl.SpawnInheritRequest{}, err
+			}
+			result.Workspace = parsed
+		case "skills":
+			parsed, err := parseOptionalBool(value, "inherit.skills")
+			if err != nil {
+				return subagentctl.SpawnInheritRequest{}, err
+			}
+			result.Skills = parsed
+		case "runtime":
+			parsed, err := parseOptionalBool(value, "inherit.runtime")
+			if err != nil {
+				return subagentctl.SpawnInheritRequest{}, err
+			}
+			result.Runtime = parsed
+		case "memory_scope":
+			text, ok := value.(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				return subagentctl.SpawnInheritRequest{}, argsError("inherit.memory_scope must be a non-empty string")
+			}
+			result.MemoryScope = strings.TrimSpace(text)
+		case "message_ids":
+			items, ok := value.([]any)
+			if !ok || len(items) == 0 {
+				return subagentctl.SpawnInheritRequest{}, argsError("inherit.message_ids must be a non-empty string array")
+			}
+			seen := map[uuid.UUID]struct{}{}
+			for _, item := range items {
+				text, ok := item.(string)
+				if !ok || strings.TrimSpace(text) == "" {
+					return subagentctl.SpawnInheritRequest{}, argsError("inherit.message_ids must contain valid UUID strings")
+				}
+				messageID, err := uuid.Parse(strings.TrimSpace(text))
+				if err != nil {
+					return subagentctl.SpawnInheritRequest{}, argsError("inherit.message_ids must contain valid UUID strings")
+				}
+				if _, ok := seen[messageID]; ok {
+					continue
+				}
+				seen[messageID] = struct{}{}
+				result.MessageIDs = append(result.MessageIDs, messageID)
+			}
+		default:
+			return subagentctl.SpawnInheritRequest{}, argsError("unknown inherit parameter: " + key)
+		}
+	}
+	return result, nil
+}
+
+func parseOptionalBool(raw any, field string) (*bool, error) {
+	value, ok := raw.(bool)
+	if !ok {
+		return nil, argsError(field + " must be a boolean")
+	}
+	return &value, nil
+}
+
 func snapshotJSON(snapshot subagentctl.StatusSnapshot) map[string]any {
 	result := map[string]any{
 		"sub_agent_id":  snapshot.SubAgentID.String(),
@@ -343,8 +491,14 @@ func snapshotJSON(snapshot subagentctl.StatusSnapshot) map[string]any {
 	if snapshot.PersonaID != nil {
 		result["persona_id"] = *snapshot.PersonaID
 	}
+	if snapshot.Role != nil {
+		result["role"] = *snapshot.Role
+	}
 	if snapshot.Nickname != nil {
 		result["nickname"] = *snapshot.Nickname
+	}
+	if strings.TrimSpace(snapshot.ContextMode) != "" {
+		result["context_mode"] = snapshot.ContextMode
 	}
 	if snapshot.CurrentRunID != nil {
 		result["current_run_id"] = snapshot.CurrentRunID.String()
@@ -368,6 +522,15 @@ func snapshotJSON(snapshot subagentctl.StatusSnapshot) map[string]any {
 		result["last_event_type"] = *snapshot.LastEventType
 	}
 	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func argsError(message string) *tools.ExecutionError {

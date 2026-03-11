@@ -88,6 +88,7 @@ type RunContext struct {
 	ToolSpecs     []llm.ToolSpec
 	ToolExecutors map[string]tools.Executor
 	AllowlistSet  map[string]struct{}
+	ToolDenylist  []string
 	ToolRegistry  *tools.Registry
 	// group_name -> provider_name
 	ActiveToolProviderByGroup map[string]string

@@ -27,7 +27,7 @@ func NewSubAgentStateProjector(pool *pgxpool.Pool, rdb *redis.Client, jobQueue q
 		pool:     pool,
 		rdb:      rdb,
 		jobQueue: jobQueue,
-		factory:  NewSubAgentRunFactory(pool),
+		factory:  NewSubAgentRunFactory(pool, NewSnapshotStorage()),
 	}
 }
 
@@ -170,8 +170,10 @@ func (p *SubAgentStateProjector) BuildSnapshot(ctx context.Context, tx pgx.Tx, r
 		RootRunID:          record.RootRunID,
 		Depth:              record.Depth,
 		Status:             record.Status,
+		Role:               cloneStringPtr(record.Role),
 		PersonaID:          cloneStringPtr(record.PersonaID),
 		Nickname:           cloneStringPtr(record.Nickname),
+		ContextMode:        record.ContextMode,
 		CurrentRunID:       cloneUUIDPtr(record.CurrentRunID),
 		LastCompletedRunID: cloneUUIDPtr(record.LastCompletedRunID),
 		LastOutputRef:      cloneStringPtr(record.LastOutputRef),
