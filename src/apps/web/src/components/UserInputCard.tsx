@@ -224,7 +224,7 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
         >
           {t.userInput.dismiss}
           <kbd
-            className="inline-flex items-center justify-center rounded-full px-1 text-[10px] font-mono leading-[18px]"
+            className="inline-flex items-center justify-center rounded px-1 text-[10px] font-mono leading-[18px]"
             style={{
               background: 'var(--c-bg-deep)',
               color: 'var(--c-text-muted)',
@@ -303,7 +303,7 @@ function QuestionBlock({
         </div>
       )}
       <div
-        className="text-xs px-1"
+        className="text-sm px-1"
         style={{ color: 'var(--c-text-primary)' }}
       >
         {question.question}
@@ -390,7 +390,7 @@ function OptionRow({
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
-      className="flex items-center gap-1.5 pl-1 pr-2 py-1 text-xs cursor-pointer"
+      className="flex items-center gap-1.5 pl-1 pr-2 py-0.5 text-xs cursor-pointer"
       style={{
         background: selected
           ? 'var(--c-bg-card-hover)'
@@ -403,7 +403,7 @@ function OptionRow({
         borderRadius: '10px',
         color: 'var(--c-text-primary)',
         opacity: disabled ? 0.5 : 1,
-        transition: 'background 0.15s ease, border-color 0.15s ease',
+        transition: 'background 60ms ease, border-color 60ms ease',
       }}
     >
       <span
@@ -518,7 +518,7 @@ function OtherRow({ selected, text, disabled, onSelect, onUpdateText, t }: Other
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
-      className="flex items-center gap-1.5 pl-1 pr-2 py-1 text-xs cursor-pointer"
+      className="flex items-center gap-1.5 pl-1 pr-2 py-0.5 text-xs cursor-pointer"
       style={{
         background: selected
           ? 'var(--c-bg-card-hover)'
@@ -531,7 +531,7 @@ function OtherRow({ selected, text, disabled, onSelect, onUpdateText, t }: Other
         borderRadius: '10px',
         color: 'var(--c-text-primary)',
         opacity: disabled ? 0.5 : 1,
-        transition: 'background 0.15s ease, border-color 0.15s ease',
+        transition: 'background 60ms ease, border-color 60ms ease',
       }}
     >
       <span
