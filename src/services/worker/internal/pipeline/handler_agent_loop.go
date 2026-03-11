@@ -102,7 +102,22 @@ func NewAgentLoopHandler(
 
 		exec, execBuildErr := rc.ExecutorBuilder.Build(executorType, executorConfig)
 		if execBuildErr != nil {
-			return fmt.Errorf("build executor %q: %w", executorType, execBuildErr)
+			failed := rc.Emitter.Emit(
+				"run.failed",
+				map[string]any{
+					"error_class": "internal.error",
+					"message":     fmt.Sprintf("build executor %q: %s", executorType, execBuildErr.Error()),
+				},
+				nil,
+				StringPtr("internal.error"),
+			)
+			if err := writer.Append(ctx, runsRepo, eventsRepo, rc.Run.ID, failed); err != nil {
+				if errors.Is(err, errStopProcessing) {
+					return nil
+				}
+				return err
+			}
+			return writer.Flush(ctx)
 		}
 
 		err := exec.Execute(ctx, rc, rc.Emitter, func(ev events.RunEvent) error {
@@ -163,6 +178,7 @@ type eventWriter struct {
 
 	// 子 Run 完成通知：commit 时将终态状态发布到 run.child.{runID}.done
 	terminalRunStatus string
+	terminalMessage   string
 }
 
 func newEventWriter(
@@ -332,6 +348,9 @@ func (w *eventWriter) Append(
 			}
 		}
 		w.terminalRunStatus = status
+		if status != "completed" {
+			w.terminalMessage = terminalStatusMessage(ev.DataJSON)
+		}
 		w.hasTerminal = true
 		return nil
 	}
@@ -371,16 +390,15 @@ func (w *eventWriter) commit(ctx context.Context) error {
 			// 通知可能正在等待的父 Run（无父 Run 时此 publish 为空操作）
 			output := ""
 			if w.terminalRunStatus == "completed" {
-				full := strings.Join(w.assistantDeltas, "")
-				if len(full) > maxChildRunOutputBytes {
-					full = full[:maxChildRunOutputBytes]
-				}
-				output = full
+				output = truncateChildRunPayload(strings.Join(w.assistantDeltas, ""))
+			} else {
+				output = truncateChildRunPayload(w.terminalMessage)
 			}
 			ch := fmt.Sprintf("run.child.%s.done", w.run.ID.String())
 			_, _ = w.runLimiterRDB.Publish(ctx, ch, w.terminalRunStatus+"\n"+output).Result()
 		}
 		w.hasTerminal = false
+		w.terminalMessage = ""
 		// 子 Run 没有通过 API 层 TryAcquire，不释放并发槽
 		if w.run.ParentRunID == nil {
 			key := runlimit.Key(w.run.OrgID.String())

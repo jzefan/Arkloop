@@ -79,13 +79,18 @@ func createAndEnqueueChildRun(
 	}
 	defer tx.Rollback(ctx)
 
+	if parentRun.ProjectID == nil || *parentRun.ProjectID == uuid.Nil {
+		return fmt.Errorf("parent run project_id must not be empty")
+	}
+
 	// 创建独立临时线程，避免污染父 Run 的 thread 历史
 	var childThreadID uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO threads (org_id, is_private, expires_at)
-		 VALUES ($1, TRUE, now() + make_interval(secs => $2))
+		`INSERT INTO threads (org_id, project_id, is_private, expires_at)
+		 VALUES ($1, $2, TRUE, now() + make_interval(secs => $3))
 		 RETURNING id`,
 		parentRun.OrgID,
+		*parentRun.ProjectID,
 		int64(childThreadTTL.Seconds()),
 	).Scan(&childThreadID); err != nil {
 		return fmt.Errorf("create child thread: %w", err)
@@ -104,13 +109,15 @@ func createAndEnqueueChildRun(
 
 	// 创建子 Run（继承父 Run 的 org/user，指向独立临时线程）
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO runs (id, org_id, thread_id, parent_run_id, created_by_user_id, status)
-		 VALUES ($1, $2, $3, $4, $5, 'running')`,
+		`INSERT INTO runs (id, org_id, thread_id, parent_run_id, created_by_user_id, profile_ref, workspace_ref, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')`,
 		childRunID,
 		parentRun.OrgID,
 		childThreadID,
 		parentRun.ID,
 		parentRun.CreatedByUserID,
+		parentRun.ProfileRef,
+		parentRun.WorkspaceRef,
 	); err != nil {
 		return fmt.Errorf("insert child run: %w", err)
 	}
@@ -195,8 +202,11 @@ func parseChildRunResult(payload string) (string, error) {
 		return "", fmt.Errorf("malformed child run result payload")
 	}
 	status := payload[:idx]
-	output := payload[idx+1:]
+	output := strings.TrimSpace(payload[idx+1:])
 	if status != "completed" {
+		if output != "" {
+			return "", fmt.Errorf("child run ended with status: %s: %s", status, output)
+		}
 		return "", fmt.Errorf("child run ended with status: %s", status)
 	}
 	return output, nil

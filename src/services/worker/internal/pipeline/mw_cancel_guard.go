@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"arkloop/services/worker/internal/data"
@@ -170,12 +171,28 @@ func appendAndCommitSingle(
 
 	if rdb != nil {
 		if termStatus, ok := TerminalStatuses[ev.Type]; ok {
+			payload := truncateChildRunPayload(terminalStatusMessage(ev.DataJSON))
 			ch := fmt.Sprintf("run.child.%s.done", run.ID.String())
-			_, _ = rdb.Publish(ctx, ch, termStatus+"\n").Result()
+			_, _ = rdb.Publish(ctx, ch, termStatus+"\n"+payload).Result()
 		}
 	}
 
 	return nil
+}
+
+func terminalStatusMessage(dataJSON map[string]any) string {
+	if dataJSON == nil {
+		return ""
+	}
+	message, _ := dataJSON["message"].(string)
+	return strings.TrimSpace(message)
+}
+
+func truncateChildRunPayload(raw string) string {
+	if len(raw) <= maxChildRunOutputBytes {
+		return raw
+	}
+	return raw[:maxChildRunOutputBytes]
 }
 
 // TerminalStatuses 映射终态事件类型到 runs.status 值。
