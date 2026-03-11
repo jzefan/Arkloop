@@ -1,6 +1,7 @@
 package orgapi
 
 import (
+	"arkloop/services/api/internal/audit"
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type projectResponse struct {
@@ -57,6 +59,9 @@ func projectEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	auditWriter *audit.Writer,
+	pool *pgxpool.Pool,
+	store environmentStore,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -68,9 +73,18 @@ func projectEntry(
 			return
 		}
 
-		projectID, err := uuid.Parse(tail)
+		projectIDRaw, subpath, _ := strings.Cut(tail, "/")
+		projectIDRaw = strings.TrimSpace(projectIDRaw)
+		subpath = strings.Trim(strings.TrimSpace(subpath), "/")
+
+		projectID, err := uuid.Parse(projectIDRaw)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid project id", traceID, nil)
+			return
+		}
+
+		if subpath != "" {
+			handleProjectWorkspaceRoute(w, r, traceID, subpath, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, pool, store)
 			return
 		}
 

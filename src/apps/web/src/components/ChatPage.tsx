@@ -2256,7 +2256,7 @@ export function ChatPage() {
         </div>
         {/* 右侧面板 - width 过渡驱动整体布局动画 */}
         {appMode === 'claw' ? (
-          <ClawRightPanel />
+          <ClawRightPanel accessToken={accessToken} projectId={currentThread?.project_id || undefined} />
         ) : (
         <div
           style={{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,17 @@ import (
 
 type ShellSessionRepository struct {
 	db Querier
+}
+
+type ShellSession struct {
+	SessionRef    string
+	SessionType   string
+	OrgID         uuid.UUID
+	ProfileRef    string
+	WorkspaceRef  string
+	State         string
+	LiveSessionID *string
+	LastUsedAt    time.Time
 }
 
 func NewShellSessionRepository(db Querier) (*ShellSessionRepository, error) {
@@ -50,4 +62,54 @@ func (r *ShellSessionRepository) GetRunIDBySessionRef(ctx context.Context, orgID
 		return nil, err
 	}
 	return runID, nil
+}
+
+func (r *ShellSessionRepository) GetBySessionRef(ctx context.Context, orgID uuid.UUID, sessionRef string) (*ShellSession, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("org_id must not be empty")
+	}
+	sessionRef = strings.TrimSpace(sessionRef)
+	if sessionRef == "" {
+		return nil, fmt.Errorf("session_ref must not be empty")
+	}
+
+	var session ShellSession
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT session_ref,
+		        session_type,
+		        org_id,
+		        profile_ref,
+		        workspace_ref,
+		        state,
+		        live_session_id,
+		        last_used_at
+		   FROM shell_sessions
+		  WHERE org_id = $1
+		    AND session_ref = $2`,
+		orgID,
+		sessionRef,
+	).Scan(
+		&session.SessionRef,
+		&session.SessionType,
+		&session.OrgID,
+		&session.ProfileRef,
+		&session.WorkspaceRef,
+		&session.State,
+		&session.LiveSessionID,
+		&session.LastUsedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
 }

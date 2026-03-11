@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/testutil"
 	"github.com/google/uuid"
@@ -65,17 +66,22 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 		t.Fatalf("resolve third run failed: %v", err)
 	}
 
-	if derefString(first.ProfileRef) != derefString(second.ProfileRef) {
-		t.Fatalf("expected same profile_ref for same user, got %q vs %q", derefString(first.ProfileRef), derefString(second.ProfileRef))
+	expectedProfileA := sharedenvironmentref.BuildProfileRef(orgID, &userA)
+	expectedProfileB := sharedenvironmentref.BuildProfileRef(orgID, &userB)
+	expectedWorkspaceA := sharedenvironmentref.BuildWorkspaceRef(orgID, expectedProfileA, data.BindingScopeProject, projectID)
+	expectedWorkspaceB := sharedenvironmentref.BuildWorkspaceRef(orgID, expectedProfileB, data.BindingScopeProject, projectID)
+
+	if derefString(first.ProfileRef) != expectedProfileA || derefString(second.ProfileRef) != expectedProfileA {
+		t.Fatalf("unexpected profile_ref for user A: %q / %q", derefString(first.ProfileRef), derefString(second.ProfileRef))
 	}
-	if derefString(first.WorkspaceRef) != derefString(second.WorkspaceRef) {
-		t.Fatalf("expected same workspace_ref for same user+project, got %q vs %q", derefString(first.WorkspaceRef), derefString(second.WorkspaceRef))
+	if derefString(first.WorkspaceRef) != expectedWorkspaceA || derefString(second.WorkspaceRef) != expectedWorkspaceA {
+		t.Fatalf("unexpected workspace_ref for user A: %q / %q", derefString(first.WorkspaceRef), derefString(second.WorkspaceRef))
 	}
-	if derefString(first.ProfileRef) == derefString(third.ProfileRef) {
-		t.Fatalf("expected different profile_ref for different users, got %q", derefString(first.ProfileRef))
+	if derefString(third.ProfileRef) != expectedProfileB {
+		t.Fatalf("unexpected profile_ref for user B: %q", derefString(third.ProfileRef))
 	}
-	if derefString(first.WorkspaceRef) == derefString(third.WorkspaceRef) {
-		t.Fatalf("expected different workspace_ref for different users in same project, got %q", derefString(first.WorkspaceRef))
+	if derefString(third.WorkspaceRef) != expectedWorkspaceB {
+		t.Fatalf("unexpected workspace_ref for user B: %q", derefString(third.WorkspaceRef))
 	}
 
 	profileRepo := data.ProfileRegistriesRepository{}
@@ -139,8 +145,14 @@ func TestResolveAndPersistEnvironmentBindings_ThreadFallback(t *testing.T) {
 		t.Fatalf("resolve second run failed: %v", err)
 	}
 
-	if derefString(first.WorkspaceRef) != derefString(second.WorkspaceRef) {
-		t.Fatalf("expected thread fallback workspace_ref reused, got %q vs %q", derefString(first.WorkspaceRef), derefString(second.WorkspaceRef))
+	expectedProfile := sharedenvironmentref.BuildProfileRef(orgID, &userID)
+	expectedWorkspace := sharedenvironmentref.BuildWorkspaceRef(orgID, expectedProfile, data.BindingScopeThread, threadID)
+
+	if derefString(first.ProfileRef) != expectedProfile || derefString(second.ProfileRef) != expectedProfile {
+		t.Fatalf("unexpected thread fallback profile_ref: %q / %q", derefString(first.ProfileRef), derefString(second.ProfileRef))
+	}
+	if derefString(first.WorkspaceRef) != expectedWorkspace || derefString(second.WorkspaceRef) != expectedWorkspace {
+		t.Fatalf("unexpected thread fallback workspace_ref: %q / %q", derefString(first.WorkspaceRef), derefString(second.WorkspaceRef))
 	}
 }
 
@@ -191,8 +203,19 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 	if err != nil {
 		t.Fatalf("resolve second run failed: %v", err)
 	}
-	if derefString(first.WorkspaceRef) == derefString(second.WorkspaceRef) {
-		t.Fatalf("expected new thread workspace_ref, got %q", derefString(second.WorkspaceRef))
+
+	expectedProfile := sharedenvironmentref.BuildProfileRef(orgID, &userID)
+	expectedFirstWorkspace := sharedenvironmentref.BuildWorkspaceRef(orgID, expectedProfile, data.BindingScopeThread, threadID1)
+	expectedSecondWorkspace := sharedenvironmentref.BuildWorkspaceRef(orgID, expectedProfile, data.BindingScopeThread, threadID2)
+
+	if derefString(first.ProfileRef) != expectedProfile || derefString(second.ProfileRef) != expectedProfile {
+		t.Fatalf("unexpected inherited-skill profile_ref: %q / %q", derefString(first.ProfileRef), derefString(second.ProfileRef))
+	}
+	if derefString(first.WorkspaceRef) != expectedFirstWorkspace {
+		t.Fatalf("unexpected first workspace_ref: %q", derefString(first.WorkspaceRef))
+	}
+	if derefString(second.WorkspaceRef) != expectedSecondWorkspace {
+		t.Fatalf("unexpected second workspace_ref: %q", derefString(second.WorkspaceRef))
 	}
 
 	var skillKey string
