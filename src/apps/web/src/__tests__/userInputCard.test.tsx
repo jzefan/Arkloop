@@ -71,6 +71,10 @@ function findRole(text: string) {
   )
 }
 
+function findSubmitArrow() {
+  return container.querySelector('[data-testid="user-input-submit"]') as HTMLButtonElement | null
+}
+
 function renderCard(
   request: UserInputRequest,
   onSubmit: (r: UserInputResponse) => void = vi.fn(),
@@ -95,11 +99,10 @@ describe('UserInputCard', () => {
       expect(container.textContent).toContain('Option B')
     })
 
-    it('renders first question in multi-question mode (step nav)', () => {
+    it('renders first question in multi-question mode', () => {
       renderCard(multiQuestion)
       expect(container.textContent).toContain('First?')
       expect(container.textContent).toContain('X')
-      // q2 is hidden until user advances
       expect(container.textContent).not.toContain('Second?')
     })
 
@@ -114,26 +117,19 @@ describe('UserInputCard', () => {
       // q1: no Other input
       expect(container.querySelectorAll('input[type="text"]').length).toBe(0)
 
-      // select q1 answer and advance
+      // single-click X on q1 → auto-advances to q2
       act(() => { findRole('X')!.click() })
-      act(() => { (findBtn('继续') ?? findBtn('Next'))!.click() })
 
-      // q2 has allow_other
       expect(container.querySelectorAll('input[type="text"]').length).toBe(1)
     })
   })
 
   describe('interaction', () => {
-    it('selects option on click and submits', () => {
+    it('single click on option immediately submits (single question)', () => {
       const onSubmit = vi.fn()
       renderCard(singleQuestion, onSubmit)
 
       act(() => { findRole('Option B')!.click() })
-
-      const submitBtn = findBtn('提交') ?? findBtn('Submit')
-      expect(submitBtn).toBeTruthy()
-      expect(submitBtn!.disabled).toBe(false)
-      act(() => { submitBtn!.click() })
 
       expect(onSubmit).toHaveBeenCalledTimes(1)
       const response = onSubmit.mock.calls[0][0] as UserInputResponse
@@ -141,87 +137,62 @@ describe('UserInputCard', () => {
       expect(response.answers.q1).toEqual({ type: 'option', value: 'b' })
     })
 
-    it('pre-selects recommended option and submits it', () => {
+    it('arrow button submits pre-selected recommended option', () => {
       const onSubmit = vi.fn()
       renderCard(singleQuestion, onSubmit)
 
-      const submitBtn = findBtn('提交') ?? findBtn('Submit')
-      expect(submitBtn).toBeTruthy()
-      act(() => { submitBtn!.click() })
+      const arrow = findSubmitArrow()
+      expect(arrow).toBeTruthy()
+      expect(arrow!.disabled).toBe(false)
+      act(() => { arrow!.click() })
 
       expect(onSubmit).toHaveBeenCalledTimes(1)
       const response = onSubmit.mock.calls[0][0] as UserInputResponse
       expect(response.answers.q1).toEqual({ type: 'option', value: 'a' })
     })
 
-    it('multi-question: navigates steps and submits all answers', () => {
+    it('multi-question: single click advances and final click submits', () => {
       const onSubmit = vi.fn()
       renderCard(multiQuestion, onSubmit)
 
-      // step 1: answer q1
       act(() => { findRole('Y')!.click() })
-      const nextBtn = findBtn('继续') ?? findBtn('Next')
-      expect(nextBtn).toBeTruthy()
-      act(() => { nextBtn!.click() })
-
-      // step 2: should now show q2
       expect(container.textContent).toContain('Second?')
+
       act(() => { findRole('M')!.click() })
-
-      const submitBtn = findBtn('提交') ?? findBtn('Submit')
-      expect(submitBtn).toBeTruthy()
-      act(() => { submitBtn!.click() })
-
       expect(onSubmit).toHaveBeenCalledTimes(1)
       const response = onSubmit.mock.calls[0][0] as UserInputResponse
       expect(response.answers.q1).toEqual({ type: 'option', value: 'y' })
       expect(response.answers.q2).toEqual({ type: 'option', value: 'm' })
     })
 
-    it('multi-question: cannot advance without answering current question', () => {
-      renderCard(multiQuestion)
-
-      const nextBtn = findBtn('继续') ?? findBtn('Next')
-      expect(nextBtn).toBeTruthy()
-      expect(nextBtn!.disabled).toBe(true)
-    })
-
-    it('double-click on single question submits directly', () => {
+    it('arrow button is disabled when no answer selected', () => {
       const onSubmit = vi.fn()
-      renderCard(singleQuestion, onSubmit)
+      // Use a question with no recommended (so nothing pre-selected)
+      const req: UserInputRequest = {
+        request_id: 'req_x',
+        questions: [{
+          id: 'q1',
+          question: 'Pick?',
+          options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
+        }],
+      }
+      renderCard(req, onSubmit)
 
-      const optionB = findRole('Option B')!
-      act(() => {
-        optionB.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-      })
-
-      expect(onSubmit).toHaveBeenCalledTimes(1)
-      const response = onSubmit.mock.calls[0][0] as UserInputResponse
-      expect(response.answers.q1).toEqual({ type: 'option', value: 'b' })
-    })
-
-    it('double-click on multi-question advances to next step', () => {
-      renderCard(multiQuestion)
-
-      const optionY = findRole('Y')!
-      act(() => {
-        optionY.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-      })
-
-      // should now show q2
-      expect(container.textContent).toContain('Second?')
-      expect(container.textContent).not.toContain('First?')
+      const arrow = findSubmitArrow()
+      expect(arrow!.disabled).toBe(true)
+      act(() => { arrow!.click() })
+      expect(onSubmit).not.toHaveBeenCalled()
     })
   })
 
   describe('dismiss', () => {
-    it('calls onDismiss when dismiss button clicked', () => {
+    it('calls onDismiss when skip button clicked', () => {
       const onDismiss = vi.fn()
       renderCard(singleQuestion, vi.fn(), onDismiss)
 
-      const dismissBtn = findBtn('忽略') ?? findBtn('Dismiss')
-      expect(dismissBtn).toBeTruthy()
-      act(() => { dismissBtn!.click() })
+      const skipBtn = findBtn('跳过') ?? findBtn('Skip')
+      expect(skipBtn).toBeTruthy()
+      act(() => { skipBtn!.click() })
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
     })
@@ -236,5 +207,6 @@ describe('UserInputCard', () => {
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
     })
+
   })
 })

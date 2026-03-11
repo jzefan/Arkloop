@@ -2276,7 +2276,7 @@ export function ChatPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.25, ease: 'easeOut' }}
-            className="w-full max-w-[840px]"
+            className="w-full max-w-[840px] px-4"
           >
             <UserInputCard
               request={pendingUserInput}
