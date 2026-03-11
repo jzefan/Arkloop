@@ -83,6 +83,13 @@ button:not(:disabled) {
   --c-mode-switch-pill-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
   --c-mode-switch-active-text: #faf9f5;
   --c-mode-switch-inactive-text: #6b6b68;
+  --c-claw-card-border: rgba(255, 255, 255, 0.12);
+  --c-claw-card-hover: rgba(255, 255, 255, 0.04);
+  --c-claw-step-done: var(--c-text-tertiary);
+  --c-claw-step-pending: rgba(255, 255, 255, 0.12);
+  --c-claw-step-line: rgba(255, 255, 255, 0.10);
+  --c-claw-file-bg: rgba(255, 255, 255, 0.03);
+  --c-claw-file-border: rgba(255, 255, 255, 0.06);
 }
 
 @media (prefers-color-scheme: light) {
@@ -165,6 +172,13 @@ button:not(:disabled) {
     --c-mode-switch-pill-shadow: 0 1px 3px rgba(0, 0, 0, 0.10), 0 0.5px 1px rgba(0, 0, 0, 0.06);
     --c-mode-switch-active-text: #141412;
     --c-mode-switch-inactive-text: #8C8C8A;
+    --c-claw-card-border: rgba(0, 0, 0, 0.10);
+    --c-claw-card-hover: rgba(0, 0, 0, 0.03);
+    --c-claw-step-done: var(--c-text-tertiary);
+    --c-claw-step-pending: rgba(0, 0, 0, 0.12);
+    --c-claw-step-line: rgba(0, 0, 0, 0.10);
+    --c-claw-file-bg: rgba(0, 0, 0, 0.02);
+    --c-claw-file-border: rgba(0, 0, 0, 0.06);
   }
 }
 
@@ -247,6 +261,13 @@ button:not(:disabled) {
   --c-mode-switch-pill-shadow: 0 1px 3px rgba(0, 0, 0, 0.10), 0 0.5px 1px rgba(0, 0, 0, 0.06);
   --c-mode-switch-active-text: #141412;
   --c-mode-switch-inactive-text: #8C8C8A;
+  --c-claw-card-border: rgba(0, 0, 0, 0.10);
+  --c-claw-card-hover: rgba(0, 0, 0, 0.03);
+  --c-claw-step-done: var(--c-text-tertiary);
+  --c-claw-step-pending: rgba(0, 0, 0, 0.12);
+  --c-claw-step-line: rgba(0, 0, 0, 0.10);
+  --c-claw-file-bg: rgba(0, 0, 0, 0.02);
+  --c-claw-file-border: rgba(0, 0, 0, 0.06);
 }
 
 .chat-input-box {
@@ -631,6 +652,11 @@ button:not(:disabled) {
 @keyframes thinking-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .thinking-shimmer {
   background: linear-gradient(
