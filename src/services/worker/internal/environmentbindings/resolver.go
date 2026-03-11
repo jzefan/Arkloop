@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
@@ -57,7 +58,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 
 	profileRef := strings.TrimSpace(deref(resolved.ProfileRef))
 	if profileRef == "" {
-		profileRef = makeProfileRef(resolved.OrgID, resolved.CreatedByUserID, resolved.ThreadID)
+		profileRef = sharedenvironmentref.BuildProfileRef(resolved.OrgID, resolved.CreatedByUserID)
 	}
 
 	profileRepo := data.ProfileRegistriesRepository{}
@@ -74,7 +75,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 	workspaceRef := strings.TrimSpace(deref(resolved.WorkspaceRef))
 	workspaceCreated := false
 	if workspaceRef == "" {
-		candidate := makeWorkspaceRef(resolved.OrgID, profileRef, bindingScope, bindingTargetID)
+		candidate := sharedenvironmentref.BuildWorkspaceRef(resolved.OrgID, profileRef, bindingScope, bindingTargetID)
 		workspaceRef, workspaceCreated, err = data.DefaultWorkspaceBindingsRepository{}.GetOrCreate(
 			ctx,
 			tx,
@@ -139,21 +140,6 @@ func bindingKey(run data.Run) (string, uuid.UUID) {
 		return data.BindingScopeProject, *run.ProjectID
 	}
 	return data.BindingScopeThread, run.ThreadID
-}
-
-func makeProfileRef(orgID uuid.UUID, ownerUserID *uuid.UUID, threadID uuid.UUID) string {
-	seed := orgID.String() + ":"
-	if ownerUserID != nil && *ownerUserID != uuid.Nil {
-		seed += ownerUserID.String()
-	} else {
-		seed += threadID.String()
-	}
-	return "pref_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed)).String()
-}
-
-func makeWorkspaceRef(orgID uuid.UUID, profileRef string, bindingScope string, bindingTargetID uuid.UUID) string {
-	seed := strings.Join([]string{orgID.String(), profileRef, bindingScope, bindingTargetID.String()}, ":")
-	return "wsref_" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed)).String()
 }
 
 func inheritWorkspaceSkills(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, enabledByUserID *uuid.UUID, fromWorkspaceRef, toWorkspaceRef string) ([]string, error) {

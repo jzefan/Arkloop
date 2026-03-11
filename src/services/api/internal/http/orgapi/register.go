@@ -37,7 +37,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/teams", teamsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.TeamRepo, deps.APIKeysRepo, deps.EntitlementService, deps.Pool))
 	mux.HandleFunc("/v1/teams/", teamEntry(deps.AuthService, deps.OrgMembershipRepo, deps.TeamRepo, deps.APIKeysRepo, deps.EntitlementService, deps.Pool))
 	mux.HandleFunc("/v1/projects", projectsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ProjectRepo, deps.TeamRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/projects/", projectEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ProjectRepo, deps.APIKeysRepo))
+	mux.HandleFunc("/v1/projects/", projectEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ProjectRepo, deps.APIKeysRepo, deps.AuditWriter, deps.Pool, deps.EnvironmentStore))
 	mux.HandleFunc("/v1/orgs", orgsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.OrgRepo, deps.OrgService, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/orgs/me", orgsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.OrgRepo, deps.OrgService, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/orgs/", orgsInvitationsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.OrgInvitationsRepo, deps.AuditWriter, deps.OrgRepo))

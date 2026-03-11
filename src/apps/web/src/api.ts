@@ -410,6 +410,73 @@ export type ThreadResponse = {
   parent_thread_id?: string | null
 }
 
+export type ProjectWorkspaceStatus = 'active' | 'idle' | 'unavailable'
+
+export type ProjectWorkspace = {
+	project_id: string
+	workspace_ref: string
+	owner_user_id: string
+	status: ProjectWorkspaceStatus
+	last_used_at: string
+	active_session?: {
+		session_ref: string
+		session_type: string
+		state: string
+		last_used_at: string
+	}
+}
+
+export type ProjectWorkspaceFileEntry = {
+	name: string
+	path: string
+	type: 'dir' | 'file' | 'symlink'
+	size?: number
+	mtime_unix_ms?: number
+	mime_type?: string
+	has_children?: boolean
+}
+
+export type ProjectWorkspaceFilesResponse = {
+	workspace_ref: string
+	path: string
+	items: ProjectWorkspaceFileEntry[]
+}
+
+function normalizeWorkspaceQueryPath(pathname?: string): string {
+	const trimmed = (pathname ?? '').trim()
+	if (!trimmed || trimmed === '/') return '/'
+	return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+export async function getProjectWorkspace(accessToken: string, projectId: string): Promise<ProjectWorkspace> {
+	return await apiFetch<ProjectWorkspace>(`/v1/projects/${projectId}/workspace`, {
+		method: 'GET',
+		accessToken,
+	})
+}
+
+export async function listProjectWorkspaceFiles(
+	accessToken: string,
+	projectId: string,
+	pathname = '/',
+): Promise<ProjectWorkspaceFilesResponse> {
+	const sp = new URLSearchParams()
+	const normalizedPath = normalizeWorkspaceQueryPath(pathname)
+	if (normalizedPath !== '/') {
+		sp.set('path', normalizedPath)
+	}
+	const query = sp.toString()
+	return await apiFetch<ProjectWorkspaceFilesResponse>(`/v1/projects/${projectId}/workspace/files${query ? `?${query}` : ''}`, {
+		method: 'GET',
+		accessToken,
+	})
+}
+
+export function buildProjectWorkspaceFileUrl(projectId: string, pathname: string): string {
+	const sp = new URLSearchParams({ path: normalizeWorkspaceQueryPath(pathname) })
+	return buildUrl(`/v1/projects/${projectId}/workspace/file?${sp.toString()}`)
+}
+
 export async function getThread(
   accessToken: string,
   threadId: string,

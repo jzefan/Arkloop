@@ -246,6 +246,10 @@ export interface LocaleStrings {
     progressEmpty: string
     workingFolder: string
     workingFolderEmpty: string
+    workingFolderLoading: string
+    workingFolderError: string
+    workingFolderEmptyDir: string
+    workingFolderSelectFile: string
     context: string
     contextDesc: string
     contextEmpty: string
