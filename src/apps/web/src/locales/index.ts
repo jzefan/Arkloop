@@ -128,6 +128,18 @@ export interface LocaleStrings {
     scanStatusLabel: (status: string) => string
     riskConfirm: (name: string, status: string, summary?: string) => string
     cancelAction: string
+    trySkill: string
+    download: string
+    replace: string
+    disable: string
+    disableFailed: string
+    detailTitle: string
+    trySkillPrompt: (skillKey: string) => string
+    detailVersion: string
+    detailSource: string
+    detailUpdatedAt: string
+    detailDescription: string
+    noDescription: string
   }
   // invite code
   inviteCode: string
