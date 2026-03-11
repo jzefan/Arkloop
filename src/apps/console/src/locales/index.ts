@@ -90,17 +90,11 @@ export interface LocaleStrings {
   otpVerifyBtn: string
   // common
   loading: string
-  projectSwitcherLabel: string
-  projectSwitcherLoading: string
-  projectSwitcherEmpty: string
   // pages
   pages: {
     projects: {
       title: string
       refresh: string
-      currentLabel: string
-      currentHint: string
-      activeBadge: string
       defaultBadge: string
       noDescription: string
       empty: string

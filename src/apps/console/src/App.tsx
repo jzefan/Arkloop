@@ -33,7 +33,6 @@ import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionG
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
-import { ProjectProvider } from './contexts/ProjectContext'
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
@@ -106,9 +105,7 @@ function App() {
     <Routes>
       <Route
         element={(
-          <ProjectProvider accessToken={accessToken}>
-            <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
-          </ProjectProvider>
+          <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
         )}
       >
         <Route index element={<Navigate to="/dashboard" replace />} />

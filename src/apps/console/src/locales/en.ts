@@ -81,16 +81,10 @@ export const en: LocaleStrings = {
   otpSendingCountdown: (s: number) => `Resend in ${s}s`,
   otpVerifyBtn: 'Sign in',
   loading: 'Loading...',
-  projectSwitcherLabel: 'Current Project',
-  projectSwitcherLoading: 'Loading projects...',
-  projectSwitcherEmpty: 'No projects',
   pages: {
     projects: {
       title: 'Projects',
       refresh: 'Refresh',
-      currentLabel: 'Current Selection',
-      currentHint: 'Used for new configuration flows and upcoming project-scoped views.',
-      activeBadge: 'Current',
       defaultBadge: 'Default',
       noDescription: 'No description',
       empty: 'No projects',
