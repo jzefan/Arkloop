@@ -97,11 +97,11 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	if params.CredentialID == uuid.Nil {
 		return LlmRoute{}, fmt.Errorf("credential_id must not be nil")
 	}
-	if params.Scope != LlmCredentialScopeOrg && params.Scope != LlmCredentialScopePlatform {
-		return LlmRoute{}, fmt.Errorf("scope must be org or platform")
+	if params.Scope != LlmCredentialScopeProject && params.Scope != LlmCredentialScopePlatform {
+		return LlmRoute{}, fmt.Errorf("scope must be project or platform")
 	}
-	if params.Scope == LlmCredentialScopeOrg && params.OrgID == uuid.Nil {
-		return LlmRoute{}, fmt.Errorf("org_id must not be nil for org scope")
+	if params.Scope == LlmCredentialScopeProject && params.OrgID == uuid.Nil {
+		return LlmRoute{}, fmt.Errorf("org_id must not be nil for project scope")
 	}
 	params.Model = strings.TrimSpace(params.Model)
 	if params.Model == "" {
@@ -408,11 +408,11 @@ func appendLlmRouteScopeWhere(base string, args []any, orgID uuid.UUID, scope st
 	if scope == LlmCredentialScopePlatform {
 		return base + ` WHERE org_id IS NULL`, args, nil
 	}
-	if scope != LlmCredentialScopeOrg {
-		return "", nil, fmt.Errorf("scope must be org or platform")
+	if scope != LlmCredentialScopeProject {
+		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
 	if orgID == uuid.Nil {
-		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+		return "", nil, fmt.Errorf("org_id must not be nil for project scope")
 	}
 	args = append(args, orgID)
 	return base + fmt.Sprintf(` WHERE org_id = $%d`, len(args)), args, nil
@@ -430,11 +430,11 @@ func llmRouteScopeClause(orgID uuid.UUID, scope string, index int) (string, []an
 	if scope == LlmCredentialScopePlatform {
 		return `org_id IS NULL`, nil, nil
 	}
-	if scope != LlmCredentialScopeOrg {
-		return "", nil, fmt.Errorf("scope must be org or platform")
+	if scope != LlmCredentialScopeProject {
+		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
 	if orgID == uuid.Nil {
-		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+		return "", nil, fmt.Errorf("org_id must not be nil for project scope")
 	}
 	return fmt.Sprintf(`org_id = $%d`, index), []any{orgID}, nil
 }

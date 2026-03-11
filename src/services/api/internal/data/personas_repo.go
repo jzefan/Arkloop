@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	PersonaScopeOrg      = "org"
+	PersonaScopeProject  = "project"
 	PersonaScopePlatform = "platform"
 
 	PersonaSyncModeNone               = "none"
@@ -142,12 +142,12 @@ func scanPersona(scanner personaScanner, persona *Persona) error {
 
 func NormalizePersonaScope(scope string) (string, error) {
 	switch strings.TrimSpace(scope) {
-	case PersonaScopeOrg:
-		return PersonaScopeOrg, nil
+	case PersonaScopeProject:
+		return PersonaScopeProject, nil
 	case PersonaScopePlatform:
 		return PersonaScopePlatform, nil
 	default:
-		return "", fmt.Errorf("scope must be org or platform")
+		return "", fmt.Errorf("scope must be project or platform")
 	}
 }
 
@@ -217,7 +217,7 @@ func (r *PersonasRepository) CreateInScope(
 		return Persona{}, err
 	}
 	var orgIDPtr *uuid.UUID
-	if normalized == PersonaScopeOrg {
+	if normalized == PersonaScopeProject {
 		if orgID == uuid.Nil {
 			return Persona{}, fmt.Errorf("org_id must not be nil")
 		}
@@ -336,7 +336,7 @@ func (r *PersonasRepository) createWithOrgID(
 }
 
 func (r *PersonasRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*Persona, error) {
-	return r.GetByIDInScope(ctx, orgID, id, PersonaScopeOrg)
+	return r.GetByIDInScope(ctx, orgID, id, PersonaScopeProject)
 }
 
 func (r *PersonasRepository) GetByIDInScope(ctx context.Context, orgID, id uuid.UUID, scope string) (*Persona, error) {
@@ -365,7 +365,7 @@ func (r *PersonasRepository) GetByIDInScope(ctx context.Context, orgID, id uuid.
 }
 
 func (r *PersonasRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
-	return r.ListByScope(ctx, orgID, PersonaScopeOrg)
+	return r.ListByScope(ctx, orgID, PersonaScopeProject)
 }
 
 func (r *PersonasRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]Persona, error) {
@@ -435,7 +435,7 @@ func (r *PersonasRepository) ListActiveEffective(ctx context.Context, orgID uuid
 }
 
 func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch PersonaPatch) (*Persona, error) {
-	return r.PatchInScope(ctx, orgID, id, PersonaScopeOrg, patch)
+	return r.PatchInScope(ctx, orgID, id, PersonaScopeProject, patch)
 }
 
 func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UUID, scope string, patch PersonaPatch) (*Persona, error) {
@@ -775,7 +775,7 @@ func (r *PersonasRepository) DeactivatePlatformMirrorsByKey(ctx context.Context,
 }
 
 func (r *PersonasRepository) Delete(ctx context.Context, orgID, id uuid.UUID) (bool, error) {
-	return r.DeleteInScope(ctx, orgID, id, PersonaScopeOrg)
+	return r.DeleteInScope(ctx, orgID, id, PersonaScopeProject)
 }
 
 func (r *PersonasRepository) DeleteInScope(ctx context.Context, orgID, id uuid.UUID, scope string) (bool, error) {

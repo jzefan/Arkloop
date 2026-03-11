@@ -36,7 +36,7 @@ type CredentialScope string
 
 const (
 	CredentialScopePlatform CredentialScope = "platform"
-	CredentialScopeOrg      CredentialScope = "org"
+	CredentialScopeProject  CredentialScope = "project"
 )
 
 type ProviderCredential struct {
@@ -458,10 +458,10 @@ func parseScope(value string) (CredentialScope, error) {
 	switch cleaned {
 	case "platform":
 		return CredentialScopePlatform, nil
-	case "org":
-		return CredentialScopeOrg, nil
+	case "project":
+		return CredentialScopeProject, nil
 	default:
-		return "", fmt.Errorf("must be platform/org")
+		return "", fmt.Errorf("must be platform/project")
 	}
 }
 
@@ -489,9 +489,9 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid
 		WHERE c.revoked_at IS NULL
 		  AND (
 			(c.scope = 'platform' AND c.org_id IS NULL AND r.org_id IS NULL)
-			OR (c.scope = 'org' AND c.org_id = $1 AND r.org_id = $1)
+			OR (c.scope = 'project' AND c.org_id = $1 AND r.org_id = $1)
 		  )
-		ORDER BY CASE WHEN c.scope = 'org' THEN 0 ELSE 1 END ASC,
+		ORDER BY CASE WHEN c.scope = 'project' THEN 0 ELSE 1 END ASC,
 		         r.is_default DESC,
 		         r.priority DESC,
 		         r.created_at ASC,
