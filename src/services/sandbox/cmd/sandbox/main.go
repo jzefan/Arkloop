@@ -87,13 +87,13 @@ func run() error {
 		logger.Info("artifact store initialized", logging.LogFields{}, nil)
 	}
 
-	var vmPool session.VMPool
+	var provider session.Provider
 
 	switch cfg.Provider {
 	case app.ProviderFirecracker:
-		vmPool, err = buildFirecrackerPool(cfg, logger)
+		provider, err = buildFirecrackerPool(cfg, logger)
 	case app.ProviderDocker:
-		vmPool, err = buildDockerPool(cfg, logger)
+		provider, err = buildDockerPool(cfg, logger)
 	default:
 		err = fmt.Errorf("unknown provider: %s", cfg.Provider)
 	}
@@ -113,7 +113,7 @@ func run() error {
 
 	mgr := session.NewManager(session.ManagerConfig{
 		MaxSessions: cfg.MaxSessions,
-		Pool:        vmPool,
+		Pool:        provider,
 		IdleTimeouts: map[string]int{
 			session.TierLite:    cfg.IdleTimeoutSeconds(session.TierLite),
 			session.TierPro:     cfg.IdleTimeoutSeconds(session.TierPro),
@@ -186,7 +186,7 @@ func buildStorageBucketOpener(cfg app.Config) (objectstore.BucketOpener, error) 
 	return runtimeConfig.BucketOpener()
 }
 
-func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
+func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.Provider, error) {
 	var snapshotStore storage.SnapshotStore
 	var registry *template.Registry
 
@@ -271,7 +271,7 @@ func buildFirecrackerPool(cfg app.Config, logger *logging.JSONLogger) (session.V
 	return warmPool, nil
 }
 
-func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
+func buildDockerPool(cfg app.Config, logger *logging.JSONLogger) (session.Provider, error) {
 	dp, err := dockerpool.New(dockerpool.Config{
 		WarmSizes:             cfg.WarmSizes(),
 		RefillIntervalSeconds: cfg.RefillIntervalSeconds,
