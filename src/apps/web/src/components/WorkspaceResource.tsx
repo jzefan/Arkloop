@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, ExternalLink, FileCode2, X } from 'lucide-react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 
 const ANIM_MS = 120
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 export type WorkspaceFileRef = {
   path: string

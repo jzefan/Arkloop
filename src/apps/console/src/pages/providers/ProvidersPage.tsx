@@ -7,7 +7,7 @@ import { FormField } from '../../components/FormField'
 import { Modal } from '../../components/Modal'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Badge } from '../../components/Badge'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {

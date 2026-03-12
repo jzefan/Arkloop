@@ -4,7 +4,7 @@ import { RefreshCw, Shield, Search, X } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { EmptyState } from '../../components/EmptyState'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { listAccessLog, type AccessLogEntry, type AccessLogParams } from '../../api/access-log'
 

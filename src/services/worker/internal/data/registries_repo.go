@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/registryerr"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +22,7 @@ const (
 	FlushStateFailed  = "failed"
 )
 
-var ErrFlushConflict = errors.New("flush conflict")
+var ErrFlushConflict = registryerr.ErrFlushConflict
 
 type RegistryRecord struct {
 	Ref                    string

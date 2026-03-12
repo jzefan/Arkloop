@@ -66,13 +66,16 @@ func (r *Resolver) Resolve(ctx context.Context, orgID uuid.UUID, key string) (st
 	return val, nil
 }
 
-// ResolveInt 解析整型权益值，无法解析时返回 0。
+// ResolveInt 解析整型权益值。
 func (r *Resolver) ResolveInt(ctx context.Context, orgID uuid.UUID, key string) (int64, error) {
 	raw, err := r.Resolve(ctx, orgID, key)
 	if err != nil {
 		return 0, err
 	}
-	n, _ := strconv.ParseInt(raw, 10, 64)
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("entitlement: parse int for %q (raw=%q): %w", key, raw, err)
+	}
 	return n, nil
 }
 

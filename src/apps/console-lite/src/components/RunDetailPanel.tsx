@@ -7,7 +7,7 @@ import { TurnView } from './TurnView'
 import { buildTurns, type LlmTurn } from '../run-turns'
 import { Badge, type BadgeVariant } from './Badge'
 import { useLocale } from '../contexts/LocaleContext'
-import { useToast } from './useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../api'
 
 type Props = {

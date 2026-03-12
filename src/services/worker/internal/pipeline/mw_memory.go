@@ -60,12 +60,12 @@ func NewMemoryMiddleware(provider memory.MemoryProvider, pool *pgxpool.Pool, con
 		}
 
 		err := next(ctx, rc)
-		flushPendingWritesAfterRun(activeProvider, pool, configResolver, rc)
+		flushPendingWritesAfterRun(ctx, activeProvider, pool, configResolver, rc)
 		return err
 	}
 }
 
-func flushPendingWritesAfterRun(provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver, rc *RunContext) {
+func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver, rc *RunContext) {
 	if rc.PendingMemoryWrites == nil {
 		return
 	}
@@ -73,7 +73,7 @@ func flushPendingWritesAfterRun(provider memory.MemoryProvider, pool *pgxpool.Po
 	if len(pending) == 0 {
 		return
 	}
-	costPerWrite := resolveCommitCost(context.Background(), configResolver)
+	costPerWrite := resolveCommitCost(ctx, configResolver)
 	go flushPendingWrites(pending, provider, pool, rc.Run.OrgID, rc.Run.ID, costPerWrite)
 }
 
@@ -96,6 +96,7 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 		rc.SystemPrompt += block
 		if pool != nil {
 			go func() {
+				// goroutine 超出请求生命周期，需要独立 context
 				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer uCancel()
 				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
@@ -166,6 +167,7 @@ func buildMemoryBlock(lines []string) string {
 }
 
 func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, pool *pgxpool.Pool, orgID, runID uuid.UUID, costPerWrite float64) {
+	// 由 goroutine 调用，超出请求生命周期，需要独立 context
 	ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 	defer cancel()
 
@@ -208,7 +210,7 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 
 	if costPerWrite > 0 && pool != nil {
 		totalCost := costPerWrite * float64(successCount)
-		uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		uCtx, uCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer uCancel()
 		if err := usageRepo.InsertMemoryUsage(uCtx, pool, orgID, runID, totalCost); err != nil {
 			slog.Warn("memory: usage record insert failed",

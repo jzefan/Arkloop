@@ -162,7 +162,10 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 	}
 
 	cidrs := filterCIDRs(body.TrustedCIDRs)
-	encoded, _ := json.Marshal(cidrs)
+	encoded, err := json.Marshal(cidrs)
+	if err != nil {
+		return fmt.Errorf("marshal trusted CIDRs: %w", err)
+	}
 	if _, err := settingsRepo.Set(ctx, settingGatewayTrustedCIDRs, string(encoded)); err != nil {
 		return err
 	}
