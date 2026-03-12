@@ -63,15 +63,12 @@ ALTER TABLE redemption_records RENAME COLUMN org_id TO account_id;
 
 -- infra / runtime
 ALTER TABLE shell_sessions RENAME COLUMN org_id TO account_id;
-ALTER TABLE default_shell_session_bindings RENAME COLUMN org_id TO account_id;
 ALTER TABLE default_workspace_bindings RENAME COLUMN org_id TO account_id;
 ALTER TABLE profile_registries RENAME COLUMN org_id TO account_id;
 ALTER TABLE workspace_registries RENAME COLUMN org_id TO account_id;
 ALTER TABLE browser_state_registries RENAME COLUMN org_id TO account_id;
 
 -- org-scoped configs
-ALTER TABLE agent_configs RENAME COLUMN org_id TO account_id;
-ALTER TABLE prompt_templates RENAME COLUMN org_id TO account_id;
 ALTER TABLE teams RENAME COLUMN org_id TO account_id;
 
 -- webhooks / audit / notifications
@@ -229,10 +226,6 @@ ALTER INDEX idx_webhook_deliveries_org_id RENAME TO idx_webhook_deliveries_accou
 ALTER INDEX ix_audit_logs_org_id_ts RENAME TO ix_audit_logs_account_id_ts;
 ALTER INDEX idx_ip_rules_org_id RENAME TO idx_ip_rules_account_id;
 
--- agent_configs / prompt_templates
-ALTER INDEX idx_agent_configs_org_id RENAME TO idx_agent_configs_account_id;
-ALTER INDEX idx_prompt_templates_org_id RENAME TO idx_prompt_templates_account_id;
-
 -- registries
 ALTER INDEX idx_profile_registries_org_id RENAME TO idx_profile_registries_account_id;
 ALTER INDEX idx_workspace_registries_org_id RENAME TO idx_workspace_registries_account_id;
@@ -306,10 +299,6 @@ ALTER INDEX idx_shell_sessions_account_thread RENAME TO idx_shell_sessions_org_t
 ALTER INDEX idx_browser_state_registries_account_id RENAME TO idx_browser_state_registries_org_id;
 ALTER INDEX idx_workspace_registries_account_id RENAME TO idx_workspace_registries_org_id;
 ALTER INDEX idx_profile_registries_account_id RENAME TO idx_profile_registries_org_id;
-
--- agent_configs / prompt_templates
-ALTER INDEX idx_prompt_templates_account_id RENAME TO idx_prompt_templates_org_id;
-ALTER INDEX idx_agent_configs_account_id RENAME TO idx_agent_configs_org_id;
 
 -- teams / webhooks / audit / ip_rules
 ALTER INDEX idx_ip_rules_account_id RENAME TO idx_ip_rules_org_id;
@@ -479,15 +468,12 @@ ALTER TABLE webhook_endpoints RENAME COLUMN account_id TO org_id;
 
 -- org-scoped configs
 ALTER TABLE teams RENAME COLUMN account_id TO org_id;
-ALTER TABLE prompt_templates RENAME COLUMN account_id TO org_id;
-ALTER TABLE agent_configs RENAME COLUMN account_id TO org_id;
 
 -- infra / runtime
 ALTER TABLE browser_state_registries RENAME COLUMN account_id TO org_id;
 ALTER TABLE workspace_registries RENAME COLUMN account_id TO org_id;
 ALTER TABLE profile_registries RENAME COLUMN account_id TO org_id;
 ALTER TABLE default_workspace_bindings RENAME COLUMN account_id TO org_id;
-ALTER TABLE default_shell_session_bindings RENAME COLUMN account_id TO org_id;
 ALTER TABLE shell_sessions RENAME COLUMN account_id TO org_id;
 
 -- billing
