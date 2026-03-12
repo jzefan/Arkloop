@@ -36,6 +36,9 @@
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
 | llm.retry.max_attempts | int | platform | 3 | false | LLM 重试最大次数 |
+| memory.distill_enabled | bool | both | true | false | 启用 run 结束后的自动 Memory 提炼 |
+| memory.distill_min_rounds | int | both | 3 | false | 触发 Memory 提炼的最低 LLM 迭代轮数 |
+| memory.distill_min_tool_calls | int | both | 2 | false | 触发 Memory 提炼的最低 tool call 次数 |
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |

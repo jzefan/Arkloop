@@ -48,6 +48,30 @@ func RegisterTrackE(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopeBoth,
 		},
+		{
+			Key:         "memory.distill_enabled",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "启用 run 结束后的自动 Memory 提炼",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
+		{
+			Key:         "memory.distill_min_tool_calls",
+			Type:        TypeInt,
+			Default:     "2",
+			Description: "触发 Memory 提炼的最低 tool call 次数",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
+		{
+			Key:         "memory.distill_min_rounds",
+			Type:        TypeInt,
+			Default:     "3",
+			Description: "触发 Memory 提炼的最低 LLM 迭代轮数",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
 	}
 
 	for _, e := range entries {

@@ -143,6 +143,8 @@ func NewAgentLoopHandler(
 			}
 			rc.FinalAssistantOutput = writer.AssistantOutput()
 		}
+		rc.RunToolCallCount = writer.toolCallCount
+		rc.RunIterationCount = writer.iterationCount
 		return writer.Flush(ctx)
 	}
 }
@@ -172,6 +174,8 @@ type eventWriter struct {
 	pendingEventsSinceCommit int
 	lastCommitAt             time.Time
 	assistantDeltas          []string
+	toolCallCount            int
+	iterationCount           int
 	completed                bool
 	hasTerminal              bool
 
@@ -329,6 +333,13 @@ func (w *eventWriter) Append(
 	w.pendingEventsSinceCommit++
 
 	w.accumUsage(ev.DataJSON)
+
+	if ev.Type == "tool.call" {
+		w.toolCallCount++
+	}
+	if ev.Type == "llm.request" {
+		w.iterationCount++
+	}
 
 	if ev.Type == "message.delta" {
 		// 只累积主内容，thinking channel 不计入最终消息文本
