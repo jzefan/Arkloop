@@ -55,7 +55,7 @@ t() {
   ./setup.sh install [flags]
   ./setup.sh doctor [--gateway-port <port>] [--lang zh-CN|en]
   ./setup.sh status [--lang zh-CN|en]
-  ./setup.sh upgrade [--lang zh-CN|en]
+  ./setup.sh upgrade [--prod] [--version <tag>] [--yes] [--lang zh-CN|en]
   ./setup.sh uninstall [--purge] [--yes] [--lang zh-CN|en]
 
 install flags:
@@ -82,7 +82,7 @@ Usage:
   ./setup.sh install [flags]
   ./setup.sh doctor [--gateway-port <port>] [--lang zh-CN|en]
   ./setup.sh status [--lang zh-CN|en]
-  ./setup.sh upgrade [--lang zh-CN|en]
+  ./setup.sh upgrade [--prod] [--version <tag>] [--yes] [--lang zh-CN|en]
   ./setup.sh uninstall [--purge] [--yes] [--lang zh-CN|en]
 
 install flags:
@@ -175,8 +175,30 @@ EOF
     en:status_metadata_missing) printf 'No setup.sh install metadata found, printing current compose state only' ;;
     zh-CN:upgrade_prereq_failed) printf 'upgrade 前置检查失败：Docker / Compose 不可用' ;;
     en:upgrade_prereq_failed) printf 'Upgrade pre-check failed: Docker / Compose is unavailable' ;;
-    zh-CN:upgrade_message) printf '完整升级流程留到 PR9；当前 PR2 仅保留安全占位命令。' ;;
-    en:upgrade_message) printf 'Full upgrade flow is deferred to PR9; PR2 only keeps a safe placeholder command.' ;;
+    zh-CN:upgrade_no_install) printf '未找到安装记录，请先执行 ./setup.sh install' ;;
+    en:upgrade_no_install) printf 'No installation found. Please run ./setup.sh install first.' ;;
+    zh-CN:upgrade_current_state) printf '当前安装状态：profile=%s mode=%s' "$2" "$3" ;;
+    en:upgrade_current_state) printf 'Current install state: profile=%s mode=%s' "$2" "$3" ;;
+    zh-CN:upgrade_confirm) printf '确认升级？[y/N]: ' ;;
+    en:upgrade_confirm) printf 'Proceed with upgrade? [y/N]: ' ;;
+    zh-CN:upgrade_pulling) printf '正在拉取最新镜像...' ;;
+    en:upgrade_pulling) printf 'Pulling latest images...' ;;
+    zh-CN:upgrade_building) printf '正在重新构建服务...' ;;
+    en:upgrade_building) printf 'Rebuilding services...' ;;
+    zh-CN:upgrade_migrating) printf '正在执行数据库迁移...' ;;
+    en:upgrade_migrating) printf 'Running database migrations...' ;;
+    zh-CN:upgrade_restarting) printf '正在重启服务...' ;;
+    en:upgrade_restarting) printf 'Restarting services...' ;;
+    zh-CN:upgrade_health_wait) printf '等待服务健康检查...' ;;
+    en:upgrade_health_wait) printf 'Waiting for service health checks...' ;;
+    zh-CN:upgrade_done) printf '升级完成' ;;
+    en:upgrade_done) printf 'Upgrade completed' ;;
+    zh-CN:upgrade_failed) printf '升级失败' ;;
+    en:upgrade_failed) printf 'Upgrade failed' ;;
+    zh-CN:upgrade_version_set) printf '目标版本已设置为 %s' "$2" ;;
+    en:upgrade_version_set) printf 'Target version set to %s' "$2" ;;
+    zh-CN:upgrade_prod_note) printf '使用预构建镜像模式' ;;
+    en:upgrade_prod_note) printf 'Using pre-built images mode' ;;
     zh-CN:confirm_uninstall) printf '确认卸载 Arkloop？默认保留卷与 .env [y/N]: ' ;;
     en:confirm_uninstall) printf 'Uninstall Arkloop? Volumes and .env are kept by default [y/N]: ' ;;
     zh-CN:cancelled) printf '已取消' ;;
@@ -1191,8 +1213,12 @@ run_status() {
 }
 
 run_upgrade() {
+  local target_version="" prod="0" yes="0"
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --version) target_version="$2"; shift 2 ;;
+      --prod) prod="1"; shift ;;
+      --yes) yes="1"; shift ;;
       --lang) SETUP_LANG="$(normalize_setup_lang "$2")"; shift 2 ;;
       -h|--help) print_usage; exit 0 ;;
       *) fail "$(t unknown_arg "$1")" ;;
@@ -1204,8 +1230,70 @@ run_upgrade() {
   if [ "$DOCKER_OK" != "1" ] || [ "$COMPOSE_OK" != "1" ]; then
     fail "$(t upgrade_prereq_failed)"
   fi
-  printf 'upgrade=not-implemented\n'
-  printf 'message=%s\n' "$(t upgrade_message)"
+
+  # Read current install state
+  if ! status_from_metadata; then
+    fail "$(t upgrade_no_install)"
+  fi
+
+  local current_profile current_mode
+  current_profile="$(python_state_get ARKLOOP_INSTALL_PROFILE || true)"
+  current_mode="$(python_state_get ARKLOOP_INSTALL_MODE || true)"
+  log "$(t upgrade_current_state "$current_profile" "$current_mode")"
+
+  if [ "$prod" = "1" ]; then
+    USE_PROD_IMAGES="1"
+    log "$(t upgrade_prod_note)"
+  fi
+
+  if [ -n "$target_version" ]; then
+    log "$(t upgrade_version_set "$target_version")"
+  fi
+
+  # Confirmation
+  if [ "$yes" != "1" ]; then
+    local answer
+    printf '%s' "$(t upgrade_confirm)"
+    IFS= read -r answer || true
+    answer="$(trim "$answer")"
+    [ "$answer" = "y" ] || [ "$answer" = "Y" ] || fail "$(t cancelled)"
+  fi
+
+  # Set target version in .env
+  if [ -n "$target_version" ]; then
+    python_env_set ARKLOOP_VERSION "$target_version"
+  fi
+
+  compose_base_cmd "$COMPOSE_PROFILES"
+
+  # Pull images (prod mode only)
+  if [ "$prod" = "1" ]; then
+    log "$(t upgrade_pulling)"
+    "${COMPOSE_BASE_CMD[@]}" pull || fail "$(t upgrade_failed)"
+  fi
+
+  # Run migrations
+  log "$(t upgrade_migrating)"
+  "${COMPOSE_BASE_CMD[@]}" run --rm migrate up || fail "$(t upgrade_failed)"
+
+  # Recreate services
+  if [ "$prod" = "1" ]; then
+    log "$(t upgrade_restarting)"
+    "${COMPOSE_BASE_CMD[@]}" up -d || fail "$(t upgrade_failed)"
+  else
+    log "$(t upgrade_building)"
+    "${COMPOSE_BASE_CMD[@]}" up -d --build || fail "$(t upgrade_failed)"
+  fi
+
+  # Wait for health
+  log "$(t upgrade_health_wait)"
+  local services_array
+  read_lines_to_array "$COMPOSE_SERVICES" services_array
+  if ! wait_for_services "${services_array[@]}"; then
+    warn "$(t service_health_timeout)"
+  fi
+
+  log "$(t upgrade_done)"
 }
 
 run_uninstall() {
