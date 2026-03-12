@@ -262,6 +262,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		WorkspaceRegistriesRepo:      cfg.WorkspaceRegistriesRepo,
 		PlatformSettingsRepo:         cfg.PlatformSettingsRepo,
 		APIKeysRepo:                  cfg.APIKeysRepo,
+		ProjectRepo:                  cfg.ProjectRepo,
 		AuditWriter:                  cfg.AuditWriter,
 		SkillStore:                   cfg.SkillStore,
 		RepoPersonas:                 cfg.RepoPersonas,

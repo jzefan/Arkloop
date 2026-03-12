@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
+func TestPersonasRepositoryScopesRowsToProject(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "api_go_personas_repo")
 	ctx := context.Background()
 
@@ -32,21 +32,30 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
+	projectRepo, err := NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
 
 	org, err := orgRepo.Create(ctx, "persona-scope-org", "Persona Scope Org", "personal")
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	orgID := org.ID
-	custom, err := repo.Create(ctx, orgID, "custom-only", "1", "Custom Only", nil, "prompt", nil, nil, nil, nil, nil, "auto", "none", "agent.simple", nil)
+	project, err := projectRepo.Create(ctx, org.ID, nil, "default", nil, "private")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	projectID := project.ID
+
+	custom, err := repo.Create(ctx, projectID, "custom-only", "1", "Custom Only", nil, "prompt", nil, nil, nil, nil, nil, "auto", "none", "agent.simple", nil)
 	if err != nil {
 		t.Fatalf("create custom persona: %v", err)
 	}
 	ghostID := insertGlobalPersonaRow(t, ctx, pool, "ghost", "Ghost Persona")
 
-	list, err := repo.ListByOrg(ctx, orgID)
+	list, err := repo.ListByProject(ctx, projectID)
 	if err != nil {
-		t.Fatalf("ListByOrg failed: %v", err)
+		t.Fatalf("ListByProject failed: %v", err)
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 persona, got %d", len(list))
@@ -55,7 +64,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 		t.Fatalf("expected custom persona in list, got %s", list[0].ID)
 	}
 
-	gotCustom, err := repo.GetByID(ctx, orgID, custom.ID)
+	gotCustom, err := repo.GetByID(ctx, projectID, custom.ID)
 	if err != nil {
 		t.Fatalf("GetByID custom failed: %v", err)
 	}
@@ -63,7 +72,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 		t.Fatalf("unexpected custom persona: %#v", gotCustom)
 	}
 
-	gotGhost, err := repo.GetByID(ctx, orgID, ghostID)
+	gotGhost, err := repo.GetByID(ctx, projectID, ghostID)
 	if err != nil {
 		t.Fatalf("GetByID ghost failed: %v", err)
 	}
@@ -72,7 +81,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 	}
 
 	newName := "Renamed Ghost"
-	patchedGhost, err := repo.Patch(ctx, orgID, ghostID, PersonaPatch{DisplayName: &newName})
+	patchedGhost, err := repo.Patch(ctx, projectID, ghostID, PersonaPatch{DisplayName: &newName})
 	if err != nil {
 		t.Fatalf("Patch ghost failed: %v", err)
 	}
@@ -80,7 +89,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 		t.Fatalf("expected ghost patch ignored, got %#v", patchedGhost)
 	}
 
-	deletedGhost, err := repo.Delete(ctx, orgID, ghostID)
+	deletedGhost, err := repo.Delete(ctx, projectID, ghostID)
 	if err != nil {
 		t.Fatalf("Delete ghost failed: %v", err)
 	}
@@ -88,7 +97,7 @@ func TestPersonasRepositoryScopesRowsToOrg(t *testing.T) {
 		t.Fatal("expected ghost delete to affect no rows")
 	}
 
-	deletedCustom, err := repo.Delete(ctx, orgID, custom.ID)
+	deletedCustom, err := repo.Delete(ctx, projectID, custom.ID)
 	if err != nil {
 		t.Fatalf("Delete custom failed: %v", err)
 	}
