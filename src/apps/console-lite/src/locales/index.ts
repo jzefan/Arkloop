@@ -284,6 +284,7 @@ export interface LocaleStrings {
   otpSendingCountdown: (s: number) => string
   otpVerifyBtn: string
   requestFailed: string
+  saved: string
   loading: string
   accessDenied: string
   noAdminAccess: string

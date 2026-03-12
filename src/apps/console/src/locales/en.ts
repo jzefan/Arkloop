@@ -6,7 +6,6 @@ export const en: LocaleStrings = {
     configuration: 'Configuration',
     integration: 'Integration',
     security: 'Security',
-    organization: 'Workspace',
     billing: 'Billing',
     platform: 'Platform',
   },
@@ -25,7 +24,6 @@ export const en: LocaleStrings = {
     accessLog: 'Access Log',
     members: 'Members',
     teams: 'Teams',
-    projects: 'Projects',
     plans: 'Plans',
     subscriptions: 'Subscriptions',
     entitlements: 'Entitlements',
@@ -82,14 +80,6 @@ export const en: LocaleStrings = {
   otpVerifyBtn: 'Sign in',
   loading: 'Loading...',
   pages: {
-    projects: {
-      title: 'Projects',
-      refresh: 'Refresh',
-      defaultBadge: 'Default',
-      noDescription: 'No description',
-      empty: 'No projects',
-      loading: 'Loading...',
-    },
     credentials: {
       title: 'LLM Providers',
       addCredential: 'Add Provider',

@@ -281,6 +281,7 @@ export const en: LocaleStrings = {
   otpSendingCountdown: (s: number) => `Resend in ${s}s`,
   otpVerifyBtn: 'Verify',
   requestFailed: 'Request failed',
+  saved: 'Saved',
   loading: 'Loading',
   accessDenied: 'Access denied',
   noAdminAccess: 'Admin permission required',
