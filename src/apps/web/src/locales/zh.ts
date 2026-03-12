@@ -315,5 +315,22 @@ export const zh: LocaleStrings = {
     dismiss: '跳过',
     submit: '提交',
     submitting: '提交中...',
+    next: '下一步',
+    back: '上一步',
   },
+  // document panel
+  documentPanel: {
+    preview: '预览',
+    source: '源码',
+    download: '下载',
+    previewUnsupported: '该格式暂不支持预览',
+    downloadFile: '下载文件',
+    loadFailed: (detail: string) => `加载失败：${detail}`,
+  },
+  // message actions
+  copyAction: '复制',
+  editAction: '编辑',
+  // chat page
+  checkInPlaceholder: '输入你的回复...',
+  replyPlaceholder: '回复...',
 }
