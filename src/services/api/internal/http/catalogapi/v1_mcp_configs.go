@@ -11,10 +11,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type createMCPConfigRequest struct {
@@ -66,13 +65,13 @@ func mcpConfigsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodPost:
-			createMCPConfig(w, r, traceID, authService, membershipRepo, mcpRepo, secretsRepo, pool)
+			createMCPConfig(w, r, traceID, authService, membershipRepo, mcpRepo, secretsRepo, db)
 		case nethttp.MethodGet:
 			listMCPConfigs(w, r, traceID, authService, membershipRepo, mcpRepo)
 		default:
@@ -86,7 +85,7 @@ func mcpConfigEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -106,9 +105,9 @@ func mcpConfigEntry(
 
 		switch r.Method {
 		case nethttp.MethodPatch:
-			patchMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, secretsRepo, pool)
+			patchMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, secretsRepo, db)
 		case nethttp.MethodDelete:
-			deleteMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, pool)
+			deleteMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, db)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -123,13 +122,13 @@ func createMCPConfig(
 	membershipRepo *data.OrgMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if mcpRepo == nil || pool == nil {
+	if mcpRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -190,7 +189,7 @@ func createMCPConfig(
 	argsJSON, _ := json.Marshal(req.Args)
 	envJSON, _ := json.Marshal(req.Env)
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -243,7 +242,7 @@ func createMCPConfig(
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toMCPConfigResponse(cfg))
 }
@@ -293,13 +292,13 @@ func patchMCPConfig(
 	membershipRepo *data.OrgMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if mcpRepo == nil || pool == nil {
+	if mcpRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -333,7 +332,7 @@ func patchMCPConfig(
 		return
 	}
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -386,7 +385,7 @@ func patchMCPConfig(
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toMCPConfigResponse(*updated))
 }
@@ -399,7 +398,7 @@ func deleteMCPConfig(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -434,8 +433,8 @@ func deleteMCPConfig(
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	if pool != nil {
-		_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	if db != nil {
+		_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})

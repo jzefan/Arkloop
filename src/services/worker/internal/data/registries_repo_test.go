@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/testutil"
+"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,11 +19,12 @@ func TestProfileRegistriesRepository_GetOrCreateAndTransitions(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	ownerUserID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	repo := ProfileRegistriesRepository{}
-	record, err := repo.GetOrCreate(context.Background(), pool, RegistryRecord{
+	record, err := repo.GetOrCreate(context.Background(), dbPool, RegistryRecord{
 		Ref:                 "pref_test",
 		OrgID:               orgID,
 		OwnerUserID:         &ownerUserID,
@@ -42,7 +44,7 @@ func TestProfileRegistriesRepository_GetOrCreateAndTransitions(t *testing.T) {
 		t.Fatalf("unexpected default_workspace_ref: %#v", record.DefaultWorkspaceRef)
 	}
 
-	record2, err := repo.GetOrCreate(context.Background(), pool, RegistryRecord{Ref: "pref_test", OrgID: orgID})
+	record2, err := repo.GetOrCreate(context.Background(), dbPool, RegistryRecord{Ref: "pref_test", OrgID: orgID})
 	if err != nil {
 		t.Fatalf("get or create twice: %v", err)
 	}
@@ -50,17 +52,17 @@ func TestProfileRegistriesRepository_GetOrCreateAndTransitions(t *testing.T) {
 		t.Fatalf("expected idempotent create, got %v and %v", record.CreatedAt, record2.CreatedAt)
 	}
 
-	if err := repo.MarkFlushPending(context.Background(), pool, "pref_test"); err != nil {
+	if err := repo.MarkFlushPending(context.Background(), dbPool, "pref_test"); err != nil {
 		t.Fatalf("mark pending: %v", err)
 	}
-	if err := repo.MarkFlushRunning(context.Background(), pool, "pref_test"); err != nil {
+	if err := repo.MarkFlushRunning(context.Background(), dbPool, "pref_test"); err != nil {
 		t.Fatalf("mark running: %v", err)
 	}
 	failedAt := time.Now().UTC().Truncate(time.Microsecond)
-	if err := repo.MarkFlushFailed(context.Background(), pool, "pref_test", failedAt); err != nil {
+	if err := repo.MarkFlushFailed(context.Background(), dbPool, "pref_test", failedAt); err != nil {
 		t.Fatalf("mark failed: %v", err)
 	}
-	stored, err := repo.Get(context.Background(), pool, "pref_test")
+	stored, err := repo.Get(context.Background(), dbPool, "pref_test")
 	if err != nil {
 		t.Fatalf("get after fail: %v", err)
 	}
@@ -69,10 +71,10 @@ func TestProfileRegistriesRepository_GetOrCreateAndTransitions(t *testing.T) {
 	}
 
 	succeededAt := time.Now().UTC().Truncate(time.Microsecond)
-	if err := repo.MarkFlushSucceeded(context.Background(), pool, "pref_test", "rev-1", succeededAt); err != nil {
+	if err := repo.MarkFlushSucceeded(context.Background(), dbPool, "pref_test", "rev-1", succeededAt); err != nil {
 		t.Fatalf("mark succeeded: %v", err)
 	}
-	stored, err = repo.Get(context.Background(), pool, "pref_test")
+	stored, err = repo.Get(context.Background(), dbPool, "pref_test")
 	if err != nil {
 		t.Fatalf("get after success: %v", err)
 	}
@@ -94,36 +96,37 @@ func TestWorkspaceRegistriesRepository_FlushLeaseCAS(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	repo := WorkspaceRegistriesRepository{}
-	if _, err := repo.GetOrCreate(context.Background(), pool, RegistryRecord{Ref: "wsref_test", OrgID: orgID}); err != nil {
+	if _, err := repo.GetOrCreate(context.Background(), dbPool, RegistryRecord{Ref: "wsref_test", OrgID: orgID}); err != nil {
 		t.Fatalf("get or create: %v", err)
 	}
-	if err := repo.MarkFlushPending(context.Background(), pool, "wsref_test"); err != nil {
+	if err := repo.MarkFlushPending(context.Background(), dbPool, "wsref_test"); err != nil {
 		t.Fatalf("mark pending: %v", err)
 	}
 	leaseUntil := time.Now().UTC().Add(time.Minute)
-	if err := repo.AcquireFlushLease(context.Background(), pool, "wsref_test", "holder-a", "", leaseUntil); err != nil {
+	if err := repo.AcquireFlushLease(context.Background(), dbPool, "wsref_test", "holder-a", "", leaseUntil); err != nil {
 		t.Fatalf("acquire lease: %v", err)
 	}
-	if err := repo.AcquireFlushLease(context.Background(), pool, "wsref_test", "holder-b", "", leaseUntil); !errors.Is(err, ErrFlushConflict) {
+	if err := repo.AcquireFlushLease(context.Background(), dbPool, "wsref_test", "holder-b", "", leaseUntil); !errors.Is(err, ErrFlushConflict) {
 		t.Fatalf("expected conflict, got %v", err)
 	}
-	if err := repo.ReleaseFlushFailure(context.Background(), pool, "wsref_test", "holder-b", time.Now().UTC()); err != nil {
+	if err := repo.ReleaseFlushFailure(context.Background(), dbPool, "wsref_test", "holder-b", time.Now().UTC()); err != nil {
 		t.Fatalf("release failure: %v", err)
 	}
-	stored, err := repo.Get(context.Background(), pool, "wsref_test")
+	stored, err := repo.Get(context.Background(), dbPool, "wsref_test")
 	if err != nil {
 		t.Fatalf("get after failed conflict: %v", err)
 	}
 	if stored.FlushState != FlushStateFailed || stored.FlushRetryCount != 1 {
 		t.Fatalf("unexpected failed record: %#v", stored)
 	}
-	if err := repo.CommitFlushSuccess(context.Background(), pool, "wsref_test", "holder-a", "", "rev-1", time.Now().UTC()); err != nil {
+	if err := repo.CommitFlushSuccess(context.Background(), dbPool, "wsref_test", "holder-a", "", "rev-1", time.Now().UTC()); err != nil {
 		t.Fatalf("commit success: %v", err)
 	}
-	stored, err = repo.Get(context.Background(), pool, "wsref_test")
+	stored, err = repo.Get(context.Background(), dbPool, "wsref_test")
 	if err != nil {
 		t.Fatalf("get after success: %v", err)
 	}
@@ -136,7 +139,7 @@ func TestWorkspaceRegistriesRepository_FlushLeaseCAS(t *testing.T) {
 	if stored.FlushState != FlushStateIdle || stored.FlushRetryCount != 0 {
 		t.Fatalf("unexpected success state: %#v", stored)
 	}
-	if err := repo.AcquireFlushLease(context.Background(), pool, "wsref_test", "holder-c", "", time.Now().UTC().Add(time.Minute)); !errors.Is(err, ErrFlushConflict) {
+	if err := repo.AcquireFlushLease(context.Background(), dbPool, "wsref_test", "holder-c", "", time.Now().UTC().Add(time.Minute)); !errors.Is(err, ErrFlushConflict) {
 		t.Fatalf("expected base revision conflict, got %v", err)
 	}
 }
@@ -148,12 +151,13 @@ func TestWorkspaceRegistriesRepository_UpsertTouch(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	ownerUserID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	projectID := uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
 	repo := WorkspaceRegistriesRepository{}
-	if err := repo.UpsertTouch(context.Background(), pool, RegistryRecord{
+	if err := repo.UpsertTouch(context.Background(), dbPool, RegistryRecord{
 		Ref:                    "wsref_test",
 		OrgID:                  orgID,
 		OwnerUserID:            &ownerUserID,
@@ -163,7 +167,7 @@ func TestWorkspaceRegistriesRepository_UpsertTouch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert touch: %v", err)
 	}
-	record, err := repo.Get(context.Background(), pool, "wsref_test")
+	record, err := repo.Get(context.Background(), dbPool, "wsref_test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

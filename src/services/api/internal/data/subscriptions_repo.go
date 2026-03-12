@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Subscription struct {
@@ -78,7 +78,7 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*Su
 		&s.ID, &s.OrgID, &s.PlanID, &s.Status,
 		&s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CancelledAt, &s.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -100,7 +100,7 @@ func (r *SubscriptionRepository) GetActiveByOrgID(ctx context.Context, orgID uui
 		&s.ID, &s.OrgID, &s.PlanID, &s.Status,
 		&s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CancelledAt, &s.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -122,7 +122,7 @@ func (r *SubscriptionRepository) Cancel(ctx context.Context, id uuid.UUID) (*Sub
 		&s.ID, &s.OrgID, &s.PlanID, &s.Status,
 		&s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CancelledAt, &s.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

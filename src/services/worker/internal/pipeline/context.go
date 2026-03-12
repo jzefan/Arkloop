@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -39,6 +40,7 @@ type ResolvedAgentConfig struct {
 type RunContext struct {
 	// -- 初始化时写入 --
 	Run          data.Run
+	DB           database.DB
 	Pool         *pgxpool.Pool
 	DirectPool   *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
 	BroadcastRDB *redis.Client // 跨实例 SSE 广播，nil 时仅走 pg_notify

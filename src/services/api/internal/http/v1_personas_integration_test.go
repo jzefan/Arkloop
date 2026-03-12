@@ -20,11 +20,11 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_personas")
 	ctx := context.Background()
 
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -36,31 +36,31 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(pool)
+	personasRepo, err := data.NewPersonasRepository(appDB)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -69,14 +69,14 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -128,7 +128,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
 	orgID := uuid.MustParse(me.OrgID)
 
-	ghostID := insertGlobalPersonaHTTP(t, ctx, pool, "ghost", "Ghost Persona")
+	ghostID := insertGlobalPersonaHTTP(t, ctx, appDB, "ghost", "Ghost Persona")
 
 	_, err = personasRepo.Create(
 		ctx,
@@ -329,11 +329,11 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_personas_member_read")
 	ctx := context.Background()
 
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -345,31 +345,31 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(pool)
+	personasRepo, err := data.NewPersonasRepository(appDB)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -378,14 +378,14 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -456,11 +456,11 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_selectable_personas")
 	ctx := context.Background()
 
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -472,31 +472,31 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(pool)
+	personasRepo, err := data.NewPersonasRepository(appDB)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -505,14 +505,14 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -676,11 +676,11 @@ func strPtrPersonaLocal(value string) *string {
 	return &value
 }
 
-func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, pool data.Querier, personaKey string, displayName string) uuid.UUID {
+func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, db data.Querier, personaKey string, displayName string) uuid.UUID {
 	t.Helper()
 
 	var id uuid.UUID
-	err := pool.QueryRow(
+	err := db.QueryRow(
 		ctx,
 		`INSERT INTO personas
 			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, budgets_json, executor_type, executor_config_json)

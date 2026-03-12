@@ -7,12 +7,12 @@ import (
 
 	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 type SkillsRepository struct{}
 
-func (SkillsRepository) ResolveEnabledSkills(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
+func (SkillsRepository) ResolveEnabledSkills(ctx context.Context, pool database.DB, orgID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

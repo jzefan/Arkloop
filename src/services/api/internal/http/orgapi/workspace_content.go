@@ -13,8 +13,8 @@ import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/workspaceblob"
+	"arkloop/services/shared/database"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const workspaceRootPath = "/workspace"
@@ -103,8 +103,8 @@ const (
 	workspaceEntryTypeSymlink = "symlink"
 )
 
-func readWorkspaceFile(ctx context.Context, pool *pgxpool.Pool, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
-	manifest, err := loadWorkspaceManifest(ctx, pool, store, workspaceRef)
+func readWorkspaceFile(ctx context.Context, db database.DB, store environmentStore, workspaceRef string, relativePath string) ([]byte, string, error) {
+	manifest, err := loadWorkspaceManifest(ctx, db, store, workspaceRef)
 	if err != nil {
 		return nil, "", err
 	}
@@ -131,8 +131,8 @@ func readWorkspaceFile(ctx context.Context, pool *pgxpool.Pool, store environmen
 	return nil, "", errWorkspaceFileNotFound
 }
 
-func loadWorkspaceManifestRevision(ctx context.Context, pool *pgxpool.Pool, workspaceRef string) (string, error) {
-	if pool == nil {
+func loadWorkspaceManifestRevision(ctx context.Context, db database.DB, workspaceRef string) (string, error) {
+	if db == nil {
 		return "", errWorkspaceFileNotFound
 	}
 	workspaceRef = strings.TrimSpace(workspaceRef)
@@ -140,7 +140,7 @@ func loadWorkspaceManifestRevision(ctx context.Context, pool *pgxpool.Pool, work
 		return "", errWorkspaceFileNotFound
 	}
 	var revision *string
-	if err := pool.QueryRow(ctx, `SELECT latest_manifest_rev FROM workspace_registries WHERE workspace_ref = $1`, workspaceRef).Scan(&revision); err != nil {
+	if err := db.QueryRow(ctx, `SELECT latest_manifest_rev FROM workspace_registries WHERE workspace_ref = $1`, workspaceRef).Scan(&revision); err != nil {
 		return "", errWorkspaceFileNotFound
 	}
 	if revision == nil {
@@ -149,8 +149,8 @@ func loadWorkspaceManifestRevision(ctx context.Context, pool *pgxpool.Pool, work
 	return strings.TrimSpace(*revision), nil
 }
 
-func loadWorkspaceManifest(ctx context.Context, pool *pgxpool.Pool, store environmentStore, workspaceRef string) (workspaceManifest, error) {
-	revision, err := loadWorkspaceManifestRevision(ctx, pool, workspaceRef)
+func loadWorkspaceManifest(ctx context.Context, db database.DB, store environmentStore, workspaceRef string) (workspaceManifest, error) {
+	revision, err := loadWorkspaceManifestRevision(ctx, db, workspaceRef)
 	if err != nil {
 		return workspaceManifest{}, err
 	}
@@ -173,12 +173,12 @@ func loadWorkspaceManifest(ctx context.Context, pool *pgxpool.Pool, store enviro
 
 func listWorkspaceManifestEntries(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	workspaceRef string,
 	relativePath string,
 ) ([]projectWorkspaceFileListItem, error) {
-	manifest, err := loadWorkspaceManifest(ctx, pool, store, workspaceRef)
+	manifest, err := loadWorkspaceManifest(ctx, db, store, workspaceRef)
 	if err != nil {
 		return nil, err
 	}

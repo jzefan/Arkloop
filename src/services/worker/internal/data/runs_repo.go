@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 // TerminalStatusUpdate 携带终态写入所需的所有字段，供 R30 的 eventWriter 使用。
@@ -35,7 +35,7 @@ type RunsRepository struct{}
 // UpdateRunMetadata 写入 runs.model / runs.persona_id，用于列表展示与筛选。
 func (RunsRepository) UpdateRunMetadata(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 	model string,
 	personaID string,
@@ -61,7 +61,7 @@ func (RunsRepository) UpdateRunMetadata(
 	return nil
 }
 
-func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*Run, error) {
+func (RunsRepository) GetRun(ctx context.Context, tx database.Tx, runID uuid.UUID) (*Run, error) {
 	var run Run
 	err := tx.QueryRow(
 		ctx,
@@ -80,7 +80,7 @@ func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*
 		runID,
 	).Scan(&run.ID, &run.OrgID, &run.ThreadID, &run.ProjectID, &run.ParentRunID, &run.CreatedByUserID, &run.ProfileRef, &run.WorkspaceRef)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -90,7 +90,7 @@ func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*
 
 func (RunsRepository) UpdateEnvironmentBindings(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 	profileRef string,
 	workspaceRef string,
@@ -123,7 +123,7 @@ func (RunsRepository) UpdateEnvironmentBindings(
 	return nil
 }
 
-func (RunsRepository) LockRunRow(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
+func (RunsRepository) LockRunRow(ctx context.Context, tx database.Tx, runID uuid.UUID) error {
 	var ignored int
 	err := tx.QueryRow(
 		ctx,
@@ -134,7 +134,7 @@ func (RunsRepository) LockRunRow(ctx context.Context, tx pgx.Tx, runID uuid.UUID
 		runID,
 	).Scan(&ignored)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return fmt.Errorf("run not found: %s", runID)
 		}
 		return err
@@ -146,7 +146,7 @@ func (RunsRepository) LockRunRow(ctx context.Context, tx pgx.Tx, runID uuid.UUID
 // 由 R30 的 eventWriter 在同一事务内调用。
 func (RunsRepository) UpdateRunTerminalStatus(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 	u TerminalStatusUpdate,
 ) error {

@@ -22,6 +22,7 @@ import (
 	"arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/database"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -41,7 +42,7 @@ func defaultSSEConfig() SSEConfig {
 }
 
 type HandlerConfig struct {
-	Pool                     *pgxpool.Pool
+	DB                     database.DB
 	DirectPool               *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer
 	InvalidationListenerCtx  context.Context
 	DirectPoolAcquireTimeout time.Duration
@@ -172,7 +173,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		if cfg.RedisClient != nil && cacheTTL > 0 {
 			cache = sharedconfig.NewRedisCache(cfg.RedisClient)
 		}
-		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(cfg.Pool), cache, cacheTTL)
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(cfg.DB), cache, cacheTTL)
 		resolver = fallback
 	}
 	invalidator := cfg.ConfigInvalidator
@@ -229,7 +230,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ProjectRepo:              cfg.ProjectRepo,
 		TeamRepo:                 cfg.TeamRepo,
 		AuditWriter:              cfg.AuditWriter,
-		Pool:                     cfg.Pool,
+		DB:                     cfg.DB,
 		DirectPool:               cfg.DirectPool,
 		DirectPoolAcquireTimeout: cfg.DirectPoolAcquireTimeout,
 		APIKeysRepo:              cfg.APIKeysRepo,
@@ -249,7 +250,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		LlmCredentialsRepo:           cfg.LlmCredentialsRepo,
 		LlmRoutesRepo:                cfg.LlmRoutesRepo,
 		SecretsRepo:                  cfg.SecretsRepo,
-		Pool:                         cfg.Pool,
+		DB:                         cfg.DB,
 		DirectPool:                   cfg.DirectPool,
 		AsrCredentialsRepo:           cfg.AsrCredentialsRepo,
 		MCPConfigsRepo:               cfg.MCPConfigsRepo,
@@ -285,7 +286,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ReferralsRepo:       cfg.ReferralsRepo,
 		RedemptionCodesRepo: cfg.RedemptionCodesRepo,
 		AuditWriter:         cfg.AuditWriter,
-		Pool:                cfg.Pool,
+		DB:                cfg.DB,
 	})
 
 	orgapi.RegisterRoutes(mux, orgapi.Deps{
@@ -296,7 +297,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		APIKeysRepo:        cfg.APIKeysRepo,
 		AuditWriter:        cfg.AuditWriter,
 		EntitlementService: cfg.EntitlementService,
-		Pool:               cfg.Pool,
+		DB:               cfg.DB,
 		OrgRepo:            cfg.OrgRepo,
 		OrgService:         cfg.OrgService,
 		OrgInvitationsRepo: cfg.OrgInvitationsRepo,
@@ -344,7 +345,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:          cfg.CreditsRepo,
 		RedemptionCodesRepo:  cfg.RedemptionCodesRepo,
 		NotificationsRepo:    cfg.NotificationsRepo,
-		Pool:                 cfg.Pool,
+		DB:                 cfg.DB,
 		Logger:               cfg.Logger,
 		GatewayRedisClient:   gatewayRedis,
 		PlatformSettingsRepo: cfg.PlatformSettingsRepo,

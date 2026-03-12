@@ -7,8 +7,8 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
+	"arkloop/services/shared/database"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Deps struct {
@@ -25,7 +25,7 @@ type Deps struct {
 	ReferralsRepo       *data.ReferralRepository
 	RedemptionCodesRepo *data.RedemptionCodesRepository
 	AuditWriter         *audit.Writer
-	Pool                *pgxpool.Pool
+	DB                database.DB
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
@@ -49,7 +49,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/admin/credits/bulk-adjust", adminCreditsBulkAdjust(deps.AuthService, deps.OrgMembershipRepo, deps.CreditsRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/admin/credits/reset-all", adminCreditsResetAll(deps.AuthService, deps.OrgMembershipRepo, deps.CreditsRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/admin/credits", adminCreditsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.CreditsRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/admin/redemption-codes/batch", adminRedemptionCodesBatch(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.APIKeysRepo, deps.AuditWriter, deps.Pool))
+	mux.HandleFunc("/v1/admin/redemption-codes/batch", adminRedemptionCodesBatch(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.APIKeysRepo, deps.AuditWriter, deps.DB))
 	mux.HandleFunc("/v1/admin/redemption-codes/", adminRedemptionCodeEntry(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/admin/redemption-codes", adminRedemptionCodesEntry(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/me/usage", meUsage(deps.AuthService, deps.OrgMembershipRepo, deps.UsageRepo, deps.APIKeysRepo))
@@ -58,5 +58,5 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/me/invite-code/reset", meInviteCodeReset(deps.AuthService, deps.OrgMembershipRepo, deps.InviteCodesRepo, deps.EntitlementService, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/me/invite-code", meInviteCode(deps.AuthService, deps.OrgMembershipRepo, deps.InviteCodesRepo, deps.EntitlementService, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/me/credits", meCredits(deps.AuthService, deps.OrgMembershipRepo, deps.CreditsRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/me/redeem", meRedeem(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.CreditsRepo, deps.APIKeysRepo, deps.AuditWriter, deps.Pool))
+	mux.HandleFunc("/v1/me/redeem", meRedeem(deps.AuthService, deps.OrgMembershipRepo, deps.RedemptionCodesRepo, deps.CreditsRepo, deps.APIKeysRepo, deps.AuditWriter, deps.DB))
 }

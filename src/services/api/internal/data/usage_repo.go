@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type UsageRecord struct {
@@ -104,7 +104,7 @@ func (r *UsageRepository) GetMonthlyUsage(
 		&summary.TotalCostUSD,
 		&summary.RecordCount,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return summary, nil
 	}
 	if err != nil {
@@ -310,7 +310,7 @@ func (r *UsageRepository) GetGlobalMonthlyUsage(
 		&summary.TotalCostUSD,
 		&summary.RecordCount,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return summary, nil
 	}
 	if err != nil {

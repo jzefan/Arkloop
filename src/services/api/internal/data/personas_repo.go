@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 const (
@@ -28,7 +28,7 @@ const personaSelectColumns = `id, org_id, persona_key, version, display_name, de
 	    executor_type, executor_config_json,
 	    sync_mode, mirrored_file_dir, last_synced_at`
 
-func (r *PersonasRepository) WithTx(tx pgx.Tx) *PersonasRepository {
+func (r *PersonasRepository) WithTx(tx database.Tx) *PersonasRepository {
 	return &PersonasRepository{db: tx}
 }
 
@@ -356,7 +356,7 @@ func (r *PersonasRepository) GetByIDInScope(ctx context.Context, orgID, id uuid.
 		args...,
 	), &persona)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -568,7 +568,7 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UU
 		args...,
 	), &persona)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		if isUniqueViolation(err) {
@@ -579,7 +579,7 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UU
 	return &persona, nil
 }
 
-func scanPersonas(rows pgx.Rows) ([]Persona, error) {
+func scanPersonas(rows database.Rows) ([]Persona, error) {
 	personas := []Persona{}
 	for rows.Next() {
 		var s Persona
@@ -898,7 +898,7 @@ func normalizePatchedRuntimeExecutorConfig(
 		args...,
 	).Scan(&currentType, &currentConfig)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -921,16 +921,12 @@ func normalizePatchedRuntimeExecutorConfig(
 	return validated, nil
 }
 
-type txBeginner interface {
-	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
-}
-
-func beginTx(ctx context.Context, db Querier) (pgx.Tx, error) {
-	beginner, ok := db.(txBeginner)
+func beginTx(ctx context.Context, db Querier) (database.Tx, error) {
+	beginner, ok := db.(database.DB)
 	if !ok {
 		return nil, fmt.Errorf("querier does not support transactions")
 	}
-	return beginner.BeginTx(ctx, pgx.TxOptions{})
+	return beginner.Begin(ctx)
 }
 
 func (r *PersonasRepository) MarkSynced(ctx context.Context, id uuid.UUID, syncedAt time.Time) error {

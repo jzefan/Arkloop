@@ -6,20 +6,19 @@ import (
 
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func backfillWebhookSecrets(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	webhookRepo *data.WebhookEndpointRepository,
 	secretsRepo *data.SecretsRepository,
 	logger *observability.JSONLogger,
 ) error {
-	if ctx == nil || pool == nil || webhookRepo == nil || secretsRepo == nil {
+	if ctx == nil || db == nil || webhookRepo == nil || secretsRepo == nil {
 		return nil
 	}
 
@@ -37,7 +36,7 @@ func backfillWebhookSecrets(
 			continue
 		}
 
-		tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin webhook secret backfill tx: %w", err)
 		}

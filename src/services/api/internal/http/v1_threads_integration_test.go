@@ -22,11 +22,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -39,31 +39,31 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
@@ -72,11 +72,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -174,7 +174,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("expected patched thread mode %q, got %#v", data.ThreadModeChat, updatedPayload)
 	}
 
-	deniedCount, err := countDeniedAudit(ctx, pool, "threads.get", "org_mismatch")
+	deniedCount, err := countDeniedAudit(ctx, appDB, "threads.get", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -187,11 +187,11 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_patch_delete")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -204,35 +204,35 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
@@ -241,14 +241,14 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -331,7 +331,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 			bobHeaders,
 		)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, pool, "threads.update", "org_mismatch")
+		count, err := countDeniedAudit(ctx, appDB, "threads.update", "org_mismatch")
 		if err != nil {
 			t.Fatalf("count patch denied audit: %v", err)
 		}
@@ -352,7 +352,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerTitle := "no-owner"
-	noOwnerPatchProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-patch")
+	noOwnerPatchProject := mustCreateTestProject(t, ctx, appDB, aliceOrgID, nil, "no-owner-patch")
 	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerPatchProject.ID, data.ThreadModeChat, &noOwnerTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner patch thread: %v", err)
@@ -367,7 +367,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 			aliceHeaders,
 		)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, pool, "threads.update", "no_owner")
+		count, err := countDeniedAudit(ctx, appDB, "threads.update", "no_owner")
 		if err != nil {
 			t.Fatalf("count patch no-owner denied audit: %v", err)
 		}
@@ -385,7 +385,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	t.Run("non owner delete denied", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodDelete, "/v1/threads/"+deleteThread.ID, nil, bobHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, pool, "threads.delete", "org_mismatch")
+		count, err := countDeniedAudit(ctx, appDB, "threads.delete", "org_mismatch")
 		if err != nil {
 			t.Fatalf("count delete denied audit: %v", err)
 		}
@@ -410,7 +410,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		if stored != nil {
 			t.Fatalf("expected deleted thread to be hidden, got %#v", stored)
 		}
-		count, err := countAuditResult(ctx, pool, "threads.delete", "deleted", deleteThread.ID)
+		count, err := countAuditResult(ctx, appDB, "threads.delete", "deleted", deleteThread.ID)
 		if err != nil {
 			t.Fatalf("count delete success audit: %v", err)
 		}
@@ -425,7 +425,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerDeleteTitle := "no-owner-delete"
-	noOwnerDeleteProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-delete")
+	noOwnerDeleteProject := mustCreateTestProject(t, ctx, appDB, aliceOrgID, nil, "no-owner-delete")
 	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerDeleteProject.ID, data.ThreadModeChat, &noOwnerDeleteTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner delete thread: %v", err)
@@ -434,7 +434,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	t.Run("delete no owner keeps denied semantics", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodDelete, "/v1/threads/"+noOwnerDeleteThread.ID.String(), nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, pool, "threads.delete", "no_owner")
+		count, err := countDeniedAudit(ctx, appDB, "threads.delete", "no_owner")
 		if err != nil {
 			t.Fatalf("count delete no-owner denied audit: %v", err)
 		}
@@ -448,11 +448,11 @@ func TestThreadListActiveRunID(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_active_run")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -465,27 +465,27 @@ func TestThreadListActiveRunID(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(pool)
-	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	auditRepo, _ := data.NewAuditLogRepository(pool)
-	threadRepo, _ := data.NewThreadRepository(pool)
-	projectRepo, _ := data.NewProjectRepository(pool)
-	runRepo, _ := data.NewRunEventRepository(pool)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(pool)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	auditRepo, _ := data.NewAuditLogRepository(appDB)
+	threadRepo, _ := data.NewThreadRepository(appDB)
+	projectRepo, _ := data.NewProjectRepository(appDB)
+	runRepo, _ := data.NewRunEventRepository(appDB)
+	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(pool)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	jobRepo, _ := data.NewJobRepository(appDB)
+	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
 		t.Fatalf("enable claw flag: %v", err)
 	}
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
@@ -561,7 +561,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	}
 
 	// mark run completed — active_run_id must become null
-	if _, err := pool.Exec(ctx,
+	if _, err := appDB.Exec(ctx,
 		`UPDATE runs SET status = 'completed' WHERE id = $1`,
 		runPayload.RunID,
 	); err != nil {
@@ -654,11 +654,11 @@ func TestThreadModeCreateListSearchAndFork(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_mode")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -671,22 +671,22 @@ func TestThreadModeCreateListSearchAndFork(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(pool)
-	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	auditRepo, _ := data.NewAuditLogRepository(pool)
-	threadRepo, _ := data.NewThreadRepository(pool)
-	projectRepo, _ := data.NewProjectRepository(pool)
-	runRepo, _ := data.NewRunEventRepository(pool)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	auditRepo, _ := data.NewAuditLogRepository(appDB)
+	threadRepo, _ := data.NewThreadRepository(appDB)
+	projectRepo, _ := data.NewProjectRepository(appDB)
+	runRepo, _ := data.NewRunEventRepository(appDB)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	jobRepo, _ := data.NewJobRepository(pool)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	jobRepo, _ := data.NewJobRepository(appDB)
+	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
@@ -842,11 +842,11 @@ func TestThreadClawFeatureFlagBlocksEndpoints(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_claw_flag")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -858,24 +858,24 @@ func TestThreadClawFeatureFlagBlocksEndpoints(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(pool)
-	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	auditRepo, _ := data.NewAuditLogRepository(pool)
-	threadRepo, _ := data.NewThreadRepository(pool)
-	projectRepo, _ := data.NewProjectRepository(pool)
-	runRepo, _ := data.NewRunEventRepository(pool)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(pool)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	auditRepo, _ := data.NewAuditLogRepository(appDB)
+	threadRepo, _ := data.NewThreadRepository(appDB)
+	projectRepo, _ := data.NewProjectRepository(appDB)
+	runRepo, _ := data.NewRunEventRepository(appDB)
+	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(pool)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	jobRepo, _ := data.NewJobRepository(appDB)
+	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,

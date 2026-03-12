@@ -17,11 +17,11 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_feature_flags")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -33,27 +33,27 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	featureFlagsRepo, err := data.NewFeatureFlagRepository(pool)
+	featureFlagsRepo, err := data.NewFeatureFlagRepository(appDB)
 	if err != nil {
 		t.Fatalf("new feature flag repo: %v", err)
 	}
@@ -62,18 +62,18 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -90,7 +90,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
 
-	if _, err := pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err := appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
@@ -101,7 +101,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 	adminToken := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes()).AccessToken
 
 	var orgID string
-	if err := pool.QueryRow(ctx, "SELECT org_id::text FROM org_memberships WHERE user_id = $1 LIMIT 1", adminPayload.UserID).Scan(&orgID); err != nil {
+	if err := appDB.QueryRow(ctx, "SELECT org_id::text FROM org_memberships WHERE user_id = $1 LIMIT 1", adminPayload.UserID).Scan(&orgID); err != nil {
 		t.Fatalf("query org id: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 		payload := decodeJSONBody[flagResp](t, resp.Body.Bytes())
 		flagID = payload.ID
 
-		log := latestAuditLogByAction(t, ctx, pool, "feature_flags.create")
+		log := latestAuditLogByAction(t, ctx, appDB, "feature_flags.create")
 		if log.TargetType == nil || *log.TargetType != "feature_flag" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -146,7 +146,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 			t.Fatalf("update flag: %d %s", resp.Code, resp.Body.String())
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "feature_flags.update")
+		log := latestAuditLogByAction(t, ctx, appDB, "feature_flags.update")
 		if log.BeforeState["default_value"] != false {
 			t.Fatalf("unexpected before_state: %#v", log.BeforeState)
 		}
@@ -164,7 +164,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 			t.Fatalf("set org override: %d %s", resp.Code, resp.Body.String())
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "feature_flags.org_override_set")
+		log := latestAuditLogByAction(t, ctx, appDB, "feature_flags.org_override_set")
 		if log.TargetType == nil || *log.TargetType != "feature_flag_org_override" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -185,7 +185,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 			t.Fatalf("delete org override: %d %s", resp.Code, resp.Body.String())
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "feature_flags.org_override_delete")
+		log := latestAuditLogByAction(t, ctx, appDB, "feature_flags.org_override_delete")
 		if log.BeforeState["enabled"] != false {
 			t.Fatalf("unexpected before_state: %#v", log.BeforeState)
 		}
@@ -200,7 +200,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 			t.Fatalf("delete flag: %d %s", resp.Code, resp.Body.String())
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "feature_flags.delete")
+		log := latestAuditLogByAction(t, ctx, appDB, "feature_flags.delete")
 		if log.TargetID == nil || *log.TargetID != flagID {
 			t.Fatalf("unexpected target_id: %#v", log.TargetID)
 		}
@@ -213,12 +213,12 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 	})
 
 	t.Run("missing delete does not write audit", func(t *testing.T) {
-		before := countAuditLogByAction(t, ctx, pool, "feature_flags.delete")
+		before := countAuditLogByAction(t, ctx, appDB, "feature_flags.delete")
 		resp := doJSON(handler, nethttp.MethodDelete, "/v1/feature-flags/missing-flag", nil, authHeader(adminToken))
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("delete missing flag: %d %s", resp.Code, resp.Body.String())
 		}
-		after := countAuditLogByAction(t, ctx, pool, "feature_flags.delete")
+		after := countAuditLogByAction(t, ctx, appDB, "feature_flags.delete")
 		if before != after {
 			t.Fatalf("delete audit count changed: before=%d after=%d", before, after)
 		}

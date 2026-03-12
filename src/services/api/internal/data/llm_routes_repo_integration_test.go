@@ -21,21 +21,21 @@ func setupLlmRoutesTestRepos(t *testing.T) (*LlmRoutesRepository, *LlmCredential
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
-	routesRepo, err := NewLlmRoutesRepository(pool)
+	routesRepo, err := NewLlmRoutesRepository(appDB)
 	if err != nil {
 		t.Fatalf("new routes repo: %v", err)
 	}
-	credentialsRepo, err := NewLlmCredentialsRepository(pool)
+	credentialsRepo, err := NewLlmCredentialsRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credentials repo: %v", err)
 	}
-	orgRepo, err := NewOrgRepository(pool)
+	orgRepo, err := NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}

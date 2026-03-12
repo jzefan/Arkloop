@@ -14,10 +14,10 @@ import (
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var executionGovernanceKeys = []string{
@@ -67,7 +67,7 @@ func adminExecutionGovernance(
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
 	registry *sharedconfig.Registry,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -92,7 +92,7 @@ func adminExecutionGovernance(
 			return
 		}
 
-		store := sharedconfig.NewPGXStore(pool)
+		store := sharedconfig.NewPGXStore(db)
 		scope := sharedconfig.Scope{OrgID: orgID}
 		resp := executionGovernanceResponse{
 			Limits:   make([]sharedconfig.SettingInspection, 0, len(executionGovernanceKeys)),
@@ -109,8 +109,8 @@ func adminExecutionGovernance(
 			resp.Limits = append(resp.Limits, inspection)
 			inspections[key] = inspection
 		}
-		if pool != nil {
-			if model, err := loadTitleSummarizerModel(r.Context(), pool); err == nil {
+		if db != nil {
+			if model, err := loadTitleSummarizerModel(r.Context(), db); err == nil {
 				resp.TitleSummarizerModel = model
 			}
 		}
@@ -168,12 +168,12 @@ func inspectionEffectiveInt(inspection sharedconfig.SettingInspection) int {
 	return value
 }
 
-func loadTitleSummarizerModel(ctx context.Context, pool *pgxpool.Pool) (*string, error) {
-	if pool == nil {
+func loadTitleSummarizerModel(ctx context.Context, db database.DB) (*string, error) {
+	if db == nil {
 		return nil, nil
 	}
 	var value string
-	if err := pool.QueryRow(ctx,
+	if err := db.QueryRow(ctx,
 		`SELECT value FROM platform_settings WHERE key = $1`,
 		"title_summarizer.model",
 	).Scan(&value); err != nil {

@@ -11,6 +11,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -29,7 +30,7 @@ type Deps struct {
 	ProjectRepo              *data.ProjectRepository
 	TeamRepo                 *data.TeamRepository
 	AuditWriter              *audit.Writer
-	Pool                     *pgxpool.Pool
+	DB                     database.DB
 	DirectPool               *pgxpool.Pool
 	DirectPoolAcquireTimeout time.Duration
 	APIKeysRepo              *data.APIKeysRepository
@@ -45,7 +46,7 @@ type Deps struct {
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/me/feedback", meFeedback(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadReportRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/threads", threadsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.ProjectRepo, deps.Pool, deps.APIKeysRepo, deps.AuditWriter, deps.FeatureFlagService))
+	mux.HandleFunc("/v1/threads", threadsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.ProjectRepo, deps.DB, deps.APIKeysRepo, deps.AuditWriter, deps.FeatureFlagService))
 	mux.HandleFunc("/v1/threads/search", searchThreads(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadRepo, deps.APIKeysRepo, deps.AuditWriter, deps.FeatureFlagService))
 	mux.HandleFunc("/v1/threads/starred", listStarredThreads(deps.AuthService, deps.OrgMembershipRepo, deps.ThreadStarRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc(
@@ -62,7 +63,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 			deps.ProjectRepo,
 			deps.TeamRepo,
 			deps.AuditWriter,
-			deps.Pool,
+			deps.DB,
 			deps.APIKeysRepo,
 			deps.RunLimiter,
 			deps.EntitlementService,
@@ -81,7 +82,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 			deps.RunEventRepo,
 			deps.ThreadRepo,
 			deps.AuditWriter,
-			deps.Pool,
+			deps.DB,
 			deps.DirectPool,
 			deps.DirectPoolAcquireTimeout,
 			deps.SSEConfig,

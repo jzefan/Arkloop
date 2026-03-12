@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Run struct {
@@ -145,7 +145,7 @@ func (r *RunEventRepository) GetRun(ctx context.Context, runID uuid.UUID) (*Run,
 		&run.Model, &run.PersonaID, &run.ProfileRef, &run.WorkspaceRef, &run.DeletedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -239,7 +239,7 @@ func (r *RunEventRepository) GetLatestEventType(
 		types,
 	).Scan(&eventType)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -373,7 +373,7 @@ func (r *RunEventRepository) lockRunRow(ctx context.Context, runID uuid.UUID) er
 		runID,
 	).Scan(&lockedID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return RunNotFoundError{RunID: runID}
 		}
 		return err

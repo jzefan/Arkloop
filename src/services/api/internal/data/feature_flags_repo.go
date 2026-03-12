@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type FeatureFlag struct {
@@ -70,7 +70,7 @@ func (r *FeatureFlagRepository) GetFlag(ctx context.Context, key string) (*Featu
 		 FROM feature_flags WHERE key = $1`,
 		key,
 	).Scan(&f.ID, &f.Key, &f.Description, &f.DefaultValue, &f.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -114,7 +114,7 @@ func (r *FeatureFlagRepository) UpdateFlagDefaultValue(
 		 RETURNING id, key, description, default_value, created_at`,
 		defaultValue, key,
 	).Scan(&f.ID, &f.Key, &f.Description, &f.DefaultValue, &f.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -179,7 +179,7 @@ func (r *FeatureFlagRepository) GetOrgOverride(
 		 WHERE org_id = $1 AND flag_key = $2`,
 		orgID, flagKey,
 	).Scan(&o.OrgID, &o.FlagKey, &o.Enabled, &o.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

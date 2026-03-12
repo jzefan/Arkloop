@@ -10,12 +10,12 @@ import (
 	"arkloop/services/api/internal/crypto"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // WithTx 返回一个使用给定事务的 SecretsRepository 副本。
-func (r *SecretsRepository) WithTx(tx pgx.Tx) *SecretsRepository {
+func (r *SecretsRepository) WithTx(tx database.Tx) *SecretsRepository {
 	return &SecretsRepository{db: tx, keyRing: r.keyRing}
 }
 
@@ -211,7 +211,7 @@ func (r *SecretsRepository) GetByName(ctx context.Context, orgID uuid.UUID, name
 		orgID, name,
 	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -237,7 +237,7 @@ func (r *SecretsRepository) DecryptByID(ctx context.Context, id uuid.UUID) (*str
 		id,
 	).Scan(&s.ID, &s.OrgID, &s.Scope, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

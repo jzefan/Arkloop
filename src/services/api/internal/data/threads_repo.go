@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type ThreadMode string
@@ -127,7 +127,7 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -245,7 +245,7 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -295,7 +295,7 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -350,7 +350,7 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -416,7 +416,7 @@ func (r *ThreadRepository) DeleteOwnedReturning(
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

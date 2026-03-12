@@ -22,22 +22,22 @@ func TestBackfillWebhookSecrets(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	keyBytes, _ := hex.DecodeString("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 	keyRing, err := apicrypto.NewKeyRing(map[int][]byte{1: keyBytes})
 	if err != nil {
 		t.Fatalf("new key ring: %v", err)
 	}
-	webhookRepo, err := data.NewWebhookEndpointRepository(pool)
+	webhookRepo, err := data.NewWebhookEndpointRepository(appDB)
 	if err != nil {
 		t.Fatalf("new webhook repo: %v", err)
 	}
-	secretsRepo, err := data.NewSecretsRepository(pool, keyRing)
+	secretsRepo, err := data.NewSecretsRepository(appDB, keyRing)
 	if err != nil {
 		t.Fatalf("new secrets repo: %v", err)
 	}
@@ -45,10 +45,10 @@ func TestBackfillWebhookSecrets(t *testing.T) {
 	orgID := uuid.New()
 	endpointID := uuid.New()
 	legacySecret := "legacy-secret"
-	if _, err := pool.Exec(ctx, "INSERT INTO orgs (id, slug, name, type) VALUES ($1, $2, $3, 'personal')", orgID, "org-backfill", "org"); err != nil {
+	if _, err := appDB.Exec(ctx, "INSERT INTO orgs (id, slug, name, type) VALUES ($1, $2, $3, 'personal')", orgID, "org-backfill", "org"); err != nil {
 		t.Fatalf("insert org: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
+	if _, err := appDB.Exec(ctx,
 		`INSERT INTO webhook_endpoints (id, org_id, url, signing_secret, events)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		endpointID, orgID, "https://example.com/hook", legacySecret, []string{"run.completed"},
@@ -57,13 +57,13 @@ func TestBackfillWebhookSecrets(t *testing.T) {
 	}
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	if err := backfillWebhookSecrets(ctx, pool, webhookRepo, secretsRepo, logger); err != nil {
+	if err := backfillWebhookSecrets(ctx, appDB, webhookRepo, secretsRepo, logger); err != nil {
 		t.Fatalf("backfill webhook secrets: %v", err)
 	}
 
 	var secretID *uuid.UUID
 	var signingSecret *string
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		"SELECT secret_id, signing_secret FROM webhook_endpoints WHERE id = $1",
 		endpointID,
 	).Scan(&secretID, &signingSecret); err != nil {

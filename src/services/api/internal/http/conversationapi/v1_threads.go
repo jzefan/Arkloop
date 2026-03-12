@@ -17,10 +17,9 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/http/featuregate"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -102,7 +101,7 @@ func createThread(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	projectRepo *data.ProjectRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 	flagService *featureflag.Service,
@@ -122,7 +121,7 @@ func createThread(
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
-		if projectRepo == nil || pool == nil {
+		if projectRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -157,7 +156,7 @@ func createThread(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -520,12 +519,12 @@ func threadsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	projectRepo *data.ProjectRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	create := createThread(authService, membershipRepo, threadRepo, projectRepo, pool, apiKeysRepo, auditWriter, flagService)
+	create := createThread(authService, membershipRepo, threadRepo, projectRepo, db, apiKeysRepo, auditWriter, flagService)
 	list := listThreads(authService, membershipRepo, threadRepo, apiKeysRepo, auditWriter, flagService)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
@@ -629,7 +628,7 @@ func forkThread(
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -644,7 +643,7 @@ func forkThread(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || messageRepo == nil || pool == nil {
+		if threadRepo == nil || messageRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -682,7 +681,7 @@ func forkThread(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -749,7 +748,7 @@ func threadEntry(
 	projectRepo *data.ProjectRepository,
 	teamRepo *data.TeamRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	runLimiter *data.RunLimiter,
 	entSvc *entitlement.Service,
@@ -762,17 +761,17 @@ func threadEntry(
 	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo, flagService)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
-	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb, flagService)
+	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, db, apiKeysRepo, runLimiter, entSvc, rdb, flagService)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo, flagService)
-	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo, flagService)
-	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo, flagService)
+	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, db, apiKeysRepo, flagService)
+	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, db, apiKeysRepo, flagService)
 	share := shareEntry(authService, membershipRepo, threadRepo, threadShareRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	report := reportEntry(authService, membershipRepo, threadRepo, threadReportRepo, auditWriter, apiKeysRepo, flagService)
-	fork := forkThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo, flagService)
+	fork := forkThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, db, apiKeysRepo, flagService)
 	uploadAttachment := uploadThreadAttachment(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo, attachmentStore, flagService)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
-			threadsEntry(authService, membershipRepo, threadRepo, projectRepo, pool, apiKeysRepo, auditWriter, flagService)(w, r)
+			threadsEntry(authService, membershipRepo, threadRepo, projectRepo, db, apiKeysRepo, auditWriter, flagService)(w, r)
 			return
 		}
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type WorkspaceSkillEnablement struct {
@@ -37,7 +37,7 @@ func NewWorkspaceSkillEnablementsRepository(db Querier) (*WorkspaceSkillEnableme
 	return &WorkspaceSkillEnablementsRepository{db: db}, nil
 }
 
-func (r *WorkspaceSkillEnablementsRepository) Replace(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, workspaceRef string, enabledByUserID uuid.UUID, items []WorkspaceSkillEnablement) error {
+func (r *WorkspaceSkillEnablementsRepository) Replace(ctx context.Context, tx database.Tx, orgID uuid.UUID, workspaceRef string, enabledByUserID uuid.UUID, items []WorkspaceSkillEnablement) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}

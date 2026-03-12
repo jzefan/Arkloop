@@ -13,9 +13,9 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/llmproviders"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type createLlmProviderRequest struct {
@@ -104,9 +104,9 @@ func llmProvidersEntry(
 	credRepo *data.LlmCredentialsRepository,
 	routeRepo *data.LlmRoutesRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo)
+	service := llmproviders.NewService(db, credRepo, routeRepo, secretsRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
@@ -126,9 +126,9 @@ func llmProviderEntry(
 	credRepo *data.LlmCredentialsRepository,
 	routeRepo *data.LlmRoutesRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo)
+	service := llmproviders.NewService(db, credRepo, routeRepo, secretsRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		tail := strings.TrimPrefix(r.URL.Path, "/v1/llm-providers/")

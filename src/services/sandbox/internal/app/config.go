@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database/pgadapter"
 	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -258,7 +259,7 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	if dbPool != nil {
-		resolver, _ = sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(dbPool), nil, 0)
+		resolver, _ = sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(pgadapter.New(dbPool)), nil, 0)
 		defer dbPool.Close()
 	} else {
 		resolver, _ = sharedconfig.NewResolver(registry, nil, nil, 0)

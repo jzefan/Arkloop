@@ -38,11 +38,11 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	}
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -54,31 +54,31 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	apiKeysRepo, err := data.NewAPIKeysRepository(pool)
+	apiKeysRepo, err := data.NewAPIKeysRepository(appDB)
 	if err != nil {
 		t.Fatalf("new api keys repo: %v", err)
 	}
@@ -87,11 +87,11 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -99,7 +99,7 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -401,11 +401,11 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -417,31 +417,31 @@ func TestAPIKeyAuditLog(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("thread repo: %v", err)
 	}
-	apiKeysRepo, err := data.NewAPIKeysRepository(pool)
+	apiKeysRepo, err := data.NewAPIKeysRepository(appDB)
 	if err != nil {
 		t.Fatalf("api keys repo: %v", err)
 	}
@@ -450,18 +450,18 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -495,7 +495,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	created := decodeJSONBody[createBody](t, createResp.Body.Bytes())
 
 	var createCount int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.create'").Scan(&createCount); err != nil {
+	if err := appDB.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.create'").Scan(&createCount); err != nil {
 		t.Fatalf("count create audit: %v", err)
 	}
 	if createCount != 1 {
@@ -509,7 +509,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	}
 
 	var revokeCount int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.revoke'").Scan(&revokeCount); err != nil {
+	if err := appDB.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.revoke'").Scan(&revokeCount); err != nil {
 		t.Fatalf("count revoke audit: %v", err)
 	}
 	if revokeCount != 1 {

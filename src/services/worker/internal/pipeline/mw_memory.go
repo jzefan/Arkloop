@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
@@ -14,7 +15,6 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -31,9 +31,9 @@ var usageRepo = data.UsageRecordsRepository{}
 
 // NewMemoryMiddleware 在 run 前注入长期记忆到 SystemPrompt，run 后异步刷写显式 memory_write。
 // provider 为 nil 时整个 middleware 为 no-op。
-// pool 为 nil 时跳过快照缓存，每次直接 Find。
+// db 为 nil 时跳过快照缓存，每次直接 Find。
 // configResolver 为 nil 时跳过 memory usage 记录。
-func NewMemoryMiddleware(provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver) RunMiddleware {
+func NewMemoryMiddleware(provider memory.MemoryProvider, db database.DB, configResolver sharedconfig.Resolver) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		activeProvider := provider
 		if activeProvider == nil {
@@ -56,16 +56,16 @@ func NewMemoryMiddleware(provider memory.MemoryProvider, pool *pgxpool.Pool, con
 
 		userQuery := lastUserMessageText(rc.Messages)
 		if userQuery != "" {
-			injectFromCacheOrFind(ctx, rc, activeProvider, pool, ident, userQuery)
+			injectFromCacheOrFind(ctx, rc, activeProvider, db, ident, userQuery)
 		}
 
 		err := next(ctx, rc)
-		flushPendingWritesAfterRun(activeProvider, pool, configResolver, rc)
+		flushPendingWritesAfterRun(activeProvider, db, configResolver, rc)
 		return err
 	}
 }
 
-func flushPendingWritesAfterRun(provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver, rc *RunContext) {
+func flushPendingWritesAfterRun(provider memory.MemoryProvider, db database.DB, configResolver sharedconfig.Resolver, rc *RunContext) {
 	if rc.PendingMemoryWrites == nil {
 		return
 	}
@@ -74,13 +74,13 @@ func flushPendingWritesAfterRun(provider memory.MemoryProvider, pool *pgxpool.Po
 		return
 	}
 	costPerWrite := resolveCommitCost(context.Background(), configResolver)
-	go flushPendingWrites(pending, provider, pool, rc.Run.OrgID, rc.Run.ID, costPerWrite)
+	go flushPendingWrites(pending, provider, db, rc.Run.OrgID, rc.Run.ID, costPerWrite)
 }
 
 // injectFromCacheOrFind 优先从 PG 快照读取记忆，缓存缺失时降级到 OpenViking Find。
-func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, pool *pgxpool.Pool, ident memory.MemoryIdentity, query string) {
-	if pool != nil {
-		block, found, err := snapshotRepo.Get(ctx, pool, ident.OrgID, ident.UserID, ident.AgentID)
+func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, db database.DB, ident memory.MemoryIdentity, query string) {
+	if db != nil {
+		block, found, err := snapshotRepo.Get(ctx, db, ident.OrgID, ident.UserID, ident.AgentID)
 		if err != nil {
 			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
 		} else if found && strings.TrimSpace(block) != "" {
@@ -94,11 +94,11 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 	block, hits := renderMemoryBlock(findCtx, provider, ident, memory.MemoryScopeUser, query)
 	if block != "" {
 		rc.SystemPrompt += block
-		if pool != nil {
+		if db != nil {
 			go func() {
 				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer uCancel()
-				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
+				_ = snapshotRepo.UpsertWithHits(uCtx, db, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
 			}()
 		}
 	}
@@ -165,7 +165,7 @@ func buildMemoryBlock(lines []string) string {
 	return block
 }
 
-func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, pool *pgxpool.Pool, orgID, runID uuid.UUID, costPerWrite float64) {
+func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, db database.DB, orgID, runID uuid.UUID, costPerWrite float64) {
 	ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 	defer cancel()
 
@@ -192,10 +192,10 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 		return
 	}
 
-	if pool != nil {
+	if db != nil {
 		ident := pending[0].Ident
 		if block, hits, ok := rebuildSnapshotBlock(ctx, provider, ident, successfulQueries); ok {
-			if err := snapshotRepo.UpsertWithHits(ctx, pool, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
+			if err := snapshotRepo.UpsertWithHits(ctx, db, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
 				slog.Warn("memory: snapshot rebuild upsert failed",
 					"org_id", ident.OrgID.String(),
 					"user_id", ident.UserID.String(),
@@ -206,11 +206,11 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 		}
 	}
 
-	if costPerWrite > 0 && pool != nil {
+	if costPerWrite > 0 && db != nil {
 		totalCost := costPerWrite * float64(successCount)
 		uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer uCancel()
-		if err := usageRepo.InsertMemoryUsage(uCtx, pool, orgID, runID, totalCost); err != nil {
+		if err := usageRepo.InsertMemoryUsage(uCtx, db, orgID, runID, totalCost); err != nil {
 			slog.Warn("memory: usage record insert failed",
 				"run_id", runID.String(),
 				"err", err.Error(),

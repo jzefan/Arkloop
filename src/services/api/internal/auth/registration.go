@@ -10,11 +10,10 @@ import (
 	"unicode"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type LoginExistsError struct{}
@@ -76,7 +75,7 @@ type RegisterResult struct {
 }
 
 type RegistrationService struct {
-	pool             *pgxpool.Pool
+	db               database.DB
 	passwordHasher   *BcryptPasswordHasher
 	tokenService     *JwtAccessTokenService
 	refreshTokenRepo *data.RefreshTokenRepository
@@ -103,14 +102,14 @@ func (v EntitlementValue) Int() int64 {
 }
 
 func NewRegistrationService(
-	pool *pgxpool.Pool,
+	db database.DB,
 	passwordHasher *BcryptPasswordHasher,
 	tokenService *JwtAccessTokenService,
 	refreshTokenRepo *data.RefreshTokenRepository,
 	jobRepo *data.JobRepository,
 ) (*RegistrationService, error) {
-	if pool == nil {
-		return nil, errors.New("pool must not be nil")
+	if db == nil {
+		return nil, errors.New("db must not be nil")
 	}
 	if passwordHasher == nil {
 		return nil, errors.New("passwordHasher must not be nil")
@@ -122,7 +121,7 @@ func NewRegistrationService(
 		return nil, errors.New("refreshTokenRepo must not be nil")
 	}
 	return &RegistrationService{
-		pool:             pool,
+		db:               db,
 		passwordHasher:   passwordHasher,
 		tokenService:     tokenService,
 		refreshTokenRepo: refreshTokenRepo,
@@ -164,7 +163,7 @@ func (s *RegistrationService) Register(
 		return RegisterResult{}, err
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return RegisterResult{}, err
 	}

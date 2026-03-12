@@ -22,11 +22,11 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -43,18 +43,18 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 		t.Fatalf("new key ring: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(pool)
-	credRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	jobRepo, _ := data.NewJobRepository(pool)
-	webhookRepo, _ := data.NewWebhookEndpointRepository(pool)
-	secretsRepo, _ := data.NewSecretsRepository(pool, keyRing)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	jobRepo, _ := data.NewJobRepository(appDB)
+	webhookRepo, _ := data.NewWebhookEndpointRepository(appDB)
+	secretsRepo, _ := data.NewSecretsRepository(appDB, keyRing)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -84,7 +84,7 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 
 	var secretID *string
 	var signingSecret *string
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		"SELECT secret_id::text, signing_secret FROM webhook_endpoints WHERE id = $1",
 		created.ID,
 	).Scan(&secretID, &signingSecret); err != nil {

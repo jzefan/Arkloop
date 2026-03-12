@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type User struct {
@@ -84,7 +84,7 @@ func (r *UserRepository) GetByID(ctx context.Context, userID uuid.UUID) (*User, 
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -111,7 +111,7 @@ func (r *UserRepository) GetTokensInvalidBefore(ctx context.Context, userID uuid
 		userID,
 	).Scan(&val)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return time.Time{}, false, nil
 		}
 		return time.Time{}, false, err
@@ -169,7 +169,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*User, e
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -302,7 +302,7 @@ func (r *UserRepository) UpdateStatus(ctx context.Context, userID uuid.UUID, sta
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("users.UpdateStatus: %w", err)
@@ -361,7 +361,7 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, pa
 		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("users.UpdateProfile: %w", err)

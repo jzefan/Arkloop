@@ -9,9 +9,9 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
 	sharedtoolmeta "arkloop/services/shared/toolmeta"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 	nethttp "net/http"
 )
@@ -22,7 +22,7 @@ func toolCatalogEffectiveEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	mcpCache *effectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -41,7 +41,7 @@ func toolCatalogEffectiveEntry(
 			return
 		}
 
-		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.OrgID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.OrgID, overridesRepo, db, mcpCache, artifactStoreAvailable)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -54,11 +54,11 @@ func buildEffectiveToolCatalog(
 	ctx context.Context,
 	orgID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	mcpCache *effectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
-	available := buildEffectiveBuiltinToolNameSet(ctx, pool, artifactStoreAvailable)
+	available := buildEffectiveBuiltinToolNameSet(ctx, db, artifactStoreAvailable)
 	platformByName, orgByName := loadEffectiveToolDescriptionOverrides(ctx, overridesRepo, orgID)
 	platformDisabledByName, orgDisabledByName := loadEffectiveToolDisabledOverrides(ctx, overridesRepo, orgID)
 	mcpTools := []toolCatalogItem{}
@@ -68,7 +68,7 @@ func buildEffectiveToolCatalog(
 		} else {
 			slog.WarnContext(ctx, "effective tool catalog: env mcp discovery failed", "err", err.Error())
 		}
-		if orgTools, err := mcpCache.GetOrg(ctx, pool, orgID); err == nil {
+		if orgTools, err := mcpCache.GetOrg(ctx, db, orgID); err == nil {
 			mcpTools = append(mcpTools, orgTools...)
 		} else {
 			slog.WarnContext(ctx, "effective tool catalog: org mcp discovery failed", "org_id", orgID, "err", err.Error())

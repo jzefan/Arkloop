@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type WebhookEndpoint struct {
@@ -33,7 +33,7 @@ func NewWebhookEndpointRepository(db Querier) (*WebhookEndpointRepository, error
 	return &WebhookEndpointRepository{db: db}, nil
 }
 
-func (r *WebhookEndpointRepository) WithTx(tx pgx.Tx) *WebhookEndpointRepository {
+func (r *WebhookEndpointRepository) WithTx(tx database.Tx) *WebhookEndpointRepository {
 	return &WebhookEndpointRepository{db: tx}
 }
 
@@ -82,7 +82,7 @@ func (r *WebhookEndpointRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
 		&ep.Events, &ep.Enabled, &ep.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -179,7 +179,7 @@ func (r *WebhookEndpointRepository) SetEnabled(ctx context.Context, id uuid.UUID
 		&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
 		&ep.Events, &ep.Enabled, &ep.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type RefreshToken struct {
@@ -65,7 +65,7 @@ func (r *RefreshTokenRepository) GetByHash(ctx context.Context, tokenHash string
 		tokenHash,
 	).Scan(&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.RevokedAt, &t.CreatedAt, &t.LastUsedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -105,7 +105,7 @@ func (r *RefreshTokenRepository) ConsumeByHash(ctx context.Context, tokenHash st
 		tokenHash,
 	).Scan(&userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return uuid.Nil, false, nil
 		}
 		return uuid.Nil, false, err

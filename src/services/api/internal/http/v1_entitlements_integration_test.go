@@ -17,11 +17,11 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_entitlements")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -33,27 +33,27 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	entitlementsRepo, err := data.NewEntitlementsRepository(pool)
+	entitlementsRepo, err := data.NewEntitlementsRepository(appDB)
 	if err != nil {
 		t.Fatalf("new entitlements repo: %v", err)
 	}
@@ -62,18 +62,18 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -90,7 +90,7 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
 
-	if _, err := pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err := appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
@@ -101,7 +101,7 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 	adminToken := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes()).AccessToken
 
 	var orgID string
-	if err := pool.QueryRow(ctx, "SELECT org_id::text FROM org_memberships WHERE user_id = $1 LIMIT 1", adminPayload.UserID).Scan(&orgID); err != nil {
+	if err := appDB.QueryRow(ctx, "SELECT org_id::text FROM org_memberships WHERE user_id = $1 LIMIT 1", adminPayload.UserID).Scan(&orgID); err != nil {
 		t.Fatalf("query org id: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 		payload := decodeJSONBody[overrideResp](t, resp.Body.Bytes())
 		overrideID = payload.ID
 
-		log := latestAuditLogByAction(t, ctx, pool, "entitlements.override_set")
+		log := latestAuditLogByAction(t, ctx, appDB, "entitlements.override_set")
 		if log.TargetType == nil || *log.TargetType != "entitlement_override" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -162,11 +162,11 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 		if payload.ID != overrideID {
 			t.Fatalf("override id changed: %s != %s", payload.ID, overrideID)
 		}
-		if count := countAuditLogByAction(t, ctx, pool, "entitlements.override_set"); count != 2 {
+		if count := countAuditLogByAction(t, ctx, appDB, "entitlements.override_set"); count != 2 {
 			t.Fatalf("expected 2 override_set audit logs, got %d", count)
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "entitlements.override_set")
+		log := latestAuditLogByAction(t, ctx, appDB, "entitlements.override_set")
 		if log.BeforeState["value"] != "1500" {
 			t.Fatalf("unexpected before_state: %#v", log.BeforeState)
 		}
@@ -181,7 +181,7 @@ func TestEntitlementOverridesAuditIntegration(t *testing.T) {
 			t.Fatalf("delete override: %d %s", resp.Code, resp.Body.String())
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "entitlements.override_delete")
+		log := latestAuditLogByAction(t, ctx, appDB, "entitlements.override_delete")
 		if log.TargetType == nil || *log.TargetType != "entitlement_override" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}

@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // WithTx 返回一个使用给定事务的 LlmRoutesRepository 副本。
-func (r *LlmRoutesRepository) WithTx(tx pgx.Tx) *LlmRoutesRepository {
+func (r *LlmRoutesRepository) WithTx(tx database.Tx) *LlmRoutesRepository {
 	return &LlmRoutesRepository{db: tx}
 }
 
@@ -212,7 +212,7 @@ func (r *LlmRoutesRepository) GetByID(ctx context.Context, orgID, routeID uuid.U
 
 	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, args...))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -258,7 +258,7 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 
 	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, args...))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return LlmRoute{}, fmt.Errorf("route not found")
 		}
 		return LlmRoute{}, mapLlmRouteWriteError(err, uuid.Nil, params.Model)
@@ -290,7 +290,7 @@ func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, orgID,
 	fullArgs := append([]any{credentialID, routeID}, args...)
 	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -328,7 +328,7 @@ func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Contex
 	fullArgs := append([]any{credentialID}, args...)
 	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

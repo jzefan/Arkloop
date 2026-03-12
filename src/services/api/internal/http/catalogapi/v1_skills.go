@@ -13,11 +13,11 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 type skillPackageResponse struct {
@@ -328,11 +328,11 @@ func workspaceSkillsEntry(
 	enableRepo *data.WorkspaceSkillEnablementsRepository,
 	workspaceRepo *data.WorkspaceRegistriesRepository,
 	profileRepo *data.ProfileRegistriesRepository,
-	pool dbBeginner,
+	db dbBeginner,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
-		if packagesRepo == nil || installsRepo == nil || enableRepo == nil || workspaceRepo == nil || profileRepo == nil || pool == nil {
+		if packagesRepo == nil || installsRepo == nil || enableRepo == nil || workspaceRepo == nil || profileRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "skills.not_configured", "skills not configured", traceID, nil)
 			return
 		}
@@ -399,7 +399,7 @@ func workspaceSkillsEntry(
 				}
 				items = append(items, data.WorkspaceSkillEnablement{SkillKey: item.SkillKey, Version: item.Version})
 			}
-			tx, err := pool.Begin(r.Context())
+			tx, err := db.Begin(r.Context())
 			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
@@ -429,7 +429,7 @@ func workspaceSkillsEntry(
 }
 
 type dbBeginner interface {
-	Begin(ctx context.Context) (pgx.Tx, error)
+	Begin(ctx context.Context) (database.Tx, error)
 }
 
 func toSkillPackageResponses(items []data.SkillPackage) []skillPackageResponse {

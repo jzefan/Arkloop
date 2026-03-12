@@ -9,9 +9,9 @@ import (
 
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/creditpolicy"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,26 +21,26 @@ const (
 )
 
 // Resolver 提供直接 SQL 的三级权益解析，适合 Worker 等无 DI 容器的服务。
-// pool/rdb 均可为 nil：pool 为 nil 时 Resolve 退化为平台默认值；rdb 为 nil 时不使用缓存。
+// db/rdb 均可为 nil：db 为 nil 时 Resolve 退化为平台默认值；rdb 为 nil 时不使用缓存。
 type Resolver struct {
-	pool *pgxpool.Pool
-	rdb  *redis.Client
+	db  database.DB
+	rdb *redis.Client
 
 	cfgResolver sharedconfig.Resolver
 	registry    *sharedconfig.Registry
 }
 
-// NewResolver 创建 Resolver。pool/rdb 均可为 nil（fail-open）。
-func NewResolver(pool *pgxpool.Pool, rdb *redis.Client) *Resolver {
+// NewResolver 创建 Resolver。db/rdb 均可为 nil（fail-open）。
+func NewResolver(db database.DB, rdb *redis.Client) *Resolver {
 	registry := sharedconfig.DefaultRegistry()
 	var cache sharedconfig.Cache
 	cacheTTL := sharedconfig.CacheTTLFromEnv()
 	if rdb != nil && cacheTTL > 0 {
 		cache = sharedconfig.NewRedisCache(rdb)
 	}
-	cfgResolver, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(pool), cache, cacheTTL)
+	cfgResolver, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(db), cache, cacheTTL)
 	return &Resolver{
-		pool:        pool,
+		db:          db,
 		rdb:         rdb,
 		cfgResolver: cfgResolver,
 		registry:    registry,
@@ -79,12 +79,12 @@ func (r *Resolver) ResolveInt(ctx context.Context, orgID uuid.UUID, key string) 
 // CountMonthlyRuns 统计指定 org 在给定年月已执行的 run 数量（从 usage_records）。
 // 使用时间范围查询，确保索引 idx_usage_records_org_recorded 可被命中。
 func (r *Resolver) CountMonthlyRuns(ctx context.Context, orgID uuid.UUID, year, month int) (int64, error) {
-	if r.pool == nil {
+	if r.db == nil {
 		return 0, nil
 	}
 	start, end := monthRange(year, month)
 	var count int64
-	err := r.pool.QueryRow(ctx,
+	err := r.db.QueryRow(ctx,
 		`SELECT COUNT(*)
 		 FROM usage_records
 		 WHERE org_id = $1 AND recorded_at >= $2 AND recorded_at < $3`,
@@ -99,12 +99,12 @@ func (r *Resolver) CountMonthlyRuns(ctx context.Context, orgID uuid.UUID, year, 
 // SumMonthlyTokens 汇总指定 org 在给定年月的 token 消耗总量（从 usage_records）。
 // 使用时间范围查询，确保索引 idx_usage_records_org_recorded 可被命中。
 func (r *Resolver) SumMonthlyTokens(ctx context.Context, orgID uuid.UUID, year, month int) (int64, error) {
-	if r.pool == nil {
+	if r.db == nil {
 		return 0, nil
 	}
 	start, end := monthRange(year, month)
 	var total int64
-	err := r.pool.QueryRow(ctx,
+	err := r.db.QueryRow(ctx,
 		`SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
 		 FROM usage_records
 		 WHERE org_id = $1 AND recorded_at >= $2 AND recorded_at < $3`,
@@ -118,11 +118,11 @@ func (r *Resolver) SumMonthlyTokens(ctx context.Context, orgID uuid.UUID, year, 
 
 // GetCreditBalance 查询 org 的积分余额。无记录时返回 0（不报错，允许 org 尚未初始化积分）。
 func (r *Resolver) GetCreditBalance(ctx context.Context, orgID uuid.UUID) (int64, error) {
-	if r.pool == nil {
+	if r.db == nil {
 		return 0, nil
 	}
 	var balance int64
-	err := r.pool.QueryRow(ctx,
+	err := r.db.QueryRow(ctx,
 		`SELECT COALESCE(balance, 0) FROM credits WHERE org_id = $1`,
 		orgID,
 	).Scan(&balance)
@@ -146,15 +146,15 @@ func (r *Resolver) resolveFromDB(ctx context.Context, orgID uuid.UUID, key strin
 	}
 	if r.cfgResolver == nil {
 		registry := sharedconfig.DefaultRegistry()
-		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(r.pool), nil, 0)
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(r.db), nil, 0)
 		r.cfgResolver = fallback
 		r.registry = registry
 	}
 
 	// 1. org override（未过期）
-	if r.pool != nil {
+	if r.db != nil {
 		var overrideVal string
-		err := r.pool.QueryRow(ctx,
+		err := r.db.QueryRow(ctx,
 			`SELECT value FROM org_entitlement_overrides
 			 WHERE org_id = $1 AND key = $2
 			   AND (expires_at IS NULL OR expires_at > now())
@@ -167,7 +167,7 @@ func (r *Resolver) resolveFromDB(ctx context.Context, orgID uuid.UUID, key strin
 
 		// 2. plan entitlement（active subscription → plan）
 		var planVal string
-		err = r.pool.QueryRow(ctx,
+		err = r.db.QueryRow(ctx,
 			`SELECT pe.value
 			 FROM plan_entitlements pe
 			 JOIN subscriptions s ON s.plan_id = pe.plan_id

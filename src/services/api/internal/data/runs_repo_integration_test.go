@@ -20,18 +20,18 @@ func setupRunsTestRepo(t *testing.T) (*RunEventRepository, *OrgRepository, conte
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
-	runRepo, err := NewRunEventRepository(pool)
+	runRepo, err := NewRunEventRepository(appDB)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
 
-	orgRepo, err := NewOrgRepository(pool)
+	orgRepo, err := NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}

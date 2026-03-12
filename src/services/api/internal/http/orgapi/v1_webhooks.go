@@ -12,10 +12,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var validWebhookEvents = map[string]struct{}{
@@ -48,12 +47,12 @@ func webhookEndpointsEntry(
 	webhookRepo *data.WebhookEndpointRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createWebhookEndpoint(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo, secretsRepo, pool)
+			createWebhookEndpoint(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo, secretsRepo, db)
 		case nethttp.MethodGet:
 			listWebhookEndpoints(w, r, authService, membershipRepo, webhookRepo, apiKeysRepo)
 		default:
@@ -105,14 +104,14 @@ func createWebhookEndpoint(
 	webhookRepo *data.WebhookEndpointRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if webhookRepo == nil || pool == nil {
+	if webhookRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -163,7 +162,7 @@ func createWebhookEndpoint(
 	}
 	endpointID := uuid.New()
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

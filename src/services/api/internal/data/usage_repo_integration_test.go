@@ -21,18 +21,18 @@ func setupUsageTestRepo(t *testing.T) (*UsageRepository, *OrgRepository, context
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
-	usageRepo, err := NewUsageRepository(pool)
+	usageRepo, err := NewUsageRepository(appDB)
 	if err != nil {
 		t.Fatalf("new usage repo: %v", err)
 	}
 
-	orgRepo, err := NewOrgRepository(pool)
+	orgRepo, err := NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}

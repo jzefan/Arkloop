@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -134,7 +134,7 @@ func (r *ProjectRepository) GetDefaultByOwner(ctx context.Context, orgID uuid.UU
 		ownerUserID,
 	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -184,7 +184,7 @@ func (r *ProjectRepository) GetByID(ctx context.Context, projectID uuid.UUID) (*
 		projectID,
 	).Scan(&p.ID, &p.OrgID, &p.TeamID, &p.OwnerUserID, &p.Name, &p.Description, &p.Visibility, &p.IsDefault, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

@@ -20,29 +20,29 @@ func setupThreadsTestRepos(t *testing.T) (*ThreadRepository, *MessageRepository,
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
-	threadRepo, err := NewThreadRepository(pool)
+	threadRepo, err := NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	messageRepo, err := NewMessageRepository(pool)
+	messageRepo, err := NewMessageRepository(appDB)
 	if err != nil {
 		t.Fatalf("new message repo: %v", err)
 	}
-	orgRepo, err := NewOrgRepository(pool)
+	orgRepo, err := NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
-	userRepo, err := NewUserRepository(pool)
+	userRepo, err := NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	projectRepo, err := NewProjectRepository(pool)
+	projectRepo, err := NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}

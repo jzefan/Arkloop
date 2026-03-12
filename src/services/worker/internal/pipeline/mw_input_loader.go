@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type MessageAttachmentStore interface {
@@ -28,7 +27,7 @@ func NewInputLoaderMiddleware(
 		if messageLimit <= 0 {
 			messageLimit = 200
 		}
-		inputJSON, threadMessages, err := loadRunInputs(ctx, rc.Pool, rc.Run, eventsRepo, messagesRepo, messageLimit)
+		inputJSON, threadMessages, err := loadRunInputs(ctx, rc.DB, rc.Run, eventsRepo, messagesRepo, messageLimit)
 		if err != nil {
 			return err
 		}
@@ -57,15 +56,13 @@ func NewInputLoaderMiddleware(
 
 func loadRunInputs(
 	ctx context.Context,
-	pool interface {
-		BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
-	},
+	db database.DB,
 	run data.Run,
 	eventsRepo data.RunEventsRepository,
 	messagesRepo data.MessagesRepository,
 	messageLimit int,
 ) (map[string]any, []data.ThreadMessage, error) {
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

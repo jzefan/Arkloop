@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type ToolDescriptionOverride struct {
@@ -108,7 +108,7 @@ func (r *ToolDescriptionOverridesRepository) Delete(ctx context.Context, orgID u
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+		return database.ErrNoRows
 	}
 	return nil
 }

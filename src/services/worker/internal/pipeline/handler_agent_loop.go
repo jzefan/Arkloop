@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"arkloop/services/shared/creditpolicy"
+	"arkloop/services/shared/database"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/runlimit"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -70,7 +69,7 @@ func NewAgentLoopHandler(
 		}
 
 		writer := newEventWriter(
-			rc.Pool, rc.Run, rc.TraceID, runLimiterRDB,
+			rc.DB, rc.Run, rc.TraceID, runLimiterRDB,
 			selected.Route.Model, personaID, usageRepo, creditsRepo,
 			creditsPerUSD,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
@@ -145,7 +144,7 @@ func NewAgentLoopHandler(
 
 // eventWriter 批提交事件并在终态时更新 runs.status + DECR 并发计数 + 写入 usage_records。
 type eventWriter struct {
-	pool          *pgxpool.Pool
+	db            database.DB
 	run           data.Run
 	traceID       string
 	runLimiterRDB *redis.Client // 双职责：并发槽释放（runlimit.Release）+ 跨实例 SSE 广播（Publish）
@@ -162,7 +161,7 @@ type eventWriter struct {
 	policy              creditpolicy.CreditDeductionPolicy
 	creditsPerUSD       float64
 
-	tx                       pgx.Tx
+	tx                       database.Tx
 	pendingEventsSinceCommit int
 	lastCommitAt             time.Time
 	assistantDeltas          []string
@@ -182,7 +181,7 @@ type eventWriter struct {
 }
 
 func newEventWriter(
-	pool *pgxpool.Pool,
+	db database.DB,
 	run data.Run,
 	traceID string,
 	runLimiterRDB *redis.Client,
@@ -205,7 +204,7 @@ func newEventWriter(
 		multiplier = 1.0
 	}
 	return &eventWriter{
-		pool:                pool,
+		db:                  db,
 		run:                 run,
 		traceID:             strings.TrimSpace(traceID),
 		lastCommitAt:        time.Now(),
@@ -228,7 +227,7 @@ func (w *eventWriter) ensureTx(ctx context.Context) error {
 	if w.tx != nil {
 		return nil
 	}
-	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := w.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -378,7 +377,7 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	w.lastCommitAt = time.Now()
 
 	channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
-	_, _ = w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+	_, _ = w.db.Exec(ctx, "SELECT pg_notify($1, '')", channel)
 
 	if w.runLimiterRDB != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", w.run.ID.String())

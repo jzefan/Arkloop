@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -67,7 +67,7 @@ func (r *resolvedSession) ThreadID(fallback *uuid.UUID) *uuid.UUID {
 }
 
 type sessionOrchestrator struct {
-	pool            *pgxpool.Pool
+	db              database.DB
 	sessionType     string
 	sessionsRepo    data.ShellSessionsRepository
 	registryService *registryService
@@ -77,16 +77,16 @@ type sessionOrchestrator struct {
 	memorySessions map[string]data.ShellSessionRecord
 }
 
-func newSessionOrchestrator(pool *pgxpool.Pool) *sessionOrchestrator {
-	return newSessionOrchestratorWithType(pool, data.ShellSessionTypeShell)
+func newSessionOrchestrator(db database.DB) *sessionOrchestrator {
+	return newSessionOrchestratorWithType(db, data.ShellSessionTypeShell)
 }
 
-func newSessionOrchestratorWithType(pool *pgxpool.Pool, sessionType string) *sessionOrchestrator {
+func newSessionOrchestratorWithType(db database.DB, sessionType string) *sessionOrchestrator {
 	return &sessionOrchestrator{
-		pool:            pool,
+		db:              db,
 		sessionType:     normalizeSessionType(sessionType),
-		registryService: newRegistryService(pool),
-		acl:             newSessionACLEvaluator(pool),
+		registryService: newRegistryService(db),
+		acl:             newSessionACLEvaluator(db),
 		memorySessions:  map[string]data.ShellSessionRecord{},
 	}
 }
@@ -347,7 +347,7 @@ func (o *sessionOrchestrator) createSessionWithRef(
 		DefaultBindingKey: defaultBindingKey,
 		MetadataJSON:      map[string]any{},
 	}
-	if o.pool != nil {
+	if o.db != nil {
 		if record.OrgID == uuid.Nil {
 			return nil, sandboxArgsError("org_id is required for shell sessions")
 		}
@@ -439,7 +439,7 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 	orgID uuid.UUID,
 	runID uuid.UUID,
 ) (data.ShellSessionRecord, bool, error) {
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		var selected data.ShellSessionRecord
@@ -455,7 +455,7 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetLatestByRunAndType(ctx, o.pool, orgID, runID, o.sessionType)
+	record, err := o.sessionsRepo.GetLatestByRunAndType(ctx, o.db, orgID, runID, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -471,7 +471,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 	profileRef string,
 	defaultBindingKey string,
 ) (data.ShellSessionRecord, bool, error) {
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		var selected data.ShellSessionRecord
@@ -489,7 +489,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetByDefaultBindingKeyAndType(ctx, o.pool, orgID, profileRef, defaultBindingKey, o.sessionType)
+	record, err := o.sessionsRepo.GetByDefaultBindingKeyAndType(ctx, o.db, orgID, profileRef, defaultBindingKey, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -500,7 +500,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 }
 
 func (o *sessionOrchestrator) lookupSession(ctx context.Context, execCtx tools.ExecutionContext, sessionRef string) (data.ShellSessionRecord, bool, error) {
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[sessionRef]
@@ -509,7 +509,7 @@ func (o *sessionOrchestrator) lookupSession(ctx context.Context, execCtx tools.E
 		}
 		return data.ShellSessionRecord{}, false, nil
 	}
-	record, err := o.sessionsRepo.GetBySessionRefAndType(ctx, o.pool, derefUUID(execCtx.OrgID), sessionRef, o.sessionType)
+	record, err := o.sessionsRepo.GetBySessionRefAndType(ctx, o.db, derefUUID(execCtx.OrgID), sessionRef, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -523,7 +523,7 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 	now := time.Now().UTC()
 	record.LastUsedAt = now
 	record.UpdatedAt = now
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		if record.DefaultBindingKey != nil {
@@ -553,11 +553,11 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 	if err := o.registryService.UpsertWorkspaceRegistry(ctx, record.OrgID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, nil); err != nil {
 		return err
 	}
-	return o.sessionsRepo.Upsert(ctx, o.pool, record)
+	return o.sessionsRepo.Upsert(ctx, o.db, record)
 }
 
 func (o *sessionOrchestrator) clearLiveSession(ctx context.Context, execCtx tools.ExecutionContext, sessionRef string) error {
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[sessionRef]
@@ -573,7 +573,7 @@ func (o *sessionOrchestrator) clearLiveSession(ctx context.Context, execCtx tool
 		o.memorySessions[sessionRef] = record
 		return nil
 	}
-	return o.sessionsRepo.ClearLiveSession(ctx, o.pool, derefUUID(execCtx.OrgID), sessionRef)
+	return o.sessionsRepo.ClearLiveSession(ctx, o.db, derefUUID(execCtx.OrgID), sessionRef)
 }
 
 func (o *sessionOrchestrator) markResult(
@@ -625,13 +625,13 @@ func (o *sessionOrchestrator) markResult(
 	}
 	record.LastUsedAt = time.Now().UTC()
 	record.UpdatedAt = record.LastUsedAt
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		o.memorySessions[resolution.SessionRef] = record
 		return
 	}
-	if err := o.sessionsRepo.Upsert(ctx, o.pool, record); err != nil {
+	if err := o.sessionsRepo.Upsert(ctx, o.db, record); err != nil {
 		return
 	}
 	if err := o.registryService.UpsertProfileRegistry(ctx, orgID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
@@ -821,7 +821,7 @@ func (o *sessionOrchestrator) releaseWriterLease(ctx context.Context, execCtx to
 	if resolution == nil || strings.TrimSpace(ownerID) == "" {
 		return
 	}
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[resolution.SessionRef]
@@ -836,7 +836,7 @@ func (o *sessionOrchestrator) releaseWriterLease(ctx context.Context, execCtx to
 		resolution.Record = &record
 		return
 	}
-	if err := o.sessionsRepo.ReleaseWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID); err != nil {
+	if err := o.sessionsRepo.ReleaseWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID); err != nil {
 		return
 	}
 	if resolution.Record != nil {
@@ -849,7 +849,7 @@ func (o *sessionOrchestrator) clearFinishedWriterLease(ctx context.Context, exec
 	if resolution == nil {
 		return nil
 	}
-	if o.pool == nil {
+	if o.db == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[resolution.SessionRef]
@@ -865,7 +865,7 @@ func (o *sessionOrchestrator) clearFinishedWriterLease(ctx context.Context, exec
 		resolution.Record = &record
 		return nil
 	}
-	if err := o.sessionsRepo.ClearFinishedWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef); err != nil && !data.IsShellSessionNotFound(err) {
+	if err := o.sessionsRepo.ClearFinishedWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef); err != nil && !data.IsShellSessionNotFound(err) {
 		return err
 	}
 	if resolution.Record != nil {
@@ -908,7 +908,7 @@ func (o *sessionOrchestrator) updateWriterLease(
 	if resolution == nil || ownerID == "" {
 		return data.ShellSessionRecord{}, sandboxArgsError("run_id is required for shell writer lease")
 	}
-	if o.pool == nil {
+	if o.db == nil {
 		return o.updateMemoryWriterLease(execCtx, resolution, ownerID, leaseUntil, renewOnly)
 	}
 	var (
@@ -916,9 +916,9 @@ func (o *sessionOrchestrator) updateWriterLease(
 		err    error
 	)
 	if renewOnly {
-		record, err = o.sessionsRepo.RenewWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+		record, err = o.sessionsRepo.RenewWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
 	} else {
-		record, err = o.sessionsRepo.AcquireWriterLease(ctx, o.pool, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+		record, err = o.sessionsRepo.AcquireWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
 	}
 	if err == nil {
 		return record, nil

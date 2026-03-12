@@ -19,6 +19,7 @@ import (
 	"arkloop/services/worker/internal/registration"
 	"arkloop/services/worker/internal/webhook"
 
+	"arkloop/services/shared/database/pgadapter"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -244,7 +245,7 @@ func chooseHandler(ctx context.Context, logger *app.JSONLogger, pool *pgxpool.Po
 	if rdb != nil && cacheTTL > 0 {
 		configCache = sharedconfig.NewRedisCache(rdb)
 	}
-	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pgadapter.New(pool)), configCache, cacheTTL)
 
 	native, err := executor.NewNativeRunEngineV1Handler(ctx, pool, directPool, logger, rdb, q, cfg)
 	if err != nil {

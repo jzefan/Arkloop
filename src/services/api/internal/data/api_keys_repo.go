@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type APIKey struct {
@@ -170,7 +170,7 @@ func (r *APIKeysRepository) GetByHash(ctx context.Context, keyHash string) (*API
 		&k.Scopes, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -194,7 +194,7 @@ func (r *APIKeysRepository) Revoke(ctx context.Context, orgID, keyID uuid.UUID) 
 		keyID, orgID,
 	).Scan(&keyHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -218,7 +218,7 @@ func (r *APIKeysRepository) RevokeOwned(ctx context.Context, orgID, userID, keyI
 		userID,
 	).Scan(&keyHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", nil
 		}
 		return "", err

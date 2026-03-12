@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type IPRuleType string
@@ -118,7 +118,7 @@ func (r *IPRulesRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*
 		id, orgID,
 	).Scan(&rule.ID, &rule.OrgID, &rule.Type, &rule.CIDR, &rule.Note, &rule.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

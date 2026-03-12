@@ -8,11 +8,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -26,19 +26,19 @@ const (
 )
 
 type searchRepository interface {
-	SearchVisibleByOwner(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, ownerUserID uuid.UUID, query string, limit int) ([]data.ConversationSearchHit, error)
+	SearchVisibleByOwner(ctx context.Context, db database.DB, orgID uuid.UUID, ownerUserID uuid.UUID, query string, limit int) ([]data.ConversationSearchHit, error)
 }
 
 type ToolExecutor struct {
-	pool *pgxpool.Pool
+	db   database.DB
 	repo searchRepository
 }
 
-func NewToolExecutor(pool *pgxpool.Pool, repo searchRepository) *ToolExecutor {
+func NewToolExecutor(db database.DB, repo searchRepository) *ToolExecutor {
 	if repo == nil {
 		repo = data.MessagesRepository{}
 	}
-	return &ToolExecutor{pool: pool, repo: repo}
+	return &ToolExecutor{db: db, repo: repo}
 }
 
 func (e *ToolExecutor) Execute(ctx context.Context, _ string, args map[string]any, execCtx tools.ExecutionContext, _ string) tools.ExecutionResult {
@@ -50,7 +50,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, _ string, args map[string]an
 	if !ok || strings.TrimSpace(query) == "" {
 		return executionError(errorArgsInvalid, "query must be a non-empty string", started)
 	}
-	if e.pool == nil {
+	if e.db == nil {
 		return executionError(errorSearchFailed, "conversation search pool not available", started)
 	}
 	if e.repo == nil {
@@ -58,7 +58,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, _ string, args map[string]an
 	}
 
 	limit := parseLimit(args, defaultLimit)
-	hits, err := e.repo.SearchVisibleByOwner(ctx, e.pool, *execCtx.OrgID, *execCtx.UserID, query, limit)
+	hits, err := e.repo.SearchVisibleByOwner(ctx, e.db, *execCtx.OrgID, *execCtx.UserID, query, limit)
 	if err != nil {
 		return executionError(errorSearchFailed, fmt.Sprintf("conversation search failed: %s", err.Error()), started)
 	}

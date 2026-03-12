@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"arkloop/services/shared/database"
 )
 
 type ProviderSecretDecrypter func(ctx context.Context, encrypted string, keyVersion *int, providerName string) (*string, error)
 
-func LoadPlatformProviders(ctx context.Context, pool *pgxpool.Pool, decrypt ProviderSecretDecrypter) ([]ProviderConfig, error) {
+func LoadPlatformProviders(ctx context.Context, db database.DB, decrypt ProviderSecretDecrypter) ([]ProviderConfig, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if pool == nil {
+	if db == nil {
 		return nil, nil
 	}
 
-	rows, err := pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT c.group_name, c.provider_name, c.base_url,
 		       s.encrypted_value, s.key_version
 		FROM tool_provider_configs c

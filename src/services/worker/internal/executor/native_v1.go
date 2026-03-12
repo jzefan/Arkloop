@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/runengine"
 	"arkloop/services/worker/internal/webhook"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -55,7 +56,8 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 
 	h.logger.Info("worker received job", payload.LogFields(lease), map[string]any{"job_type": payload.JobType})
 
-	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	db := database.DB(pgadapter.New(h.pool))
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return err
 	}

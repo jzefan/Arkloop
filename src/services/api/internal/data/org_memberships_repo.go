@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type OrgMembership struct {
@@ -78,7 +78,7 @@ func (r *OrgMembershipRepository) GetDefaultForUser(ctx context.Context, userID 
 		userID,
 	).Scan(&membership.ID, &membership.OrgID, &membership.UserID, &membership.Role, &membership.RoleID, &membership.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -105,7 +105,7 @@ func (r *OrgMembershipRepository) GetByOrgAndUser(ctx context.Context, orgID, us
 		userID,
 	).Scan(&membership.ID, &membership.OrgID, &membership.UserID, &membership.Role, &membership.RoleID, &membership.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

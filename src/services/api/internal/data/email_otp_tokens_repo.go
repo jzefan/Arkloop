@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type EmailOTPToken struct {
@@ -82,7 +82,7 @@ func (r *EmailOTPTokenRepository) Consume(
 		tokenHash,
 	).Scan(&userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return uuid.Nil, false, nil
 		}
 		return uuid.Nil, false, fmt.Errorf("email_otp_tokens.Consume: %w", err)

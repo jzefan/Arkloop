@@ -5,8 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 type OrgMembershipRecord struct {
@@ -19,7 +18,7 @@ type OrgMembershipsRepository struct{}
 
 func (OrgMembershipsRepository) GetByOrgAndUser(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	userID uuid.UUID,
 ) (*OrgMembershipRecord, error) {
@@ -48,7 +47,7 @@ func (OrgMembershipsRepository) GetByOrgAndUser(
 		userID,
 	).Scan(&record.OrgID, &record.UserID, &record.Role)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

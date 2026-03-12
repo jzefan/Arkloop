@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 // WithTx 返回一个使用给定事务的 MCPConfigsRepository 副本。
-func (r *MCPConfigsRepository) WithTx(tx pgx.Tx) *MCPConfigsRepository {
+func (r *MCPConfigsRepository) WithTx(tx database.Tx) *MCPConfigsRepository {
 	return &MCPConfigsRepository{db: tx}
 }
 
@@ -140,7 +140,7 @@ func (r *MCPConfigsRepository) GetByID(ctx context.Context, orgID, id uuid.UUID)
 		&cfg.IsActive, &cfg.CreatedAt, &cfg.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -280,7 +280,7 @@ func (r *MCPConfigsRepository) Patch(ctx context.Context, orgID, id uuid.UUID, p
 		&cfg.IsActive, &cfg.CreatedAt, &cfg.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		if isUniqueViolation(err) {
@@ -320,7 +320,7 @@ func (r *MCPConfigsRepository) UpdateAuthSecret(ctx context.Context, orgID, id, 
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+		return database.ErrNoRows
 	}
 	return nil
 }

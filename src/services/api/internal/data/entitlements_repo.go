@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 // PlanEntitlement 表示 plan 下的某个权益配置项。
@@ -120,7 +120,7 @@ func (r *EntitlementsRepository) GetPlanEntitlement(ctx context.Context, planID 
 		 WHERE plan_id = $1 AND key = $2`,
 		planID, key,
 	).Scan(&pe.ID, &pe.PlanID, &pe.Key, &pe.Value, &pe.ValueType)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -218,7 +218,7 @@ func (r *EntitlementsRepository) GetOverrideByOrgAndKey(
 		&o.ID, &o.OrgID, &o.Key, &o.Value, &o.ValueType,
 		&o.Reason, &o.ExpiresAt, &o.CreatedByUserID, &o.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -243,7 +243,7 @@ func (r *EntitlementsRepository) GetOverrideByID(
 		&o.ID, &o.OrgID, &o.Key, &o.Value, &o.ValueType,
 		&o.Reason, &o.ExpiresAt, &o.CreatedByUserID, &o.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -266,7 +266,7 @@ func (r *EntitlementsRepository) GetOverride(ctx context.Context, orgID uuid.UUI
 		&o.ID, &o.OrgID, &o.Key, &o.Value, &o.ValueType,
 		&o.Reason, &o.ExpiresAt, &o.CreatedByUserID, &o.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"arkloop/services/worker/internal/testutil"
+
+	"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -16,6 +18,7 @@ func TestOrgMembershipsRepository_GetByOrgAndUser(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
@@ -32,7 +35,7 @@ func TestOrgMembershipsRepository_GetByOrgAndUser(t *testing.T) {
 	}
 
 	repo := OrgMembershipsRepository{}
-	record, err := repo.GetByOrgAndUser(context.Background(), pool, orgID, userID)
+	record, err := repo.GetByOrgAndUser(context.Background(), dbPool, orgID, userID)
 	if err != nil {
 		t.Fatalf("get membership: %v", err)
 	}
@@ -51,9 +54,10 @@ func TestOrgMembershipsRepository_GetByOrgAndUser_NotFound(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+dbPool := pgadapter.New(pool)
 
 	repo := OrgMembershipsRepository{}
-	record, err := repo.GetByOrgAndUser(context.Background(), pool, uuid.New(), uuid.New())
+	record, err := repo.GetByOrgAndUser(context.Background(), dbPool, uuid.New(), uuid.New())
 	if err != nil {
 		t.Fatalf("get membership: %v", err)
 	}

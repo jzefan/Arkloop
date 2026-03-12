@@ -38,35 +38,35 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_providers")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	toolProvidersRepo, err := data.NewToolProviderConfigsRepository(pool)
+	toolProvidersRepo, err := data.NewToolProviderConfigsRepository(appDB)
 	if err != nil {
 		t.Fatalf("tool providers repo: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new key ring: %v", err)
 	}
-	secretsRepo, err := data.NewSecretsRepository(pool, ring)
+	secretsRepo, err := data.NewSecretsRepository(appDB, ring)
 	if err != nil {
 		t.Fatalf("secrets repo: %v", err)
 	}
@@ -118,8 +118,8 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                    pool,
-		DirectPool:              pool,
+		DB:                appDB,
+		DirectPool:              directPool,
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
@@ -178,7 +178,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	}
 
 	// 预置 config_json，确保后续仅更新凭证时不会被覆盖成 {}
-	if _, err := pool.Exec(ctx, `
+	if _, err := appDB.Exec(ctx, `
 		UPDATE tool_provider_configs
 		SET config_json = '{"keep": true}'::jsonb
 		WHERE scope = 'platform' AND provider_name = 'web_search.tavily'
@@ -194,7 +194,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	}
 
 	var rawCfg []byte
-	if err := pool.QueryRow(ctx, `
+	if err := appDB.QueryRow(ctx, `
 		SELECT config_json
 		FROM tool_provider_configs
 		WHERE scope = 'platform' AND provider_name = 'web_search.tavily'
@@ -296,7 +296,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	}
 
 	var orgCfgCount int
-	if err := pool.QueryRow(ctx, `
+	if err := appDB.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM tool_provider_configs
 		WHERE scope = 'org' AND org_id = $1 AND provider_name = 'web_search.tavily'
@@ -350,7 +350,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	}
 
 	var orgSecretCount int
-	if err := pool.QueryRow(ctx, `
+	if err := appDB.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM secrets
 		WHERE scope = 'org' AND org_id = $1 AND name = 'tool_provider:web_search.tavily'

@@ -23,11 +23,11 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -40,39 +40,39 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(pool)
+	runRepo, err := data.NewRunEventRepository(appDB)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
-	featureFlagsRepo, err := data.NewFeatureFlagRepository(pool)
+	featureFlagsRepo, err := data.NewFeatureFlagRepository(appDB)
 	if err != nil {
 		t.Fatalf("new feature flags repo: %v", err)
 	}
@@ -85,11 +85,11 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new feature flag service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
@@ -149,7 +149,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	createdRunID := uuid.MustParse(runPayload.RunID)
 
 	var startedCount int
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		`SELECT COUNT(*) FROM run_events WHERE run_id = $1 AND type = 'run.started'`,
 		createdRunID,
 	).Scan(&startedCount); err != nil {
@@ -163,7 +163,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		startedSeq  int64
 		startedJSON []byte
 	)
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		`SELECT seq, data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		createdRunID,
 	).Scan(&startedSeq, &startedJSON); err != nil {
@@ -196,7 +196,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputRoute := decodeJSONBody[createRunResponse](t, runWithOutputRouteResp.Body.Bytes())
 	runWithOutputRouteID := uuid.MustParse(runWithOutputRoute.RunID)
 	var startedJSONWithOutputRoute []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputRouteID,
@@ -216,7 +216,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 
 	threadOrgID := uuid.MustParse(threadPayload.OrgID)
 	var outputCredentialID uuid.UUID
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`INSERT INTO llm_credentials (org_id, provider, name)
 		 VALUES ($1, 'anthropic', 'hybrid-output-cred')
@@ -226,7 +226,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("create output credential: %v", err)
 	}
 	var outputRouteFromAgent uuid.UUID
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ($1, $2, 'claude-3-5-haiku', 120, true, '{}'::jsonb, 1.0)
@@ -238,7 +238,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 
 	var gptCredentialID uuid.UUID
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`INSERT INTO llm_credentials (org_id, provider, name)
 		 VALUES ($1, 'openai', 'gpt-output-cred')
@@ -248,7 +248,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("create gpt output credential: %v", err)
 	}
 	var outputRouteFromModel uuid.UUID
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`INSERT INTO llm_routes (id, org_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ('11111111-1111-1111-1111-111111111111', $1, $2, 'gpt-5', 120, true, '{}'::jsonb, 1.0)
@@ -259,7 +259,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("create output route for bare model selector: %v", err)
 	}
 
-	if _, err := pool.Exec(
+	if _, err := appDB.Exec(
 		ctx,
 		`INSERT INTO platform_settings (key, value, updated_at)
 		 VALUES ('search_hybrid_output_models', $1, now())
@@ -285,7 +285,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModel := decodeJSONBody[createRunResponse](t, runWithOutputModelResp.Body.Bytes())
 	runWithOutputModelID := uuid.MustParse(runWithOutputModel.RunID)
 	var startedJSONWithOutputModel []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelID,
@@ -320,7 +320,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithBothOutput := decodeJSONBody[createRunResponse](t, runWithBothOutputResp.Body.Bytes())
 	runWithBothOutputID := uuid.MustParse(runWithBothOutput.RunID)
 	var startedJSONWithBothOutput []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithBothOutputID,
@@ -354,7 +354,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelFromAgentName := decodeJSONBody[createRunResponse](t, runWithOutputModelFromAgentNameResp.Body.Bytes())
 	runWithOutputModelFromAgentNameID := uuid.MustParse(runWithOutputModelFromAgentName.RunID)
 	var startedJSONWithOutputModelFromAgentName []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelFromAgentNameID,
@@ -389,7 +389,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelEnv := decodeJSONBody[createRunResponse](t, runWithOutputModelEnvResp.Body.Bytes())
 	runWithOutputModelEnvID := uuid.MustParse(runWithOutputModelEnv.RunID)
 	var startedJSONWithOutputModelEnv []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelEnvID,
@@ -424,7 +424,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelNoMapping := decodeJSONBody[createRunResponse](t, runWithOutputModelNoMappingResp.Body.Bytes())
 	runWithOutputModelNoMappingID := uuid.MustParse(runWithOutputModelNoMapping.RunID)
 	var startedJSONWithOutputModelNoMapping []byte
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelNoMappingID,
@@ -469,7 +469,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		jobType    string
 		jobPayload []byte
 	)
-	if err := pool.QueryRow(
+	if err := appDB.QueryRow(
 		ctx,
 		`SELECT id, job_type, payload_json
 		 FROM jobs
@@ -567,7 +567,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 
 	var cancelRequestedCount int
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		`SELECT COUNT(*) FROM run_events WHERE run_id = $1 AND type = 'run.cancel_requested'`,
 		createdRunID,
 	).Scan(&cancelRequestedCount); err != nil {
@@ -592,7 +592,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	denyGet := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID, nil, authHeader(bob.AccessToken))
 	assertErrorEnvelope(t, denyGet, nethttp.StatusForbidden, "policy.denied")
 
-	deniedCount, err := countDeniedAudit(ctx, pool, "runs.get", "org_mismatch")
+	deniedCount, err := countDeniedAudit(ctx, appDB, "runs.get", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -605,11 +605,11 @@ func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs_claw_default")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -622,35 +622,35 @@ func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(pool)
+	runRepo, err := data.NewRunEventRepository(appDB)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
@@ -659,11 +659,11 @@ func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -671,7 +671,7 @@ func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
@@ -711,7 +711,7 @@ func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
 	loadStarted := func(runID string) map[string]any {
 		t.Helper()
 		var startedJSON []byte
-		if err := pool.QueryRow(ctx,
+		if err := appDB.QueryRow(ctx,
 			`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 			uuid.MustParse(runID),
 		).Scan(&startedJSON); err != nil {
@@ -765,11 +765,11 @@ func TestStreamRunEvents(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_sse")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -782,35 +782,35 @@ func TestStreamRunEvents(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(pool)
+	runRepo, err := data.NewRunEventRepository(appDB)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
@@ -819,11 +819,11 @@ func TestStreamRunEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -831,7 +831,7 @@ func TestStreamRunEvents(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -974,11 +974,11 @@ func TestListGlobalRuns(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_global_runs")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -991,35 +991,35 @@ func TestListGlobalRuns(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(pool)
+	projectRepo, err := data.NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(pool)
+	runRepo, err := data.NewRunEventRepository(appDB)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
@@ -1028,11 +1028,11 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -1040,7 +1040,7 @@ func TestListGlobalRuns(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
@@ -1076,7 +1076,7 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse run id: %v", err)
 	}
-	_, err = pool.Exec(ctx, "UPDATE runs SET model = $1, persona_id = $2 WHERE id = $3", "gpt-4o-mini", "ops-trace", runID)
+	_, err = appDB.Exec(ctx, "UPDATE runs SET model = $1, persona_id = $2 WHERE id = $3", "gpt-4o-mini", "ops-trace", runID)
 	if err != nil {
 		t.Fatalf("seed run model/persona: %v", err)
 	}
@@ -1332,11 +1332,11 @@ func TestRunsClawFeatureFlagBlocksExistingRunAccess(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs_claw_flag")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -1348,24 +1348,24 @@ func TestRunsClawFeatureFlagBlocksExistingRunAccess(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(pool)
-	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	auditRepo, _ := data.NewAuditLogRepository(pool)
-	threadRepo, _ := data.NewThreadRepository(pool)
-	projectRepo, _ := data.NewProjectRepository(pool)
-	runRepo, _ := data.NewRunEventRepository(pool)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(pool)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	auditRepo, _ := data.NewAuditLogRepository(appDB)
+	threadRepo, _ := data.NewThreadRepository(appDB)
+	projectRepo, _ := data.NewProjectRepository(appDB)
+	runRepo, _ := data.NewRunEventRepository(appDB)
+	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(pool)
-	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	jobRepo, _ := data.NewJobRepository(appDB)
+	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                 pool,
+		DB:                appDB,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	apicrypto "arkloop/services/api/internal/crypto"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,12 +61,12 @@ func (c *effectiveToolCatalogCache) GetEnv(ctx context.Context) ([]toolCatalogIt
 	})
 }
 
-func (c *effectiveToolCatalogCache) GetOrg(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]toolCatalogItem, error) {
+func (c *effectiveToolCatalogCache) GetOrg(ctx context.Context, db database.DB, orgID uuid.UUID) ([]toolCatalogItem, error) {
 	if orgID == uuid.Nil {
 		return nil, nil
 	}
 	return c.get(ctx, orgID.String(), func(context.Context) ([]toolCatalogItem, error) {
-		servers, err := loadEffectiveMCPConfigFromDB(ctx, pool, orgID)
+		servers, err := loadEffectiveMCPConfigFromDB(ctx, db, orgID)
 		if err != nil {
 			return nil, err
 		}
@@ -226,14 +227,14 @@ func loadEffectiveMCPConfigFromEnv() ([]effectiveMCPServerConfig, error) {
 	return servers, nil
 }
 
-func loadEffectiveMCPConfigFromDB(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID) ([]effectiveMCPServerConfig, error) {
-	if pool == nil || orgID == uuid.Nil {
+func loadEffectiveMCPConfigFromDB(ctx context.Context, db database.DB, orgID uuid.UUID) ([]effectiveMCPServerConfig, error) {
+	if db == nil || orgID == uuid.Nil {
 		return nil, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT m.name, m.transport, m.url, m.command,
 		       m.args_json, m.cwd, m.env_json, m.call_timeout_ms,
 		       s.encrypted_value, s.key_version

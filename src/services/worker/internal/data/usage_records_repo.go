@@ -5,8 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 // UsageRecordsRepository 在 Worker 侧写入 usage_records，与 RunsRepository 风格一致（零值可用）。
@@ -15,7 +14,7 @@ type UsageRecordsRepository struct{}
 // Insert 在已有事务内写入 usage_records，ON CONFLICT (run_id, usage_type) 时用最新值更新（幂等）。
 func (UsageRecordsRepository) Insert(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	orgID, runID uuid.UUID,
 	model string,
 	inputTokens, outputTokens int64,
@@ -50,7 +49,7 @@ func (UsageRecordsRepository) Insert(
 // costUSD <= 0 时跳过写入。
 func (UsageRecordsRepository) InsertMemoryUsage(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID, runID uuid.UUID,
 	costUSD float64,
 ) error {

@@ -8,8 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 // MemoryHitCache 是 memory.MemoryHit 的存储形式，避免 data 包依赖 memory 包。
@@ -24,7 +23,7 @@ type MemoryHitCache struct {
 type MemorySnapshotRepository struct{}
 
 // Get 读取用户记忆快照。未找到时返回 ("", false, nil)。
-func (MemorySnapshotRepository) Get(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID string) (string, bool, error) {
+func (MemorySnapshotRepository) Get(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID string) (string, bool, error) {
 	var block string
 	err := pool.QueryRow(ctx,
 		`SELECT memory_block FROM user_memory_snapshots
@@ -32,7 +31,7 @@ func (MemorySnapshotRepository) Get(ctx context.Context, pool *pgxpool.Pool, org
 		orgID, userID, agentID,
 	).Scan(&block)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", false, nil
 		}
 		return "", false, err
@@ -41,7 +40,7 @@ func (MemorySnapshotRepository) Get(ctx context.Context, pool *pgxpool.Pool, org
 }
 
 // GetHits 读取缓存的 raw hits JSON。未找到或列为空时返回 (nil, false, nil)。
-func (MemorySnapshotRepository) GetHits(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID string) ([]MemoryHitCache, bool, error) {
+func (MemorySnapshotRepository) GetHits(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID string) ([]MemoryHitCache, bool, error) {
 	var raw []byte
 	err := pool.QueryRow(ctx,
 		`SELECT hits_json FROM user_memory_snapshots
@@ -49,7 +48,7 @@ func (MemorySnapshotRepository) GetHits(ctx context.Context, pool *pgxpool.Pool,
 		orgID, userID, agentID,
 	).Scan(&raw)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -62,7 +61,7 @@ func (MemorySnapshotRepository) GetHits(ctx context.Context, pool *pgxpool.Pool,
 }
 
 // Upsert 写入或覆盖用户记忆快照。
-func (MemorySnapshotRepository) Upsert(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID, memoryBlock string) error {
+func (MemorySnapshotRepository) Upsert(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string) error {
 	_, err := pool.Exec(ctx,
 		`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, updated_at)
 		 VALUES ($1, $2, $3, $4, now())
@@ -74,7 +73,7 @@ func (MemorySnapshotRepository) Upsert(ctx context.Context, pool *pgxpool.Pool, 
 }
 
 // UpsertWithHits 同时写入渲染后的 memory_block 和原始 hits JSON。
-func (MemorySnapshotRepository) UpsertWithHits(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID, memoryBlock string, hits []MemoryHitCache) error {
+func (MemorySnapshotRepository) UpsertWithHits(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string, hits []MemoryHitCache) error {
 	hitsJSON, err := json.Marshal(hits)
 	if err != nil {
 		return err
@@ -90,7 +89,7 @@ func (MemorySnapshotRepository) UpsertWithHits(ctx context.Context, pool *pgxpoo
 }
 
 // AppendMemoryLine 原子追加一条 memory 行，避免并发写互相覆盖。
-func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID, line string) error {
+func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, line string) error {
 	if pool == nil {
 		return fmt.Errorf("snapshot pool must not be nil")
 	}
@@ -99,7 +98,7 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool *pgxp
 		return fmt.Errorf("snapshot line must not be empty")
 	}
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -115,7 +114,7 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool *pgxp
 		orgID, userID, agentID,
 	).Scan(&block)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, database.ErrNoRows) {
 			return err
 		}
 		tag, execErr := tx.Exec(ctx,

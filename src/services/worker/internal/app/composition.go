@@ -9,6 +9,8 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/objectstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -46,13 +48,18 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ctx = context.Background()
 	}
 
+	var db database.DB
+	if pool != nil {
+		db = pgadapter.New(pool)
+	}
+
 	configRegistry := sharedconfig.DefaultRegistry()
 	var configCache sharedconfig.Cache
 	configCacheTTL := sharedconfig.CacheTTLFromEnv()
 	if rdb != nil && configCacheTTL > 0 {
 		configCache = sharedconfig.NewRedisCache(rdb)
 	}
-	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, configCacheTTL)
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(db), configCache, configCacheTTL)
 
 	routingCfg, err := loadRoutingConfig(ctx, pool)
 	if err != nil {
@@ -155,13 +162,13 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		runtimeManager.StartToolProviderInvalidationListener(ctx, directPool)
 	}
 
-	sandboxExecutorFactory := workerruntime.NewSandboxExecutorFactory(pool)
+	sandboxExecutorFactory := workerruntime.NewSandboxExecutorFactory(db)
 	dynamicSandboxExec := workerruntime.NewDynamicSandboxExecutor(runtimeManager, sandboxExecutorFactory)
 	var sandboxExec tools.Executor = dynamicSandboxExec
 	if pool != nil {
 		billingCfg := resolveSandboxBillingConfig(ctx, configResolver)
-		entResolver := sharedent.NewResolver(pool, rdb)
-		sandboxExec = sandboxtool.NewBillingExecutor(dynamicSandboxExec, pool, entResolver, billingCfg)
+		entResolver := sharedent.NewResolver(db, rdb)
+		sandboxExec = sandboxtool.NewBillingExecutor(dynamicSandboxExec, db, entResolver, billingCfg)
 	}
 	for _, spec := range sandboxtool.AgentSpecs() {
 		executors[spec.Name] = sandboxExec
@@ -169,14 +176,14 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	executors[sandboxtool.BrowserSpec.Name] = dynamicSandboxExec
 
 	memoryProviderFactory := workerruntime.NewMemoryProviderFactory()
-	memoryExecutorFactory := workerruntime.NewMemoryExecutorFactory(pool, data.MemorySnapshotRepository{})
+	memoryExecutorFactory := workerruntime.NewMemoryExecutorFactory(db, data.MemorySnapshotRepository{})
 	dynamicMemoryExec := workerruntime.NewDynamicMemoryExecutor(runtimeManager, memoryProviderFactory, memoryExecutorFactory)
 	for _, spec := range memorytool.AgentSpecs() {
 		executors[spec.Name] = dynamicMemoryExec
 	}
 
 	if pool != nil {
-		convExecutor := conversationtool.NewToolExecutor(pool, data.MessagesRepository{})
+		convExecutor := conversationtool.NewToolExecutor(db, data.MessagesRepository{})
 		for _, spec := range conversationtool.AgentSpecs() {
 			if err := toolRegistry.Register(spec); err != nil {
 				return nil, err
@@ -198,7 +205,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	var toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
 	if pool != nil {
-		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(pool)
+		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(db)
 		if err != nil {
 			return nil, err
 		}

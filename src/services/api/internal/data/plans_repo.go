@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Plan struct {
@@ -63,7 +63,7 @@ func (r *PlanRepository) GetByID(ctx context.Context, id uuid.UUID) (*Plan, erro
 		`SELECT id, name, display_name, created_at FROM plans WHERE id = $1`,
 		id,
 	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -79,7 +79,7 @@ func (r *PlanRepository) GetByName(ctx context.Context, name string) (*Plan, err
 		`SELECT id, name, display_name, created_at FROM plans WHERE name = $1`,
 		name,
 	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

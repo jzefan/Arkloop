@@ -10,8 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 const (
@@ -57,7 +56,7 @@ type ShellSessionsRepository struct{}
 
 func (ShellSessionsRepository) GetBySessionRef(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 ) (ShellSessionRecord, error) {
@@ -66,7 +65,7 @@ func (ShellSessionsRepository) GetBySessionRef(
 
 func (ShellSessionsRepository) GetBySessionRefAndType(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	sessionType string,
@@ -76,7 +75,7 @@ func (ShellSessionsRepository) GetBySessionRefAndType(
 
 func (ShellSessionsRepository) GetLatestByRun(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	runID uuid.UUID,
 ) (ShellSessionRecord, error) {
@@ -85,7 +84,7 @@ func (ShellSessionsRepository) GetLatestByRun(
 
 func (ShellSessionsRepository) GetLatestByRunAndType(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	runID uuid.UUID,
 	sessionType string,
@@ -141,7 +140,7 @@ func (ShellSessionsRepository) GetLatestByRunAndType(
 
 func (ShellSessionsRepository) GetByDefaultBindingKey(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
@@ -151,7 +150,7 @@ func (ShellSessionsRepository) GetByDefaultBindingKey(
 
 func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
@@ -214,7 +213,7 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 
 func (ShellSessionsRepository) Upsert(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	record ShellSessionRecord,
 ) error {
 	if ctx == nil {
@@ -227,7 +226,7 @@ func (ShellSessionsRepository) Upsert(
 	if err != nil {
 		return err
 	}
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -304,7 +303,7 @@ func (ShellSessionsRepository) Upsert(
 
 func (ShellSessionsRepository) Touch(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 ) error {
@@ -313,7 +312,7 @@ func (ShellSessionsRepository) Touch(
 
 func (ShellSessionsRepository) TouchLastUsed(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 ) error {
@@ -345,7 +344,7 @@ func (ShellSessionsRepository) TouchLastUsed(
 
 func (ShellSessionsRepository) UpdateRestoreRevision(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	revision string,
@@ -381,7 +380,7 @@ func (ShellSessionsRepository) UpdateRestoreRevision(
 
 func (ShellSessionsRepository) SetDefaultBindingKey(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	defaultBindingKey string,
@@ -417,7 +416,7 @@ func (ShellSessionsRepository) SetDefaultBindingKey(
 
 func (ShellSessionsRepository) ClearLiveSession(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 ) error {
@@ -454,7 +453,7 @@ func (ShellSessionsRepository) ClearLiveSession(
 
 func (ShellSessionsRepository) AcquireWriterLease(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	ownerID string,
@@ -465,7 +464,7 @@ func (ShellSessionsRepository) AcquireWriterLease(
 
 func (ShellSessionsRepository) RenewWriterLease(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	ownerID string,
@@ -476,7 +475,7 @@ func (ShellSessionsRepository) RenewWriterLease(
 
 func (ShellSessionsRepository) ReleaseWriterLease(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	ownerID string,
@@ -524,7 +523,7 @@ func (ShellSessionsRepository) ReleaseWriterLease(
 
 func (ShellSessionsRepository) ClearFinishedWriterLease(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 ) error {
@@ -567,7 +566,7 @@ func (ShellSessionsRepository) ClearFinishedWriterLease(
 
 func (ShellSessionsRepository) SetState(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	state string,
@@ -602,7 +601,7 @@ func (ShellSessionsRepository) SetState(
 
 func (ShellSessionsRepository) GetLiveSessionRefsByRun(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	runID uuid.UUID,
 ) ([]string, error) {
@@ -693,7 +692,7 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	return record, nil
 }
 
-func getShellSessionByType(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, sessionRef string, sessionType string) (ShellSessionRecord, error) {
+func getShellSessionByType(ctx context.Context, pool database.DB, orgID uuid.UUID, sessionRef string, sessionType string) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -778,7 +777,7 @@ func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord,
 }
 
 type defaultBindingKeyQuerier interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error)
 }
 
 func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord) error {
@@ -858,7 +857,7 @@ func ShellDefaultBindingKeyForWorkspace(workspaceRef string) string {
 }
 
 func IsShellSessionNotFound(err error) bool {
-	return err != nil && err == pgx.ErrNoRows
+	return err != nil && err == database.ErrNoRows
 }
 
 func IsShellSessionLeaseConflict(err error) bool {
@@ -867,7 +866,7 @@ func IsShellSessionLeaseConflict(err error) bool {
 
 func acquireWriterLease(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	sessionRef string,
 	ownerID string,
@@ -943,13 +942,13 @@ func acquireWriterLease(
 	if err == nil {
 		return record, nil
 	}
-	if err != pgx.ErrNoRows {
+	if err != database.ErrNoRows {
 		return ShellSessionRecord{}, err
 	}
 	return ShellSessionRecord{}, detectShellSessionLeaseConflict(ctx, pool, orgID, sessionRef)
 }
 
-func detectShellSessionLeaseConflict(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, sessionRef string) error {
+func detectShellSessionLeaseConflict(ctx context.Context, pool database.DB, orgID uuid.UUID, sessionRef string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -10,9 +10,9 @@ import (
 	datarepo "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -26,23 +26,23 @@ const (
 )
 
 type snapshotAppender interface {
-	AppendMemoryLine(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID, agentID, line string) error
+	AppendMemoryLine(ctx context.Context, db database.DB, orgID, userID uuid.UUID, agentID, line string) error
 }
 
 // ToolExecutor 实现 tools.Executor，将 memory_search/read/write/forget 分发到 MemoryProvider。
 type ToolExecutor struct {
 	provider  memory.MemoryProvider
-	pool      *pgxpool.Pool
+	db        database.DB
 	snapshots snapshotAppender
 }
 
-func NewToolExecutor(provider memory.MemoryProvider, pool *pgxpool.Pool, snapshots snapshotAppender) *ToolExecutor {
+func NewToolExecutor(provider memory.MemoryProvider, db database.DB, snapshots snapshotAppender) *ToolExecutor {
 	if snapshots == nil {
 		snapshots = datarepo.MemorySnapshotRepository{}
 	}
 	return &ToolExecutor{
 		provider:  provider,
-		pool:      pool,
+		db:        db,
 		snapshots: snapshots,
 	}
 }
@@ -141,7 +141,7 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 	if execCtx.PendingMemoryWrites == nil {
 		return stateError("pending memory buffer not available", started)
 	}
-	if e.pool == nil {
+	if e.db == nil {
 		return stateError("snapshot pool not available", started)
 	}
 	if e.snapshots == nil {
@@ -164,7 +164,7 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 	scope := parseScope(args)
 	writable := buildWritableContent(scope, category, key, content)
 	entry := memory.MemoryEntry{Content: writable}
-	if err := e.snapshots.AppendMemoryLine(ctx, e.pool, ident.OrgID, ident.UserID, ident.AgentID, writable); err != nil {
+	if err := e.snapshots.AppendMemoryLine(ctx, e.db, ident.OrgID, ident.UserID, ident.AgentID, writable); err != nil {
 		return snapshotError(err, started)
 	}
 

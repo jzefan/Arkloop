@@ -22,11 +22,11 @@ func TestRBACPermissions(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_rbac")
 	ctx := context.Background()
 
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -38,31 +38,31 @@ func TestRBACPermissions(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(pool)
+	threadRepo, err := data.NewThreadRepository(appDB)
 	if err != nil {
 		t.Fatalf("thread repo: %v", err)
 	}
-	invitationsRepo, err := data.NewOrgInvitationsRepository(pool)
+	invitationsRepo, err := data.NewOrgInvitationsRepository(appDB)
 	if err != nil {
 		t.Fatalf("invitations repo: %v", err)
 	}
@@ -71,18 +71,18 @@ func TestRBACPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -118,19 +118,19 @@ func TestRBACPermissions(t *testing.T) {
 
 	// 查询两人各自的 org_id
 	var orgAID, orgBID string
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		"SELECT org_id FROM org_memberships WHERE user_id = $1", userAID,
 	).Scan(&orgAID); err != nil {
 		t.Fatalf("get orgA id: %v", err)
 	}
-	if err := pool.QueryRow(ctx,
+	if err := appDB.QueryRow(ctx,
 		"SELECT org_id FROM org_memberships WHERE user_id = $1", userBID,
 	).Scan(&orgBID); err != nil {
 		t.Fatalf("get orgB id: %v", err)
 	}
 
 	// 将 B 在 orgB 的角色降为 "member"，模拟受邀普通成员
-	if _, err := pool.Exec(ctx,
+	if _, err := appDB.Exec(ctx,
 		"UPDATE org_memberships SET role = 'member' WHERE user_id = $1", userBID,
 	); err != nil {
 		t.Fatalf("demote B: %v", err)
@@ -231,7 +231,7 @@ func TestRBACPermissions(t *testing.T) {
 	assertErrorEnvelope(t, memberRevoke, nethttp.StatusForbidden, "auth.forbidden")
 
 	// 场景 8：未知角色（无任何权限）无法执行任何邀请操作
-	if _, err := pool.Exec(ctx,
+	if _, err := appDB.Exec(ctx,
 		"UPDATE org_memberships SET role = 'legacy_role' WHERE user_id = $1", userBID,
 	); err != nil {
 		t.Fatalf("set legacy role: %v", err)

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	workerCrypto "arkloop/services/worker/internal/crypto"
 
 	"github.com/google/uuid"
@@ -102,7 +104,11 @@ func LoadActiveOrgProviders(ctx context.Context, pool *pgxpool.Pool, orgID uuid.
 }
 
 func LoadActivePlatformProviders(ctx context.Context, pool *pgxpool.Pool) ([]ActiveProviderConfig, error) {
-	providers, err := sharedtoolruntime.LoadPlatformProviders(ctx, pool, decryptPlatformProviderSecret)
+	var db database.DB
+	if pool != nil {
+		db = pgadapter.New(pool)
+	}
+	providers, err := sharedtoolruntime.LoadPlatformProviders(ctx, db, decryptPlatformProviderSecret)
 	if err != nil {
 		return nil, err
 	}
