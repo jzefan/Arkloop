@@ -52,7 +52,16 @@ type ShellSessionRecord struct {
 	UpdatedAt         time.Time
 }
 
-type ShellSessionsRepository struct{}
+type ShellSessionsRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r ShellSessionsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 func (ShellSessionsRepository) GetBySessionRef(
 	ctx context.Context,
@@ -211,7 +220,7 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 	))
 }
 
-func (ShellSessionsRepository) Upsert(
+func (r ShellSessionsRepository) Upsert(
 	ctx context.Context,
 	pool database.DB,
 	record ShellSessionRecord,
@@ -231,13 +240,13 @@ func (ShellSessionsRepository) Upsert(
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := clearCompetingDefaultBindingKeys(ctx, tx, normalized); err != nil {
+	if err := clearCompetingDefaultBindingKeys(ctx, tx, normalized, r.dialect()); err != nil {
 		return err
 	}
 
 	_, err = tx.Exec(
 		ctx,
-		`INSERT INTO shell_sessions (
+		fmt.Sprintf(`INSERT INTO shell_sessions (
 			session_ref,
 			session_type,
 			org_id,
@@ -257,7 +266,7 @@ func (ShellSessionsRepository) Upsert(
 			last_used_at,
 			metadata_json
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), $17::jsonb
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, %s, %s
 		)
 		ON CONFLICT (session_ref) DO UPDATE SET
 			session_type = EXCLUDED.session_type,
@@ -274,9 +283,9 @@ func (ShellSessionsRepository) Upsert(
 			lease_owner_id = EXCLUDED.lease_owner_id,
 			lease_until = EXCLUDED.lease_until,
 			lease_epoch = EXCLUDED.lease_epoch,
-			last_used_at = now(),
+			last_used_at = %s,
 			metadata_json = EXCLUDED.metadata_json,
-			updated_at = now()`,
+			updated_at = %s`, r.dialect().Now(), r.dialect().JSONCast("$17"), r.dialect().Now(), r.dialect().Now()),
 		normalized.SessionRef,
 		normalized.SessionType,
 		normalized.OrgID,
@@ -310,7 +319,7 @@ func (ShellSessionsRepository) Touch(
 	return (ShellSessionsRepository{}).TouchLastUsed(ctx, pool, orgID, sessionRef)
 }
 
-func (ShellSessionsRepository) TouchLastUsed(
+func (r ShellSessionsRepository) TouchLastUsed(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -331,18 +340,18 @@ func (ShellSessionsRepository) TouchLastUsed(
 	}
 	_, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
-		    SET last_used_at = now(),
-		        updated_at = now()
+		fmt.Sprintf(`UPDATE shell_sessions
+		    SET last_used_at = %s,
+		        updated_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 	)
 	return err
 }
 
-func (ShellSessionsRepository) UpdateRestoreRevision(
+func (r ShellSessionsRepository) UpdateRestoreRevision(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -365,12 +374,12 @@ func (ShellSessionsRepository) UpdateRestoreRevision(
 	}
 	_, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET latest_restore_rev = NULLIF($3, ''),
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		revision,
@@ -378,7 +387,7 @@ func (ShellSessionsRepository) UpdateRestoreRevision(
 	return err
 }
 
-func (ShellSessionsRepository) SetDefaultBindingKey(
+func (r ShellSessionsRepository) SetDefaultBindingKey(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -401,12 +410,12 @@ func (ShellSessionsRepository) SetDefaultBindingKey(
 	}
 	_, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET default_binding_key = NULLIF($3, ''),
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		defaultBindingKey,
@@ -414,7 +423,7 @@ func (ShellSessionsRepository) SetDefaultBindingKey(
 	return err
 }
 
-func (ShellSessionsRepository) ClearLiveSession(
+func (r ShellSessionsRepository) ClearLiveSession(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -435,15 +444,15 @@ func (ShellSessionsRepository) ClearLiveSession(
 	}
 	_, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET live_session_id = NULL,
 		        lease_owner_id = NULL,
 		        lease_until = NULL,
 		        state = $3,
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		ShellSessionStateReady,
@@ -451,7 +460,7 @@ func (ShellSessionsRepository) ClearLiveSession(
 	return err
 }
 
-func (ShellSessionsRepository) AcquireWriterLease(
+func (r ShellSessionsRepository) AcquireWriterLease(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -459,10 +468,10 @@ func (ShellSessionsRepository) AcquireWriterLease(
 	ownerID string,
 	leaseUntil time.Time,
 ) (ShellSessionRecord, error) {
-	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, false)
+	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, false, r.dialect())
 }
 
-func (ShellSessionsRepository) RenewWriterLease(
+func (r ShellSessionsRepository) RenewWriterLease(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -470,10 +479,10 @@ func (ShellSessionsRepository) RenewWriterLease(
 	ownerID string,
 	leaseUntil time.Time,
 ) (ShellSessionRecord, error) {
-	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, true)
+	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, true, r.dialect())
 }
 
-func (ShellSessionsRepository) ReleaseWriterLease(
+func (r ShellSessionsRepository) ReleaseWriterLease(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -499,14 +508,14 @@ func (ShellSessionsRepository) ReleaseWriterLease(
 	}
 	commandTag, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET lease_owner_id = NULL,
 		        lease_until = NULL,
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
 		    AND session_ref = $2
-		    AND lease_owner_id = $3`,
+		    AND lease_owner_id = $3`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		ownerID,
@@ -521,7 +530,7 @@ func (ShellSessionsRepository) ReleaseWriterLease(
 	return err
 }
 
-func (ShellSessionsRepository) ClearFinishedWriterLease(
+func (r ShellSessionsRepository) ClearFinishedWriterLease(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -542,14 +551,14 @@ func (ShellSessionsRepository) ClearFinishedWriterLease(
 	}
 	commandTag, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET lease_owner_id = NULL,
 		        lease_until = NULL,
 		        state = $3,
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		ShellSessionStateReady,
@@ -564,7 +573,7 @@ func (ShellSessionsRepository) ClearFinishedWriterLease(
 	return err
 }
 
-func (ShellSessionsRepository) SetState(
+func (r ShellSessionsRepository) SetState(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -586,12 +595,12 @@ func (ShellSessionsRepository) SetState(
 	}
 	_, err := pool.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET state = $3,
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
-		    AND session_ref = $2`,
+		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
 		orgID,
 		sessionRef,
 		normalizeShellSessionState(state),
@@ -780,22 +789,22 @@ type defaultBindingKeyQuerier interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error)
 }
 
-func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord) error {
+func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord, dialect database.DialectHelper) error {
 	if querier == nil || record.DefaultBindingKey == nil {
 		return nil
 	}
 	_, err := querier.Exec(
 		ctx,
-		`UPDATE shell_sessions
+		fmt.Sprintf(`UPDATE shell_sessions
 		    SET default_binding_key = NULL,
-		        updated_at = now(),
-		        last_used_at = now()
+		        updated_at = %s,
+		        last_used_at = %s
 		  WHERE org_id = $1
 		    AND profile_ref = $2
 		    AND session_type = $3
 		    AND default_binding_key = $4
 		    AND session_ref <> $5
-		    AND state <> $6`,
+		    AND state <> $6`, dialect.Now(), dialect.Now()),
 		record.OrgID,
 		record.ProfileRef,
 		record.SessionType,
@@ -872,6 +881,7 @@ func acquireWriterLease(
 	ownerID string,
 	leaseUntil time.Time,
 	renewOnly bool,
+	dialect database.DialectHelper,
 ) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -893,7 +903,7 @@ func acquireWriterLease(
 	if leaseUntil.IsZero() {
 		return ShellSessionRecord{}, fmt.Errorf("lease_until must not be zero")
 	}
-	query := `UPDATE shell_sessions
+	query := fmt.Sprintf(`UPDATE shell_sessions
 	    SET lease_owner_id = $3,
 	        lease_until = $4,
 	        lease_epoch = CASE
@@ -901,21 +911,21 @@ func acquireWriterLease(
 	            WHEN lease_owner_id = $3 THEN lease_epoch
 	            ELSE lease_epoch + 1
 	        END,
-	        updated_at = now(),
-	        last_used_at = now()
+	        updated_at = %s,
+	        last_used_at = %s
 	  WHERE org_id = $1
 	    AND session_ref = $2
 	    AND (
-	        lease_owner_id = $3`
+	        lease_owner_id = $3`, dialect.Now(), dialect.Now())
 	if renewOnly {
 		query += `
 	    )`
 	} else {
-		query += `
+		query += fmt.Sprintf(`
 	        OR lease_owner_id IS NULL
 	        OR lease_until IS NULL
-	        OR lease_until <= now()
-	    )`
+	        OR lease_until <= %s
+	    )`, dialect.Now())
 	}
 	query += `
 	RETURNING session_ref,

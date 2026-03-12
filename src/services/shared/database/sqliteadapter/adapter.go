@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"arkloop/services/shared/database"
 
@@ -156,7 +157,7 @@ func translateError(err error) error {
 		return nil
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return database.ErrNoRows
+		return fmt.Errorf("%w: %v", database.ErrNoRows, err)
 	}
 	return err
 }

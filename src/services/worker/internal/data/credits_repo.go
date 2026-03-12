@@ -10,11 +10,20 @@ import (
 )
 
 // CreditsRepository 在 Worker 侧扣减积分，与 UsageRecordsRepository 风格一致（零值可用）。
-type CreditsRepository struct{}
+type CreditsRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r CreditsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 // DeductStandalone 自管理事务的积分扣减，用于工具调用等需要立即扣减的场景。
 // metadata 可选，非 nil 时写入 credit_transactions.metadata（计算明细）。
-func (CreditsRepository) DeductStandalone(
+func (r CreditsRepository) DeductStandalone(
 	ctx context.Context,
 	pool interface{ Begin(context.Context) (database.Tx, error) },
 	orgID uuid.UUID,
@@ -35,7 +44,7 @@ func (CreditsRepository) DeductStandalone(
 	}
 	defer tx.Rollback(ctx)
 
-	if err := deductBalance(ctx, tx, orgID, amount); err != nil {
+	if err := deductBalance(ctx, tx, orgID, amount, r.dialect()); err != nil {
 		return fmt.Errorf("credits.DeductStandalone: %w", err)
 	}
 
@@ -47,7 +56,7 @@ func (CreditsRepository) DeductStandalone(
 
 // Deduct 在已有事务内原子扣减积分并写交易流水。
 // metadata 可选，非 nil 时写入 credit_transactions.metadata（计算明细）。
-func (CreditsRepository) Deduct(
+func (r CreditsRepository) Deduct(
 	ctx context.Context,
 	tx database.Tx,
 	orgID uuid.UUID,
@@ -59,7 +68,7 @@ func (CreditsRepository) Deduct(
 		return nil
 	}
 
-	if err := deductBalance(ctx, tx, orgID, amount); err != nil {
+	if err := deductBalance(ctx, tx, orgID, amount, r.dialect()); err != nil {
 		return fmt.Errorf("credits.Deduct: %w", err)
 	}
 
@@ -69,10 +78,10 @@ func (CreditsRepository) Deduct(
 	return nil
 }
 
-func deductBalance(ctx context.Context, tx database.Tx, orgID uuid.UUID, amount int64) error {
+func deductBalance(ctx context.Context, tx database.Tx, orgID uuid.UUID, amount int64, dialect database.DialectHelper) error {
 	tag, err := tx.Exec(ctx,
-		`UPDATE credits SET balance = balance - $1, updated_at = now()
-		 WHERE org_id = $2 AND balance >= $1`,
+		fmt.Sprintf(`UPDATE credits SET balance = balance - $1, updated_at = %s
+		 WHERE org_id = $2 AND balance >= $1`, dialect.Now()),
 		amount, orgID,
 	)
 	if err != nil {
@@ -80,7 +89,7 @@ func deductBalance(ctx context.Context, tx database.Tx, orgID uuid.UUID, amount 
 	}
 	if tag.RowsAffected() == 0 {
 		_, err = tx.Exec(ctx,
-			`UPDATE credits SET balance = 0, updated_at = now() WHERE org_id = $1 AND balance > 0`,
+			fmt.Sprintf(`UPDATE credits SET balance = 0, updated_at = %s WHERE org_id = $1 AND balance > 0`, dialect.Now()),
 			orgID,
 		)
 		if err != nil {

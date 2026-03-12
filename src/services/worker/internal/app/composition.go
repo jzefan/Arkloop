@@ -187,7 +187,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	}
 
 	if pool != nil {
-		convExecutor := conversationtool.NewToolExecutor(db, data.MessagesRepository{})
+		convExecutor := conversationtool.NewToolExecutor(db, data.MessagesRepository{Dialect: database.PostgresDialect{}})
 		for _, spec := range conversationtool.AgentSpecs() {
 			if err := toolRegistry.Register(spec); err != nil {
 				return nil, err
@@ -266,6 +266,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		EventBus:                     bus,
 		LlmRetryMaxAttempts:          llmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:          llmRetryBaseDelayMs,
+		Dialect:                      database.PostgresDialect{},
 		RuntimeManager:               runtimeManager,
 		MemoryProviderFactory:        memoryProviderFactory,
 		RoutingConfigLoader:          routingLoader,

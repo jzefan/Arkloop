@@ -15,7 +15,16 @@ const (
 	BindingScopeThread  = "thread"
 )
 
-type DefaultWorkspaceBindingsRepository struct{}
+type DefaultWorkspaceBindingsRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r DefaultWorkspaceBindingsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	ctx context.Context,

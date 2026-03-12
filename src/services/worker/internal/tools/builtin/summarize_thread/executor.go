@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/eventbus"
 	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
@@ -48,6 +49,7 @@ var LlmSpec = llm.ToolSpec{
 type ToolExecutor struct {
 	Pool     *pgxpool.Pool
 	EventBus eventbus.EventBus
+	Dialect  database.DialectHelper
 }
 
 func (e *ToolExecutor) Execute(
@@ -103,7 +105,7 @@ func (e *ToolExecutor) Execute(
 	}
 
 	// 通过 run_events 表推送 SSE 通知
-	emitTitleEvent(ctx, e.Pool, e.EventBus, execCtx.RunID, *threadID, title)
+	emitTitleEvent(ctx, e.Pool, e.EventBus, execCtx.RunID, *threadID, title, e.Dialect)
 
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{
@@ -113,6 +115,13 @@ func (e *ToolExecutor) Execute(
 	}
 }
 
+func defaultDialect(d database.DialectHelper) database.DialectHelper {
+	if d != nil {
+		return d
+	}
+	return database.PostgresDialect{}
+}
+
 func emitTitleEvent(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -120,7 +129,10 @@ func emitTitleEvent(
 	runID uuid.UUID,
 	threadID uuid.UUID,
 	title string,
+	dialect database.DialectHelper,
 ) {
+	dialect = defaultDialect(dialect)
+
 	dataJSON := map[string]any{
 		"thread_id": threadID.String(),
 		"title":     title,
@@ -137,14 +149,13 @@ func emitTitleEvent(
 	defer tx.Rollback(ctx)
 
 	var seq int64
-	if err = tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq); err != nil {
+	seqSQL := fmt.Sprintf("SELECT %s", dialect.Sequence("run_events_seq_global"))
+	if err = tx.QueryRow(ctx, seqSQL).Scan(&seq); err != nil {
 		return
 	}
 
-	_, err = tx.Exec(ctx,
-		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, $4::jsonb)`,
-		runID, seq, "thread.title.updated", string(encoded),
-	)
+	insertSQL := fmt.Sprintf("INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, %s)", dialect.JSONCast("$4"))
+	_, err = tx.Exec(ctx, insertSQL, runID, seq, "thread.title.updated", string(encoded))
 	if err != nil {
 		return
 	}
@@ -153,8 +164,10 @@ func emitTitleEvent(
 		return
 	}
 
-	pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
-	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+	if dialect.Name() == database.DialectPostgres {
+		pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
+		_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+	}
 	if bus != nil {
 		rdbChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
 		_ = bus.Publish(ctx, rdbChannel, "ping")

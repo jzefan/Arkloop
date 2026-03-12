@@ -20,7 +20,16 @@ type MemoryHitCache struct {
 	IsLeaf      bool    `json:"is_leaf"`
 }
 
-type MemorySnapshotRepository struct{}
+type MemorySnapshotRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r MemorySnapshotRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 // Get 读取用户记忆快照。未找到时返回 ("", false, nil)。
 func (MemorySnapshotRepository) Get(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID string) (string, bool, error) {
@@ -61,35 +70,35 @@ func (MemorySnapshotRepository) GetHits(ctx context.Context, pool database.DB, o
 }
 
 // Upsert 写入或覆盖用户记忆快照。
-func (MemorySnapshotRepository) Upsert(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string) error {
+func (r MemorySnapshotRepository) Upsert(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string) error {
 	_, err := pool.Exec(ctx,
-		`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, updated_at)
-		 VALUES ($1, $2, $3, $4, now())
+		fmt.Sprintf(`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, updated_at)
+		 VALUES ($1, $2, $3, $4, %s)
 		 ON CONFLICT (org_id, user_id, agent_id)
-		 DO UPDATE SET memory_block = EXCLUDED.memory_block, updated_at = now()`,
+		 DO UPDATE SET memory_block = EXCLUDED.memory_block, updated_at = %s`, r.dialect().Now(), r.dialect().Now()),
 		orgID, userID, agentID, memoryBlock,
 	)
 	return err
 }
 
 // UpsertWithHits 同时写入渲染后的 memory_block 和原始 hits JSON。
-func (MemorySnapshotRepository) UpsertWithHits(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string, hits []MemoryHitCache) error {
+func (r MemorySnapshotRepository) UpsertWithHits(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, memoryBlock string, hits []MemoryHitCache) error {
 	hitsJSON, err := json.Marshal(hits)
 	if err != nil {
 		return err
 	}
 	_, err = pool.Exec(ctx,
-		`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, hits_json, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, now())
+		fmt.Sprintf(`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, hits_json, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, %s)
 		 ON CONFLICT (org_id, user_id, agent_id)
-		 DO UPDATE SET memory_block = EXCLUDED.memory_block, hits_json = EXCLUDED.hits_json, updated_at = now()`,
+		 DO UPDATE SET memory_block = EXCLUDED.memory_block, hits_json = EXCLUDED.hits_json, updated_at = %s`, r.dialect().Now(), r.dialect().Now()),
 		orgID, userID, agentID, memoryBlock, hitsJSON,
 	)
 	return err
 }
 
 // AppendMemoryLine 原子追加一条 memory 行，避免并发写互相覆盖。
-func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, line string) error {
+func (r MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool database.DB, orgID, userID uuid.UUID, agentID, line string) error {
 	if pool == nil {
 		return fmt.Errorf("snapshot pool must not be nil")
 	}
@@ -107,10 +116,13 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool datab
 	}()
 
 	var block string
+	forUpdate := r.dialect().ForUpdate()
+	if forUpdate != "" {
+		forUpdate = "\n		 " + forUpdate
+	}
 	err = tx.QueryRow(ctx,
-		`SELECT memory_block FROM user_memory_snapshots
-		 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3
-		 FOR UPDATE`,
+		fmt.Sprintf(`SELECT memory_block FROM user_memory_snapshots
+		 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3%s`, forUpdate),
 		orgID, userID, agentID,
 	).Scan(&block)
 	if err != nil {
@@ -118,9 +130,9 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool datab
 			return err
 		}
 		tag, execErr := tx.Exec(ctx,
-			`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, updated_at)
-			 VALUES ($1, $2, $3, $4, now())
-			 ON CONFLICT DO NOTHING`,
+			fmt.Sprintf(`INSERT INTO user_memory_snapshots (org_id, user_id, agent_id, memory_block, updated_at)
+			 VALUES ($1, $2, $3, $4, %s)
+			 ON CONFLICT DO NOTHING`, r.dialect().Now()),
 			orgID, userID, agentID, newMemoryBlock(cleanedLine),
 		)
 		if execErr != nil {
@@ -128,9 +140,8 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool datab
 		}
 		if tag.RowsAffected() == 0 {
 			err = tx.QueryRow(ctx,
-				`SELECT memory_block FROM user_memory_snapshots
-				 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3
-				 FOR UPDATE`,
+				fmt.Sprintf(`SELECT memory_block FROM user_memory_snapshots
+				 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3%s`, forUpdate),
 				orgID, userID, agentID,
 			).Scan(&block)
 			if err != nil {
@@ -138,9 +149,9 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool datab
 			}
 			updatedBlock := appendMemoryLineToBlock(block, cleanedLine)
 			if _, err := tx.Exec(ctx,
-				`UPDATE user_memory_snapshots
-				 SET memory_block = $4, updated_at = now()
-				 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3`,
+				fmt.Sprintf(`UPDATE user_memory_snapshots
+				 SET memory_block = $4, updated_at = %s
+				 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3`, r.dialect().Now()),
 				orgID, userID, agentID, updatedBlock,
 			); err != nil {
 				return err
@@ -151,9 +162,9 @@ func (MemorySnapshotRepository) AppendMemoryLine(ctx context.Context, pool datab
 
 	updatedBlock := appendMemoryLineToBlock(block, cleanedLine)
 	if _, err := tx.Exec(ctx,
-		`UPDATE user_memory_snapshots
-		 SET memory_block = $4, updated_at = now()
-		 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3`,
+		fmt.Sprintf(`UPDATE user_memory_snapshots
+		 SET memory_block = $4, updated_at = %s
+		 WHERE org_id = $1 AND user_id = $2 AND agent_id = $3`, r.dialect().Now()),
 		orgID, userID, agentID, updatedBlock,
 	); err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
@@ -17,7 +18,14 @@ import (
 
 const settingTitleSummarizerModel = "title_summarizer.model"
 
-func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stubGateway llm.Gateway, emitDebugEvents bool, loaders ...*routing.ConfigLoader) RunMiddleware {
+func defaultDialect(d database.DialectHelper) database.DialectHelper {
+	if d != nil {
+		return d
+	}
+	return database.PostgresDialect{}
+}
+
+func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stubGateway llm.Gateway, emitDebugEvents bool, dialect database.DialectHelper, loaders ...*routing.ConfigLoader) RunMiddleware {
 	var configLoader *routing.ConfigLoader
 	if len(loaders) > 0 {
 		configLoader = loaders[0]
@@ -49,13 +57,14 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stu
 		maxTokens := rc.TitleSummarizer.MaxTokens
 		llmMaxResponseBytes := rc.LlmMaxResponseBytes
 
+		d := defaultDialect(dialect)
 		go func() {
 			bgCtx := context.Background()
 			gateway, model := resolveTitleGateway(bgCtx, pool, orgID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
 			if gateway == nil {
 				return
 			}
-			generateTitle(pool, bus, gateway, runID, threadID, model, messages, prompt, maxTokens)
+			generateTitle(pool, bus, gateway, runID, threadID, model, messages, prompt, maxTokens, d)
 		}()
 
 		return next(ctx, rc)
@@ -130,6 +139,7 @@ func generateTitle(
 	messages []llm.Message,
 	prompt string,
 	maxTokens int,
+	dialect database.DialectHelper,
 ) {
 	ctx := context.Background()
 
@@ -186,7 +196,7 @@ func generateTitle(
 		return
 	}
 
-	emitTitleEvent(ctx, pool, bus, runID, threadID, title)
+	emitTitleEvent(ctx, pool, bus, runID, threadID, title, dialect)
 }
 
 func emitTitleEvent(
@@ -196,7 +206,10 @@ func emitTitleEvent(
 	runID uuid.UUID,
 	threadID uuid.UUID,
 	title string,
+	dialect database.DialectHelper,
 ) {
+	dialect = defaultDialect(dialect)
+
 	dataJSON := map[string]any{
 		"thread_id": threadID.String(),
 		"title":     title,
@@ -213,14 +226,13 @@ func emitTitleEvent(
 	defer tx.Rollback(ctx)
 
 	var seq int64
-	if err = tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq); err != nil {
+	seqSQL := fmt.Sprintf("SELECT %s", dialect.Sequence("run_events_seq_global"))
+	if err = tx.QueryRow(ctx, seqSQL).Scan(&seq); err != nil {
 		return
 	}
 
-	_, err = tx.Exec(ctx,
-		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, $4::jsonb)`,
-		runID, seq, "thread.title.updated", string(encoded),
-	)
+	insertSQL := fmt.Sprintf("INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, %s)", dialect.JSONCast("$4"))
+	_, err = tx.Exec(ctx, insertSQL, runID, seq, "thread.title.updated", string(encoded))
 	if err != nil {
 		return
 	}
@@ -229,8 +241,10 @@ func emitTitleEvent(
 		return
 	}
 
-	pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
-	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+	if dialect.Name() == database.DialectPostgres {
+		pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
+		_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+	}
 	if bus != nil {
 		rdbChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
 		_ = bus.Publish(ctx, rdbChannel, "ping")

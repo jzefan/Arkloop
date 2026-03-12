@@ -30,7 +30,16 @@ type Run struct {
 	WorkspaceRef    *string
 }
 
-type RunsRepository struct{}
+type RunsRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r RunsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 // UpdateRunMetadata 写入 runs.model / runs.persona_id，用于列表展示与筛选。
 func (RunsRepository) UpdateRunMetadata(
@@ -123,14 +132,17 @@ func (RunsRepository) UpdateEnvironmentBindings(
 	return nil
 }
 
-func (RunsRepository) LockRunRow(ctx context.Context, tx database.Tx, runID uuid.UUID) error {
+func (r RunsRepository) LockRunRow(ctx context.Context, tx database.Tx, runID uuid.UUID) error {
 	var ignored int
+	forUpdate := r.dialect().ForUpdate()
+	if forUpdate != "" {
+		forUpdate = " " + forUpdate
+	}
 	err := tx.QueryRow(
 		ctx,
-		`SELECT 1
+		fmt.Sprintf(`SELECT 1
 		 FROM runs
-		 WHERE id = $1
-		 FOR UPDATE`,
+		 WHERE id = $1%s`, forUpdate),
 		runID,
 	).Scan(&ignored)
 	if err != nil {
@@ -144,23 +156,29 @@ func (RunsRepository) LockRunRow(ctx context.Context, tx database.Tx, runID uuid
 
 // UpdateRunTerminalStatus 在终态事件提交时同步更新 runs 的生命周期字段。
 // 由 R30 的 eventWriter 在同一事务内调用。
-func (RunsRepository) UpdateRunTerminalStatus(
+func (r RunsRepository) UpdateRunTerminalStatus(
 	ctx context.Context,
 	tx database.Tx,
 	runID uuid.UUID,
 	u TerminalStatusUpdate,
 ) error {
+	var durationExpr string
+	if r.dialect().Name() == database.DialectSQLite {
+		durationExpr = fmt.Sprintf("(strftime('%%s', %s) - strftime('%%s', created_at)) * 1000", r.dialect().Now())
+	} else {
+		durationExpr = fmt.Sprintf("EXTRACT(EPOCH FROM (%s - created_at)) * 1000", r.dialect().Now())
+	}
 	tag, err := tx.Exec(ctx,
-		`UPDATE runs
+		fmt.Sprintf(`UPDATE runs
 		 SET status              = $2,
-		     status_updated_at   = now(),
-		     completed_at        = CASE WHEN $2 = 'completed' THEN now() ELSE completed_at END,
-		     failed_at           = CASE WHEN $2 = 'failed'    THEN now() ELSE failed_at    END,
-		     duration_ms         = EXTRACT(EPOCH FROM (now() - created_at)) * 1000,
+		     status_updated_at   = %s,
+		     completed_at        = CASE WHEN $2 = 'completed' THEN %s ELSE completed_at END,
+		     failed_at           = CASE WHEN $2 = 'failed'    THEN %s ELSE failed_at    END,
+		     duration_ms         = %s,
 		     total_input_tokens  = $3,
 		     total_output_tokens = $4,
 		     total_cost_usd      = $5
-		 WHERE id = $1`,
+		 WHERE id = $1`, r.dialect().Now(), r.dialect().Now(), r.dialect().Now(), durationExpr),
 		runID,
 		u.Status,
 		u.TotalInputTokens,
