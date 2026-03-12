@@ -32,8 +32,8 @@ import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionGovernancePage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
-import { ProjectsPage } from './pages/projects/ProjectsPage'
-import { ProjectProvider } from './contexts/ProjectContext'
+import { ModulesPage } from './pages/modules/ModulesPage'
+
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
@@ -106,9 +106,7 @@ function App() {
     <Routes>
       <Route
         element={(
-          <ProjectProvider accessToken={accessToken}>
-            <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
-          </ProjectProvider>
+          <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
         )}
       >
         <Route index element={<Navigate to="/dashboard" replace />} />
@@ -135,8 +133,7 @@ function App() {
         <Route path="captcha" element={<CaptchaPage />} />
         <Route path="gateway-config" element={<GatewayConfigPage />} />
         <Route path="access-log" element={<AccessLogPage />} />
-        {/* Workspace */}
-        <Route path="projects" element={<ProjectsPage />} />
+
         {/* Billing */}
         <Route path="plans" element={<PlaceholderPage title="Plans" />} />
         <Route path="subscriptions" element={<PlaceholderPage title="Subscriptions" />} />
@@ -152,6 +149,8 @@ function App() {
         <Route path="credits-admin" element={<CreditsAdminPage />} />
         <Route path="broadcasts" element={<BroadcastsPage />} />
         <Route path="email" element={<EmailPage />} />
+        {/* Infrastructure */}
+        <Route path="modules" element={<ModulesPage />} />
         {/* Redirects */}
         
         <Route path="tool-providers" element={<Navigate to="/tools" replace />} />

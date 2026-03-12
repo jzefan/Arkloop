@@ -275,7 +275,7 @@ func patchLlmProvider(
 	currentScope := data.LlmCredentialScopePlatform
 	current, err := service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
 	if err != nil {
-		currentScope = data.LlmCredentialScopeOrg
+		currentScope = data.LlmCredentialScopeProject
 		current, err = service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
 	}
 	if err != nil {
@@ -292,14 +292,26 @@ func patchLlmProvider(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "provider must be a string", traceID, nil)
 		return
 	}
+	if providerSet && providerText == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "provider cannot be null", traceID, nil)
+		return
+	}
 	nameText, nameSet, err := readOptionalString(body, "name")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name must be a string", traceID, nil)
 		return
 	}
+	if nameSet && nameText == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name cannot be null", traceID, nil)
+		return
+	}
 	apiKeyText, apiKeySet, err := readOptionalString(body, "api_key")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "api_key must be a string", traceID, nil)
+		return
+	}
+	if apiKeySet && apiKeyText == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "api_key cannot be null", traceID, nil)
 		return
 	}
 	baseURL, baseURLSet, err := readOptionalNullableString(body, "base_url")
@@ -334,11 +346,11 @@ func patchLlmProvider(
 		return
 	}
 	mergedProvider := current.Credential.Provider
-	if providerSet && providerText != nil {
+	if providerSet {
 		mergedProvider = strings.TrimSpace(*providerText)
 	}
 	mergedName := current.Credential.Name
-	if nameSet && nameText != nil {
+	if nameSet {
 		mergedName = strings.TrimSpace(*nameText)
 	}
 	mergedMode := current.Credential.OpenAIAPIMode
@@ -361,7 +373,7 @@ func patchLlmProvider(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider", traceID, nil)
 		return
 	}
-	if apiKeySet && apiKeyText != nil && strings.TrimSpace(*apiKeyText) == "" {
+	if apiKeySet && strings.TrimSpace(*apiKeyText) == "" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "api_key must not be empty", traceID, nil)
 		return
 	}
@@ -501,14 +513,26 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model must be a string", traceID, nil)
 		return
 	}
+	if modelSet && modelText == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model cannot be null", traceID, nil)
+		return
+	}
 	priority, prioritySet, err := readOptionalInt(body, "priority")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "priority must be an integer", traceID, nil)
 		return
 	}
+	if prioritySet && priority == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "priority cannot be null", traceID, nil)
+		return
+	}
 	isDefault, isDefaultSet, err := readOptionalBool(body, "is_default")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "is_default must be a boolean", traceID, nil)
+		return
+	}
+	if isDefaultSet && isDefault == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "is_default cannot be null", traceID, nil)
 		return
 	}
 	tags, tagsSet, err := readOptionalStringSlice(body, "tags")
@@ -534,7 +558,7 @@ func patchLlmProviderModel(
 	currentScope := data.LlmCredentialScopePlatform
 	provider, err := service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
 	if err != nil {
-		currentScope = data.LlmCredentialScopeOrg
+		currentScope = data.LlmCredentialScopeProject
 		provider, err = service.GetProvider(r.Context(), actor.OrgID, providerID, currentScope)
 	}
 	if err != nil {
@@ -573,7 +597,7 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "cost_per_1k_cache_read must be a number", traceID, nil)
 		return
 	}
-	if modelSet && modelText != nil && strings.TrimSpace(*modelText) == "" {
+	if modelSet && strings.TrimSpace(*modelText) == "" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model must not be empty", traceID, nil)
 		return
 	}
@@ -705,12 +729,11 @@ func resolveLlmProviderScope(
 	if scope == "" && bodyScope != nil {
 		scope = strings.TrimSpace(*bodyScope)
 	}
-	scope = normalizeRequestedProviderScope(scope)
 	if scope == "" {
 		scope = data.LlmCredentialScopePlatform
 	}
-	if scope != data.LlmCredentialScopeOrg && scope != data.LlmCredentialScopePlatform {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	if scope != data.LlmCredentialScopeProject && scope != data.LlmCredentialScopePlatform {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
 		return "", false
 	}
 	if scope == data.LlmCredentialScopePlatform {
@@ -729,12 +752,12 @@ func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 	name := strings.TrimSpace(req.Name)
 	provider := strings.TrimSpace(req.Provider)
 	apiKey := strings.TrimSpace(req.APIKey)
-	scope := normalizeRequestedProviderScope(strings.TrimSpace(req.Scope))
+	scope := strings.TrimSpace(req.Scope)
 	if name == "" || provider == "" || apiKey == "" {
 		return errors.New("name, provider and api_key are required")
 	}
-	if scope != "" && scope != data.LlmCredentialScopeOrg && scope != data.LlmCredentialScopePlatform {
-		return errors.New("scope must be org or platform")
+	if scope != "" && scope != data.LlmCredentialScopeProject && scope != data.LlmCredentialScopePlatform {
+		return errors.New("scope must be project or platform")
 	}
 	if strings.Contains(name, "^") {
 		return errors.New("name must not contain ^")
@@ -813,24 +836,6 @@ func writeLlmProviderServiceError(w nethttp.ResponseWriter, traceID string, err 
 	httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 }
 
-func normalizeRequestedProviderScope(scope string) string {
-	if scope == projectProviderScopeValue() {
-		return strings.Join([]string{"o", "rg"}, "")
-	}
-	return scope
-}
-
-func normalizeProviderResponseScope(scope string) string {
-	if strings.TrimSpace(scope) == data.LlmCredentialScopePlatform {
-		return data.LlmCredentialScopePlatform
-	}
-	return projectProviderScopeValue()
-}
-
-func projectProviderScopeValue() string {
-	return "project"
-}
-
 func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 	models := make([]llmProviderModelResponse, 0, len(provider.Models))
 	for _, model := range provider.Models {
@@ -844,7 +849,7 @@ func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 	return llmProviderResponse{
 		ID:            provider.Credential.ID.String(),
 		OrgID:         orgID,
-		Scope:         normalizeProviderResponseScope(provider.Credential.Scope),
+		Scope:         provider.Credential.Scope,
 		Provider:      provider.Credential.Provider,
 		Name:          provider.Credential.Name,
 		KeyPrefix:     provider.Credential.KeyPrefix,

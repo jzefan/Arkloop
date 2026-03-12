@@ -374,7 +374,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              p.ID.String(),
-		Scope:           personaScopeFromOrgID(p.OrgID),
+		Scope:           personaScopeFromProjectID(p.OrgID),
 		PersonaKey:      p.PersonaKey,
 		DisplayName:     p.DisplayName,
 		Description:     p.Description,

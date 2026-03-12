@@ -154,7 +154,7 @@ func adminRunsEntry(
 			if credUUID, err := uuid.Parse(*credentialID); err == nil {
 				cred, err := credentialsRepo.GetByID(r.Context(), run.OrgID, credUUID, data.LlmCredentialScopePlatform)
 				if err == nil && cred == nil {
-					cred, err = credentialsRepo.GetByID(r.Context(), run.OrgID, credUUID, data.LlmCredentialScopeOrg)
+					cred, err = credentialsRepo.GetByID(r.Context(), run.OrgID, credUUID, data.LlmCredentialScopeProject)
 				}
 				if err == nil && cred != nil {
 					credentialName = &cred.Name
