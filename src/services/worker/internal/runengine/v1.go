@@ -271,7 +271,12 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			MaxDescendantsPerRootRun: resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_descendants_per_root_run", orgScope, 50),
 			MaxPendingPerRootRun:     resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_pending_per_root_run", orgScope, 20),
 		}
-		rc.SubAgentControl = subagentctl.NewService(pool, e.broadcastRDB, e.jobQueue, run, traceID, subAgentLimits)
+		bpConfig := subagentctl.BackpressureConfig{
+			Enabled:        resolveBool(ctx, e.configResolver, registry, "backpressure.enabled", orgScope, true),
+			QueueThreshold: resolveNonNegativeInt(ctx, e.configResolver, registry, "backpressure.queue_threshold", orgScope, 15),
+			Strategy:       resolveString(ctx, e.configResolver, registry, "backpressure.strategy", orgScope, "serial"),
+		}
+		rc.SubAgentControl = subagentctl.NewService(pool, e.broadcastRDB, e.jobQueue, run, traceID, subAgentLimits, bpConfig)
 	}
 
 	handler := pipeline.Build(e.middlewares, e.terminal)
@@ -308,6 +313,46 @@ func resolvePositiveInt(ctx context.Context, resolver sharedconfig.Resolver, reg
 		return fallback
 	}
 	return v
+}
+
+func resolveBool(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort bool) bool {
+	fallback := lastResort
+	if registry != nil {
+		if entry, ok := registry.Get(key); ok {
+			if v, err := strconv.ParseBool(strings.TrimSpace(entry.Default)); err == nil {
+				fallback = v
+			}
+		}
+	}
+	if resolver == nil {
+		return fallback
+	}
+	raw, err := resolver.Resolve(ctx, key, scope)
+	if err != nil {
+		return fallback
+	}
+	v, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func resolveString(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort string) string {
+	fallback := lastResort
+	if registry != nil {
+		if entry, ok := registry.Get(key); ok && entry.Default != "" {
+			fallback = entry.Default
+		}
+	}
+	if resolver == nil {
+		return fallback
+	}
+	raw, err := resolver.Resolve(ctx, key, scope)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	return raw
 }
 
 func resolveNonNegativeInt(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort int) int {

@@ -54,12 +54,12 @@ func CreateInitialRun(
 	personaID string,
 	input string,
 ) error {
-	service := NewService(pool, rdb, jobQueue, parentRun, traceID, SubAgentLimits{})
+	service := NewService(pool, rdb, jobQueue, parentRun, traceID, SubAgentLimits{}, BackpressureConfig{})
 	_, err := service.spawn(ctx, SpawnRequest{PersonaID: personaID, ContextMode: data.SubAgentContextModeIsolated, Input: input}, &forcedRunID)
 	return err
 }
 
-func NewService(pool *pgxpool.Pool, rdb *redis.Client, jobQueue queue.JobQueue, parentRun data.Run, traceID string, limits SubAgentLimits) *Service {
+func NewService(pool *pgxpool.Pool, rdb *redis.Client, jobQueue queue.JobQueue, parentRun data.Run, traceID string, limits SubAgentLimits, bp BackpressureConfig) *Service {
 	snapshotStorage := NewSnapshotStorage()
 	factory := NewSubAgentRunFactory(pool, snapshotStorage)
 	projector := NewSubAgentStateProjector(pool, rdb, jobQueue)
@@ -76,7 +76,7 @@ func NewService(pool *pgxpool.Pool, rdb *redis.Client, jobQueue queue.JobQueue, 
 		projector:        projector,
 		snapshotBuilder:  NewSnapshotBuilder(),
 		snapshotStorage:  snapshotStorage,
-		governor:         NewSpawnGovernor(limits),
+		governor:         NewSpawnGovernor(limits, bp),
 	}
 }
 
@@ -117,6 +117,9 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	if err := s.governor.ValidateSpawn(ctx, tx, s.parentRun, lineage.RootRunID, lineage.Depth+1); err != nil {
 		return StatusSnapshot{}, err
 	}
+	if err := s.governor.ValidateBackpressureForSpawn(ctx, tx, lineage.RootRunID); err != nil {
+		return StatusSnapshot{}, err
+	}
 
 	snapshot, err := s.snapshotBuilder.Build(ctx, tx, s.parentRun, *plan.Spawn)
 	if err != nil {
@@ -129,7 +132,19 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	if err := tx.Commit(ctx); err != nil {
 		return StatusSnapshot{}, err
 	}
-	if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, childRunID, s.traceID); err != nil {
+
+	// 背压 pause 策略下延迟入队
+	var availableAt *time.Time
+	if bpTx, bpErr := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}); bpErr == nil {
+		bp, _ := s.governor.EvaluateBackpressure(ctx, bpTx, lineage.RootRunID)
+		_ = bpTx.Rollback(ctx)
+		if bp.Level == BackpressureCritical && bp.Strategy == BackpressureStrategyPause {
+			t := time.Now().Add(5 * time.Second)
+			availableAt = &t
+		}
+	}
+
+	if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, childRunID, s.traceID, availableAt); err != nil {
 		_ = s.projector.MarkRunFailed(context.Background(), childRunID, "failed to enqueue child run job")
 		return StatusSnapshot{}, fmt.Errorf("enqueue child run: %w", err)
 	}
@@ -156,6 +171,9 @@ func (s *Service) SendInput(ctx context.Context, req SendInputRequest) (StatusSn
 	}
 	plan, err := s.planner.PlanSendInput(*record, req)
 	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	if err := s.governor.ValidateBackpressureForSendInput(ctx, tx, record.RootRunID, req.Interrupt); err != nil {
 		return StatusSnapshot{}, err
 	}
 
@@ -217,7 +235,7 @@ func (s *Service) SendInput(ctx context.Context, req SendInputRequest) (StatusSn
 		return StatusSnapshot{}, err
 	}
 	if childRunID != nil {
-		if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, *childRunID, s.traceID); err != nil {
+		if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, *childRunID, s.traceID, nil); err != nil {
 			_ = s.projector.MarkRunFailed(context.Background(), *childRunID, "failed to enqueue child run job")
 			return StatusSnapshot{}, fmt.Errorf("enqueue child run: %w", err)
 		}
@@ -297,6 +315,9 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (StatusSnapshot
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
+	if err := s.governor.ValidateBackpressureForResume(ctx, tx, record.RootRunID); err != nil {
+		return StatusSnapshot{}, err
+	}
 	childRunID, err := s.factory.CreateRunForExistingSubAgent(ctx, tx, *record, "", nil, plan.PrimaryEventType, map[string]any{}, nil)
 	if err != nil {
 		return StatusSnapshot{}, err
@@ -304,7 +325,7 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (StatusSnapshot
 	if err := tx.Commit(ctx); err != nil {
 		return StatusSnapshot{}, err
 	}
-	if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, childRunID, s.traceID); err != nil {
+	if err := s.projector.EnqueueRun(ctx, s.parentRun.OrgID, childRunID, s.traceID, nil); err != nil {
 		_ = s.projector.MarkRunFailed(context.Background(), childRunID, "failed to enqueue child run job")
 		return StatusSnapshot{}, fmt.Errorf("enqueue resumed child run: %w", err)
 	}
@@ -391,7 +412,15 @@ func (s *Service) GetStatus(ctx context.Context, subAgentID uuid.UUID) (StatusSn
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	return s.projector.BuildSnapshot(ctx, tx, *record)
+	snapshot, err := s.projector.BuildSnapshot(ctx, tx, *record)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	bp, _ := s.governor.EvaluateBackpressure(ctx, tx, record.RootRunID)
+	if bp.Level == BackpressureCritical {
+		snapshot.Degraded = true
+	}
+	return snapshot, nil
 }
 
 func (s *Service) ListChildren(ctx context.Context) ([]StatusSnapshot, error) {

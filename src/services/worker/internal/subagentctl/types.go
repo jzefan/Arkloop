@@ -110,6 +110,7 @@ type StatusSnapshot struct {
 	StartedAt          *time.Time `json:"started_at,omitempty"`
 	CompletedAt        *time.Time `json:"completed_at,omitempty"`
 	ClosedAt           *time.Time `json:"closed_at,omitempty"`
+	Degraded           bool       `json:"degraded,omitempty"`
 }
 
 type ContextSnapshot struct {
