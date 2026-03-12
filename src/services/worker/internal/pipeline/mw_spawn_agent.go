@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/tools"
 	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
 )
@@ -16,7 +18,10 @@ func NewSpawnAgentMiddleware() RunMiddleware {
 			return next(ctx, rc)
 		}
 
-		executor := &spawnagent.ToolExecutor{Control: rc.SubAgentControl}
+		executor := &spawnagent.ToolExecutor{
+			Control:     rc.SubAgentControl,
+			PersonaKeys: loadPersonaKeys(ctx, rc),
+		}
 		specs := []tools.AgentToolSpec{
 			spawnagent.AgentSpec,
 			spawnagent.SendInputSpec,
@@ -41,4 +46,21 @@ func NewSpawnAgentMiddleware() RunMiddleware {
 		rc.ToolRegistry = ForkRegistry(rc.ToolRegistry, specs)
 		return next(ctx, rc)
 	}
+}
+
+// loadPersonaKeys 从 DB 加载当前 org 可用的 persona ID 列表
+func loadPersonaKeys(ctx context.Context, rc *RunContext) []string {
+	if rc.Pool == nil {
+		return nil
+	}
+	defs, err := personas.LoadFromDB(ctx, rc.Pool, rc.Run.OrgID)
+	if err != nil {
+		slog.WarnContext(ctx, "spawn_agent: failed to load persona keys", "error", err)
+		return nil
+	}
+	keys := make([]string, len(defs))
+	for i, d := range defs {
+		keys[i] = d.ID
+	}
+	return keys
 }

@@ -265,11 +265,13 @@ func (s *Service) Wait(ctx context.Context, req WaitRequest) (StatusSnapshot, er
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var lastSnapshot StatusSnapshot
 	for {
 		snapshot, err := s.GetStatus(waitCtx, req.SubAgentID)
 		if err != nil {
-			return StatusSnapshot{}, err
+			return lastSnapshot, err
 		}
+		lastSnapshot = snapshot
 		if waitResolved(snapshot.Status) {
 			payload := map[string]any{"status": snapshot.Status}
 			if snapshot.CurrentRunID != nil {
@@ -287,7 +289,12 @@ func (s *Service) Wait(ctx context.Context, req WaitRequest) (StatusSnapshot, er
 		}
 		select {
 		case <-waitCtx.Done():
-			return StatusSnapshot{}, waitCtx.Err()
+			// 超时时记录生命周期事件，携带最后已知状态
+			_ = s.appendLifecycleEvent(context.WithoutCancel(waitCtx), req.SubAgentID, data.SubAgentEventTypeWaitTimeout, map[string]any{
+				"status":     lastSnapshot.Status,
+				"timeout_ms": req.Timeout.Milliseconds(),
+			})
+			return lastSnapshot, waitCtx.Err()
 		case <-ticker.C:
 		}
 	}

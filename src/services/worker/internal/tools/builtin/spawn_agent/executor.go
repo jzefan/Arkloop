@@ -22,6 +22,19 @@ const (
 	errorTimeout        = "tool.timeout"
 )
 
+// BuiltinNames 返回所有 spawn_agent 系列内置工具名，供上游过滤冲突用。
+var BuiltinNames = func() map[string]struct{} {
+	names := []string{
+		"spawn_agent", "send_input", "wait_agent",
+		"resume_agent", "close_agent", "interrupt_agent",
+	}
+	m := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		m[n] = struct{}{}
+	}
+	return m
+}()
+
 var AgentSpec = tools.AgentToolSpec{
 	Name:        "spawn_agent",
 	Version:     "2",
@@ -173,7 +186,8 @@ var InterruptAgentLlmSpec = llm.ToolSpec{
 }
 
 type ToolExecutor struct {
-	Control subagentctl.Control
+	Control     subagentctl.Control
+	PersonaKeys []string // 可用 persona ID 列表，spawn 前快速校验
 }
 
 func (e *ToolExecutor) Execute(
@@ -196,6 +210,9 @@ func (e *ToolExecutor) Execute(
 	case AgentSpec.Name:
 		var req subagentctl.SpawnRequest
 		req, err = parseSpawnArgs(args, execCtx)
+		if err == nil {
+			err = e.validatePersonaID(req.PersonaID)
+		}
 		if err == nil {
 			snapshot, err = e.Control.Spawn(ctx, req)
 		}
@@ -236,12 +253,35 @@ func (e *ToolExecutor) Execute(
 		if execErr, ok := err.(*tools.ExecutionError); ok {
 			return tools.ExecutionResult{Error: execErr, DurationMs: durationMs(started)}
 		}
+		// wait_agent 超时但有最新快照时，返回快照 + timeout 标记
+		if isTimeoutError(err) && snapshot.SubAgentID != uuid.Nil {
+			result := snapshotJSON(snapshot)
+			result["timeout"] = true
+			result["timeout_ms"] = durationMs(started)
+			return tools.ExecutionResult{ResultJSON: result, DurationMs: durationMs(started)}
+		}
 		if isTimeoutError(err) {
 			return errorResult(errorTimeout, err.Error(), started)
 		}
 		return errorResult(errorControlFailed, err.Error(), started)
 	}
 	return tools.ExecutionResult{ResultJSON: snapshotJSON(snapshot), DurationMs: durationMs(started)}
+}
+
+// validatePersonaID 校验 persona_id 是否在预加载列表中
+func (e *ToolExecutor) validatePersonaID(id string) error {
+	if len(e.PersonaKeys) == 0 {
+		return nil
+	}
+	for _, k := range e.PersonaKeys {
+		if k == id {
+			return nil
+		}
+	}
+	return &tools.ExecutionError{
+		ErrorClass: errorControlFailed,
+		Message:    fmt.Sprintf("persona not found: %s, available: %v", id, e.PersonaKeys),
+	}
 }
 
 func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subagentctl.SpawnRequest, error) {
