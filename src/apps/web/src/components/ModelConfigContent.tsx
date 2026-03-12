@@ -14,7 +14,28 @@ import {
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 
-const VENDORS = ['openai', 'anthropic', 'gemini', 'deepseek'] as const
+const PROVIDER_PRESETS = [
+  { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
+  { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
+  { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
+] as const
+
+type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
+
+function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string }): string {
+  const map: Record<string, string> = {
+    openai_responses: m.vendorOpenaiResponses,
+    openai_chat_completions: m.vendorOpenaiChatCompletions,
+    anthropic_message: m.vendorAnthropicMessage,
+  }
+  return map[key] ?? key
+}
+
+function resolvePresetKey(provider: LlmProvider): ProviderPresetKey {
+  if (provider.provider === 'anthropic') return 'anthropic_message'
+  if (provider.openai_api_mode === 'chat_completions') return 'openai_chat_completions'
+  return 'openai_responses'
+}
 
 type Props = {
   accessToken: string
@@ -100,24 +121,26 @@ function AddProviderButton({ accessToken, onCreated }: { accessToken: string; on
   const m = t.models
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
-  const [vendor, setVendor] = useState<string>('openai')
+  const [preset, setPreset] = useState<ProviderPresetKey>('openai_responses')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  const reset = () => { setName(''); setVendor('openai'); setApiKey(''); setBaseUrl(''); setErr(''); setOpen(false) }
+  const reset = () => { setName(''); setPreset('openai_responses'); setApiKey(''); setBaseUrl(''); setErr(''); setOpen(false) }
 
   const handleSave = async () => {
     if (!name.trim() || !apiKey.trim()) return
     setSaving(true)
     setErr('')
     try {
+      const p = PROVIDER_PRESETS.find((pp) => pp.key === preset)!
       await createLlmProvider(accessToken, {
         name: name.trim(),
-        provider: vendor,
+        provider: p.provider,
         api_key: apiKey.trim(),
         base_url: baseUrl.trim() || undefined,
+        openai_api_mode: p.openai_api_mode,
       })
       reset()
       onCreated()
@@ -128,8 +151,8 @@ function AddProviderButton({ accessToken, onCreated }: { accessToken: string; on
     }
   }
 
-  if (!open) {
-    return (
+  return (
+    <>
       <button
         onClick={() => setOpen(true)}
         className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]"
@@ -137,38 +160,60 @@ function AddProviderButton({ accessToken, onCreated }: { accessToken: string; on
         <Plus size={13} />
         <span>{m.addProvider}</span>
       </button>
-    )
-  }
 
-  return (
-    <div className="mt-2 flex flex-col gap-2 rounded-lg p-2" style={{ background: 'var(--c-bg-deep)' }}>
-      <InputField label={m.providerName} value={name} onChange={setName} placeholder="My OpenAI" />
-      <label className="text-xs text-[var(--c-text-tertiary)]">{m.providerVendor}</label>
-      <select
-        value={vendor}
-        onChange={(e) => setVendor(e.target.value)}
-        className="h-8 rounded-md px-2 text-sm outline-none"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-heading)' }}
-      >
-        {VENDORS.map((v) => (
-          <option key={v} value={v}>{vendorLabel(v, m)}</option>
-        ))}
-      </select>
-      <InputField label={m.apiKey} value={apiKey} onChange={setApiKey} placeholder={m.apiKeyPlaceholder} type="password" />
-      <InputField label={m.baseUrl} value={baseUrl} onChange={setBaseUrl} placeholder={m.baseUrlPlaceholder} />
-      {err && <p className="text-xs text-red-400">{err}</p>}
-      <div className="flex gap-2">
-        <button onClick={reset} className="flex-1 rounded-md py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-page)]">{m.cancel}</button>
-        <button
-          onClick={handleSave}
-          disabled={saving || !name.trim() || !apiKey.trim()}
-          className="flex-1 rounded-md py-1.5 text-sm transition-colors disabled:opacity-40"
-          style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.45)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) reset() }}
         >
-          {saving ? m.saving : m.save}
-        </button>
-      </div>
-    </div>
+          <div
+            className="flex w-[400px] flex-col gap-4 rounded-xl p-5"
+            style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)' }}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-[var(--c-text-heading)]">{m.addProvider}</h3>
+              <button onClick={reset} className="text-[var(--c-text-tertiary)] hover:text-[var(--c-text-heading)]">
+                <X size={16} />
+              </button>
+            </div>
+
+            <InputField label={m.providerName} value={name} onChange={setName} placeholder="My Provider" />
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-[var(--c-text-tertiary)]">{m.providerVendor}</label>
+              <select
+                value={preset}
+                onChange={(e) => setPreset(e.target.value as ProviderPresetKey)}
+                className="h-8 rounded-md px-2 text-sm outline-none"
+                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)', color: 'var(--c-text-heading)' }}
+              >
+                {PROVIDER_PRESETS.map((p) => (
+                  <option key={p.key} value={p.key}>{presetLabel(p.key, m)}</option>
+                ))}
+              </select>
+            </div>
+
+            <InputField label={m.apiKey} value={apiKey} onChange={setApiKey} placeholder={m.apiKeyPlaceholder} type="password" />
+            <InputField label={m.baseUrl} value={baseUrl} onChange={setBaseUrl} placeholder={m.baseUrlPlaceholder} />
+
+            {err && <p className="text-xs text-red-400">{err}</p>}
+
+            <div className="flex gap-2">
+              <button onClick={reset} className="flex-1 rounded-md py-2 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]">{m.cancel}</button>
+              <button
+                onClick={handleSave}
+                disabled={saving || !name.trim() || !apiKey.trim()}
+                className="flex-1 rounded-md py-2 text-sm transition-colors disabled:opacity-40"
+                style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+              >
+                {saving ? m.saving : m.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -234,7 +279,7 @@ function ProviderDetail({
         <div>
           <h3 className="text-sm font-medium text-[var(--c-text-heading)]">{provider.name}</h3>
           <span className="text-xs text-[var(--c-text-tertiary)]">
-            {vendorLabel(provider.provider, m)}
+            {presetLabel(resolvePresetKey(provider), m)}
             {provider.key_prefix && <> &middot; {provider.key_prefix}***</>}
           </span>
         </div>
@@ -458,13 +503,4 @@ function InputField({
   )
 }
 
-function vendorLabel(vendor: string, m: { vendorOpenai: string; vendorAnthropic: string; vendorGoogle: string; vendorCustom: string }): string {
-  const map: Record<string, string> = {
-    openai: m.vendorOpenai,
-    anthropic: m.vendorAnthropic,
-    gemini: m.vendorGoogle,
-    google: m.vendorGoogle,
-    deepseek: 'DeepSeek',
-  }
-  return map[vendor] ?? m.vendorCustom
-}
+

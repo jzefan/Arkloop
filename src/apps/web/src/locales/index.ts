@@ -368,10 +368,9 @@ export interface LocaleStrings {
     loadFailed: string
     saveFailed: string
     deleteFailed: string
-    vendorOpenai: string
-    vendorAnthropic: string
-    vendorGoogle: string
-    vendorCustom: string
+    vendorOpenaiResponses: string
+    vendorOpenaiChatCompletions: string
+    vendorAnthropicMessage: string
   }
   // agent settings
   agentSettings: {
