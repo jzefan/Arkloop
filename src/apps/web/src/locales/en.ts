@@ -360,10 +360,9 @@ export const en: LocaleStrings = {
     loadFailed: 'Failed to load providers',
     saveFailed: 'Failed to save',
     deleteFailed: 'Failed to delete',
-    vendorOpenai: 'OpenAI',
-    vendorAnthropic: 'Anthropic',
-    vendorGoogle: 'Google',
-    vendorCustom: 'Custom',
+    vendorOpenaiResponses: 'OpenAI Responses',
+    vendorOpenaiChatCompletions: 'OpenAI Chat Completions',
+    vendorAnthropicMessage: 'Anthropic Messages',
   },
   // agent settings
   agentSettings: {

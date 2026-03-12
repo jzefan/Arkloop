@@ -360,10 +360,9 @@ export const zh: LocaleStrings = {
     loadFailed: '加载供应商失败',
     saveFailed: '保存失败',
     deleteFailed: '删除失败',
-    vendorOpenai: 'OpenAI',
-    vendorAnthropic: 'Anthropic',
-    vendorGoogle: 'Google',
-    vendorCustom: '自定义',
+    vendorOpenaiResponses: 'OpenAI Responses',
+    vendorOpenaiChatCompletions: 'OpenAI Chat Completions',
+    vendorAnthropicMessage: 'Anthropic Messages',
   },
   // agent settings
   agentSettings: {
