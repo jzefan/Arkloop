@@ -17,6 +17,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
+	"github.com/google/uuid"
 
 	lua "github.com/yuin/gopher-lua"
 )
