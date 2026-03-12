@@ -1,6 +1,7 @@
 package catalogapi
 
 import (
+	"context"
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"strings"
 
@@ -19,7 +20,7 @@ type toolDescriptionSource string
 const (
 	toolDescriptionSourceDefault  toolDescriptionSource = "default"
 	toolDescriptionSourcePlatform toolDescriptionSource = "platform"
-	toolDescriptionSourceOrg      toolDescriptionSource = "org"
+	toolDescriptionSourceProject toolDescriptionSource = "project"
 )
 
 type toolCatalogItem struct {
@@ -43,12 +44,12 @@ type toolCatalogResponse struct {
 func buildToolCatalog(
 	scope string,
 	platformOverrides []data.ToolDescriptionOverride,
-	orgOverrides []data.ToolDescriptionOverride,
+	projectOverrides []data.ToolDescriptionOverride,
 ) toolCatalogResponse {
 	platformByName := buildToolDescriptionOverrideMap(platformOverrides)
-	orgByName := buildToolDescriptionOverrideMap(orgOverrides)
+	projectByName := buildToolDescriptionOverrideMap(projectOverrides)
 	platformDisabledByName := buildToolDisabledOverrideMap(platformOverrides)
-	orgDisabledByName := buildToolDisabledOverrideMap(orgOverrides)
+	projectDisabledByName := buildToolDisabledOverrideMap(projectOverrides)
 
 	groups := make([]toolCatalogGroup, 0, len(sharedtoolmeta.GroupOrder()))
 	for _, group := range sharedtoolmeta.Catalog() {
@@ -58,11 +59,11 @@ func buildToolCatalog(
 			hasOverride := false
 			source := toolDescriptionSourceDefault
 
-			if scope == "org" {
-				if override, ok := orgByName[meta.Name]; ok {
+			if scope == "project" {
+				if override, ok := projectByName[meta.Name]; ok {
 					description = override
 					hasOverride = true
-					source = toolDescriptionSourceOrg
+					source = toolDescriptionSourceProject
 				} else if override, ok := platformByName[meta.Name]; ok {
 					description = override
 					source = toolDescriptionSourcePlatform
@@ -79,7 +80,7 @@ func buildToolCatalog(
 				LLMDescription:    description,
 				HasOverride:       hasOverride,
 				DescriptionSource: source,
-				IsDisabled:        platformDisabledByName[meta.Name] || orgDisabledByName[meta.Name],
+				IsDisabled:        platformDisabledByName[meta.Name] || projectDisabledByName[meta.Name],
 			})
 		}
 		groups = append(groups, toolCatalogGroup{Group: group.Name, Tools: items})
@@ -91,6 +92,7 @@ func toolCatalogEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -107,28 +109,28 @@ func toolCatalogEntry(
 			return
 		}
 
-		scope, orgID, ok := resolveToolCatalogScope(w, r, traceID, actor)
+		scope, projectID, ok := resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
 		if !ok {
 			return
 		}
 
 		var platformOverrides []data.ToolDescriptionOverride
-		var orgOverrides []data.ToolDescriptionOverride
+		var projectOverrides []data.ToolDescriptionOverride
 		if overridesRepo != nil {
 			var err error
 			platformOverrides, err = overridesRepo.ListByScope(r.Context(), uuid.Nil, "platform")
 			if err != nil {
 				platformOverrides = nil
 			}
-			if scope == "org" {
-				orgOverrides, err = overridesRepo.ListByScope(r.Context(), orgID, "org")
+			if scope == "project" {
+				projectOverrides, err = overridesRepo.ListByScope(r.Context(), projectID, "project")
 				if err != nil {
-					orgOverrides = nil
+					projectOverrides = nil
 				}
 			}
 		}
 
-		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, buildToolCatalog(scope, platformOverrides, orgOverrides))
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, buildToolCatalog(scope, platformOverrides, projectOverrides))
 	}
 }
 
@@ -144,6 +146,7 @@ func toolCatalogItemEntry(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -177,7 +180,7 @@ func toolCatalogItemEntry(
 			return
 		}
 
-		scope, orgID, ok := resolveToolCatalogScope(w, r, traceID, actor)
+		scope, projectID, ok := resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
 		if !ok {
 			return
 		}
@@ -199,7 +202,7 @@ func toolCatalogItemEntry(
 					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "description must not be empty", traceID, nil)
 					return
 				}
-				if err := overridesRepo.Upsert(r.Context(), orgID, scope, toolName, req.Description); err != nil {
+				if err := overridesRepo.Upsert(r.Context(), projectID, scope, toolName, req.Description); err != nil {
 					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 					return
 				}
@@ -212,7 +215,7 @@ func toolCatalogItemEntry(
 				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid request body", traceID, nil)
 				return
 			}
-			if err := overridesRepo.SetDisabled(r.Context(), orgID, scope, toolName, req.Disabled); err != nil {
+			if err := overridesRepo.SetDisabled(r.Context(), projectID, scope, toolName, req.Disabled); err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
@@ -223,7 +226,7 @@ func toolCatalogItemEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			if err := overridesRepo.Delete(r.Context(), orgID, scope, toolName); err != nil {
+			if err := overridesRepo.Delete(r.Context(), projectID, scope, toolName); err != nil {
 				httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "no override found", traceID, nil)
 				return
 			}
@@ -236,17 +239,23 @@ func toolCatalogItemEntry(
 }
 
 func resolveToolCatalogScope(
+	ctx context.Context,
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
 	traceID string,
 	actor *httpkit.Actor,
+	projectRepo *data.ProjectRepository,
 ) (string, uuid.UUID, bool) {
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if scope == "" {
 		scope = "platform"
 	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	// short-term compat: accept "org" as alias for "project"
+	if scope == "org" {
+		scope = "project"
+	}
+	if scope != "project" && scope != "platform" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
 		return "", uuid.Nil, false
 	}
 
@@ -260,7 +269,16 @@ func resolveToolCatalogScope(
 	if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
 		return "", uuid.Nil, false
 	}
-	return scope, actor.OrgID, true
+	if projectRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return "", uuid.Nil, false
+	}
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, actor.OrgID, actor.UserID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return "", uuid.Nil, false
+	}
+	return scope, project.ID, true
 }
 
 func buildToolDescriptionOverrideMap(overrides []data.ToolDescriptionOverride) map[string]string {

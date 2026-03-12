@@ -59,6 +59,7 @@ type patchPersonaRequest struct {
 type personaResponse struct {
 	ID                  string          `json:"id"`
 	OrgID               *string         `json:"org_id"`
+	ProjectID           *string         `json:"project_id"`
 	Scope               string          `json:"scope"`
 	PersonaKey          string          `json:"persona_key"`
 	Version             string          `json:"version"`
@@ -91,14 +92,15 @@ func personasEntry(
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
 	syncTrigger personaSyncTrigger,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodPost:
-			createPersona(w, r, traceID, authService, membershipRepo, personasRepo, repoPersonas, syncTrigger)
+			createPersona(w, r, traceID, authService, membershipRepo, personasRepo, repoPersonas, syncTrigger, projectRepo)
 		case nethttp.MethodGet:
-			listPersonas(w, r, traceID, authService, membershipRepo, personasRepo, repoPersonas)
+			listPersonas(w, r, traceID, authService, membershipRepo, personasRepo, repoPersonas, projectRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -110,6 +112,7 @@ func personaEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	personasRepo *data.PersonasRepository,
 	syncTrigger personaSyncTrigger,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -129,9 +132,9 @@ func personaEntry(
 
 		switch r.Method {
 		case nethttp.MethodPatch:
-			patchPersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo, syncTrigger)
+			patchPersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo, syncTrigger, projectRepo)
 		case nethttp.MethodDelete:
-			deletePersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo, syncTrigger)
+			deletePersona(w, r, traceID, personaID, authService, membershipRepo, personasRepo, syncTrigger, projectRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -147,6 +150,7 @@ func createPersona(
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
 	syncTrigger personaSyncTrigger,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -171,6 +175,15 @@ func createPersona(
 	scope, ok := requirePersonaScope(actor, w, traceID, req.Scope, true, true)
 	if !ok {
 		return
+	}
+
+	projectID := uuid.Nil
+	if scope == data.PersonaScopeProject {
+		var resolved bool
+		projectID, resolved = resolvePersonaProjectID(r.Context(), w, traceID, actor, projectRepo)
+		if !resolved {
+			return
+		}
 	}
 
 	req.PersonaKey = strings.TrimSpace(req.PersonaKey)
@@ -198,7 +211,7 @@ func createPersona(
 			return
 		}
 
-		persona, err := materializeRepoPersonaForCreate(r.Context(), personasRepo, actor.OrgID, scope, *repoPersona, req)
+		persona, err := materializeRepoPersonaForCreate(r.Context(), personasRepo, projectID, scope, *repoPersona, req)
 		if err != nil {
 			var conflict data.PersonaConflictError
 			if errors.As(err, &conflict) {
@@ -225,7 +238,7 @@ func createPersona(
 
 	persona, err := personasRepo.CreateInScope(
 		r.Context(),
-		actor.OrgID,
+		projectID,
 		scope,
 		req.PersonaKey,
 		req.Version,
@@ -268,6 +281,7 @@ func listPersonas(
 	membershipRepo *data.OrgMembershipRepository,
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -288,7 +302,16 @@ func listPersonas(
 		return
 	}
 
-	dbPersonas, err := personasRepo.ListByScope(r.Context(), actor.OrgID, scope)
+	projectID := uuid.Nil
+	if scope == data.PersonaScopeProject {
+		var resolved bool
+		projectID, resolved = resolvePersonaProjectID(r.Context(), w, traceID, actor, projectRepo)
+		if !resolved {
+			return
+		}
+	}
+
+	dbPersonas, err := personasRepo.ListByScope(r.Context(), projectID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -315,6 +338,7 @@ func selectablePersonasEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -336,7 +360,12 @@ func selectablePersonasEntry(
 			return
 		}
 
-		resp, err := buildSelectablePersonaResponses(r.Context(), actor.OrgID, personasRepo, repoPersonas)
+		projectID, resolved := resolvePersonaProjectID(r.Context(), w, traceID, actor, projectRepo)
+		if !resolved {
+			return
+		}
+
+		resp, err := buildSelectablePersonaResponses(r.Context(), projectID, personasRepo, repoPersonas)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -347,7 +376,7 @@ func selectablePersonasEntry(
 
 func buildSelectablePersonaResponses(
 	ctx context.Context,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
 ) ([]personaResponse, error) {
@@ -364,7 +393,7 @@ func buildSelectablePersonaResponses(
 		effectiveByKey[key] = persona
 	}
 
-	dbPersonas, err := personasRepo.ListActiveEffective(ctx, orgID)
+	dbPersonas, err := personasRepo.ListActiveEffective(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -426,6 +455,7 @@ func patchPersona(
 	membershipRepo *data.OrgMembershipRepository,
 	personasRepo *data.PersonasRepository,
 	syncTrigger personaSyncTrigger,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -446,7 +476,16 @@ func patchPersona(
 		return
 	}
 
-	existing, err := personasRepo.GetByIDInScope(r.Context(), actor.OrgID, personaID, scope)
+	scopeID := uuid.Nil
+	if scope == data.PersonaScopeProject {
+		var resolved bool
+		scopeID, resolved = resolvePersonaProjectID(r.Context(), w, traceID, actor, projectRepo)
+		if !resolved {
+			return
+		}
+	}
+
+	existing, err := personasRepo.GetByIDInScope(r.Context(), scopeID, personaID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -482,7 +521,7 @@ func patchPersona(
 		return
 	}
 
-	updated, err := personasRepo.PatchInScope(r.Context(), actor.OrgID, personaID, scope, patch)
+	updated, err := personasRepo.PatchInScope(r.Context(), scopeID, personaID, scope, patch)
 	if err != nil {
 		if isPersonaValidationError(err) {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
@@ -509,6 +548,7 @@ func deletePersona(
 	membershipRepo *data.OrgMembershipRepository,
 	personasRepo *data.PersonasRepository,
 	syncTrigger personaSyncTrigger,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -529,7 +569,16 @@ func deletePersona(
 		return
 	}
 
-	deleted, err := personasRepo.DeleteInScope(r.Context(), actor.OrgID, personaID, scope)
+	scopeID := uuid.Nil
+	if scope == data.PersonaScopeProject {
+		var resolved bool
+		scopeID, resolved = resolvePersonaProjectID(r.Context(), w, traceID, actor, projectRepo)
+		if !resolved {
+			return
+		}
+	}
+
+	deleted, err := personasRepo.DeleteInScope(r.Context(), scopeID, personaID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -582,7 +631,8 @@ func toPersonaResponse(s data.Persona) personaResponse {
 	return personaResponse{
 		ID:                  s.ID.String(),
 		OrgID:               orgIDStr,
-		Scope:               personaScopeFromOrgID(s.OrgID),
+		ProjectID:           orgIDStr,
+		Scope:               personaScopeFromProjectID(s.OrgID),
 		PersonaKey:          s.PersonaKey,
 		Version:             s.Version,
 		DisplayName:         s.DisplayName,
@@ -768,8 +818,27 @@ func isPersonaValidationError(err error) bool {
 	return strings.Contains(message, "executor_config.") || strings.Contains(message, "must not be empty") || strings.Contains(message, "is required") || strings.Contains(message, "valid json object")
 }
 
-func personaScopeFromOrgID(orgID *uuid.UUID) string {
-	if orgID == nil {
+func resolvePersonaProjectID(
+	ctx context.Context,
+	w nethttp.ResponseWriter,
+	traceID string,
+	actor *httpkit.Actor,
+	projectRepo *data.ProjectRepository,
+) (uuid.UUID, bool) {
+	if projectRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return uuid.Nil, false
+	}
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, actor.OrgID, actor.UserID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return uuid.Nil, false
+	}
+	return project.ID, true
+}
+
+func personaScopeFromProjectID(projectID *uuid.UUID) string {
+	if projectID == nil {
 		return data.PersonaScopePlatform
 	}
 	return data.PersonaScopeProject
