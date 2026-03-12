@@ -45,8 +45,8 @@ type personaSyncTrigger interface {
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
-	mux.HandleFunc("/v1/llm-providers", llmProvidersEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.Pool))
-	mux.HandleFunc("/v1/llm-providers/", llmProviderEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.Pool))
+	mux.HandleFunc("/v1/llm-providers", llmProvidersEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool))
+	mux.HandleFunc("/v1/llm-providers/", llmProviderEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials", asrCredentialsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials/", asrCredentialEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo))
 	mux.HandleFunc("/v1/asr/transcribe", asrTranscribeEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo))

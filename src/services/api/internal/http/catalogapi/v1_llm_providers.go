@@ -106,9 +106,10 @@ func llmProvidersEntry(
 	credRepo *data.LlmCredentialsRepository,
 	routeRepo *data.LlmRoutesRepository,
 	secretsRepo *data.SecretsRepository,
+	projectRepo *data.ProjectRepository,
 	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo)
+	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo, projectRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
@@ -128,9 +129,10 @@ func llmProviderEntry(
 	credRepo *data.LlmCredentialsRepository,
 	routeRepo *data.LlmRoutesRepository,
 	secretsRepo *data.SecretsRepository,
+	projectRepo *data.ProjectRepository,
 	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo)
+	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo, projectRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		tail := strings.TrimPrefix(r.URL.Path, "/v1/llm-providers/")
