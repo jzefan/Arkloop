@@ -7,7 +7,7 @@ import {
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { Badge, type BadgeVariant } from '../../components/Badge'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import type { LocaleStrings } from '../../locales'
 import {

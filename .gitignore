@@ -17,8 +17,13 @@ arkilo-ui-example
 *.exe
 *.test
 
+# root-level compiled Go binaries
+/api
+/worker
+
 .claude
 CLAUDE.md
+AGENTS.md
 review.md
 mcp.config.json
 src/services/worker/worker
@@ -33,6 +38,7 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 
 temp
+output/
 src/apps/developers/dist
 src/apps/developers/.astro
 src/services/api/api

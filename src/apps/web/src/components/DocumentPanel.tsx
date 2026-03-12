@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, FileText, Download, Eye, Code } from 'lucide-react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 
@@ -8,11 +9,6 @@ const toggleButtonHeight = 30
 const toggleButtonGap = 2
 const toggleButtonOffset = toggleButtonWidth + toggleButtonGap
 const actionButtonSize = 30
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 const textLikeMimeTypes = new Set([
   'application/json',

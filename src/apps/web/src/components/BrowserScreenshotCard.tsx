@@ -1,13 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, Download, ExternalLink, Globe, Loader2 } from 'lucide-react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
 
 const ANIM_MS = 120
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 type Props = {
   artifact: ArtifactRef

@@ -2,17 +2,18 @@ package environment
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"arkloop/services/shared/registryerr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrFlushConflict = errors.New("flush conflict")
+var ErrFlushConflict = registryerr.ErrFlushConflict
 
 type RegistryManifestBinding struct {
 	Ref      string

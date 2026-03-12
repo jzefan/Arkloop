@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Copy, Check, RefreshCw, Share2, Split, Paperclip, Pencil, MoreHorizontal, Flag, X, Download, ExternalLink } from 'lucide-react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 import type { MessageResponse } from '../api'
 import type { WebSource, ArtifactRef } from '../storage'
 import type { BrowserActionRef } from '../storage'
@@ -102,11 +103,6 @@ function getDomain(url: string): string {
   } catch {
     return url
   }
-}
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
 }
 
 const LIGHTBOX_ANIM_MS = 120

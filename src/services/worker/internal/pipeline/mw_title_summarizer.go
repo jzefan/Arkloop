@@ -50,6 +50,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGat
 		llmMaxResponseBytes := rc.LlmMaxResponseBytes
 
 		go func() {
+			// goroutine 超出请求生命周期，需要独立 context
 			bgCtx := context.Background()
 			gateway, model := resolveTitleGateway(bgCtx, pool, projectID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
 			if gateway == nil {
@@ -131,6 +132,7 @@ func generateTitle(
 	prompt string,
 	maxTokens int,
 ) {
+	// 由 fire-and-forget goroutine 调用，需要独立 context
 	ctx := context.Background()
 
 	userText := extractUserText(messages)
