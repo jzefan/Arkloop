@@ -79,9 +79,9 @@ type Pool struct {
 	totalCreated   atomic.Int64
 	totalDestroyed atomic.Int64
 
-	// containerID -> session 映射，用于 DestroyVM
-	mu         sync.Mutex
-	containers map[string]string // socketDir -> containerID
+	// sessionID -> entry 映射，用于 Destroy
+	mu     sync.Mutex
+	active map[string]*entry // sessionID -> entry
 }
 
 // New 创建 DockerPool 实例。
@@ -129,7 +129,7 @@ func New(cfg Config) (*Pool, error) {
 		ready:      ready,
 		sem:        make(chan struct{}, cfg.MaxRefillConcurrency),
 		stop:       make(chan struct{}),
-		containers: make(map[string]string),
+		active: make(map[string]*entry),
 	}, nil
 }
 
@@ -190,40 +190,53 @@ func (p *Pool) Start() {
 }
 
 // Acquire 获取一个就绪的容器。优先从 warm pool 取，pool 为空时按需创建。
-func (p *Pool) Acquire(ctx context.Context, tier string) (*session.Session, *os.Process, error) {
+func (p *Pool) Acquire(ctx context.Context, sessionID, tier string) (*session.Session, error) {
 	if ch, ok := p.ready[tier]; ok {
 		select {
 		case e := <-ch:
-			return e.session, nil, nil
+			e.session.ID = sessionID
+			p.mu.Lock()
+			p.active[sessionID] = e
+			p.mu.Unlock()
+			return e.session, nil
 		default:
 		}
 	}
 	e, err := p.createContainer(ctx, tier)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return e.session, nil, nil
+	e.session.ID = sessionID
+	p.mu.Lock()
+	p.active[sessionID] = e
+	p.mu.Unlock()
+	return e.session, nil
 }
 
-// DestroyVM 销毁一个容器。proc 参数在 Docker 后端中不使用。
-func (p *Pool) DestroyVM(proc *os.Process, socketDir string) {
+// Destroy 销毁 sessionID 对应的容器并释放所有关联资源。
+func (p *Pool) Destroy(sessionID string) {
 	p.mu.Lock()
-	containerID, ok := p.containers[socketDir]
+	e, ok := p.active[sessionID]
 	if ok {
-		delete(p.containers, socketDir)
+		delete(p.active, sessionID)
 	}
 	p.mu.Unlock()
 
-	if ok && containerID != "" {
+	if ok && e != nil {
+		p.destroyResources(e.containerID, e.session.SocketDir)
+	}
+	p.totalDestroyed.Add(1)
+}
+
+func (p *Pool) destroyResources(containerID, socketDir string) {
+	if containerID != "" {
 		rmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = p.cli.ContainerRemove(rmCtx, containerID, container.RemoveOptions{Force: true})
 	}
-
 	if socketDir != "" {
 		_ = os.RemoveAll(socketDir)
 	}
-	p.totalDestroyed.Add(1)
 }
 
 // Ready 返回所有启用了预热的 tier 是否已达到目标数量。
@@ -283,7 +296,7 @@ func (p *Pool) destroyEntry(e *entry) {
 	if e == nil {
 		return
 	}
-	p.DestroyVM(nil, e.session.SocketDir)
+	p.destroyResources(e.containerID, e.session.SocketDir)
 }
 
 func (p *Pool) refiller(tier string, target int) {
@@ -425,9 +438,9 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 		return nil, fmt.Errorf("browser tier requires allow_egress=true")
 	}
 
-	id := generateID()
+	suffix := generateID()
 
-	socketDir := fmt.Sprintf("%s/%s", p.cfg.SocketBaseDir, id)
+	socketDir := fmt.Sprintf("%s/%s", p.cfg.SocketBaseDir, suffix)
 	if err := os.MkdirAll(socketDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create socket dir: %w", err)
 	}
@@ -437,7 +450,7 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 	}
 
 	plan := buildCreatePlan(p.cfg, tier)
-	resp, err := p.cli.ContainerCreate(ctx, plan.containerCfg, plan.hostCfg, nil, nil, "sandbox-"+id)
+	resp, err := p.cli.ContainerCreate(ctx, plan.containerCfg, plan.hostCfg, nil, nil, "sandbox-"+suffix)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("docker create: %w", err)
@@ -480,13 +493,7 @@ func (p *Pool) createContainer(ctx context.Context, tier string) (*entry, error)
 		agentAddr = net.JoinHostPort(bindings[0].HostIP, bindings[0].HostPort)
 	}
 
-	// 注册 containerID 映射
-	p.mu.Lock()
-	p.containers[socketDir] = containerID
-	p.mu.Unlock()
-
 	s := &session.Session{
-		ID:         id,
 		Tier:       tier,
 		AgentImage: plan.image,
 		Dial:       session.NewTCPDialer(agentAddr),
