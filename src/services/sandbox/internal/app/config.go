@@ -33,6 +33,7 @@ const (
 	dockerNetworkEnv         = "ARKLOOP_SANDBOX_DOCKER_NETWORK"
 	firecrackerBinEnv        = "ARKLOOP_FIRECRACKER_BIN"
 	kernelImagePathEnv       = "ARKLOOP_SANDBOX_KERNEL_IMAGE"
+	initrdPathEnv            = "ARKLOOP_SANDBOX_INITRD"
 	rootfsPathEnv            = "ARKLOOP_SANDBOX_ROOTFS"
 	socketBaseDirEnv         = "ARKLOOP_SANDBOX_SOCKET_DIR"
 	templatesPathEnv         = "ARKLOOP_SANDBOX_TEMPLATES_PATH"
@@ -58,6 +59,7 @@ type Config struct {
 	Provider                   string // "firecracker" | "docker"
 	FirecrackerBin             string
 	KernelImagePath            string
+	InitrdPath                 string // optional initramfs for Vz provider
 	RootfsPath                 string
 	SocketBaseDir              string
 	BootTimeoutSeconds         int
@@ -211,6 +213,9 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if raw := strings.TrimSpace(os.Getenv(kernelImagePathEnv)); raw != "" {
 		cfg.KernelImagePath = raw
+	}
+	if raw := strings.TrimSpace(os.Getenv(initrdPathEnv)); raw != "" {
+		cfg.InitrdPath = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv(rootfsPathEnv)); raw != "" {
 		cfg.RootfsPath = raw
