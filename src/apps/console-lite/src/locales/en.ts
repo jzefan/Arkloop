@@ -9,6 +9,7 @@ export const en: LocaleStrings = {
     runs: 'Runs',
     modules: 'Modules',
     settings: 'Settings',
+    installTasks: 'Install Tasks',
   },
   dashboard: {
     title: 'Dashboard',

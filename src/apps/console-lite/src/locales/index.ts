@@ -12,6 +12,7 @@ export interface LocaleStrings {
     runs: string
     modules: string
     settings: string
+    installTasks: string
   }
   dashboard: {
     title: string

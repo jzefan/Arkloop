@@ -156,16 +156,29 @@ export function LiteLayout({ accessToken, onLoggedOut }: Props) {
         </nav>
 
         {operations.length > 0 && (
-          <div className="border-t border-[var(--c-border-console)] px-3 py-2">
+          <div className="border-t border-[var(--c-border-console)] px-2 py-2">
             <button
               onClick={() => setHistoryOpen(true)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-[10px] transition-colors hover:bg-[var(--c-bg-sub)]"
+              style={{ border: '0.5px solid var(--c-border-console)' }}
             >
-              {activeCount > 0 && <Loader2 size={12} className="animate-spin" />}
-              {activeCount > 0
-                ? `${activeCount} running`
-                : `${operations.length} completed`
-              }
+              <div className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full bg-[var(--c-bg-tag)]">
+                {activeCount > 0
+                  ? <Loader2 size={15} className="animate-spin text-amber-500" />
+                  : <Blocks size={15} className="text-[var(--c-text-muted)]" />
+                }
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-[2px] text-left">
+                <div className="truncate text-xs font-medium text-[var(--c-text-secondary)]">
+                  {t.nav.installTasks}
+                </div>
+                <div className="text-[10px] font-normal text-[var(--c-text-tertiary)]">
+                  {activeCount > 0
+                    ? `${activeCount} running · ${operations.length} total`
+                    : `${operations.length} completed`
+                  }
+                </div>
+              </div>
             </button>
           </div>
         )}
