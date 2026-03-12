@@ -427,6 +427,48 @@ func TestServiceSpawnSharedWorkspaceOnlyOmitsHistory(t *testing.T) {
 	}
 }
 
+func TestServiceSpawnWritesRoleToChildRunStartedEvent(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_spawn_role")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	orgID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	userID := uuid.New()
+	seedThreadAndRun(t, pool, orgID, threadID, &projectID, &userID, runID)
+
+	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-role")
+	role := "worker"
+
+	snapshot, err := service.Spawn(context.Background(), SpawnRequest{
+		PersonaID:   "researcher@1",
+		Role:        &role,
+		ContextMode: data.SubAgentContextModeIsolated,
+		Input:       "collect facts",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if snapshot.CurrentRunID == nil {
+		t.Fatal("expected current_run_id")
+	}
+
+	var roleValue string
+	err = pool.QueryRow(context.Background(), `SELECT data_json->>'role' FROM run_events WHERE run_id = $1 AND seq = 1`, *snapshot.CurrentRunID).Scan(&roleValue)
+	if err != nil {
+		t.Fatalf("load run.started role: %v", err)
+	}
+	if roleValue != role {
+		t.Fatalf("unexpected role in run.started: %q", roleValue)
+	}
+}
+
 func seedThreadMessages(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, threadID uuid.UUID, contents []string) {
 	t.Helper()
 	for idx, content := range contents {

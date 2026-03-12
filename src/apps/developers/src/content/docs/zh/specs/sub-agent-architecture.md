@@ -1269,6 +1269,13 @@ Track A + Track B + Track E -> Track F
 
 - 子 Agent 支持 `persona + role` 叠加配置
 
+**当前实现状态**
+
+- child run 首事件会写入 `role`
+- worker 的 persona 解析会按 `persona + role` 生成最终执行配置
+- role 可覆盖 prompt 追加段、工具策略、budgets、model / credential / reasoning / prompt cache
+- repo persona 与 DB persona 都支持 `roles` / `roles_json`
+
 **验收**
 
 - 同一 persona 可以在不同 role 下表现出不同协作风格
