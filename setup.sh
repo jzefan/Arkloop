@@ -73,7 +73,6 @@ install flags:
   --prod                    使用预构建镜像（compose.prod.yaml）
 
 说明：
-  - PR2 暂不支持 --mode saas
   - browser=on 仅支持 sandbox=docker
 EOF
       ;;
@@ -101,7 +100,6 @@ install flags:
   --prod                    Use pre-built images (compose.prod.yaml)
 
 Notes:
-  - PR2 does not support --mode saas yet
   - browser=on only works with sandbox=docker
 EOF
       ;;
@@ -831,6 +829,27 @@ apply_runtime_env() {
   esac
   python_env_delete ARKLOOP_SANDBOX_BASE_URL
 
+  # SaaS mode: PGBouncer, S3 storage, security hardening
+  if [ "$RESOLVED_MODE" = "saas" ]; then
+    # When PGBouncer is selected, route Docker traffic through it
+    if printf '%s' "$SELECTED_MODULES" | grep -q pgbouncer; then
+      set_value ARKLOOP_DOCKER_DATABASE_URL "postgresql://${pg_user}:${pg_pass}@pgbouncer:5432/${pg_db}"
+      set_value ARKLOOP_DOCKER_DATABASE_DIRECT_URL "postgresql://${pg_user}:${pg_pass}@postgres:5432/${pg_db}"
+    fi
+    # When SeaweedFS is selected, switch storage backend to S3
+    if printf '%s' "$SELECTED_MODULES" | grep -q seaweedfs; then
+      set_value ARKLOOP_STORAGE_BACKEND "s3"
+      set_if_empty ARKLOOP_S3_ENDPOINT "http://127.0.0.1:9000"
+      set_if_empty ARKLOOP_S3_ENDPOINT_DOCKER "http://seaweedfs:8333"
+      set_if_empty ARKLOOP_S3_REGION "us-east-1"
+    fi
+    # SaaS: disable fake-IP trust, set Turnstile placeholders
+    set_value ARKLOOP_OUTBOUND_TRUST_FAKE_IP "false"
+    set_if_empty ARKLOOP_TURNSTILE_SECRET_KEY ""
+    set_if_empty ARKLOOP_TURNSTILE_SITE_KEY ""
+    set_if_empty ARKLOOP_TURNSTILE_ALLOWED_HOST ""
+  fi
+
   if [ "$RESOLVED_BROWSER" = "on" ]; then
     set_value ARKLOOP_SANDBOX_WARM_BROWSER "1"
   else
@@ -1013,7 +1032,9 @@ run_install() {
   if [ "$RESOLVED_GATEWAY" = "on" ]; then
     wait_for_http "http://127.0.0.1:${gateway_port}/healthz" 60 || fail "$(t gateway_health_failed)"
     wait_for_http "http://127.0.0.1:${gateway_port}/" 60 || fail "$(t console_not_ready)"
-    bootstrap_init_url "$gateway_port"
+    if [ "$RESOLVED_MODE" != "saas" ]; then
+      bootstrap_init_url "$gateway_port"
+    fi
     log "$(t install_done)"
     printf '%s\n' "$(t entry_url "$gateway_port")"
     printf '%s\n' "$(t next_step_console)"
@@ -1144,6 +1165,8 @@ run_status() {
         sandbox-firecracker) service="sandbox" ;;
         searxng) service="searxng" ;;
         firecrawl) service="firecrawl" ;;
+        pgbouncer) service="pgbouncer" ;;
+        seaweedfs) service="seaweedfs" ;;
         *) service="$module" ;;
       esac
       if record="$(service_status_line "$service")"; then

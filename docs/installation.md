@@ -154,11 +154,11 @@ Set `--gateway on` unless the user explicitly says they want to run the API dire
 > Are you deploying this for personal or team use (self-hosted), or is this an Arkloop SaaS deployment?
 
 - Self-hosted → `--mode self-hosted`
-- SaaS → `--mode saas` (not supported in current release; defer if selected)
+- SaaS → `--mode saas`
 
 **Default: self-hosted**
 
-> **Note**: `--mode saas` is not yet implemented. If the user selects SaaS mode, inform them it is not available in the current release and proceed with `--mode self-hosted`.
+> **Note**: `--mode saas` automatically enables PGBouncer (connection pooling), S3 storage (SeaweedFS), and the full Console. Gateway rate limiting and Turnstile placeholders are configured by default. Bootstrap admin URL generation is skipped (handled by CI/CD pipeline).
 
 ---
 
@@ -287,7 +287,7 @@ If the URL was not printed (gateway was off, or bootstrap already completed), sk
 | Flag | Values | Default | Notes |
 |------|--------|---------|-------|
 | `--profile` | `standard`, `full` | `standard` | `full` enables all optional modules |
-| `--mode` | `self-hosted` | `self-hosted` | `saas` not yet available |
+| `--mode` | `self-hosted`, `saas` | `self-hosted` | `saas` enables PGBouncer, S3, full Console |
 | `--memory` | `none`, `openviking` | `none` | Adds persistent agent memory |
 | `--sandbox` | `none`, `docker`, `firecracker` | `none` | Code execution isolation |
 | `--console` | `lite`, `full` | `lite` | Full adds advanced management UI |
