@@ -6,7 +6,7 @@ import {
   KeyRound, Bot, Plug, Sparkles,
   Key, Webhook,
   ShieldCheck,
-  Users, FolderOpen, UserPlus,
+  Users, UserPlus,
   Package, Receipt, BadgeCheck, BarChart3,
   Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail, AlignLeft,
   PanelLeftClose, PanelLeftOpen, ChevronDown,
@@ -104,13 +104,7 @@ function buildNavGroups(t: LocaleStrings): NavGroup[] {
         { label: t.nav.webhooks,  path: '/webhooks',  icon: <Webhook size={17} /> },
       ],
     },
-    {
-      id: 'organization',
-      label: t.groups.organization,
-      items: [
-        { label: t.nav.projects, path: '/projects', icon: <FolderOpen size={17} /> },
-      ],
-    },
+
   ]
 }
 

@@ -10,7 +10,6 @@ export interface LocaleStrings {
     configuration: string
     integration: string
     security: string
-    organization: string
     billing: string
     platform: string
   }
@@ -31,7 +30,6 @@ export interface LocaleStrings {
     accessLog: string
     members: string
     teams: string
-    projects: string
     plans: string
     subscriptions: string
     entitlements: string
@@ -92,14 +90,6 @@ export interface LocaleStrings {
   loading: string
   // pages
   pages: {
-    projects: {
-      title: string
-      refresh: string
-      defaultBadge: string
-      noDescription: string
-      empty: string
-      loading: string
-    }
     credentials: {
       title: string
       addCredential: string

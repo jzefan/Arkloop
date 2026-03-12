@@ -326,6 +326,7 @@ export function AgentsPage() {
         }, accessToken)
 
       notifyToolCatalogChanged()
+      addToast(t.saved, 'success')
       const fresh = await load()
       const updated = fresh.find((item) => item.id === saved.id)
         ?? fresh.find((item) => item.persona_key === saved.persona_key && item.source === 'db')
@@ -338,7 +339,7 @@ export function AgentsPage() {
     } finally {
       setSaving(false)
     }
-  }, [accessToken, addToast, form, load, scope, selected, t.requestFailed])
+  }, [accessToken, addToast, form, load, scope, selected, t.requestFailed, t.saved])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return

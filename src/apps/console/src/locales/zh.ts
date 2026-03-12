@@ -6,7 +6,6 @@ export const zh: LocaleStrings = {
     configuration: '配置',
     integration: '集成',
     security: '安全',
-    organization: '工作区',
     billing: '计费',
     platform: '平台',
   },
@@ -25,7 +24,6 @@ export const zh: LocaleStrings = {
     accessLog: '访问日志',
     members: '成员',
     teams: '团队',
-    projects: '项目',
     plans: '套餐',
     subscriptions: '订阅',
     entitlements: '权益',
@@ -82,14 +80,6 @@ export const zh: LocaleStrings = {
   otpVerifyBtn: '登录',
   loading: '加载中...',
   pages: {
-    projects: {
-      title: '项目',
-      refresh: '刷新',
-      defaultBadge: '默认',
-      noDescription: '暂无说明',
-      empty: '暂无项目',
-      loading: '加载中...',
-    },
     credentials: {
       title: 'LLM 提供方',
       addCredential: '添加提供方',

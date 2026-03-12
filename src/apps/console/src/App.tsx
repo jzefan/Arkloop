@@ -32,7 +32,7 @@ import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionGovernancePage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
-import { ProjectsPage } from './pages/projects/ProjectsPage'
+
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
@@ -132,8 +132,7 @@ function App() {
         <Route path="captcha" element={<CaptchaPage />} />
         <Route path="gateway-config" element={<GatewayConfigPage />} />
         <Route path="access-log" element={<AccessLogPage />} />
-        {/* Workspace */}
-        <Route path="projects" element={<ProjectsPage />} />
+
         {/* Billing */}
         <Route path="plans" element={<PlaceholderPage title="Plans" />} />
         <Route path="subscriptions" element={<PlaceholderPage title="Subscriptions" />} />
