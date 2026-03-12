@@ -54,7 +54,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestToolProvidersListActivateCredentialAndClear(t *testing.T) {
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
-		OrgMembershipRepo:       membershipRepo,
+		AccountMembershipRepo:       membershipRepo,
 		ToolProviderConfigsRepo: toolProvidersRepo,
 		SecretsRepo:             secretsRepo,
 	})

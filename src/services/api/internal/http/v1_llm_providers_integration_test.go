@@ -43,7 +43,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("user cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -51,7 +51,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("refresh token repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
@@ -125,7 +125,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
-		OrgMembershipRepo:       membershipRepo,
+		AccountMembershipRepo:       membershipRepo,
 		LlmCredentialsRepo:      llmCredentialsRepo,
 		LlmRoutesRepo:           llmRoutesRepo,
 		SecretsRepo:             secretsRepo,

@@ -40,7 +40,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
@@ -250,7 +250,7 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
@@ -330,12 +330,12 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	logger := observability.NewJSONLogger("test", io.Discard)
 	userRepo, _ := data.NewUserRepository(pool)
 	credRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	mcpRepo, _ := data.NewMCPConfigsRepository(pool)
 	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(pool)
 	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(pool)
-	orgRepo, _ := data.NewOrgRepository(pool)
+	orgRepo, _ := data.NewAccountRepository(pool)
 	passwordHasher, _ := auth.NewBcryptPasswordHasher(0)
 	tokenService, _ := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -399,7 +399,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolProviderConfigsRepo:      toolProvidersRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 		ArtifactStore:                newFakeHTTPArtifactStore(),
@@ -429,7 +429,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 		t.Fatalf("unexpected mcp label: %s", item.Label)
 	}
 
-	if err := overridesRepo.SetDisabled(ctx, uuid.Nil, "platform", "document_write", true); err != nil {
+	if err := overridesRepo.SetDisabled(ctx, "document_write", true); err != nil {
 		t.Fatalf("disable document_write: %v", err)
 	}
 

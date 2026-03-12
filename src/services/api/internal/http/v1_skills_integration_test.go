@@ -117,7 +117,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 	}
 	userRepo, _ := data.NewUserRepository(pool)
 	credRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	apiKeysRepo, _ := data.NewAPIKeysRepository(pool)
@@ -138,7 +138,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		Logger:                   logger,
 		AuthService:              authService,
 		RegistrationService:      registrationService,
-		OrgMembershipRepo:        membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		APIKeysRepo:              apiKeysRepo,
 		AuditWriter:              auditWriter,
 		PersonasRepo:             personasRepo,

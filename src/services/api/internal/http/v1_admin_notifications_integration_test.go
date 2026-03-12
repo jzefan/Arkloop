@@ -42,7 +42,7 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		NotificationsRepo:   notifRepo,
 		AuditWriter:         auditWriter,
 	})

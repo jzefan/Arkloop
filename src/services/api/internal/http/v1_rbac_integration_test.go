@@ -46,7 +46,7 @@ func TestRBACPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -62,11 +62,6 @@ func TestRBACPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("thread repo: %v", err)
 	}
-	invitationsRepo, err := data.NewOrgInvitationsRepository(pool)
-	if err != nil {
-		t.Fatalf("invitations repo: %v", err)
-	}
-
 	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
@@ -86,10 +81,9 @@ func TestRBACPermissions(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		AuditWriter:         auditWriter,
-		OrgInvitationsRepo:  invitationsRepo,
 	})
 
 	// 注册 owner (A)

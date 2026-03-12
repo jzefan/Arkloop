@@ -22,7 +22,7 @@ const apiKeysTestJWTSecret = "test-secret-should-be-long-enough-32chars"
 type apiKeyTestEnv struct {
 	handler        nethttp.Handler
 	apiKeysRepo    *data.APIKeysRepository
-	membershipRepo *data.OrgMembershipRepository
+	membershipRepo *data.AccountMembershipRepository
 	tokenService   *auth.JwtAccessTokenService
 	aliceToken     string
 	aliceUserID    uuid.UUID
@@ -62,7 +62,7 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	if err != nil {
 		t.Fatalf("new cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -103,7 +103,7 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		AuditWriter:         auditWriter,
 		APIKeysRepo:         apiKeysRepo,
@@ -137,7 +137,7 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 		tokenService:   tokenService,
 		aliceToken:     regPayload.AccessToken,
 		aliceUserID:    aliceUserID,
-		aliceOrgID:     aliceMembership.OrgID,
+		aliceOrgID:     aliceMembership.AccountID,
 	}
 }
 
@@ -425,7 +425,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		AuditWriter:         auditWriter,
 		APIKeysRepo:         apiKeysRepo,
