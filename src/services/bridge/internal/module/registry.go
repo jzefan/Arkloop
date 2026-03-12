@@ -14,10 +14,10 @@ type webURLSpec struct {
 }
 
 var webURLMap = map[string]webURLSpec{
-	"console":      {envVar: "ARKLOOP_CONSOLE_PORT", defaultVal: "5174"},
-	"console-lite": {envVar: "ARKLOOP_CONSOLE_LITE_PORT", defaultVal: "5175"},
-	"searxng":      {envVar: "ARKLOOP_SEARXNG_PORT", defaultVal: "8888"},
-	"gateway":      {envVar: "ARKLOOP_GATEWAY_PORT", defaultVal: "8000"},
+	"console":      {envVar: "ARKLOOP_CONSOLE_PORT", defaultVal: "19081"},
+	"console-lite": {envVar: "ARKLOOP_CONSOLE_LITE_PORT", defaultVal: "19082"},
+	"searxng":      {envVar: "ARKLOOP_SEARXNG_PORT", defaultVal: "19011"},
+	"gateway":      {envVar: "ARKLOOP_GATEWAY_PORT", defaultVal: "19000"},
 }
 
 func resolveWebURL(id string) string {
@@ -210,15 +210,15 @@ func frontendCategory(id string) ModuleCategory {
 
 // knownPort returns the display port for modules that expose one.
 var portMap = map[string]int{
-	"openviking":         1933,
-	"sandbox-docker":     8002,
-	"sandbox-firecracker": 8002,
-	"searxng":            8888,
-	"firecrawl":          3002,
-	"console":            5174,
-	"console-lite":       5175,
-	"api":                8001,
-	"gateway":            8000,
+	"openviking":         19010,
+	"sandbox-docker":     19002,
+	"sandbox-firecracker": 19002,
+	"searxng":            19011,
+	"firecrawl":          19012,
+	"console":            19081,
+	"console-lite":       19082,
+	"api":                19001,
+	"gateway":            19000,
 }
 
 func knownPort(id string) *int {

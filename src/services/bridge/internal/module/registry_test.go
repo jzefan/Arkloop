@@ -70,8 +70,8 @@ func TestRegistryGet(t *testing.T) {
 	if !def.Capabilities.BootstrapSupported {
 		t.Error("expected BootstrapSupported to be true")
 	}
-	if def.Port == nil || *def.Port != 1933 {
-		t.Errorf("Port = %v, want 1933", def.Port)
+	if def.Port == nil || *def.Port != 19010 {
+		t.Errorf("Port = %v, want 19010", def.Port)
 	}
 }
 

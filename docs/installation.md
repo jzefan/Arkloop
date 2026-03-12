@@ -38,7 +38,7 @@ Expected output fields:
 | `compose=1\|0` | `docker compose` plugin available |
 | `docker_socket=<path>\|not-found` | Accessible Docker socket path |
 | `kvm=1\|0` | KVM device present (Linux only) |
-| `port_8000=free\|in-use` | Default gateway port availability |
+| `port_19000=free\|in-use` | Default gateway port availability |
 | `port_9000=free\|in-use` | MinIO port availability |
 
 If `docker=0` or `compose=0`, **stop here** and follow the [Docker prerequisite guide](#docker-not-available).
@@ -245,17 +245,17 @@ After the installer completes, verify the stack is running:
 Check the gateway is reachable:
 
 ```bash
-curl -sf http://localhost:8000/healthz && echo "gateway ok"
+curl -sf http://localhost:19000/healthz && echo "gateway ok"
 ```
 
-If gateway is healthy, Arkloop is running. The Console is accessible at `http://localhost:8000/`.
+If gateway is healthy, Arkloop is running. The Console is accessible at `http://localhost:19000/`.
 
 ### Step 4: Complete Admin Initialization
 
 The installer prints a one-time bootstrap URL at the end:
 
 ```
-管理员初始化地址：http://localhost:8000/bootstrap/<token>
+管理员初始化地址：http://localhost:19000/bootstrap/<token>
 ```
 
 Open this URL in a browser (or instruct the user to open it). The user will set their admin username and password. The token is single-use and expires after 30 minutes.
@@ -331,12 +331,12 @@ If running in a VM, enable nested virtualization. If running on macOS or WSL2, u
 
 ### Port Already in Use
 
-Symptom: installer fails with `端口 8000 已被占用` (or similar).
+Symptom: installer fails with `端口 19000 已被占用` (or similar).
 
 Find what is using the port:
 
 ```bash
-lsof -i :8000
+lsof -i :19000
 ```
 
 Options:

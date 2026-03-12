@@ -613,7 +613,7 @@ collect_install_inputs() {
   INSTALL_CONSOLE="$(prompt_choice "$(t prompt_console)" "${console:-}")"
   INSTALL_BROWSER="$(prompt_choice "$(t prompt_browser)" "${browser:-off}")"
   INSTALL_GATEWAY="$(prompt_choice "$(t prompt_gateway)" "${gateway:-on}")"
-  INSTALL_GATEWAY_PORT="$(prompt_choice "$(t prompt_gateway_port)" "${gateway_port:-8000}")"
+  INSTALL_GATEWAY_PORT="$(prompt_choice "$(t prompt_gateway_port)" "${gateway_port:-19000}")"
 }
 
 compose_ps_lines() {
@@ -779,7 +779,7 @@ apply_runtime_env() {
   local gateway_port pg_user pg_db pg_pass redis_pass console_upstream
   gateway_port="$INSTALL_GATEWAY_PORT"
   [ -n "$gateway_port" ] || gateway_port="$(python_env_get ARKLOOP_GATEWAY_PORT)"
-  [ -n "$gateway_port" ] || gateway_port="8000"
+  [ -n "$gateway_port" ] || gateway_port="19000"
   validate_port "$gateway_port" || fail "$(t invalid_port "$gateway_port")"
   set_value ARKLOOP_GATEWAY_PORT "$gateway_port"
   pg_user="$(python_env_get ARKLOOP_POSTGRES_USER)"
@@ -794,7 +794,7 @@ apply_runtime_env() {
   set_value ARKLOOP_PGBOUNCER_URL "postgresql://${pg_user}:${pg_pass}@127.0.0.1:5433/${pg_db}"
   set_value ARKLOOP_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/0"
   set_value ARKLOOP_GATEWAY_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/1"
-  set_if_empty ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS "http://localhost:5173,http://localhost:5174,http://localhost:5175"
+  set_if_empty ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS "http://localhost:19080,http://localhost:19081,http://localhost:19082"
 
   case "$RESOLVED_CONSOLE" in
     lite) console_upstream="http://console-lite:80" ;;
@@ -904,7 +904,7 @@ preflight_install() {
 
   local gateway_port
   gateway_port="$(python_env_get ARKLOOP_GATEWAY_PORT || true)"
-  [ -n "$gateway_port" ] || gateway_port="8000"
+  [ -n "$gateway_port" ] || gateway_port="19000"
   if [ "$RESOLVED_GATEWAY" = "on" ] && port_in_use "$gateway_port"; then
     if ! service_ready gateway >/dev/null 2>&1; then
       warn "$(t gateway_port_in_use "$gateway_port")"
@@ -1000,7 +1000,7 @@ run_install() {
 
   local gateway_port
   gateway_port="$(python_env_get ARKLOOP_GATEWAY_PORT)"
-  [ -n "$gateway_port" ] || gateway_port="8000"
+  [ -n "$gateway_port" ] || gateway_port="19000"
 
   if [ "$RESOLVED_GATEWAY" = "on" ]; then
     wait_for_http "http://127.0.0.1:${gateway_port}/healthz" 60 || fail "$(t gateway_health_failed)"
@@ -1032,7 +1032,7 @@ run_doctor() {
   local gateway_port
   gateway_port="$gateway_port_override"
   [ -n "$gateway_port" ] || gateway_port="$(python_env_get ARKLOOP_GATEWAY_PORT)"
-  [ -n "$gateway_port" ] || gateway_port="8000"
+  [ -n "$gateway_port" ] || gateway_port="19000"
   validate_port "$gateway_port" || fail "$(t invalid_port "$gateway_port")"
 
   printf 'platform=%s\n' "$HOST_OS"

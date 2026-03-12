@@ -16,7 +16,7 @@ func TestSecurityHeadersMiddlewareAllowsConfiguredOrigin(t *testing.T) {
 	})
 
 	handler := traceMiddleware(
-		securityHeadersMiddleware([]string{"http://localhost:5173"}, next),
+		securityHeadersMiddleware([]string{"http://localhost:19080"}, next),
 		nil,
 		geoip.Noop{},
 		nil,
@@ -26,7 +26,7 @@ func TestSecurityHeadersMiddlewareAllowsConfiguredOrigin(t *testing.T) {
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Origin", "http://localhost:19080")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -39,7 +39,7 @@ func TestSecurityHeadersMiddlewareAllowsConfiguredOrigin(t *testing.T) {
 	if got := rec.Header().Get("Content-Security-Policy"); got != frontendCSPHeaderValue {
 		t.Fatalf("unexpected CSP header: %q", got)
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:19080" {
 		t.Fatalf("unexpected allow-origin: %q", got)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
@@ -74,7 +74,7 @@ func TestSecurityHeadersMiddlewareHandlesPreflight(t *testing.T) {
 	)
 
 	req := httptest.NewRequest(http.MethodOptions, "/v1/auth/refresh", nil)
-	req.Header.Set("Origin", "http://localhost:5174")
+	req.Header.Set("Origin", "http://localhost:19081")
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -85,7 +85,7 @@ func TestSecurityHeadersMiddlewareHandlesPreflight(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5174" {
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:19081" {
 		t.Fatalf("unexpected allow-origin: %q", got)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != corsAllowMethodsValue {
