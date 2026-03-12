@@ -4,6 +4,10 @@ import "context"
 
 // DB abstracts a database connection pool.
 // Both PostgreSQL (pgxpool.Pool) and SQLite can implement this interface.
+//
+// TODO(m4): Consider adding BeginTx(ctx context.Context, opts TxOptions) (Tx, error)
+// for callers that need isolation-level or read-only transaction options.
+// Currently all Begin callers use default options.
 type DB interface {
 	Querier
 	Begin(ctx context.Context) (Tx, error)
@@ -31,6 +35,10 @@ type Row interface {
 }
 
 // Rows abstracts a multi-row query result set.
+//
+// TODO(m2): Close() currently returns no error. Changing to Close() error
+// would be a breaking change across 80+ call sites that use `defer rows.Close()`.
+// Evaluate in a future pass if error propagation from Close is needed.
 type Rows interface {
 	Next() bool
 	Scan(dest ...any) error
@@ -39,6 +47,10 @@ type Rows interface {
 }
 
 // Result abstracts the outcome of an Exec operation.
+//
+// TODO(m3): LastInsertId() is intentionally omitted. PostgreSQL does not
+// support it (uses RETURNING instead) and no existing code needs it.
+// Add LastInsertId() (int64, error) if a use case arises.
 type Result interface {
 	RowsAffected() int64
 }

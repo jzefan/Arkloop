@@ -5,6 +5,7 @@ package pgadapter
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"arkloop/services/shared/database"
 
@@ -131,12 +132,19 @@ type result struct {
 func (r result) RowsAffected() int64 { return r.tag.RowsAffected() }
 
 // translateError converts pgx-specific errors to database package errors.
+// It wraps pgx.ErrNoRows so callers can use errors.Is(err, database.ErrNoRows)
+// while preserving the original error context. Other pgx/pgconn driver errors
+// are wrapped inside database.DriverError so they don't leak driver types.
 func translateError(err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return database.ErrNoRows
+		return fmt.Errorf("%w: %v", database.ErrNoRows, err)
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return &database.DriverError{Driver: "pgx", Err: err}
 	}
 	return err
 }

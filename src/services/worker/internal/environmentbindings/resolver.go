@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (data.Run, error) {
+func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run, dialect database.DialectHelper) (data.Run, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -35,7 +35,7 @@ func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (da
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	runsRepo := data.RunsRepository{}
+	runsRepo := data.RunsRepository{Dialect: dialect}
 	if err := runsRepo.LockRunRow(ctx, tx, run.ID); err != nil {
 		return data.Run{}, err
 	}
@@ -60,7 +60,7 @@ func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (da
 		profileRef = sharedenvironmentref.BuildProfileRef(resolved.OrgID, resolved.CreatedByUserID)
 	}
 
-	profileRepo := data.ProfileRegistriesRepository{}
+	profileRepo := data.ProfileRegistriesRepository{Dialect: dialect}
 	profileRecord, err := profileRepo.GetOrCreate(ctx, db, data.RegistryRecord{
 		Ref:         profileRef,
 		OrgID:       resolved.OrgID,
@@ -75,7 +75,7 @@ func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (da
 	workspaceCreated := false
 	if workspaceRef == "" {
 		candidate := sharedenvironmentref.BuildWorkspaceRef(resolved.OrgID, profileRef, bindingScope, bindingTargetID)
-		workspaceRef, workspaceCreated, err = data.DefaultWorkspaceBindingsRepository{}.GetOrCreate(
+		workspaceRef, workspaceCreated, err = data.DefaultWorkspaceBindingsRepository{Dialect: dialect}.GetOrCreate(
 			ctx,
 			tx,
 			resolved.OrgID,
@@ -102,7 +102,7 @@ func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (da
 		}
 	}
 
-	workspaceRepo := data.WorkspaceRegistriesRepository{}
+	workspaceRepo := data.WorkspaceRegistriesRepository{Dialect: dialect}
 	if _, err := workspaceRepo.GetOrCreate(ctx, db, data.RegistryRecord{
 		Ref:          workspaceRef,
 		OrgID:        resolved.OrgID,

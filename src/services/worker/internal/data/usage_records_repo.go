@@ -9,7 +9,16 @@ import (
 )
 
 // UsageRecordsRepository 在 Worker 侧写入 usage_records，与 RunsRepository 风格一致（零值可用）。
-type UsageRecordsRepository struct{}
+type UsageRecordsRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r UsageRecordsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 // Insert 在已有事务内写入 usage_records，ON CONFLICT (run_id, usage_type) 时用最新值更新（幂等）。
 func (UsageRecordsRepository) Insert(

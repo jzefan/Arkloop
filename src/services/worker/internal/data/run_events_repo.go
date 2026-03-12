@@ -4,14 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 "arkloop/services/shared/database"
 )
 
-type RunEventsRepository struct{}
+type RunEventsRepository struct{
+	Dialect database.DialectHelper
+}
 
-func (RunEventsRepository) GetLatestEventType(
+func (r RunEventsRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
+
+func (r RunEventsRepository) GetLatestEventType(
 	ctx context.Context,
 	tx database.Tx,
 	runID uuid.UUID,
@@ -24,12 +34,12 @@ func (RunEventsRepository) GetLatestEventType(
 	var eventType string
 	err := tx.QueryRow(
 		ctx,
-		`SELECT type
+		fmt.Sprintf(`SELECT type
 		 FROM run_events
 		 WHERE run_id = $1
-		   AND type = ANY($2)
+		   AND %s
 		 ORDER BY seq DESC
-		 LIMIT 1`,
+		 LIMIT 1`, r.dialect().ArrayAny("type", 2)),
 		runID,
 		types,
 	).Scan(&eventType)
@@ -63,11 +73,11 @@ func (r RunEventsRepository) AppendEvent(
 
 	_, err = tx.Exec(
 		ctx,
-		`INSERT INTO run_events (
+		fmt.Sprintf(`INSERT INTO run_events (
 			run_id, seq, type, data_json, tool_name, error_class
 		) VALUES (
-			$1, $2, $3, $4::jsonb, $5, $6
-		)`,
+			$1, $2, $3, %s, $5, $6
+		)`, r.dialect().JSONCast("$4")),
 		runID,
 		seq,
 		eventType,
@@ -122,9 +132,9 @@ func (RunEventsRepository) FirstEventData(
 	return eventType, obj, nil
 }
 
-func (RunEventsRepository) allocateSeq(ctx context.Context, tx database.Tx) (int64, error) {
+func (r RunEventsRepository) allocateSeq(ctx context.Context, tx database.Tx) (int64, error) {
 	var seq int64
-	err := tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq)
+	err := tx.QueryRow(ctx, fmt.Sprintf("SELECT %s", r.dialect().Sequence("run_events_seq_global"))).Scan(&seq)
 	if err != nil {
 		return 0, err
 	}

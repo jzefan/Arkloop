@@ -8,8 +8,8 @@ import (
 	"arkloop/services/worker/internal/environmentbindings"
 )
 
-func resolveAndPersistEnvironmentBindings(ctx context.Context, db database.DB, run data.Run) (data.Run, error) {
-	return environmentbindings.ResolveAndPersistRun(ctx, db, run)
+func resolveAndPersistEnvironmentBindings(ctx context.Context, db database.DB, run data.Run, dialect database.DialectHelper) (data.Run, error) {
+	return environmentbindings.ResolveAndPersistRun(ctx, db, run, dialect)
 }
 
 func derefString(value *string) string {

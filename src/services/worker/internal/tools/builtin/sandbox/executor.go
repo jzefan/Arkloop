@@ -808,7 +808,7 @@ func (e *ToolExecutor) ensureEnvironmentBindings(
 		run.ThreadID = *execCtx.ThreadID
 	}
 
-	resolvedRun, err := environmentbindings.ResolveAndPersistRun(ctx, e.orchestrator.db, run)
+	resolvedRun, err := environmentbindings.ResolveAndPersistRun(ctx, e.orchestrator.db, run, nil)
 	if err != nil {
 		return execCtx, &tools.ExecutionError{
 			ErrorClass: errorSandboxError,

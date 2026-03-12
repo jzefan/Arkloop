@@ -11,7 +11,16 @@ import (
 "arkloop/services/shared/database"
 )
 
-type MessagesRepository struct{}
+type MessagesRepository struct{
+	Dialect database.DialectHelper
+}
+
+func (r MessagesRepository) dialect() database.DialectHelper {
+	if r.Dialect != nil {
+		return r.Dialect
+	}
+	return database.PostgresDialect{}
+}
 
 type ThreadMessage struct {
 	Role        string
@@ -26,7 +35,7 @@ type ConversationSearchHit struct {
 	CreatedAt time.Time
 }
 
-func (MessagesRepository) InsertAssistantMessage(
+func (r MessagesRepository) InsertAssistantMessage(
 	ctx context.Context,
 	tx database.Tx,
 	orgID uuid.UUID,
@@ -47,11 +56,11 @@ func (MessagesRepository) InsertAssistantMessage(
 	}
 	_, err = tx.Exec(
 		ctx,
-		`INSERT INTO messages (
+		fmt.Sprintf(`INSERT INTO messages (
 			org_id, thread_id, created_by_user_id, role, content, metadata_json
 		) VALUES (
-			$1, $2, NULL, $3, $4, $5::jsonb
-		)`,
+			$1, $2, NULL, $3, $4, %s
+		)`, r.dialect().JSONCast("$5")),
 		orgID,
 		threadID,
 		"assistant",
@@ -109,7 +118,7 @@ func (MessagesRepository) ListByThread(
 	return out, nil
 }
 
-func (MessagesRepository) SearchVisibleByOwner(
+func (r MessagesRepository) SearchVisibleByOwner(
 	ctx context.Context,
 	pool database.DB,
 	orgID uuid.UUID,
@@ -134,7 +143,7 @@ func (MessagesRepository) SearchVisibleByOwner(
 	like := "%" + escapeILikePattern(trimmedQuery) + "%"
 	rows, err := pool.Query(
 		ctx,
-		`SELECT m.thread_id, m.role, m.content, m.created_at
+		fmt.Sprintf(`SELECT m.thread_id, m.role, m.content, m.created_at
 		 FROM messages m
 		 JOIN threads t ON t.id = m.thread_id
 		 WHERE m.org_id = $1
@@ -144,9 +153,9 @@ func (MessagesRepository) SearchVisibleByOwner(
 		   AND t.is_private = FALSE
 		   AND m.deleted_at IS NULL
 		   AND m.hidden = FALSE
-		   AND m.content ILIKE $3 ESCAPE '!'
+		   AND m.content %s $3 ESCAPE '!'
 		 ORDER BY m.created_at DESC, m.id DESC
-		 LIMIT $4`,
+		 LIMIT $4`, r.dialect().ILike()),
 		orgID, ownerUserID, like, limit,
 	)
 	if err != nil {
