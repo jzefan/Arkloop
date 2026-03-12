@@ -67,6 +67,7 @@ func ValidateAndNormalize(args map[string]any) (string, map[string]any, error) {
 
 	properties := make(map[string]any)
 	var requiredKeys []any
+	var orderedKeys []any
 
 	for i, fieldRaw := range fields {
 		field, ok := fieldRaw.(map[string]any)
@@ -87,6 +88,7 @@ func ValidateAndNormalize(args map[string]any) (string, map[string]any, error) {
 			return "", nil, err
 		}
 		properties[key] = prop
+		orderedKeys = append(orderedKeys, key)
 
 		if req, _ := field["required"].(bool); req {
 			requiredKeys = append(requiredKeys, key)
@@ -94,6 +96,9 @@ func ValidateAndNormalize(args map[string]any) (string, map[string]any, error) {
 	}
 
 	schema := map[string]any{"properties": properties}
+	if len(orderedKeys) > 0 {
+		schema["_fieldOrder"] = orderedKeys
+	}
 	if len(requiredKeys) > 0 {
 		schema["required"] = requiredKeys
 	}

@@ -315,5 +315,22 @@ export const en: LocaleStrings = {
     dismiss: 'Skip',
     submit: 'Submit',
     submitting: 'Submitting...',
+    next: 'Next',
+    back: 'Back',
   },
+  // document panel
+  documentPanel: {
+    preview: 'Preview',
+    source: 'Source',
+    download: 'Download',
+    previewUnsupported: 'Preview not available for this format',
+    downloadFile: 'Download file',
+    loadFailed: (detail: string) => `Load failed: ${detail}`,
+  },
+  // message actions
+  copyAction: 'Copy',
+  editAction: 'Edit',
+  // chat page
+  checkInPlaceholder: 'Type your response...',
+  replyPlaceholder: 'Reply...',
 }

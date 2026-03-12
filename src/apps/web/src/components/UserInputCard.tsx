@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowRight, Check, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react'
 import { useLocale } from '../contexts/LocaleContext'
 import type {
   FieldSchema,
@@ -44,7 +44,15 @@ interface Props {
 
 export default function UserInputCard({ request, onSubmit, onDismiss, disabled }: Props) {
   const { t } = useLocale()
-  const fields = useMemo(() => Object.entries(request.requestedSchema.properties), [request])
+  const fields = useMemo(() => {
+    const order = request.requestedSchema._fieldOrder
+    if (order) {
+      return order
+        .filter(key => key in request.requestedSchema.properties)
+        .map(key => [key, request.requestedSchema.properties[key]] as [string, FieldSchema])
+    }
+    return Object.entries(request.requestedSchema.properties)
+  }, [request])
   const requiredSet = useMemo(() => {
     const req = request.requestedSchema.required
     return new Set(Array.isArray(req) ? req : [])
@@ -52,6 +60,10 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
   const [values, setValues] = useState<Record<string, FieldValue>>(() => buildInitialValues(request.requestedSchema))
   const [submitting, setSubmitting] = useState(false)
   const [cardHovered, setCardHovered] = useState(false)
+  const [page, setPage] = useState(0)
+
+  const useWizard = fields.length > 1
+  const isLastPage = page === fields.length - 1
 
   const setValue = useCallback((key: string, val: FieldValue) => {
     setValues(prev => ({ ...prev, [key]: val }))
@@ -64,6 +76,14 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
     }
     return true
   }, [values, requiredSet])
+
+  const currentFieldValid = useMemo(() => {
+    if (!useWizard) return true
+    const [key] = fields[page]
+    if (!requiredSet.has(key)) return true
+    const v = values[key]
+    return v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)
+  }, [useWizard, fields, page, values, requiredSet])
 
   const doSubmit = useCallback(() => {
     if (!allValid || submitting || disabled) return
@@ -80,6 +100,33 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
     onSubmit({ type: 'user_input_response', request_id: request.request_id, answers: merged })
   }, [submitting, disabled, values, onSubmit, request.request_id])
 
+  const handleSelectAdvance = useCallback((key: string, val: FieldValue) => {
+    if (submitting || disabled) return
+    const merged = { ...values, [key]: val }
+    setValues(merged)
+    if (!isLastPage) {
+      setPage(p => p + 1)
+    } else {
+      let valid = true
+      for (const reqKey of requiredSet) {
+        const v = merged[reqKey]
+        if (v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) { valid = false; break }
+      }
+      if (valid) {
+        setSubmitting(true)
+        onSubmit({ type: 'user_input_response', request_id: request.request_id, answers: merged })
+      }
+    }
+  }, [submitting, disabled, values, isLastPage, requiredSet, onSubmit, request.request_id])
+
+  const goNext = useCallback(() => {
+    if (currentFieldValid && !isLastPage) setPage(p => p + 1)
+  }, [currentFieldValid, isLastPage])
+
+  const goBack = useCallback(() => {
+    if (page > 0) setPage(p => p - 1)
+  }, [page])
+
   const handleDismiss = useCallback(() => {
     if (submitting || disabled) return
     onDismiss()
@@ -95,6 +142,8 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
 
   // 只有单个 select/oneOf 字段时，点选即提交
   const isSingleSelect = fields.length === 1 && (isEnumField(fields[0][1]) || isOneOfField(fields[0][1]))
+  const isCurrentSelect = useWizard && (isEnumField(fields[page][1]) || isOneOfField(fields[page][1]))
+  const visibleFields = useWizard ? [fields[page]] : fields
 
   return (
     <div
@@ -112,11 +161,16 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
       onMouseEnter={() => setCardHovered(true)}
       onMouseLeave={() => setCardHovered(false)}
     >
-      {/* Message */}
+      {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-4">
         <h2 className="text-[17px] font-normal leading-snug m-0 flex-1" style={{ color: 'var(--c-text-secondary)' }}>
-          {request.message}
+          {useWizard && page > 0 ? (fields[page][1] as FieldSchema).title ?? request.message : request.message}
         </h2>
+        {useWizard && (
+          <span className="text-[12px] font-medium flex-shrink-0 mt-1" style={{ color: 'var(--c-text-muted)' }}>
+            {page + 1} / {fields.length}
+          </span>
+        )}
         <button
           type="button"
           onClick={handleDismiss}
@@ -131,22 +185,91 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
 
       {/* Fields */}
       <div className="flex flex-col gap-4">
-        {fields.map(([key, field]) => (
-          <FieldRenderer
-            key={key}
-            fieldKey={key}
-            field={field}
-            value={values[key]}
-            required={requiredSet.has(key)}
-            disabled={submitting || !!disabled}
-            onChange={val => setValue(key, val)}
-            onQuickSubmit={isSingleSelect ? (val: FieldValue) => quickSubmit(key, val) : undefined}
-          />
-        ))}
+        {visibleFields.map(([key, field]) => {
+          const displayField = useWizard && page > 0 ? { ...field, title: undefined } as typeof field : field
+          return (
+            <FieldRenderer
+              key={key}
+              fieldKey={key}
+              field={displayField}
+              value={values[key]}
+              required={requiredSet.has(key)}
+              disabled={submitting || !!disabled}
+              onChange={val => setValue(key, val)}
+              onQuickSubmit={
+                isSingleSelect ? (val: FieldValue) => quickSubmit(key, val) :
+                isCurrentSelect ? (val: FieldValue) => handleSelectAdvance(key, val) :
+                undefined
+              }
+            />
+          )
+        })}
       </div>
 
-      {/* Footer: 多字段时显示提交按钮 */}
-      {!isSingleSelect && (
+      {/* Footer */}
+      {useWizard ? (
+        <div className="flex items-center pt-3 mt-3" style={{ borderTop: '0.5px solid var(--c-border-subtle)' }}>
+          <div className="flex-1 flex justify-start">
+            {page > 0 && (
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={submitting || !!disabled}
+                className="flex h-7 items-center gap-1 rounded-lg px-2.5 border-none bg-transparent cursor-pointer transition-[background-color] duration-[60ms] disabled:opacity-30 text-[13px] font-medium hover:bg-[var(--c-bg-deep)]"
+                style={{ color: 'var(--c-text-secondary)' }}
+              >
+                <ArrowLeft size={13} />
+                {t.userInput.back}
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            {fields.map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: i === page ? 'var(--c-text-primary)' : i < page ? 'var(--c-text-muted)' : 'var(--c-border-subtle)',
+                  transition: 'background 150ms ease',
+                }}
+              />
+            ))}
+          </div>
+          <div className="flex-1 flex justify-end">
+            {!isCurrentSelect && (
+              isLastPage ? (
+                <button
+                  type="button"
+                  onClick={doSubmit}
+                  disabled={!allValid || submitting || !!disabled}
+                  className="flex h-7 items-center gap-1.5 rounded-lg px-3 border-none cursor-pointer transition-[background-color,color] duration-[60ms] disabled:opacity-30 text-[13px] font-medium"
+                  style={{
+                    background: allValid && !submitting ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
+                    color: allValid && !submitting ? 'var(--c-bg-page)' : 'var(--c-text-muted)',
+                  }}
+                >
+                  {submitting ? t.userInput.submitting : t.userInput.submit}
+                  {!submitting && <ArrowRight size={13} />}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={!currentFieldValid || submitting || !!disabled}
+                  className="flex h-7 items-center gap-1.5 rounded-lg px-3 border-none cursor-pointer transition-[background-color,color] duration-[60ms] disabled:opacity-30 text-[13px] font-medium"
+                  style={{
+                    background: currentFieldValid && !submitting ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
+                    color: currentFieldValid && !submitting ? 'var(--c-bg-page)' : 'var(--c-text-muted)',
+                  }}
+                >
+                  {t.userInput.next}
+                  <ArrowRight size={13} />
+                </button>
+              )
+            )}
+          </div>
+        </div>
+      ) : !isSingleSelect ? (
         <div className="flex items-center justify-end pt-3 mt-3" style={{ borderTop: '0.5px solid var(--c-border-subtle)' }}>
           <div className="flex items-center gap-1.5">
             <button
@@ -174,7 +297,7 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
             </button>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -219,12 +342,12 @@ function FieldRenderer({ fieldKey, field, value, disabled, onChange, onQuickSubm
 // --- FieldLabel ---
 
 function FieldLabel({ title, description }: { title?: string; description?: string }) {
-  if (!title) return null
+  if (!title && !description) return null
   return (
     <div className="mb-2">
-      <span className="text-[14px] font-medium" style={{ color: 'var(--c-text-primary)' }}>{title}</span>
+      {title && <span className="text-[14px] font-medium" style={{ color: 'var(--c-text-primary)' }}>{title}</span>}
       {description && (
-        <span className="ml-2 text-[12px]" style={{ color: 'var(--c-text-muted)' }}>{description}</span>
+        <span className={title ? 'ml-2 text-[12px]' : 'text-[12.5px]'} style={{ color: 'var(--c-text-muted)' }}>{description}</span>
       )}
     </div>
   )

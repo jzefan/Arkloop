@@ -323,7 +323,24 @@ export interface LocaleStrings {
     dismiss: string
     submit: string
     submitting: string
+    next: string
+    back: string
   }
+  // document panel
+  documentPanel: {
+    preview: string
+    source: string
+    download: string
+    previewUnsupported: string
+    downloadFile: string
+    loadFailed: (detail: string) => string
+  }
+  // message actions
+  copyAction: string
+  editAction: string
+  // chat page
+  checkInPlaceholder: string
+  replyPlaceholder: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

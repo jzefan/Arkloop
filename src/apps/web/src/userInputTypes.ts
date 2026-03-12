@@ -97,6 +97,7 @@ export type FieldSchema =
 export interface RequestedSchema {
   properties: Record<string, FieldSchema>
   required?: string[]
+  _fieldOrder?: string[]
 }
 
 export interface UserInputRequest {
