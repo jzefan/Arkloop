@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/worker/internal/data"
@@ -150,7 +151,7 @@ func toExecutionPersonaProfile(def *personas.Definition) *sharedexec.PersonaProf
 	}
 	return &sharedexec.PersonaProfile{
 		SoulMD:                  def.SoulMD,
-		PromptMD:                def.PromptMD,
+		PromptMD:                joinPromptSegments(def.PromptMD, def.RoleSoulMD, def.RolePromptMD),
 		PreferredCredentialName: def.PreferredCredential,
 		Budgets: sharedexec.RequestedBudgets{
 			ReasoningIterations:    def.Budgets.ReasoningIterations,
@@ -163,4 +164,16 @@ func toExecutionPersonaProfile(def *personas.Definition) *sharedexec.PersonaProf
 			TopP:                   def.Budgets.TopP,
 		},
 	}
+}
+
+func joinPromptSegments(parts ...string) string {
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		segments = append(segments, trimmed)
+	}
+	return strings.Join(segments, "\n\n")
 }

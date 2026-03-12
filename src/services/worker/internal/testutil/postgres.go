@@ -201,6 +201,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			tool_allowlist       TEXT[]      NOT NULL DEFAULT '{}',
 			tool_denylist        TEXT[]      NOT NULL DEFAULT '{}',
 			budgets_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			roles_json           JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			title_summarize_json JSONB       NULL,
 			model                TEXT        NULL,
 			reasoning_mode       TEXT        NOT NULL DEFAULT 'auto',

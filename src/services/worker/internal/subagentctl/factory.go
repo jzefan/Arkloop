@@ -290,6 +290,9 @@ func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot
 		"sub_agent_id": subAgent.ID.String(),
 		"context_mode": subAgent.ContextMode,
 	}
+	if subAgent.Role != nil && strings.TrimSpace(*subAgent.Role) != "" {
+		payload["role"] = strings.TrimSpace(*subAgent.Role)
+	}
 	if snapshot == nil {
 		return payload
 	}
