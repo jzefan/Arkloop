@@ -27,6 +27,7 @@ type Config struct {
 	RefillIntervalSeconds int
 	MaxRefillConcurrency  int
 	KernelImagePath       string
+	InitrdPath            string // optional initramfs for loading kernel modules
 	RootfsPath            string
 	SocketBaseDir         string
 	BootTimeoutSeconds    int
@@ -199,9 +200,15 @@ func (p *Pool) createVM(ctx context.Context, tier string) (*entry, error) {
 	}
 
 	// --- Boot loader ---
+	bootOpts := []vz.LinuxBootLoaderOption{
+		vz.WithCommandLine("console=hvc0 root=/dev/vda rw"),
+	}
+	if p.cfg.InitrdPath != "" {
+		bootOpts = append(bootOpts, vz.WithInitrd(p.cfg.InitrdPath))
+	}
 	bootLoader, err := vz.NewLinuxBootLoader(
 		p.cfg.KernelImagePath,
-		vz.WithCommandLine("console=hvc0 root=/dev/vda rw"),
+		bootOpts...,
 	)
 	if err != nil {
 		cleanup()
