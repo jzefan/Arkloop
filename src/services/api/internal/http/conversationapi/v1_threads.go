@@ -20,7 +20,7 @@ import (
 	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+	"arkloop/services/shared/runlimit"
 )
 
 type createThreadRequest struct {
@@ -752,7 +752,7 @@ func threadEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	runLimiter *data.RunLimiter,
 	entSvc *entitlement.Service,
-	rdb *redis.Client,
+	concurrencyLimiter runlimit.ConcurrencyLimiter,
 	attachmentStore messageAttachmentStore,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -761,7 +761,7 @@ func threadEntry(
 	del := deleteThread(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo, flagService)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
-	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, db, apiKeysRepo, runLimiter, entSvc, rdb, flagService)
+	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, db, apiKeysRepo, runLimiter, entSvc, concurrencyLimiter, flagService)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo, flagService)
 	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, db, apiKeysRepo, flagService)
 	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, db, apiKeysRepo, flagService)

@@ -14,8 +14,9 @@ import (
 	"arkloop/services/shared/database"
 	"arkloop/services/shared/eventbus"
 
+	"arkloop/services/shared/runlimit"
+
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 type Deps struct {
@@ -37,7 +38,7 @@ type Deps struct {
 	APIKeysRepo              *data.APIKeysRepository
 	RunLimiter               *data.RunLimiter
 	EntitlementService       *entitlement.Service
-	RedisClient              *redis.Client
+	ConcurrencyLimiter       runlimit.ConcurrencyLimiter
 	EventBus                 eventbus.EventBus
 	ConfigResolver           sharedconfig.Resolver
 	SSEConfig                SSEConfig
@@ -69,7 +70,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 			deps.APIKeysRepo,
 			deps.RunLimiter,
 			deps.EntitlementService,
-			deps.RedisClient,
+			deps.ConcurrencyLimiter,
 			deps.MessageAttachmentStore,
 			deps.FeatureFlagService,
 		),

@@ -28,6 +28,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
 	sharedredis "arkloop/services/shared/redis"
+	"arkloop/services/shared/runlimit"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -165,9 +166,14 @@ func (a *Application) Run(ctx context.Context) error {
 		a.logger.Info("gateway redis connected", observability.LogFields{}, nil)
 	}
 
+	var concurrencyLimiter runlimit.ConcurrencyLimiter
+	if redisClient != nil {
+		concurrencyLimiter = runlimit.NewRedisConcurrencyLimiter(redisClient)
+	}
+
 	var runLimiter *data.RunLimiter
-	if redisClient != nil && a.config.MaxConcurrentRunsPerOrg > 0 {
-		rl, err := data.NewRunLimiter(redisClient, a.config.MaxConcurrentRunsPerOrg)
+	if concurrencyLimiter != nil && a.config.MaxConcurrentRunsPerOrg > 0 {
+		rl, err := data.NewRunLimiter(concurrencyLimiter, a.config.MaxConcurrentRunsPerOrg)
 		if err != nil {
 			return fmt.Errorf("run limiter: %w", err)
 		}
@@ -699,6 +705,7 @@ func (a *Application) Run(ctx context.Context) error {
 			EventBus:                     eb,
 			GatewayRedisClient:           gatewayRedisClient,
 			RunLimiter:                   runLimiter,
+			ConcurrencyLimiter:           concurrencyLimiter,
 			AsrCredentialsRepo:           asrCredRepo,
 			EmailVerifyService:           emailVerifyService,
 			EmailOTPLoginService:         emailOTPLoginService,

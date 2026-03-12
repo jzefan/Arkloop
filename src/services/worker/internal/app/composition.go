@@ -14,6 +14,7 @@ import (
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/runlimit"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
@@ -234,6 +235,11 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	baseAllowlistNames := resolveBaseToolAllowlistNames(ctx, toolRegistry)
 
+	var concurrencyLimiter runlimit.ConcurrencyLimiter
+	if rdb != nil {
+		concurrencyLimiter = runlimit.NewRedisConcurrencyLimiter(rdb)
+	}
+
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                       router,
 		DBPool:                       pool,
@@ -254,6 +260,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ExecutorRegistry:             execRegistry,
 		JobQueue:                     jobQueue,
 		RunLimiterRDB:                rdb,
+		ConcurrencyLimiter:           concurrencyLimiter,
 		EventBus:                     bus,
 		LlmRetryMaxAttempts:          llmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:          llmRetryBaseDelayMs,
