@@ -54,7 +54,7 @@ func TestServiceSpawnAndWaitCompleted(t *testing.T) {
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
 	jobQueue := &stubJobQueue{}
-	service := NewService(pool, nil, jobQueue, parentRun, "trace-1", SubAgentLimits{})
+	service := NewService(pool, nil, jobQueue, parentRun, "trace-1", SubAgentLimits{}, BackpressureConfig{})
 
 	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("collect facts"))
 	if err != nil {
@@ -100,7 +100,7 @@ func TestServiceSendInputCreatesQueuedRunDirectly(t *testing.T) {
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
 	jobQueue := &stubJobQueue{}
-	service := NewService(pool, nil, jobQueue, parentRun, "trace-2", SubAgentLimits{})
+	service := NewService(pool, nil, jobQueue, parentRun, "trace-2", SubAgentLimits{}, BackpressureConfig{})
 
 	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
@@ -140,7 +140,7 @@ func TestServiceResumeRequeuesCompletedSubAgent(t *testing.T) {
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
 	jobQueue := &stubJobQueue{}
-	service := NewService(pool, nil, jobQueue, parentRun, "trace-2b", SubAgentLimits{})
+	service := NewService(pool, nil, jobQueue, parentRun, "trace-2b", SubAgentLimits{}, BackpressureConfig{})
 
 	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
@@ -180,7 +180,7 @@ func TestServiceSendInputQueuesRunningSubAgentAndMergesPendingBatch(t *testing.T
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
 	jobQueue := &stubJobQueue{}
-	service := NewService(pool, nil, jobQueue, parentRun, "trace-3", SubAgentLimits{})
+	service := NewService(pool, nil, jobQueue, parentRun, "trace-3", SubAgentLimits{}, BackpressureConfig{})
 
 	snapshot, err := service.Spawn(context.Background(), isolatedSpawnRequest("phase one"))
 	if err != nil {
@@ -289,7 +289,7 @@ func TestServiceSpawnForkRecentCopiesHistoryAndStoresSnapshot(t *testing.T) {
 	}
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID, ProfileRef: &profileRef, WorkspaceRef: &workspaceRef}
-	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-fork", SubAgentLimits{})
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-fork", SubAgentLimits{}, BackpressureConfig{})
 
 	role := "worker"
 	nickname := "Atlas"
@@ -388,7 +388,7 @@ func TestServiceSpawnSharedWorkspaceOnlyOmitsHistory(t *testing.T) {
 	}
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID, ProfileRef: &profileRef, WorkspaceRef: &workspaceRef}
-	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-shared", SubAgentLimits{})
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-shared", SubAgentLimits{}, BackpressureConfig{})
 
 	snapshot, err := service.Spawn(context.Background(), SpawnRequest{
 		PersonaID:   "researcher@1",
@@ -443,7 +443,7 @@ func TestServiceSpawnWritesRoleToChildRunStartedEvent(t *testing.T) {
 	seedThreadAndRun(t, pool, orgID, threadID, &projectID, &userID, runID)
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
-	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-role", SubAgentLimits{})
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-role", SubAgentLimits{}, BackpressureConfig{})
 	role := "worker"
 
 	snapshot, err := service.Spawn(context.Background(), SpawnRequest{

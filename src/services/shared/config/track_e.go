@@ -72,6 +72,30 @@ func RegisterTrackE(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopeBoth,
 		},
+		{
+			Key:         "backpressure.enabled",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "启用 sub-agent 背压治理",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
+		{
+			Key:         "backpressure.queue_threshold",
+			Type:        TypeInt,
+			Default:     "15",
+			Description: "单 root run 下触发背压的活跃 sub-agent 数量阈值",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
+		{
+			Key:         "backpressure.strategy",
+			Type:        TypeString,
+			Default:     "serial",
+			Description: "背压降级策略: serial/reject/pause",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
 	}
 
 	for _, e := range entries {

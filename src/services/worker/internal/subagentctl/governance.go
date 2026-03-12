@@ -18,12 +18,37 @@ type SubAgentLimits struct {
 	MaxPendingPerRootRun     int
 }
 
-type SpawnGovernor struct {
-	limits SubAgentLimits
+type BackpressureConfig struct {
+	Enabled        bool
+	QueueThreshold int    // 单 root run 下排队数触发背压
+	Strategy       string // "serial" | "reject" | "pause"
 }
 
-func NewSpawnGovernor(limits SubAgentLimits) *SpawnGovernor {
-	return &SpawnGovernor{limits: limits}
+type BackpressureResult struct {
+	Level    BackpressureLevel
+	Strategy string
+}
+
+type BackpressureLevel int
+
+const (
+	BackpressureNone     BackpressureLevel = iota
+	BackpressureCritical
+)
+
+const (
+	BackpressureStrategySerial = "serial"
+	BackpressureStrategyReject = "reject"
+	BackpressureStrategyPause  = "pause"
+)
+
+type SpawnGovernor struct {
+	limits       SubAgentLimits
+	backpressure BackpressureConfig
+}
+
+func NewSpawnGovernor(limits SubAgentLimits, bp BackpressureConfig) *SpawnGovernor {
+	return &SpawnGovernor{limits: limits, backpressure: bp}
 }
 
 func (g *SpawnGovernor) ValidateSpawn(ctx context.Context, tx pgx.Tx, parentRun data.Run, rootRunID uuid.UUID, depth int) error {
@@ -76,6 +101,54 @@ func (g *SpawnGovernor) ValidatePendingInput(ctx context.Context, tx pgx.Tx, roo
 	}
 	if count >= g.limits.MaxPendingPerRootRun {
 		return fmt.Errorf("pending input count %d reached limit %d for root run", count, g.limits.MaxPendingPerRootRun)
+	}
+	return nil
+}
+
+func (g *SpawnGovernor) EvaluateBackpressure(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID) (BackpressureResult, error) {
+	if !g.backpressure.Enabled || g.backpressure.QueueThreshold <= 0 {
+		return BackpressureResult{Level: BackpressureNone}, nil
+	}
+	count, err := (data.SubAgentRepository{}).CountActiveByRootRun(ctx, tx, rootRunID)
+	if err != nil {
+		return BackpressureResult{}, fmt.Errorf("evaluate backpressure: %w", err)
+	}
+	if count >= g.backpressure.QueueThreshold {
+		return BackpressureResult{Level: BackpressureCritical, Strategy: g.backpressure.Strategy}, nil
+	}
+	return BackpressureResult{Level: BackpressureNone}, nil
+}
+
+func (g *SpawnGovernor) ValidateBackpressureForSpawn(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID) error {
+	result, err := g.EvaluateBackpressure(ctx, tx, rootRunID)
+	if err != nil {
+		return err
+	}
+	if result.Level == BackpressureCritical && result.Strategy == BackpressureStrategyReject {
+		count, _ := (data.SubAgentRepository{}).CountActiveByRootRun(ctx, tx, rootRunID)
+		return fmt.Errorf("spawn rejected: backpressure threshold %d reached (active: %d)", g.backpressure.QueueThreshold, count)
+	}
+	return nil
+}
+
+func (g *SpawnGovernor) ValidateBackpressureForResume(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID) error {
+	result, err := g.EvaluateBackpressure(ctx, tx, rootRunID)
+	if err != nil {
+		return err
+	}
+	if result.Level == BackpressureCritical {
+		return fmt.Errorf("resume rejected: backpressure threshold reached")
+	}
+	return nil
+}
+
+func (g *SpawnGovernor) ValidateBackpressureForSendInput(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID, isInterrupt bool) error {
+	result, err := g.EvaluateBackpressure(ctx, tx, rootRunID)
+	if err != nil {
+		return err
+	}
+	if result.Level == BackpressureCritical && !isInterrupt {
+		return fmt.Errorf("send_input rejected: backpressure threshold reached, only interrupt allowed")
 	}
 	return nil
 }

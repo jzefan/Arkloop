@@ -60,7 +60,7 @@ func setupGovernanceTest(t *testing.T, dbName string) (*pgxpool.Pool, uuid.UUID,
 func TestSpawnGovernorDepthLimit(t *testing.T) {
 	pool, _, _, runID := setupGovernanceTest(t, "arkloop_gov_depth")
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxDepth: 2})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxDepth: 2}, BackpressureConfig{})
 	parentRun := data.Run{ID: runID}
 	rootRunID := runID
 
@@ -89,7 +89,7 @@ func TestSpawnGovernorActivePerRootRunLimit(t *testing.T) {
 	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
 	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusQueued)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxActivePerRootRun: 2})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxActivePerRootRun: 2}, BackpressureConfig{})
 	parentRun := data.Run{ID: runID, OrgID: orgID}
 
 	tx, err := pool.Begin(context.Background())
@@ -112,7 +112,7 @@ func TestSpawnGovernorParallelChildrenLimit(t *testing.T) {
 
 	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxParallelChildren: 1})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxParallelChildren: 1}, BackpressureConfig{})
 	parentRun := data.Run{ID: runID, OrgID: orgID}
 
 	tx, err := pool.Begin(context.Background())
@@ -137,7 +137,7 @@ func TestSpawnGovernorDescendantsPerRootRunLimit(t *testing.T) {
 	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusFailed)
 	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxDescendantsPerRootRun: 3})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxDescendantsPerRootRun: 3}, BackpressureConfig{})
 	parentRun := data.Run{ID: runID, OrgID: orgID}
 
 	tx, err := pool.Begin(context.Background())
@@ -162,7 +162,7 @@ func TestSpawnGovernorPendingInputLimit(t *testing.T) {
 	seedPendingInput(t, pool, subAgentID, "input-1")
 	seedPendingInput(t, pool, subAgentID, "input-2")
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxPendingPerRootRun: 2})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxPendingPerRootRun: 2}, BackpressureConfig{})
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -187,7 +187,7 @@ func TestSpawnGovernorZeroLimitMeansUnlimited(t *testing.T) {
 		seedPendingInput(t, pool, subAgentID, "queued-input")
 	}
 
-	governor := NewSpawnGovernor(SubAgentLimits{})
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{})
 	parentRun := data.Run{ID: runID, OrgID: orgID}
 
 	tx, err := pool.Begin(context.Background())
@@ -220,7 +220,7 @@ func TestServiceSpawnRejectsOnParallelChildrenLimit(t *testing.T) {
 	seedThreadAndRun(t, pool, orgID, threadID, &projectID, &userID, runID)
 
 	parentRun := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
-	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-gov", SubAgentLimits{MaxParallelChildren: 1})
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-gov", SubAgentLimits{MaxParallelChildren: 1}, BackpressureConfig{})
 
 	_, err = service.Spawn(context.Background(), isolatedSpawnRequest("first child"))
 	if err != nil {
@@ -233,5 +233,269 @@ func TestServiceSpawnRejectsOnParallelChildrenLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parallel") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBackpressureEvaluateBelowThreshold(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_below")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusQueued)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 10,
+		Strategy:       BackpressureStrategySerial,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	if err != nil {
+		t.Fatalf("evaluate backpressure: %v", err)
+	}
+	if result.Level != BackpressureNone {
+		t.Fatalf("expected BackpressureNone, got %d", result.Level)
+	}
+}
+
+func TestBackpressureEvaluateAboveThreshold(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_above")
+
+	for i := 0; i < 5; i++ {
+		seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	}
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 5,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	if err != nil {
+		t.Fatalf("evaluate backpressure: %v", err)
+	}
+	if result.Level != BackpressureCritical {
+		t.Fatalf("expected BackpressureCritical, got %d", result.Level)
+	}
+	if result.Strategy != BackpressureStrategyReject {
+		t.Fatalf("expected strategy %q, got %q", BackpressureStrategyReject, result.Strategy)
+	}
+}
+
+func TestBackpressureSpawnRejectStrategy(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_reject")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	err = governor.ValidateBackpressureForSpawn(context.Background(), tx, runID)
+	if err == nil {
+		t.Fatal("reject strategy should reject spawn under backpressure")
+	}
+	if !strings.Contains(err.Error(), "backpressure") {
+		t.Fatalf("error should mention backpressure: %v", err)
+	}
+}
+
+func TestBackpressureSpawnSerialStrategy(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_serial")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategySerial,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+		t.Fatalf("serial strategy should allow spawn: %v", err)
+	}
+}
+
+func TestBackpressureSpawnPauseStrategy(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_pause")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategyPause,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+		t.Fatalf("pause strategy should allow spawn: %v", err)
+	}
+}
+
+func TestBackpressureSendInputRejectsNonInterrupt(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_input_reject")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	err = governor.ValidateBackpressureForSendInput(context.Background(), tx, runID, false)
+	if err == nil {
+		t.Fatal("non-interrupt send_input should be rejected under backpressure")
+	}
+}
+
+func TestBackpressureSendInputAllowsInterrupt(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_input_interrupt")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	if err := governor.ValidateBackpressureForSendInput(context.Background(), tx, runID, true); err != nil {
+		t.Fatalf("interrupt should be allowed under backpressure: %v", err)
+	}
+}
+
+func TestBackpressureResumeRejected(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_resume")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 2,
+		Strategy:       BackpressureStrategySerial,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	err = governor.ValidateBackpressureForResume(context.Background(), tx, runID)
+	if err == nil {
+		t.Fatal("resume should be rejected under backpressure")
+	}
+	if !strings.Contains(err.Error(), "resume") {
+		t.Fatalf("error should mention resume: %v", err)
+	}
+}
+
+func TestBackpressureDisabled(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_disabled")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        false,
+		QueueThreshold: 1,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.Level != BackpressureNone {
+		t.Fatalf("disabled backpressure should return None, got %d", result.Level)
+	}
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+		t.Fatalf("disabled backpressure should allow spawn: %v", err)
+	}
+	if err := governor.ValidateBackpressureForResume(context.Background(), tx, runID); err != nil {
+		t.Fatalf("disabled backpressure should allow resume: %v", err)
+	}
+}
+
+func TestBackpressureZeroThreshold(t *testing.T) {
+	pool, orgID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_zero")
+
+	seedSubAgent(t, pool, orgID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+
+	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
+		Enabled:        true,
+		QueueThreshold: 0,
+		Strategy:       BackpressureStrategyReject,
+	})
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.Level != BackpressureNone {
+		t.Fatalf("zero threshold should return None, got %d", result.Level)
 	}
 }
