@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 // WithTx 返回一个使用给定事务的 ToolProviderConfigsRepository 副本。
-func (r *ToolProviderConfigsRepository) WithTx(tx pgx.Tx) *ToolProviderConfigsRepository {
+func (r *ToolProviderConfigsRepository) WithTx(tx database.Tx) *ToolProviderConfigsRepository {
 	return &ToolProviderConfigsRepository{db: tx}
 }
 
@@ -54,7 +54,7 @@ func (r *ToolProviderConfigsRepository) ListByScope(ctx context.Context, orgID u
 		return nil, fmt.Errorf("org_id must not be empty for org scope")
 	}
 
-	var rows pgx.Rows
+	var rows database.Rows
 	var err error
 	if scope == "platform" {
 		rows, err = r.db.Query(ctx, `
@@ -142,7 +142,7 @@ func (r *ToolProviderConfigsRepository) UpsertConfig(
 	}
 
 	var cfg ToolProviderConfig
-	var row pgx.Row
+	var row database.Row
 	if scope == "platform" {
 		row = r.db.QueryRow(ctx, `
 			INSERT INTO tool_provider_configs (org_id, scope, group_name, provider_name, secret_id, key_prefix, base_url, config_json)

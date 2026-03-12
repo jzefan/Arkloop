@@ -7,6 +7,7 @@ import (
 
 	"arkloop/services/worker/internal/testutil"
 
+	"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,6 +20,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("new pool: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	repo := MessagesRepository{}
 	orgID := uuid.New()
@@ -67,7 +69,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("update hidden message: %v", err)
 	}
 
-	hits, err := repo.SearchVisibleByOwner(ctx, pool, orgID, userID, "alpha", 10)
+	hits, err := repo.SearchVisibleByOwner(ctx, dbPool, orgID, userID, "alpha", 10)
 	if err != nil {
 		t.Fatalf("search visible by owner: %v", err)
 	}
@@ -81,7 +83,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("unexpected content: %q", hits[0].Content)
 	}
 
-	escapedHits, err := repo.SearchVisibleByOwner(ctx, pool, orgID, userID, "100!% sure", 10)
+	escapedHits, err := repo.SearchVisibleByOwner(ctx, dbPool, orgID, userID, "100!% sure", 10)
 	if err != nil {
 		t.Fatalf("escaped search failed: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type ToolDescriptionOverride struct {
@@ -20,7 +20,7 @@ type ToolDescriptionOverride struct {
 }
 
 type toolDescriptionOverrideQuerier interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Query(ctx context.Context, sql string, args ...any) (database.Rows, error)
 }
 
 type ToolDescriptionOverridesRepository struct {

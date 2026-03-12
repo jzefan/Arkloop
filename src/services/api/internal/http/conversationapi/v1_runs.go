@@ -25,6 +25,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/pgnotify"
 	"arkloop/services/shared/runlimit"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -120,7 +121,7 @@ func createThreadRun(
 	membershipRepo *data.OrgMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	limiter *data.RunLimiter,
 	entSvc *entitlement.Service,
@@ -138,7 +139,7 @@ func createThreadRun(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || pool == nil {
+		if threadRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -216,7 +217,7 @@ func createThreadRun(
 			}
 		}
 		if outputRouteID == "" && outputModelKey != "" {
-			resolvedOutputRouteID, err := resolveSearchOutputRouteID(r.Context(), pool, thread, outputModelKey)
+			resolvedOutputRouteID, err := resolveSearchOutputRouteID(r.Context(), db, thread, outputModelKey)
 			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
@@ -258,7 +259,7 @@ func createThreadRun(
 			}()
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -333,12 +334,12 @@ func normalizeSearchOutputModelKey(raw string) string {
 
 func resolveSearchOutputRouteID(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	thread *data.Thread,
 	outputModelKey string,
 ) (string, error) {
-	if pool != nil && thread != nil {
-		routeID, err := resolveSearchOutputRouteIDFromPlatformSetting(ctx, pool, thread.OrgID, outputModelKey)
+	if db != nil && thread != nil {
+		routeID, err := resolveSearchOutputRouteIDFromPlatformSetting(ctx, db, thread.OrgID, outputModelKey)
 		if err != nil {
 			return "", err
 		}
@@ -351,12 +352,12 @@ func resolveSearchOutputRouteID(
 
 func resolveSearchOutputRouteIDFromPlatformSetting(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	orgID uuid.UUID,
 	outputModelKey string,
 ) (string, error) {
 	var raw string
-	if err := pool.QueryRow(ctx,
+	if err := db.QueryRow(ctx,
 		`SELECT value FROM platform_settings WHERE key = $1`,
 		searchHybridOutputModelsKey,
 	).Scan(&raw); err != nil {
@@ -374,7 +375,7 @@ func resolveSearchOutputRouteIDFromPlatformSetting(
 	if selector == "" {
 		return "", nil
 	}
-	return resolveSearchOutputRouteIDByModelSelector(ctx, pool, orgID, selector)
+	return resolveSearchOutputRouteIDByModelSelector(ctx, db, orgID, selector)
 }
 
 func pickSearchOutputModelSelector(models map[string]any, outputModelKey string) string {
@@ -394,7 +395,7 @@ func pickSearchOutputModelSelector(models map[string]any, outputModelKey string)
 
 func resolveSearchOutputRouteIDByModelSelector(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	orgID uuid.UUID,
 	selector string,
 ) (string, error) {
@@ -406,7 +407,7 @@ func resolveSearchOutputRouteIDByModelSelector(
 	parts := strings.SplitN(cleanedSelector, "^", 2)
 	var routeID uuid.UUID
 	if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
-		err := pool.QueryRow(
+		err := db.QueryRow(
 			ctx,
 			`SELECT r.id
 			 FROM llm_routes r
@@ -428,7 +429,7 @@ func resolveSearchOutputRouteIDByModelSelector(
 			return "", err
 		}
 	} else {
-		err := pool.QueryRow(
+		err := db.QueryRow(
 			ctx,
 			`SELECT r.id
 			 FROM llm_routes r
@@ -653,7 +654,7 @@ func cancelRun(
 	runRepo *data.RunEventRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -663,7 +664,7 @@ func cancelRun(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if runRepo == nil || pool == nil {
+		if runRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -693,7 +694,7 @@ func cancelRun(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -723,7 +724,7 @@ func cancelRun(
 		}
 
 		// 通知 worker 立即中断，失败可忽略（worker 有 DB 兜底检查）
-		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
+		_, _ = db.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
 
 		if auditWriter != nil {
 			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.OrgID, actor.UserID, run.ID)
@@ -739,7 +740,7 @@ func submitRunInput(
 	runRepo *data.RunEventRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	resolver sharedconfig.Resolver,
 	flagService *featureflag.Service,
@@ -750,7 +751,7 @@ func submitRunInput(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if runRepo == nil || pool == nil {
+		if runRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -808,7 +809,7 @@ func submitRunInput(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -837,7 +838,7 @@ func submitRunInput(
 		}
 
 		// 唤醒 Worker 侧的 WaitForInput LISTEN goroutine
-		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, run.ID.String())
+		_, _ = db.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, run.ID.String())
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, submitInputResponse{OK: true})
 	}
@@ -1148,7 +1149,7 @@ func runEntry(
 	runRepo *data.RunEventRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 	directPoolAcquireTimeout time.Duration,
 	sseConfig SSEConfig,
@@ -1158,8 +1159,8 @@ func runEntry(
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getRun(authService, membershipRepo, runRepo, threadRepo, auditWriter, apiKeysRepo, flagService)
-	cancel := cancelRun(authService, membershipRepo, runRepo, threadRepo, auditWriter, pool, apiKeysRepo, flagService)
-	submitInput := submitRunInput(authService, membershipRepo, runRepo, threadRepo, auditWriter, pool, apiKeysRepo, resolver, flagService)
+	cancel := cancelRun(authService, membershipRepo, runRepo, threadRepo, auditWriter, db, apiKeysRepo, flagService)
+	submitInput := submitRunInput(authService, membershipRepo, runRepo, threadRepo, auditWriter, db, apiKeysRepo, resolver, flagService)
 	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, threadRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, rdb, flagService)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {

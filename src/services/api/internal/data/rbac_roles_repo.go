@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type RBACRole struct {
@@ -44,7 +44,7 @@ func (r *RBACRolesRepository) GetSystemRole(ctx context.Context, name string) (*
 		name,
 	).Scan(&role.ID, &role.OrgID, &role.Name, &role.Permissions, &role.IsSystem, &role.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

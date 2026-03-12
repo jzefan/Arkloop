@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Message struct {
@@ -111,7 +111,7 @@ func (r *MessageRepository) Create(
 		&message.Hidden,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return Message{}, ThreadNotFoundError{ThreadID: threadID}
 		}
 		return Message{}, err
@@ -186,7 +186,7 @@ func (r *MessageRepository) CreateStructured(
 		&message.Hidden,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return Message{}, ThreadNotFoundError{ThreadID: threadID}
 		}
 		return Message{}, err
@@ -303,7 +303,7 @@ func (r *MessageRepository) GetByID(
 		&message.Hidden,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -349,7 +349,7 @@ func (r *MessageRepository) UpdateContent(
 		&message.TokenCount, &message.DeletedAt, &message.CreatedAt, &message.Hidden,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return Message{}, fmt.Errorf("message not found or not editable")
 		}
 		return Message{}, err
@@ -401,7 +401,7 @@ func (r *MessageRepository) UpdateStructuredContent(
 		&message.TokenCount, &message.DeletedAt, &message.CreatedAt, &message.Hidden,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return Message{}, fmt.Errorf("message not found or not editable")
 		}
 		return Message{}, err
@@ -478,7 +478,7 @@ func (r *MessageRepository) HideLastAssistantMessage(
 		threadID,
 	).Scan(&hiddenID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return uuid.Nil, NoAssistantMessageError{}
 		}
 		return uuid.Nil, err

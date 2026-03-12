@@ -2,12 +2,11 @@ package config
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"arkloop/services/shared/database"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Store interface {
@@ -15,25 +14,31 @@ type Store interface {
 	GetOrgSetting(ctx context.Context, orgID uuid.UUID, key string) (string, bool, error)
 }
 
-type PGXStore struct {
-	pool *pgxpool.Pool
+type DBStore struct {
+	db database.DB
 }
 
-func NewPGXStore(pool *pgxpool.Pool) *PGXStore {
-	return &PGXStore{pool: pool}
+func NewDBStore(db database.DB) *DBStore {
+	return &DBStore{db: db}
 }
 
-func (s *PGXStore) GetPlatformSetting(ctx context.Context, key string) (string, bool, error) {
+// NewPGXStore is a backward-compatible alias that accepts database.DB.
+// Deprecated: use NewDBStore instead.
+func NewPGXStore(db database.DB) *DBStore {
+	return NewDBStore(db)
+}
+
+func (s *DBStore) GetPlatformSetting(ctx context.Context, key string) (string, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s == nil || s.pool == nil {
+	if s == nil || s.db == nil {
 		return "", false, nil
 	}
 
 	var value string
-	err := s.pool.QueryRow(ctx, `SELECT value FROM platform_settings WHERE key = $1 LIMIT 1`, key).Scan(&value)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.QueryRow(ctx, `SELECT value FROM platform_settings WHERE key = $1 LIMIT 1`, key).Scan(&value)
+	if database.IsNoRows(err) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -42,11 +47,11 @@ func (s *PGXStore) GetPlatformSetting(ctx context.Context, key string) (string, 
 	return value, true, nil
 }
 
-func (s *PGXStore) GetOrgSetting(ctx context.Context, orgID uuid.UUID, key string) (string, bool, error) {
+func (s *DBStore) GetOrgSetting(ctx context.Context, orgID uuid.UUID, key string) (string, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s == nil || s.pool == nil {
+	if s == nil || s.db == nil {
 		return "", false, nil
 	}
 	if orgID == uuid.Nil {
@@ -54,8 +59,8 @@ func (s *PGXStore) GetOrgSetting(ctx context.Context, orgID uuid.UUID, key strin
 	}
 
 	var value string
-	err := s.pool.QueryRow(ctx, `SELECT value FROM org_settings WHERE org_id = $1 AND key = $2 LIMIT 1`, orgID, key).Scan(&value)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.QueryRow(ctx, `SELECT value FROM org_settings WHERE org_id = $1 AND key = $2 LIMIT 1`, orgID, key).Scan(&value)
+	if database.IsNoRows(err) {
 		return "", false, nil
 	}
 	if err != nil {

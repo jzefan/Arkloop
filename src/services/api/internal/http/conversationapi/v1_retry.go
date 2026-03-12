@@ -11,10 +11,9 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func editThreadMessage(
@@ -23,7 +22,7 @@ func editThreadMessage(
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID, uuid.UUID) {
@@ -38,7 +37,7 @@ func editThreadMessage(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || messageRepo == nil || pool == nil {
+		if threadRepo == nil || messageRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -71,7 +70,7 @@ func editThreadMessage(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -167,7 +166,7 @@ func retryThread(
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	apiKeysRepo *data.APIKeysRepository,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -182,7 +181,7 @@ func retryThread(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || messageRepo == nil || pool == nil {
+		if threadRepo == nil || messageRepo == nil || db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -209,7 +208,7 @@ func retryThread(
 			return
 		}
 
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+		tx, err := db.Begin(r.Context())
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return

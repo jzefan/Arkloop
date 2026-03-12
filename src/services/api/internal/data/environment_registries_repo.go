@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type ProfileRegistry struct {
@@ -69,7 +69,7 @@ func (r *ProfileRegistriesRepository) Get(ctx context.Context, profileRef string
 		strings.TrimSpace(profileRef),
 	).Scan(&record.ProfileRef, &record.OrgID, &record.OwnerUserID, &record.DefaultWorkspaceRef, &record.LastUsedAt, &metadataRaw)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -92,7 +92,7 @@ func (r *WorkspaceRegistriesRepository) Get(ctx context.Context, workspaceRef st
 		strings.TrimSpace(workspaceRef),
 	).Scan(&record.WorkspaceRef, &record.OrgID, &record.OwnerUserID, &record.ProjectID, &record.LatestManifestRev, &record.DefaultShellSessionRef, &record.LastUsedAt, &metadataRaw)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

@@ -8,12 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -30,10 +29,10 @@ func NewCancelGuardMiddleware(
 	hub *RunControlHub,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		pool := rc.Pool
+		db := rc.DB
 		run := rc.Run
 
-		cancelType, err := readLatestEventType(ctx, pool, eventsRepo, run.ID, cancelEventTypes)
+		cancelType, err := readLatestEventType(ctx, db, eventsRepo, run.ID, cancelEventTypes)
 		if err != nil {
 			return err
 		}
@@ -41,11 +40,11 @@ func NewCancelGuardMiddleware(
 			return nil
 		}
 		if cancelType == "run.cancel_requested" {
-			return appendAndCommitSingle(ctx, pool, run, runsRepo, eventsRepo,
+			return appendAndCommitSingle(ctx, db, run, runsRepo, eventsRepo,
 				rc.Emitter.Emit("run.cancelled", map[string]any{}, nil, nil), nil, rc.BroadcastRDB)
 		}
 
-		terminalType, err := readLatestEventType(ctx, pool, eventsRepo, run.ID, terminalEventTypes)
+		terminalType, err := readLatestEventType(ctx, db, eventsRepo, run.ID, terminalEventTypes)
 		if err != nil {
 			return err
 		}
@@ -80,7 +79,7 @@ func NewCancelGuardMiddleware(
 		var lastSeq int64
 		rc.WaitForInput = func(ctx context.Context) (string, bool) {
 			for {
-				content, seq, ok := fetchLatestInput(ctx, pool, run.ID, lastSeq)
+				content, seq, ok := fetchLatestInput(ctx, db, run.ID, lastSeq)
 				if ok {
 					lastSeq = seq
 					return content, true
@@ -111,12 +110,12 @@ func NewCancelGuardMiddleware(
 
 func readLatestEventType(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	eventsRepo data.RunEventsRepository,
 	runID uuid.UUID,
 	types []string,
 ) (string, error) {
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +126,7 @@ func readLatestEventType(
 // appendAndCommitSingle 写入单个事件并提交，用于短路场景。
 func appendAndCommitSingle(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	run data.Run,
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
@@ -135,7 +134,7 @@ func appendAndCommitSingle(
 	releaseSlot func(),
 	rdb *redis.Client,
 ) error {
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -158,7 +157,7 @@ func appendAndCommitSingle(
 	}
 
 	channel := fmt.Sprintf("run_events:%s", run.ID.String())
-	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+	_, _ = db.Exec(ctx, "SELECT pg_notify($1, '')", channel)
 
 	if rdb != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", run.ID.String())
@@ -204,10 +203,10 @@ var TerminalStatuses = map[string]string{
 
 // fetchLatestInput 查询 run_events 中 seq > sinceSeq 的最新 run.input_provided 事件。
 // 返回 (content, seq, true) 或 ("", 0, false)。
-func fetchLatestInput(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID, sinceSeq int64) (string, int64, bool) {
+func fetchLatestInput(ctx context.Context, db database.DB, runID uuid.UUID, sinceSeq int64) (string, int64, bool) {
 	var rawJSON []byte
 	var seq int64
-	err := pool.QueryRow(
+	err := db.QueryRow(
 		ctx,
 		`SELECT data_json, seq
 		 FROM run_events
@@ -221,7 +220,7 @@ func fetchLatestInput(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID, 
 		sinceSeq,
 	).Scan(&rawJSON, &seq)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", 0, false
 		}
 		return "", 0, false

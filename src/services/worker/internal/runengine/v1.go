@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/runlimit"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -143,15 +145,19 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	}
 
 	// deps.DBPool 为 nil 时 resolver 保持 nil，EntitlementMiddleware 以 fail-open 方式跳过检查
-	var resolver *sharedent.Resolver
+	var db database.DB
 	if deps.DBPool != nil {
-		resolver = sharedent.NewResolver(deps.DBPool, rdb)
+		db = pgadapter.New(deps.DBPool)
+	}
+	var resolver *sharedent.Resolver
+	if db != nil {
+		resolver = sharedent.NewResolver(db, rdb)
 	}
 
 	cfgResolver := deps.ConfigResolver
 	if cfgResolver == nil {
 		registry := sharedconfig.DefaultRegistry()
-		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(deps.DBPool), nil, 0)
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(db), nil, 0)
 		cfgResolver = fallback
 	}
 
@@ -170,8 +176,8 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewAgentConfigMiddleware(deps.DBPool),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
-		pipeline.NewSkillContextMiddleware(deps.DBPool, nil),
-		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
+		pipeline.NewSkillContextMiddleware(db, nil),
+		pipeline.NewMemoryMiddleware(nil, db, deps.ConfigResolver),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
@@ -201,7 +207,8 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		return fmt.Errorf("pool must not be nil")
 	}
 
-	resolvedRun, err := resolveAndPersistEnvironmentBindings(ctx, pool, run)
+	db := pgadapter.New(pool)
+	resolvedRun, err := resolveAndPersistEnvironmentBindings(ctx, db, run)
 	if err != nil {
 		return fmt.Errorf("resolve environment bindings: %w", err)
 	}
@@ -225,6 +232,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 	rc := &pipeline.RunContext{
 		Run:                 run,
+		DB:                  db,
 		Pool:                pool,
 		DirectPool:          directPool,
 		BroadcastRDB:        e.broadcastRDB,

@@ -24,35 +24,35 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	overridesRepo, err := data.NewToolDescriptionOverridesRepository(pool)
+	overridesRepo, err := data.NewToolDescriptionOverridesRepository(appDB)
 	if err != nil {
 		t.Fatalf("tool description repo: %v", err)
 	}
@@ -98,8 +98,8 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                         pool,
-		DirectPool:                   pool,
+		DB:                appDB,
+		DirectPool:              directPool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
@@ -235,34 +235,34 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog_perms")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(pool)
+	credRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	overridesRepo, err := data.NewToolDescriptionOverridesRepository(pool)
+	overridesRepo, err := data.NewToolDescriptionOverridesRepository(appDB)
 	if err != nil {
 		t.Fatalf("tool description repo: %v", err)
 	}
@@ -298,8 +298,8 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                         pool,
-		DirectPool:                   pool,
+		DB:                appDB,
+		DirectPool:              directPool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
@@ -321,21 +321,21 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog_effective")
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { appDB.Close() })
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	userRepo, _ := data.NewUserRepository(pool)
-	credRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
-	mcpRepo, _ := data.NewMCPConfigsRepository(pool)
-	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(pool)
-	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(pool)
-	orgRepo, _ := data.NewOrgRepository(pool)
+	userRepo, _ := data.NewUserRepository(appDB)
+	credRepo, _ := data.NewUserCredentialRepository(appDB)
+	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
+	mcpRepo, _ := data.NewMCPConfigsRepository(appDB)
+	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(appDB)
+	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(appDB)
+	orgRepo, _ := data.NewOrgRepository(appDB)
 	passwordHasher, _ := auth.NewBcryptPasswordHasher(0)
 	tokenService, _ := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -394,8 +394,8 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                         pool,
-		DirectPool:                   pool,
+		DB:                appDB,
+		DirectPool:              directPool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,

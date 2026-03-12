@@ -17,11 +17,11 @@ func TestCreditsIntegration(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_credits")
 
 	ctx := context.Background()
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -34,27 +34,27 @@ func TestCreditsIntegration(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	creditsRepo, err := data.NewCreditsRepository(pool)
+	creditsRepo, err := data.NewCreditsRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credits repo: %v", err)
 	}
@@ -63,11 +63,11 @@ func TestCreditsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestCreditsIntegration(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -118,7 +118,7 @@ func TestCreditsIntegration(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminResp.Body.Bytes())
 
-	if _, err = pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err = appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
@@ -151,7 +151,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected balance 1500, got %d", payload.Balance)
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
+		log := latestAuditLogByAction(t, ctx, appDB, "credits.adjust")
 		if log.TargetType == nil || *log.TargetType != "org" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -178,11 +178,11 @@ func TestCreditsIntegration(t *testing.T) {
 		if payload.Balance != 1300 {
 			t.Fatalf("expected balance 1300, got %d", payload.Balance)
 		}
-		if count := countAuditLogByAction(t, ctx, pool, "credits.adjust"); count != 2 {
+		if count := countAuditLogByAction(t, ctx, appDB, "credits.adjust"); count != 2 {
 			t.Fatalf("expected 2 credits.adjust audit logs, got %d", count)
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
+		log := latestAuditLogByAction(t, ctx, appDB, "credits.adjust")
 		if log.Metadata["amount"] != float64(-200) || log.Metadata["note"] != "test deduction" {
 			t.Fatalf("unexpected metadata: %#v", log.Metadata)
 		}
@@ -243,7 +243,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected affected 2, got %d", payload.Affected)
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "credits.bulk_adjust")
+		log := latestAuditLogByAction(t, ctx, appDB, "credits.bulk_adjust")
 		if log.TargetType == nil || *log.TargetType != "credits_batch" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -268,7 +268,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected affected 2, got %d", payload.Affected)
 		}
 
-		log := latestAuditLogByAction(t, ctx, pool, "credits.reset_all")
+		log := latestAuditLogByAction(t, ctx, appDB, "credits.reset_all")
 		if log.TargetType == nil || *log.TargetType != "credits_batch" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}

@@ -20,11 +20,11 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_execution_governance")
 	ctx := context.Background()
 
-	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	defer appDB.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -36,31 +36,31 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(pool)
+	userRepo, err := data.NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	credentialRepo, err := data.NewUserCredentialRepository(appDB)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(pool)
+	auditRepo, err := data.NewAuditLogRepository(appDB)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(pool)
+	jobRepo, err := data.NewJobRepository(appDB)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(pool)
+	personasRepo, err := data.NewPersonasRepository(appDB)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -69,14 +69,14 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
+		DB:                appDB,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
@@ -114,7 +114,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
-	if _, err := pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err := appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	adminLogin := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
@@ -133,7 +133,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
 	orgID := uuid.MustParse(me.OrgID)
 
-	if _, err := pool.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
+	if _, err := appDB.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
 		('limit.agent_reasoning_iterations', '12', now()),
 		('limit.tool_continuation_budget', '30', now()),
 		('limit.thread_message_history', '250', now()),
@@ -141,7 +141,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`); err != nil {
 		t.Fatalf("seed platform settings: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO org_settings (org_id, key, value, updated_at) VALUES
+	if _, err := appDB.Exec(ctx, `INSERT INTO org_settings (org_id, key, value, updated_at) VALUES
 		($1, 'limit.agent_reasoning_iterations', '9', now()),
 		($1, 'limit.tool_continuation_budget', '18', now())
 		ON CONFLICT (org_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, orgID); err != nil {

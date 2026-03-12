@@ -6,19 +6,18 @@ import (
 	"strings"
 
 	sharedenvironmentref "arkloop/services/shared/environmentref"
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run) (data.Run, error) {
+func ResolveAndPersistRun(ctx context.Context, db database.DB, run data.Run) (data.Run, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if pool == nil {
-		return data.Run{}, fmt.Errorf("pool must not be nil")
+	if db == nil {
+		return data.Run{}, fmt.Errorf("db must not be nil")
 	}
 	if run.ID == uuid.Nil {
 		return data.Run{}, fmt.Errorf("run_id must not be empty")
@@ -30,7 +29,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 		return data.Run{}, fmt.Errorf("thread_id must not be empty")
 	}
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return data.Run{}, err
 	}
@@ -62,7 +61,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 	}
 
 	profileRepo := data.ProfileRegistriesRepository{}
-	profileRecord, err := profileRepo.GetOrCreate(ctx, pool, data.RegistryRecord{
+	profileRecord, err := profileRepo.GetOrCreate(ctx, db, data.RegistryRecord{
 		Ref:         profileRef,
 		OrgID:       resolved.OrgID,
 		OwnerUserID: resolved.CreatedByUserID,
@@ -104,7 +103,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 	}
 
 	workspaceRepo := data.WorkspaceRegistriesRepository{}
-	if _, err := workspaceRepo.GetOrCreate(ctx, pool, data.RegistryRecord{
+	if _, err := workspaceRepo.GetOrCreate(ctx, db, data.RegistryRecord{
 		Ref:          workspaceRef,
 		OrgID:        resolved.OrgID,
 		OwnerUserID:  resolved.CreatedByUserID,
@@ -114,7 +113,7 @@ func ResolveAndPersistRun(ctx context.Context, pool *pgxpool.Pool, run data.Run)
 		return data.Run{}, err
 	}
 
-	if _, err := profileRepo.GetOrCreate(ctx, pool, data.RegistryRecord{
+	if _, err := profileRepo.GetOrCreate(ctx, db, data.RegistryRecord{
 		Ref:                 profileRef,
 		OrgID:               resolved.OrgID,
 		OwnerUserID:         resolved.CreatedByUserID,
@@ -142,7 +141,7 @@ func bindingKey(run data.Run) (string, uuid.UUID) {
 	return data.BindingScopeThread, run.ThreadID
 }
 
-func inheritWorkspaceSkills(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, enabledByUserID *uuid.UUID, fromWorkspaceRef, toWorkspaceRef string) ([]string, error) {
+func inheritWorkspaceSkills(ctx context.Context, tx database.Tx, orgID uuid.UUID, enabledByUserID *uuid.UUID, fromWorkspaceRef, toWorkspaceRef string) ([]string, error) {
 	rows, err := tx.Query(
 		ctx,
 		`SELECT skill_key, version

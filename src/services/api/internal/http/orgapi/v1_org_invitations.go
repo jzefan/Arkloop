@@ -11,10 +11,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type orgInvitationResponse struct {
@@ -80,7 +79,7 @@ func orgInvitationEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	invitationsRepo *data.OrgInvitationsRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -101,7 +100,7 @@ func orgInvitationEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			acceptOrgInvitation(w, r, traceID, token, authService, membershipRepo, invitationsRepo, auditWriter, pool)
+			acceptOrgInvitation(w, r, traceID, token, authService, membershipRepo, invitationsRepo, auditWriter, db)
 			return
 		}
 
@@ -254,13 +253,13 @@ func acceptOrgInvitation(
 	membershipRepo *data.OrgMembershipRepository,
 	invitationsRepo *data.OrgInvitationsRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if invitationsRepo == nil || pool == nil {
+	if invitationsRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -305,7 +304,7 @@ func acceptOrgInvitation(
 		return
 	}
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

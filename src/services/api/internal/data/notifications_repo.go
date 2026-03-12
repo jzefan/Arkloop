@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Notification struct {
@@ -202,7 +202,7 @@ func (r *NotificationsRepository) MarkRead(ctx context.Context, userID uuid.UUID
 	}
 	if tag.RowsAffected() == 0 {
 		// already read or not found — treat as no-op
-		return pgx.ErrNoRows
+		return database.ErrNoRows
 	}
 	return nil
 }
@@ -320,8 +320,8 @@ func (r *NotificationsRepository) GetBroadcast(ctx context.Context, id uuid.UUID
 		&b.PayloadJSON, &b.Status, &b.SentCount, &b.CreatedBy, &b.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return NotificationBroadcast{}, pgx.ErrNoRows
+		if errors.Is(err, database.ErrNoRows) {
+			return NotificationBroadcast{}, database.ErrNoRows
 		}
 		return NotificationBroadcast{}, fmt.Errorf("broadcasts.Get: %w", err)
 	}
@@ -341,7 +341,7 @@ func (r *NotificationsRepository) DeleteBroadcast(ctx context.Context, id uuid.U
 		return fmt.Errorf("broadcasts.Delete: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+		return database.ErrNoRows
 	}
 	return nil
 }
@@ -381,7 +381,7 @@ func (r *NotificationsRepository) ListBroadcasts(
 	}
 
 	var (
-		rows pgx.Rows
+		rows database.Rows
 		err  error
 	)
 

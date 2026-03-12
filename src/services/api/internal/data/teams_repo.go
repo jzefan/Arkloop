@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type Team struct {
@@ -72,7 +72,7 @@ func (r *TeamRepository) GetByID(ctx context.Context, teamID uuid.UUID) (*Team, 
 		teamID,
 	).Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -152,7 +152,7 @@ func (r *TeamRepository) IsMember(ctx context.Context, teamID, userID uuid.UUID)
 }
 
 // WithTx 返回一个使用给定事务的 TeamRepository 副本。
-func (r *TeamRepository) WithTx(tx pgx.Tx) *TeamRepository {
+func (r *TeamRepository) WithTx(tx database.Tx) *TeamRepository {
 	return &TeamRepository{db: tx}
 }
 

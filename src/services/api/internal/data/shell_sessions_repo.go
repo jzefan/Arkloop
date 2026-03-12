@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type ShellSessionRepository struct {
@@ -55,7 +55,7 @@ func (r *ShellSessionRepository) GetRunIDBySessionRef(ctx context.Context, orgID
 		orgID,
 		sessionRef,
 	).Scan(&runID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -105,7 +105,7 @@ func (r *ShellSessionRepository) GetBySessionRef(ctx context.Context, orgID uuid
 		&session.LiveSessionID,
 		&session.LastUsedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -160,7 +160,7 @@ func (r *ShellSessionRepository) GetLatestLiveByWorkspaceRef(ctx context.Context
 		&session.LiveSessionID,
 		&session.LastUsedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

@@ -10,10 +10,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type createAsrCredentialRequest struct {
@@ -49,13 +48,13 @@ func asrCredentialsEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	credRepo *data.AsrCredentialsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodPost:
-			createAsrCredential(w, r, traceID, authService, membershipRepo, credRepo, secretsRepo, pool)
+			createAsrCredential(w, r, traceID, authService, membershipRepo, credRepo, secretsRepo, db)
 		case nethttp.MethodGet:
 			listAsrCredentials(w, r, traceID, authService, membershipRepo, credRepo)
 		default:
@@ -116,13 +115,13 @@ func createAsrCredential(
 	membershipRepo *data.OrgMembershipRepository,
 	credRepo *data.AsrCredentialsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if credRepo == nil || secretsRepo == nil || pool == nil {
+	if credRepo == nil || secretsRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -168,7 +167,7 @@ func createAsrCredential(
 		return
 	}
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

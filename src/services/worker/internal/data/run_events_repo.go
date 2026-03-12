@@ -6,14 +6,14 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type RunEventsRepository struct{}
 
 func (RunEventsRepository) GetLatestEventType(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 	types []string,
 ) (string, error) {
@@ -34,7 +34,7 @@ func (RunEventsRepository) GetLatestEventType(
 		types,
 	).Scan(&eventType)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -44,7 +44,7 @@ func (RunEventsRepository) GetLatestEventType(
 
 func (r RunEventsRepository) AppendEvent(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 	eventType string,
 	dataJSON map[string]any,
@@ -84,7 +84,7 @@ func (r RunEventsRepository) AppendEvent(
 
 func (RunEventsRepository) FirstEventData(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	runID uuid.UUID,
 ) (string, map[string]any, error) {
 	var (
@@ -101,7 +101,7 @@ func (RunEventsRepository) FirstEventData(
 		runID,
 	).Scan(&eventType, &rawJSON)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return "", nil, nil
 		}
 		return "", nil, err
@@ -122,7 +122,7 @@ func (RunEventsRepository) FirstEventData(
 	return eventType, obj, nil
 }
 
-func (RunEventsRepository) allocateSeq(ctx context.Context, tx pgx.Tx) (int64, error) {
+func (RunEventsRepository) allocateSeq(ctx context.Context, tx database.Tx) (int64, error) {
 	var seq int64
 	err := tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq)
 	if err != nil {

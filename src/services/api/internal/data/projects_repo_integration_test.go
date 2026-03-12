@@ -17,21 +17,21 @@ func TestProjectRepositoryGetOrCreateDefaultByOwner(t *testing.T) {
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(func() { appDB.Close() })
 
-	orgRepo, err := NewOrgRepository(pool)
+	orgRepo, err := NewOrgRepository(appDB)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
-	userRepo, err := NewUserRepository(pool)
+	userRepo, err := NewUserRepository(appDB)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	repo, err := NewProjectRepository(pool)
+	repo, err := NewProjectRepository(appDB)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 
 func TestProjectWorkspaceFilesReturnsEmptyListWhenManifestObjectMissing(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-missing-manifest")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-missing-manifest")
 
 	workspaceResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if workspaceResp.Code != 200 {

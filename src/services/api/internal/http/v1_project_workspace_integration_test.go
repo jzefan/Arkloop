@@ -44,7 +44,7 @@ type projectWorkspaceFilesPayload struct {
 
 func TestProjectWorkspaceLazilyCreatesDefaultWorkspace(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-lazy")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-lazy")
 
 	resp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if resp.Code != 200 {
@@ -81,7 +81,7 @@ func TestProjectWorkspaceLazilyCreatesDefaultWorkspace(t *testing.T) {
 		t.Fatalf("expected same workspace_ref, got %q vs %q", payload.WorkspaceRef, repeatPayload.WorkspaceRef)
 	}
 
-	bindingsRepo, err := data.NewDefaultWorkspaceBindingsRepository(env.pool)
+	bindingsRepo, err := data.NewDefaultWorkspaceBindingsRepository(env.appDB)
 	if err != nil {
 		t.Fatalf("new bindings repo: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestProjectWorkspaceLazilyCreatesDefaultWorkspace(t *testing.T) {
 		t.Fatalf("unexpected binding: %#v", binding)
 	}
 
-	profileRepo, err := data.NewProfileRegistriesRepository(env.pool)
+	profileRepo, err := data.NewProfileRegistriesRepository(env.appDB)
 	if err != nil {
 		t.Fatalf("new profile repo: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestProjectWorkspaceLazilyCreatesDefaultWorkspace(t *testing.T) {
 		t.Fatalf("unexpected profile registry: %#v", profileRegistry)
 	}
 
-	workspaceRepo, err := data.NewWorkspaceRegistriesRepository(env.pool)
+	workspaceRepo, err := data.NewWorkspaceRegistriesRepository(env.appDB)
 	if err != nil {
 		t.Fatalf("new workspace repo: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestProjectWorkspaceLazilyCreatesDefaultWorkspace(t *testing.T) {
 
 func TestProjectWorkspaceIsolatedPerUser(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-isolation")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-isolation")
 
 	ownerResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if ownerResp.Code != 200 {
@@ -161,7 +161,7 @@ func TestProjectWorkspaceIsolatedPerUser(t *testing.T) {
 
 func TestProjectWorkspaceStatusAndFilesFlow(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-files")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-files")
 
 	workspaceResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if workspaceResp.Code != 200 {
@@ -179,14 +179,14 @@ func TestProjectWorkspaceStatusAndFilesFlow(t *testing.T) {
 	}
 
 	setWorkspaceLatestManifest(t, env, workspacePayload.WorkspaceRef, "rev-project-1")
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		UPDATE workspace_registries
 		   SET default_shell_session_ref = $2, last_used_at = now()
 		 WHERE workspace_ref = $1`, workspacePayload.WorkspaceRef, "shref_project_active"); err != nil {
 		t.Fatalf("update workspace registry: %v", err)
 	}
 	liveSessionID := "live-project-shell"
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
 			session_ref, session_type, org_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
@@ -268,7 +268,7 @@ func TestProjectWorkspaceStatusAndFilesFlow(t *testing.T) {
 
 func TestProjectWorkspaceRequiresClawFlag(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-flag")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-flag")
 
 	if _, err := env.featureFlagsRepo.UpdateFlagDefaultValue(context.Background(), featureflag.ClawEnabledKey, false); err != nil {
 		t.Fatalf("disable claw flag: %v", err)
@@ -280,7 +280,7 @@ func TestProjectWorkspaceRequiresClawFlag(t *testing.T) {
 
 func TestProjectWorkspaceMissingDefaultSessionStaysIdleAndReadsFiles(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-missing-default-session")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-missing-default-session")
 
 	workspaceResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if workspaceResp.Code != 200 {
@@ -289,7 +289,7 @@ func TestProjectWorkspaceMissingDefaultSessionStaysIdleAndReadsFiles(t *testing.
 	workspacePayload := decodeJSONBody[projectWorkspaceResponsePayload](t, workspaceResp.Body.Bytes())
 
 	setWorkspaceLatestManifest(t, env, workspacePayload.WorkspaceRef, "rev-project-idle-1")
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		UPDATE workspace_registries
 		   SET default_shell_session_ref = $2, last_used_at = now()
 		 WHERE workspace_ref = $1`, workspacePayload.WorkspaceRef, "shref_missing_default"); err != nil {
@@ -330,7 +330,7 @@ func TestProjectWorkspaceMissingDefaultSessionStaysIdleAndReadsFiles(t *testing.
 
 func TestProjectWorkspaceClosedDefaultSessionStaysIdle(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-closed-default-session")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-closed-default-session")
 
 	workspaceResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if workspaceResp.Code != 200 {
@@ -339,13 +339,13 @@ func TestProjectWorkspaceClosedDefaultSessionStaysIdle(t *testing.T) {
 	workspacePayload := decodeJSONBody[projectWorkspaceResponsePayload](t, workspaceResp.Body.Bytes())
 	profileRef := sharedenvironmentref.BuildProfileRef(env.aliceOrgID, &env.aliceUserID)
 
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		UPDATE workspace_registries
 		   SET default_shell_session_ref = $2, last_used_at = now()
 		 WHERE workspace_ref = $1`, workspacePayload.WorkspaceRef, "shref_closed_default"); err != nil {
 		t.Fatalf("update workspace registry: %v", err)
 	}
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
 			session_ref, session_type, org_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
@@ -377,7 +377,7 @@ func TestProjectWorkspaceClosedDefaultSessionStaysIdle(t *testing.T) {
 
 func TestProjectWorkspaceUsesLatestLiveSessionAcrossWorkspace(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-latest-live-session")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-latest-live-session")
 
 	workspaceResp := doArtifactRequest(t, env.handler, "/v1/projects/"+project.ID.String()+"/workspace", authHeader(env.aliceToken))
 	if workspaceResp.Code != 200 {
@@ -388,13 +388,13 @@ func TestProjectWorkspaceUsesLatestLiveSessionAcrossWorkspace(t *testing.T) {
 	olderUsedAt := time.Now().UTC().Add(-time.Hour)
 	newerUsedAt := time.Now().UTC()
 
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		UPDATE workspace_registries
 		   SET default_shell_session_ref = $2, last_used_at = now()
 		 WHERE workspace_ref = $1`, workspacePayload.WorkspaceRef, "shref_stale_default"); err != nil {
 		t.Fatalf("update workspace registry: %v", err)
 	}
-	if _, err := env.pool.Exec(context.Background(), `
+	if _, err := env.appDB.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
 			session_ref, session_type, org_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
@@ -437,7 +437,7 @@ func TestProjectWorkspaceUsesLatestLiveSessionAcrossWorkspace(t *testing.T) {
 
 func TestProjectWorkspacePermissionsAndOrgIsolation(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceOrgID, &env.aliceUserID, "project-workspace-policy")
+	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "project-workspace-policy")
 
 	_, projectsOnlyKey, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, env.aliceUserID, "projects-only", []string{auth.PermDataProjectsRead})
 	if err != nil {

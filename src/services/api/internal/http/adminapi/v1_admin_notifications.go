@@ -11,10 +11,10 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type broadcastResponse struct {
@@ -60,7 +60,7 @@ func adminBroadcastsEntry(
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	logger *observability.JSONLogger,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -68,7 +68,7 @@ func adminBroadcastsEntry(
 		case nethttp.MethodGet:
 			listBroadcasts(authService, membershipRepo, notifRepo, apiKeysRepo)(w, r)
 		case nethttp.MethodPost:
-			createBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo, auditWriter, pool, logger)(w, r)
+			createBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo, auditWriter, db, logger)(w, r)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -122,7 +122,7 @@ func createBroadcast(
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	logger *observability.JSONLogger,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -190,7 +190,7 @@ func createBroadcast(
 			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			bgRepo, err := data.NewNotificationsRepository(pool)
+			bgRepo, err := data.NewNotificationsRepository(db)
 			if err != nil {
 				if logger != nil {
 					logger.Error("broadcast: failed to create bg repo", observability.LogFields{TraceID: &traceID}, map[string]any{"error": err.Error()})

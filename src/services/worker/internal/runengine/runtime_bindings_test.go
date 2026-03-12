@@ -8,6 +8,9 @@ import (
 	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/testutil"
+
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,6 +22,7 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 		t.Fatalf("pgxpool.New failed: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	projectID := uuid.New()
@@ -31,11 +35,11 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 	runA2 := uuid.New()
 	runB := uuid.New()
 
-	seedThreadAndRun(t, pool, orgID, threadA1, &projectID, &userA, runA1)
-	seedThreadAndRun(t, pool, orgID, threadA2, &projectID, &userA, runA2)
-	seedThreadAndRun(t, pool, orgID, threadB, &projectID, &userB, runB)
+	seedThreadAndRun(t, dbPool, orgID, threadA1, &projectID, &userA, runA1)
+	seedThreadAndRun(t, dbPool, orgID, threadA2, &projectID, &userA, runA2)
+	seedThreadAndRun(t, dbPool, orgID, threadB, &projectID, &userB, runB)
 
-	first, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	first, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runA1,
 		OrgID:           orgID,
 		ThreadID:        threadA1,
@@ -45,7 +49,7 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 	if err != nil {
 		t.Fatalf("resolve first run failed: %v", err)
 	}
-	second, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	second, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runA2,
 		OrgID:           orgID,
 		ThreadID:        threadA2,
@@ -55,7 +59,7 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 	if err != nil {
 		t.Fatalf("resolve second run failed: %v", err)
 	}
-	third, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	third, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runB,
 		OrgID:           orgID,
 		ThreadID:        threadB,
@@ -85,7 +89,7 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 	}
 
 	profileRepo := data.ProfileRegistriesRepository{}
-	profileRecord, err := profileRepo.Get(context.Background(), pool, derefString(first.ProfileRef))
+	profileRecord, err := profileRepo.Get(context.Background(), dbPool, derefString(first.ProfileRef))
 	if err != nil {
 		t.Fatalf("get profile registry: %v", err)
 	}
@@ -97,7 +101,7 @@ func TestResolveAndPersistEnvironmentBindings_ProjectScopedPerProfile(t *testing
 	}
 
 	workspaceRepo := data.WorkspaceRegistriesRepository{}
-	workspaceRecord, err := workspaceRepo.Get(context.Background(), pool, derefString(first.WorkspaceRef))
+	workspaceRecord, err := workspaceRepo.Get(context.Background(), dbPool, derefString(first.WorkspaceRef))
 	if err != nil {
 		t.Fatalf("get workspace registry: %v", err)
 	}
@@ -116,6 +120,7 @@ func TestResolveAndPersistEnvironmentBindings_ThreadFallback(t *testing.T) {
 		t.Fatalf("pgxpool.New failed: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
@@ -123,10 +128,10 @@ func TestResolveAndPersistEnvironmentBindings_ThreadFallback(t *testing.T) {
 	runID1 := uuid.New()
 	runID2 := uuid.New()
 
-	seedThreadAndRun(t, pool, orgID, threadID, nil, &userID, runID1)
-	seedRunOnly(t, pool, orgID, threadID, &userID, runID2)
+	seedThreadAndRun(t, dbPool, orgID, threadID, nil, &userID, runID1)
+	seedRunOnly(t, dbPool, orgID, threadID, &userID, runID2)
 
-	first, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	first, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runID1,
 		OrgID:           orgID,
 		ThreadID:        threadID,
@@ -135,7 +140,7 @@ func TestResolveAndPersistEnvironmentBindings_ThreadFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve first run failed: %v", err)
 	}
-	second, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	second, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runID2,
 		OrgID:           orgID,
 		ThreadID:        threadID,
@@ -163,6 +168,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 		t.Fatalf("pgxpool.New failed: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
@@ -171,10 +177,10 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 	runID1 := uuid.New()
 	runID2 := uuid.New()
 
-	seedThreadAndRun(t, pool, orgID, threadID1, nil, &userID, runID1)
-	seedThreadAndRun(t, pool, orgID, threadID2, nil, &userID, runID2)
+	seedThreadAndRun(t, dbPool, orgID, threadID1, nil, &userID, runID1)
+	seedThreadAndRun(t, dbPool, orgID, threadID2, nil, &userID, runID2)
 
-	first, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	first, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runID1,
 		OrgID:           orgID,
 		ThreadID:        threadID1,
@@ -183,7 +189,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 	if err != nil {
 		t.Fatalf("resolve first run failed: %v", err)
 	}
-	if _, err := pool.Exec(
+	if _, err := dbPool.Exec(
 		context.Background(),
 		`INSERT INTO workspace_skill_enablements (workspace_ref, org_id, enabled_by_user_id, skill_key, version)
 		 VALUES ($1, $2, $3, 'deep-research', '1.0.0')`,
@@ -194,7 +200,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 		t.Fatalf("seed workspace skill enablement: %v", err)
 	}
 
-	second, err := resolveAndPersistEnvironmentBindings(context.Background(), pool, data.Run{
+	second, err := resolveAndPersistEnvironmentBindings(context.Background(), dbPool, data.Run{
 		ID:              runID2,
 		OrgID:           orgID,
 		ThreadID:        threadID2,
@@ -220,7 +226,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 
 	var skillKey string
 	var version string
-	if err := pool.QueryRow(
+	if err := dbPool.QueryRow(
 		context.Background(),
 		`SELECT skill_key, version FROM workspace_skill_enablements WHERE workspace_ref = $1`,
 		derefString(second.WorkspaceRef),
@@ -232,7 +238,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 	}
 
 	var metadata []byte
-	if err := pool.QueryRow(
+	if err := dbPool.QueryRow(
 		context.Background(),
 		`SELECT metadata_json FROM workspace_registries WHERE workspace_ref = $1`,
 		derefString(second.WorkspaceRef),
@@ -244,7 +250,7 @@ func TestResolveAndPersistEnvironmentBindings_NewThreadInheritsWorkspaceSkills(t
 	}
 }
 
-func seedThreadAndRun(t *testing.T, pool *pgxpool.Pool, orgID, threadID uuid.UUID, projectID, userID *uuid.UUID, runID uuid.UUID) {
+func seedThreadAndRun(t *testing.T, pool database.DB, orgID, threadID uuid.UUID, projectID, userID *uuid.UUID, runID uuid.UUID) {
 	t.Helper()
 	_, err := pool.Exec(
 		context.Background(),
@@ -261,7 +267,7 @@ func seedThreadAndRun(t *testing.T, pool *pgxpool.Pool, orgID, threadID uuid.UUI
 	seedRunOnly(t, pool, orgID, threadID, userID, runID)
 }
 
-func seedRunOnly(t *testing.T, pool *pgxpool.Pool, orgID, threadID uuid.UUID, userID *uuid.UUID, runID uuid.UUID) {
+func seedRunOnly(t *testing.T, pool database.DB, orgID, threadID uuid.UUID, userID *uuid.UUID, runID uuid.UUID) {
 	t.Helper()
 	_, err := pool.Exec(
 		context.Background(),

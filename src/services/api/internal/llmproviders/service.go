@@ -8,10 +8,9 @@ import (
 	"strings"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrNotConfigured = errors.New("llm providers service not configured")
@@ -112,20 +111,20 @@ func (e ProviderSecretMissingError) Error() string {
 }
 
 type Service struct {
-	pool        *pgxpool.Pool
+	db          database.DB
 	credentials *data.LlmCredentialsRepository
 	routes      *data.LlmRoutesRepository
 	secrets     *data.SecretsRepository
 }
 
 func NewService(
-	pool *pgxpool.Pool,
+	db database.DB,
 	credentials *data.LlmCredentialsRepository,
 	routes *data.LlmRoutesRepository,
 	secrets *data.SecretsRepository,
 ) *Service {
 	return &Service{
-		pool:        pool,
+		db:          db,
 		credentials: credentials,
 		routes:      routes,
 		secrets:     secrets,
@@ -180,7 +179,7 @@ func (s *Service) CreateProvider(ctx context.Context, orgID uuid.UUID, scope str
 	if err := s.requireWriteReady(); err != nil {
 		return Provider{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -248,7 +247,7 @@ func (s *Service) UpdateProvider(ctx context.Context, orgID, providerID uuid.UUI
 		advancedJSON = input.AdvancedJSON
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -287,7 +286,7 @@ func (s *Service) DeleteProvider(ctx context.Context, orgID, providerID uuid.UUI
 		return ProviderNotFoundError{ID: providerID}
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -330,7 +329,7 @@ func (s *Service) CreateModel(ctx context.Context, orgID, providerID uuid.UUID, 
 	insertDefault := desiredDefault && len(existing) == 0
 	multiplier := derefFloat(input.Multiplier, 1.0)
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -445,7 +444,7 @@ func (s *Service) UpdateModel(ctx context.Context, orgID, providerID, modelID uu
 		costPer1kCacheRead = input.CostPer1kCacheRead
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -512,7 +511,7 @@ func (s *Service) DeleteModel(ctx context.Context, orgID, providerID, modelID uu
 		return ModelNotFoundError{ID: modelID}
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -577,20 +576,20 @@ func (s *Service) requireListReady() error {
 }
 
 func (s *Service) requireWriteReady() error {
-	if s.pool == nil || s.credentials == nil || s.routes == nil || s.secrets == nil {
+	if s.db == nil || s.credentials == nil || s.routes == nil || s.secrets == nil {
 		return ErrNotConfigured
 	}
 	return nil
 }
 
-func upsertProviderSecret(ctx context.Context, tx pgx.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string, plaintext string) (data.Secret, error) {
+func upsertProviderSecret(ctx context.Context, tx database.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string, plaintext string) (data.Secret, error) {
 	if scope == data.LlmCredentialScopePlatform {
 		return repo.WithTx(tx).UpsertPlatform(ctx, name, plaintext)
 	}
 	return repo.WithTx(tx).Upsert(ctx, orgID, name, plaintext)
 }
 
-func deleteProviderSecret(ctx context.Context, tx pgx.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string) error {
+func deleteProviderSecret(ctx context.Context, tx database.Tx, repo *data.SecretsRepository, orgID uuid.UUID, scope string, name string) error {
 	if scope == data.LlmCredentialScopePlatform {
 		return repo.WithTx(tx).DeletePlatform(ctx, name)
 	}

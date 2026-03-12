@@ -5,20 +5,20 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type registryService struct {
-	pool          *pgxpool.Pool
+	db            database.DB
 	profileRepo   data.ProfileRegistriesRepository
 	workspaceRepo data.WorkspaceRegistriesRepository
 	sessionsRepo  data.ShellSessionsRepository
 }
 
-func newRegistryService(pool *pgxpool.Pool) *registryService {
-	return &registryService{pool: pool}
+func newRegistryService(db database.DB) *registryService {
+	return &registryService{db: db}
 }
 
 func (s *registryService) UpsertProfileRegistry(
@@ -28,14 +28,14 @@ func (s *registryService) UpsertProfileRegistry(
 	profileRef string,
 	defaultWorkspaceRef *string,
 ) error {
-	if s == nil || s.pool == nil {
+	if s == nil || s.db == nil {
 		return nil
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	if orgID == uuid.Nil || profileRef == "" {
 		return nil
 	}
-	return s.profileRepo.UpsertTouch(ctx, s.pool, data.RegistryRecord{
+	return s.profileRepo.UpsertTouch(ctx, s.db, data.RegistryRecord{
 		Ref:                 profileRef,
 		OrgID:               orgID,
 		OwnerUserID:         ownerUserID,
@@ -54,14 +54,14 @@ func (s *registryService) UpsertWorkspaceRegistry(
 	workspaceRef string,
 	defaultShellSessionRef *string,
 ) error {
-	if s == nil || s.pool == nil {
+	if s == nil || s.db == nil {
 		return nil
 	}
 	workspaceRef = strings.TrimSpace(workspaceRef)
 	if orgID == uuid.Nil || workspaceRef == "" {
 		return nil
 	}
-	return s.workspaceRepo.UpsertTouch(ctx, s.pool, data.RegistryRecord{
+	return s.workspaceRepo.UpsertTouch(ctx, s.db, data.RegistryRecord{
 		Ref:                    workspaceRef,
 		OrgID:                  orgID,
 		OwnerUserID:            ownerUserID,
@@ -74,11 +74,11 @@ func (s *registryService) UpsertWorkspaceRegistry(
 }
 
 func (s *registryService) BindSessionRestorePointer(ctx context.Context, orgID uuid.UUID, sessionRef string, revision string) error {
-	if s == nil || s.pool == nil {
+	if s == nil || s.db == nil {
 		return nil
 	}
 	if orgID == uuid.Nil || strings.TrimSpace(sessionRef) == "" {
 		return nil
 	}
-	return s.sessionsRepo.UpdateRestoreRevision(ctx, s.pool, orgID, sessionRef, revision)
+	return s.sessionsRepo.UpdateRestoreRevision(ctx, s.db, orgID, sessionRef, revision)
 }

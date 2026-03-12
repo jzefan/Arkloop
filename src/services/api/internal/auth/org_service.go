@@ -5,20 +5,20 @@ import (
 	"fmt"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type OrgService struct {
-	pool           *pgxpool.Pool
+	db             database.DB
 	orgRepo        *data.OrgRepository
 	membershipRepo *data.OrgMembershipRepository
 }
 
-func NewOrgService(pool *pgxpool.Pool, orgRepo *data.OrgRepository, membershipRepo *data.OrgMembershipRepository) (*OrgService, error) {
-	if pool == nil {
-		return nil, fmt.Errorf("pool must not be nil")
+func NewOrgService(db database.DB, orgRepo *data.OrgRepository, membershipRepo *data.OrgMembershipRepository) (*OrgService, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
 	}
 	if orgRepo == nil {
 		return nil, fmt.Errorf("orgRepo must not be nil")
@@ -26,7 +26,7 @@ func NewOrgService(pool *pgxpool.Pool, orgRepo *data.OrgRepository, membershipRe
 	if membershipRepo == nil {
 		return nil, fmt.Errorf("membershipRepo must not be nil")
 	}
-	return &OrgService{pool: pool, orgRepo: orgRepo, membershipRepo: membershipRepo}, nil
+	return &OrgService{db: db, orgRepo: orgRepo, membershipRepo: membershipRepo}, nil
 }
 
 type CreateWorkspaceResult struct {
@@ -46,7 +46,7 @@ func (s *OrgService) CreateWorkspace(ctx context.Context, slug, name string, own
 		return CreateWorkspaceResult{}, fmt.Errorf("org_service: ownerUserID must not be empty")
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return CreateWorkspaceResult{}, fmt.Errorf("org_service.CreateWorkspace: %w", err)
 	}

@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -17,12 +17,12 @@ const (
 )
 
 type sessionACLEvaluator struct {
-	pool            *pgxpool.Pool
+	db              database.DB
 	membershipsRepo data.OrgMembershipsRepository
 }
 
-func newSessionACLEvaluator(pool *pgxpool.Pool) *sessionACLEvaluator {
-	return &sessionACLEvaluator{pool: pool}
+func newSessionACLEvaluator(db database.DB) *sessionACLEvaluator {
+	return &sessionACLEvaluator{db: db}
 }
 
 func (e *sessionACLEvaluator) AuthorizeSession(
@@ -110,14 +110,14 @@ func (e *sessionACLEvaluator) authorizeOrgShare(
 			"share_scope": shareScope,
 		})
 	}
-	if e.pool == nil {
+	if e.db == nil {
 		return sandboxPermissionDenied("shell session access denied", map[string]any{
 			"reason":      "org_scope_acl_unavailable",
 			"session_ref": strings.TrimSpace(sessionRef),
 			"share_scope": shareScope,
 		})
 	}
-	membership, err := e.membershipsRepo.GetByOrgAndUser(ctx, e.pool, *execCtx.OrgID, *execCtx.UserID)
+	membership, err := e.membershipsRepo.GetByOrgAndUser(ctx, e.db, *execCtx.OrgID, *execCtx.UserID)
 	if err != nil {
 		return sandboxPermissionDenied("shell session access denied", map[string]any{
 			"reason":      "org_scope_acl_error",

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"arkloop/services/worker/internal/testutil"
+"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -16,6 +17,7 @@ func TestSkillsRepositoryResolveEnabledSkills(t *testing.T) {
 		t.Fatalf("new pool: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 	repo := SkillsRepository{}
 	orgID := uuid.New()
 	userID := uuid.New()
@@ -33,7 +35,7 @@ func TestSkillsRepositoryResolveEnabledSkills(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `INSERT INTO workspace_skill_enablements (workspace_ref, org_id, enabled_by_user_id, skill_key, version) VALUES ($1, $2, $3, 'grep-helper', '1'), ($1, $2, $3, 'sed-helper', '1')`, workspaceRef, orgID, userID); err != nil {
 		t.Fatalf("seed workspace enablement: %v", err)
 	}
-	items, err := repo.ResolveEnabledSkills(context.Background(), pool, orgID, profileRef, workspaceRef)
+	items, err := repo.ResolveEnabledSkills(context.Background(), dbPool, orgID, profileRef, workspaceRef)
 	if err != nil {
 		t.Fatalf("resolve enabled skills: %v", err)
 	}

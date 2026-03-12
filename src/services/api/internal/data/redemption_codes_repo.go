@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 const redemptionCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -50,7 +50,7 @@ func NewRedemptionCodesRepository(db Querier) (*RedemptionCodesRepository, error
 	return &RedemptionCodesRepository{db: db}, nil
 }
 
-func (r *RedemptionCodesRepository) WithTx(tx pgx.Tx) *RedemptionCodesRepository {
+func (r *RedemptionCodesRepository) WithTx(tx database.Tx) *RedemptionCodesRepository {
 	return &RedemptionCodesRepository{db: tx}
 }
 
@@ -103,7 +103,7 @@ func (r *RedemptionCodesRepository) GetByCode(ctx context.Context, code string) 
 		 FROM redemption_codes WHERE code = $1`,
 		code,
 	).Scan(&rc.ID, &rc.Code, &rc.Type, &rc.Value, &rc.MaxUses, &rc.UseCount, &rc.ExpiresAt, &rc.IsActive, &rc.BatchID, &rc.CreatedByUserID, &rc.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -119,7 +119,7 @@ func (r *RedemptionCodesRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		 FROM redemption_codes WHERE id = $1`,
 		id,
 	).Scan(&rc.ID, &rc.Code, &rc.Type, &rc.Value, &rc.MaxUses, &rc.UseCount, &rc.ExpiresAt, &rc.IsActive, &rc.BatchID, &rc.CreatedByUserID, &rc.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -196,7 +196,7 @@ func (r *RedemptionCodesRepository) Deactivate(ctx context.Context, id uuid.UUID
 		 RETURNING id, code, type, value, max_uses, use_count, expires_at, is_active, batch_id, created_by_user_id, created_at`,
 		id,
 	).Scan(&rc.ID, &rc.Code, &rc.Type, &rc.Value, &rc.MaxUses, &rc.UseCount, &rc.ExpiresAt, &rc.IsActive, &rc.BatchID, &rc.CreatedByUserID, &rc.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

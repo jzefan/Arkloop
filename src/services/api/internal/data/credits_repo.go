@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+"arkloop/services/shared/database"
 )
 
 type Credit struct {
@@ -55,7 +54,7 @@ func NewCreditsRepository(db Querier) (*CreditsRepository, error) {
 	return &CreditsRepository{db: db}, nil
 }
 
-func (r *CreditsRepository) WithTx(tx pgx.Tx) *CreditsRepository {
+func (r *CreditsRepository) WithTx(tx database.Tx) *CreditsRepository {
 	return &CreditsRepository{db: tx}
 }
 
@@ -67,7 +66,7 @@ func (r *CreditsRepository) GetBalance(ctx context.Context, orgID uuid.UUID) (*C
 		orgID,
 	).Scan(&c.ID, &c.OrgID, &c.Balance, &c.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("credits.GetBalance: %w", err)
@@ -269,7 +268,7 @@ func (r *CreditsRepository) BulkAdjust(ctx context.Context, amount int64, note s
 if amount == 0 {
 return 0, fmt.Errorf("credits.BulkAdjust: amount must not be zero")
 }
-var tag pgconn.CommandTag
+var tag database.Result
 var err error
 if amount > 0 {
 tag, err = r.db.Exec(ctx,

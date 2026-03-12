@@ -9,8 +9,8 @@ import (
 	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,7 +32,7 @@ type Deps struct {
 	CreditsRepo          *data.CreditsRepository
 	RedemptionCodesRepo  *data.RedemptionCodesRepository
 	NotificationsRepo    *data.NotificationsRepository
-	Pool                 *pgxpool.Pool
+	DB                 database.DB
 	Logger               *observability.JSONLogger
 	GatewayRedisClient   *redis.Client
 	PlatformSettingsRepo *data.PlatformSettingsRepository
@@ -53,10 +53,10 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/admin/users", adminUsersEntry(deps.AuthService, deps.OrgMembershipRepo, deps.UsersRepo, deps.APIKeysRepo, deps.UserCredentialRepo))
 	mux.HandleFunc("/v1/admin/users/", adminUserEntry(deps.AuthService, deps.OrgMembershipRepo, deps.UsersRepo, deps.APIKeysRepo, deps.AuditWriter, deps.InviteCodesRepo, deps.UserCredentialRepo))
 	mux.HandleFunc("/v1/admin/notifications/broadcasts/", adminBroadcastEntry(deps.AuthService, deps.OrgMembershipRepo, deps.NotificationsRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/admin/notifications/broadcasts", adminBroadcastsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.NotificationsRepo, deps.APIKeysRepo, deps.AuditWriter, deps.Pool, deps.Logger))
+	mux.HandleFunc("/v1/admin/notifications/broadcasts", adminBroadcastsEntry(deps.AuthService, deps.OrgMembershipRepo, deps.NotificationsRepo, deps.APIKeysRepo, deps.AuditWriter, deps.DB, deps.Logger))
 	mux.HandleFunc("/v1/admin/gateway-config", adminGatewayConfigEntry(deps.AuthService, deps.OrgMembershipRepo, deps.PlatformSettingsRepo, deps.APIKeysRepo, deps.GatewayRedisClient, deps.ConfigResolver, deps.ConfigInvalidator))
 	mux.HandleFunc("/v1/admin/access-log", adminAccessLogEntry(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.UsersRepo, deps.GatewayRedisClient))
-	mux.HandleFunc("/v1/admin/execution-governance", adminExecutionGovernance(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.PersonasRepo, deps.RepoPersonas, deps.ConfigRegistry, deps.Pool))
+	mux.HandleFunc("/v1/admin/execution-governance", adminExecutionGovernance(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.PersonasRepo, deps.RepoPersonas, deps.ConfigRegistry, deps.DB))
 	mux.HandleFunc("/v1/admin/email/status", adminEmailStatus(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.ConfigResolver))
 	mux.HandleFunc("/v1/admin/email/config", adminEmailConfig(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.PlatformSettingsRepo, deps.ConfigResolver, deps.ConfigInvalidator))
 	mux.HandleFunc("/v1/admin/email/test", adminEmailTest(deps.AuthService, deps.OrgMembershipRepo, deps.APIKeysRepo, deps.JobRepo, deps.PlatformSettingsRepo, deps.ConfigResolver))

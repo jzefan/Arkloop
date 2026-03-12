@@ -24,6 +24,7 @@ import (
 	"arkloop/services/api/internal/personas"
 	"arkloop/services/api/internal/personasync"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/objectstore"
 	sharedredis "arkloop/services/shared/redis"
 
@@ -59,7 +60,8 @@ func (a *Application) Run(ctx context.Context) error {
 	defer stop()
 
 	var (
-		pool       *pgxpool.Pool
+		db         database.DB
+		rawPool    *pgxpool.Pool
 		directPool *pgxpool.Pool
 		schemaRepo *data.SchemaRepository
 	)
@@ -67,19 +69,19 @@ func (a *Application) Run(ctx context.Context) error {
 
 	dsn := strings.TrimSpace(a.config.DatabaseDSN)
 	if dsn != "" {
-		createdPool, err := data.NewPool(ctx, dsn, data.PoolLimits{
+		var err error
+		db, rawPool, err = data.NewPool(ctx, dsn, data.PoolLimits{
 			MaxConns: int32(a.config.DBPoolMaxConns),
 			MinConns: int32(a.config.DBPoolMinConns),
 		})
 		if err != nil {
 			return err
 		}
-		pool = createdPool
-		poolCloser = createdPool.Close
+		poolCloser = rawPool.Close
 
-		repo, err := data.NewSchemaRepository(createdPool)
+		repo, err := data.NewSchemaRepository(db)
 		if err != nil {
-			createdPool.Close()
+			rawPool.Close()
 			return err
 		}
 		schemaRepo = repo
@@ -117,16 +119,16 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 		directPool = dp
 		defer directPool.Close()
-	} else if pool != nil {
+	} else if rawPool != nil {
 		a.logger.Warn("ARKLOOP_DATABASE_DIRECT_URL not set: LISTEN/NOTIFY uses main pool, breaks with PgBouncer", observability.LogFields{}, nil)
-		directPool = pool
+		directPool = rawPool
 	}
 
 	statsIntervalSeconds := a.config.DBPoolStatsIntervalSeconds
-	if statsIntervalSeconds > 0 && pool != nil {
+	if statsIntervalSeconds > 0 && rawPool != nil {
 		interval := time.Duration(statsIntervalSeconds) * time.Second
-		startDBPoolStatsLogger(ctx, a.logger, pool, "db_primary", interval)
-		if directPool != nil && directPool != pool {
+		startDBPoolStatsLogger(ctx, a.logger, rawPool, "db_primary", interval)
+		if directPool != nil && directPool != rawPool {
 			startDBPoolStatsLogger(ctx, a.logger, directPool, "db_direct", interval)
 		}
 	}
@@ -173,7 +175,7 @@ func (a *Application) Run(ctx context.Context) error {
 	if redisClient != nil && cacheTTL > 0 {
 		configCache = sharedconfig.NewRedisCache(redisClient)
 	}
-	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, cacheTTL)
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(db), configCache, cacheTTL)
 
 	var artifactStore objectstore.Store
 	var messageAttachmentStore objectstore.Store
@@ -281,134 +283,134 @@ func (a *Application) Run(ctx context.Context) error {
 		emailOTPTokenRepo *data.EmailOTPTokenRepository
 	)
 
-	if pool != nil {
+	if db != nil {
 		var err error
-		userRepo, err = data.NewUserRepository(pool)
+		userRepo, err = data.NewUserRepository(db)
 		if err != nil {
 			return err
 		}
-		credentialRepo, err = data.NewUserCredentialRepository(pool)
+		credentialRepo, err = data.NewUserCredentialRepository(db)
 		if err != nil {
 			return err
 		}
-		membershipRepo, err = data.NewOrgMembershipRepository(pool)
+		membershipRepo, err = data.NewOrgMembershipRepository(db)
 		if err != nil {
 			return err
 		}
-		orgRepo, err = data.NewOrgRepository(pool)
+		orgRepo, err = data.NewOrgRepository(db)
 		if err != nil {
 			return err
 		}
-		threadRepo, err = data.NewThreadRepository(pool)
+		threadRepo, err = data.NewThreadRepository(db)
 		if err != nil {
 			return err
 		}
-		threadStarRepo, err = data.NewThreadStarRepository(pool)
+		threadStarRepo, err = data.NewThreadStarRepository(db)
 		if err != nil {
 			return err
 		}
-		threadShareRepo, err = data.NewThreadShareRepository(pool)
+		threadShareRepo, err = data.NewThreadShareRepository(db)
 		if err != nil {
 			return err
 		}
-		threadReportRepo, err = data.NewThreadReportRepository(pool)
+		threadReportRepo, err = data.NewThreadReportRepository(db)
 		if err != nil {
 			return err
 		}
-		messageRepo, err = data.NewMessageRepository(pool)
+		messageRepo, err = data.NewMessageRepository(db)
 		if err != nil {
 			return err
 		}
-		runEventRepo, err = data.NewRunEventRepository(pool)
+		runEventRepo, err = data.NewRunEventRepository(db)
 		if err != nil {
 			return err
 		}
-		shellSessionRepo, err = data.NewShellSessionRepository(pool)
+		shellSessionRepo, err = data.NewShellSessionRepository(db)
 		if err != nil {
 			return err
 		}
-		auditRepo, err = data.NewAuditLogRepository(pool)
+		auditRepo, err = data.NewAuditLogRepository(db)
 		if err != nil {
 			return err
 		}
 
-		llmCredRepo, err = data.NewLlmCredentialsRepository(pool)
+		llmCredRepo, err = data.NewLlmCredentialsRepository(db)
 		if err != nil {
 			return err
 		}
-		llmRoutesRepo, err = data.NewLlmRoutesRepository(pool)
+		llmRoutesRepo, err = data.NewLlmRoutesRepository(db)
 		if err != nil {
 			return err
 		}
-		mcpConfigsRepo, err = data.NewMCPConfigsRepository(pool)
+		mcpConfigsRepo, err = data.NewMCPConfigsRepository(db)
 		if err != nil {
 			return err
 		}
-		toolProviderConfigsRepo, err = data.NewToolProviderConfigsRepository(pool)
+		toolProviderConfigsRepo, err = data.NewToolProviderConfigsRepository(db)
 		if err != nil {
 			return err
 		}
-		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(pool)
+		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(db)
 		if err != nil {
 			return err
 		}
-		personasRepo, err = data.NewPersonasRepository(pool)
+		personasRepo, err = data.NewPersonasRepository(db)
 		if err != nil {
 			return err
 		}
-		skillPackagesRepo, err = data.NewSkillPackagesRepository(pool)
+		skillPackagesRepo, err = data.NewSkillPackagesRepository(db)
 		if err != nil {
 			return err
 		}
-		profileSkillInstallsRepo, err = data.NewProfileSkillInstallsRepository(pool)
+		profileSkillInstallsRepo, err = data.NewProfileSkillInstallsRepository(db)
 		if err != nil {
 			return err
 		}
-		workspaceSkillEnableRepo, err = data.NewWorkspaceSkillEnablementsRepository(pool)
+		workspaceSkillEnableRepo, err = data.NewWorkspaceSkillEnablementsRepository(db)
 		if err != nil {
 			return err
 		}
-		profileRegistriesRepo, err = data.NewProfileRegistriesRepository(pool)
+		profileRegistriesRepo, err = data.NewProfileRegistriesRepository(db)
 		if err != nil {
 			return err
 		}
-		workspaceRegistriesRepo, err = data.NewWorkspaceRegistriesRepository(pool)
+		workspaceRegistriesRepo, err = data.NewWorkspaceRegistriesRepository(db)
 		if err != nil {
 			return err
 		}
-		ipRulesRepo, err = data.NewIPRulesRepository(pool)
+		ipRulesRepo, err = data.NewIPRulesRepository(db)
 		if err != nil {
 			return err
 		}
-		apiKeysRepo, err = data.NewAPIKeysRepository(pool)
+		apiKeysRepo, err = data.NewAPIKeysRepository(db)
 		if err != nil {
 			return err
 		}
-		orgInvitationsRepo, err = data.NewOrgInvitationsRepository(pool)
+		orgInvitationsRepo, err = data.NewOrgInvitationsRepository(db)
 		if err != nil {
 			return err
 		}
-		teamRepo, err = data.NewTeamRepository(pool)
+		teamRepo, err = data.NewTeamRepository(db)
 		if err != nil {
 			return err
 		}
-		projectRepo, err = data.NewProjectRepository(pool)
+		projectRepo, err = data.NewProjectRepository(db)
 		if err != nil {
 			return err
 		}
-		webhookRepo, err = data.NewWebhookEndpointRepository(pool)
+		webhookRepo, err = data.NewWebhookEndpointRepository(db)
 		if err != nil {
 			return err
 		}
-		plansRepo, err = data.NewPlanRepository(pool)
+		plansRepo, err = data.NewPlanRepository(db)
 		if err != nil {
 			return err
 		}
-		subscriptionsRepo, err = data.NewSubscriptionRepository(pool)
+		subscriptionsRepo, err = data.NewSubscriptionRepository(db)
 		if err != nil {
 			return err
 		}
-		entitlementsRepo, err = data.NewEntitlementsRepository(pool)
+		entitlementsRepo, err = data.NewEntitlementsRepository(db)
 		if err != nil {
 			return err
 		}
@@ -416,11 +418,11 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		usageRepo, err = data.NewUsageRepository(pool)
+		usageRepo, err = data.NewUsageRepository(db)
 		if err != nil {
 			return err
 		}
-		featureFlagsRepo, err = data.NewFeatureFlagRepository(pool)
+		featureFlagsRepo, err = data.NewFeatureFlagRepository(db)
 		if err != nil {
 			return err
 		}
@@ -428,63 +430,63 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		notificationsRepo, err = data.NewNotificationsRepository(pool)
+		notificationsRepo, err = data.NewNotificationsRepository(db)
 		if err != nil {
 			return err
 		}
-		inviteCodesRepo, err = data.NewInviteCodeRepository(pool)
+		inviteCodesRepo, err = data.NewInviteCodeRepository(db)
 		if err != nil {
 			return err
 		}
-		referralsRepo, err = data.NewReferralRepository(pool)
+		referralsRepo, err = data.NewReferralRepository(db)
 		if err != nil {
 			return err
 		}
-		creditsRepo, err = data.NewCreditsRepository(pool)
+		creditsRepo, err = data.NewCreditsRepository(db)
 		if err != nil {
 			return err
 		}
-		redemptionCodesRepo, err = data.NewRedemptionCodesRepository(pool)
+		redemptionCodesRepo, err = data.NewRedemptionCodesRepository(db)
 		if err != nil {
 			return err
 		}
-		platformSettingsRepo, err = data.NewPlatformSettingsRepository(pool)
+		platformSettingsRepo, err = data.NewPlatformSettingsRepository(db)
 		if err != nil {
 			return err
 		}
-		smtpProviderRepo, err = data.NewSmtpProviderRepository(pool)
-		if err != nil {
-			return err
-		}
-
-		asrCredRepo, err = data.NewAsrCredentialsRepository(pool)
+		smtpProviderRepo, err = data.NewSmtpProviderRepository(db)
 		if err != nil {
 			return err
 		}
 
-		refreshTokenRepo, err = data.NewRefreshTokenRepository(pool)
+		asrCredRepo, err = data.NewAsrCredentialsRepository(db)
 		if err != nil {
 			return err
 		}
 
-		jobRepo, err = data.NewJobRepository(pool)
+		refreshTokenRepo, err = data.NewRefreshTokenRepository(db)
 		if err != nil {
 			return err
 		}
 
-		emailVerifyTokenRepo, err = data.NewEmailVerificationTokenRepository(pool)
+		jobRepo, err = data.NewJobRepository(db)
 		if err != nil {
 			return err
 		}
 
-		emailOTPTokenRepo, err = data.NewEmailOTPTokenRepository(pool)
+		emailVerifyTokenRepo, err = data.NewEmailVerificationTokenRepository(db)
+		if err != nil {
+			return err
+		}
+
+		emailOTPTokenRepo, err = data.NewEmailOTPTokenRepository(db)
 		if err != nil {
 			return err
 		}
 		// 加密 key 未配置时 secrets/llm-credentials 端点不可用，但不影响其他功能启动
 		keyRing, keyRingErr := crypto.NewKeyRingFromEnv()
 		if keyRingErr == nil {
-			secretsRepo, err = data.NewSecretsRepository(pool, keyRing)
+			secretsRepo, err = data.NewSecretsRepository(db, keyRing)
 			if err != nil {
 				return err
 			}
@@ -495,10 +497,10 @@ func (a *Application) Run(ctx context.Context) error {
 			)
 		}
 
-		warnUnsafeOutboundBaseURLs(ctx, pool, a.logger)
+		warnUnsafeOutboundBaseURLs(ctx, rawPool, a.logger)
 	}
 
-	if pool != nil && a.config.Auth != nil {
+	if db != nil && a.config.Auth != nil {
 		passwordHasher, err := auth.NewBcryptPasswordHasher(0)
 		if err != nil {
 			return err
@@ -511,11 +513,11 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		registrationService, err = auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+		registrationService, err = auth.NewRegistrationService(db, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 		if err != nil {
 			return err
 		}
-		orgService, err = auth.NewOrgService(pool, orgRepo, membershipRepo)
+		orgService, err = auth.NewOrgService(db, orgRepo, membershipRepo)
 		if err != nil {
 			return err
 		}
@@ -571,20 +573,20 @@ func (a *Application) Run(ctx context.Context) error {
 				}
 			}
 		}
-		if err := backfillWebhookSecrets(ctx, pool, webhookRepo, secretsRepo, a.logger); err != nil {
+		if err := backfillWebhookSecrets(ctx, db, webhookRepo, secretsRepo, a.logger); err != nil {
 			return err
 		}
 	}
 
 	// 启动分区管理器（自动创建/清理 run_events 月分区）
-	if pool != nil {
-		partitionMgr := data.NewPartitionManagerWithRetention(pool, a.logger, a.config.RunEventsRetentionMonths)
+	if db != nil {
+		partitionMgr := data.NewPartitionManagerWithRetention(rawPool, a.logger, a.config.RunEventsRetentionMonths)
 		go partitionMgr.Run(ctx)
 	}
 
 	// 启动卡死 run 清理器（R73: 修复 Redis 并发计数器泄漏）
-	if pool != nil && runLimiter != nil {
-		reaper := jobs.NewStaleRunReaper(runEventRepo, runLimiter, auditRepo, pool, a.logger, a.config.RunTimeoutMinutes)
+	if db != nil && runLimiter != nil {
+		reaper := jobs.NewStaleRunReaper(runEventRepo, runLimiter, auditRepo, db, a.logger, a.config.RunTimeoutMinutes)
 		go reaper.Run(ctx)
 	}
 
@@ -610,13 +612,13 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	var personaSyncManager *personasync.Manager
-	if pool != nil && personasRepo != nil {
+	if db != nil && personasRepo != nil {
 		if deleted, err := personasRepo.DeleteInvalidLuaRuntimeRows(ctx); err != nil {
 			return err
 		} else if deleted > 0 {
 			a.logger.Warn("persona_runtime_rows_deleted", observability.LogFields{}, map[string]any{"rows": deleted})
 		}
-		personaSyncManager = personasync.NewManager(personasRoot, pool, personasRepo, a.logger)
+		personaSyncManager = personasync.NewManager(personasRoot, rawPool, personasRepo, a.logger)
 		if err := personaSyncManager.SyncNow(ctx); err != nil {
 			return err
 		}
@@ -628,7 +630,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
-			Pool:                         pool,
+			DB:                           db,
 			DirectPool:                   directPool,
 			InvalidationListenerCtx:      ctx,
 			DirectPoolAcquireTimeout:     time.Duration(a.config.DirectPoolAcquireTimeoutMs) * time.Millisecond,

@@ -9,9 +9,9 @@ import (
 
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/personas"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type toolDescriptionSource string
@@ -309,11 +309,11 @@ func buildEffectiveToolCatalog(
 	ctx context.Context,
 	orgID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	mcpCache *catalogfamily.EffectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
-	resp, err := catalogfamily.BuildEffectiveToolCatalogCompat(ctx, orgID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+	resp, err := catalogfamily.BuildEffectiveToolCatalogCompat(ctx, orgID, overridesRepo, db, mcpCache, artifactStoreAvailable)
 	if err != nil {
 		return toolCatalogResponse{}, err
 	}

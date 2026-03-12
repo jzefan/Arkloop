@@ -12,8 +12,8 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/http/featuregate"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func workspaceFilesEntry(
@@ -23,7 +23,7 @@ func workspaceFilesEntry(
 	runRepo *data.RunEventRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	flagService *featureflag.Service,
 ) nethttp.HandlerFunc {
@@ -41,7 +41,7 @@ func workspaceFilesEntry(
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "workspace_files.not_configured", "workspace file storage not configured", traceID, nil)
 			return
 		}
-		if pool == nil {
+		if db == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -83,7 +83,7 @@ func workspaceFilesEntry(
 			return
 		}
 
-		content, contentType, err := readWorkspaceFile(r.Context(), pool, store, strings.TrimSpace(*run.WorkspaceRef), targetPath)
+		content, contentType, err := readWorkspaceFile(r.Context(), db, store, strings.TrimSpace(*run.WorkspaceRef), targetPath)
 		if err != nil {
 			if errors.Is(err, errWorkspaceFileNotFound) {
 				httpkit.WriteError(w, nethttp.StatusNotFound, "workspace_files.not_found", "workspace file not found", traceID, nil)

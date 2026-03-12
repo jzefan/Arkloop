@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // WithTx 返回一个使用给定事务的 LlmCredentialsRepository 副本。
-func (r *LlmCredentialsRepository) WithTx(tx pgx.Tx) *LlmCredentialsRepository {
+func (r *LlmCredentialsRepository) WithTx(tx database.Tx) *LlmCredentialsRepository {
 	return &LlmCredentialsRepository{db: tx}
 }
 
@@ -152,7 +152,7 @@ func (r *LlmCredentialsRepository) GetByID(ctx context.Context, orgID, id uuid.U
 		&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -297,7 +297,7 @@ func (r *LlmCredentialsRepository) Update(
 		&c.BaseURL, &c.OpenAIAPIMode, &advJSON, &c.RevokedAt, &c.LastUsedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		if isUniqueViolation(err) {

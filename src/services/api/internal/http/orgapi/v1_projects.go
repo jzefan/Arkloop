@@ -12,9 +12,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type projectResponse struct {
@@ -61,7 +61,7 @@ func projectEntry(
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -86,7 +86,7 @@ func projectEntry(
 		}
 
 		if subpath != "" {
-			handleProjectWorkspaceRoute(w, r, traceID, subpath, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, pool, store, flagService)
+			handleProjectWorkspaceRoute(w, r, traceID, subpath, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, db, store, flagService)
 			return
 		}
 

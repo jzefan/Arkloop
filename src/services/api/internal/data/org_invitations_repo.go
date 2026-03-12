@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type OrgInvitation struct {
@@ -90,7 +90,7 @@ func (r *OrgInvitationsRepository) GetByToken(ctx context.Context, token string)
 		&inv.ExpiresAt, &inv.AcceptedAt, &inv.AcceptedByUserID, &inv.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

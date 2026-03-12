@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/database"
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/environmentbindings"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -135,16 +135,16 @@ type ToolExecutor struct {
 }
 
 func NewToolExecutor(baseURL, authToken string) *ToolExecutor {
-	return NewToolExecutorWithPool(baseURL, authToken, nil)
+	return NewToolExecutorWithDB(baseURL, authToken, nil)
 }
 
-func NewToolExecutorWithPool(baseURL, authToken string, pool *pgxpool.Pool) *ToolExecutor {
+func NewToolExecutorWithDB(baseURL, authToken string, db database.DB) *ToolExecutor {
 	return &ToolExecutor{
 		baseURL:             baseURL,
 		authToken:           authToken,
 		client:              &http.Client{Timeout: httpClientTimeout},
-		orchestrator:        newSessionOrchestrator(pool),
-		browserOrchestrator: newSessionOrchestratorWithType(pool, data.ShellSessionTypeBrowser),
+		orchestrator:        newSessionOrchestrator(db),
+		browserOrchestrator: newSessionOrchestratorWithType(db, data.ShellSessionTypeBrowser),
 	}
 }
 
@@ -786,7 +786,7 @@ func (e *ToolExecutor) ensureEnvironmentBindings(
 	ctx context.Context,
 	execCtx tools.ExecutionContext,
 ) (tools.ExecutionContext, *tools.ExecutionError) {
-	if e == nil || e.orchestrator == nil || e.orchestrator.pool == nil {
+	if e == nil || e.orchestrator == nil || e.orchestrator.db == nil {
 		return execCtx, nil
 	}
 	if strings.TrimSpace(execCtx.ProfileRef) != "" && strings.TrimSpace(execCtx.WorkspaceRef) != "" {
@@ -808,7 +808,7 @@ func (e *ToolExecutor) ensureEnvironmentBindings(
 		run.ThreadID = *execCtx.ThreadID
 	}
 
-	resolvedRun, err := environmentbindings.ResolveAndPersistRun(ctx, e.orchestrator.pool, run)
+	resolvedRun, err := environmentbindings.ResolveAndPersistRun(ctx, e.orchestrator.db, run)
 	if err != nil {
 		return execCtx, &tools.ExecutionError{
 			ErrorClass: errorSandboxError,
@@ -1144,12 +1144,12 @@ func isSessionNotRunning(err *tools.ExecutionError) bool {
 }
 
 func (e *ToolExecutor) resolveEnabledSkills(ctx context.Context, execCtx tools.ExecutionContext) ([]skillstore.ResolvedSkill, error) {
-	if e == nil || e.orchestrator == nil || e.orchestrator.pool == nil || execCtx.OrgID == nil {
+	if e == nil || e.orchestrator == nil || e.orchestrator.db == nil || execCtx.OrgID == nil {
 		return nil, nil
 	}
 	if strings.TrimSpace(execCtx.ProfileRef) == "" || strings.TrimSpace(execCtx.WorkspaceRef) == "" {
 		return nil, nil
 	}
 	repo := data.SkillsRepository{}
-	return repo.ResolveEnabledSkills(ctx, e.orchestrator.pool, *execCtx.OrgID, execCtx.ProfileRef, execCtx.WorkspaceRef)
+	return repo.ResolveEnabledSkills(ctx, e.orchestrator.db, *execCtx.OrgID, execCtx.ProfileRef, execCtx.WorkspaceRef)
 }

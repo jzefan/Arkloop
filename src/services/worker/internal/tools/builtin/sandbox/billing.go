@@ -6,11 +6,10 @@ import (
 	"math"
 
 	"arkloop/services/shared/creditpolicy"
+	"arkloop/services/shared/database"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // BillingConfig 存储 sandbox 计费参数。
@@ -74,30 +73,25 @@ func CalcBaseOnlyCredits(cfg BillingConfig, policy creditpolicy.CreditDeductionP
 	return credits, meta
 }
 
-// TxBeginner 抽象 pgxpool.Pool 的 Begin 方法，便于测试。
-type TxBeginner interface {
-	Begin(ctx context.Context) (pgx.Tx, error)
-}
-
 // BillingExecutor 装饰原始 sandbox executor，在调用完成后立即扣减积分。
 type BillingExecutor struct {
 	inner       tools.Executor
-	pool        TxBeginner
+	db          database.DB
 	creditsRepo data.CreditsRepository
 	resolver    *sharedent.Resolver
 	cfg         BillingConfig
 }
 
-// NewBillingExecutor 创建计费装饰器。pool 和 resolver 不应为 nil。
+// NewBillingExecutor 创建计费装饰器。db 和 resolver 不应为 nil。
 func NewBillingExecutor(
 	inner tools.Executor,
-	pool TxBeginner,
+	db database.DB,
 	resolver *sharedent.Resolver,
 	cfg BillingConfig,
 ) *BillingExecutor {
 	return &BillingExecutor{
 		inner:    inner,
-		pool:     pool,
+		db:       db,
 		resolver: resolver,
 		cfg:      cfg,
 	}
@@ -136,7 +130,7 @@ func (b *BillingExecutor) Execute(
 		return result
 	}
 
-	err := b.creditsRepo.DeductStandalone(ctx, b.pool, *execCtx.OrgID, credits, execCtx.RunID, "sandbox", meta)
+	err := b.creditsRepo.DeductStandalone(ctx, b.db, *execCtx.OrgID, credits, execCtx.RunID, "sandbox", meta)
 	if err != nil {
 		slog.WarnContext(ctx, "sandbox billing: deduct failed",
 			"org_id", execCtx.OrgID,

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 const inviteCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -98,7 +98,7 @@ func (r *InviteCodeRepository) GetByCode(ctx context.Context, code string) (*Inv
 		 FROM invite_codes WHERE code = $1`,
 		code,
 	).Scan(&ic.ID, &ic.UserID, &ic.Code, &ic.MaxUses, &ic.UseCount, &ic.IsActive, &ic.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -118,7 +118,7 @@ func (r *InviteCodeRepository) GetByID(ctx context.Context, id uuid.UUID) (*Invi
 		 FROM invite_codes WHERE id = $1`,
 		id,
 	).Scan(&ic.ID, &ic.UserID, &ic.Code, &ic.MaxUses, &ic.UseCount, &ic.IsActive, &ic.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -246,7 +246,7 @@ func (r *InviteCodeRepository) UpdateMaxUses(ctx context.Context, id uuid.UUID, 
 		 RETURNING id, user_id, code, max_uses, use_count, is_active, created_at`,
 		maxUses, id,
 	).Scan(&ic.ID, &ic.UserID, &ic.Code, &ic.MaxUses, &ic.UseCount, &ic.IsActive, &ic.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -266,7 +266,7 @@ func (r *InviteCodeRepository) SetActive(ctx context.Context, id uuid.UUID, isAc
 		 RETURNING id, user_id, code, max_uses, use_count, is_active, created_at`,
 		isActive, id,
 	).Scan(&ic.ID, &ic.UserID, &ic.Code, &ic.MaxUses, &ic.UseCount, &ic.IsActive, &ic.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

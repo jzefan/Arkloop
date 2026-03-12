@@ -9,7 +9,7 @@ import (
 
 	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type SkillPackage struct {
@@ -151,7 +151,7 @@ func (r *SkillPackagesRepository) Get(ctx context.Context, orgID uuid.UUID, skil
 		version,
 	).Scan(&item.OrgID, &item.SkillKey, &item.Version, &item.DisplayName, &item.Description, &item.InstructionPath, &item.ManifestKey, &item.BundleKey, &item.FilesPrefix, &item.Platforms, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

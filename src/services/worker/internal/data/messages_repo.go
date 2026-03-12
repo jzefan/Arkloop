@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+"arkloop/services/shared/database"
 )
 
 type MessagesRepository struct{}
@@ -29,7 +28,7 @@ type ConversationSearchHit struct {
 
 func (MessagesRepository) InsertAssistantMessage(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	orgID uuid.UUID,
 	threadID uuid.UUID,
 	runID uuid.UUID,
@@ -64,7 +63,7 @@ func (MessagesRepository) InsertAssistantMessage(
 
 func (MessagesRepository) ListByThread(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	orgID uuid.UUID,
 	threadID uuid.UUID,
 	limit int,
@@ -112,7 +111,7 @@ func (MessagesRepository) ListByThread(
 
 func (MessagesRepository) SearchVisibleByOwner(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	ownerUserID uuid.UUID,
 	query string,

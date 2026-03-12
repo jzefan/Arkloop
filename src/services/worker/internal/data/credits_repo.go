@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 // CreditsRepository 在 Worker 侧扣减积分，与 UsageRecordsRepository 风格一致（零值可用）。
@@ -16,7 +16,7 @@ type CreditsRepository struct{}
 // metadata 可选，非 nil 时写入 credit_transactions.metadata（计算明细）。
 func (CreditsRepository) DeductStandalone(
 	ctx context.Context,
-	pool interface{ Begin(context.Context) (pgx.Tx, error) },
+	pool interface{ Begin(context.Context) (database.Tx, error) },
 	orgID uuid.UUID,
 	amount int64,
 	runID uuid.UUID,
@@ -49,7 +49,7 @@ func (CreditsRepository) DeductStandalone(
 // metadata 可选，非 nil 时写入 credit_transactions.metadata（计算明细）。
 func (CreditsRepository) Deduct(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	orgID uuid.UUID,
 	amount int64,
 	runID uuid.UUID,
@@ -69,7 +69,7 @@ func (CreditsRepository) Deduct(
 	return nil
 }
 
-func deductBalance(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, amount int64) error {
+func deductBalance(ctx context.Context, tx database.Tx, orgID uuid.UUID, amount int64) error {
 	tag, err := tx.Exec(ctx,
 		`UPDATE credits SET balance = balance - $1, updated_at = now()
 		 WHERE org_id = $2 AND balance >= $1`,
@@ -90,7 +90,7 @@ func deductBalance(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, amount int64
 	return nil
 }
 
-func insertTransaction(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, amount int64, refType string, refID uuid.UUID, metadata map[string]any) error {
+func insertTransaction(ctx context.Context, tx database.Tx, orgID uuid.UUID, amount int64, refType string, refID uuid.UUID, metadata map[string]any) error {
 	var metaJSON []byte
 	if metadata != nil {
 		var err error

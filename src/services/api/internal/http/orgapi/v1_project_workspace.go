@@ -15,10 +15,9 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/http/featuregate"
 	"arkloop/services/shared/environmentref"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var errProjectWorkspaceNotFound = errors.New("project workspace not found")
@@ -83,7 +82,7 @@ func handleProjectWorkspaceRoute(
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	flagService *featureflag.Service,
 ) {
@@ -99,11 +98,11 @@ func handleProjectWorkspaceRoute(
 
 	switch {
 	case len(parts) == 1 && r.Method == nethttp.MethodGet:
-		getProjectWorkspace(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, pool, flagService)
+		getProjectWorkspace(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, db, flagService)
 	case len(parts) == 2 && parts[1] == "files" && r.Method == nethttp.MethodGet:
-		listProjectWorkspaceFiles(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, pool, store, flagService)
+		listProjectWorkspaceFiles(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, db, store, flagService)
 	case len(parts) == 2 && parts[1] == "file" && r.Method == nethttp.MethodGet:
-		getProjectWorkspaceFile(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, pool, store, flagService)
+		getProjectWorkspaceFile(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo, auditWriter, db, store, flagService)
 	default:
 		httpkit.WriteMethodNotAllowed(w, r)
 	}
@@ -119,7 +118,7 @@ func getProjectWorkspace(
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	flagService *featureflag.Service,
 ) {
 	if !featuregate.EnsureClawEnabled(w, traceID, r.Context(), flagService) {
@@ -129,7 +128,7 @@ func getProjectWorkspace(
 	if !ok {
 		return
 	}
-	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, pool, projectRepo, projectID, actor)
+	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, db, projectRepo, projectID, actor)
 	if !ok {
 		return
 	}
@@ -166,7 +165,7 @@ func listProjectWorkspaceFiles(
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	flagService *featureflag.Service,
 ) {
@@ -181,7 +180,7 @@ func listProjectWorkspaceFiles(
 	if !ok {
 		return
 	}
-	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, pool, projectRepo, projectID, actor)
+	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, db, projectRepo, projectID, actor)
 	if !ok {
 		return
 	}
@@ -190,7 +189,7 @@ func listProjectWorkspaceFiles(
 		return
 	}
 
-	items, err := listWorkspaceManifestEntries(r.Context(), pool, store, resolved.WorkspaceRef, relativePath)
+	items, err := listWorkspaceManifestEntries(r.Context(), db, store, resolved.WorkspaceRef, relativePath)
 	if err != nil {
 		if errors.Is(err, errWorkspaceFileNotFound) {
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, projectWorkspaceFilesResponse{
@@ -221,7 +220,7 @@ func getProjectWorkspaceFile(
 	projectRepo *data.ProjectRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	pool *pgxpool.Pool,
+	db database.DB,
 	store environmentStore,
 	flagService *featureflag.Service,
 ) {
@@ -236,7 +235,7 @@ func getProjectWorkspaceFile(
 	if !ok {
 		return
 	}
-	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, pool, projectRepo, projectID, actor)
+	resolved, ok := resolveProjectWorkspaceForActor(w, r, traceID, db, projectRepo, projectID, actor)
 	if !ok {
 		return
 	}
@@ -245,7 +244,7 @@ func getProjectWorkspaceFile(
 		return
 	}
 
-	content, contentType, err := readWorkspaceFile(r.Context(), pool, store, resolved.WorkspaceRef, relativePath)
+	content, contentType, err := readWorkspaceFile(r.Context(), db, store, resolved.WorkspaceRef, relativePath)
 	if err != nil {
 		if errors.Is(err, errWorkspaceFileNotFound) {
 			httpkit.WriteError(w, nethttp.StatusNotFound, "workspace_files.not_found", "workspace file not found", traceID, nil)
@@ -291,16 +290,16 @@ func resolveProjectWorkspaceForActor(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
 	traceID string,
-	pool *pgxpool.Pool,
+	db database.DB,
 	projectRepo *data.ProjectRepository,
 	projectID uuid.UUID,
 	actor *httpkit.Actor,
 ) (*resolvedProjectWorkspace, bool) {
-	if pool == nil || projectRepo == nil {
+	if db == nil || projectRepo == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return nil, false
 	}
-	resolved, err := resolveProjectWorkspace(r.Context(), pool, projectRepo, projectID, actor)
+	resolved, err := resolveProjectWorkspace(r.Context(), db, projectRepo, projectID, actor)
 	if err != nil {
 		if errors.Is(err, errProjectWorkspaceNotFound) {
 			httpkit.WriteError(w, nethttp.StatusNotFound, "projects.not_found", "project not found", traceID, nil)
@@ -314,7 +313,7 @@ func resolveProjectWorkspaceForActor(
 
 func resolveProjectWorkspace(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db database.DB,
 	projectRepo *data.ProjectRepository,
 	projectID uuid.UUID,
 	actor *httpkit.Actor,
@@ -322,7 +321,7 @@ func resolveProjectWorkspace(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if pool == nil || projectRepo == nil || actor == nil {
+	if db == nil || projectRepo == nil || actor == nil {
 		return nil, fmt.Errorf("project workspace dependencies must not be nil")
 	}
 	project, err := projectRepo.GetByID(ctx, projectID)
@@ -334,7 +333,7 @@ func resolveProjectWorkspace(
 	}
 
 	profileRef := environmentref.BuildProfileRef(actor.OrgID, &actor.UserID)
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -371,11 +370,11 @@ func resolveProjectWorkspace(
 		return nil, err
 	}
 
-	workspaceRepo, err = data.NewWorkspaceRegistriesRepository(pool)
+	workspaceRepo, err = data.NewWorkspaceRegistriesRepository(db)
 	if err != nil {
 		return nil, err
 	}
-	sessionRepo, err := data.NewShellSessionRepository(pool)
+	sessionRepo, err := data.NewShellSessionRepository(db)
 	if err != nil {
 		return nil, err
 	}

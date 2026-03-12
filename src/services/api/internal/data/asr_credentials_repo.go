@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 type AsrCredentialNameConflictError struct{ Name string }
@@ -44,7 +44,7 @@ func NewAsrCredentialsRepository(db Querier) (*AsrCredentialsRepository, error) 
 	return &AsrCredentialsRepository{db: db}, nil
 }
 
-func (r *AsrCredentialsRepository) WithTx(tx pgx.Tx) *AsrCredentialsRepository {
+func (r *AsrCredentialsRepository) WithTx(tx database.Tx) *AsrCredentialsRepository {
 	return &AsrCredentialsRepository{db: tx}
 }
 
@@ -129,7 +129,7 @@ func (r *AsrCredentialsRepository) GetByID(ctx context.Context, orgID, id uuid.U
 		&c.BaseURL, &c.Model, &c.IsDefault, &c.RevokedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -163,7 +163,7 @@ func (r *AsrCredentialsRepository) GetDefault(ctx context.Context, orgID uuid.UU
 		&c.BaseURL, &c.Model, &c.IsDefault, &c.RevokedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

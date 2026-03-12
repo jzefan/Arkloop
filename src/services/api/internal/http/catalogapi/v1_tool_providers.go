@@ -12,9 +12,10 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -69,7 +70,7 @@ func toolProvidersEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -88,7 +89,7 @@ func toolProviderEntry(
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -117,21 +118,21 @@ func toolProviderEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			activateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool)
+			activateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
 			return
 		case "deactivate":
 			if r.Method != nethttp.MethodPut {
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			deactivateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool)
+			deactivateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
 			return
 		case "credential":
 			switch r.Method {
 			case nethttp.MethodPut:
-				upsertToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, pool, directPool)
+				upsertToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, db, directPool)
 			case nethttp.MethodDelete:
-				clearToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, pool, directPool)
+				clearToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, db, directPool)
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
@@ -141,7 +142,7 @@ func toolProviderEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			updateToolProviderConfig(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool)
+			updateToolProviderConfig(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
 			return
 		default:
 			httpkit.WriteNotFound(w, r)
@@ -261,14 +262,14 @@ func activateToolProvider(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || pool == nil {
+	if toolProvidersRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -301,7 +302,7 @@ func activateToolProvider(
 		notifyPayload = actor.OrgID.String()
 	}
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -323,7 +324,7 @@ func activateToolProvider(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -336,14 +337,14 @@ func deactivateToolProvider(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || pool == nil {
+	if toolProvidersRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -381,7 +382,7 @@ func deactivateToolProvider(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -395,14 +396,14 @@ func upsertToolProviderCredential(
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || pool == nil {
+	if toolProvidersRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -484,7 +485,7 @@ func upsertToolProviderCredential(
 
 	secretName := "tool_provider:" + providerName
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -531,7 +532,7 @@ func upsertToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -545,14 +546,14 @@ func clearToolProviderCredential(
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || pool == nil {
+	if toolProvidersRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -591,7 +592,7 @@ func clearToolProviderCredential(
 
 	secretName := "tool_provider:" + providerName
 
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -622,7 +623,7 @@ func clearToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -635,14 +636,14 @@ func updateToolProviderConfig(
 	authService *auth.Service,
 	membershipRepo *data.OrgMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	pool *pgxpool.Pool,
+	db database.DB,
 	directPool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || pool == nil {
+	if toolProvidersRepo == nil || db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -689,7 +690,7 @@ func updateToolProviderConfig(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -704,13 +705,15 @@ func findProviderDef(groupName string, providerName string) (toolProviderDefinit
 	return toolProviderDefinition{}, false
 }
 
-func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, pool *pgxpool.Pool, payload string) {
-	db := directPool
-	if db == nil {
-		db = pool
+func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, db database.DB, payload string) {
+	var q database.DB
+	if directPool != nil {
+		q = pgadapter.New(directPool)
+	} else {
+		q = db
 	}
-	if db == nil {
+	if q == nil {
 		return
 	}
-	_, _ = db.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", payload)
+	_, _ = q.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", payload)
 }

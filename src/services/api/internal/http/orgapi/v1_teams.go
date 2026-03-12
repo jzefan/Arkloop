@@ -11,10 +11,9 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type teamResponse struct {
@@ -47,7 +46,7 @@ func teamsEntry(
 	teamRepo *data.TeamRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	entSvc *entitlement.Service,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
@@ -67,7 +66,7 @@ func teamEntry(
 	teamRepo *data.TeamRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	entSvc *entitlement.Service,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -75,7 +74,7 @@ func teamEntry(
 		tail := strings.TrimPrefix(r.URL.Path, "/v1/teams/")
 		tail = strings.Trim(tail, "/")
 		if tail == "" {
-			teamsEntry(authService, membershipRepo, teamRepo, apiKeysRepo, entSvc, pool)(w, r)
+			teamsEntry(authService, membershipRepo, teamRepo, apiKeysRepo, entSvc, db)(w, r)
 			return
 		}
 
@@ -108,7 +107,7 @@ func teamEntry(
 			case nethttp.MethodGet:
 				listTeamMembers(w, r, traceID, teamID, authService, membershipRepo, teamRepo, apiKeysRepo)
 			case nethttp.MethodPost:
-				addTeamMember(w, r, traceID, teamID, authService, membershipRepo, teamRepo, apiKeysRepo, entSvc, pool)
+				addTeamMember(w, r, traceID, teamID, authService, membershipRepo, teamRepo, apiKeysRepo, entSvc, db)
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
@@ -226,7 +225,7 @@ func addTeamMember(
 	teamRepo *data.TeamRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	entSvc *entitlement.Service,
-	pool *pgxpool.Pool,
+	db database.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -286,11 +285,11 @@ func addTeamMember(
 	}
 
 	// 在事务内锁定 team 行，避免并发 addTeamMember 导致软配额超额
-	if pool == nil {
+	if db == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
-	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := db.Begin(r.Context())
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

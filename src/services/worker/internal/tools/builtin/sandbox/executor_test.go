@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"arkloop/services/shared/database"
+	"arkloop/services/shared/database/pgadapter"
 	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/worker/internal/data"
 	"context"
@@ -37,7 +39,7 @@ func testContextWithOrg(runID uuid.UUID, orgID uuid.UUID) tools.ExecutionContext
 
 func seedSandboxThreadAndRun(
 	t *testing.T,
-	pool *pgxpool.Pool,
+	pool database.DB,
 	orgID uuid.UUID,
 	threadID uuid.UUID,
 	projectID *uuid.UUID,
@@ -903,6 +905,7 @@ func TestExecCommand_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	threadID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -936,7 +939,7 @@ func TestExecCommand_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx1, "")
 	second := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx2, "")
 	if first.Error != nil || second.Error != nil {
@@ -960,12 +963,13 @@ func TestExecCommand_ResolvesMissingEnvironmentBindingsFromRunContext(t *testing
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
 	threadID := uuid.New()
 	runID := uuid.New()
-	seedSandboxThreadAndRun(t, pool, orgID, threadID, nil, &userID, runID)
+	seedSandboxThreadAndRun(t, dbPool, orgID, threadID, nil, &userID, runID)
 
 	expectedProfileRef := sharedenvironmentref.BuildProfileRef(orgID, &userID)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -987,7 +991,7 @@ func TestExecCommand_ResolvesMissingEnvironmentBindingsFromRunContext(t *testing
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{
 		RunID:    runID,
 		OrgID:    &orgID,
@@ -1001,7 +1005,7 @@ func TestExecCommand_ResolvesMissingEnvironmentBindingsFromRunContext(t *testing
 
 	var storedProfileRef string
 	var storedWorkspaceRef string
-	if err := pool.QueryRow(
+	if err := dbPool.QueryRow(
 		context.Background(),
 		`SELECT profile_ref, workspace_ref FROM runs WHERE id = $1`,
 		runID,
@@ -1052,10 +1056,11 @@ func TestExecCommand_ResumeWithoutLiveOrRestoreFails(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_existing",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1082,7 +1087,7 @@ func TestExecCommand_ResumeWithoutLiveOrRestoreFails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1104,13 +1109,14 @@ func TestExecCommand_AutoFallsBackAfterStaleThreadDefault(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
 	bindingKey := "thread:" + threadID.String()
 	liveSessionID := "shref_old"
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:        "shref_old",
 		OrgID:             orgID,
 		ProfileRef:        "pref_test",
@@ -1144,7 +1150,7 @@ func TestExecCommand_AutoFallsBackAfterStaleThreadDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{
 		RunID:        uuid.New(),
 		OrgID:        &orgID,
@@ -1168,7 +1174,7 @@ func TestExecCommand_AutoFallsBackAfterStaleThreadDefault(t *testing.T) {
 	if modes[1] != openModeCreate {
 		t.Fatalf("expected fallback open_mode create, got %s", modes[1])
 	}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, "shref_old")
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, "shref_old")
 	if err != nil {
 		t.Fatalf("reload stale session: %v", err)
 	}
@@ -1184,13 +1190,14 @@ func TestExecCommand_AutoFallsBackAfterStaleWorkspaceDefaultKeepsWorkspaceScope(
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	workspaceRef := "wsref_test"
 	bindingKey := "workspace:" + workspaceRef
 	liveSessionID := "shref_workspace_old"
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:        "shref_workspace_old",
 		OrgID:             orgID,
 		ProfileRef:        "pref_test",
@@ -1221,7 +1228,7 @@ func TestExecCommand_AutoFallsBackAfterStaleWorkspaceDefaultKeepsWorkspaceScope(
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: workspaceRef}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "call_workspace_fallback")
 	if result.Error != nil {
@@ -1231,7 +1238,7 @@ func TestExecCommand_AutoFallsBackAfterStaleWorkspaceDefaultKeepsWorkspaceScope(
 	if len(sessionIDs) != 2 || sessionIDs[1] != newSessionRef {
 		t.Fatalf("unexpected fallback sessions: %#v", sessionIDs)
 	}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, newSessionRef)
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, newSessionRef)
 	if err != nil {
 		t.Fatalf("get fallback session: %v", err)
 	}
@@ -1250,6 +1257,7 @@ func TestExecCommand_WorkspaceDefaultUpdatesWorkspaceRegistry(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
@@ -1264,7 +1272,7 @@ func TestExecCommand_WorkspaceDefaultUpdatesWorkspaceRegistry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{
 		RunID:        uuid.New(),
 		OrgID:        &orgID,
@@ -1279,7 +1287,7 @@ func TestExecCommand_WorkspaceDefaultUpdatesWorkspaceRegistry(t *testing.T) {
 	}
 	sessionRef, _ := result.ResultJSON["session_ref"].(string)
 	workspaceRepo := data.WorkspaceRegistriesRepository{}
-	stored, err := workspaceRepo.Get(t.Context(), pool, "wsref_test")
+	stored, err := workspaceRepo.Get(t.Context(), dbPool, "wsref_test")
 	if err != nil {
 		t.Fatalf("get workspace registry: %v", err)
 	}
@@ -1362,10 +1370,11 @@ func TestExecCommand_NewSessionPersistsRequestedShareScope(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_admin")
+	seedMembership(t, dbPool, orgID, userID, "org_admin")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body execCommandRequest
@@ -1377,7 +1386,7 @@ func TestExecCommand_NewSessionPersistsRequestedShareScope(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{
 		RunID:        uuid.New(),
 		OrgID:        &orgID,
@@ -1398,7 +1407,7 @@ func TestExecCommand_NewSessionPersistsRequestedShareScope(t *testing.T) {
 	}
 	sessionRef, _ := result.ResultJSON["session_ref"].(string)
 	repo := data.ShellSessionsRepository{}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, sessionRef)
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, sessionRef)
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
@@ -1414,11 +1423,12 @@ func TestExecCommand_ResumeRunScopeRequiresSameRun(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	repo := data.ShellSessionsRepository{}
 	otherRunID := uuid.New()
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_run_only",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1431,7 +1441,7 @@ func TestExecCommand_ResumeRunScopeRequiresSameRun(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	exec := NewToolExecutorWithDB("http://localhost:9999", "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1450,12 +1460,13 @@ func TestExecCommand_ResumeOrgScopeRejectedForMember(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_member")
+	seedMembership(t, dbPool, orgID, userID, "org_member")
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_org",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1467,7 +1478,7 @@ func TestExecCommand_ResumeOrgScopeRejectedForMember(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	exec := NewToolExecutorWithDB("http://localhost:9999", "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1486,12 +1497,13 @@ func TestExecCommand_ResumeOrgScopeAllowedForAdmin(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_admin")
+	seedMembership(t, dbPool, orgID, userID, "org_admin")
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_org_ok",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1515,7 +1527,7 @@ func TestExecCommand_ResumeOrgScopeAllowedForAdmin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1540,12 +1552,13 @@ func TestExecCommand_ResumeOrgScopePreservesSourceWorkspaceIdentity(t *testing.T
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_admin")
+	seedMembership(t, dbPool, orgID, userID, "org_admin")
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_org_identity",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1568,7 +1581,7 @@ func TestExecCommand_ResumeOrgScopePreservesSourceWorkspaceIdentity(t *testing.T
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_caller"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1581,7 +1594,7 @@ func TestExecCommand_ResumeOrgScopePreservesSourceWorkspaceIdentity(t *testing.T
 	if body.WorkspaceRef != "wsref_source" {
 		t.Fatalf("expected source workspace_ref in sandbox request, got %s", body.WorkspaceRef)
 	}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, "shref_org_identity")
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, "shref_org_identity")
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
@@ -1597,12 +1610,13 @@ func TestExecCommand_ResumeOrgScopeRejectsCrossProfile(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_admin")
+	seedMembership(t, dbPool, orgID, userID, "org_admin")
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_other_profile",
 		OrgID:        orgID,
 		ProfileRef:   "pref_other",
@@ -1614,7 +1628,7 @@ func TestExecCommand_ResumeOrgScopeRejectsCrossProfile(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	exec := NewToolExecutorWithPool("http://localhost:9999", "", pool)
+	exec := NewToolExecutorWithDB("http://localhost:9999", "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1633,14 +1647,15 @@ func TestExecCommand_AutoSkipsUnauthorizedCandidateAndCreatesNew(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
 	workspaceRef := "wsref_test"
-	seedMembership(t, pool, orgID, userID, "org_member")
+	seedMembership(t, dbPool, orgID, userID, "org_member")
 	repo := data.ShellSessionsRepository{}
 	bindingKey := "workspace:" + workspaceRef
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:        "shref_forbidden",
 		OrgID:             orgID,
 		ProfileRef:        "pref_test",
@@ -1665,7 +1680,7 @@ func TestExecCommand_AutoSkipsUnauthorizedCandidateAndCreatesNew(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: workspaceRef}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "")
 	if result.Error != nil {
@@ -1689,13 +1704,14 @@ func TestExecCommand_ForkInheritsShareScope(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	userID := uuid.New()
-	seedMembership(t, pool, orgID, userID, "org_admin")
+	seedMembership(t, dbPool, orgID, userID, "org_admin")
 	repo := data.ShellSessionsRepository{}
 	restoreRev := "rev-1"
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:       "shref_source",
 		OrgID:            orgID,
 		ProfileRef:       "pref_test",
@@ -1725,7 +1741,7 @@ func TestExecCommand_ForkInheritsShareScope(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, UserID: &userID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":          "pwd",
@@ -1739,7 +1755,7 @@ func TestExecCommand_ForkInheritsShareScope(t *testing.T) {
 		t.Fatalf("unexpected share_scope: %v", result.ResultJSON["share_scope"])
 	}
 	newSessionRef, _ := result.ResultJSON["session_ref"].(string)
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, newSessionRef)
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, newSessionRef)
 	if err != nil {
 		t.Fatalf("get forked session: %v", err)
 	}
@@ -1758,6 +1774,7 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	runID := uuid.New()
@@ -1785,7 +1802,7 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: runID, OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "python server.py"}, ctx, "call_shared_writer")
 	if first.Error != nil {
@@ -1800,7 +1817,7 @@ func TestExecCommandAndWriteStdin_SameRunKeepsWriterLease(t *testing.T) {
 		t.Fatalf("expected 2 sandbox calls, got %d", len(calls))
 	}
 	repo := data.ShellSessionsRepository{}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, sessionRef)
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, sessionRef)
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}
@@ -1822,6 +1839,7 @@ func TestWriteStdin_SameRunDifferentToolCallIDRejected(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	runID := uuid.New()
@@ -1842,7 +1860,7 @@ func TestWriteStdin_SameRunDifferentToolCallIDRejected(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: runID, OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "python server.py"}, ctx, "call_writer_owner")
 	if first.Error != nil {
@@ -1865,12 +1883,13 @@ func TestExecCommand_BusySessionRejectedBeforeSandbox(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
 	leaseUntil := time.Now().UTC().Add(2 * time.Minute)
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_busy",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1892,7 +1911,7 @@ func TestExecCommand_BusySessionRejectedBeforeSandbox(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ThreadID: &threadID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1920,11 +1939,12 @@ func TestWriteStdin_PollAllowedButCrossRunInputRejected(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	leaseUntil := time.Now().UTC().Add(2 * time.Minute)
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_busy",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -1953,7 +1973,7 @@ func TestWriteStdin_PollAllowedButCrossRunInputRejected(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: uuid.New(), OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	busy := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": "shref_busy", "chars": "no\n"}, ctx, "")
 	if busy.Error == nil || busy.Error.ErrorClass != errorSandboxError {
@@ -1970,7 +1990,7 @@ func TestWriteStdin_PollAllowedButCrossRunInputRejected(t *testing.T) {
 	if writeCalls != 1 {
 		t.Fatalf("expected 1 sandbox call after poll, got %d", writeCalls)
 	}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, "shref_busy")
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, "shref_busy")
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}
@@ -1989,11 +2009,12 @@ func TestExecCommand_ExpiredLeaseCanBeTakenOver(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	leaseUntil := time.Now().UTC().Add(-time.Minute)
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:   "shref_stale",
 		OrgID:        orgID,
 		ProfileRef:   "pref_test",
@@ -2019,7 +2040,7 @@ func TestExecCommand_ExpiredLeaseCanBeTakenOver(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{RunID: runID, OrgID: &orgID, ProfileRef: "pref_test", WorkspaceRef: "wsref_test"}
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "tail -f server.log",
@@ -2029,7 +2050,7 @@ func TestExecCommand_ExpiredLeaseCanBeTakenOver(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected exec error: %+v", result.Error)
 	}
-	stored, err := repo.GetBySessionRef(t.Context(), pool, orgID, "shref_stale")
+	stored, err := repo.GetBySessionRef(t.Context(), dbPool, orgID, "shref_stale")
 	if err != nil {
 		t.Fatalf("get stored stale session: %v", err)
 	}
@@ -2041,7 +2062,7 @@ func TestExecCommand_ExpiredLeaseCanBeTakenOver(t *testing.T) {
 	}
 }
 
-func seedMembership(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, userID uuid.UUID, role string) {
+func seedMembership(t *testing.T, pool database.DB, orgID uuid.UUID, userID uuid.UUID, role string) {
 	t.Helper()
 	_, err := pool.Exec(
 		t.Context(),
@@ -2324,6 +2345,7 @@ func TestBrowser_AutoSessionDoesNotReuseShellSession(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	runID := uuid.New()
@@ -2357,7 +2379,7 @@ func TestBrowser_AutoSessionDoesNotReuseShellSession(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	firstShell := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd"}, ctx, "")
 	if firstShell.Error != nil {
 		t.Fatalf("unexpected shell error: %+v", firstShell.Error)
@@ -2397,6 +2419,7 @@ func TestBrowser_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
@@ -2434,7 +2457,7 @@ func TestBrowser_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	first := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx1, "")
 	second := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx2, "")
 	if first.Error != nil || second.Error != nil {
@@ -2447,7 +2470,7 @@ func TestBrowser_AutoReusesThreadDefaultAcrossRunsWithPool(t *testing.T) {
 		t.Fatalf("expected thread-default browser reuse, got %q vs %q", sessionIDs[0], sessionIDs[1])
 	}
 	repo := data.ShellSessionsRepository{}
-	stored, err := repo.GetBySessionRefAndType(t.Context(), pool, orgID, sessionIDs[0], data.ShellSessionTypeBrowser)
+	stored, err := repo.GetBySessionRefAndType(t.Context(), dbPool, orgID, sessionIDs[0], data.ShellSessionTypeBrowser)
 	if err != nil {
 		t.Fatalf("load browser session: %v", err)
 	}
@@ -2463,6 +2486,7 @@ func TestBrowser_AutoReusesWorkspaceDefaultAcrossThreads(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	ctx1 := tools.ExecutionContext{
@@ -2499,7 +2523,7 @@ func TestBrowser_AutoReusesWorkspaceDefaultAcrossThreads(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	first := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx1, "")
 	second := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx2, "")
 	if first.Error != nil || second.Error != nil {
@@ -2512,7 +2536,7 @@ func TestBrowser_AutoReusesWorkspaceDefaultAcrossThreads(t *testing.T) {
 		t.Fatalf("expected workspace-default browser reuse, got %q vs %q", sessionIDs[0], sessionIDs[1])
 	}
 	repo := data.ShellSessionsRepository{}
-	stored, err := repo.GetBySessionRefAndType(t.Context(), pool, orgID, sessionIDs[0], data.ShellSessionTypeBrowser)
+	stored, err := repo.GetBySessionRefAndType(t.Context(), dbPool, orgID, sessionIDs[0], data.ShellSessionTypeBrowser)
 	if err != nil {
 		t.Fatalf("load browser session: %v", err)
 	}
@@ -2528,6 +2552,7 @@ func TestBrowser_AutoDoesNotReuseAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	ctx1 := tools.ExecutionContext{
@@ -2562,7 +2587,7 @@ func TestBrowser_AutoDoesNotReuseAcrossWorkspaces(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	first := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx1, "")
 	second := exec.Execute(t.Context(), "browser", map[string]any{"command": "snapshot"}, ctx2, "")
 	if first.Error != nil || second.Error != nil {
@@ -2594,13 +2619,14 @@ func TestBrowser_AutoFallsBackAfterDisconnectedThreadDefault(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
+	dbPool := pgadapter.New(pool)
 
 	orgID := uuid.New()
 	threadID := uuid.New()
 	bindingKey := "thread:" + threadID.String()
 	liveSessionID := "brref_live_old"
 	repo := data.ShellSessionsRepository{}
-	if err := repo.Upsert(t.Context(), pool, data.ShellSessionRecord{
+	if err := repo.Upsert(t.Context(), dbPool, data.ShellSessionRecord{
 		SessionRef:        "brref_old",
 		SessionType:       data.ShellSessionTypeBrowser,
 		OrgID:             orgID,
@@ -2641,7 +2667,7 @@ func TestBrowser_AutoFallsBackAfterDisconnectedThreadDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := NewToolExecutorWithPool(server.URL, "", pool)
+	exec := NewToolExecutorWithDB(server.URL, "", dbPool)
 	ctx := tools.ExecutionContext{
 		RunID:        uuid.New(),
 		OrgID:        &orgID,
@@ -2662,7 +2688,7 @@ func TestBrowser_AutoFallsBackAfterDisconnectedThreadDefault(t *testing.T) {
 	if sessionIDs[1] == "brref_old" {
 		t.Fatalf("expected fallback browser session, got %#v", sessionIDs)
 	}
-	stored, err := repo.GetBySessionRefAndType(t.Context(), pool, orgID, "brref_old", data.ShellSessionTypeBrowser)
+	stored, err := repo.GetBySessionRefAndType(t.Context(), dbPool, orgID, "brref_old", data.ShellSessionTypeBrowser)
 	if err != nil {
 		t.Fatalf("reload stale browser session: %v", err)
 	}

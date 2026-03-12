@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+"arkloop/services/shared/database"
 )
 
 const (
@@ -19,7 +19,7 @@ type DefaultWorkspaceBindingsRepository struct{}
 
 func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx database.Tx,
 	orgID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	profileRef string,
@@ -69,7 +69,7 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	if err == nil {
 		return existing, false, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, database.ErrNoRows) {
 		return "", false, err
 	}
 
