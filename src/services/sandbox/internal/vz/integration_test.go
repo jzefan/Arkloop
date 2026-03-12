@@ -207,3 +207,98 @@ func TestIntegration_Python(t *testing.T) {
 	}
 	t.Logf("Node.js version: %s", result3.Stdout)
 }
+
+func TestIntegration_WarmPool(t *testing.T) {
+	skipIfNoAssets(t)
+	if os.Getenv("VZ_INTEGRATION") == "" {
+		t.Skip("set VZ_INTEGRATION=1 to run Vz integration tests")
+	}
+
+	socketDir := t.TempDir()
+	logger := logging.NewJSONLogger("vz-warm", os.Stdout)
+
+	pool := New(Config{
+		WarmSizes:             map[string]int{session.TierLite: 1},
+		RefillIntervalSeconds: 5,
+		MaxRefillConcurrency:  1,
+		KernelImagePath:       testKernelPath,
+		InitrdPath:            testInitrdPath,
+		RootfsPath:            testRootfsPath,
+		SocketBaseDir:         socketDir,
+		BootTimeoutSeconds:    30,
+		GuestAgentPort:        8080,
+		Logger:                logger,
+	})
+	pool.Start()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		pool.Drain(ctx)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// Wait for warm pool to fill
+	t.Log("waiting for warm pool to fill...")
+	fillStart := time.Now()
+	for !pool.Ready() {
+		if time.Since(fillStart) > 60*time.Second {
+			t.Fatal("warm pool did not fill within 60s")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	fillDuration := time.Since(fillStart)
+	t.Logf("warm pool filled in %v", fillDuration)
+
+	stats := pool.Stats()
+	t.Logf("stats after fill: ready=%v, created=%d", stats.ReadyByTier, stats.TotalCreated)
+	if stats.ReadyByTier[session.TierLite] != 1 {
+		t.Errorf("expected 1 ready lite VM, got %d", stats.ReadyByTier[session.TierLite])
+	}
+
+	// Acquire from warm pool — should be nearly instant
+	acquireStart := time.Now()
+	sess, err := pool.Acquire(ctx, "warm-test-1", session.TierLite)
+	if err != nil {
+		t.Fatalf("warm Acquire failed: %v", err)
+	}
+	warmAcquire := time.Since(acquireStart)
+	t.Logf("warm Acquire took %v", warmAcquire)
+	defer pool.Destroy(sess.ID)
+
+	// Warm acquire should be <100ms (no VM creation needed)
+	if warmAcquire > 500*time.Millisecond {
+		t.Errorf("warm Acquire too slow: %v (expected <500ms)", warmAcquire)
+	}
+
+	// Verify VM works
+	result, err := sess.Exec(ctx, session.ExecJob{
+		Language:  "shell",
+		Code:      "echo warm-pool-works",
+		TimeoutMs: 5000,
+	})
+	if err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	if result.Stdout != "warm-pool-works\n" {
+		t.Errorf("expected 'warm-pool-works', got %q", result.Stdout)
+	}
+	t.Logf("warm VM exec: %q (exit %d)", result.Stdout, result.ExitCode)
+
+	// Cold acquire (pool is now empty, no warm VM available)
+	coldStart := time.Now()
+	sess2, err := pool.Acquire(ctx, "cold-test-1", session.TierLite)
+	if err != nil {
+		t.Fatalf("cold Acquire failed: %v", err)
+	}
+	coldAcquire := time.Since(coldStart)
+	t.Logf("cold Acquire took %v", coldAcquire)
+	defer pool.Destroy(sess2.ID)
+
+	// Log the speedup
+	if warmAcquire > 0 {
+		t.Logf("speedup: warm=%v vs cold=%v (%.1fx faster)",
+			warmAcquire, coldAcquire, float64(coldAcquire)/float64(warmAcquire))
+	}
+}
