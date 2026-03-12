@@ -9,6 +9,7 @@ export const zhCN: LocaleStrings = {
     runs: '运行记录',
     modules: '模块',
     settings: '设置',
+    installTasks: '安装任务',
   },
   dashboard: {
     title: '仪表盘',
