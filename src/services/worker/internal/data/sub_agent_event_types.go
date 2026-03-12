@@ -14,4 +14,5 @@ const (
 	SubAgentEventTypeFailed         = "sub_agent.failed"
 	SubAgentEventTypeCancelled      = "sub_agent.cancelled"
 	SubAgentEventTypeClosed         = "sub_agent.closed"
+	SubAgentEventTypeWaitTimeout    = "sub_agent.wait_timeout"
 )
