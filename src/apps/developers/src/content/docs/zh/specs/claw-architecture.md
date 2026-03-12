@@ -630,6 +630,45 @@ func ResolveProvider() string {
 - 如有不通用的部分，重构接口
 - 输出：冻结的 Provider interface 定义
 
+**状态：✅ 已完成**
+
+审计发现旧 `VMPool` 接口存在三项泄漏：`Acquire` 返回 `*os.Process`（Firecracker 特有，Docker 返回 nil）；`DestroyVM` 接受 `*os.Process` 参数（Docker 忽略）；Manager 被迫维护 `procs map[string]*os.Process`。已全部修复。
+
+**冻结的 Provider 接口定义**（`session/manager.go`）：
+
+```go
+// Provider 抽象隔离执行环境（microVM / 容器 / Vz VM）的获取与销毁。
+// Firecracker、Docker、Vz 等后端均实现此接口。
+type Provider interface {
+    // Acquire 获取一个就绪的隔离执行环境，返回可用的 Session。
+    // sessionID 由调用方指定，provider 必须将其设置为返回 Session 的 ID。
+    Acquire(ctx context.Context, sessionID, tier string) (*Session, error)
+
+    // Destroy 销毁 sessionID 对应的执行环境并释放所有关联资源。
+    Destroy(sessionID string)
+
+    // Ready 返回 provider 是否完成初始预热。
+    Ready() bool
+
+    // Stats 返回运行时统计。
+    Stats() PoolStats
+
+    // Drain 停止 provider 并销毁所有预热环境。Graceful shutdown 时调用。
+    Drain(ctx context.Context)
+}
+```
+
+**重构变更清单**：
+
+| 变更 | 说明 |
+|------|------|
+| `VMPool` → `Provider` | 接口重命名，适用于 VM / 容器 / 任意后端 |
+| `Acquire` 去掉 `*os.Process` | 进程管理下沉到各 provider 内部 |
+| `Acquire` 增加 `sessionID` 参数 | provider 按 sessionID 注册资源，支持 Destroy 查找 |
+| `DestroyVM` → `Destroy(sessionID)` | 按 sessionID 销毁，provider 内部持有资源映射 |
+| Manager 删除 `procs` map | 不再持有 Firecracker 特有的进程引用 |
+| WarmPool / Docker Pool 内部 `active` map | 各 provider 自行维护 sessionID → 资源的映射 |
+
 #### 3.2 macOS Virtualization.framework Provider
 
 **需求**：基于 Apple Virtualization.framework 实现 sandbox provider。
