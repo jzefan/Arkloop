@@ -71,14 +71,14 @@ export function ExecutionGovernancePage() {
   const tc = t.pages.executionGovernance
 
   const [loading, setLoading] = useState(true)
-  const [draftOrgId, setDraftOrgId] = useState('')
-  const [activeOrgId, setActiveOrgId] = useState('')
+  const [draftProjectId, setDraftProjectId] = useState('')
+  const [activeProjectId, setActiveProjectId] = useState('')
   const [data, setData] = useState<ExecutionGovernanceResponse | null>(null)
 
-  const load = useCallback(async (orgId?: string) => {
+  const load = useCallback(async (projectId?: string) => {
     setLoading(true)
     try {
-      const resp = await getExecutionGovernance(accessToken, orgId)
+      const resp = await getExecutionGovernance(accessToken, projectId)
       setData(resp)
     } catch (err) {
       addToast(isApiError(err) ? err.message : tc.toastLoadFailed, 'error')
@@ -91,22 +91,22 @@ export function ExecutionGovernancePage() {
     void load()
   }, [load])
 
-  const applyOrgScope = useCallback(() => {
-    const nextOrgId = draftOrgId.trim()
-    setActiveOrgId(nextOrgId)
-    void load(nextOrgId || undefined)
-  }, [draftOrgId, load])
+  const applyProjectScope = useCallback(() => {
+    const nextProjectId = draftProjectId.trim()
+    setActiveProjectId(nextProjectId)
+    void load(nextProjectId || undefined)
+  }, [draftProjectId, load])
 
-  const resetOrgScope = useCallback(() => {
-    setDraftOrgId('')
-    setActiveOrgId('')
+  const resetProjectScope = useCallback(() => {
+    setDraftProjectId('')
+    setActiveProjectId('')
     void load(undefined)
   }, [load])
 
   const emptyValue = tc.defaultEmpty
   const limits = data?.limits ?? []
   const personas = data?.personas ?? []
-  const hasOrgScope = activeOrgId.trim() !== ''
+  const hasProjectScope = activeProjectId.trim() !== ''
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -124,25 +124,25 @@ export function ExecutionGovernancePage() {
                 <div>
                   <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.filterTitle}</h3>
                   <p className="mt-1 text-xs text-[var(--c-text-muted)]">
-                    {hasOrgScope ? tc.filterActive(activeOrgId) : tc.filterPlatformOnly}
+                    {hasProjectScope ? tc.filterActive(activeProjectId) : tc.filterPlatformOnly}
                   </p>
                 </div>
                 <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
                   <input
                     className={inputCls}
-                    placeholder={tc.fieldOrgIdPlaceholder}
-                    value={draftOrgId}
-                    onChange={(e) => setDraftOrgId(e.target.value)}
+                    placeholder={tc.fieldProjectIdPlaceholder}
+                    value={draftProjectId}
+                    onChange={(e) => setDraftProjectId(e.target.value)}
                   />
                   <div className="flex gap-2">
                     <button
-                      onClick={applyOrgScope}
+                      onClick={applyProjectScope}
                       className="rounded-md bg-[var(--c-bg-tag)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
                     >
                       {tc.apply}
                     </button>
                     <button
-                      onClick={resetOrgScope}
+                      onClick={resetProjectScope}
                       className="rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
                     >
                       {tc.reset}
@@ -183,7 +183,7 @@ export function ExecutionGovernancePage() {
                         <td className="py-3 pr-4 text-xs text-[var(--c-text-secondary)]">{item.effective.source || emptyValue}</td>
                         <td className="py-3 text-xs text-[var(--c-text-secondary)]">
                           <div>{tc.layerEnv}: {item.layers.env ?? emptyValue}</div>
-                          <div>{tc.layerOrg}: {item.layers.org_db ?? emptyValue}</div>
+                          <div>{tc.layerProject}: {item.layers.project_db ?? emptyValue}</div>
                           <div>{tc.layerPlatform}: {item.layers.platform_db ?? emptyValue}</div>
                           <div>{tc.layerDefault}: {item.layers.default || emptyValue}</div>
                         </td>
@@ -214,7 +214,7 @@ export function ExecutionGovernancePage() {
                 </div>
                 <Link to="/personas" className={linkCls}>{tc.gotoPersonas}</Link>
               </div>
-              {!hasOrgScope ? (
+              {!hasProjectScope ? (
                 <p className="text-xs text-[var(--c-text-muted)]">{tc.personasPlatformOnly}</p>
               ) : (
                 <div className="overflow-x-auto">

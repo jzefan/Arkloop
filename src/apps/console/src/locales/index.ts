@@ -989,9 +989,9 @@ export interface LocaleStrings {
       title: string
       filterTitle: string
       filterPlatformOnly: string
-      filterActive: (orgId: string) => string
-      fieldOrgId: string
-      fieldOrgIdPlaceholder: string
+      filterActive: (projectId: string) => string
+      fieldProjectId: string
+      fieldProjectIdPlaceholder: string
       apply: string
       reset: string
       gotoEntitlements: string
@@ -1004,7 +1004,7 @@ export interface LocaleStrings {
       colSource: string
       colLayers: string
       layerEnv: string
-      layerOrg: string
+      layerProject: string
       layerPlatform: string
       layerDefault: string
       defaultEmpty: string

@@ -181,6 +181,7 @@ export function PersonasPage() {
 
   const [personas, setPersonas] = useState<Persona[]>([])
   const [scope, setScope] = useState<PersonaScope>('platform')
+  const [projectId, setProjectId] = useState('')
   const [catalogGroups, setCatalogGroups] = useState<ToolCatalogGroup[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -201,7 +202,7 @@ export function PersonasPage() {
     setLoading(true)
     try {
       const [list, catalog] = await Promise.all([
-        listPersonas(accessToken, scope),
+        listPersonas(accessToken, scope, projectId || undefined),
         listEffectiveToolCatalog(accessToken),
       ])
       setPersonas(list)
@@ -213,7 +214,7 @@ export function PersonasPage() {
     } finally {
       setLoading(false)
     }
-  }, [accessToken, addToast, scope, tc.toastLoadFailed])
+  }, [accessToken, addToast, projectId, scope, tc.toastLoadFailed])
 
   useEffect(() => {
     void load()
@@ -250,6 +251,7 @@ export function PersonasPage() {
     try {
       const persona = await createPersona({
         scope,
+        project_id: projectId || undefined,
         persona_key: key,
         version: '1.0.0',
         display_name: name,
@@ -269,7 +271,7 @@ export function PersonasPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, createKey, createName, load, scope, selectAgent, tc.toastSaveFailed])
+  }, [accessToken, addToast, createKey, createName, load, projectId, scope, selectAgent, tc.toastSaveFailed])
 
   const handleSave = useCallback(async () => {
     if (!selected || !form || !form.displayName.trim()) return
@@ -309,11 +311,12 @@ export function PersonasPage() {
         ? await createPersona({
             copy_from_repo_persona_key: selected.persona_key,
             scope,
+            project_id: projectId || undefined,
             persona_key: form.personaKey.trim(),
             version: form.version.trim(),
             ...payload,
           }, accessToken)
-        : await patchPersona(selected.id, { ...payload, scope }, accessToken)
+        : await patchPersona(selected.id, { ...payload, scope, project_id: projectId || undefined }, accessToken)
 
       addToast(tc.toastUpdated, 'success')
       notifyToolCatalogChanged()
@@ -329,13 +332,13 @@ export function PersonasPage() {
     } finally {
       setSaving(false)
     }
-  }, [accessToken, addToast, form, load, scope, selected, tc])
+  }, [accessToken, addToast, form, load, projectId, scope, selected, tc])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return
     setDeleting(true)
     try {
-      await deletePersona(selected.id, scope, accessToken)
+      await deletePersona(selected.id, scope, accessToken, projectId || undefined)
       setDeleteOpen(false)
       goBack()
       void load()
@@ -344,7 +347,7 @@ export function PersonasPage() {
     } finally {
       setDeleting(false)
     }
-  }, [accessToken, addToast, goBack, load, scope, selected, tc.toastSaveFailed])
+  }, [accessToken, addToast, goBack, load, projectId, scope, selected, tc.toastSaveFailed])
 
   const replaceTools = useCallback((tools: string[]) => {
     setForm((prev) => (prev ? { ...prev, toolSelectionMode: 'custom', tools: uniqToolNames(tools) } : prev))
@@ -826,6 +829,14 @@ export function PersonasPage() {
               <option value="platform">{tc.scopePlatform}</option>
               <option value="project">{tc.scopeProject}</option>
             </select>
+            {scope === 'project' && (
+              <input
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                placeholder="Project ID"
+                className="w-[160px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1 text-xs text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]"
+              />
+            )}
             <button
               onClick={() => {
                 setCreateOpen(true)

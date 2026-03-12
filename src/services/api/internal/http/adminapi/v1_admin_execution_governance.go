@@ -87,13 +87,13 @@ func adminExecutionGovernance(
 			registry = sharedconfig.DefaultRegistry()
 		}
 
-		orgID, ok := parseExecutionGovernanceOrgID(w, r, traceID)
+		projectID, ok := parseExecutionGovernanceProjectID(w, r, traceID)
 		if !ok {
 			return
 		}
 
 		store := sharedconfig.NewPGXStore(pool)
-		scope := sharedconfig.Scope{ProjectID: orgID}
+		scope := sharedconfig.Scope{ProjectID: projectID}
 		resp := executionGovernanceResponse{
 			Limits:   make([]sharedconfig.SettingInspection, 0, len(executionGovernanceKeys)),
 			Personas: []executionGovernancePersona{},
@@ -115,7 +115,7 @@ func adminExecutionGovernance(
 			}
 		}
 
-		if orgID == nil {
+		if projectID == nil {
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
 			return
 		}
@@ -125,7 +125,7 @@ func adminExecutionGovernance(
 		}
 
 		platformLimits := executionGovernancePlatformLimits(inspections)
-		customDefs, err := personasRepo.ListByProject(r.Context(), *orgID)
+		customDefs, err := personasRepo.ListByProject(r.Context(), *projectID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -140,14 +140,14 @@ func adminExecutionGovernance(
 	}
 }
 
-func parseExecutionGovernanceOrgID(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (*uuid.UUID, bool) {
-	raw := strings.TrimSpace(r.URL.Query().Get("org_id"))
+func parseExecutionGovernanceProjectID(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (*uuid.UUID, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	if raw == "" {
 		return nil, true
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid org_id", traceID, nil)
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid project_id", traceID, nil)
 		return nil, false
 	}
 	return &parsed, true
