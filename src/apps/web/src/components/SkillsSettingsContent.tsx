@@ -3,7 +3,6 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
-  ExternalLink,
   Github,
   Loader2,
   MessageSquare,
