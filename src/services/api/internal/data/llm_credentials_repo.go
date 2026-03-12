@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	LlmCredentialScopeOrg      = "org"
+	LlmCredentialScopeProject  = "project"
 	LlmCredentialScopePlatform = "platform"
 )
 
@@ -77,11 +77,11 @@ func (r *LlmCredentialsRepository) Create(
 	if id == uuid.Nil {
 		return LlmCredential{}, fmt.Errorf("id must not be nil")
 	}
-	if scope != LlmCredentialScopeOrg && scope != LlmCredentialScopePlatform {
-		return LlmCredential{}, fmt.Errorf("scope must be org or platform")
+	if scope != LlmCredentialScopeProject && scope != LlmCredentialScopePlatform {
+		return LlmCredential{}, fmt.Errorf("scope must be project or platform")
 	}
-	if scope == LlmCredentialScopeOrg && orgID == uuid.Nil {
-		return LlmCredential{}, fmt.Errorf("org_id must not be nil for org scope")
+	if scope == LlmCredentialScopeProject && orgID == uuid.Nil {
+		return LlmCredential{}, fmt.Errorf("org_id must not be nil for project scope")
 	}
 	if strings.TrimSpace(provider) == "" {
 		return LlmCredential{}, fmt.Errorf("provider must not be empty")
@@ -279,14 +279,14 @@ func (r *LlmCredentialsRepository) Update(
 	args := []any{id, provider, name, baseURL, openAIAPIMode, string(advJSONBytes)}
 	if scope == LlmCredentialScopePlatform {
 		query += ` AND scope = 'platform'`
-	} else if scope == LlmCredentialScopeOrg {
+	} else if scope == LlmCredentialScopeProject {
 		if orgID == uuid.Nil {
-			return nil, fmt.Errorf("org_id must not be nil for org scope")
+			return nil, fmt.Errorf("org_id must not be nil for project scope")
 		}
 		args = append(args, orgID)
-		query += ` AND org_id = $7 AND scope = 'org'`
+		query += ` AND org_id = $7 AND scope = 'project'`
 	} else {
-		return nil, fmt.Errorf("scope must be org or platform")
+		return nil, fmt.Errorf("scope must be project or platform")
 	}
 	query += ` RETURNING id, org_id, scope, provider, name, secret_id, key_prefix, base_url, openai_api_mode, advanced_json, revoked_at, last_used_at, created_at, updated_at`
 
@@ -327,14 +327,14 @@ func (r *LlmCredentialsRepository) UpdateSecret(
 	args := []any{id, secretID, keyPrefix}
 	if scope == LlmCredentialScopePlatform {
 		query += ` AND scope = 'platform'`
-	} else if scope == LlmCredentialScopeOrg {
+	} else if scope == LlmCredentialScopeProject {
 		if orgID == uuid.Nil {
-			return fmt.Errorf("org_id must not be nil for org scope")
+			return fmt.Errorf("org_id must not be nil for project scope")
 		}
 		args = append(args, orgID)
-		query += ` AND org_id = $4 AND scope = 'org'`
+		query += ` AND org_id = $4 AND scope = 'project'`
 	} else {
-		return fmt.Errorf("scope must be org or platform")
+		return fmt.Errorf("scope must be project or platform")
 	}
 	_, err := r.db.Exec(ctx, query, args...)
 	return err
@@ -344,25 +344,25 @@ func llmCredentialScopeQuery(base string, id uuid.UUID, orgID uuid.UUID, scope s
 	if scope == LlmCredentialScopePlatform {
 		return base + ` AND scope = 'platform'`, []any{id}, nil
 	}
-	if scope != LlmCredentialScopeOrg {
-		return "", nil, fmt.Errorf("scope must be org or platform")
+	if scope != LlmCredentialScopeProject {
+		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
 	if orgID == uuid.Nil {
-		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+		return "", nil, fmt.Errorf("org_id must not be nil for project scope")
 	}
-	return base + ` AND org_id = $2 AND scope = 'org'`, []any{id, orgID}, nil
+	return base + ` AND org_id = $2 AND scope = 'project'`, []any{id, orgID}, nil
 }
 
 func appendLlmCredentialScopeFilter(base string, args []any, orgID uuid.UUID, scope string) (string, []any, error) {
 	if scope == LlmCredentialScopePlatform {
 		return base + ` AND scope = 'platform'`, args, nil
 	}
-	if scope != LlmCredentialScopeOrg {
-		return "", nil, fmt.Errorf("scope must be org or platform")
+	if scope != LlmCredentialScopeProject {
+		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
 	if orgID == uuid.Nil {
-		return "", nil, fmt.Errorf("org_id must not be nil for org scope")
+		return "", nil, fmt.Errorf("org_id must not be nil for project scope")
 	}
 	args = append(args, orgID)
-	return base + fmt.Sprintf(` AND org_id = $%d AND scope = 'org'`, len(args)), args, nil
+	return base + fmt.Sprintf(` AND org_id = $%d AND scope = 'project'`, len(args)), args, nil
 }

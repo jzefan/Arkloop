@@ -189,6 +189,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		`CREATE TABLE personas (
 			id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 			org_id               UUID        NULL,
+			project_id           UUID        NULL,
 			persona_key          TEXT        NOT NULL,
 			version              TEXT        NOT NULL,
 			display_name         TEXT        NOT NULL,
@@ -213,9 +214,10 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 			sync_mode            TEXT        NOT NULL DEFAULT 'none',
 			mirrored_file_dir    TEXT        NULL,
-			last_synced_at       TIMESTAMPTZ NULL,
-			CONSTRAINT uq_personas_org_key_version UNIQUE NULLS NOT DISTINCT (org_id, persona_key, version)
+			last_synced_at       TIMESTAMPTZ NULL
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_personas_project_key_version ON personas (project_id, persona_key, version) WHERE project_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_personas_platform_key_version ON personas (persona_key, version) WHERE project_id IS NULL`,
 		`CREATE TABLE secrets (
 			id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 			org_id          UUID        NULL,

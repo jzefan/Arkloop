@@ -10,9 +10,9 @@ export interface LocaleStrings {
     configuration: string
     integration: string
     security: string
-    organization: string
     billing: string
     platform: string
+    infrastructure: string
   }
   // nav item labels
   nav: {
@@ -31,7 +31,6 @@ export interface LocaleStrings {
     accessLog: string
     members: string
     teams: string
-    projects: string
     plans: string
     subscriptions: string
     entitlements: string
@@ -53,6 +52,7 @@ export interface LocaleStrings {
     memoryConfig: string
     executionGovernance: string
     reports: string
+    modules: string
   }
   // settings
   account: string
@@ -90,22 +90,8 @@ export interface LocaleStrings {
   otpVerifyBtn: string
   // common
   loading: string
-  projectSwitcherLabel: string
-  projectSwitcherLoading: string
-  projectSwitcherEmpty: string
   // pages
   pages: {
-    projects: {
-      title: string
-      refresh: string
-      currentLabel: string
-      currentHint: string
-      activeBadge: string
-      defaultBadge: string
-      noDescription: string
-      empty: string
-      loading: string
-    }
     credentials: {
       title: string
       addCredential: string
@@ -1206,6 +1192,37 @@ export interface LocaleStrings {
       prev: string
       next: string
       toastLoadFailed: string
+    }
+    modules: {
+      title: string
+      bridgeOnline: string
+      bridgeOffline: string
+      tabAll: string
+      tabMemory: string
+      tabSandbox: string
+      tabSearch: string
+      tabBrowser: string
+      tabConsole: string
+      statusUnknown: string
+      statusNotInstalled: string
+      statusDisconnected: string
+      statusPendingBootstrap: string
+      statusRunning: string
+      statusStopped: string
+      statusError: string
+      actionInstall: string
+      actionStart: string
+      actionStop: string
+      actionRestart: string
+      actionConfigure: string
+      actionBootstrap: string
+      copyCommand: string
+      copyAgentPrompt: string
+      copied: string
+      port: string
+      dependsOn: string
+      noModules: string
+      requires: (deps: string) => string
     }
   }
 }

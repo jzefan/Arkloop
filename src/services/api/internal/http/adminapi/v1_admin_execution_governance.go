@@ -125,7 +125,7 @@ func adminExecutionGovernance(
 		}
 
 		platformLimits := executionGovernancePlatformLimits(inspections)
-		customDefs, err := personasRepo.ListByOrg(r.Context(), *orgID)
+		customDefs, err := personasRepo.ListByProject(r.Context(), *orgID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return

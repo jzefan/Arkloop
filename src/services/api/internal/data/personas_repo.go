@@ -13,14 +13,14 @@ import (
 )
 
 const (
-	PersonaScopeOrg      = "org"
+	PersonaScopeProject  = "project"
 	PersonaScopePlatform = "platform"
 
 	PersonaSyncModeNone               = "none"
 	PersonaSyncModePlatformFileMirror = "platform_file_mirror"
 )
 
-const personaSelectColumns = `id, org_id, persona_key, version, display_name, description,
+const personaSelectColumns = `id, org_id, project_id, persona_key, version, display_name, description,
 	    soul_md, user_selectable, selector_name, selector_order,
 	    prompt_md, tool_allowlist, tool_denylist, budgets_json, title_summarize_json,
 	    is_active, created_at, updated_at,
@@ -44,6 +44,7 @@ func (e PersonaConflictError) Error() string {
 type Persona struct {
 	ID                  uuid.UUID
 	OrgID               *uuid.UUID
+	ProjectID           *uuid.UUID
 	PersonaKey          string
 	Version             string
 	DisplayName         string
@@ -129,7 +130,7 @@ type personaScanner interface {
 
 func scanPersona(scanner personaScanner, persona *Persona) error {
 	return scanner.Scan(
-		&persona.ID, &persona.OrgID, &persona.PersonaKey, &persona.Version,
+		&persona.ID, &persona.OrgID, &persona.ProjectID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description,
 		&persona.SoulMD, &persona.UserSelectable, &persona.SelectorName, &persona.SelectorOrder,
 		&persona.PromptMD, &persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.TitleSummarizeJSON,
@@ -142,18 +143,18 @@ func scanPersona(scanner personaScanner, persona *Persona) error {
 
 func NormalizePersonaScope(scope string) (string, error) {
 	switch strings.TrimSpace(scope) {
-	case PersonaScopeOrg:
-		return PersonaScopeOrg, nil
+	case PersonaScopeProject:
+		return PersonaScopeProject, nil
 	case PersonaScopePlatform:
 		return PersonaScopePlatform, nil
 	default:
-		return "", fmt.Errorf("scope must be org or platform")
+		return "", fmt.Errorf("scope must be project or platform")
 	}
 }
 
 func (r *PersonasRepository) Create(
 	ctx context.Context,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	personaKey string,
 	version string,
 	displayName string,
@@ -169,13 +170,13 @@ func (r *PersonasRepository) Create(
 	executorType string,
 	executorConfigJSON json.RawMessage,
 ) (Persona, error) {
-	if orgID == uuid.Nil {
-		return Persona{}, fmt.Errorf("org_id must not be nil")
+	if projectID == uuid.Nil {
+		return Persona{}, fmt.Errorf("project_id must not be nil")
 	}
-	orgIDCopy := orgID
-	return r.createWithOrgID(
+	projectIDCopy := projectID
+	return r.createWithProjectID(
 		ctx,
-		&orgIDCopy,
+		&projectIDCopy,
 		personaKey,
 		version,
 		displayName,
@@ -195,7 +196,7 @@ func (r *PersonasRepository) Create(
 
 func (r *PersonasRepository) CreateInScope(
 	ctx context.Context,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	scope string,
 	personaKey string,
 	version string,
@@ -216,17 +217,17 @@ func (r *PersonasRepository) CreateInScope(
 	if err != nil {
 		return Persona{}, err
 	}
-	var orgIDPtr *uuid.UUID
-	if normalized == PersonaScopeOrg {
-		if orgID == uuid.Nil {
-			return Persona{}, fmt.Errorf("org_id must not be nil")
+	var projectIDPtr *uuid.UUID
+	if normalized == PersonaScopeProject {
+		if projectID == uuid.Nil {
+			return Persona{}, fmt.Errorf("project_id must not be nil")
 		}
-		orgIDCopy := orgID
-		orgIDPtr = &orgIDCopy
+		projectIDCopy := projectID
+		projectIDPtr = &projectIDCopy
 	}
-	return r.createWithOrgID(
+	return r.createWithProjectID(
 		ctx,
-		orgIDPtr,
+		projectIDPtr,
 		personaKey,
 		version,
 		displayName,
@@ -244,9 +245,9 @@ func (r *PersonasRepository) CreateInScope(
 	)
 }
 
-func (r *PersonasRepository) createWithOrgID(
+func (r *PersonasRepository) createWithProjectID(
 	ctx context.Context,
-	orgID *uuid.UUID,
+	projectID *uuid.UUID,
 	personaKey string,
 	version string,
 	displayName string,
@@ -302,7 +303,7 @@ func (r *PersonasRepository) createWithOrgID(
 
 	syncMode := PersonaSyncModeNone
 	var mirroredFileDir *string
-	if orgID == nil {
+	if projectID == nil {
 		syncMode = PersonaSyncModePlatformFileMirror
 		value := strings.TrimSpace(personaKey)
 		mirroredFileDir = &value
@@ -312,7 +313,7 @@ func (r *PersonasRepository) createWithOrgID(
 	row := r.db.QueryRow(
 		ctx,
 		`INSERT INTO personas
-		    (org_id, persona_key, version, display_name, description, soul_md,
+		    (project_id, persona_key, version, display_name, description, soul_md,
 		     user_selectable, selector_name, selector_order,
 		     prompt_md, tool_allowlist, tool_denylist, budgets_json, title_summarize_json,
 		     preferred_credential, model, reasoning_mode, prompt_cache_control,
@@ -320,7 +321,7 @@ func (r *PersonasRepository) createWithOrgID(
 		     sync_mode, mirrored_file_dir, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, '', FALSE, NULL, NULL, $6, $7, $8, $9, NULL, $10, $11, $12, $13, $14, $15, $16, $17, now())
 		 RETURNING `+personaSelectColumns,
-		orgID, personaKey, version, displayName, description, promptMD,
+		projectID, personaKey, version, displayName, description, promptMD,
 		toolAllowlist, toolDenylist, budgetsJSON, preferredCredential,
 		model, reasoningMode, promptCacheControl,
 		executorType, executorConfigJSON, syncMode, mirroredFileDir,
@@ -335,15 +336,15 @@ func (r *PersonasRepository) createWithOrgID(
 	return persona, nil
 }
 
-func (r *PersonasRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*Persona, error) {
-	return r.GetByIDInScope(ctx, orgID, id, PersonaScopeOrg)
+func (r *PersonasRepository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Persona, error) {
+	return r.GetByIDInScope(ctx, projectID, id, PersonaScopeProject)
 }
 
-func (r *PersonasRepository) GetByIDInScope(ctx context.Context, orgID, id uuid.UUID, scope string) (*Persona, error) {
+func (r *PersonasRepository) GetByIDInScope(ctx context.Context, projectID, id uuid.UUID, scope string) (*Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	whereClause, scopeArgs, err := personaScopeWhereClause(scope, orgID, 2)
+	whereClause, scopeArgs, err := personaScopeWhereClause(scope, projectID, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -364,15 +365,15 @@ func (r *PersonasRepository) GetByIDInScope(ctx context.Context, orgID, id uuid.
 	return &persona, nil
 }
 
-func (r *PersonasRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
-	return r.ListByScope(ctx, orgID, PersonaScopeOrg)
+func (r *PersonasRepository) ListByProject(ctx context.Context, projectID uuid.UUID) ([]Persona, error) {
+	return r.ListByScope(ctx, projectID, PersonaScopeProject)
 }
 
-func (r *PersonasRepository) ListByScope(ctx context.Context, orgID uuid.UUID, scope string) ([]Persona, error) {
+func (r *PersonasRepository) ListByScope(ctx context.Context, projectID uuid.UUID, scope string) ([]Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	whereClause, scopeArgs, err := personaScopeWhereClause(scope, orgID, 1)
+	whereClause, scopeArgs, err := personaScopeWhereClause(scope, projectID, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +393,7 @@ func (r *PersonasRepository) ListByScope(ctx context.Context, orgID uuid.UUID, s
 	return scanPersonas(rows)
 }
 
-func (r *PersonasRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
+func (r *PersonasRepository) ListActiveByProject(ctx context.Context, projectID uuid.UUID) ([]Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -401,9 +402,9 @@ func (r *PersonasRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUI
 		ctx,
 		`SELECT `+personaSelectColumns+`
 		 FROM personas
-		 WHERE org_id = $1 AND is_active = TRUE
+		 WHERE project_id = $1 AND is_active = TRUE
 		 ORDER BY created_at ASC`,
-		orgID,
+		projectID,
 	)
 	if err != nil {
 		return nil, err
@@ -413,7 +414,7 @@ func (r *PersonasRepository) ListActiveByOrg(ctx context.Context, orgID uuid.UUI
 	return scanPersonas(rows)
 }
 
-func (r *PersonasRepository) ListActiveEffective(ctx context.Context, orgID uuid.UUID) ([]Persona, error) {
+func (r *PersonasRepository) ListActiveEffective(ctx context.Context, projectID uuid.UUID) ([]Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -422,9 +423,9 @@ func (r *PersonasRepository) ListActiveEffective(ctx context.Context, orgID uuid
 		ctx,
 		`SELECT `+personaSelectColumns+`
 		 FROM personas
-		 WHERE is_active = TRUE AND (org_id IS NULL OR org_id = $1)
-		 ORDER BY CASE WHEN org_id IS NULL THEN 0 ELSE 1 END ASC, created_at ASC`,
-		orgID,
+		 WHERE is_active = TRUE AND (project_id IS NULL OR project_id = $1)
+		 ORDER BY CASE WHEN project_id IS NULL THEN 0 ELSE 1 END ASC, created_at ASC`,
+		projectID,
 	)
 	if err != nil {
 		return nil, err
@@ -434,11 +435,11 @@ func (r *PersonasRepository) ListActiveEffective(ctx context.Context, orgID uuid
 	return scanPersonas(rows)
 }
 
-func (r *PersonasRepository) Patch(ctx context.Context, orgID, id uuid.UUID, patch PersonaPatch) (*Persona, error) {
-	return r.PatchInScope(ctx, orgID, id, PersonaScopeOrg, patch)
+func (r *PersonasRepository) Patch(ctx context.Context, projectID, id uuid.UUID, patch PersonaPatch) (*Persona, error) {
+	return r.PatchInScope(ctx, projectID, id, PersonaScopeProject, patch)
 }
 
-func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UUID, scope string, patch PersonaPatch) (*Persona, error) {
+func (r *PersonasRepository) PatchInScope(ctx context.Context, projectID, id uuid.UUID, scope string, patch PersonaPatch) (*Persona, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -533,7 +534,7 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UU
 	if patch.ExecutorType != nil {
 		effectiveExecutorType = strings.TrimSpace(*patch.ExecutorType)
 	}
-	validatedExecutorConfigJSON, err := normalizePatchedRuntimeExecutorConfig(ctx, r.db, id, scope, orgID, effectiveExecutorType, patch.ExecutorConfigJSON)
+	validatedExecutorConfigJSON, err := normalizePatchedRuntimeExecutorConfig(ctx, r.db, id, scope, projectID, effectiveExecutorType, patch.ExecutorConfigJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -544,12 +545,12 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, orgID, id uuid.UU
 	}
 
 	if len(setClauses) == 0 {
-		return r.GetByIDInScope(ctx, orgID, id, scope)
+		return r.GetByIDInScope(ctx, projectID, id, scope)
 	}
 
 	setClauses = append(setClauses, "updated_at = now()")
 
-	whereClause, scopeArgs, err := personaScopeWhereClause(scope, orgID, argIdx+1)
+	whereClause, scopeArgs, err := personaScopeWhereClause(scope, projectID, argIdx+1)
 	if err != nil {
 		return nil, err
 	}
@@ -616,7 +617,7 @@ func (r *PersonasRepository) ListLatestPlatformMirrors(ctx context.Context) ([]P
 		ctx,
 		`SELECT DISTINCT ON (persona_key) `+personaSelectColumns+`
 		 FROM personas
-		 WHERE org_id IS NULL AND sync_mode = $1 AND is_active = TRUE
+		 WHERE project_id IS NULL AND sync_mode = $1 AND is_active = TRUE
 		 ORDER BY persona_key ASC, is_active DESC, updated_at DESC, created_at DESC`,
 		PersonaSyncModePlatformFileMirror,
 	)
@@ -693,7 +694,7 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 			$18, $19,
 			$20, $21, $22, $23, now()
 		)
-		ON CONFLICT (org_id, persona_key, version)
+		ON CONFLICT (persona_key, version) WHERE project_id IS NULL
 		DO UPDATE SET
 			display_name = EXCLUDED.display_name,
 			description = EXCLUDED.description,
@@ -735,6 +736,7 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 		 SET is_active = FALSE,
 		     updated_at = now()
 		 WHERE org_id IS NULL
+		   AND project_id IS NULL
 		   AND sync_mode = $1
 		   AND persona_key = $2
 		   AND id <> $3
@@ -762,6 +764,7 @@ func (r *PersonasRepository) DeactivatePlatformMirrorsByKey(ctx context.Context,
 		 SET is_active = FALSE,
 		     updated_at = now()
 		 WHERE org_id IS NULL
+		   AND project_id IS NULL
 		   AND sync_mode = $1
 		   AND persona_key = $2
 		   AND is_active = TRUE`,
@@ -774,15 +777,15 @@ func (r *PersonasRepository) DeactivatePlatformMirrorsByKey(ctx context.Context,
 	return tag.RowsAffected(), nil
 }
 
-func (r *PersonasRepository) Delete(ctx context.Context, orgID, id uuid.UUID) (bool, error) {
-	return r.DeleteInScope(ctx, orgID, id, PersonaScopeOrg)
+func (r *PersonasRepository) Delete(ctx context.Context, projectID, id uuid.UUID) (bool, error) {
+	return r.DeleteInScope(ctx, projectID, id, PersonaScopeProject)
 }
 
-func (r *PersonasRepository) DeleteInScope(ctx context.Context, orgID, id uuid.UUID, scope string) (bool, error) {
+func (r *PersonasRepository) DeleteInScope(ctx context.Context, projectID, id uuid.UUID, scope string) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	whereClause, scopeArgs, err := personaScopeWhereClause(scope, orgID, 2)
+	whereClause, scopeArgs, err := personaScopeWhereClause(scope, projectID, 2)
 	if err != nil {
 		return false, err
 	}
@@ -798,18 +801,18 @@ func (r *PersonasRepository) DeleteInScope(ctx context.Context, orgID, id uuid.U
 	return tag.RowsAffected() > 0, nil
 }
 
-func personaScopeWhereClause(scope string, orgID uuid.UUID, argIdx int) (string, []any, error) {
+func personaScopeWhereClause(scope string, projectID uuid.UUID, argIdx int) (string, []any, error) {
 	normalized, err := NormalizePersonaScope(scope)
 	if err != nil {
 		return "", nil, err
 	}
 	if normalized == PersonaScopePlatform {
-		return "org_id IS NULL", nil, nil
+		return "project_id IS NULL", nil, nil
 	}
-	if orgID == uuid.Nil {
-		return "", nil, fmt.Errorf("org_id must not be nil")
+	if projectID == uuid.Nil {
+		return "", nil, fmt.Errorf("project_id must not be nil")
 	}
-	return fmt.Sprintf("org_id = $%d", argIdx), []any{orgID}, nil
+	return fmt.Sprintf("project_id = $%d", argIdx), []any{projectID}, nil
 }
 
 func normalizeOptionalPersonaString(value *string) *string {
@@ -876,14 +879,14 @@ func normalizePatchedRuntimeExecutorConfig(
 	db Querier,
 	id uuid.UUID,
 	scope string,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	requestedType string,
 	patchConfig json.RawMessage,
 ) (json.RawMessage, error) {
 	if len(patchConfig) == 0 && strings.TrimSpace(requestedType) == "" {
 		return nil, nil
 	}
-	whereClause, scopeArgs, err := personaScopeWhereClause(scope, orgID, 2)
+	whereClause, scopeArgs, err := personaScopeWhereClause(scope, projectID, 2)
 	if err != nil {
 		return nil, err
 	}

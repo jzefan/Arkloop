@@ -318,6 +318,12 @@ export interface LocaleStrings {
   // pasted content
   pastedContent: string
   pastedLines: (n: number) => string
+  // user input card
+  userInput: {
+    dismiss: string
+    submit: string
+    submitting: string
+  }
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

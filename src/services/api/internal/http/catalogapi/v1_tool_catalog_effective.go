@@ -25,6 +25,7 @@ func toolCatalogEffectiveEntry(
 	pool *pgxpool.Pool,
 	mcpCache *effectiveToolCatalogCache,
 	artifactStoreAvailable bool,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -41,7 +42,17 @@ func toolCatalogEffectiveEntry(
 			return
 		}
 
-		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.OrgID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+		projectID := uuid.Nil
+		if projectRepo != nil {
+			project, err := projectRepo.GetOrCreateDefaultByOwner(r.Context(), actor.OrgID, actor.UserID)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			projectID = project.ID
+		}
+
+		catalog, err := buildEffectiveToolCatalog(r.Context(), projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -52,15 +63,15 @@ func toolCatalogEffectiveEntry(
 
 func buildEffectiveToolCatalog(
 	ctx context.Context,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
 	pool *pgxpool.Pool,
 	mcpCache *effectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
 	available := buildEffectiveBuiltinToolNameSet(ctx, pool, artifactStoreAvailable)
-	platformByName, orgByName := loadEffectiveToolDescriptionOverrides(ctx, overridesRepo, orgID)
-	platformDisabledByName, orgDisabledByName := loadEffectiveToolDisabledOverrides(ctx, overridesRepo, orgID)
+	platformByName, projectByName := loadEffectiveToolDescriptionOverrides(ctx, overridesRepo, projectID)
+	platformDisabledByName, projectDisabledByName := loadEffectiveToolDisabledOverrides(ctx, overridesRepo, projectID)
 	mcpTools := []toolCatalogItem{}
 	if mcpCache != nil {
 		if envTools, err := mcpCache.GetEnv(ctx); err == nil {
@@ -68,10 +79,10 @@ func buildEffectiveToolCatalog(
 		} else {
 			slog.WarnContext(ctx, "effective tool catalog: env mcp discovery failed", "err", err.Error())
 		}
-		if orgTools, err := mcpCache.GetOrg(ctx, pool, orgID); err == nil {
+		if orgTools, err := mcpCache.GetOrg(ctx, pool, projectID); err == nil {
 			mcpTools = append(mcpTools, orgTools...)
 		} else {
-			slog.WarnContext(ctx, "effective tool catalog: org mcp discovery failed", "org_id", orgID, "err", err.Error())
+			slog.WarnContext(ctx, "effective tool catalog: org mcp discovery failed", "project_id", projectID, "err", err.Error())
 		}
 	}
 
@@ -82,16 +93,16 @@ func buildEffectiveToolCatalog(
 			if _, ok := available[meta.Name]; !ok {
 				continue
 			}
-			if platformDisabledByName[meta.Name] || orgDisabledByName[meta.Name] {
+			if platformDisabledByName[meta.Name] || projectDisabledByName[meta.Name] {
 				continue
 			}
 			description := meta.LLMDescription
 			hasOverride := false
 			source := toolDescriptionSourceDefault
-			if override, ok := orgByName[meta.Name]; ok {
+			if override, ok := projectByName[meta.Name]; ok {
 				description = override
 				hasOverride = true
-				source = toolDescriptionSourceOrg
+				source = toolDescriptionSourceProject
 			} else if override, ok := platformByName[meta.Name]; ok {
 				description = override
 				source = toolDescriptionSourcePlatform
@@ -118,7 +129,7 @@ func buildEffectiveToolCatalog(
 func loadEffectiveToolDescriptionOverrides(
 	ctx context.Context,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 ) (map[string]string, map[string]string) {
 	if overridesRepo == nil {
 		return nil, nil
@@ -127,17 +138,17 @@ func loadEffectiveToolDescriptionOverrides(
 	if err != nil {
 		platformOverrides = nil
 	}
-	orgOverrides, err := overridesRepo.ListByScope(ctx, orgID, "org")
+	projectOverrides, err := overridesRepo.ListByScope(ctx, projectID, "project")
 	if err != nil {
-		orgOverrides = nil
+		projectOverrides = nil
 	}
-	return buildToolDescriptionOverrideMap(platformOverrides), buildToolDescriptionOverrideMap(orgOverrides)
+	return buildToolDescriptionOverrideMap(platformOverrides), buildToolDescriptionOverrideMap(projectOverrides)
 }
 
 func loadEffectiveToolDisabledOverrides(
 	ctx context.Context,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 ) (map[string]bool, map[string]bool) {
 	if overridesRepo == nil {
 		return nil, nil
@@ -146,9 +157,9 @@ func loadEffectiveToolDisabledOverrides(
 	if err != nil {
 		platformOverrides = nil
 	}
-	orgOverrides, err := overridesRepo.ListByScope(ctx, orgID, "org")
+	projectOverrides, err := overridesRepo.ListByScope(ctx, projectID, "project")
 	if err != nil {
-		orgOverrides = nil
+		projectOverrides = nil
 	}
-	return buildToolDisabledOverrideMap(platformOverrides), buildToolDisabledOverrideMap(orgOverrides)
+	return buildToolDisabledOverrideMap(platformOverrides), buildToolDisabledOverrideMap(projectOverrides)
 }

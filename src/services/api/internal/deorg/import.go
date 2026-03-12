@@ -448,23 +448,31 @@ func importToolProviderConfigs(ctx context.Context, tx pgx.Tx, items []ToolProvi
 
 func importToolDescriptionOverrides(ctx context.Context, tx pgx.Tx, items []ToolDescriptionOverrideRecord, defaultProjects map[string]string) error {
 	for _, item := range items {
-		orgID, err := parseUUIDPtr(item.LegacyOrgID)
-		if err != nil {
-			return fmt.Errorf("parse tool description override org_id: %w", err)
-		}
 		projectID, err := defaultProjectUUID(item.LegacyOrgID, defaultProjects)
 		if err != nil {
 			return fmt.Errorf("resolve tool description override project_id: %w", err)
 		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO tool_description_overrides (org_id, scope, project_id, tool_name, description, is_disabled, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (org_id, scope, tool_name) DO UPDATE SET
-			    project_id = EXCLUDED.project_id,
-			    description = EXCLUDED.description,
-			    is_disabled = EXCLUDED.is_disabled,
-			    updated_at = EXCLUDED.updated_at
-		`, orgID, item.LegacyScope, projectID, item.ToolName, item.Description, item.IsDisabled, item.UpdatedAt)
+		if item.LegacyScope == "platform" || item.LegacyScope == "" {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO tool_description_overrides (scope, tool_name, description, is_disabled, updated_at)
+				VALUES ('platform', $1, $2, $3, $4)
+				ON CONFLICT (tool_name) WHERE scope = 'platform'
+				DO UPDATE SET
+				    description = EXCLUDED.description,
+				    is_disabled = EXCLUDED.is_disabled,
+				    updated_at = EXCLUDED.updated_at
+			`, item.ToolName, item.Description, item.IsDisabled, item.UpdatedAt)
+		} else {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO tool_description_overrides (project_id, scope, tool_name, description, is_disabled, updated_at)
+				VALUES ($1, 'project', $2, $3, $4, $5)
+				ON CONFLICT (project_id, tool_name) WHERE project_id IS NOT NULL
+				DO UPDATE SET
+				    description = EXCLUDED.description,
+				    is_disabled = EXCLUDED.is_disabled,
+				    updated_at = EXCLUDED.updated_at
+			`, projectID, item.ToolName, item.Description, item.IsDisabled, item.UpdatedAt)
+		}
 		if err != nil {
 			return fmt.Errorf("import tool description override %s: %w", item.ToolName, err)
 		}
