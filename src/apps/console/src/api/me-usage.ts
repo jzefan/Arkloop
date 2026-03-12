@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 import type { DailyUsage, ModelUsage } from './usage'
 
 export type MeUsageSummary = {
-  org_id: string
+  project_id: string // TODO(migrate): backend still sends org_id
   year: number
   month: number
   total_input_tokens: number
@@ -15,7 +15,7 @@ export type MeCreditsResponse = {
   balance: number
   transactions: {
     id: string
-    org_id: string
+    project_id: string // TODO(migrate): backend still sends org_id
     amount: number
     type: string
     reference_type?: string

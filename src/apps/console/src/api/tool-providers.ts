@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 import type { ToolCatalogGroup } from './tool-catalog'
 
-export type ToolProviderScope = 'org' | 'platform'
+export type ToolProviderScope = 'project' | 'platform'
 
 export type ToolProviderItem = {
   group_name: string

@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type IPRule = {
   id: string
-  org_id: string
+  project_id: string // TODO(migrate): backend still sends org_id
   type: 'allowlist' | 'blocklist'
   cidr: string
   note?: string

@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type AsrCredential = {
   id: string
-  org_id: string | null
+  project_id: string | null // TODO(migrate): backend still sends org_id
   scope: string
   provider: string
   name: string

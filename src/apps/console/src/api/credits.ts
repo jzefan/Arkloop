@@ -18,13 +18,13 @@ export type AdminOrgCreditsResponse = {
 }
 
 export async function getAdminOrgCredits(
-  orgId: string,
+  projectId: string,
   accessToken: string,
   limit = 20,
   offset = 0,
 ): Promise<AdminOrgCreditsResponse> {
   return apiFetch<AdminOrgCreditsResponse>(
-    `/v1/admin/credits?org_id=${encodeURIComponent(orgId)}&limit=${limit}&offset=${offset}`,
+    `/v1/admin/credits?org_id=${encodeURIComponent(projectId)}&limit=${limit}&offset=${offset}`,
     { accessToken },
   )
 }

@@ -22,10 +22,10 @@ export type CreateEntitlementOverrideRequest = {
 }
 
 export async function listEntitlementOverrides(
-  orgId: string,
+  projectId: string,
   accessToken: string,
 ): Promise<EntitlementOverride[]> {
-  const qs = new URLSearchParams({ org_id: orgId })
+  const qs = new URLSearchParams({ org_id: projectId })
   return apiFetch<EntitlementOverride[]>(`/v1/entitlement-overrides?${qs.toString()}`, { accessToken })
 }
 
@@ -42,10 +42,10 @@ export async function upsertEntitlementOverride(
 
 export async function deleteEntitlementOverride(
   id: string,
-  orgId: string,
+  projectId: string,
   accessToken: string,
 ): Promise<void> {
-  const qs = new URLSearchParams({ org_id: orgId })
+  const qs = new URLSearchParams({ org_id: projectId })
   await apiFetch<void>(`/v1/entitlement-overrides/${id}?${qs.toString()}`, {
     method: 'DELETE',
     accessToken,

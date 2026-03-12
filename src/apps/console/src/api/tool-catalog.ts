@@ -1,6 +1,6 @@
 import { apiFetch } from './client'
 
-export type ToolDescriptionSource = 'default' | 'platform' | 'org'
+export type ToolDescriptionSource = 'default' | 'platform' | 'project'
 
 export type ToolCatalogItem = {
   name: string

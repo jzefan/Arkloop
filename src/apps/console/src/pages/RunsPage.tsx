@@ -18,7 +18,7 @@ type RunFilters = {
   runId: string
   threadId: string
   userId: string
-  orgId: string
+  projectId: string
   parentRunId: string
   status: string
   model: string
@@ -31,7 +31,7 @@ const EMPTY_RUN_FILTERS: RunFilters = {
   runId: '',
   threadId: '',
   userId: '',
-  orgId: '',
+  projectId: '',
   parentRunId: '',
   status: '',
   model: '',
@@ -74,7 +74,7 @@ function parseInitialFilters(searchParams: URLSearchParams): RunFilters {
     runId: searchParams.get('run_id') ?? '',
     threadId: searchParams.get('thread_id') ?? '',
     userId: searchParams.get('user_id') ?? '',
-    orgId: searchParams.get('org_id') ?? '',
+    projectId: searchParams.get('project_id') ?? '',
     parentRunId: searchParams.get('parent_run_id') ?? '',
     status: searchParams.get('status') ?? '',
     model: searchParams.get('model') ?? '',
@@ -88,7 +88,7 @@ function normalizeFilters(filters: RunFilters): RunFilters {
     runId: filters.runId.trim(),
     threadId: filters.threadId.trim(),
     userId: filters.userId.trim(),
-    orgId: filters.orgId.trim(),
+    projectId: filters.projectId.trim(),
     parentRunId: filters.parentRunId.trim(),
     status: filters.status.trim(),
     model: filters.model.trim(),
@@ -108,7 +108,7 @@ function countActiveFilters(filters: RunFilters): number {
     filters.runId,
     filters.threadId,
     filters.userId,
-    filters.orgId,
+    filters.projectId,
     filters.parentRunId,
     filters.status,
     filters.model,
@@ -153,7 +153,7 @@ export function RunsPage() {
             run_id: filters.runId || undefined,
             thread_id: filters.threadId || undefined,
             user_id: filters.userId || undefined,
-            org_id: filters.orgId || undefined,
+            org_id: filters.projectId || undefined,
             parent_run_id: filters.parentRunId || undefined,
             status: filters.status || undefined,
             model: filters.model || undefined,
@@ -242,8 +242,8 @@ export function RunsPage() {
       ),
     },
     {
-      key: 'org_id',
-      header: rt.colOrg,
+      key: 'project_id',
+      header: rt.colProject,
       render: (row) => (
         <span className="font-mono text-xs" title={row.org_id}>
           {truncateId(row.org_id)}
@@ -411,9 +411,9 @@ export function RunsPage() {
           />
           <input
             type="text"
-            placeholder={rt.filterOrgPlaceholder}
-            value={draftFilters.orgId}
-            onChange={(e) => updateDraftFilter('orgId', e.target.value)}
+            placeholder={rt.filterProjectPlaceholder}
+            value={draftFilters.projectId}
+            onChange={(e) => updateDraftFilter('projectId', e.target.value)}
             className={filterInputCls}
           />
           <input

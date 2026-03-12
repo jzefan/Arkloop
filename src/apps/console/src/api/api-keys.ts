@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type APIKey = {
   id: string
-  org_id: string
+  project_id: string // TODO(migrate): backend still sends org_id
   user_id: string
   name: string
   key_prefix: string

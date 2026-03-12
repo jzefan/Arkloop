@@ -88,7 +88,7 @@ export function UsersPage() {
   const [editing, setEditing] = useState(false)
 
   // credit adjust modal
-  const [creditTarget, setCreditTarget] = useState<{ orgID: string; username: string } | null>(null)
+  const [creditTarget, setCreditTarget] = useState<{ projectID: string; username: string } | null>(null)
   const [creditForm, setCreditForm] = useState({ amount: '', note: '' })
   const [creditError, setCreditError] = useState('')
   const [creditAdjusting, setCreditAdjusting] = useState(false)
@@ -231,9 +231,9 @@ export function UsersPage() {
   }, [])
 
   const handleOpenCredit = useCallback((d: AdminUserDetail) => {
-    const orgID = d.orgs[0]?.org_id
-    if (!orgID) return
-    setCreditTarget({ orgID, username: d.username })
+    const projectID = d.orgs[0]?.org_id
+    if (!projectID) return
+    setCreditTarget({ projectID, username: d.username })
     setCreditForm({ amount: '', note: '' })
     setCreditError('')
   }, [])
@@ -258,7 +258,7 @@ export function UsersPage() {
     setCreditAdjusting(true)
     setCreditError('')
     try {
-      await adjustAdminCredits({ org_id: creditTarget.orgID, amount, note }, accessToken)
+      await adjustAdminCredits({ org_id: creditTarget.projectID, amount, note }, accessToken)
       addToast(tc.toastCreditAdjusted, 'success')
       setCreditTarget(null)
     } catch (err) {
@@ -754,17 +754,17 @@ function UserRow({
 
                   <div>
                     <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
-                      {tc.detailOrgs}
+                      {tc.detailProjects}
                     </span>
                     {renderDetail.orgs.length > 0 ? (
                       <table className="mt-2 w-full text-xs">
                         <thead>
                           <tr className="border-b border-[var(--c-border)]">
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailOrgId}
+                              {tc.detailProjectId}
                             </th>
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailOrgRole}
+                              {tc.detailProjectRole}
                             </th>
                           </tr>
                         </thead>
@@ -784,7 +784,7 @@ function UserRow({
                       </table>
                     ) : (
                       <p className="py-2 text-xs text-[var(--c-text-muted)]">
-                        {tc.detailNoOrgs}
+                        {tc.detailNoProjects}
                       </p>
                     )}
                   </div>
