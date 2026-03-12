@@ -134,15 +134,11 @@ func loadEffectiveToolDescriptionOverrides(
 	if overridesRepo == nil {
 		return nil, nil
 	}
-	platformOverrides, err := overridesRepo.ListByScope(ctx, uuid.Nil, "platform")
+	overrides, err := overridesRepo.List(ctx)
 	if err != nil {
-		platformOverrides = nil
+		overrides = nil
 	}
-	projectOverrides, err := overridesRepo.ListByScope(ctx, projectID, "project")
-	if err != nil {
-		projectOverrides = nil
-	}
-	return buildToolDescriptionOverrideMap(platformOverrides), buildToolDescriptionOverrideMap(projectOverrides)
+	return buildToolDescriptionOverrideMap(overrides), nil
 }
 
 func loadEffectiveToolDisabledOverrides(
@@ -153,13 +149,9 @@ func loadEffectiveToolDisabledOverrides(
 	if overridesRepo == nil {
 		return nil, nil
 	}
-	platformOverrides, err := overridesRepo.ListByScope(ctx, uuid.Nil, "platform")
+	overrides, err := overridesRepo.List(ctx)
 	if err != nil {
-		platformOverrides = nil
+		overrides = nil
 	}
-	projectOverrides, err := overridesRepo.ListByScope(ctx, projectID, "project")
-	if err != nil {
-		projectOverrides = nil
-	}
-	return buildToolDisabledOverrideMap(platformOverrides), buildToolDisabledOverrideMap(projectOverrides)
+	return buildToolDisabledOverrideMap(overrides), nil
 }

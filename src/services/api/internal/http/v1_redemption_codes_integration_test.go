@@ -42,7 +42,7 @@ func TestRedemptionCodesIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRedemptionCodesIntegration(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		CreditsRepo:         creditsRepo,
 		RedemptionCodesRepo: redemptionRepo,
 		UsersRepo:           userRepo,

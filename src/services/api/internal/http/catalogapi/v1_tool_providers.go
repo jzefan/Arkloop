@@ -159,34 +159,25 @@ func resolveToolProviderScope(
 	traceID string,
 	actor *httpkit.Actor,
 	projectRepo *data.ProjectRepository,
-) (string, uuid.UUID, bool) {
+) (string, *uuid.UUID, bool) {
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if scope == "" {
 		scope = "platform"
 	}
 	if scope != "project" && scope != "platform" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
-		return "", uuid.Nil, false
+		return "", nil, false
 	}
 	if scope == "platform" {
 		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return "", uuid.Nil, false
+			return "", nil, false
 		}
-		return scope, uuid.Nil, true
+		return "platform", nil, true
 	}
 	if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-		return "", uuid.Nil, false
+		return "", nil, false
 	}
-	if projectRepo == nil {
-		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
-		return "", uuid.Nil, false
-	}
-	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, actor.AccountID, actor.UserID)
-	if err != nil {
-		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-		return "", uuid.Nil, false
-	}
-	return scope, project.ID, true
+	return "user", &actor.UserID, true
 }
 
 func listToolProviders(
@@ -212,12 +203,12 @@ func listToolProviders(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
 
-	configs, err := toolProvidersRepo.ListByScope(r.Context(), projectID, scope)
+	configs, err := toolProvidersRepo.ListByOwner(r.Context(), ownerKind, ownerUserID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -303,14 +294,14 @@ func activateToolProvider(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
 
 	notifyPayload := "platform"
-	if scope != "platform" {
-		notifyPayload = projectID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
@@ -320,7 +311,7 @@ func activateToolProvider(
 	}
 	defer tx.Rollback(r.Context())
 
-	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), projectID, scope, groupName, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), ownerKind, ownerUserID, groupName, providerName); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			httpkit.WriteError(w, nethttp.StatusConflict, "tool_provider.active_conflict", "active tool provider conflict", traceID, nil)
@@ -366,19 +357,19 @@ func deactivateToolProvider(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
 
-	if err := toolProvidersRepo.Deactivate(r.Context(), projectID, scope, groupName, providerName); err != nil {
+	if err := toolProvidersRepo.Deactivate(r.Context(), ownerKind, ownerUserID, groupName, providerName); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
 	notifyPayload := "platform"
-	if scope != "platform" {
-		notifyPayload = projectID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
@@ -414,14 +405,14 @@ func upsertToolProviderCredential(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
 
 	notifyPayload := "platform"
-	if scope != "platform" {
-		notifyPayload = projectID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 
 	var req upsertToolProviderCredentialRequest
@@ -493,10 +484,10 @@ func upsertToolProviderCredential(
 			secret data.Secret
 			err    error
 		)
-		if scope == "platform" {
+		if ownerKind == "platform" {
 			secret, err = secretsRepo.WithTx(tx).UpsertPlatform(r.Context(), secretName, apiKey)
 		} else {
-			secret, err = secretsRepo.WithTx(tx).Upsert(r.Context(), projectID, secretName, apiKey)
+			secret, err = secretsRepo.WithTx(tx).Upsert(r.Context(), *ownerUserID, secretName, apiKey)
 		}
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -508,7 +499,7 @@ func upsertToolProviderCredential(
 		keyPrefix = &prefix
 	}
 
-	if _, err := txProviders.UpsertConfig(r.Context(), projectID, scope, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
+	if _, err := txProviders.UpsertConfig(r.Context(), ownerKind, ownerUserID, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -554,7 +545,7 @@ func clearToolProviderCredential(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
@@ -569,10 +560,10 @@ func clearToolProviderCredential(
 	defer tx.Rollback(r.Context())
 
 	var delErr error
-	if scope == "platform" {
+	if ownerKind == "platform" {
 		delErr = secretsRepo.WithTx(tx).DeletePlatform(r.Context(), secretName)
 	} else {
-		delErr = secretsRepo.WithTx(tx).Delete(r.Context(), projectID, secretName)
+		delErr = secretsRepo.WithTx(tx).Delete(r.Context(), *ownerUserID, secretName)
 	}
 	if delErr != nil {
 		var notFound data.SecretNotFoundError
@@ -582,7 +573,7 @@ func clearToolProviderCredential(
 		}
 	}
 
-	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), projectID, scope, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), ownerKind, ownerUserID, providerName); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -593,8 +584,8 @@ func clearToolProviderCredential(
 	}
 
 	notifyPayload := "platform"
-	if scope != "platform" {
-		notifyPayload = projectID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
@@ -627,7 +618,7 @@ func updateToolProviderConfig(
 		return
 	}
 
-	scope, projectID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
 	if !ok {
 		return
 	}
@@ -641,14 +632,14 @@ func updateToolProviderConfig(
 		raw = json.RawMessage("{}")
 	}
 
-	if _, err := toolProvidersRepo.UpsertConfig(r.Context(), projectID, scope, groupName, providerName, nil, nil, nil, raw); err != nil {
+	if _, err := toolProvidersRepo.UpsertConfig(r.Context(), ownerKind, ownerUserID, groupName, providerName, nil, nil, nil, raw); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
 	notifyPayload := "platform"
-	if scope != "platform" {
-		notifyPayload = projectID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)

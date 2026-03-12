@@ -27,7 +27,7 @@ type artifactTestEnv struct {
 	handler         nethttp.Handler
 	pool            *pgxpool.Pool
 	apiKeysRepo     *data.APIKeysRepository
-	membershipRepo  *data.OrgMembershipRepository
+	membershipRepo  *data.AccountMembershipRepository
 	threadRepo      *data.ThreadRepository
 	threadShareRepo *data.ThreadShareRepository
 	runRepo         *data.RunEventRepository
@@ -142,7 +142,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	if err != nil {
 		t.Fatalf("new cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -198,7 +198,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		Logger:                 logger,
 		AuthService:            authService,
 		RegistrationService:    registrationService,
-		OrgMembershipRepo:      membershipRepo,
+		AccountMembershipRepo:      membershipRepo,
 		ThreadRepo:             threadRepo,
 		ProjectRepo:            projectRepo,
 		ThreadShareRepo:        threadShareRepo,
@@ -242,7 +242,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		tokenService:    tokenService,
 		aliceToken:      regPayload.AccessToken,
 		aliceUserID:     aliceUserID,
-		aliceOrgID:      membership.OrgID,
+		aliceOrgID:      membership.AccountID,
 		store:           store,
 	}
 }

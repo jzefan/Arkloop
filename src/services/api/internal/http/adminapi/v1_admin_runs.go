@@ -152,9 +152,9 @@ func adminRunsEntry(
 		// 如果事件中没有 credential_name（旧 run），尝试从 DB 查询补全
 		if credentialName == nil && credentialID != nil && credentialsRepo != nil {
 			if credUUID, err := uuid.Parse(*credentialID); err == nil {
-				cred, err := credentialsRepo.GetByID(r.Context(), run.AccountID, credUUID, data.LlmCredentialScopePlatform)
+				cred, err := credentialsRepo.GetByID(r.Context(), "platform", nil, credUUID)
 				if err == nil && cred == nil {
-					cred, err = credentialsRepo.GetByID(r.Context(), run.AccountID, credUUID, data.LlmCredentialScopeProject)
+					cred, err = credentialsRepo.GetByID(r.Context(), "user", run.CreatedByUserID, credUUID)
 				}
 				if err == nil && cred != nil {
 					credentialName = &cred.Name

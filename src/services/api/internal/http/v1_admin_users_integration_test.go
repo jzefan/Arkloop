@@ -41,7 +41,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		UsersRepo:           userRepo,
 		AuditWriter:         auditWriter,
 	})

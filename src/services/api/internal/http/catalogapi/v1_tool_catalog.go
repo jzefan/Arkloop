@@ -109,7 +109,7 @@ func toolCatalogEntry(
 			return
 		}
 
-		scope, projectID, ok := resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
+		scope, _, ok := resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
 		if !ok {
 			return
 		}
@@ -118,15 +118,9 @@ func toolCatalogEntry(
 		var projectOverrides []data.ToolDescriptionOverride
 		if overridesRepo != nil {
 			var err error
-			platformOverrides, err = overridesRepo.ListByScope(r.Context(), uuid.Nil, "platform")
+			platformOverrides, err = overridesRepo.List(r.Context())
 			if err != nil {
 				platformOverrides = nil
-			}
-			if scope == "project" {
-				projectOverrides, err = overridesRepo.ListByScope(r.Context(), projectID, "project")
-				if err != nil {
-					projectOverrides = nil
-				}
 			}
 		}
 
@@ -180,7 +174,7 @@ func toolCatalogItemEntry(
 			return
 		}
 
-		scope, projectID, ok := resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
+		_, _, ok = resolveToolCatalogScope(r.Context(), w, r, traceID, actor, projectRepo)
 		if !ok {
 			return
 		}
@@ -202,7 +196,7 @@ func toolCatalogItemEntry(
 					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "description must not be empty", traceID, nil)
 					return
 				}
-				if err := overridesRepo.Upsert(r.Context(), projectID, scope, toolName, req.Description); err != nil {
+				if err := overridesRepo.Upsert(r.Context(), toolName, req.Description); err != nil {
 					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 					return
 				}
@@ -215,7 +209,7 @@ func toolCatalogItemEntry(
 				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid request body", traceID, nil)
 				return
 			}
-			if err := overridesRepo.SetDisabled(r.Context(), projectID, scope, toolName, req.Disabled); err != nil {
+			if err := overridesRepo.SetDisabled(r.Context(), toolName, req.Disabled); err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
@@ -226,7 +220,7 @@ func toolCatalogItemEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			if err := overridesRepo.Delete(r.Context(), projectID, scope, toolName); err != nil {
+			if err := overridesRepo.Delete(r.Context(), toolName); err != nil {
 				httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "no override found", traceID, nil)
 				return
 			}
