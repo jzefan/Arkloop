@@ -189,7 +189,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		if detail.Username != "alice@test.com" {
 			t.Fatalf("expected alice@test.com, got %s", detail.Username)
 		}
-		if len(detail.Orgs) == 0 {
+		if len(detail.Accounts) == 0 {
 			t.Fatal("expected at least one org")
 		}
 	})

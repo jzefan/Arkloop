@@ -168,7 +168,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	mePayload := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	aliceOrgID := uuid.MustParse(mePayload.OrgID)
+	aliceOrgID := uuid.MustParse(mePayload.AccountID)
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{"login": "alice-skills", "password": "pwd12345"}, nil)
 	if loginResp.Code != nethttp.StatusOK {
 		t.Fatalf("login: %d %s", loginResp.Code, loginResp.Body.String())

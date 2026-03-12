@@ -257,7 +257,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse thread id: %v", err)
 	}
-	orgID, err := uuid.Parse(threadPayload.OrgID)
+	orgID, err := uuid.Parse(threadPayload.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}

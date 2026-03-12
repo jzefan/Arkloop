@@ -200,7 +200,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected started output_route_id: %#v", startedDataWithOutputRoute["output_route_id"])
 	}
 
-	threadOrgID := uuid.MustParse(threadPayload.OrgID)
+	threadOrgID := uuid.MustParse(threadPayload.AccountID)
 	var outputCredentialID uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
@@ -481,7 +481,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if jobJSON["trace_id"] != runPayload.TraceID {
 		t.Fatalf("unexpected payload trace_id: %#v", jobJSON["trace_id"])
 	}
-	if jobJSON["org_id"] != threadPayload.OrgID {
+	if jobJSON["org_id"] != threadPayload.AccountID {
 		t.Fatalf("unexpected payload org_id: %#v", jobJSON["org_id"])
 	}
 	if jobJSON["run_id"] != runPayload.RunID {
@@ -528,7 +528,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected get run status: %d body=%s", getRunResp.Code, getRunResp.Body.String())
 	}
 	getRunPayload := decodeJSONBody[runResponse](t, getRunResp.Body.Bytes())
-	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.OrgID != threadPayload.OrgID {
+	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.AccountID != threadPayload.AccountID {
 		t.Fatalf("unexpected get run payload: %#v", getRunPayload)
 	}
 	if getRunPayload.CreatedByUserID == nil || *getRunPayload.CreatedByUserID != alice.UserID {
@@ -939,8 +939,8 @@ func TestListGlobalRuns(t *testing.T) {
 		if len(body.Data) != 1 || body.Data[0].RunID != runPayload.RunID {
 			t.Fatalf("unexpected data: %#v", body.Data)
 		}
-		if body.Data[0].OrgID != threadPayload.OrgID {
-			t.Fatalf("unexpected org_id: %q", body.Data[0].OrgID)
+		if body.Data[0].AccountID != threadPayload.AccountID {
+			t.Fatalf("unexpected account_id: %q", body.Data[0].AccountID)
 		}
 	})
 

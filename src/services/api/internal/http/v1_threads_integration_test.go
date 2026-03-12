@@ -111,7 +111,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("unexpected create thread status: %d body=%s", threadResp.Code, threadResp.Body.String())
 	}
 	threadPayload := decodeJSONBody[threadResponse](t, threadResp.Body.Bytes())
-	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.OrgID == "" {
+	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.AccountID == "" {
 		t.Fatalf("unexpected thread payload: %#v", threadPayload)
 	}
 	if threadPayload.ProjectID == nil || *threadPayload.ProjectID == "" {
@@ -273,7 +273,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("create patch thread: %d body=%s", patchThreadResp.Code, patchThreadResp.Body.String())
 	}
 	patchThread := decodeJSONBody[threadResponse](t, patchThreadResp.Body.Bytes())
-	aliceOrgID, err := uuid.Parse(patchThread.OrgID)
+	aliceOrgID, err := uuid.Parse(patchThread.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}
