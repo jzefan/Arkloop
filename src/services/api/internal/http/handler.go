@@ -24,6 +24,7 @@ import (
 	"arkloop/services/shared/database"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/runlimit"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -129,8 +130,9 @@ type HandlerConfig struct {
 	RedisClient *redis.Client
 	EventBus    eventbus.EventBus
 	// 网关相关 key 专用 Redis（未设置时回退到 RedisClient）。
-	GatewayRedisClient *redis.Client
-	RunLimiter         *data.RunLimiter
+	GatewayRedisClient   *redis.Client
+	RunLimiter           *data.RunLimiter
+	ConcurrencyLimiter   runlimit.ConcurrencyLimiter
 
 	SSEConfig SSEConfig
 
@@ -238,7 +240,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		APIKeysRepo:              cfg.APIKeysRepo,
 		RunLimiter:               cfg.RunLimiter,
 		EntitlementService:       cfg.EntitlementService,
-		RedisClient:              cfg.RedisClient,
+		ConcurrencyLimiter:       cfg.ConcurrencyLimiter,
 		EventBus:                 cfg.EventBus,
 		ConfigResolver:           resolver,
 		SSEConfig:                conversationapi.SSEConfig(sseConfig),

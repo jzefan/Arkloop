@@ -53,14 +53,15 @@ type ExecuteInput struct {
 }
 
 type EngineV1Deps struct {
-	Router          *routing.ProviderRouter
-	DBPool          *pgxpool.Pool
-	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
-	RunControlHub   *pipeline.RunControlHub
-	StubGateway     llm.Gateway
-	EmitDebugEvents bool
-	RunLimiterRDB   *redis.Client
-	EventBus        eventbus.EventBus
+	Router             *routing.ProviderRouter
+	DBPool             *pgxpool.Pool
+	DirectDBPool       *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
+	RunControlHub      *pipeline.RunControlHub
+	StubGateway        llm.Gateway
+	EmitDebugEvents    bool
+	RunLimiterRDB      *redis.Client
+	ConcurrencyLimiter runlimit.ConcurrencyLimiter
+	EventBus           eventbus.EventBus
 
 	ConfigResolver sharedconfig.Resolver
 
@@ -137,14 +138,17 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	usageRepo := data.UsageRecordsRepository{}
 	creditsRepo := data.CreditsRepository{}
 
-	rdb := deps.RunLimiterRDB
+	concurrencyLimiter := deps.ConcurrencyLimiter
 	releaseSlot := func(ctx context.Context, run data.Run) {
 		// 子 Run 没有通过 API 层 TryAcquire，不释放并发槽
 		if run.ParentRunID != nil {
 			return
 		}
+		if concurrencyLimiter == nil {
+			return
+		}
 		key := runlimit.Key(run.OrgID.String())
-		runlimit.Release(ctx, rdb, key)
+		concurrencyLimiter.Release(ctx, key)
 	}
 
 	// deps.DBPool 为 nil 时 resolver 保持 nil，EntitlementMiddleware 以 fail-open 方式跳过检查
@@ -154,7 +158,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	}
 	var resolver *sharedent.Resolver
 	if db != nil {
-		resolver = sharedent.NewResolver(db, rdb)
+		resolver = sharedent.NewResolver(db, deps.RunLimiterRDB)
 	}
 
 	cfgResolver := deps.ConfigResolver
@@ -187,7 +191,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolBuildMiddleware(),
 	}
 
-	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, deps.EventBus, usageRepo, creditsRepo, resolver)
+	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, concurrencyLimiter, deps.EventBus, usageRepo, creditsRepo, resolver)
 
 	return &EngineV1{
 		middlewares:           middlewares,

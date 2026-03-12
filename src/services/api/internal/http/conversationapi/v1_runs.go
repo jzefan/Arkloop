@@ -30,7 +30,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 
 	"arkloop/services/shared/eventbus"
 )
@@ -127,7 +126,7 @@ func createThreadRun(
 	apiKeysRepo *data.APIKeysRepository,
 	limiter *data.RunLimiter,
 	entSvc *entitlement.Service,
-	rdb *redis.Client,
+	concurrencyLimiter runlimit.ConcurrencyLimiter,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
@@ -230,7 +229,7 @@ func createThreadRun(
 		}
 
 		var acquired bool
-		if entSvc != nil && rdb != nil {
+		if entSvc != nil && concurrencyLimiter != nil {
 			// 从权益系统获取该 org 的并发上限，动态解析覆盖全局配置。
 			limitVal, err := entSvc.Resolve(r.Context(), thread.OrgID, "limit.concurrent_runs")
 			if err != nil {
@@ -238,14 +237,14 @@ func createThreadRun(
 				return
 			}
 			key := runlimit.Key(thread.OrgID.String())
-			if !runlimit.TryAcquire(r.Context(), rdb, key, limitVal.Int()) {
+			if !concurrencyLimiter.TryAcquire(r.Context(), key, limitVal.Int()) {
 				httpkit.WriteError(w, nethttp.StatusTooManyRequests, "runs.limit_exceeded", "concurrent run limit exceeded", traceID, nil)
 				return
 			}
 			acquired = true
 			defer func() {
 				if acquired {
-					runlimit.Release(r.Context(), rdb, key)
+					concurrencyLimiter.Release(r.Context(), key)
 				}
 			}()
 		} else if limiter != nil {

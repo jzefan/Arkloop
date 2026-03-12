@@ -18,7 +18,6 @@ import (
 	"arkloop/services/worker/internal/events"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -44,7 +43,7 @@ func NewAgentLoopHandler(
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
 	messagesRepo data.MessagesRepository,
-	runLimiterRDB *redis.Client,
+	concurrencyLimiter runlimit.ConcurrencyLimiter,
 	eventBus eventbus.EventBus,
 	usageRepo data.UsageRecordsRepository,
 	creditsRepo data.CreditsRepository,
@@ -71,7 +70,7 @@ func NewAgentLoopHandler(
 		}
 
 		writer := newEventWriter(
-			rc.DB, rc.Run, rc.TraceID, runLimiterRDB, eventBus,
+			rc.DB, rc.Run, rc.TraceID, concurrencyLimiter, eventBus,
 			selected.Route.Model, personaID, usageRepo, creditsRepo,
 			creditsPerUSD,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
@@ -146,11 +145,11 @@ func NewAgentLoopHandler(
 
 // eventWriter 批提交事件并在终态时更新 runs.status + DECR 并发计数 + 写入 usage_records。
 type eventWriter struct {
-	db            database.DB
-	run           data.Run
-	traceID       string
-	runLimiterRDB *redis.Client // 并发槽释放（runlimit.Release）
-	eventBus      eventbus.EventBus // 跨实例 SSE 广播（Publish）
+	db                 database.DB
+	run                data.Run
+	traceID            string
+	concurrencyLimiter runlimit.ConcurrencyLimiter // 并发槽释放
+	eventBus           eventbus.EventBus           // 跨实例 SSE 广播（Publish）
 	model         string
 	personaID     string
 	usageRepo     data.UsageRecordsRepository
@@ -187,7 +186,7 @@ func newEventWriter(
 	db database.DB,
 	run data.Run,
 	traceID string,
-	runLimiterRDB *redis.Client,
+	concurrencyLimiter runlimit.ConcurrencyLimiter,
 	eventBus eventbus.EventBus,
 	model string,
 	personaID string,
@@ -212,7 +211,7 @@ func newEventWriter(
 		run:                 run,
 		traceID:             strings.TrimSpace(traceID),
 		lastCommitAt:        time.Now(),
-		runLimiterRDB:       runLimiterRDB,
+		concurrencyLimiter:  concurrencyLimiter,
 		eventBus:            eventBus,
 		model:               model,
 		personaID:           strings.TrimSpace(personaID),
@@ -404,9 +403,9 @@ func (w *eventWriter) commit(ctx context.Context) error {
 		w.hasTerminal = false
 		w.terminalMessage = ""
 		// 子 Run 没有通过 API 层 TryAcquire，不释放并发槽
-		if w.run.ParentRunID == nil {
+		if w.run.ParentRunID == nil && w.concurrencyLimiter != nil {
 			key := runlimit.Key(w.run.OrgID.String())
-			runlimit.Release(ctx, w.runLimiterRDB, key)
+			w.concurrencyLimiter.Release(ctx, key)
 		}
 	}
 
