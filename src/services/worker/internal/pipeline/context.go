@@ -59,6 +59,10 @@ type RunContext struct {
 	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 --
 	FinalAssistantOutput string
 
+	// -- AgentLoopHandler 写入：本次 run 的 tool call 总数和 LLM 迭代轮数，供 MemoryMiddleware 判断提炼条件 --
+	RunToolCallCount  int
+	RunIterationCount int
+
 	// -- CancelGuardMiddleware 写入 --
 	CancelFunc context.CancelFunc // 释放 LISTEN 连接
 	ListenDone <-chan struct{}    // LISTEN goroutine 完成信号
