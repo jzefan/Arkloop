@@ -15,6 +15,7 @@ import (
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/stablejson"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"github.com/google/uuid"
 )
 
@@ -258,12 +259,31 @@ func (l *Loop) Run(
 				return err
 			}
 
-			questions := askUserCall.ArgumentsJSON["questions"]
 			requestID := askUserCall.ToolCallID
+			callArgs := askUserCall.ArgumentsJSON
+
+			message, schema, normErr := askuser.ValidateAndNormalize(callArgs)
+			if normErr != nil {
+				answerResult := llm.StreamToolResult{
+					ToolCallID: requestID,
+					ToolName:   askUserToolName,
+					Error: &llm.GatewayError{
+						ErrorClass: "tool.args_invalid",
+						Message:    normErr.Error(),
+					},
+				}
+				messages = append(messages, toolResultMessage(answerResult))
+				askErrorClass := stringPtr(answerResult.Error.ErrorClass)
+				if err := yield(emitter.Emit("tool.result", answerResult.ToDataJSON(), stringPtr(askUserToolName), askErrorClass)); err != nil {
+					return err
+				}
+				continue
+			}
 
 			if err := yield(emitter.Emit("run.input_requested", map[string]any{
-				"request_id": requestID,
-				"questions":  questions,
+				"request_id":      requestID,
+				"message":         message,
+				"requestedSchema": schema,
 			}, nil, nil)); err != nil {
 				return err
 			}
@@ -272,10 +292,19 @@ func (l *Loop) Run(
 			if runCtx.WaitForInput != nil {
 				text, ok := runCtx.WaitForInput(ctx)
 				if ok && text != "" {
-					answerResult = llm.StreamToolResult{
-						ToolCallID: requestID,
-						ToolName:   askUserToolName,
-						ResultJSON: map[string]any{"user_response": text},
+					var parsed map[string]any
+					if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+						answerResult = llm.StreamToolResult{
+							ToolCallID: requestID,
+							ToolName:   askUserToolName,
+							ResultJSON: map[string]any{"user_response": parsed},
+						}
+					} else {
+						answerResult = llm.StreamToolResult{
+							ToolCallID: requestID,
+							ToolName:   askUserToolName,
+							ResultJSON: map[string]any{"user_response": text},
+						}
 					}
 				} else {
 					answerResult = llm.StreamToolResult{

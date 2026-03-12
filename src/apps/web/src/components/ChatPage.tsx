@@ -35,7 +35,7 @@ import {
   buildMessageBrowserActionsFromRunEvents,
 } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
-import type { UserInputRequest, UserInputResponse } from '../userInputTypes'
+import type { UserInputRequest, UserInputResponse, RequestedSchema } from '../userInputTypes'
 import {
   createMessage,
   createRun,
@@ -1059,11 +1059,18 @@ export function ChatPage() {
 
       if (event.type === 'run.input_requested') {
         const data = event.data as Record<string, unknown> | undefined
-        const questions = data?.questions
-        if (Array.isArray(questions) && questions.length > 0) {
+        const message = data?.message as string | undefined
+        const schema = data?.requestedSchema as RequestedSchema | undefined
+        if (message && schema && schema.properties && Object.keys(schema.properties).length > 0) {
+          // 规范化 required 字段，防止 LLM 传非数组值导致前端崩溃
+          const safeSchema: RequestedSchema = {
+            ...schema,
+            required: Array.isArray(schema.required) ? schema.required : undefined,
+          }
           setPendingUserInput({
             request_id: (data?.request_id as string) ?? '',
-            questions: questions as UserInputRequest['questions'],
+            message,
+            requestedSchema: safeSchema,
           })
         } else {
           setAwaitingInput(true)
@@ -1586,7 +1593,7 @@ export function ChatPage() {
     if (!activeRunId) return
     setError(null)
     try {
-      await provideInput(accessToken, activeRunId, JSON.stringify(response))
+      await provideInput(accessToken, activeRunId, JSON.stringify(response.answers))
       setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
@@ -1603,12 +1610,7 @@ export function ChatPage() {
     if (!req) return
     setError(null)
     try {
-      const empty: UserInputResponse = {
-        type: 'user_input_response',
-        request_id: req.request_id,
-        answers: {},
-      }
-      await provideInput(accessToken, activeRunId, JSON.stringify(empty))
+      await provideInput(accessToken, activeRunId, JSON.stringify({}))
       setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {

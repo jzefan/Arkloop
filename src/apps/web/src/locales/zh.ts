@@ -315,9 +315,5 @@ export const zh: LocaleStrings = {
     dismiss: '跳过',
     submit: '提交',
     submitting: '提交中...',
-    next: '继续',
-    selected: '已选',
-    otherPlaceholder: '输入你的答案...',
-    recommended: '推荐',
   },
 }

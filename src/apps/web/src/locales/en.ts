@@ -315,9 +315,5 @@ export const en: LocaleStrings = {
     dismiss: 'Skip',
     submit: 'Submit',
     submitting: 'Submitting...',
-    next: 'Next',
-    selected: 'selected',
-    otherPlaceholder: 'Type your answer...',
-    recommended: 'Recommended',
   },
 }

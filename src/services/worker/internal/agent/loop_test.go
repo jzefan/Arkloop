@@ -1073,14 +1073,14 @@ func (g *askUserGateway) Stream(_ context.Context, _ llm.Request, yield func(llm
 			ToolCallID: "call_askuser",
 			ToolName:   "ask_user",
 			ArgumentsJSON: map[string]any{
-				"questions": []any{
+				"message": "Pick a database",
+				"fields": []any{
 					map[string]any{
-						"id":       "q1",
-						"question": "Pick one",
-						"options": []any{
-							map[string]any{"value": "a", "label": "A"},
-							map[string]any{"value": "b", "label": "B"},
-						},
+						"key":      "db",
+						"type":     "string",
+						"title":    "Database",
+						"enum":     []any{"postgres", "mysql"},
+						"required": true,
 					},
 				},
 			},
@@ -1100,7 +1100,7 @@ func TestAskUserLoopIntercept(t *testing.T) {
 	loop := NewLoop(gateway, nil)
 	emitter := events.NewEmitter("trace")
 
-	userAnswer := `{"type":"user_input_response","request_id":"call_askuser","answers":{"q1":{"type":"option","value":"a"}}}`
+	userAnswer := `{"db":"postgres"}`
 
 	var got []events.RunEvent
 	err := loop.Run(
@@ -1222,13 +1222,13 @@ func (g *askUserMixedGateway) Stream(_ context.Context, _ llm.Request, yield fun
 			ToolCallID: "call_ask",
 			ToolName:   "ask_user",
 			ArgumentsJSON: map[string]any{
-				"questions": []any{
+				"message": "Pick one",
+				"fields": []any{
 					map[string]any{
-						"id": "q1", "question": "?",
-						"options": []any{
-							map[string]any{"value": "a", "label": "A"},
-							map[string]any{"value": "b", "label": "B"},
-						},
+						"key":   "choice",
+						"type":  "string",
+						"title": "Choice",
+						"enum":  []any{"a", "b"},
 					},
 				},
 			},
@@ -1270,7 +1270,7 @@ func TestAskUserMixedWithRegularTools(t *testing.T) {
 			ToolExecutor:        executor,
 			CancelSignal:        func() bool { return false },
 			WaitForInput: func(_ context.Context) (string, bool) {
-				return `{"answers":{"q1":{"type":"option","value":"b"}}}`, true
+				return `{"choice":"b"}`, true
 			},
 		},
 		llm.Request{Model: "stub"},

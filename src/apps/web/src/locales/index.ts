@@ -323,10 +323,6 @@ export interface LocaleStrings {
     dismiss: string
     submit: string
     submitting: string
-    next: string
-    selected: string
-    otherPlaceholder: string
-    recommended: string
   }
 }
 
