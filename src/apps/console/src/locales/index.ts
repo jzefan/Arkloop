@@ -597,7 +597,7 @@ export interface LocaleStrings {
       cardInputTokens: string
       cardOutputTokens: string
       cardCostUSD: string
-      cardActiveOrgs: string
+      cardActiveProjects: string
       toastLoadFailed: string
     }
     myUsage: {
@@ -644,10 +644,10 @@ export interface LocaleStrings {
       detailEmailNotVerified: string
       detailLocale: string
       detailTimezone: string
-      detailOrgs: string
-      detailOrgId: string
-      detailOrgRole: string
-      detailNoOrgs: string
+      detailProjects: string
+      detailProjectId: string
+      detailProjectRole: string
+      detailNoProjects: string
       suspendTitle: string
       suspendMessage: (name: string) => string
       suspendConfirm: string
@@ -861,19 +861,19 @@ export interface LocaleStrings {
       deleteTitle: string
       deleteMessage: (key: string) => string
       deleteConfirm: string
-      // org overrides
-      orgOverrides: string
+      // project overrides
+      projectOverrides: string
       overridesEmpty: string
       addOverride: string
-      overrideOrgId: string
+      overrideProjectId: string
       overrideEnabled: string
       deleteOverride: string
       deleteOverrideTitle: string
-      deleteOverrideMessage: (orgId: string) => string
+      deleteOverrideMessage: (projectId: string) => string
       deleteOverrideConfirm: string
       // errors
       errKeyRequired: string
-      errOrgIdRequired: string
+      errProjectIdRequired: string
       // toasts
       toastCreated: string
       toastUpdated: string
@@ -1091,7 +1091,7 @@ export interface LocaleStrings {
       filterRunPlaceholder: string
       filterThreadPlaceholder: string
       filterUserPlaceholder: string
-      filterOrgPlaceholder: string
+      filterProjectPlaceholder: string
       filterParentRunPlaceholder: string
       filterStatusLabel: string
       filterModelLabel: string
@@ -1107,7 +1107,7 @@ export interface LocaleStrings {
       // table columns
       colId: string
       colUser: string
-      colOrg: string
+      colProject: string
       colThread: string
       colStatus: string
       colModel: string
@@ -1150,7 +1150,7 @@ export interface LocaleStrings {
       usageTotal: string
       labelUser: string
       labelThread: string
-      labelOrg: string
+      labelProject: string
       labelPersona: string
       labelPersonaModel: string
       labelCredential: string

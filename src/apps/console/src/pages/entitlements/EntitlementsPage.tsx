@@ -91,7 +91,7 @@ export function EntitlementsPage() {
   const [gatewayPerMinute, setGatewayPerMinute] = useState('')
   const [savingGateway, setSavingGateway] = useState(false)
 
-  const [orgId, setOrgId] = useState('')
+  const [projectId, setProjectId] = useState('')
   const [loadingOverrides, setLoadingOverrides] = useState(false)
   const [savingOverrideKey, setSavingOverrideKey] = useState<string | null>(null)
   const [deletingOverrideKey, setDeletingOverrideKey] = useState<string | null>(null)
@@ -234,9 +234,9 @@ export function EntitlementsPage() {
   }, [accessToken, addToast, gatewayCapacity, gatewayConfig, gatewayPerMinute])
 
   const handleLoadOverrides = useCallback(async () => {
-    const id = orgId.trim()
+    const id = projectId.trim()
     if (!id) {
-      addToast('请先输入组织 ID', 'error')
+      addToast('请先输入项目 ID', 'error')
       return
     }
     setLoadingOverrides(true)
@@ -249,20 +249,20 @@ export function EntitlementsPage() {
         drafts[field.key] = byKey[field.key]?.value ?? ''
       }
       setOverrideDrafts(drafts)
-      addToast('已加载组织覆盖', 'success')
+      addToast('已加载项目覆盖', 'success')
     } catch (err) {
-      addToast(isApiError(err) ? err.message : '加载组织覆盖失败', 'error')
+      addToast(isApiError(err) ? err.message : '加载项目覆盖失败', 'error')
     } finally {
       setLoadingOverrides(false)
     }
-  }, [accessToken, addToast, orgId])
+  }, [accessToken, addToast, projectId])
 
   const handleSaveOverride = useCallback(async (key: string) => {
     const field = findField(key)
     if (!field) return
-    const id = orgId.trim()
+    const id = projectId.trim()
     if (!id) {
-      addToast('请先输入组织 ID', 'error')
+      addToast('请先输入项目 ID', 'error')
       return
     }
     const checked = parseAndValidate(overrideDrafts[key] ?? '', field)
@@ -287,18 +287,18 @@ export function EntitlementsPage() {
       setOverrideDrafts((prev) => ({ ...prev, [key]: checked.value! }))
       addToast(`${field.label} 覆盖已保存`, 'success')
     } catch (err) {
-      addToast(isApiError(err) ? err.message : '保存组织覆盖失败', 'error')
+      addToast(isApiError(err) ? err.message : '保存项目覆盖失败', 'error')
     } finally {
       setSavingOverrideKey(null)
     }
-  }, [accessToken, addToast, orgId, overrideDrafts])
+  }, [accessToken, addToast, projectId, overrideDrafts])
 
   const handleDeleteOverride = useCallback(async (key: string) => {
     const field = findField(key)
     if (!field) return
-    const id = orgId.trim()
+    const id = projectId.trim()
     if (!id) {
-      addToast('请先输入组织 ID', 'error')
+      addToast('请先输入项目 ID', 'error')
       return
     }
     const existing = overrideByKey[key]
@@ -318,11 +318,11 @@ export function EntitlementsPage() {
       setOverrideDrafts((prev) => ({ ...prev, [key]: '' }))
       addToast(`${field.label} 覆盖已删除`, 'success')
     } catch (err) {
-      addToast(isApiError(err) ? err.message : '删除组织覆盖失败', 'error')
+      addToast(isApiError(err) ? err.message : '删除项目覆盖失败', 'error')
     } finally {
       setDeletingOverrideKey(null)
     }
-  }, [accessToken, addToast, orgId, overrideByKey])
+  }, [accessToken, addToast, projectId, overrideByKey])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -421,16 +421,16 @@ export function EntitlementsPage() {
 
         <section className="rounded-lg border border-[var(--c-border-console)] bg-[var(--c-bg-card)] p-5">
           <div className="mb-4">
-            <h2 className="text-sm font-medium text-[var(--c-text-primary)]">组织覆盖</h2>
-            <p className="mt-1 text-xs text-[var(--c-text-muted)]">按组织覆盖全局默认限制。</p>
+            <h2 className="text-sm font-medium text-[var(--c-text-primary)]">项目覆盖</h2>
+            <p className="mt-1 text-xs text-[var(--c-text-muted)]">按项目覆盖全局默认限制。</p>
           </div>
 
           <div className="mb-4 flex flex-col gap-2 lg:flex-row">
             <input
               type="text"
-              value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
-              placeholder="org_id"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              placeholder="project_id"
               className={inputClass}
             />
             <button

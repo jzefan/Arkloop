@@ -20,8 +20,8 @@ export type MeResponse = {
   id: string
   username: string
   created_at: string
-  org_id: string
-  org_name: string
+  project_id: string // TODO(migrate): backend still sends org_id
+  project_name: string // TODO(migrate): backend still sends org_name
   role: string
   permissions: string[]
 }

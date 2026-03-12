@@ -58,7 +58,6 @@ type patchPersonaRequest struct {
 
 type personaResponse struct {
 	ID                  string          `json:"id"`
-	OrgID               *string         `json:"org_id"`
 	ProjectID           *string         `json:"project_id"`
 	Scope               string          `json:"scope"`
 	PersonaKey          string          `json:"persona_key"`
@@ -622,17 +621,16 @@ func toPersonaResponse(s data.Persona) personaResponse {
 		promptCacheControl = "none"
 	}
 
-	var orgIDStr *string
-	if s.OrgID != nil {
-		value := s.OrgID.String()
-		orgIDStr = &value
+	var projectIDStr *string
+	if s.ProjectID != nil {
+		value := s.ProjectID.String()
+		projectIDStr = &value
 	}
 
 	return personaResponse{
 		ID:                  s.ID.String(),
-		OrgID:               orgIDStr,
-		ProjectID:           orgIDStr,
-		Scope:               personaScopeFromProjectID(s.OrgID),
+		ProjectID:           projectIDStr,
+		Scope:               personaScopeFromProjectID(s.ProjectID),
 		PersonaKey:          s.PersonaKey,
 		Version:             s.Version,
 		DisplayName:         s.DisplayName,
@@ -700,7 +698,6 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 
 	return personaResponse{
 		ID:                  "builtin:" + s.ID + ":" + s.Version,
-		OrgID:               nil,
 		Scope:               scope,
 		PersonaKey:          s.ID,
 		Version:             s.Version,

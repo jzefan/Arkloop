@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 
 export type UsageSummary = {
-  org_id: string
+  project_id: string // TODO(migrate): backend still sends org_id
   year: number
   month: number
   total_input_tokens: number
@@ -26,38 +26,38 @@ export type ModelUsage = {
   record_count: number
 }
 
-export async function getOrgUsage(
-  orgId: string,
+export async function getProjectUsage(
+  projectId: string,
   year: number,
   month: number,
   accessToken: string,
 ): Promise<UsageSummary> {
   return apiFetch<UsageSummary>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/usage?year=${year}&month=${month}`,
+    `/v1/orgs/${encodeURIComponent(projectId)}/usage?year=${year}&month=${month}`,
     { accessToken },
   )
 }
 
-export async function getOrgDailyUsage(
-  orgId: string,
+export async function getProjectDailyUsage(
+  projectId: string,
   start: string,
   end: string,
   accessToken: string,
 ): Promise<DailyUsage[]> {
   return apiFetch<DailyUsage[]>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/usage/daily?start=${start}&end=${end}`,
+    `/v1/orgs/${encodeURIComponent(projectId)}/usage/daily?start=${start}&end=${end}`,
     { accessToken },
   )
 }
 
-export async function getOrgUsageByModel(
-  orgId: string,
+export async function getProjectUsageByModel(
+  projectId: string,
   year: number,
   month: number,
   accessToken: string,
 ): Promise<ModelUsage[]> {
   return apiFetch<ModelUsage[]>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/usage/by-model?year=${year}&month=${month}`,
+    `/v1/orgs/${encodeURIComponent(projectId)}/usage/by-model?year=${year}&month=${month}`,
     { accessToken },
   )
 }
