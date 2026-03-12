@@ -1,28 +1,38 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, ArrowRight, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowRight, Check, X } from 'lucide-react'
 import { useLocale } from '../contexts/LocaleContext'
 import type {
-  UserInputAnswer,
+  FieldSchema,
+  FieldValue,
   UserInputRequest,
   UserInputResponse,
 } from '../userInputTypes'
+import {
+  isEnumField,
+  isOneOfField,
+  isArrayEnumField,
+  isArrayAnyOfField,
+  isBooleanField,
+  isTextField,
+  isNumberField,
+} from '../userInputTypes'
 
-function buildInitialAnswers(questions: UserInputRequest['questions']): Record<string, UserInputAnswer> {
-  const initial: Record<string, UserInputAnswer> = {}
-  for (const question of questions) {
-    const recommended = question.options.find((option) => option.recommended)
-    if (recommended) {
-      initial[question.id] = { type: 'option', value: recommended.value }
+function getDefaultValue(field: FieldSchema): FieldValue | undefined {
+  if ('default' in field && field.default !== undefined) {
+    return field.default as FieldValue
+  }
+  return undefined
+}
+
+function buildInitialValues(schema: UserInputRequest['requestedSchema']): Record<string, FieldValue> {
+  const initial: Record<string, FieldValue> = {}
+  for (const [key, field] of Object.entries(schema.properties)) {
+    const def = getDefaultValue(field)
+    if (def !== undefined) {
+      initial[key] = def
     }
   }
   return initial
-}
-
-function isAnswerComplete(answer?: UserInputAnswer): boolean {
-  if (!answer) {
-    return false
-  }
-  return answer.type === 'option' || !!answer.value.trim()
 }
 
 interface Props {
@@ -34,74 +44,46 @@ interface Props {
 
 export default function UserInputCard({ request, onSubmit, onDismiss, disabled }: Props) {
   const { t } = useLocale()
-  const isMulti = request.questions.length > 1
-  const [activeIdx, setActiveIdx] = useState(0)
-  const [answers, setAnswers] = useState<Record<string, UserInputAnswer>>(() => buildInitialAnswers(request.questions))
-  const [otherTexts, setOtherTexts] = useState<Record<string, string>>({})
+  const fields = useMemo(() => Object.entries(request.requestedSchema.properties), [request])
+  const requiredSet = useMemo(() => {
+    const req = request.requestedSchema.required
+    return new Set(Array.isArray(req) ? req : [])
+  }, [request])
+  const [values, setValues] = useState<Record<string, FieldValue>>(() => buildInitialValues(request.requestedSchema))
   const [submitting, setSubmitting] = useState(false)
   const [cardHovered, setCardHovered] = useState(false)
-  const [hoveredOptIdx, setHoveredOptIdx] = useState<number | null>(null)
 
-  const currentQ = request.questions[activeIdx]
-  const isLastQuestion = activeIdx === request.questions.length - 1
-  const currentAnswer = answers[currentQ.id]
-  const currentAnswered = isAnswerComplete(currentAnswer)
-  const allAnswered = request.questions.every((question) => isAnswerComplete(answers[question.id]))
+  const setValue = useCallback((key: string, val: FieldValue) => {
+    setValues(prev => ({ ...prev, [key]: val }))
+  }, [])
 
-  const doSubmit = useCallback((latestAnswers: Record<string, UserInputAnswer>) => {
+  const allValid = useMemo(() => {
+    for (const key of requiredSet) {
+      const v = values[key]
+      if (v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) return false
+    }
+    return true
+  }, [values, requiredSet])
+
+  const doSubmit = useCallback(() => {
+    if (!allValid || submitting || disabled) return
     setSubmitting(true)
-    onSubmit({ type: 'user_input_response', request_id: request.request_id, answers: latestAnswers })
-  }, [onSubmit, request.request_id])
+    onSubmit({ type: 'user_input_response', request_id: request.request_id, answers: values })
+  }, [allValid, submitting, disabled, onSubmit, request.request_id, values])
 
-  const handleOptionClick = useCallback((questionId: string, value: string) => {
-    const updated: Record<string, UserInputAnswer> = { ...answers, [questionId]: { type: 'option', value } }
-    setAnswers(updated)
-
-    if (isMulti && !isLastQuestion) {
-      setActiveIdx((i) => i + 1)
-      return
-    }
-
-    let ready = true
-    for (const q of request.questions) {
-      const a = updated[q.id]
-      if (!a || (a.type === 'other' && !a.value.trim())) { ready = false; break }
-    }
-    if (ready) doSubmit(updated)
-  }, [answers, isMulti, isLastQuestion, request.questions, doSubmit])
+  // 单选快速提交: 合并当前值和新选择值后直接提交，避免 stale closure
+  const quickSubmit = useCallback((key: string, val: FieldValue) => {
+    if (submitting || disabled) return
+    const merged = { ...values, [key]: val }
+    setValues(merged)
+    setSubmitting(true)
+    onSubmit({ type: 'user_input_response', request_id: request.request_id, answers: merged })
+  }, [submitting, disabled, values, onSubmit, request.request_id])
 
   const handleDismiss = useCallback(() => {
     if (submitting || disabled) return
     onDismiss()
   }, [submitting, disabled, onDismiss])
-
-  const primaryEnabled = !submitting && !disabled && (allAnswered || (isMulti && !isLastQuestion && currentAnswered))
-
-  const handlePrimaryAction = useCallback(() => {
-    if (!primaryEnabled) {
-      return
-    }
-    if (isMulti && !isLastQuestion) {
-      setActiveIdx((index) => index + 1)
-      return
-    }
-    doSubmit(answers)
-  }, [answers, doSubmit, isLastQuestion, isMulti, primaryEnabled])
-
-  const handleSelectOther = useCallback(() => {
-    setAnswers((prev) => ({
-      ...prev,
-      [currentQ.id]: { type: 'other', value: otherTexts[currentQ.id] ?? '' },
-    }))
-  }, [currentQ.id, otherTexts])
-
-  const handleUpdateOther = useCallback((text: string) => {
-    setOtherTexts((prev) => ({ ...prev, [currentQ.id]: text }))
-    setAnswers((prev) => ({
-      ...prev,
-      [currentQ.id]: { type: 'other', value: text },
-    }))
-  }, [currentQ.id])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -111,11 +93,8 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleDismiss])
 
-  const otherSelected = answers[currentQ.id]?.type === 'other'
-  const otherText = otherTexts[currentQ.id] ?? ''
-
-  // 卡片水平 padding，用于选项容器负 margin 延伸到边缘
-  const CARD_H_PAD = 22
+  // 只有单个 select/oneOf 字段时，点选即提交
+  const isSingleSelect = fields.length === 1 && (isEnumField(fields[0][1]) || isOneOfField(fields[0][1]))
 
   return (
     <div
@@ -128,210 +107,415 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
         borderRadius: '20px',
         boxShadow: cardHovered ? 'var(--c-input-shadow-hover)' : 'var(--c-input-shadow)',
         transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-        padding: `18px ${CARD_H_PAD}px 16px`,
+        padding: '18px 22px 16px',
       }}
       onMouseEnter={() => setCardHovered(true)}
       onMouseLeave={() => setCardHovered(false)}
     >
-      {/* Header */}
+      {/* Message */}
       <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="flex flex-col gap-0.5 flex-1">
-          {currentQ.header && (
-            <span
-              className="text-[10px] font-normal"
-              style={{ color: 'var(--c-text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}
-            >
-              {currentQ.header}
-            </span>
-          )}
-          <h2 className="text-[17px] font-normal leading-snug m-0" style={{ color: 'var(--c-text-secondary)' }}>
-            {currentQ.question}
-          </h2>
-        </div>
-
-        <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
-          {isMulti && (
-            <>
-              <button
-                type="button"
-                onClick={() => activeIdx > 0 && setActiveIdx((i) => i - 1)}
-                disabled={activeIdx === 0}
-                className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-25 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
-                style={{ color: 'var(--c-text-secondary)' }}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span className="text-xs tabular-nums px-0.5" style={{ color: 'var(--c-text-tertiary)' }}>
-                {activeIdx + 1}/{request.questions.length}
-              </span>
-              <button
-                type="button"
-                onClick={() => !isLastQuestion && setActiveIdx((i) => i + 1)}
-                disabled={isLastQuestion}
-                className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-25 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
-                style={{ color: 'var(--c-text-secondary)' }}
-              >
-                <ChevronRight size={14} />
-              </button>
-              <div style={{ width: '1px', height: '14px', background: 'var(--c-border-subtle)', margin: '0 2px' }} />
-            </>
-          )}
-          <button
-            type="button"
-            onClick={handleDismiss}
-            disabled={submitting || !!disabled}
-            aria-label={t.userInput.dismiss}
-            className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-30 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
-            style={{ color: 'var(--c-text-muted)' }}
-          >
-            <X size={13} />
-          </button>
-        </div>
+        <h2 className="text-[17px] font-normal leading-snug m-0 flex-1" style={{ color: 'var(--c-text-secondary)' }}>
+          {request.message}
+        </h2>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          disabled={submitting || !!disabled}
+          aria-label={t.userInput.dismiss}
+          className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-30 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)] flex-shrink-0 mt-0.5"
+          style={{ color: 'var(--c-text-muted)' }}
+        >
+          <X size={13} />
+        </button>
       </div>
 
-      {/*
-        Options list
-        负 margin = 卡片水平 padding，让选项行的 hover 背景可以延伸到卡片内边缘
-        分割线 marginLeft/Right = 0，相对于此容器就是全宽，与卡片边缘对齐
-        行内再用 paddingLeft/Right 补回内缩距离 + 额外 8px 留给 hover 的呼吸感
-      */}
-      <div
-        className="flex flex-col"
-        style={{ marginLeft: 0, marginRight: 0 }}
-      >
-        {currentQ.options.map((opt, idx) => {
-          const selected = answers[currentQ.id]?.type === 'option' && answers[currentQ.id]?.value === opt.value
-          const isHovered = hoveredOptIdx === idx
-          const showDivider = idx < currentQ.options.length - 1
-          const dividerVisible = hoveredOptIdx !== idx && hoveredOptIdx !== idx + 1
+      {/* Fields */}
+      <div className="flex flex-col gap-4">
+        {fields.map(([key, field]) => (
+          <FieldRenderer
+            key={key}
+            fieldKey={key}
+            field={field}
+            value={values[key]}
+            required={requiredSet.has(key)}
+            disabled={submitting || !!disabled}
+            onChange={val => setValue(key, val)}
+            onQuickSubmit={isSingleSelect ? (val: FieldValue) => quickSubmit(key, val) : undefined}
+          />
+        ))}
+      </div>
+
+      {/* Footer: 多字段时显示提交按钮 */}
+      {!isSingleSelect && (
+        <div className="flex items-center justify-end pt-3 mt-3" style={{ borderTop: '0.5px solid var(--c-border-subtle)' }}>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={doSubmit}
+              aria-label={t.userInput.submit}
+              disabled={!allValid || submitting || !!disabled}
+              className="flex h-7 items-center gap-1.5 rounded-lg px-3 border-none cursor-pointer transition-[background-color,color] duration-[60ms] disabled:opacity-30 text-[13px] font-medium"
+              style={{
+                background: allValid && !submitting ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
+                color: allValid && !submitting ? 'var(--c-bg-page)' : 'var(--c-text-muted)',
+              }}
+            >
+              {submitting ? t.userInput.submitting : t.userInput.submit}
+              {!submitting && <ArrowRight size={13} />}
+            </button>
+            <button
+              type="button"
+              onClick={handleDismiss}
+              disabled={submitting || !!disabled}
+              className="rounded-lg px-3 py-1.5 text-[13px] border-none bg-transparent cursor-pointer transition-[background-color] duration-[60ms] disabled:opacity-40 hover:bg-[var(--c-bg-deep)]"
+              style={{ color: 'var(--c-text-secondary)' }}
+            >
+              {t.userInput.dismiss}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- FieldRenderer ---
+
+interface FieldRendererProps {
+  fieldKey: string
+  field: FieldSchema
+  value: FieldValue | undefined
+  required: boolean
+  disabled: boolean
+  onChange: (val: FieldValue) => void
+  onQuickSubmit?: (val: FieldValue) => void
+}
+
+function FieldRenderer({ fieldKey, field, value, disabled, onChange, onQuickSubmit }: FieldRendererProps) {
+  if (isEnumField(field)) {
+    return <SelectField field={field} value={value as string | undefined} disabled={disabled} onChange={onChange} onQuickSubmit={onQuickSubmit} />
+  }
+  if (isOneOfField(field)) {
+    return <OneOfSelectField field={field} value={value as string | undefined} disabled={disabled} onChange={onChange} onQuickSubmit={onQuickSubmit} />
+  }
+  if (isArrayEnumField(field)) {
+    return <MultiSelectEnumField field={field} value={(value as string[]) ?? []} disabled={disabled} onChange={onChange} />
+  }
+  if (isArrayAnyOfField(field)) {
+    return <MultiSelectAnyOfField field={field} value={(value as string[]) ?? []} disabled={disabled} onChange={onChange} />
+  }
+  if (isBooleanField(field)) {
+    return <BooleanField field={field} value={value as boolean | undefined} disabled={disabled} onChange={onChange} />
+  }
+  if (isNumberField(field)) {
+    return <NumberField fieldKey={fieldKey} field={field} value={value as number | undefined} disabled={disabled} onChange={onChange} />
+  }
+  if (isTextField(field)) {
+    return <TextField fieldKey={fieldKey} field={field} value={(value as string) ?? ''} disabled={disabled} onChange={onChange} />
+  }
+  return null
+}
+
+// --- FieldLabel ---
+
+function FieldLabel({ title, description }: { title?: string; description?: string }) {
+  if (!title) return null
+  return (
+    <div className="mb-2">
+      <span className="text-[14px] font-medium" style={{ color: 'var(--c-text-primary)' }}>{title}</span>
+      {description && (
+        <span className="ml-2 text-[12px]" style={{ color: 'var(--c-text-muted)' }}>{description}</span>
+      )}
+    </div>
+  )
+}
+
+// --- Select (enum) ---
+
+interface SelectFieldProps {
+  field: { title?: string; description?: string; enum: string[]; enumNames?: string[] }
+  value: string | undefined
+  disabled: boolean
+  onChange: (val: string) => void
+  onQuickSubmit?: (val: string) => void
+}
+
+function SelectField({ field, value, disabled, onChange, onQuickSubmit }: SelectFieldProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  const handleClick = useCallback((v: string) => {
+    onChange(v)
+    if (onQuickSubmit) onQuickSubmit(v)
+  }, [onChange, onQuickSubmit])
+
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <div className="flex flex-col">
+        {field.enum.map((opt, idx) => {
+          const label = field.enumNames?.[idx] ?? opt
+          const selected = value === opt
+          const isHovered = hoveredIdx === idx
           return (
-            <div key={opt.value}>
+            <div key={opt}>
               <OptionRow
                 index={idx}
-                option={opt}
+                label={label}
                 selected={selected}
-                disabled={submitting || !!disabled}
+                disabled={disabled}
                 isHovered={isHovered}
-                onHover={() => setHoveredOptIdx(idx)}
-                onHoverEnd={() => setHoveredOptIdx(null)}
-                onClick={() => handleOptionClick(currentQ.id, opt.value)}
-                t={t}
+                onHover={() => setHoveredIdx(idx)}
+                onHoverEnd={() => setHoveredIdx(null)}
+                onClick={() => handleClick(opt)}
               />
-              {showDivider && (
-                <div
-                  style={{
-                    height: '0.5px',
-                    background: 'var(--c-border-subtle)',
-                    // marginLeft/Right = 0：分割线与容器等宽，即与卡片边缘对齐
-                    opacity: dividerVisible ? 1 : 0,
-                    transition: 'opacity 60ms ease',
-                  }}
-                />
+              {idx < field.enum.length - 1 && (
+                <div style={{ height: '0.5px', background: 'var(--c-border-subtle)', opacity: hoveredIdx !== idx && hoveredIdx !== idx + 1 ? 1 : 0, transition: 'opacity 60ms ease' }} />
               )}
             </div>
           )
         })}
       </div>
+    </div>
+  )
+}
 
-      {/*
-        Footer
-        margin-top = 0：让最后一个选项的 paddingBottom (13px) 自然充当与分割线的间距
-        这样底部间距 ≈ 顶部标题 mb-4 (16px)，视觉上均匀
-      */}
-      <div
-        className="flex items-center justify-between pt-3"
-        style={{ borderTop: '0.5px solid var(--c-border-subtle)', marginTop: 0 }}
-      >
-        {currentQ.allow_other ? (
-          <OtherInput
-            selected={otherSelected}
-            text={otherText}
-            disabled={submitting || !!disabled}
-            onSelect={handleSelectOther}
-            onUpdateText={handleUpdateOther}
-            onSubmit={handlePrimaryAction}
-            t={t}
-          />
-        ) : (
-          <span />
-        )}
+// --- Select (oneOf) ---
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            type="button"
-            onClick={handlePrimaryAction}
-            aria-label={t.userInput.submit}
-            data-testid="user-input-submit"
-            disabled={!primaryEnabled}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border-none cursor-pointer transition-[background-color,color] duration-[60ms] disabled:opacity-30"
-            style={{
-              background: primaryEnabled ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
-              color: primaryEnabled ? 'var(--c-bg-page)' : 'var(--c-text-muted)',
-            }}
-          >
-            <ArrowRight size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={handleDismiss}
-            disabled={submitting || !!disabled}
-            className="rounded-lg px-3 py-1.5 text-[13px] border-none bg-transparent cursor-pointer transition-[background-color] duration-[60ms] disabled:opacity-40 hover:bg-[var(--c-bg-deep)]"
-            style={{ color: 'var(--c-text-secondary)' }}
-          >
-            {t.userInput.dismiss}
-          </button>
-        </div>
+interface OneOfSelectFieldProps {
+  field: { title?: string; description?: string; oneOf: Array<{ const: string; title: string }> }
+  value: string | undefined
+  disabled: boolean
+  onChange: (val: string) => void
+  onQuickSubmit?: (val: string) => void
+}
+
+function OneOfSelectField({ field, value, disabled, onChange, onQuickSubmit }: OneOfSelectFieldProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  const handleClick = useCallback((v: string) => {
+    onChange(v)
+    if (onQuickSubmit) onQuickSubmit(v)
+  }, [onChange, onQuickSubmit])
+
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <div className="flex flex-col">
+        {field.oneOf.map((opt, idx) => {
+          const selected = value === opt.const
+          const isHovered = hoveredIdx === idx
+          return (
+            <div key={opt.const}>
+              <OptionRow
+                index={idx}
+                label={opt.title}
+                selected={selected}
+                disabled={disabled}
+                isHovered={isHovered}
+                onHover={() => setHoveredIdx(idx)}
+                onHoverEnd={() => setHoveredIdx(null)}
+                onClick={() => handleClick(opt.const)}
+              />
+              {idx < field.oneOf.length - 1 && (
+                <div style={{ height: '0.5px', background: 'var(--c-border-subtle)', opacity: hoveredIdx !== idx && hoveredIdx !== idx + 1 ? 1 : 0, transition: 'opacity 60ms ease' }} />
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-// --- OptionRow ---
+// --- Multiselect (enum) ---
+
+interface MultiSelectEnumFieldProps {
+  field: { title?: string; description?: string; items: { enum: string[] } }
+  value: string[]
+  disabled: boolean
+  onChange: (val: string[]) => void
+}
+
+function MultiSelectEnumField({ field, value, disabled, onChange }: MultiSelectEnumFieldProps) {
+  const toggle = useCallback((v: string) => {
+    onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v])
+  }, [value, onChange])
+
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <div className="flex flex-col gap-0.5">
+        {field.items.enum.map(opt => (
+          <CheckboxRow key={opt} label={opt} checked={value.includes(opt)} disabled={disabled} onClick={() => toggle(opt)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// --- Multiselect (anyOf) ---
+
+interface MultiSelectAnyOfFieldProps {
+  field: { title?: string; description?: string; items: { anyOf: Array<{ const: string; title: string }> } }
+  value: string[]
+  disabled: boolean
+  onChange: (val: string[]) => void
+}
+
+function MultiSelectAnyOfField({ field, value, disabled, onChange }: MultiSelectAnyOfFieldProps) {
+  const toggle = useCallback((v: string) => {
+    onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v])
+  }, [value, onChange])
+
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <div className="flex flex-col gap-0.5">
+        {field.items.anyOf.map(opt => (
+          <CheckboxRow key={opt.const} label={opt.title} checked={value.includes(opt.const)} disabled={disabled} onClick={() => toggle(opt.const)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// --- Boolean ---
+
+interface BooleanFieldProps {
+  field: { title?: string; description?: string }
+  value: boolean | undefined
+  disabled: boolean
+  onChange: (val: boolean) => void
+}
+
+function BooleanField({ field, value, disabled, onChange }: BooleanFieldProps) {
+  const checked = value ?? false
+  return (
+    <div>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => !disabled && onChange(!checked)}
+        onKeyDown={e => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onChange(!checked) } }}
+        className="flex items-center gap-3 cursor-pointer rounded-lg px-2 py-2.5 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
+        style={{ opacity: disabled ? 0.5 : 1 }}
+      >
+        <div
+          className="flex-shrink-0 flex items-center justify-center rounded-md"
+          style={{
+            width: '22px', height: '22px',
+            background: checked ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
+            color: checked ? 'var(--c-bg-page)' : 'transparent',
+            transition: 'background 60ms ease, color 60ms ease',
+          }}
+        >
+          <Check size={13} />
+        </div>
+        <span className="text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
+          {field.title}
+        </span>
+        {field.description && (
+          <span className="text-[12px]" style={{ color: 'var(--c-text-muted)' }}>{field.description}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- Text ---
+
+interface TextFieldProps {
+  fieldKey: string
+  field: { title?: string; description?: string; maxLength?: number }
+  value: string
+  disabled: boolean
+  onChange: (val: string) => void
+}
+
+function TextField({ fieldKey, field, value, disabled, onChange }: TextFieldProps) {
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <input
+        id={`field-${fieldKey}`}
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        maxLength={field.maxLength}
+        disabled={disabled}
+        className="w-full rounded-lg px-3 py-2 text-[14px] font-light outline-none"
+        style={{
+          background: 'var(--c-bg-deep)',
+          color: 'var(--c-text-primary)',
+          border: '0.5px solid var(--c-border-subtle)',
+          caretColor: 'var(--c-text-primary)',
+        }}
+      />
+    </div>
+  )
+}
+
+// --- Number ---
+
+interface NumberFieldProps {
+  fieldKey: string
+  field: { title?: string; description?: string; minimum?: number; maximum?: number; type: 'number' | 'integer' }
+  value: number | undefined
+  disabled: boolean
+  onChange: (val: number) => void
+}
+
+function NumberField({ fieldKey, field, value, disabled, onChange }: NumberFieldProps) {
+  return (
+    <div>
+      <FieldLabel title={field.title} description={field.description} />
+      <input
+        id={`field-${fieldKey}`}
+        type="number"
+        value={value ?? ''}
+        onChange={e => {
+          const v = field.type === 'integer' ? parseInt(e.target.value, 10) : parseFloat(e.target.value)
+          if (!isNaN(v)) onChange(v)
+        }}
+        min={field.minimum}
+        max={field.maximum}
+        step={field.type === 'integer' ? 1 : 'any'}
+        disabled={disabled}
+        className="w-full rounded-lg px-3 py-2 text-[14px] font-light outline-none"
+        style={{
+          background: 'var(--c-bg-deep)',
+          color: 'var(--c-text-primary)',
+          border: '0.5px solid var(--c-border-subtle)',
+          caretColor: 'var(--c-text-primary)',
+        }}
+      />
+    </div>
+  )
+}
+
+// --- OptionRow (select 单选行) ---
 
 interface OptionRowProps {
   index: number
-  option: { value: string; label: string; description?: string; recommended?: boolean }
+  label: string
   selected: boolean
   disabled: boolean
   isHovered: boolean
-
   onHover: () => void
   onHoverEnd: () => void
   onClick: () => void
-  t: ReturnType<typeof useLocale>['t']
 }
 
-function OptionRow({ index, option, selected, disabled, isHovered, onHover, onHoverEnd, onClick, t }: OptionRowProps) {
-  const [showTooltip, setShowTooltip] = useState(false)
-
-  // badge 颜色策略（深色/浅色模式通用）：
-  //   已选中  → --c-text-primary（最亮），字色 --c-bg-page（最深）→ 最强对比
-  //   hover   → --c-border-subtle（比 --c-bg-deep 深一档），字色 --c-text-secondary
-  //   默认    → --c-bg-deep，字色 --c-text-muted（最灰），与选中态拉开最大距离
-  const badgeBg = selected
-    ? 'var(--c-text-primary)'
-    : isHovered && !disabled
-      ? 'var(--c-border-subtle)'
-      : 'var(--c-bg-deep)'
-
-  const badgeColor = selected
-    ? 'var(--c-bg-page)'
-    : isHovered && !disabled
-      ? 'var(--c-text-secondary)'
-      : 'var(--c-text-muted)'
-
-  // 行的水平 padding：不再抵消负 margin，直接使用 8px 呼吸感
-  const rowPx = 8;
+function OptionRow({ index, label, selected, disabled, isHovered, onHover, onHoverEnd, onClick }: OptionRowProps) {
+  const badgeBg = selected ? 'var(--c-text-primary)' : isHovered && !disabled ? 'var(--c-border-subtle)' : 'var(--c-bg-deep)'
+  const badgeColor = selected ? 'var(--c-bg-page)' : isHovered && !disabled ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
 
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={() => !disabled && onClick()}
-      onKeyDown={(e) => {
-        if (disabled) return
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() }
-      }}
+      onKeyDown={e => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick() } }}
       onMouseEnter={onHover}
       onMouseLeave={onHoverEnd}
       className="flex items-center gap-3 cursor-pointer"
@@ -340,119 +524,61 @@ function OptionRow({ index, option, selected, disabled, isHovered, onHover, onHo
         borderRadius: '10px',
         opacity: disabled ? 0.5 : 1,
         transition: 'background 60ms ease',
-        paddingTop: '13px',
-        paddingBottom: '13px',
-        paddingLeft: `${rowPx}px`,
-        paddingRight: `${rowPx}px`,
+        padding: '13px 8px',
       }}
     >
       <div
         className="flex-shrink-0 flex items-center justify-center rounded-md text-[12px] font-medium"
-        style={{
-          width: '26px',
-          height: '26px',
-          background: badgeBg,
-          color: badgeColor,
-          transition: 'background 60ms ease, color 60ms ease',
-          flexShrink: 0,
-        }}
+        style={{ width: '26px', height: '26px', background: badgeBg, color: badgeColor, transition: 'background 60ms ease, color 60ms ease' }}
       >
         {index + 1}
       </div>
-
       <span className="flex-1 text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
-        {option.label}
-        {option.recommended && (
-          <span className="ml-1.5 opacity-60 text-[13px]">
-            {t.userInput.recommended}
-          </span>
-        )}
+        {label}
       </span>
-
-
-
-      {option.description && (
-        <span
-          className="relative flex-shrink-0"
-          onMouseEnter={() => setShowTooltip(true)}
-          onMouseLeave={() => setShowTooltip(false)}
-        >
-          <span
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] cursor-help"
-            style={{ border: '0.5px solid var(--c-border-subtle)', color: 'var(--c-text-muted)' }}
-          >
-            i
-          </span>
-          {showTooltip && (
-            <div
-              className="absolute bottom-full right-0 z-10 mb-1 max-w-[200px] rounded-xl px-2.5 py-1.5 text-xs"
-              style={{
-                background: 'var(--c-bg-menu)',
-                border: '0.5px solid var(--c-border-subtle)',
-                color: 'var(--c-text-secondary)',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              }}
-            >
-              {option.description}
-            </div>
-          )}
-        </span>
-      )}
-
       <ArrowRight
         size={13}
-        style={{
-          flexShrink: 0,
-          color: 'var(--c-text-tertiary)',
-          opacity: isHovered && !disabled ? 1 : 0,
-          transition: 'opacity 80ms ease',
-        }}
+        style={{ flexShrink: 0, color: 'var(--c-text-tertiary)', opacity: isHovered && !disabled ? 1 : 0, transition: 'opacity 80ms ease' }}
       />
     </div>
   )
 }
 
-// --- OtherInput ---
+// --- CheckboxRow (multiselect 多选行) ---
 
-interface OtherInputProps {
-  selected: boolean
-  text: string
+interface CheckboxRowProps {
+  label: string
+  checked: boolean
   disabled: boolean
-  onSelect: () => void
-  onUpdateText: (text: string) => void
-  onSubmit: () => void
-  t: ReturnType<typeof useLocale>['t']
+  onClick: () => void
 }
 
-function OtherInput({ selected, text, disabled, onSelect, onUpdateText, onSubmit, t }: OtherInputProps) {
+function CheckboxRow({ label, checked, disabled, onClick }: CheckboxRowProps) {
   return (
-    <div className="flex items-center gap-2 flex-1 mr-3">
+    <div
+      role="checkbox"
+      aria-checked={checked}
+      tabIndex={0}
+      onClick={() => !disabled && onClick()}
+      onKeyDown={e => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick() } }}
+      className="flex items-center gap-3 cursor-pointer rounded-lg px-2 py-2.5 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
+      style={{ opacity: disabled ? 0.5 : 1 }}
+    >
       <div
-        className="flex-shrink-0 flex items-center justify-center rounded-md text-[12px] font-medium"
+        className="flex-shrink-0 flex items-center justify-center rounded-md"
         style={{
-          width: '22px',
-          height: '22px',
-          background: selected ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
-          color: selected ? 'var(--c-bg-page)' : 'var(--c-text-muted)',
+          width: '22px', height: '22px',
+          background: checked ? 'var(--c-text-primary)' : 'var(--c-bg-deep)',
+          color: checked ? 'var(--c-bg-page)' : 'transparent',
+          border: checked ? 'none' : '0.5px solid var(--c-border-subtle)',
           transition: 'background 60ms ease, color 60ms ease',
-          flexShrink: 0,
         }}
       >
-        *
+        <Check size={12} />
       </div>
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => { onUpdateText(e.target.value); onSelect() }}
-        onClick={onSelect}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && text.trim()) { e.preventDefault(); onSubmit() }
-        }}
-        disabled={disabled}
-        placeholder={t.userInput.otherPlaceholder}
-        className="flex-1 bg-transparent border-none outline-none text-[13px] font-light"
-        style={{ color: 'var(--c-text-primary)', caretColor: 'var(--c-text-primary)' }}
-      />
+      <span className="flex-1 text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
+        {label}
+      </span>
     </div>
   )
 }

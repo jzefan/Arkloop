@@ -20,43 +20,42 @@ afterEach(() => {
   container.remove()
 })
 
-const singleQuestion: UserInputRequest = {
+const singleSelect: UserInputRequest = {
   request_id: 'req_1',
-  questions: [
-    {
-      id: 'q1',
-      header: 'Select type',
-      question: 'Which demo?',
-      options: [
-        { value: 'a', label: 'Option A', description: 'Description A', recommended: true },
-        { value: 'b', label: 'Option B' },
-      ],
-      allow_other: false,
+  message: 'Which database?',
+  requestedSchema: {
+    properties: {
+      db: {
+        type: 'string' as const,
+        title: 'Database',
+        enum: ['postgres', 'mysql'],
+      },
     },
-  ],
+    required: ['db'],
+  },
 }
 
-const multiQuestion: UserInputRequest = {
+const multiField: UserInputRequest = {
   request_id: 'req_2',
-  questions: [
-    {
-      id: 'q1',
-      question: 'First?',
-      options: [
-        { value: 'x', label: 'X' },
-        { value: 'y', label: 'Y' },
-      ],
+  message: 'Configure project',
+  requestedSchema: {
+    properties: {
+      db: {
+        type: 'string' as const,
+        title: 'Database',
+        oneOf: [
+          { const: 'pg', title: 'PostgreSQL' },
+          { const: 'my', title: 'MySQL' },
+        ],
+      },
+      features: {
+        type: 'array' as const,
+        title: 'Features',
+        items: { type: 'string' as const, enum: ['auth', 'billing', 'search'] },
+      },
     },
-    {
-      id: 'q2',
-      question: 'Second?',
-      options: [
-        { value: 'm', label: 'M' },
-        { value: 'n', label: 'N' },
-      ],
-      allow_other: true,
-    },
-  ],
+    required: ['db'],
+  },
 }
 
 function findBtn(text: string) {
@@ -65,14 +64,10 @@ function findBtn(text: string) {
   )
 }
 
-function findRole(text: string) {
-  return Array.from(container.querySelectorAll('[role="button"]')).find(
+function findRole(role: string, text: string) {
+  return Array.from(container.querySelectorAll(`[role="${role}"]`)).find(
     (el) => el.textContent?.includes(text),
   )
-}
-
-function findSubmitArrow() {
-  return container.querySelector('[data-testid="user-input-submit"]') as HTMLButtonElement | null
 }
 
 function renderCard(
@@ -91,104 +86,80 @@ function renderCard(
 
 describe('UserInputCard', () => {
   describe('rendering', () => {
-    it('renders single question with header and options', () => {
-      renderCard(singleQuestion)
-      expect(container.textContent).toContain('Select type')
-      expect(container.textContent).toContain('Which demo?')
-      expect(container.textContent).toContain('Option A')
-      expect(container.textContent).toContain('Option B')
+    it('renders message and enum options', () => {
+      renderCard(singleSelect)
+      expect(container.textContent).toContain('Which database?')
+      expect(container.textContent).toContain('postgres')
+      expect(container.textContent).toContain('mysql')
     })
 
-    it('renders first question in multi-question mode', () => {
-      renderCard(multiQuestion)
-      expect(container.textContent).toContain('First?')
-      expect(container.textContent).toContain('X')
-      expect(container.textContent).not.toContain('Second?')
+    it('renders oneOf options with titles', () => {
+      renderCard(multiField)
+      expect(container.textContent).toContain('Configure project')
+      expect(container.textContent).toContain('PostgreSQL')
+      expect(container.textContent).toContain('MySQL')
     })
 
-    it('shows recommended tag for recommended option', () => {
-      renderCard(singleQuestion)
-      expect(container.innerHTML).toContain('Option A')
-      expect(container.innerHTML).toContain('推荐')
-    })
-
-    it('shows Other input after navigating to question with allow_other', () => {
-      renderCard(multiQuestion)
-      // q1: no Other input
-      expect(container.querySelectorAll('input[type="text"]').length).toBe(0)
-
-      // single-click X on q1 → auto-advances to q2
-      act(() => { findRole('X')!.click() })
-
-      expect(container.querySelectorAll('input[type="text"]').length).toBe(1)
+    it('renders multiselect checkboxes', () => {
+      renderCard(multiField)
+      expect(container.textContent).toContain('auth')
+      expect(container.textContent).toContain('billing')
+      expect(container.textContent).toContain('search')
+      expect(container.querySelectorAll('[role="checkbox"]').length).toBe(3)
     })
   })
 
   describe('interaction', () => {
-    it('single click on option immediately submits (single question)', () => {
+    it('single enum select immediately submits', () => {
       const onSubmit = vi.fn()
-      renderCard(singleQuestion, onSubmit)
+      renderCard(singleSelect, onSubmit)
 
-      act(() => { findRole('Option B')!.click() })
+      act(() => { (findRole('button', 'mysql') as HTMLElement).click() })
 
       expect(onSubmit).toHaveBeenCalledTimes(1)
       const response = onSubmit.mock.calls[0][0] as UserInputResponse
       expect(response.request_id).toBe('req_1')
-      expect(response.answers.q1).toEqual({ type: 'option', value: 'b' })
+      expect(response.answers.db).toBe('mysql')
     })
 
-    it('arrow button submits pre-selected recommended option', () => {
+    it('multi-field requires submit button', () => {
       const onSubmit = vi.fn()
-      renderCard(singleQuestion, onSubmit)
+      renderCard(multiField, onSubmit)
 
-      const arrow = findSubmitArrow()
-      expect(arrow).toBeTruthy()
-      expect(arrow!.disabled).toBe(false)
-      act(() => { arrow!.click() })
-
-      expect(onSubmit).toHaveBeenCalledTimes(1)
-      const response = onSubmit.mock.calls[0][0] as UserInputResponse
-      expect(response.answers.q1).toEqual({ type: 'option', value: 'a' })
-    })
-
-    it('multi-question: single click advances and final click submits', () => {
-      const onSubmit = vi.fn()
-      renderCard(multiQuestion, onSubmit)
-
-      act(() => { findRole('Y')!.click() })
-      expect(container.textContent).toContain('Second?')
-
-      act(() => { findRole('M')!.click() })
-      expect(onSubmit).toHaveBeenCalledTimes(1)
-      const response = onSubmit.mock.calls[0][0] as UserInputResponse
-      expect(response.answers.q1).toEqual({ type: 'option', value: 'y' })
-      expect(response.answers.q2).toEqual({ type: 'option', value: 'm' })
-    })
-
-    it('arrow button is disabled when no answer selected', () => {
-      const onSubmit = vi.fn()
-      // Use a question with no recommended (so nothing pre-selected)
-      const req: UserInputRequest = {
-        request_id: 'req_x',
-        questions: [{
-          id: 'q1',
-          question: 'Pick?',
-          options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
-        }],
-      }
-      renderCard(req, onSubmit)
-
-      const arrow = findSubmitArrow()
-      expect(arrow!.disabled).toBe(true)
-      act(() => { arrow!.click() })
+      act(() => { (findRole('button', 'PostgreSQL') as HTMLElement).click() })
       expect(onSubmit).not.toHaveBeenCalled()
+
+      const submitBtn = findBtn('提交') ?? findBtn('Submit')
+      expect(submitBtn).toBeTruthy()
+      act(() => { (submitBtn as HTMLElement).click() })
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('multiselect toggles values', () => {
+      const onSubmit = vi.fn()
+      renderCard(multiField, onSubmit)
+
+      // 选 db
+      act(() => { (findRole('button', 'PostgreSQL') as HTMLElement).click() })
+
+      // 选 features
+      const checkboxes = container.querySelectorAll('[role="checkbox"]')
+      act(() => { (checkboxes[0] as HTMLElement).click() })
+      act(() => { (checkboxes[2] as HTMLElement).click() })
+
+      const submitBtn = findBtn('提交') ?? findBtn('Submit')
+      act(() => { submitBtn!.click() })
+
+      const response = onSubmit.mock.calls[0][0] as UserInputResponse
+      expect(response.answers.db).toBe('pg')
+      expect(response.answers.features).toEqual(['auth', 'search'])
     })
   })
 
   describe('dismiss', () => {
     it('calls onDismiss when skip button clicked', () => {
       const onDismiss = vi.fn()
-      renderCard(singleQuestion, vi.fn(), onDismiss)
+      renderCard(multiField, vi.fn(), onDismiss)
 
       const skipBtn = findBtn('跳过') ?? findBtn('Skip')
       expect(skipBtn).toBeTruthy()
@@ -199,7 +170,7 @@ describe('UserInputCard', () => {
 
     it('calls onDismiss on ESC key', () => {
       const onDismiss = vi.fn()
-      renderCard(singleQuestion, vi.fn(), onDismiss)
+      renderCard(singleSelect, vi.fn(), onDismiss)
 
       act(() => {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
@@ -207,6 +178,5 @@ describe('UserInputCard', () => {
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
     })
-
   })
 })
