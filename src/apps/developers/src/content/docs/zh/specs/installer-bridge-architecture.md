@@ -535,7 +535,7 @@ Agent 不应该直接重写 Compose 规则本身。
 建议行为：
 
 1. 安装完成后生成一次性 bootstrap token
-2. 输出一个临时 URL，例如：`http://localhost:8000/bootstrap/<token>`
+2. 输出一个临时 URL，例如：`http://localhost:19000/bootstrap/<token>`
 3. 用户通过该 URL 创建首个管理员账号或设置管理员密码
 4. token 使用一次即失效
 5. token 超时自动失效
@@ -576,7 +576,7 @@ POST /v1/bootstrap/setup         # 通过 token 创建管理员（username + pas
 
 1. `setup.sh install` 完成后，调用 `POST /v1/bootstrap/init` 生成 token
 2. token 存入 `platform_settings["bootstrap.token"]`，附带过期时间
-3. `setup.sh` 在终端打印 `http://localhost:8000/bootstrap/<token>`
+3. `setup.sh` 在终端打印 `http://localhost:19000/bootstrap/<token>`
 4. 用户访问该 URL，Console Lite 渲染管理员设置页面
 5. 用户填写 username + password，提交到 `POST /v1/bootstrap/setup`
 6. 后端创建用户、赋予 `platform_admin` 角色、写入 bootstrap marker、销毁 token
@@ -674,7 +674,7 @@ POST /v1/system/upgrade
 { "action": "start" }
 { "action": "stop" }
 { "action": "restart" }
-{ "action": "configure_connection", "params": { "base_url": "http://openviking:1933", "api_key": "***" } }
+{ "action": "configure_connection", "params": { "base_url": "http://openviking:19010", "api_key": "***" } }
 { "action": "bootstrap_defaults" }
 ```
 

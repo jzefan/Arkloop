@@ -16,23 +16,23 @@ const (
 	bridgeAuditLogEnv    = "ARKLOOP_BRIDGE_AUDIT_LOG"
 	bridgeCORSOriginsEnv = "ARKLOOP_BRIDGE_CORS_ORIGINS"
 
-	defaultBridgeAddr        = "127.0.0.1:8003"
+	defaultBridgeAddr        = "127.0.0.1:19003"
 	defaultModulesFileRel    = "install/modules.yaml"
 )
 
 var defaultBridgeCORSOrigins = []string{
-	"http://localhost:5173",
-	"http://localhost:5174",
-	"http://localhost:5175",
-	"http://localhost:5179",
-	"http://localhost:8000",
-	"http://localhost:8006",
-	"http://127.0.0.1:5173",
-	"http://127.0.0.1:5174",
-	"http://127.0.0.1:5175",
-	"http://127.0.0.1:5179",
-	"http://127.0.0.1:8000",
-	"http://127.0.0.1:8006",
+	"http://localhost:19080",
+	"http://localhost:19081",
+	"http://localhost:19082",
+	"http://localhost:19083",
+	"http://localhost:19000",
+	"http://localhost:19006",
+	"http://127.0.0.1:19080",
+	"http://127.0.0.1:19081",
+	"http://127.0.0.1:19082",
+	"http://127.0.0.1:19083",
+	"http://127.0.0.1:19000",
+	"http://127.0.0.1:19006",
 }
 
 type Config struct {

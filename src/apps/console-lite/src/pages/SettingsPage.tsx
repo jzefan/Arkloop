@@ -843,7 +843,7 @@ function SandboxSection({
         </div>
       </FormField>
       <FormField label={tc.sandboxBaseUrl}>
-        <input value={sandboxBaseUrl} onChange={(e) => setSandboxBaseUrl(e.target.value)} className={inputCls} placeholder="http://localhost:8002" />
+        <input value={sandboxBaseUrl} onChange={(e) => setSandboxBaseUrl(e.target.value)} className={inputCls} placeholder="http://localhost:19002" />
       </FormField>
       {sandboxProvider === 'docker' && (
         <FormField label={tc.sandboxDockerImage}>

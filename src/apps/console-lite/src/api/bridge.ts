@@ -2,7 +2,7 @@
 // PR5: Bridge not yet available, all calls degrade gracefully.
 // PR6: Bridge goes live, zero frontend changes needed.
 
-const BRIDGE_BASE_URL = import.meta.env.VITE_BRIDGE_URL ?? 'http://localhost:8003'
+const BRIDGE_BASE_URL = import.meta.env.VITE_BRIDGE_URL ?? 'http://localhost:19003'
 
 export type ModuleStatus =
   | 'not_installed'
