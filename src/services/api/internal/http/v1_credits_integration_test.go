@@ -132,11 +132,11 @@ func TestCreditsIntegration(t *testing.T) {
 	if meResp.Code != nethttp.StatusOK {
 		t.Fatalf("get me: %d %s", meResp.Code, meResp.Body.String())
 	}
-	type meResponse struct {
-		OrgID string `json:"org_id"`
+	type meMinimalResponse struct {
+		AccountID string `json:"org_id"`
 	}
-	meData := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := meData.OrgID
+	meData := decodeJSONBody[meMinimalResponse](t, meResp.Body.Bytes())
+	orgID := meData.AccountID
 
 	t.Run("admin adjust positive writes audit", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",

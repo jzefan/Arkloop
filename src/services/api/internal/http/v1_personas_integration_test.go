@@ -126,7 +126,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	orgID := uuid.MustParse(me.AccountID)
 
 	ghostID := insertGlobalPersonaHTTP(t, ctx, pool, "ghost", "Ghost Persona")
 
@@ -566,7 +566,7 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	orgID := uuid.MustParse(me.AccountID)
 
 	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "extended-search", "1", "Platform Search", nil, "platform search prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^search"), "auto", "none", "agent.simple", nil); err != nil {
 		t.Fatalf("create platform search: %v", err)

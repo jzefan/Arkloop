@@ -131,7 +131,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	orgID := uuid.MustParse(me.AccountID)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
 		('limit.agent_reasoning_iterations', '12', now()),
