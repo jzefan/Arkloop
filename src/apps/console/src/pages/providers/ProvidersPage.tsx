@@ -7,7 +7,7 @@ import { FormField } from '../../components/FormField'
 import { Modal } from '../../components/Modal'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Badge } from '../../components/Badge'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -142,6 +142,7 @@ export function ProvidersPage() {
 
 	const [providers, setProviders] = useState<LlmProvider[]>([])
 	const [scope, setScope] = useState<LlmProviderScope>('platform')
+	const [projectId, setProjectId] = useState('')
 	const [selectedId, setSelectedId] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -177,7 +178,7 @@ export function ProvidersPage() {
   const load = useCallback(async (keepSelectedId?: string) => {
     setLoading(true)
     try {
-		const data = await listLlmProviders(accessToken, scope)
+		const data = await listLlmProviders(accessToken, scope, projectId || undefined)
       setProviders(data)
       const preferredId = keepSelectedId?.trim() ?? ''
       if (preferredId && data.some((item) => item.id === preferredId)) {
@@ -192,7 +193,7 @@ export function ProvidersPage() {
     } finally {
       setLoading(false)
     }
-	}, [accessToken, addToast, scope, tc.toastLoadFailed])
+	}, [accessToken, addToast, projectId, scope, tc.toastLoadFailed])
 
   useEffect(() => {
     void load()
@@ -241,6 +242,7 @@ export function ProvidersPage() {
     try {
       await updateLlmProvider(selectedProvider.id, {
 		scope,
+		project_id: projectId || undefined,
         name,
         provider: providerForm.provider,
         api_key: providerForm.apiKey.trim() || undefined,
@@ -256,7 +258,7 @@ export function ProvidersPage() {
     } finally {
       setSavingProvider(false)
     }
-  }, [accessToken, addToast, load, providerForm, scope, selectedProvider, tc])
+  }, [accessToken, addToast, load, projectId, providerForm, scope, selectedProvider, tc])
 
   const handleCreateProvider = useCallback(async () => {
     const name = createForm.name.trim()
@@ -278,6 +280,7 @@ export function ProvidersPage() {
     try {
       const provider = await createLlmProvider({
 		scope,
+		project_id: projectId || undefined,
         name,
         provider: createForm.provider,
         api_key: apiKey,
@@ -295,13 +298,13 @@ export function ProvidersPage() {
     } finally {
       setCreating(false)
     }
-  }, [accessToken, addToast, createForm, load, scope, tc])
+  }, [accessToken, addToast, createForm, load, projectId, scope, tc])
 
   const handleDeleteProvider = useCallback(async () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-		await deleteLlmProvider(deleteTarget.id, scope, accessToken)
+		await deleteLlmProvider(deleteTarget.id, scope, accessToken, projectId || undefined)
       setDeleteTarget(null)
       await load(selectedId === deleteTarget.id ? '' : selectedId)
       addToast(tc.toastDeleted, 'success')
@@ -310,7 +313,7 @@ export function ProvidersPage() {
     } finally {
       setDeleting(false)
     }
-  }, [accessToken, addToast, deleteTarget, load, scope, selectedId, tc])
+  }, [accessToken, addToast, deleteTarget, load, projectId, scope, selectedId, tc])
 
   const openCreateModel = useCallback(() => {
     setEditingModel(null)
@@ -366,10 +369,10 @@ export function ProvidersPage() {
     setSavingModel(true)
     try {
       if (editingModel) {
-		await updateProviderModel(selectedProvider.id, editingModel.id, { ...payload, scope }, accessToken)
+		await updateProviderModel(selectedProvider.id, editingModel.id, { ...payload, scope, project_id: projectId || undefined }, accessToken)
         addToast(tc.toastRouteUpdated, 'success')
       } else {
-		await createProviderModel(selectedProvider.id, { ...payload, scope }, accessToken)
+		await createProviderModel(selectedProvider.id, { ...payload, scope, project_id: projectId || undefined }, accessToken)
         addToast(tc.toastRouteCreated, 'success')
       }
       setModelOpen(false)
@@ -381,13 +384,13 @@ export function ProvidersPage() {
     } finally {
       setSavingModel(false)
     }
-  }, [accessToken, addToast, editingModel, load, modelForm, scope, selectedProvider, tc])
+  }, [accessToken, addToast, editingModel, load, modelForm, projectId, scope, selectedProvider, tc])
 
   const handleDeleteModel = useCallback(async () => {
     if (!selectedProvider || !deleteModelTarget) return
     setDeletingModel(true)
     try {
-		await deleteProviderModel(selectedProvider.id, deleteModelTarget.id, scope, accessToken)
+		await deleteProviderModel(selectedProvider.id, deleteModelTarget.id, scope, accessToken, projectId || undefined)
       setDeleteModelTarget(null)
       await load(selectedProvider.id)
       addToast(tc.toastDeletedRoute, 'success')
@@ -396,7 +399,7 @@ export function ProvidersPage() {
     } finally {
       setDeletingModel(false)
     }
-  }, [accessToken, addToast, deleteModelTarget, load, scope, selectedProvider, tc])
+  }, [accessToken, addToast, deleteModelTarget, load, projectId, scope, selectedProvider, tc])
 
   const openImport = useCallback(async () => {
     if (!selectedProvider) return
@@ -407,7 +410,7 @@ export function ProvidersPage() {
     setImportSearchQuery('')
     setImportSelected(new Set())
     try {
-		const data = await listAvailableModels(selectedProvider.id, scope, accessToken)
+		const data = await listAvailableModels(selectedProvider.id, scope, accessToken, projectId || undefined)
       setAvailableModels(data.models.filter((item) => !item.configured))
     } catch (err) {
       setAvailableModels([])
@@ -415,7 +418,7 @@ export function ProvidersPage() {
     } finally {
       setImportLoading(false)
     }
-  }, [accessToken, scope, selectedProvider, tc.importModelsError])
+  }, [accessToken, projectId, scope, selectedProvider, tc.importModelsError])
 
   const toggleImportModel = useCallback((modelID: string) => {
     setImportSelected((prev) => {
@@ -433,6 +436,7 @@ export function ProvidersPage() {
 		for (const modelID of importSelected) {
 			await createProviderModel(selectedProvider.id, {
 				scope,
+				project_id: projectId || undefined,
 				model: modelID,
           priority: 1,
           is_default: false,
@@ -446,7 +450,7 @@ export function ProvidersPage() {
     } finally {
       setImporting(false)
     }
-  }, [accessToken, addToast, importSelected, importing, load, scope, selectedProvider, tc])
+  }, [accessToken, addToast, importSelected, importing, load, projectId, scope, selectedProvider, tc])
 
   const copySelector = useCallback(async (providerName: string, modelName: string) => {
     try {
@@ -470,8 +474,16 @@ export function ProvidersPage() {
               className={`${INPUT_CLS} w-[112px] py-1 text-xs`}
             >
               <option value="platform">{tc.scopePlatform}</option>
-              <option value="org">{tc.scopeOrg}</option>
+              <option value="project">{tc.scopeAccount}</option>
             </select>
+            {scope === 'project' && (
+              <input
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                placeholder="Account ID"
+                className={`${INPUT_CLS} w-[160px] py-1 text-xs`}
+              />
+            )}
             <button
               onClick={() => {
                 setCreateForm(emptyProviderForm())

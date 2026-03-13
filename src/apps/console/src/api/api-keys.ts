@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type APIKey = {
   id: string
-  org_id: string
+  account_id: string
   user_id: string
   name: string
   key_prefix: string

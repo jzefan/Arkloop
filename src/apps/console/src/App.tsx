@@ -14,10 +14,8 @@ import { ToolsPage } from './pages/tools/ToolsPage'
 import { APIKeysPage } from './pages/api-keys/APIKeysPage'
 import { IPRulesPage } from './pages/ip-rules/IPRulesPage'
 import { CaptchaPage } from './pages/captcha/CaptchaPage'
-import { TeamsPage } from './pages/teams/TeamsPage'
 import { UsagePage } from './pages/usage/UsagePage'
 import { MyUsagePage } from './pages/my-usage/MyUsagePage'
-import { OrgsPage } from './pages/OrgsPage'
 import { UsersPage } from './pages/users/UsersPage'
 import { InviteCodesPage } from './pages/invite-codes/InviteCodesPage'
 import { RedemptionCodesPage } from './pages/redemption-codes/RedemptionCodesPage'
@@ -34,12 +32,23 @@ import { GatewayConfigPage } from './pages/gateway-config/GatewayConfigPage'
 import { ExecutionGovernancePage } from './pages/execution-governance/ExecutionGovernancePage'
 import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
+import { ModulesPage } from './pages/modules/ModulesPage'
+
+import { OperationProvider, useOperations } from './contexts/OperationContext'
+import { OperationHistoryModal } from './components/OperationHistoryModal'
+
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
 import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
 import { setClientApp } from '@arkloop/shared/api'
+
+function OperationHistoryModalWrapper() {
+  const { historyOpen, setHistoryOpen } = useOperations()
+  if (!historyOpen) return null
+  return <OperationHistoryModal onClose={() => setHistoryOpen(false)} />
+}
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -103,9 +112,13 @@ function App() {
   }
 
   return (
+    <OperationProvider>
+    <OperationHistoryModalWrapper />
     <Routes>
       <Route
-        element={<ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />}
+        element={(
+          <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
+        )}
       >
         <Route index element={<Navigate to="/dashboard" replace />} />
         {/* Operations */}
@@ -131,10 +144,7 @@ function App() {
         <Route path="captcha" element={<CaptchaPage />} />
         <Route path="gateway-config" element={<GatewayConfigPage />} />
         <Route path="access-log" element={<AccessLogPage />} />
-        {/* Organization */}
-        <Route path="members" element={<OrgsPage />} />
-        <Route path="teams" element={<TeamsPage />} />
-        <Route path="projects" element={<PlaceholderPage title="Projects" />} />
+
         {/* Billing */}
         <Route path="plans" element={<PlaceholderPage title="Plans" />} />
         <Route path="subscriptions" element={<PlaceholderPage title="Subscriptions" />} />
@@ -150,15 +160,19 @@ function App() {
         <Route path="credits-admin" element={<CreditsAdminPage />} />
         <Route path="broadcasts" element={<BroadcastsPage />} />
         <Route path="email" element={<EmailPage />} />
+        {/* Infrastructure */}
+        <Route path="modules" element={<ModulesPage />} />
         {/* Redirects */}
         
         <Route path="tool-providers" element={<Navigate to="/tools" replace />} />
         <Route path="sandbox-config" element={<Navigate to="/tools" replace />} />
         <Route path="memory-config" element={<Navigate to="/tools" replace />} />
-        <Route path="orgs" element={<Navigate to="/members" replace />} />
+        <Route path="members" element={<Navigate to="/users" replace />} />
+        <Route path="teams" element={<Navigate to="/users" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
+    </OperationProvider>
   )
 }
 

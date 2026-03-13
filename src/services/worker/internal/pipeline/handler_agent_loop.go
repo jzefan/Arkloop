@@ -10,14 +10,17 @@ import (
 	"time"
 
 	"arkloop/services/shared/creditpolicy"
-	"arkloop/services/shared/database"
 	sharedent "arkloop/services/shared/entitlement"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/runlimit"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
+	"arkloop/services/worker/internal/queue"
+	"arkloop/services/worker/internal/subagentctl"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -43,8 +46,8 @@ func NewAgentLoopHandler(
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
 	messagesRepo data.MessagesRepository,
-	concurrencyLimiter runlimit.ConcurrencyLimiter,
-	eventBus eventbus.EventBus,
+	runLimiterRDB *redis.Client,
+	jobQueue queue.JobQueue,
 	usageRepo data.UsageRecordsRepository,
 	creditsRepo data.CreditsRepository,
 	resolver *sharedent.Resolver,
@@ -54,7 +57,7 @@ func NewAgentLoopHandler(
 
 		policy := creditpolicy.DefaultPolicy
 		if resolver != nil {
-			if p, err := resolver.ResolveDeductionPolicy(ctx, rc.Run.OrgID); err == nil {
+			if p, err := resolver.ResolveDeductionPolicy(ctx, rc.Run.AccountID); err == nil {
 				policy = p
 			}
 		}
@@ -70,7 +73,8 @@ func NewAgentLoopHandler(
 		}
 
 		writer := newEventWriter(
-			rc.DB, rc.Run, rc.TraceID, concurrencyLimiter, eventBus,
+			rc.Pool, rc.Run, rc.TraceID, runLimiterRDB,
+			jobQueue,
 			selected.Route.Model, personaID, usageRepo, creditsRepo,
 			creditsPerUSD,
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
@@ -134,22 +138,25 @@ func NewAgentLoopHandler(
 		}
 
 		if writer.Completed() {
-			if err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.OrgID, rc.Run.ThreadID); err != nil {
+			if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID); err != nil {
 				return err
 			}
 			rc.FinalAssistantOutput = writer.AssistantOutput()
 		}
+		rc.RunToolCallCount = writer.toolCallCount
+		rc.RunIterationCount = writer.iterationCount
 		return writer.Flush(ctx)
 	}
 }
 
 // eventWriter 批提交事件并在终态时更新 runs.status + DECR 并发计数 + 写入 usage_records。
 type eventWriter struct {
-	db                 database.DB
-	run                data.Run
-	traceID            string
-	concurrencyLimiter runlimit.ConcurrencyLimiter // 并发槽释放
-	eventBus           eventbus.EventBus           // 跨实例 SSE 广播（Publish）
+	pool          *pgxpool.Pool
+	run           data.Run
+	traceID       string
+	runLimiterRDB *redis.Client // 双职责：并发槽释放（runlimit.Release）+ 跨实例 SSE 广播（Publish）
+	jobQueue      queue.JobQueue
+	projector     *subagentctl.SubAgentStateProjector
 	model         string
 	personaID     string
 	usageRepo     data.UsageRecordsRepository
@@ -163,10 +170,12 @@ type eventWriter struct {
 	policy              creditpolicy.CreditDeductionPolicy
 	creditsPerUSD       float64
 
-	tx                       database.Tx
+	tx                       pgx.Tx
 	pendingEventsSinceCommit int
 	lastCommitAt             time.Time
 	assistantDeltas          []string
+	toolCallCount            int
+	iterationCount           int
 	completed                bool
 	hasTerminal              bool
 
@@ -178,16 +187,17 @@ type eventWriter struct {
 	totalCostUSD             float64
 
 	// 子 Run 完成通知：commit 时将终态状态发布到 run.child.{runID}.done
-	terminalRunStatus string
-	terminalMessage   string
+	terminalRunStatus    string
+	terminalMessage      string
+	pendingEnqueueRunIDs []uuid.UUID
 }
 
 func newEventWriter(
-	db database.DB,
+	pool *pgxpool.Pool,
 	run data.Run,
 	traceID string,
-	concurrencyLimiter runlimit.ConcurrencyLimiter,
-	eventBus eventbus.EventBus,
+	runLimiterRDB *redis.Client,
+	jobQueue queue.JobQueue,
 	model string,
 	personaID string,
 	usageRepo data.UsageRecordsRepository,
@@ -207,12 +217,13 @@ func newEventWriter(
 		multiplier = 1.0
 	}
 	return &eventWriter{
-		db:                  db,
+		pool:                pool,
 		run:                 run,
 		traceID:             strings.TrimSpace(traceID),
 		lastCommitAt:        time.Now(),
-		concurrencyLimiter:  concurrencyLimiter,
-		eventBus:            eventBus,
+		runLimiterRDB:       runLimiterRDB,
+		jobQueue:            jobQueue,
+		projector:           subagentctl.NewSubAgentStateProjector(pool, runLimiterRDB, jobQueue),
 		model:               model,
 		personaID:           strings.TrimSpace(personaID),
 		usageRepo:           usageRepo,
@@ -231,7 +242,7 @@ func (w *eventWriter) ensureTx(ctx context.Context) error {
 	if w.tx != nil {
 		return nil
 	}
-	tx, err := w.db.Begin(ctx)
+	tx, err := w.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
@@ -271,6 +282,15 @@ func (w *eventWriter) Append(
 		if _, err := eventsRepo.AppendEvent(ctx, w.tx, runID, cancelled.Type, cancelled.DataJSON, cancelled.ToolName, cancelled.ErrorClass); err != nil {
 			return err
 		}
+		if w.projector != nil {
+			nextRunID, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, data.SubAgentStatusCancelled, map[string]any{"run_id": runID.String()}, nil)
+			if err != nil {
+				return err
+			}
+			if nextRunID != nil {
+				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *nextRunID)
+			}
+		}
 		// 如果配置了平台成本费率，覆盖 LLM 返回的原始 cost
 		if platformCost := w.calcPlatformCost(); platformCost >= 0 {
 			w.totalCostUSD = platformCost
@@ -283,14 +303,14 @@ func (w *eventWriter) Append(
 		}); err != nil {
 			return err
 		}
-		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model,
+		if err := w.usageRepo.Insert(ctx, w.tx, w.run.AccountID, runID, w.model,
 			w.totalInputTokens, w.totalOutputTokens,
 			w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
 			w.totalCostUSD); err != nil {
 			return err
 		}
 		if r := w.calcCreditDeduction(); r.Credits > 0 {
-			if err := w.creditsRepo.Deduct(ctx, w.tx, w.run.OrgID, r.Credits, runID, r.Metadata); err != nil {
+			if err := w.creditsRepo.Deduct(ctx, w.tx, w.run.AccountID, r.Credits, runID, r.Metadata); err != nil {
 				return err
 			}
 		}
@@ -313,6 +333,13 @@ func (w *eventWriter) Append(
 	w.pendingEventsSinceCommit++
 
 	w.accumUsage(ev.DataJSON)
+
+	if ev.Type == "tool.call" {
+		w.toolCallCount++
+	}
+	if ev.Type == "llm.request" {
+		w.iterationCount++
+	}
 
 	if ev.Type == "message.delta" {
 		// 只累积主内容，thinking channel 不计入最终消息文本
@@ -339,14 +366,23 @@ func (w *eventWriter) Append(
 		}); err != nil {
 			return err
 		}
-		if err := w.usageRepo.Insert(ctx, w.tx, w.run.OrgID, runID, w.model,
+		if w.projector != nil {
+			nextRunID, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, status, ev.DataJSON, ev.ErrorClass)
+			if err != nil {
+				return err
+			}
+			if nextRunID != nil {
+				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *nextRunID)
+			}
+		}
+		if err := w.usageRepo.Insert(ctx, w.tx, w.run.AccountID, runID, w.model,
 			w.totalInputTokens, w.totalOutputTokens,
 			w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
 			w.totalCostUSD); err != nil {
 			return err
 		}
 		if r := w.calcCreditDeduction(); r.Credits > 0 {
-			if err := w.creditsRepo.Deduct(ctx, w.tx, w.run.OrgID, r.Credits, runID, r.Metadata); err != nil {
+			if err := w.creditsRepo.Deduct(ctx, w.tx, w.run.AccountID, r.Credits, runID, r.Metadata); err != nil {
 				return err
 			}
 		}
@@ -381,15 +417,24 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	w.lastCommitAt = time.Now()
 
 	channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
-	_, _ = w.db.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+	_, _ = w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
 
-	if w.eventBus != nil {
+	if w.runLimiterRDB != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", w.run.ID.String())
-		_ = w.eventBus.Publish(ctx, redisChannel, "")
+		_, _ = w.runLimiterRDB.Publish(ctx, redisChannel, "").Result()
 	}
 
 	if w.hasTerminal {
-		if w.eventBus != nil && w.terminalRunStatus != "" {
+		for _, nextRunID := range w.pendingEnqueueRunIDs {
+			if w.projector == nil {
+				continue
+			}
+			if err := w.projector.EnqueueRun(ctx, w.run.AccountID, nextRunID, w.traceID, nil); err != nil {
+				_ = w.projector.MarkRunFailed(context.Background(), nextRunID, "failed to enqueue child run job")
+			}
+		}
+		w.pendingEnqueueRunIDs = nil
+		if w.runLimiterRDB != nil && w.terminalRunStatus != "" {
 			// 通知可能正在等待的父 Run（无父 Run 时此 publish 为空操作）
 			output := ""
 			if w.terminalRunStatus == "completed" {
@@ -398,14 +443,14 @@ func (w *eventWriter) commit(ctx context.Context) error {
 				output = truncateChildRunPayload(w.terminalMessage)
 			}
 			ch := fmt.Sprintf("run.child.%s.done", w.run.ID.String())
-			_ = w.eventBus.Publish(ctx, ch, w.terminalRunStatus+"\n"+output)
+			_, _ = w.runLimiterRDB.Publish(ctx, ch, w.terminalRunStatus+"\n"+output).Result()
 		}
 		w.hasTerminal = false
 		w.terminalMessage = ""
 		// 子 Run 没有通过 API 层 TryAcquire，不释放并发槽
-		if w.run.ParentRunID == nil && w.concurrencyLimiter != nil {
-			key := runlimit.Key(w.run.OrgID.String())
-			w.concurrencyLimiter.Release(ctx, key)
+		if w.run.ParentRunID == nil {
+			key := runlimit.Key(w.run.AccountID.String())
+			runlimit.Release(ctx, w.runLimiterRDB, key)
 		}
 	}
 
@@ -424,14 +469,23 @@ func (w *eventWriter) AssistantOutput() string {
 func (w *eventWriter) InsertAssistantMessage(
 	ctx context.Context,
 	repo data.MessagesRepository,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	threadID uuid.UUID,
-) error {
+) (uuid.UUID, error) {
 	if err := w.ensureTx(ctx); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	content := strings.Join(w.assistantDeltas, "")
-	return repo.InsertAssistantMessage(ctx, w.tx, orgID, threadID, w.run.ID, content)
+	messageID, err := repo.InsertAssistantMessage(ctx, w.tx, accountID, threadID, w.run.ID, content)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if messageID != uuid.Nil {
+		if err := (data.SubAgentRepository{}).SetLastOutputRefByLastCompletedRunID(ctx, w.tx, w.run.ID, "message:"+messageID.String()); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	return messageID, nil
 }
 
 func (w *eventWriter) Flush(ctx context.Context) error {

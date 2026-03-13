@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, ExternalLink, FileCode2, X } from 'lucide-react'
-
-import { buildProjectWorkspaceFileUrl } from '../api'
+import { apiBaseUrl } from '@arkloop/shared/api'
+import { useLocale } from '../contexts/LocaleContext'
 
 const ANIM_MS = 120
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 export type WorkspaceFileRef = {
   path: string
@@ -19,7 +14,6 @@ export type WorkspaceFileRef = {
 type Props = {
   file: WorkspaceFileRef
   runId?: string
-  projectId?: string
   accessToken: string
 }
 
@@ -38,10 +32,6 @@ function normalizeWorkspacePath(path: string): string {
 function buildWorkspaceUrl(runId: string, path: string): string {
   const sp = new URLSearchParams({ run_id: runId, path: normalizeWorkspacePath(path) })
   return `${apiBaseUrl()}/v1/workspace-files?${sp.toString()}`
-}
-
-function buildProjectWorkspaceUrl(projectId: string, path: string): string {
-	return buildProjectWorkspaceFileUrl(projectId, normalizeWorkspacePath(path))
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -80,7 +70,8 @@ function fileExtension(filename: string): string {
   return ext || 'file'
 }
 
-export function WorkspaceResource({ file, runId, projectId, accessToken }: Props) {
+export function WorkspaceResource({ file, runId, accessToken }: Props) {
+  const { t } = useLocale()
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
   const [visible, setVisible] = useState(false)
   const [show, setShow] = useState(false)
@@ -91,16 +82,14 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
   const expectedKind = useMemo(() => workspaceKind(normalizeMimeType(file.mime_type, file.filename)), [file.filename, file.mime_type])
 
   useEffect(() => {
-    if ((!runId && !projectId) || !accessToken) {
+    if (!runId || !accessToken) {
       setLoadState({ status: 'error' })
       return
     }
 
     let cancelled = false
     let localBlobUrl: string | null = null
-    const url = projectId
-		? buildProjectWorkspaceUrl(projectId, normalizedPath)
-		: buildWorkspaceUrl(runId as string, normalizedPath)
+    const url = buildWorkspaceUrl(runId, normalizedPath)
 
     setLoadState({ status: 'loading' })
     fetch(url, {
@@ -130,7 +119,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
       cancelled = true
       if (localBlobUrl) URL.revokeObjectURL(localBlobUrl)
     }
-  }, [accessToken, file.filename, file.mime_type, normalizedPath, projectId, runId])
+  }, [accessToken, file.filename, file.mime_type, normalizedPath, runId])
 
   useEffect(() => () => {
     if (closingTimer.current) clearTimeout(closingTimer.current)
@@ -395,7 +384,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
                 }}
               >
                 <Download size={14} />
-                <span style={{ fontSize: 13 }}>下载</span>
+                <span style={{ fontSize: 13 }}>{t.documentPanel.download}</span>
               </button>
             </div>
           </div>

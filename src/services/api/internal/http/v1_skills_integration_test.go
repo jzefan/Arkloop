@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -20,23 +18,23 @@ import (
 	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/shared/workspaceblob"
-	"arkloop/services/shared/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type skillsTestEnv struct {
 	handler     nethttp.Handler
-	appDB        database.DB
+	pool        *pgxpool.Pool
 	aliceToken  string
 	aliceUserID uuid.UUID
-	aliceOrgID  uuid.UUID
+	aliceAccountID  uuid.UUID
 	skillStore  *fakeHTTPArtifactStore
 }
 
 func TestSkillPackageLifecycle(t *testing.T) {
 	env := buildSkillsEnv(t)
 	seedSkillPackageObjects(t, env.skillStore, "grep-helper", "1")
-	promoteToPlatformAdmin(t, env.appDB, env.aliceUserID)
+	promoteToPlatformAdmin(t, env.pool, env.aliceUserID)
 
 	registerResp := doJSON(env.handler, nethttp.MethodPost, "/v1/admin/skill-packages", map[string]any{
 		"skill_key": "grep-helper",
@@ -55,10 +53,10 @@ func TestSkillPackageLifecycle(t *testing.T) {
 	}
 
 	workspaceRef := "wsref_skills_test"
-	if _, err := env.appDB.Exec(context.Background(), `
-		INSERT INTO workspace_registries (workspace_ref, org_id, owner_user_id, metadata_json)
+	if _, err := env.pool.Exec(context.Background(), `
+		INSERT INTO workspace_registries (workspace_ref, account_id, owner_user_id, metadata_json)
 		VALUES ($1, $2, $3, '{}'::jsonb)
-	`, workspaceRef, env.aliceOrgID, env.aliceUserID); err != nil {
+	`, workspaceRef, env.aliceAccountID, env.aliceUserID); err != nil {
 		t.Fatalf("insert workspace registry: %v", err)
 	}
 
@@ -79,16 +77,16 @@ func TestSkillPackageLifecycle(t *testing.T) {
 		t.Fatalf("unexpected workspace skills payload: %#v", body)
 	}
 
-	profileRef := sharedenvironmentref.BuildProfileRef(env.aliceOrgID, &env.aliceUserID)
+	profileRef := sharedenvironmentref.BuildProfileRef(env.aliceAccountID, &env.aliceUserID)
 	var profileMetadata []byte
-	if err := env.appDB.QueryRow(context.Background(), `SELECT metadata_json FROM profile_registries WHERE profile_ref = $1`, profileRef).Scan(&profileMetadata); err != nil {
+	if err := env.pool.QueryRow(context.Background(), `SELECT metadata_json FROM profile_registries WHERE profile_ref = $1`, profileRef).Scan(&profileMetadata); err != nil {
 		t.Fatalf("load profile metadata: %v", err)
 	}
 	if !bytes.Contains(profileMetadata, []byte("grep-helper@1")) {
 		t.Fatalf("expected installed skill ref in profile metadata, got %s", string(profileMetadata))
 	}
 	var defaultWorkspaceRef *string
-	if err := env.appDB.QueryRow(context.Background(), `SELECT default_workspace_ref FROM profile_registries WHERE profile_ref = $1`, profileRef).Scan(&defaultWorkspaceRef); err != nil {
+	if err := env.pool.QueryRow(context.Background(), `SELECT default_workspace_ref FROM profile_registries WHERE profile_ref = $1`, profileRef).Scan(&defaultWorkspaceRef); err != nil {
 		t.Fatalf("load profile default workspace: %v", err)
 	}
 	if defaultWorkspaceRef == nil || *defaultWorkspaceRef != workspaceRef {
@@ -103,11 +101,11 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		t.Fatalf("migrate: %v", err)
 	}
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 16, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 16, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
 	if err != nil {
@@ -117,30 +115,30 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
-	userRepo, _ := data.NewUserRepository(appDB)
-	credRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	apiKeysRepo, _ := data.NewAPIKeysRepository(appDB)
-	personasRepo, _ := data.NewPersonasRepository(appDB)
-	skillPackagesRepo, _ := data.NewSkillPackagesRepository(appDB)
-	profileSkillInstallsRepo, _ := data.NewProfileSkillInstallsRepository(appDB)
-	workspaceSkillEnableRepo, _ := data.NewWorkspaceSkillEnablementsRepository(appDB)
-	profileRegistriesRepo, _ := data.NewProfileRegistriesRepository(appDB)
-	workspaceRegistriesRepo, _ := data.NewWorkspaceRegistriesRepository(appDB)
-	platformSettingsRepo, _ := data.NewPlatformSettingsRepository(appDB)
-	jobRepo, _ := data.NewJobRepository(appDB)
+	userRepo, _ := data.NewUserRepository(pool)
+	credRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	auditRepo, _ := data.NewAuditLogRepository(pool)
+	apiKeysRepo, _ := data.NewAPIKeysRepository(pool)
+	personasRepo, _ := data.NewPersonasRepository(pool)
+	skillPackagesRepo, _ := data.NewSkillPackagesRepository(pool)
+	profileSkillInstallsRepo, _ := data.NewProfileSkillInstallsRepository(pool)
+	workspaceSkillEnableRepo, _ := data.NewWorkspaceSkillEnablementsRepository(pool)
+	profileRegistriesRepo, _ := data.NewProfileRegistriesRepository(pool)
+	workspaceRegistriesRepo, _ := data.NewWorkspaceRegistriesRepository(pool)
+	platformSettingsRepo, _ := data.NewPlatformSettingsRepository(pool)
+	jobRepo, _ := data.NewJobRepository(pool)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	store := newFakeHTTPArtifactStore()
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                     pool,
 		Logger:                   logger,
 		AuthService:              authService,
 		RegistrationService:      registrationService,
-		OrgMembershipRepo:        membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		APIKeysRepo:              apiKeysRepo,
 		AuditWriter:              auditWriter,
 		PersonasRepo:             personasRepo,
@@ -170,13 +168,13 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	mePayload := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	aliceOrgID := uuid.MustParse(mePayload.OrgID)
+	aliceAccountID := uuid.MustParse(mePayload.AccountID)
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{"login": "alice-skills", "password": "pwd12345"}, nil)
 	if loginResp.Code != nethttp.StatusOK {
 		t.Fatalf("login: %d %s", loginResp.Code, loginResp.Body.String())
 	}
 	loginPayload := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes())
-	return skillsTestEnv{handler: handler, appDB: appDB, aliceToken: loginPayload.AccessToken, aliceUserID: aliceUserID, aliceOrgID: aliceOrgID, skillStore: store}
+	return skillsTestEnv{handler: handler, pool: pool, aliceToken: loginPayload.AccessToken, aliceUserID: aliceUserID, aliceAccountID: aliceAccountID, skillStore: store}
 }
 
 func seedSkillPackageObjects(t *testing.T, store *fakeHTTPArtifactStore, skillKey, version string) {
@@ -219,9 +217,9 @@ func writeTarFile(t *testing.T, writer *tar.Writer, name string, data []byte, mo
 	}
 }
 
-func promoteToPlatformAdmin(t *testing.T, db database.DB, userID uuid.UUID) {
+func promoteToPlatformAdmin(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 	t.Helper()
-	if _, err := db.Exec(context.Background(), `UPDATE org_memberships SET role = 'platform_admin' WHERE user_id = $1`, userID); err != nil {
+	if _, err := pool.Exec(context.Background(), `UPDATE account_memberships SET role = 'platform_admin' WHERE user_id = $1`, userID); err != nil {
 		t.Fatalf("promote platform admin: %v", err)
 	}
 }

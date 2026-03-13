@@ -52,7 +52,7 @@ func (e *SimpleExecutor) Execute(
 
 	runCtx := agent.RunContext{
 		RunID:                  rc.Run.ID,
-		OrgID:                  &rc.Run.OrgID,
+		AccountID:                  &rc.Run.AccountID,
 		UserID:                 rc.UserID,
 		AgentID:                agentIDFromPersona(rc),
 		ThreadID:               &rc.Run.ThreadID,
@@ -60,6 +60,11 @@ func (e *SimpleExecutor) Execute(
 		ProfileRef:             rc.ProfileRef,
 		WorkspaceRef:           rc.WorkspaceRef,
 		EnabledSkills:          append([]skillstore.ResolvedSkill(nil), rc.EnabledSkills...),
+		ToolAllowlist:          sortedToolNames(rc.AllowlistSet),
+		ToolDenylist:           append([]string(nil), rc.ToolDenylist...),
+		RouteID:                rc.SelectedRoute.Route.ID,
+		Model:                  rc.SelectedRoute.Route.Model,
+		MemoryScope:            "same_user",
 		TraceID:                rc.TraceID,
 		InputJSON:              rc.InputJSON,
 		ReasoningIterations:    rc.ReasoningIterations,
@@ -68,10 +73,13 @@ func (e *SimpleExecutor) Execute(
 		ToolTimeoutMs:          rc.ToolTimeoutMs,
 		ToolBudget:             rc.ToolBudget,
 		PerToolSoftLimits:      rc.PerToolSoftLimits,
+		MaxCostMicros:          rc.MaxCostMicros,
+		MaxTotalOutputTokens:   rc.MaxTotalOutputTokens,
 		PendingMemoryWrites:    rc.PendingMemoryWrites,
 		Runtime:                rc.Runtime,
 		LlmRetryMaxAttempts:    rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:    rc.LlmRetryBaseDelayMs,
+		WaitForInput:           rc.WaitForInput,
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},

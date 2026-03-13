@@ -12,7 +12,7 @@ export type ExecutionGovernanceLimit = {
   }
   layers: {
     env: string | null
-    org_db: string | null
+    project_db: string | null
     platform_db: string | null
     default: string
   }
@@ -65,11 +65,11 @@ export type ExecutionGovernanceResponse = {
 
 export async function getExecutionGovernance(
   accessToken: string,
-  orgId?: string,
+  projectId?: string,
 ): Promise<ExecutionGovernanceResponse> {
   const qs = new URLSearchParams()
-  if (orgId?.trim()) {
-    qs.set('org_id', orgId.trim())
+  if (projectId?.trim()) {
+    qs.set('project_id', projectId.trim())
   }
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return apiFetch<ExecutionGovernanceResponse>(`/v1/admin/execution-governance${suffix}`, { accessToken })

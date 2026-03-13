@@ -12,19 +12,18 @@ import (
 	sandboxtool "arkloop/services/worker/internal/tools/builtin/sandbox"
 	memorytool "arkloop/services/worker/internal/tools/memory"
 
-	"arkloop/services/shared/database"
-
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SandboxExecutorFactory struct {
 	mu   sync.Mutex
-	db   database.DB
+	pool *pgxpool.Pool
 	byID map[string]*sandboxtool.ToolExecutor
 }
 
-func NewSandboxExecutorFactory(db database.DB) *SandboxExecutorFactory {
-	return &SandboxExecutorFactory{db: db, byID: map[string]*sandboxtool.ToolExecutor{}}
+func NewSandboxExecutorFactory(pool *pgxpool.Pool) *SandboxExecutorFactory {
+	return &SandboxExecutorFactory{pool: pool, byID: map[string]*sandboxtool.ToolExecutor{}}
 }
 
 func (f *SandboxExecutorFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnapshot) *sandboxtool.ToolExecutor {
@@ -37,7 +36,7 @@ func (f *SandboxExecutorFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnaps
 	if executor := f.byID[key]; executor != nil {
 		return executor
 	}
-	executor := sandboxtool.NewToolExecutorWithDB(snapshot.SandboxBaseURL, snapshot.SandboxAuthToken, f.db)
+	executor := sandboxtool.NewToolExecutorWithPool(snapshot.SandboxBaseURL, snapshot.SandboxAuthToken, f.pool)
 	f.byID[key] = executor
 	return executor
 }
@@ -70,18 +69,18 @@ func (f *MemoryProviderFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnapsh
 }
 
 type MemorySnapshotAppender interface {
-	AppendMemoryLine(ctx context.Context, db database.DB, orgID, userID uuid.UUID, agentID, line string) error
+	AppendMemoryLine(ctx context.Context, pool *pgxpool.Pool, accountID, userID uuid.UUID, agentID, line string) error
 }
 
 type MemoryExecutorFactory struct {
 	mu        sync.Mutex
-	db        database.DB
+	pool      *pgxpool.Pool
 	snapshots MemorySnapshotAppender
 	byID      map[string]*memorytool.ToolExecutor
 }
 
-func NewMemoryExecutorFactory(db database.DB, snapshots MemorySnapshotAppender) *MemoryExecutorFactory {
-	return &MemoryExecutorFactory{db: db, snapshots: snapshots, byID: map[string]*memorytool.ToolExecutor{}}
+func NewMemoryExecutorFactory(pool *pgxpool.Pool, snapshots MemorySnapshotAppender) *MemoryExecutorFactory {
+	return &MemoryExecutorFactory{pool: pool, snapshots: snapshots, byID: map[string]*memorytool.ToolExecutor{}}
 }
 
 func (f *MemoryExecutorFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnapshot, provider memorypkg.MemoryProvider) *memorytool.ToolExecutor {
@@ -94,7 +93,7 @@ func (f *MemoryExecutorFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnapsh
 	if executor := f.byID[key]; executor != nil {
 		return executor
 	}
-	executor := memorytool.NewToolExecutor(provider, f.db, f.snapshots)
+	executor := memorytool.NewToolExecutor(provider, f.pool, f.snapshots)
 	f.byID[key] = executor
 	return executor
 }

@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -22,11 +20,11 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_execution_governance")
 	ctx := context.Background()
 
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -38,31 +36,31 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(appDB)
+	personasRepo, err := data.NewPersonasRepository(pool)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -71,19 +69,19 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
@@ -116,7 +114,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
-	if _, err := appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	adminLogin := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
@@ -133,9 +131,9 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	accountID := uuid.MustParse(me.AccountID)
 
-	if _, err := appDB.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
+	if _, err := pool.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
 		('limit.agent_reasoning_iterations', '12', now()),
 		('limit.tool_continuation_budget', '30', now()),
 		('limit.thread_message_history', '250', now()),
@@ -143,17 +141,17 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`); err != nil {
 		t.Fatalf("seed platform settings: %v", err)
 	}
-	if _, err := appDB.Exec(ctx, `INSERT INTO org_settings (org_id, key, value, updated_at) VALUES
+	if _, err := pool.Exec(ctx, `INSERT INTO account_settings (account_id, key, value, updated_at) VALUES
 		($1, 'limit.agent_reasoning_iterations', '9', now()),
 		($1, 'limit.tool_continuation_budget', '18', now())
-		ON CONFLICT (org_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, orgID); err != nil {
+		ON CONFLICT (account_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, accountID); err != nil {
 		t.Fatalf("seed org settings: %v", err)
 	}
 
 	customBudgets := json.RawMessage(`{"max_output_tokens":2048,"tool_continuation_budget":15,"temperature":0.7}`)
 	_, err = personasRepo.Create(
 		ctx,
-		orgID,
+		accountID,
 		"custom-bound",
 		"1",
 		"Custom Bound",
@@ -162,6 +160,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		nil,
 		nil,
 		customBudgets,
+		nil,
 		strPtrLocal("cred-custom"),
 		strPtrLocal("custom-cred^claude-3-7-sonnet"),
 		"high",
@@ -179,13 +178,13 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	}
 	noOrgBody := decodeJSONBody[executionGovernanceResponse](t, noOrgResp.Body.Bytes())
 	if len(noOrgBody.Personas) != 0 {
-		t.Fatalf("expected no personas without org_id, got %d", len(noOrgBody.Personas))
+		t.Fatalf("expected no personas without project_id, got %d", len(noOrgBody.Personas))
 	}
 	if noOrgBody.TitleSummarizerModel == nil || *noOrgBody.TitleSummarizerModel != "summary-cred^gpt-summary" {
 		t.Fatalf("unexpected title summarizer model without org: %#v", noOrgBody.TitleSummarizerModel)
 	}
 
-	resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/execution-governance?org_id="+orgID.String(), nil, authHeader(adminToken))
+	resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/execution-governance?project_id="+accountID.String(), nil, authHeader(adminToken))
 	if resp.Code != nethttp.StatusOK {
 		t.Fatalf("execution governance: %d %s", resp.Code, resp.Body.String())
 	}

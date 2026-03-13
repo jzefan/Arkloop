@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -8,7 +6,6 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/testutil"
-"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,9 +17,8 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
-	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	accountID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	threadID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	runID := uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
 	repo := ShellSessionsRepository{}
@@ -31,7 +27,7 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 	bindingKey := "thread:" + threadID.String()
 	record := ShellSessionRecord{
 		SessionRef:        "shref_test",
-		OrgID:             orgID,
+		AccountID:             accountID,
 		ProfileRef:        "pref_test",
 		WorkspaceRef:      "wsref_test",
 		ThreadID:          &threadID,
@@ -43,11 +39,11 @@ func TestShellSessionsRepository_UpsertAndGet(t *testing.T) {
 		DefaultBindingKey: &bindingKey,
 		MetadataJSON:      map[string]any{"source": "test"},
 	}
-	if err := repo.Upsert(context.Background(), dbPool, record); err != nil {
+	if err := repo.Upsert(context.Background(), pool, record); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	stored, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, "shref_test")
+	stored, err := repo.GetBySessionRef(context.Background(), pool, accountID, "shref_test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -78,13 +74,12 @@ func TestShellSessionsRepository_UpdateRestoreRevision(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
-	orgID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	accountID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	repo := ShellSessionsRepository{}
-	if err := repo.Upsert(context.Background(), dbPool, ShellSessionRecord{
+	if err := repo.Upsert(context.Background(), pool, ShellSessionRecord{
 		SessionRef:   "shref_test",
-		OrgID:        orgID,
+		AccountID:        accountID,
 		ProfileRef:   "pref_test",
 		WorkspaceRef: "wsref_test",
 		ShareScope:   ShellShareScopeThread,
@@ -93,11 +88,11 @@ func TestShellSessionsRepository_UpdateRestoreRevision(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := repo.UpdateRestoreRevision(context.Background(), dbPool, orgID, "shref_test", "restore-2"); err != nil {
+	if err := repo.UpdateRestoreRevision(context.Background(), pool, accountID, "shref_test", "restore-2"); err != nil {
 		t.Fatalf("update restore revision: %v", err)
 	}
 
-	stored, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, "shref_test")
+	stored, err := repo.GetBySessionRef(context.Background(), pool, accountID, "shref_test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -113,16 +108,15 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	threadID := uuid.New()
 	repo := ShellSessionsRepository{}
 	bindingKey := "thread:" + threadID.String()
 	older := ShellSessionRecord{
 		SessionRef:        "shref_old",
-		OrgID:             orgID,
+		AccountID:             accountID,
 		ProfileRef:        "pref_test",
 		WorkspaceRef:      "wsref_test",
 		ThreadID:          &threadID,
@@ -134,14 +128,14 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 	}
 	newer := older
 	newer.SessionRef = "shref_new"
-	if err := repo.Upsert(context.Background(), dbPool, older); err != nil {
+	if err := repo.Upsert(context.Background(), pool, older); err != nil {
 		t.Fatalf("upsert older: %v", err)
 	}
-	if err := repo.Upsert(context.Background(), dbPool, newer); err != nil {
+	if err := repo.Upsert(context.Background(), pool, newer); err != nil {
 		t.Fatalf("upsert newer: %v", err)
 	}
 
-	latest, err := repo.GetLatestByRun(context.Background(), dbPool, orgID, runID)
+	latest, err := repo.GetLatestByRun(context.Background(), pool, accountID, runID)
 	if err != nil {
 		t.Fatalf("get latest by run: %v", err)
 	}
@@ -149,7 +143,7 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 		t.Fatalf("expected latest run session %q, got %q", newer.SessionRef, latest.SessionRef)
 	}
 
-	bound, err := repo.GetByDefaultBindingKey(context.Background(), dbPool, orgID, "pref_test", bindingKey)
+	bound, err := repo.GetByDefaultBindingKey(context.Background(), pool, accountID, "pref_test", bindingKey)
 	if err != nil {
 		t.Fatalf("get by default binding key: %v", err)
 	}
@@ -157,7 +151,7 @@ func TestShellSessionsRepository_GetLatestByRunAndDefaultBinding(t *testing.T) {
 		t.Fatalf("expected authoritative bound session %q, got %q", newer.SessionRef, bound.SessionRef)
 	}
 
-	olderStored, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, older.SessionRef)
+	olderStored, err := repo.GetBySessionRef(context.Background(), pool, accountID, older.SessionRef)
 	if err != nil {
 		t.Fatalf("get older session: %v", err)
 	}
@@ -173,17 +167,16 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
 	repo := ShellSessionsRepository{}
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	threadID := uuid.New()
 	bindingKey := "thread:" + threadID.String()
 	shellRecord := ShellSessionRecord{
 		SessionRef:        "shref_shell",
 		SessionType:       ShellSessionTypeShell,
-		OrgID:             orgID,
+		AccountID:             accountID,
 		ProfileRef:        "pref_test",
 		WorkspaceRef:      "wsref_test",
 		ThreadID:          &threadID,
@@ -196,14 +189,14 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 	browserRecord := shellRecord
 	browserRecord.SessionRef = "brref_browser"
 	browserRecord.SessionType = ShellSessionTypeBrowser
-	if err := repo.Upsert(context.Background(), dbPool, shellRecord); err != nil {
+	if err := repo.Upsert(context.Background(), pool, shellRecord); err != nil {
 		t.Fatalf("upsert shell: %v", err)
 	}
-	if err := repo.Upsert(context.Background(), dbPool, browserRecord); err != nil {
+	if err := repo.Upsert(context.Background(), pool, browserRecord); err != nil {
 		t.Fatalf("upsert browser: %v", err)
 	}
 
-	latestShell, err := repo.GetLatestByRunAndType(context.Background(), dbPool, orgID, runID, ShellSessionTypeShell)
+	latestShell, err := repo.GetLatestByRunAndType(context.Background(), pool, accountID, runID, ShellSessionTypeShell)
 	if err != nil {
 		t.Fatalf("get latest shell: %v", err)
 	}
@@ -211,7 +204,7 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 		t.Fatalf("expected shell session %q, got %q", shellRecord.SessionRef, latestShell.SessionRef)
 	}
 
-	latestBrowser, err := repo.GetLatestByRunAndType(context.Background(), dbPool, orgID, runID, ShellSessionTypeBrowser)
+	latestBrowser, err := repo.GetLatestByRunAndType(context.Background(), pool, accountID, runID, ShellSessionTypeBrowser)
 	if err != nil {
 		t.Fatalf("get latest browser: %v", err)
 	}
@@ -219,7 +212,7 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 		t.Fatalf("expected browser session %q, got %q", browserRecord.SessionRef, latestBrowser.SessionRef)
 	}
 
-	boundShell, err := repo.GetByDefaultBindingKeyAndType(context.Background(), dbPool, orgID, "pref_test", bindingKey, ShellSessionTypeShell)
+	boundShell, err := repo.GetByDefaultBindingKeyAndType(context.Background(), pool, accountID, "pref_test", bindingKey, ShellSessionTypeShell)
 	if err != nil {
 		t.Fatalf("get shell binding: %v", err)
 	}
@@ -227,7 +220,7 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 		t.Fatalf("expected shell binding %q, got %q", shellRecord.SessionRef, boundShell.SessionRef)
 	}
 
-	boundBrowser, err := repo.GetByDefaultBindingKeyAndType(context.Background(), dbPool, orgID, "pref_test", bindingKey, ShellSessionTypeBrowser)
+	boundBrowser, err := repo.GetByDefaultBindingKeyAndType(context.Background(), pool, accountID, "pref_test", bindingKey, ShellSessionTypeBrowser)
 	if err != nil {
 		t.Fatalf("get browser binding: %v", err)
 	}
@@ -235,7 +228,7 @@ func TestShellSessionsRepository_IsolatesSessionTypes(t *testing.T) {
 		t.Fatalf("expected browser binding %q, got %q", browserRecord.SessionRef, boundBrowser.SessionRef)
 	}
 
-	if _, err := repo.GetBySessionRefAndType(context.Background(), dbPool, orgID, browserRecord.SessionRef, ShellSessionTypeShell); !IsShellSessionNotFound(err) {
+	if _, err := repo.GetBySessionRefAndType(context.Background(), pool, accountID, browserRecord.SessionRef, ShellSessionTypeShell); !IsShellSessionNotFound(err) {
 		t.Fatalf("expected typed lookup miss, got %v", err)
 	}
 }
@@ -247,14 +240,13 @@ func TestShellSessionsRepository_ClearLiveSession(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	liveSessionID := "live-1"
 	repo := ShellSessionsRepository{}
-	if err := repo.Upsert(context.Background(), dbPool, ShellSessionRecord{
+	if err := repo.Upsert(context.Background(), pool, ShellSessionRecord{
 		SessionRef:    "shref_test",
-		OrgID:         orgID,
+		AccountID:         accountID,
 		ProfileRef:    "pref_test",
 		WorkspaceRef:  "wsref_test",
 		ShareScope:    ShellShareScopeWorkspace,
@@ -264,10 +256,10 @@ func TestShellSessionsRepository_ClearLiveSession(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := repo.ClearLiveSession(context.Background(), dbPool, orgID, "shref_test"); err != nil {
+	if err := repo.ClearLiveSession(context.Background(), pool, accountID, "shref_test"); err != nil {
 		t.Fatalf("clear live session: %v", err)
 	}
-	stored, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, "shref_test")
+	stored, err := repo.GetBySessionRef(context.Background(), pool, accountID, "shref_test")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -286,13 +278,12 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
 	repo := ShellSessionsRepository{}
-	orgID := uuid.New()
-	if err := repo.Upsert(context.Background(), dbPool, ShellSessionRecord{
+	accountID := uuid.New()
+	if err := repo.Upsert(context.Background(), pool, ShellSessionRecord{
 		SessionRef:   "shref_test",
-		OrgID:        orgID,
+		AccountID:        accountID,
 		ProfileRef:   "pref_test",
 		WorkspaceRef: "wsref_test",
 		ShareScope:   ShellShareScopeWorkspace,
@@ -303,7 +294,7 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 	}
 
 	firstUntil := time.Now().UTC().Add(2 * time.Minute)
-	first, err := repo.AcquireWriterLease(context.Background(), dbPool, orgID, "shref_test", "run:first", firstUntil)
+	first, err := repo.AcquireWriterLease(context.Background(), pool, accountID, "shref_test", "run:first", firstUntil)
 	if err != nil {
 		t.Fatalf("acquire first lease: %v", err)
 	}
@@ -315,7 +306,7 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 	}
 
 	renewedUntil := time.Now().UTC().Add(3 * time.Minute)
-	renewed, err := repo.RenewWriterLease(context.Background(), dbPool, orgID, "shref_test", "run:first", renewedUntil)
+	renewed, err := repo.RenewWriterLease(context.Background(), pool, accountID, "shref_test", "run:first", renewedUntil)
 	if err != nil {
 		t.Fatalf("renew lease: %v", err)
 	}
@@ -326,15 +317,15 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 		t.Fatalf("expected renewed lease_until after first acquire, got %#v", renewed.LeaseUntil)
 	}
 
-	_, err = repo.AcquireWriterLease(context.Background(), dbPool, orgID, "shref_test", "run:second", time.Now().UTC().Add(2*time.Minute))
+	_, err = repo.AcquireWriterLease(context.Background(), pool, accountID, "shref_test", "run:second", time.Now().UTC().Add(2*time.Minute))
 	if !IsShellSessionLeaseConflict(err) {
 		t.Fatalf("expected lease conflict, got %v", err)
 	}
 
-	if err := repo.ReleaseWriterLease(context.Background(), dbPool, orgID, "shref_test", "run:second"); err != nil {
+	if err := repo.ReleaseWriterLease(context.Background(), pool, accountID, "shref_test", "run:second"); err != nil {
 		t.Fatalf("release with wrong owner should be ignored, got %v", err)
 	}
-	stillHeld, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, "shref_test")
+	stillHeld, err := repo.GetBySessionRef(context.Background(), pool, accountID, "shref_test")
 	if err != nil {
 		t.Fatalf("get after wrong release: %v", err)
 	}
@@ -343,10 +334,10 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 	}
 
 	staleUntil := time.Now().UTC().Add(-time.Minute)
-	if _, err := dbPool.Exec(context.Background(), `UPDATE shell_sessions SET lease_until = $3 WHERE org_id = $1 AND session_ref = $2`, orgID, "shref_test", staleUntil); err != nil {
+	if _, err := pool.Exec(context.Background(), `UPDATE shell_sessions SET lease_until = $3 WHERE account_id = $1 AND session_ref = $2`, accountID, "shref_test", staleUntil); err != nil {
 		t.Fatalf("expire lease: %v", err)
 	}
-	second, err := repo.AcquireWriterLease(context.Background(), dbPool, orgID, "shref_test", "run:second", time.Now().UTC().Add(2*time.Minute))
+	second, err := repo.AcquireWriterLease(context.Background(), pool, accountID, "shref_test", "run:second", time.Now().UTC().Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("acquire second lease after expiry: %v", err)
 	}
@@ -357,10 +348,10 @@ func TestShellSessionsRepository_WriterLeaseLifecycle(t *testing.T) {
 		t.Fatalf("expected epoch increment after owner switch, got %d", second.LeaseEpoch)
 	}
 
-	if err := repo.ClearFinishedWriterLease(context.Background(), dbPool, orgID, "shref_test"); err != nil {
+	if err := repo.ClearFinishedWriterLease(context.Background(), pool, accountID, "shref_test"); err != nil {
 		t.Fatalf("clear finished lease: %v", err)
 	}
-	cleared, err := repo.GetBySessionRef(context.Background(), dbPool, orgID, "shref_test")
+	cleared, err := repo.GetBySessionRef(context.Background(), pool, accountID, "shref_test")
 	if err != nil {
 		t.Fatalf("get after clear: %v", err)
 	}

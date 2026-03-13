@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type MessageAttachmentStore interface {
@@ -27,7 +28,7 @@ func NewInputLoaderMiddleware(
 		if messageLimit <= 0 {
 			messageLimit = 200
 		}
-		inputJSON, threadMessages, err := loadRunInputs(ctx, rc.DB, rc.Run, eventsRepo, messagesRepo, messageLimit)
+		inputJSON, threadMessages, err := loadRunInputs(ctx, rc.Pool, rc.Run, eventsRepo, messagesRepo, messageLimit)
 		if err != nil {
 			return err
 		}
@@ -56,13 +57,15 @@ func NewInputLoaderMiddleware(
 
 func loadRunInputs(
 	ctx context.Context,
-	db database.DB,
+	pool interface {
+		BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	},
 	run data.Run,
 	eventsRepo data.RunEventsRepository,
 	messagesRepo data.MessagesRepository,
 	messageLimit int,
 ) (map[string]any, []data.ThreadMessage, error) {
-	tx, err := db.Begin(ctx)
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,7 +77,7 @@ func loadRunInputs(
 	}
 
 	inputJSON := map[string]any{
-		"org_id":    run.OrgID.String(),
+		"account_id":    run.AccountID.String(),
 		"thread_id": run.ThreadID.String(),
 	}
 	if dataJSON != nil {
@@ -84,12 +87,15 @@ func loadRunInputs(
 		if rawPersonaID, ok := dataJSON["persona_id"].(string); ok && strings.TrimSpace(rawPersonaID) != "" {
 			inputJSON["persona_id"] = strings.TrimSpace(rawPersonaID)
 		}
+		if rawRole, ok := dataJSON["role"].(string); ok && strings.TrimSpace(rawRole) != "" {
+			inputJSON["role"] = strings.TrimSpace(rawRole)
+		}
 		if rawOutputRouteID, ok := dataJSON["output_route_id"].(string); ok && strings.TrimSpace(rawOutputRouteID) != "" {
 			inputJSON["output_route_id"] = strings.TrimSpace(rawOutputRouteID)
 		}
 	}
 
-	messages, err := messagesRepo.ListByThread(ctx, tx, run.OrgID, run.ThreadID, messageLimit)
+	messages, err := messagesRepo.ListByThread(ctx, tx, run.AccountID, run.ThreadID, messageLimit)
 	if err != nil {
 		return nil, nil, err
 	}

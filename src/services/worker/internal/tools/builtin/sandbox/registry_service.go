@@ -5,39 +5,39 @@ import (
 	"strings"
 	"time"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type registryService struct {
-	db            database.DB
+	pool          *pgxpool.Pool
 	profileRepo   data.ProfileRegistriesRepository
 	workspaceRepo data.WorkspaceRegistriesRepository
 	sessionsRepo  data.ShellSessionsRepository
 }
 
-func newRegistryService(db database.DB) *registryService {
-	return &registryService{db: db}
+func newRegistryService(pool *pgxpool.Pool) *registryService {
+	return &registryService{pool: pool}
 }
 
 func (s *registryService) UpsertProfileRegistry(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	profileRef string,
 	defaultWorkspaceRef *string,
 ) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.pool == nil {
 		return nil
 	}
 	profileRef = strings.TrimSpace(profileRef)
-	if orgID == uuid.Nil || profileRef == "" {
+	if accountID == uuid.Nil || profileRef == "" {
 		return nil
 	}
-	return s.profileRepo.UpsertTouch(ctx, s.db, data.RegistryRecord{
+	return s.profileRepo.UpsertTouch(ctx, s.pool, data.RegistryRecord{
 		Ref:                 profileRef,
-		OrgID:               orgID,
+		AccountID:               accountID,
 		OwnerUserID:         ownerUserID,
 		DefaultWorkspaceRef: defaultWorkspaceRef,
 		FlushState:          data.FlushStateIdle,
@@ -48,22 +48,22 @@ func (s *registryService) UpsertProfileRegistry(
 
 func (s *registryService) UpsertWorkspaceRegistry(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	projectID *uuid.UUID,
 	workspaceRef string,
 	defaultShellSessionRef *string,
 ) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.pool == nil {
 		return nil
 	}
 	workspaceRef = strings.TrimSpace(workspaceRef)
-	if orgID == uuid.Nil || workspaceRef == "" {
+	if accountID == uuid.Nil || workspaceRef == "" {
 		return nil
 	}
-	return s.workspaceRepo.UpsertTouch(ctx, s.db, data.RegistryRecord{
+	return s.workspaceRepo.UpsertTouch(ctx, s.pool, data.RegistryRecord{
 		Ref:                    workspaceRef,
-		OrgID:                  orgID,
+		AccountID:                  accountID,
 		OwnerUserID:            ownerUserID,
 		ProjectID:              projectID,
 		DefaultShellSessionRef: defaultShellSessionRef,
@@ -73,12 +73,12 @@ func (s *registryService) UpsertWorkspaceRegistry(
 	})
 }
 
-func (s *registryService) BindSessionRestorePointer(ctx context.Context, orgID uuid.UUID, sessionRef string, revision string) error {
-	if s == nil || s.db == nil {
+func (s *registryService) BindSessionRestorePointer(ctx context.Context, accountID uuid.UUID, sessionRef string, revision string) error {
+	if s == nil || s.pool == nil {
 		return nil
 	}
-	if orgID == uuid.Nil || strings.TrimSpace(sessionRef) == "" {
+	if accountID == uuid.Nil || strings.TrimSpace(sessionRef) == "" {
 		return nil
 	}
-	return s.sessionsRepo.UpdateRestoreRevision(ctx, s.db, orgID, sessionRef, revision)
+	return s.sessionsRepo.UpdateRestoreRevision(ctx, s.pool, accountID, sessionRef, revision)
 }

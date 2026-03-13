@@ -1,6 +1,11 @@
 | key | type | scope | default | sensitive | description |
 | --- | --- | --- | --- | --- | --- |
+| backpressure.enabled | bool | both | true | false | 启用 sub-agent 背压治理 |
+| backpressure.queue_threshold | int | both | 15 | false | 单 root run 下触发背压的活跃 sub-agent 数量阈值 |
+| backpressure.strategy | string | both | serial | false | 背压降级策略: serial/reject/pause |
 | browser.enabled | bool | platform | false | false | 是否在 Worker 中注册 browser 自动化工具 |
+| budget.max_cost_micros | int | both | 0 | false | 单次 run 最大累计费用 (微美元), 0 表示不限 |
+| budget.max_total_output_tokens | int | both | 0 | false | 单次 run 最大累计输出 token 数, 0 表示不限 |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新组织初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
@@ -12,7 +17,7 @@
 | email.smtp_port | int | platform | 587 | false | SMTP 端口 |
 | email.smtp_tls_mode | string | platform | starttls | false | SMTP TLS 模式：starttls/tls/none |
 | email.smtp_user | string | platform |  | false | SMTP 用户名 |
-| feature.byok_enabled | bool | both | true | false | 是否允许使用 org 级凭证（BYOK） |
+| feature.byok_enabled | bool | both | true | false | 是否允许使用用户级凭证（BYOK） |
 | feature.mcp_remote_enabled | bool | both | false | false | 是否允许远程 MCP |
 | gateway.ip_mode | string | platform | direct | false | Gateway IP 模式：direct/cloudflare/trusted_proxy |
 | gateway.ratelimit_capacity | number | platform | 600 | false | Gateway Rate Limit Capacity |
@@ -25,12 +30,20 @@
 | limit.concurrent_runs | int | both | 10 | false | 并发 run 上限 |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
+| limit.subagent_max_active_per_root_run | int | both | 20 | false | 单 root run 下最大活跃 sub-agent 数量 |
+| limit.subagent_max_depth | int | both | 5 | false | Sub-Agent 最大嵌套深度 |
+| limit.subagent_max_descendants_per_root_run | int | both | 50 | false | 单 root run 下 sub-agent 总数上限 |
+| limit.subagent_max_parallel_children | int | both | 5 | false | 单 run 下最大并行子 agent 数量 |
+| limit.subagent_max_pending_per_root_run | int | both | 20 | false | 单 root run 下待处理输入队列上限 |
 | limit.team_members | int | both | 50 | false | Team 成员数量上限 |
 | limit.thread_message_history | int | both | 200 | false | 线程历史消息加载上限（条） |
 | limit.tool_continuation_budget | int | both | 32 | false | 长工具 continuation 总预算上限 |
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
 | llm.retry.max_attempts | int | platform | 3 | false | LLM 重试最大次数 |
+| memory.distill_enabled | bool | both | true | false | 启用 run 结束后的自动 Memory 提炼 |
+| memory.distill_min_rounds | int | both | 3 | false | 触发 Memory 提炼的最低 LLM 迭代轮数 |
+| memory.distill_min_tool_calls | int | both | 2 | false | 触发 Memory 提炼的最低 tool call 次数 |
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |
@@ -51,7 +64,6 @@
 | sandbox.idle_timeout_browser_s | int | platform | 120 | false | Sandbox browser tier 空闲超时（秒） |
 | sandbox.idle_timeout_lite_s | int | platform | 180 | false | Sandbox lite tier 空闲超时（秒） |
 | sandbox.idle_timeout_pro_s | int | platform | 300 | false | Sandbox pro tier 空闲超时（秒） |
-| sandbox.idle_timeout_ultra_s | int | platform | 600 | false | Sandbox ultra tier 空闲超时（秒） |
 | sandbox.max_lifetime_browser_s | int | platform | 600 | false | Sandbox browser tier 最大存活时间（秒） |
 | sandbox.max_lifetime_s | int | platform | 1800 | false | Sandbox session 最大存活时间（秒） |
 | sandbox.max_sessions | int | platform | 50 | false | Sandbox 最大并发 session 数 |
@@ -65,6 +77,10 @@
 | sandbox.warm_ultra | int | platform | 1 | false | ultra tier 预热实例数 |
 | skills.market.skillsmp_api_key | string | platform |  | true | SkillsMP 官方市场 API Key |
 | skills.market.skillsmp_base_url | string | platform | https://skillsmp.com | false | SkillsMP 官方市场基础地址 |
+| skills.registry.api_base_url | string | platform |  | false | 官方技能 Registry API 基础地址，留空则沿用 Base URL |
+| skills.registry.api_key | string | platform |  | true | 官方技能 Registry API Key |
+| skills.registry.base_url | string | platform | https://clawhub.ai | false | 官方技能 Registry 页面基础地址 |
+| skills.registry.provider | string | platform | clawhub | false | 官方技能 Registry Provider |
 | turnstile.allowed_host | string | platform |  | false | Turnstile Allowed Host |
 | turnstile.secret_key | string | platform |  | true | Turnstile Secret Key |
 | turnstile.site_key | string | platform |  | false | Turnstile Site Key |

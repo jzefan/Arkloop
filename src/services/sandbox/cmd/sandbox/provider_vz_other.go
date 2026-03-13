@@ -10,6 +10,6 @@ import (
 	"arkloop/services/sandbox/internal/session"
 )
 
-func buildVzPool(_ app.Config, _ *logging.JSONLogger) (session.Provider, error) {
+func buildVzPool(_ app.Config, _ *logging.JSONLogger) (session.VMPool, error) {
 	return nil, fmt.Errorf("vz provider requires macOS (darwin)")
 }

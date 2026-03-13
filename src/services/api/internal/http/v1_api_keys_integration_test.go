@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -24,11 +22,11 @@ const apiKeysTestJWTSecret = "test-secret-should-be-long-enough-32chars"
 type apiKeyTestEnv struct {
 	handler        nethttp.Handler
 	apiKeysRepo    *data.APIKeysRepository
-	membershipRepo *data.OrgMembershipRepository
+	membershipRepo *data.AccountMembershipRepository
 	tokenService   *auth.JwtAccessTokenService
 	aliceToken     string
 	aliceUserID    uuid.UUID
-	aliceOrgID     uuid.UUID
+	aliceAccountID     uuid.UUID
 }
 
 func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
@@ -40,11 +38,11 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	}
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -56,31 +54,31 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(appDB)
+	credRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	apiKeysRepo, err := data.NewAPIKeysRepository(appDB)
+	apiKeysRepo, err := data.NewAPIKeysRepository(pool)
 	if err != nil {
 		t.Fatalf("new api keys repo: %v", err)
 	}
@@ -89,11 +87,11 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -101,11 +99,11 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		AuditWriter:         auditWriter,
 		APIKeysRepo:         apiKeysRepo,
@@ -139,7 +137,7 @@ func buildAPIKeyEnv(t *testing.T) apiKeyTestEnv {
 		tokenService:   tokenService,
 		aliceToken:     regPayload.AccessToken,
 		aliceUserID:    aliceUserID,
-		aliceOrgID:     aliceMembership.OrgID,
+		aliceAccountID:     aliceMembership.AccountID,
 	}
 }
 
@@ -298,21 +296,21 @@ func TestAPIKeyOwnershipVisibility(t *testing.T) {
 	memberAID := register("member-a")
 	memberBID := register("member-b")
 	for _, userID := range []uuid.UUID{memberAID, memberBID} {
-		if _, err := env.membershipRepo.Create(context.Background(), env.aliceOrgID, userID, auth.RoleOrgMember); err != nil {
+		if _, err := env.membershipRepo.Create(context.Background(), env.aliceAccountID, userID, auth.RoleAccountMember); err != nil {
 			t.Fatalf("add membership: %v", err)
 		}
 	}
 
-	memberAToken, err := env.tokenService.Issue(memberAID, env.aliceOrgID, auth.RoleOrgMember, time.Now().UTC())
+	memberAToken, err := env.tokenService.Issue(memberAID, env.aliceAccountID, auth.RoleAccountMember, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue member token: %v", err)
 	}
 
-	memberAKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, memberAID, "member-a-key", []string{auth.PermDataThreadsRead})
+	memberAKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceAccountID, memberAID, "member-a-key", []string{auth.PermDataThreadsRead})
 	if err != nil {
 		t.Fatalf("create member A key: %v", err)
 	}
-	memberBKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, memberBID, "member-b-key", []string{auth.PermDataThreadsRead})
+	memberBKey, _, err := env.apiKeysRepo.Create(context.Background(), env.aliceAccountID, memberBID, "member-b-key", []string{auth.PermDataThreadsRead})
 	if err != nil {
 		t.Fatalf("create member B key: %v", err)
 	}
@@ -403,11 +401,11 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -419,31 +417,31 @@ func TestAPIKeyAuditLog(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(appDB)
+	credRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("thread repo: %v", err)
 	}
-	apiKeysRepo, err := data.NewAPIKeysRepository(appDB)
+	apiKeysRepo, err := data.NewAPIKeysRepository(pool)
 	if err != nil {
 		t.Fatalf("api keys repo: %v", err)
 	}
@@ -452,22 +450,22 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		AuditWriter:         auditWriter,
 		APIKeysRepo:         apiKeysRepo,
@@ -497,7 +495,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	created := decodeJSONBody[createBody](t, createResp.Body.Bytes())
 
 	var createCount int
-	if err := appDB.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.create'").Scan(&createCount); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.create'").Scan(&createCount); err != nil {
 		t.Fatalf("count create audit: %v", err)
 	}
 	if createCount != 1 {
@@ -511,7 +509,7 @@ func TestAPIKeyAuditLog(t *testing.T) {
 	}
 
 	var revokeCount int
-	if err := appDB.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.revoke'").Scan(&revokeCount); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs WHERE action = 'api_keys.revoke'").Scan(&revokeCount); err != nil {
 		t.Fatalf("count revoke audit: %v", err)
 	}
 	if revokeCount != 1 {

@@ -16,8 +16,7 @@ import {
   type MeResponse,
   type ThreadResponse,
 } from '../api'
-import { clearActiveThreadIdInStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY, readAppModeFromStorage, writeAppModeToStorage } from '../storage'
-import type { AppMode } from '../storage'
+import { clearActiveThreadIdInStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY } from '../storage'
 
 type Props = {
   accessToken: string
@@ -54,22 +53,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   )
   const [notificationVersion, setNotificationVersion] = useState(0)
   const [creditsBalance, setCreditsBalance] = useState(0)
-  const [appMode, setAppModeState] = useState<AppMode>(readAppModeFromStorage)
-  const clawEnabled = me?.claw_enabled === true
-  const effectiveAppMode: AppMode = clawEnabled ? appMode : 'chat'
-  const availableAppModes: AppMode[] = clawEnabled ? ['chat', 'claw'] : ['chat']
-
-  const handleSetAppMode = useCallback((mode: AppMode) => {
-    const nextMode: AppMode = mode === 'claw' && !clawEnabled ? 'chat' : mode
-    writeAppModeToStorage(nextMode)
-    setAppModeState(nextMode)
-  }, [clawEnabled])
-
-  useEffect(() => {
-    if (!meLoaded || clawEnabled || appMode === 'chat') return
-    writeAppModeToStorage('chat')
-    setAppModeState('chat')
-  }, [appMode, clawEnabled, meLoaded])
+  const [pendingSkillPrompt, setPendingSkillPrompt] = useState<string | null>(null)
 
   const handleNotificationMarkedRead = useCallback(() => {
     setNotificationVersion((v) => v + 1)
@@ -131,7 +115,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       try {
         const [meResp, threadItems, creditsResp] = await Promise.all([
           getMe(accessToken),
-          listThreads(accessToken, { limit: 200, mode: 'chat' }),
+          listThreads(accessToken, { limit: 200 }),
           getMyCredits(accessToken),
         ])
         if (!mountedRef.current) return
@@ -289,6 +273,11 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           onLogout={handleLogout}
           onCreditsChanged={(balance) => setCreditsBalance(balance)}
           onMeUpdated={(updated) => setMe(updated)}
+          onTrySkill={(prompt) => {
+            setSettingsOpen(false)
+            navigate('/')
+            setPendingSkillPrompt(prompt)
+          }}
         />
       )}
 
@@ -297,7 +286,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
       )}
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen, threads, onThreadDeleted: handleThreadDeleted, appMode: effectiveAppMode, availableAppModes, onSetAppMode: handleSetAppMode }} />
+        <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen, threads, onThreadDeleted: handleThreadDeleted, pendingSkillPrompt, onConsumeSkillPrompt: () => setPendingSkillPrompt(null) }} />
         {notificationsOpen && (
           <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={handleNotificationMarkedRead} />
         )}

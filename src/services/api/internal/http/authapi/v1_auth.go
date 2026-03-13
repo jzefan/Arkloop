@@ -85,6 +85,129 @@ type captchaConfigResponse struct {
 	Enabled bool   `json:"enabled"`
 	SiteKey string `json:"site_key"`
 }
+type bootstrapInitResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type bootstrapVerifyResponse struct {
+	Valid     bool   `json:"valid"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type bootstrapSetupRequest struct {
+	Token    string `json:"token"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Locale   string `json:"locale"`
+	Email    string `json:"email"`
+}
+
+type bootstrapSetupResponse struct {
+	UserID      string `json:"user_id"`
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+}
+
+
+
+func bootstrapInit(registrationService *auth.RegistrationService) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodPost {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+		traceID := observability.TraceIDFromContext(r.Context())
+		if registrationService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		result, err := registrationService.InitBootstrapToken(r.Context())
+		if err != nil {
+			switch err.(type) {
+			case auth.BootstrapAlreadyInitializedError:
+				httpkit.WriteError(w, nethttp.StatusConflict, "bootstrap.already_initialized", "platform admin already initialized", traceID, nil)
+			default:
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			}
+			return
+		}
+		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, bootstrapInitResponse{Token: result.Token, ExpiresAt: result.ExpiresAt.Format(time.RFC3339Nano)})
+	}
+}
+
+func bootstrapVerify(registrationService *auth.RegistrationService) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodGet {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+		traceID := observability.TraceIDFromContext(r.Context())
+		if registrationService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		token := strings.TrimSpace(r.PathValue("token"))
+		if token == "" {
+			token = strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/v1/bootstrap/verify/"))
+		}
+		result, err := registrationService.VerifyBootstrapToken(r.Context(), token)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		resp := bootstrapVerifyResponse{Valid: result.Valid}
+		if !result.ExpiresAt.IsZero() {
+			resp.ExpiresAt = result.ExpiresAt.Format(time.RFC3339Nano)
+		}
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+	}
+}
+
+func bootstrapSetup(registrationService *auth.RegistrationService) func(nethttp.ResponseWriter, *nethttp.Request) {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.Method != nethttp.MethodPost {
+			writeMethodNotAllowed(w, r)
+			return
+		}
+		traceID := observability.TraceIDFromContext(r.Context())
+		if registrationService == nil {
+			writeAuthNotConfigured(w, traceID)
+			return
+		}
+		var body bootstrapSetupRequest
+		if err := httpkit.DecodeJSON(r, &body); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		body.Token = strings.TrimSpace(body.Token)
+		body.Username = strings.TrimSpace(body.Username)
+		body.Email = strings.TrimSpace(body.Email)
+		if body.Token == "" || body.Username == "" || body.Password == "" {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+			return
+		}
+		result, err := registrationService.SetupBootstrapAdmin(r.Context(), body.Token, body.Username, body.Password, body.Email, body.Locale)
+		if err != nil {
+			switch typed := err.(type) {
+			case auth.BootstrapInvalidTokenError:
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "bootstrap.invalid_token", typed.Error(), traceID, nil)
+			case auth.BootstrapAlreadyInitializedError:
+				httpkit.WriteError(w, nethttp.StatusConflict, "bootstrap.already_initialized", typed.Error(), traceID, nil)
+			case auth.LoginExistsError:
+				httpkit.WriteError(w, nethttp.StatusConflict, "auth.login_exists", "login already taken", traceID, nil)
+			case auth.PasswordPolicyError:
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", typed.Error(), traceID, nil)
+			default:
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			}
+			return
+		}
+		setRefreshTokenCookie(w, r, refreshTokenCookieName, result.RefreshToken, registrationService.RefreshTokenTTLSeconds())
+		clearLegacyRefreshTokenCookies(w, r)
+		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, bootstrapSetupResponse{UserID: result.UserID.String(), AccessToken: result.AccessToken, TokenType: "bearer"})
+	}
+}
 
 func captchaConfig(
 	resolver sharedconfig.Resolver,
@@ -181,8 +304,8 @@ type meResponse struct {
 	EmailVerificationRequired bool     `json:"email_verification_required"`
 	ClawEnabled               bool     `json:"claw_enabled"`
 	CreatedAt                 string   `json:"created_at"`
-	OrgID                     string   `json:"org_id,omitempty"`
-	OrgName                   string   `json:"org_name,omitempty"`
+	AccountID                     string   `json:"account_id,omitempty"`
+	AccountName                   string   `json:"account_name,omitempty"`
 	Role                      string   `json:"role,omitempty"`
 	Permissions               []string `json:"permissions"`
 }
@@ -547,7 +670,7 @@ func register(
 	}
 }
 
-func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository, orgRepo *data.OrgRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository, flagService *featureflag.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.AccountMembershipRepository, accountRepo *data.AccountRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository, flagService *featureflag.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		if authService == nil {
@@ -573,7 +696,7 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				return
 			}
 			if membership == nil {
-				httpkit.WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
+				httpkit.WriteError(w, nethttp.StatusForbidden, "auth.no_account_membership", "user has no account membership", traceID, nil)
 				return
 			}
 
@@ -590,7 +713,7 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				EmailVerificationRequired: emailVerifyRequired,
 				ClawEnabled:               clawEnabled,
 				CreatedAt:                 user.CreatedAt.UTC().Format(time.RFC3339Nano),
-				OrgID:                     membership.OrgID.String(),
+				AccountID:                     membership.AccountID.String(),
 				Role:                      membership.Role,
 				Permissions:               auth.PermissionsForRole(membership.Role),
 			}
@@ -601,9 +724,9 @@ func me(authService *auth.Service, membershipRepo *data.OrgMembershipRepository,
 				}
 			}
 
-			if orgRepo != nil {
-				if org, err := orgRepo.GetByID(r.Context(), membership.OrgID); err == nil && org != nil {
-					resp.OrgName = org.Name
+			if accountRepo != nil {
+				if account, err := accountRepo.GetByID(r.Context(), membership.AccountID); err == nil && account != nil {
+					resp.AccountName = account.Name
 				}
 			}
 

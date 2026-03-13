@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package runengine
 
 import (
@@ -10,10 +8,7 @@ import (
 	"strings"
 
 	sharedconfig "arkloop/services/shared/config"
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/database/pgadapter"
 	sharedent "arkloop/services/shared/entitlement"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/runlimit"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -26,6 +21,7 @@ import (
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
 	workerruntime "arkloop/services/worker/internal/runtime"
+	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
@@ -40,7 +36,6 @@ type EngineV1 struct {
 	router                *routing.ProviderRouter
 	directPool            *pgxpool.Pool
 	broadcastRDB          *redis.Client
-	eventBus              eventbus.EventBus
 	jobQueue              queue.JobQueue
 	executorRegistry      pipeline.AgentExecutorBuilder
 	runtimeManager        *workerruntime.Manager
@@ -48,7 +43,6 @@ type EngineV1 struct {
 	llmRetryMaxAttempts   int
 	llmRetryBaseDelayMs   int
 	configResolver        sharedconfig.Resolver
-	dialect               database.DialectHelper
 }
 
 type ExecuteInput struct {
@@ -56,15 +50,13 @@ type ExecuteInput struct {
 }
 
 type EngineV1Deps struct {
-	Router             *routing.ProviderRouter
-	DBPool             *pgxpool.Pool
-	DirectDBPool       *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
-	RunControlHub      *pipeline.RunControlHub
-	StubGateway        llm.Gateway
-	EmitDebugEvents    bool
-	RunLimiterRDB      *redis.Client
-	ConcurrencyLimiter runlimit.ConcurrencyLimiter
-	EventBus           eventbus.EventBus
+	Router          *routing.ProviderRouter
+	DBPool          *pgxpool.Pool
+	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
+	RunControlHub   *pipeline.RunControlHub
+	StubGateway     llm.Gateway
+	EmitDebugEvents bool
+	RunLimiterRDB   *redis.Client
 
 	ConfigResolver sharedconfig.Resolver
 
@@ -80,14 +72,12 @@ type EngineV1Deps struct {
 	ToolDescriptionOverridesRepo pipeline.ToolDescriptionOverridesReader
 	ExecutorRegistry             pipeline.AgentExecutorBuilder // 必填，nil 时 NewEngineV1 返回错误
 
-	// JobQueue 可选；非 nil 时启用 SpawnChildRun
+	// JobQueue 可选；非 nil 时启用 SubAgentControl
 	JobQueue queue.JobQueue
 
 	// LLM 请求重试配置
 	LlmRetryMaxAttempts int
 	LlmRetryBaseDelayMs int
-
-	Dialect database.DialectHelper
 
 	RuntimeManager         *workerruntime.Manager
 	MemoryProviderFactory  *workerruntime.MemoryProviderFactory
@@ -137,44 +127,37 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		return nil, err
 	}
 
-	runsRepo := data.RunsRepository{Dialect: deps.Dialect}
-	eventsRepo := data.RunEventsRepository{Dialect: deps.Dialect}
-	messagesRepo := data.MessagesRepository{Dialect: deps.Dialect}
-	usageRepo := data.UsageRecordsRepository{Dialect: deps.Dialect}
-	creditsRepo := data.CreditsRepository{Dialect: deps.Dialect}
+	runsRepo := data.RunsRepository{}
+	eventsRepo := data.RunEventsRepository{}
+	messagesRepo := data.MessagesRepository{}
+	usageRepo := data.UsageRecordsRepository{}
+	creditsRepo := data.CreditsRepository{}
 
-	concurrencyLimiter := deps.ConcurrencyLimiter
+	rdb := deps.RunLimiterRDB
 	releaseSlot := func(ctx context.Context, run data.Run) {
 		// 子 Run 没有通过 API 层 TryAcquire，不释放并发槽
 		if run.ParentRunID != nil {
 			return
 		}
-		if concurrencyLimiter == nil {
-			return
-		}
-		key := runlimit.Key(run.OrgID.String())
-		concurrencyLimiter.Release(ctx, key)
+		key := runlimit.Key(run.AccountID.String())
+		runlimit.Release(ctx, rdb, key)
 	}
 
 	// deps.DBPool 为 nil 时 resolver 保持 nil，EntitlementMiddleware 以 fail-open 方式跳过检查
-	var db database.DB
-	if deps.DBPool != nil {
-		db = pgadapter.New(deps.DBPool)
-	}
 	var resolver *sharedent.Resolver
-	if db != nil {
-		resolver = sharedent.NewResolver(db, deps.RunLimiterRDB)
+	if deps.DBPool != nil {
+		resolver = sharedent.NewResolver(deps.DBPool, rdb)
 	}
 
 	cfgResolver := deps.ConfigResolver
 	if cfgResolver == nil {
 		registry := sharedconfig.DefaultRegistry()
-		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(db), nil, 0)
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(deps.DBPool), nil, 0)
 		cfgResolver = fallback
 	}
 
 	middlewares := []pipeline.RunMiddleware{
-		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub, deps.EventBus),
+		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub),
 		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, deps.MessageAttachmentStore),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMCPDiscoveryMiddleware(
@@ -188,15 +171,16 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewAgentConfigMiddleware(deps.DBPool),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
-		pipeline.NewSkillContextMiddleware(db, nil),
-		pipeline.NewMemoryMiddleware(nil, db, deps.ConfigResolver),
+		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
+		pipeline.NewSkillContextMiddleware(deps.DBPool, nil),
+		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
-		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.EventBus, deps.StubGateway, deps.EmitDebugEvents, deps.Dialect, deps.RoutingConfigLoader),
+		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
 		pipeline.NewToolBuildMiddleware(),
 	}
 
-	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, concurrencyLimiter, deps.EventBus, usageRepo, creditsRepo, resolver)
+	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, deps.JobQueue, usageRepo, creditsRepo, resolver)
 
 	return &EngineV1{
 		middlewares:           middlewares,
@@ -204,7 +188,6 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		router:                deps.Router,
 		directPool:            deps.DirectDBPool,
 		broadcastRDB:          deps.RunLimiterRDB,
-		eventBus:              deps.EventBus,
 		jobQueue:              deps.JobQueue,
 		executorRegistry:      deps.ExecutorRegistry,
 		runtimeManager:        deps.RuntimeManager,
@@ -212,7 +195,6 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		llmRetryMaxAttempts:   deps.LlmRetryMaxAttempts,
 		llmRetryBaseDelayMs:   deps.LlmRetryBaseDelayMs,
 		configResolver:        cfgResolver,
-		dialect:               deps.Dialect,
 	}, nil
 }
 
@@ -221,12 +203,14 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		return fmt.Errorf("pool must not be nil")
 	}
 
-	db := pgadapter.New(pool)
-	resolvedRun, err := resolveAndPersistEnvironmentBindings(ctx, db, run, e.dialect)
+	resolvedRun, err := resolveAndPersistEnvironmentBindings(ctx, pool, run)
 	if err != nil {
 		return fmt.Errorf("resolve environment bindings: %w", err)
 	}
 	run = resolvedRun
+	if err := subagentctl.MarkRunning(ctx, pool, run.ID); err != nil {
+		return fmt.Errorf("mark sub_agent running: %w", err)
+	}
 
 	traceID := strings.TrimSpace(input.TraceID)
 
@@ -246,11 +230,9 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 	rc := &pipeline.RunContext{
 		Run:                 run,
-		DB:                  db,
 		Pool:                pool,
 		DirectPool:          directPool,
 		BroadcastRDB:        e.broadcastRDB,
-		EventBus:            e.eventBus,
 		TraceID:             traceID,
 		Emitter:             events.NewEmitter(traceID),
 		Router:              e.router,
@@ -268,10 +250,10 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 
 	registry := sharedconfig.DefaultRegistry()
-	orgScope := sharedconfig.Scope{OrgID: &run.OrgID}
-	rc.ThreadMessageHistoryLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.thread_message_history", orgScope, 200)
-	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", orgScope, 0)
-	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", orgScope, 32)
+	projectScope := sharedconfig.Scope{ProjectID: run.ProjectID}
+	rc.ThreadMessageHistoryLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.thread_message_history", projectScope, 200)
+	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", projectScope, 0)
+	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", projectScope, 32)
 	rc.MaxParallelTasks = resolvePositiveInt(ctx, e.configResolver, registry, "limit.max_parallel_tasks", sharedconfig.Scope{}, 32)
 	rc.CreditPerUSD = resolvePositiveInt(ctx, e.configResolver, registry, "credit.per_usd", sharedconfig.Scope{}, 1000)
 	rc.LlmMaxResponseBytes = resolvePositiveInt(ctx, e.configResolver, registry, "llm.max_response_bytes", sharedconfig.Scope{}, 16384)
@@ -281,8 +263,20 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		rc.MemoryProvider = e.memoryProviderFactory.Resolve(runtimeSnapshot)
 	}
 
-	if e.jobQueue != nil && e.eventBus != nil {
-		rc.SpawnChildRun = newSpawnChildRunFunc(pool, e.eventBus, e.jobQueue, run, traceID, e.dialect)
+	if e.jobQueue != nil && e.broadcastRDB != nil {
+		subAgentLimits := subagentctl.SubAgentLimits{
+			MaxDepth:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_depth", projectScope, 5),
+			MaxActivePerRootRun:      resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_active_per_root_run", projectScope, 20),
+			MaxParallelChildren:      resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_parallel_children", projectScope, 5),
+			MaxDescendantsPerRootRun: resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_descendants_per_root_run", projectScope, 50),
+			MaxPendingPerRootRun:     resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_pending_per_root_run", projectScope, 20),
+		}
+		bpConfig := subagentctl.BackpressureConfig{
+			Enabled:        resolveBool(ctx, e.configResolver, registry, "backpressure.enabled", projectScope, true),
+			QueueThreshold: resolveNonNegativeInt(ctx, e.configResolver, registry, "backpressure.queue_threshold", projectScope, 15),
+			Strategy:       resolveString(ctx, e.configResolver, registry, "backpressure.strategy", projectScope, "serial"),
+		}
+		rc.SubAgentControl = subagentctl.NewService(pool, e.broadcastRDB, e.jobQueue, run, traceID, subAgentLimits, bpConfig)
 	}
 
 	handler := pipeline.Build(e.middlewares, e.terminal)
@@ -290,8 +284,8 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 
 	// run 结束后清理 sandbox session（不阻塞返回结果）
 	if runtimeSnapshot.SandboxBaseURL != "" {
-		orgID := run.OrgID.String()
-		go sandbox.CleanupSession(runtimeSnapshot.SandboxBaseURL, runtimeSnapshot.SandboxAuthToken, run.ID.String(), orgID)
+		accountID := run.AccountID.String()
+		go sandbox.CleanupSession(runtimeSnapshot.SandboxBaseURL, runtimeSnapshot.SandboxAuthToken, run.ID.String(), accountID)
 	}
 
 	return err
@@ -319,6 +313,46 @@ func resolvePositiveInt(ctx context.Context, resolver sharedconfig.Resolver, reg
 		return fallback
 	}
 	return v
+}
+
+func resolveBool(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort bool) bool {
+	fallback := lastResort
+	if registry != nil {
+		if entry, ok := registry.Get(key); ok {
+			if v, err := strconv.ParseBool(strings.TrimSpace(entry.Default)); err == nil {
+				fallback = v
+			}
+		}
+	}
+	if resolver == nil {
+		return fallback
+	}
+	raw, err := resolver.Resolve(ctx, key, scope)
+	if err != nil {
+		return fallback
+	}
+	v, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func resolveString(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort string) string {
+	fallback := lastResort
+	if registry != nil {
+		if entry, ok := registry.Get(key); ok && entry.Default != "" {
+			fallback = entry.Default
+		}
+	}
+	if resolver == nil {
+		return fallback
+	}
+	raw, err := resolver.Resolve(ctx, key, scope)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	return raw
 }
 
 func resolveNonNegativeInt(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort int) int {

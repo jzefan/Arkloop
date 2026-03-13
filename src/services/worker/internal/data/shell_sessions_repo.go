@@ -10,7 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -24,7 +25,7 @@ const (
 	ShellShareScopeRun       = "run"
 	ShellShareScopeThread    = "thread"
 	ShellShareScopeWorkspace = "workspace"
-	ShellShareScopeOrg       = "org"
+	ShellShareScopeAccount       = "account"
 )
 
 var ErrShellSessionLeaseConflict = errors.New("shell session writer lease conflict")
@@ -32,7 +33,7 @@ var ErrShellSessionLeaseConflict = errors.New("shell session writer lease confli
 type ShellSessionRecord struct {
 	SessionRef        string
 	SessionType       string
-	OrgID             uuid.UUID
+	AccountID             uuid.UUID
 	ProfileRef        string
 	WorkspaceRef      string
 	ProjectID         *uuid.UUID
@@ -52,49 +53,40 @@ type ShellSessionRecord struct {
 	UpdatedAt         time.Time
 }
 
-type ShellSessionsRepository struct{
-	Dialect database.DialectHelper
-}
-
-func (r ShellSessionsRepository) dialect() database.DialectHelper {
-	if r.Dialect != nil {
-		return r.Dialect
-	}
-	return database.PostgresDialect{}
-}
+type ShellSessionsRepository struct{}
 
 func (ShellSessionsRepository) GetBySessionRef(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 ) (ShellSessionRecord, error) {
-	return getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
+	return getShellSessionByType(ctx, pool, accountID, sessionRef, ShellSessionTypeShell)
 }
 
 func (ShellSessionsRepository) GetBySessionRefAndType(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	sessionType string,
 ) (ShellSessionRecord, error) {
-	return getShellSessionByType(ctx, pool, orgID, sessionRef, sessionType)
+	return getShellSessionByType(ctx, pool, accountID, sessionRef, sessionType)
 }
 
 func (ShellSessionsRepository) GetLatestByRun(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 ) (ShellSessionRecord, error) {
-	return (ShellSessionsRepository{}).GetLatestByRunAndType(ctx, pool, orgID, runID, ShellSessionTypeShell)
+	return (ShellSessionsRepository{}).GetLatestByRunAndType(ctx, pool, accountID, runID, ShellSessionTypeShell)
 }
 
 func (ShellSessionsRepository) GetLatestByRunAndType(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 	sessionType string,
 ) (ShellSessionRecord, error) {
@@ -104,8 +96,8 @@ func (ShellSessionsRepository) GetLatestByRunAndType(
 	if pool == nil {
 		return ShellSessionRecord{}, fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return ShellSessionRecord{}, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return ShellSessionRecord{}, fmt.Errorf("account_id must not be empty")
 	}
 	if runID == uuid.Nil {
 		return ShellSessionRecord{}, fmt.Errorf("run_id must not be empty")
@@ -115,7 +107,7 @@ func (ShellSessionsRepository) GetLatestByRunAndType(
 		ctx,
 		`SELECT session_ref,
 		        session_type,
-		        org_id,
+		        account_id,
 		        profile_ref,
 		        workspace_ref,
 		        project_id,
@@ -134,13 +126,13 @@ func (ShellSessionsRepository) GetLatestByRunAndType(
 		        created_at,
 		        updated_at
 		   FROM shell_sessions
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND run_id = $2
 		    AND session_type = $3
 		    AND state <> $4
 		  ORDER BY last_used_at DESC, updated_at DESC
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		runID,
 		sessionType,
 		ShellSessionStateClosed,
@@ -149,18 +141,18 @@ func (ShellSessionsRepository) GetLatestByRunAndType(
 
 func (ShellSessionsRepository) GetByDefaultBindingKey(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
 ) (ShellSessionRecord, error) {
-	return (ShellSessionsRepository{}).GetByDefaultBindingKeyAndType(ctx, pool, orgID, profileRef, defaultBindingKey, ShellSessionTypeShell)
+	return (ShellSessionsRepository{}).GetByDefaultBindingKeyAndType(ctx, pool, accountID, profileRef, defaultBindingKey, ShellSessionTypeShell)
 }
 
 func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
 	sessionType string,
@@ -171,8 +163,8 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 	if pool == nil {
 		return ShellSessionRecord{}, fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return ShellSessionRecord{}, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return ShellSessionRecord{}, fmt.Errorf("account_id must not be empty")
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	defaultBindingKey = strings.TrimSpace(defaultBindingKey)
@@ -187,7 +179,7 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 		ctx,
 		`SELECT session_ref,
 		        session_type,
-		        org_id,
+		        account_id,
 		        profile_ref,
 		        workspace_ref,
 		        project_id,
@@ -206,13 +198,13 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 		        created_at,
 		        updated_at
 		   FROM shell_sessions
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND default_binding_key = $3
 		    AND session_type = $4
 		    AND state <> $5
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		profileRef,
 		defaultBindingKey,
 		sessionType,
@@ -220,9 +212,9 @@ func (ShellSessionsRepository) GetByDefaultBindingKeyAndType(
 	))
 }
 
-func (r ShellSessionsRepository) Upsert(
+func (ShellSessionsRepository) Upsert(
 	ctx context.Context,
-	pool database.DB,
+	pool *pgxpool.Pool,
 	record ShellSessionRecord,
 ) error {
 	if ctx == nil {
@@ -235,21 +227,21 @@ func (r ShellSessionsRepository) Upsert(
 	if err != nil {
 		return err
 	}
-	tx, err := pool.Begin(ctx)
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := clearCompetingDefaultBindingKeys(ctx, tx, normalized, r.dialect()); err != nil {
+	if err := clearCompetingDefaultBindingKeys(ctx, tx, normalized); err != nil {
 		return err
 	}
 
 	_, err = tx.Exec(
 		ctx,
-		fmt.Sprintf(`INSERT INTO shell_sessions (
+		`INSERT INTO shell_sessions (
 			session_ref,
 			session_type,
-			org_id,
+			account_id,
 			profile_ref,
 			workspace_ref,
 			project_id,
@@ -266,7 +258,7 @@ func (r ShellSessionsRepository) Upsert(
 			last_used_at,
 			metadata_json
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, %s, %s
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), $17::jsonb
 		)
 		ON CONFLICT (session_ref) DO UPDATE SET
 			session_type = EXCLUDED.session_type,
@@ -283,12 +275,12 @@ func (r ShellSessionsRepository) Upsert(
 			lease_owner_id = EXCLUDED.lease_owner_id,
 			lease_until = EXCLUDED.lease_until,
 			lease_epoch = EXCLUDED.lease_epoch,
-			last_used_at = %s,
+			last_used_at = now(),
 			metadata_json = EXCLUDED.metadata_json,
-			updated_at = %s`, r.dialect().Now(), r.dialect().JSONCast("$17"), r.dialect().Now(), r.dialect().Now()),
+			updated_at = now()`,
 		normalized.SessionRef,
 		normalized.SessionType,
-		normalized.OrgID,
+		normalized.AccountID,
 		normalized.ProfileRef,
 		normalized.WorkspaceRef,
 		normalized.ProjectID,
@@ -312,17 +304,17 @@ func (r ShellSessionsRepository) Upsert(
 
 func (ShellSessionsRepository) Touch(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 ) error {
-	return (ShellSessionsRepository{}).TouchLastUsed(ctx, pool, orgID, sessionRef)
+	return (ShellSessionsRepository{}).TouchLastUsed(ctx, pool, accountID, sessionRef)
 }
 
-func (r ShellSessionsRepository) TouchLastUsed(
+func (ShellSessionsRepository) TouchLastUsed(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 ) error {
 	if ctx == nil {
@@ -332,29 +324,29 @@ func (r ShellSessionsRepository) TouchLastUsed(
 		return fmt.Errorf("pool must not be nil")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	if sessionRef == "" {
 		return fmt.Errorf("session_ref must not be empty")
 	}
 	_, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
-		    SET last_used_at = %s,
-		        updated_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		`UPDATE shell_sessions
+		    SET last_used_at = now(),
+		        updated_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 	)
 	return err
 }
 
-func (r ShellSessionsRepository) UpdateRestoreRevision(
+func (ShellSessionsRepository) UpdateRestoreRevision(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	revision string,
 ) error {
@@ -366,31 +358,31 @@ func (r ShellSessionsRepository) UpdateRestoreRevision(
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	revision = strings.TrimSpace(revision)
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	if sessionRef == "" {
 		return fmt.Errorf("session_ref must not be empty")
 	}
 	_, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET latest_restore_rev = NULLIF($3, ''),
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 		revision,
 	)
 	return err
 }
 
-func (r ShellSessionsRepository) SetDefaultBindingKey(
+func (ShellSessionsRepository) SetDefaultBindingKey(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	defaultBindingKey string,
 ) error {
@@ -400,8 +392,8 @@ func (r ShellSessionsRepository) SetDefaultBindingKey(
 	if pool == nil {
 		return fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	defaultBindingKey = strings.TrimSpace(defaultBindingKey)
@@ -410,23 +402,23 @@ func (r ShellSessionsRepository) SetDefaultBindingKey(
 	}
 	_, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET default_binding_key = NULLIF($3, ''),
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 		defaultBindingKey,
 	)
 	return err
 }
 
-func (r ShellSessionsRepository) ClearLiveSession(
+func (ShellSessionsRepository) ClearLiveSession(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 ) error {
 	if ctx == nil {
@@ -435,8 +427,8 @@ func (r ShellSessionsRepository) ClearLiveSession(
 	if pool == nil {
 		return fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	if sessionRef == "" {
@@ -444,48 +436,48 @@ func (r ShellSessionsRepository) ClearLiveSession(
 	}
 	_, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET live_session_id = NULL,
 		        lease_owner_id = NULL,
 		        lease_until = NULL,
 		        state = $3,
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 		ShellSessionStateReady,
 	)
 	return err
 }
 
-func (r ShellSessionsRepository) AcquireWriterLease(
+func (ShellSessionsRepository) AcquireWriterLease(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	ownerID string,
 	leaseUntil time.Time,
 ) (ShellSessionRecord, error) {
-	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, false, r.dialect())
+	return acquireWriterLease(ctx, pool, accountID, sessionRef, ownerID, leaseUntil, false)
 }
 
-func (r ShellSessionsRepository) RenewWriterLease(
+func (ShellSessionsRepository) RenewWriterLease(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	ownerID string,
 	leaseUntil time.Time,
 ) (ShellSessionRecord, error) {
-	return acquireWriterLease(ctx, pool, orgID, sessionRef, ownerID, leaseUntil, true, r.dialect())
+	return acquireWriterLease(ctx, pool, accountID, sessionRef, ownerID, leaseUntil, true)
 }
 
-func (r ShellSessionsRepository) ReleaseWriterLease(
+func (ShellSessionsRepository) ReleaseWriterLease(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	ownerID string,
 ) error {
@@ -495,8 +487,8 @@ func (r ShellSessionsRepository) ReleaseWriterLease(
 	if pool == nil {
 		return fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	ownerID = strings.TrimSpace(ownerID)
@@ -508,15 +500,15 @@ func (r ShellSessionsRepository) ReleaseWriterLease(
 	}
 	commandTag, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET lease_owner_id = NULL,
 		        lease_until = NULL,
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
 		    AND session_ref = $2
-		    AND lease_owner_id = $3`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		    AND lease_owner_id = $3`,
+		accountID,
 		sessionRef,
 		ownerID,
 	)
@@ -526,14 +518,14 @@ func (r ShellSessionsRepository) ReleaseWriterLease(
 	if commandTag.RowsAffected() > 0 {
 		return nil
 	}
-	_, err = getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
+	_, err = getShellSessionByType(ctx, pool, accountID, sessionRef, ShellSessionTypeShell)
 	return err
 }
 
-func (r ShellSessionsRepository) ClearFinishedWriterLease(
+func (ShellSessionsRepository) ClearFinishedWriterLease(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 ) error {
 	if ctx == nil {
@@ -542,8 +534,8 @@ func (r ShellSessionsRepository) ClearFinishedWriterLease(
 	if pool == nil {
 		return fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	if sessionRef == "" {
@@ -551,15 +543,15 @@ func (r ShellSessionsRepository) ClearFinishedWriterLease(
 	}
 	commandTag, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET lease_owner_id = NULL,
 		        lease_until = NULL,
 		        state = $3,
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 		ShellSessionStateReady,
 	)
@@ -569,14 +561,14 @@ func (r ShellSessionsRepository) ClearFinishedWriterLease(
 	if commandTag.RowsAffected() > 0 {
 		return nil
 	}
-	_, err = getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
+	_, err = getShellSessionByType(ctx, pool, accountID, sessionRef, ShellSessionTypeShell)
 	return err
 }
 
-func (r ShellSessionsRepository) SetState(
+func (ShellSessionsRepository) SetState(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	state string,
 ) error {
@@ -586,8 +578,8 @@ func (r ShellSessionsRepository) SetState(
 	if pool == nil {
 		return fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	if sessionRef == "" {
@@ -595,13 +587,13 @@ func (r ShellSessionsRepository) SetState(
 	}
 	_, err := pool.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET state = $3,
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
-		    AND session_ref = $2`, r.dialect().Now(), r.dialect().Now()),
-		orgID,
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
+		    AND session_ref = $2`,
+		accountID,
 		sessionRef,
 		normalizeShellSessionState(state),
 	)
@@ -610,8 +602,8 @@ func (r ShellSessionsRepository) SetState(
 
 func (ShellSessionsRepository) GetLiveSessionRefsByRun(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 ) ([]string, error) {
 	if ctx == nil {
@@ -620,8 +612,8 @@ func (ShellSessionsRepository) GetLiveSessionRefsByRun(
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return nil, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return nil, fmt.Errorf("account_id must not be empty")
 	}
 	if runID == uuid.Nil {
 		return nil, fmt.Errorf("run_id must not be empty")
@@ -630,11 +622,11 @@ func (ShellSessionsRepository) GetLiveSessionRefsByRun(
 		ctx,
 		`SELECT session_ref
 		   FROM shell_sessions
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND run_id = $2
 		    AND session_type = $3
 		    AND state <> $4`,
-		orgID,
+		accountID,
 		runID,
 		ShellSessionTypeShell,
 		ShellSessionStateClosed,
@@ -664,7 +656,7 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	err := row.Scan(
 		&record.SessionRef,
 		&record.SessionType,
-		&record.OrgID,
+		&record.AccountID,
 		&record.ProfileRef,
 		&record.WorkspaceRef,
 		&record.ProjectID,
@@ -701,15 +693,15 @@ func scanShellSession(row pgx.Row) (ShellSessionRecord, error) {
 	return record, nil
 }
 
-func getShellSessionByType(ctx context.Context, pool database.DB, orgID uuid.UUID, sessionRef string, sessionType string) (ShellSessionRecord, error) {
+func getShellSessionByType(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, sessionRef string, sessionType string) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if pool == nil {
 		return ShellSessionRecord{}, fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return ShellSessionRecord{}, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return ShellSessionRecord{}, fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	if sessionRef == "" {
@@ -720,7 +712,7 @@ func getShellSessionByType(ctx context.Context, pool database.DB, orgID uuid.UUI
 		ctx,
 		`SELECT session_ref,
 		        session_type,
-		        org_id,
+		        account_id,
 		        profile_ref,
 		        workspace_ref,
 		        project_id,
@@ -739,18 +731,18 @@ func getShellSessionByType(ctx context.Context, pool database.DB, orgID uuid.UUI
 		        created_at,
 		        updated_at
 		   FROM shell_sessions
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND session_ref = $2
 		    AND session_type = $3`,
-		orgID,
+		accountID,
 		sessionRef,
 		sessionType,
 	))
 }
 
 func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord, []byte, error) {
-	if record.OrgID == uuid.Nil {
-		return ShellSessionRecord{}, nil, fmt.Errorf("org_id must not be empty")
+	if record.AccountID == uuid.Nil {
+		return ShellSessionRecord{}, nil, fmt.Errorf("account_id must not be empty")
 	}
 	record.SessionRef = strings.TrimSpace(record.SessionRef)
 	if record.SessionRef == "" {
@@ -786,26 +778,26 @@ func normalizeShellSessionRecord(record ShellSessionRecord) (ShellSessionRecord,
 }
 
 type defaultBindingKeyQuerier interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error)
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord, dialect database.DialectHelper) error {
+func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindingKeyQuerier, record ShellSessionRecord) error {
 	if querier == nil || record.DefaultBindingKey == nil {
 		return nil
 	}
 	_, err := querier.Exec(
 		ctx,
-		fmt.Sprintf(`UPDATE shell_sessions
+		`UPDATE shell_sessions
 		    SET default_binding_key = NULL,
-		        updated_at = %s,
-		        last_used_at = %s
-		  WHERE org_id = $1
+		        updated_at = now(),
+		        last_used_at = now()
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND session_type = $3
 		    AND default_binding_key = $4
 		    AND session_ref <> $5
-		    AND state <> $6`, dialect.Now(), dialect.Now()),
-		record.OrgID,
+		    AND state <> $6`,
+		record.AccountID,
 		record.ProfileRef,
 		record.SessionType,
 		*record.DefaultBindingKey,
@@ -817,7 +809,7 @@ func clearCompetingDefaultBindingKeys(ctx context.Context, querier defaultBindin
 
 func normalizeShellShareScope(value string) string {
 	switch strings.TrimSpace(value) {
-	case ShellShareScopeRun, ShellShareScopeThread, ShellShareScopeWorkspace, ShellShareScopeOrg:
+	case ShellShareScopeRun, ShellShareScopeThread, ShellShareScopeWorkspace, ShellShareScopeAccount:
 		return strings.TrimSpace(value)
 	default:
 		return ShellShareScopeThread
@@ -866,7 +858,7 @@ func ShellDefaultBindingKeyForWorkspace(workspaceRef string) string {
 }
 
 func IsShellSessionNotFound(err error) bool {
-	return err != nil && err == database.ErrNoRows
+	return err != nil && err == pgx.ErrNoRows
 }
 
 func IsShellSessionLeaseConflict(err error) bool {
@@ -875,13 +867,12 @@ func IsShellSessionLeaseConflict(err error) bool {
 
 func acquireWriterLease(
 	ctx context.Context,
-	pool database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	sessionRef string,
 	ownerID string,
 	leaseUntil time.Time,
 	renewOnly bool,
-	dialect database.DialectHelper,
 ) (ShellSessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -889,8 +880,8 @@ func acquireWriterLease(
 	if pool == nil {
 		return ShellSessionRecord{}, fmt.Errorf("pool must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return ShellSessionRecord{}, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return ShellSessionRecord{}, fmt.Errorf("account_id must not be empty")
 	}
 	sessionRef = strings.TrimSpace(sessionRef)
 	ownerID = strings.TrimSpace(ownerID)
@@ -903,7 +894,7 @@ func acquireWriterLease(
 	if leaseUntil.IsZero() {
 		return ShellSessionRecord{}, fmt.Errorf("lease_until must not be zero")
 	}
-	query := fmt.Sprintf(`UPDATE shell_sessions
+	query := `UPDATE shell_sessions
 	    SET lease_owner_id = $3,
 	        lease_until = $4,
 	        lease_epoch = CASE
@@ -911,26 +902,26 @@ func acquireWriterLease(
 	            WHEN lease_owner_id = $3 THEN lease_epoch
 	            ELSE lease_epoch + 1
 	        END,
-	        updated_at = %s,
-	        last_used_at = %s
-	  WHERE org_id = $1
+	        updated_at = now(),
+	        last_used_at = now()
+	  WHERE account_id = $1
 	    AND session_ref = $2
 	    AND (
-	        lease_owner_id = $3`, dialect.Now(), dialect.Now())
+	        lease_owner_id = $3`
 	if renewOnly {
 		query += `
 	    )`
 	} else {
-		query += fmt.Sprintf(`
+		query += `
 	        OR lease_owner_id IS NULL
 	        OR lease_until IS NULL
-	        OR lease_until <= %s
-	    )`, dialect.Now())
+	        OR lease_until <= now()
+	    )`
 	}
 	query += `
 	RETURNING session_ref,
 	          session_type,
-	          org_id,
+	          account_id,
 	          profile_ref,
 	          workspace_ref,
 	          project_id,
@@ -948,21 +939,21 @@ func acquireWriterLease(
 	          metadata_json,
 	          created_at,
 	          updated_at`
-	record, err := scanShellSession(pool.QueryRow(ctx, query, orgID, sessionRef, ownerID, leaseUntil.UTC()))
+	record, err := scanShellSession(pool.QueryRow(ctx, query, accountID, sessionRef, ownerID, leaseUntil.UTC()))
 	if err == nil {
 		return record, nil
 	}
-	if err != database.ErrNoRows {
+	if err != pgx.ErrNoRows {
 		return ShellSessionRecord{}, err
 	}
-	return ShellSessionRecord{}, detectShellSessionLeaseConflict(ctx, pool, orgID, sessionRef)
+	return ShellSessionRecord{}, detectShellSessionLeaseConflict(ctx, pool, accountID, sessionRef)
 }
 
-func detectShellSessionLeaseConflict(ctx context.Context, pool database.DB, orgID uuid.UUID, sessionRef string) error {
+func detectShellSessionLeaseConflict(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, sessionRef string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	record, err := getShellSessionByType(ctx, pool, orgID, sessionRef, ShellSessionTypeShell)
+	record, err := getShellSessionByType(ctx, pool, accountID, sessionRef, ShellSessionTypeShell)
 	if err != nil {
 		return err
 	}

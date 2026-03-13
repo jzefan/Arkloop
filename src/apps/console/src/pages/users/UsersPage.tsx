@@ -17,7 +17,7 @@ import { Badge, type BadgeVariant } from '../../components/Badge'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -88,7 +88,7 @@ export function UsersPage() {
   const [editing, setEditing] = useState(false)
 
   // credit adjust modal
-  const [creditTarget, setCreditTarget] = useState<{ orgID: string; username: string } | null>(null)
+  const [creditTarget, setCreditTarget] = useState<{ projectID: string; username: string } | null>(null)
   const [creditForm, setCreditForm] = useState({ amount: '', note: '' })
   const [creditError, setCreditError] = useState('')
   const [creditAdjusting, setCreditAdjusting] = useState(false)
@@ -231,9 +231,9 @@ export function UsersPage() {
   }, [])
 
   const handleOpenCredit = useCallback((d: AdminUserDetail) => {
-    const orgID = d.orgs[0]?.org_id
-    if (!orgID) return
-    setCreditTarget({ orgID, username: d.username })
+    const projectID = d.accounts?.[0]?.account_id
+    if (!projectID) return
+    setCreditTarget({ projectID, username: d.username })
     setCreditForm({ amount: '', note: '' })
     setCreditError('')
   }, [])
@@ -258,7 +258,7 @@ export function UsersPage() {
     setCreditAdjusting(true)
     setCreditError('')
     try {
-      await adjustAdminCredits({ org_id: creditTarget.orgID, amount, note }, accessToken)
+      await adjustAdminCredits({ account_id: creditTarget.projectID, amount, note }, accessToken)
       addToast(tc.toastCreditAdjusted, 'success')
       setCreditTarget(null)
     } catch (err) {
@@ -734,7 +734,7 @@ function UserRow({
                       <DetailField label={tc.detailTimezone} value={renderDetail.timezone ?? '--'} />
                     </div>
                     <div className="ml-4 flex shrink-0 gap-2">
-                      {renderDetail.orgs.length > 0 && (
+                      {(renderDetail.accounts?.length ?? 0) > 0 && (
                         <button
                           onClick={() => onCredit(renderDetail)}
                           className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep2)]"
@@ -754,28 +754,28 @@ function UserRow({
 
                   <div>
                     <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
-                      {tc.detailOrgs}
+                      {tc.detailAccounts}
                     </span>
-                    {renderDetail.orgs.length > 0 ? (
+                    {(renderDetail.accounts?.length ?? 0) > 0 ? (
                       <table className="mt-2 w-full text-xs">
                         <thead>
                           <tr className="border-b border-[var(--c-border)]">
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailOrgId}
+                              {tc.detailAccountId}
                             </th>
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailOrgRole}
+                              {tc.detailAccountRole}
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {renderDetail.orgs.map((o) => (
+                          {(renderDetail.accounts ?? []).map((o) => (
                             <tr
-                              key={o.org_id}
+                              key={o.account_id}
                               className="border-b border-[var(--c-border)] last:border-0"
                             >
                               <td className="py-1.5 font-mono text-[var(--c-text-primary)]">
-                                {o.org_id}
+                                {o.account_id}
                               </td>
                               <td className="py-1.5 text-[var(--c-text-secondary)]">{o.role}</td>
                             </tr>
@@ -784,7 +784,7 @@ function UserRow({
                       </table>
                     ) : (
                       <p className="py-2 text-xs text-[var(--c-text-muted)]">
-                        {tc.detailNoOrgs}
+                        {tc.detailNoAccounts}
                       </p>
                     )}
                   </div>

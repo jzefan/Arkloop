@@ -31,7 +31,7 @@ func NewRoutingMiddleware(
 			selectorConfig = staticRouter.Config()
 		}
 		if configLoader != nil {
-			loaded, dbErr := configLoader.Load(ctx, rc.Run.OrgID)
+			loaded, dbErr := configLoader.Load(ctx, rc.Run.ProjectID)
 			if dbErr != nil {
 				slog.WarnContext(ctx, "routing: per-run load failed, using static", "err", dbErr.Error())
 			} else if len(loaded.Routes) > 0 {
@@ -41,8 +41,8 @@ func NewRoutingMiddleware(
 		}
 
 		byokEnabled := false
-		if resolver != nil {
-			raw, err := resolver.Resolve(ctx, rc.Run.OrgID, "feature.byok_enabled")
+		if resolver != nil && rc.Run.ProjectID != nil {
+			raw, err := resolver.Resolve(ctx, *rc.Run.ProjectID, "feature.byok_enabled")
 			if err == nil {
 				byokEnabled = raw == "true"
 			}
@@ -145,7 +145,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(decision.Denied.ErrorClass),
 			)
-			return appendAndCommitSingle(ctx, rc.DB, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.EventBus)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		selected := decision.Selected
@@ -160,7 +160,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(llm.ErrorClassInternalError),
 			)
-			return appendAndCommitSingle(ctx, rc.DB, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.EventBus)
+			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB)
 		}
 
 		gateway, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
@@ -175,7 +175,7 @@ func NewRoutingMiddleware(
 				nil,
 				StringPtr(llm.ErrorClassInternalError),
 			)
-			if commitErr := appendAndCommitSingle(ctx, rc.DB, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.EventBus); commitErr != nil {
+			if commitErr := appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB); commitErr != nil {
 				return commitErr
 			}
 			return nil
@@ -227,11 +227,11 @@ func splitModelSelector(selector string) (string, string, bool) {
 }
 
 func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routing.ProviderRouteDenied {
-	if cred.Scope == routing.CredentialScopeOrg && !byokEnabled {
+	if cred.OwnerKind == routing.CredentialScopeUser && !byokEnabled {
 		return &routing.ProviderRouteDenied{
 			ErrorClass: tools.PolicyDeniedCode,
 			Code:       "policy.byok_disabled",
-			Message:    "BYOK not enabled for this organization",
+			Message:    "BYOK not enabled for this project",
 		}
 	}
 	return nil

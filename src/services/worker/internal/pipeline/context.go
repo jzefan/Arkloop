@@ -3,8 +3,6 @@ package pipeline
 import (
 	"context"
 
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -13,6 +11,7 @@ import (
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/routing"
+	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -41,11 +40,9 @@ type ResolvedAgentConfig struct {
 type RunContext struct {
 	// -- 初始化时写入 --
 	Run          data.Run
-	DB           database.DB
 	Pool         *pgxpool.Pool
 	DirectPool   *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
 	BroadcastRDB *redis.Client // 跨实例 SSE 广播，nil 时仅走 pg_notify
-	EventBus     eventbus.EventBus // EventBus 抽象，替代直接 Redis Pub/Sub
 	TraceID      string
 	Emitter      events.Emitter
 	Router       *routing.ProviderRouter
@@ -61,6 +58,10 @@ type RunContext struct {
 
 	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 --
 	FinalAssistantOutput string
+
+	// -- AgentLoopHandler 写入：本次 run 的 tool call 总数和 LLM 迭代轮数，供 MemoryMiddleware 判断提炼条件 --
+	RunToolCallCount  int
+	RunIterationCount int
 
 	// -- CancelGuardMiddleware 写入 --
 	CancelFunc context.CancelFunc // 释放 LISTEN 连接
@@ -84,6 +85,8 @@ type RunContext struct {
 	ToolTimeoutMs           *int
 	ToolBudget              map[string]any
 	PerToolSoftLimits       tools.PerToolSoftLimits
+	MaxCostMicros           *int64
+	MaxTotalOutputTokens    *int64
 	PreferredCredentialName string // Persona.PreferredCredential 解析结果，供 RoutingMiddleware 使用
 	ReasoningMode           string // "auto" | "enabled" | "disabled" | "none"
 
@@ -91,6 +94,7 @@ type RunContext struct {
 	ToolSpecs     []llm.ToolSpec
 	ToolExecutors map[string]tools.Executor
 	AllowlistSet  map[string]struct{}
+	ToolDenylist  []string
 	ToolRegistry  *tools.Registry
 	// group_name -> provider_name
 	ActiveToolProviderByGroup map[string]string
@@ -139,10 +143,8 @@ type RunContext struct {
 	// CheckInAt 判断当前迭代 iter 是否为 check-in 边界，仅当 WaitForInput 非 nil 时有效。
 	CheckInAt func(iter int) bool
 
-	// -- 父子 Run 调度（由 EngineV1.Execute 注入，nil 时表示未启用）--
-	// SpawnChildRun 创建子 Run 并异步等待其完成，父 Run 挂起期间不持有 DB 连接。
-	// ctx 取消时立即返回 error，子 Run 继续执行直至超时。
-	SpawnChildRun func(ctx context.Context, personaID string, input string) (string, error)
+	// -- Sub-agent 控制面（由 EngineV1.Execute 注入，nil 时表示未启用）--
+	SubAgentControl subagentctl.Control
 
 	// -- PersonaResolutionMiddleware 写入，TitleSummarizerMiddleware 读取 --
 	TitleSummarizer *personas.TitleSummarizerConfig

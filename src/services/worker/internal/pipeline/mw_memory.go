@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
@@ -15,6 +14,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -31,9 +31,9 @@ var usageRepo = data.UsageRecordsRepository{}
 
 // NewMemoryMiddleware 在 run 前注入长期记忆到 SystemPrompt，run 后异步刷写显式 memory_write。
 // provider 为 nil 时整个 middleware 为 no-op。
-// db 为 nil 时跳过快照缓存，每次直接 Find。
+// pool 为 nil 时跳过快照缓存，每次直接 Find。
 // configResolver 为 nil 时跳过 memory usage 记录。
-func NewMemoryMiddleware(provider memory.MemoryProvider, db database.DB, configResolver sharedconfig.Resolver) RunMiddleware {
+func NewMemoryMiddleware(provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		activeProvider := provider
 		if activeProvider == nil {
@@ -49,23 +49,24 @@ func NewMemoryMiddleware(provider memory.MemoryProvider, db database.DB, configR
 		}
 
 		ident := memory.MemoryIdentity{
-			OrgID:   rc.Run.OrgID,
+			AccountID:   rc.Run.AccountID,
 			UserID:  *rc.UserID,
 			AgentID: agentID,
 		}
 
 		userQuery := lastUserMessageText(rc.Messages)
 		if userQuery != "" {
-			injectFromCacheOrFind(ctx, rc, activeProvider, db, ident, userQuery)
+			injectFromCacheOrFind(ctx, rc, activeProvider, pool, ident, userQuery)
 		}
 
 		err := next(ctx, rc)
-		flushPendingWritesAfterRun(activeProvider, db, configResolver, rc)
+		flushPendingWritesAfterRun(ctx, activeProvider, pool, configResolver, rc)
+		distillAfterRun(activeProvider, pool, configResolver, rc, ident)
 		return err
 	}
 }
 
-func flushPendingWritesAfterRun(provider memory.MemoryProvider, db database.DB, configResolver sharedconfig.Resolver, rc *RunContext) {
+func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver, rc *RunContext) {
 	if rc.PendingMemoryWrites == nil {
 		return
 	}
@@ -73,14 +74,14 @@ func flushPendingWritesAfterRun(provider memory.MemoryProvider, db database.DB, 
 	if len(pending) == 0 {
 		return
 	}
-	costPerWrite := resolveCommitCost(context.Background(), configResolver)
-	go flushPendingWrites(pending, provider, db, rc.Run.OrgID, rc.Run.ID, costPerWrite)
+	costPerWrite := resolveCommitCost(ctx, configResolver)
+	go flushPendingWrites(pending, provider, pool, rc.Run.AccountID, rc.Run.ID, costPerWrite)
 }
 
 // injectFromCacheOrFind 优先从 PG 快照读取记忆，缓存缺失时降级到 OpenViking Find。
-func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, db database.DB, ident memory.MemoryIdentity, query string) {
-	if db != nil {
-		block, found, err := snapshotRepo.Get(ctx, db, ident.OrgID, ident.UserID, ident.AgentID)
+func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, pool *pgxpool.Pool, ident memory.MemoryIdentity, query string) {
+	if pool != nil {
+		block, found, err := snapshotRepo.Get(ctx, pool, ident.AccountID, ident.UserID, ident.AgentID)
 		if err != nil {
 			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
 		} else if found && strings.TrimSpace(block) != "" {
@@ -94,11 +95,12 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 	block, hits := renderMemoryBlock(findCtx, provider, ident, memory.MemoryScopeUser, query)
 	if block != "" {
 		rc.SystemPrompt += block
-		if db != nil {
+		if pool != nil {
 			go func() {
+				// goroutine 超出请求生命周期，需要独立 context
 				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer uCancel()
-				_ = snapshotRepo.UpsertWithHits(uCtx, db, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
+				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
 			}()
 		}
 	}
@@ -165,7 +167,8 @@ func buildMemoryBlock(lines []string) string {
 	return block
 }
 
-func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, db database.DB, orgID, runID uuid.UUID, costPerWrite float64) {
+func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, pool *pgxpool.Pool, accountID, runID uuid.UUID, costPerWrite float64) {
+	// 由 goroutine 调用，超出请求生命周期，需要独立 context
 	ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 	defer cancel()
 
@@ -174,7 +177,7 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 	for _, pendingWrite := range pending {
 		if err := provider.Write(ctx, pendingWrite.Ident, pendingWrite.Scope, pendingWrite.Entry); err != nil {
 			slog.Warn("memory: deferred write failed",
-				"org_id", pendingWrite.Ident.OrgID.String(),
+				"account_id", pendingWrite.Ident.AccountID.String(),
 				"user_id", pendingWrite.Ident.UserID.String(),
 				"agent_id", pendingWrite.Ident.AgentID,
 				"scope", string(pendingWrite.Scope),
@@ -192,12 +195,12 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 		return
 	}
 
-	if db != nil {
+	if pool != nil {
 		ident := pending[0].Ident
 		if block, hits, ok := rebuildSnapshotBlock(ctx, provider, ident, successfulQueries); ok {
-			if err := snapshotRepo.UpsertWithHits(ctx, db, ident.OrgID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
+			if err := snapshotRepo.UpsertWithHits(ctx, pool, ident.AccountID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
 				slog.Warn("memory: snapshot rebuild upsert failed",
-					"org_id", ident.OrgID.String(),
+					"account_id", ident.AccountID.String(),
 					"user_id", ident.UserID.String(),
 					"agent_id", ident.AgentID,
 					"err", err.Error(),
@@ -206,11 +209,11 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 		}
 	}
 
-	if costPerWrite > 0 && db != nil {
+	if costPerWrite > 0 && pool != nil {
 		totalCost := costPerWrite * float64(successCount)
-		uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		uCtx, uCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer uCancel()
-		if err := usageRepo.InsertMemoryUsage(uCtx, db, orgID, runID, totalCost); err != nil {
+		if err := usageRepo.InsertMemoryUsage(uCtx, pool, accountID, runID, totalCost); err != nil {
 			slog.Warn("memory: usage record insert failed",
 				"run_id", runID.String(),
 				"err", err.Error(),
@@ -235,7 +238,7 @@ func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, i
 		cancel()
 		if err != nil {
 			slog.Warn("memory: snapshot rebuild find failed",
-				"org_id", ident.OrgID.String(),
+				"account_id", ident.AccountID.String(),
 				"user_id", ident.UserID.String(),
 				"agent_id", ident.AgentID,
 				"scope", string(scope),
@@ -292,6 +295,124 @@ func lastUserMessageText(messages []llm.Message) string {
 		}
 	}
 	return ""
+}
+
+// distillAfterRun 在 run 完成后判断是否触发 Memory 提炼。
+// 条件：tool call >= min_tool_calls OR 迭代轮数 >= min_rounds，且 FinalAssistantOutput 非空。
+// 异步执行，不阻塞 run 返回。
+func distillAfterRun(provider memory.MemoryProvider, pool *pgxpool.Pool, configResolver sharedconfig.Resolver, rc *RunContext, ident memory.MemoryIdentity) {
+	if strings.TrimSpace(rc.FinalAssistantOutput) == "" {
+		return
+	}
+
+	enabled, minToolCalls, minRounds := resolveDistillConfig(context.Background(), configResolver)
+	if !enabled {
+		return
+	}
+	if rc.RunToolCallCount < minToolCalls && rc.RunIterationCount < minRounds {
+		return
+	}
+
+	msgs := buildDistillMessages(rc)
+	if len(msgs) == 0 {
+		return
+	}
+
+	sessionID := rc.Run.ThreadID.String()
+	costPerCommit := resolveCommitCost(context.Background(), configResolver)
+	orgID := rc.Run.AccountID
+	runID := rc.Run.ID
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
+		defer cancel()
+
+		if err := provider.AppendSessionMessages(ctx, ident, sessionID, msgs); err != nil {
+			slog.Warn("memory: distill append failed",
+				"org_id", orgID.String(),
+				"session_id", sessionID,
+				"err", err.Error(),
+			)
+			return
+		}
+
+		if err := provider.CommitSession(ctx, ident, sessionID); err != nil {
+			slog.Warn("memory: distill commit failed",
+				"org_id", orgID.String(),
+				"session_id", sessionID,
+				"err", err.Error(),
+			)
+			return
+		}
+
+		if costPerCommit > 0 && pool != nil {
+			uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer uCancel()
+			if err := usageRepo.InsertMemoryUsage(uCtx, pool, orgID, runID, costPerCommit); err != nil {
+				slog.Warn("memory: distill usage record failed",
+					"run_id", runID.String(),
+					"err", err.Error(),
+				)
+			}
+		}
+	}()
+}
+
+// resolveDistillConfig 从配置中读取提炼触发条件。
+func resolveDistillConfig(ctx context.Context, resolver sharedconfig.Resolver) (enabled bool, minToolCalls int, minRounds int) {
+	enabled = true
+	minToolCalls = 2
+	minRounds = 3
+
+	if resolver == nil {
+		return
+	}
+
+	if raw, err := resolver.Resolve(ctx, "memory.distill_enabled", sharedconfig.Scope{}); err == nil {
+		if strings.TrimSpace(strings.ToLower(raw)) == "false" {
+			enabled = false
+		}
+	}
+
+	if raw, err := resolver.Resolve(ctx, "memory.distill_min_tool_calls", sharedconfig.Scope{}); err == nil {
+		if v, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil && v > 0 {
+			minToolCalls = v
+		}
+	}
+
+	if raw, err := resolver.Resolve(ctx, "memory.distill_min_rounds", sharedconfig.Scope{}); err == nil {
+		if v, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil && v > 0 {
+			minRounds = v
+		}
+	}
+
+	return
+}
+
+// buildDistillMessages 从 RunContext 提取用于提炼的消息。
+func buildDistillMessages(rc *RunContext) []memory.MemoryMessage {
+	var msgs []memory.MemoryMessage
+
+	for _, msg := range rc.Messages {
+		if msg.Role != "user" {
+			continue
+		}
+		var parts []string
+		for _, part := range msg.Content {
+			if t := strings.TrimSpace(llm.PartPromptText(part)); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		if text := strings.Join(parts, "\n"); text != "" {
+			msgs = append(msgs, memory.MemoryMessage{Role: "user", Content: text})
+		}
+	}
+
+	if text := strings.TrimSpace(rc.FinalAssistantOutput); text != "" {
+		msgs = append(msgs, memory.MemoryMessage{Role: "assistant", Content: text})
+	}
+
+	return msgs
 }
 
 // resolveCommitCost 从配置中获取每次 commit 的费用（USD），解析失败或未配置时返回 0。

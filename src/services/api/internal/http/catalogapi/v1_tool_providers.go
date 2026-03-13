@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package catalogapi
 
 import (
@@ -14,10 +12,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/database/pgadapter"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,6 +25,18 @@ type toolProviderDefinition struct {
 	RequiresAPIKey     bool
 	RequiresBaseURL    bool
 	AllowsInternalHTTP bool
+	ConfigFields       []ConfigFieldDef `json:"config_fields,omitempty"`
+}
+
+type ConfigFieldDef struct {
+	Key         string   `json:"key"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"`
+	Required    bool     `json:"required"`
+	Default     string   `json:"default,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Group       string   `json:"group,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
 var toolProviderCatalog = []toolProviderDefinition{
@@ -38,7 +47,22 @@ var toolProviderCatalog = []toolProviderDefinition{
 	{GroupName: "web_fetch", ProviderName: "web_fetch.basic"},
 	{GroupName: "sandbox", ProviderName: "sandbox.docker", RequiresBaseURL: true, AllowsInternalHTTP: true},
 	{GroupName: "sandbox", ProviderName: "sandbox.firecracker", RequiresBaseURL: true, AllowsInternalHTTP: true},
-	{GroupName: "memory", ProviderName: "memory.openviking", RequiresBaseURL: true, RequiresAPIKey: true, AllowsInternalHTTP: true},
+	{
+		GroupName: "memory", ProviderName: "memory.openviking",
+		RequiresBaseURL: true, RequiresAPIKey: true, AllowsInternalHTTP: true,
+		ConfigFields: []ConfigFieldDef{
+			{Key: "embedding.provider", Label: "Embedding Provider", Type: "select", Required: true, Default: "volcengine", Options: []string{"openai", "volcengine", "vikingdb", "jina"}, Group: "embedding"},
+			{Key: "embedding.model", Label: "Embedding Model", Type: "string", Required: true, Default: "doubao-embedding-vision-250615", Group: "embedding", Placeholder: "e.g. text-embedding-3-small"},
+			{Key: "embedding.api_key", Label: "Embedding API Key", Type: "password", Required: true, Group: "embedding"},
+			{Key: "embedding.api_base", Label: "Embedding API Base", Type: "string", Required: true, Default: "https://ark.cn-beijing.volces.com/api/v3", Group: "embedding", Placeholder: "https://api.openai.com/v1"},
+			{Key: "embedding.dimension", Label: "Embedding Dimension", Type: "number", Required: true, Default: "1024", Group: "embedding"},
+			{Key: "vlm.provider", Label: "VLM Provider", Type: "select", Required: true, Default: "litellm", Options: []string{"volcengine", "openai", "litellm"}, Group: "vlm"},
+			{Key: "vlm.model", Label: "VLM Model", Type: "string", Required: true, Default: "doubao-seed-1-8-251228", Group: "vlm", Placeholder: "e.g. gpt-4o"},
+			{Key: "vlm.api_key", Label: "VLM API Key", Type: "password", Required: true, Group: "vlm"},
+			{Key: "vlm.api_base", Label: "VLM API Base", Type: "string", Required: true, Default: "https://ark.cn-beijing.volces.com/api/v3", Group: "vlm", Placeholder: "https://api.openai.com/v1"},
+			{Key: "cost_per_commit", Label: "Cost per Commit", Type: "number", Required: false, Default: "0", Group: "billing"},
+		},
+	},
 }
 
 type toolProvidersResponse struct {
@@ -51,15 +75,16 @@ type toolProviderGroupResponse struct {
 }
 
 type toolProviderItemResponse struct {
-	GroupName       string          `json:"group_name"`
-	ProviderName    string          `json:"provider_name"`
-	IsActive        bool            `json:"is_active"`
-	KeyPrefix       *string         `json:"key_prefix,omitempty"`
-	BaseURL         *string         `json:"base_url,omitempty"`
-	RequiresAPIKey  bool            `json:"requires_api_key"`
-	RequiresBaseURL bool            `json:"requires_base_url"`
-	Configured      bool            `json:"configured"`
-	ConfigJSON      json.RawMessage `json:"config_json,omitempty"`
+	GroupName       string           `json:"group_name"`
+	ProviderName    string           `json:"provider_name"`
+	IsActive        bool             `json:"is_active"`
+	KeyPrefix       *string          `json:"key_prefix,omitempty"`
+	BaseURL         *string          `json:"base_url,omitempty"`
+	RequiresAPIKey  bool             `json:"requires_api_key"`
+	RequiresBaseURL bool             `json:"requires_base_url"`
+	Configured      bool             `json:"configured"`
+	ConfigJSON      json.RawMessage  `json:"config_json,omitempty"`
+	ConfigFields    []ConfigFieldDef `json:"config_fields,omitempty"`
 }
 
 type upsertToolProviderCredentialRequest struct {
@@ -69,17 +94,18 @@ type upsertToolProviderCredentialRequest struct {
 
 func toolProvidersEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodGet:
-			listToolProviders(w, r, traceID, authService, membershipRepo, toolProvidersRepo)
+			listToolProviders(w, r, traceID, authService, membershipRepo, toolProvidersRepo, projectRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -88,11 +114,12 @@ func toolProvidersEntry(
 
 func toolProviderEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -120,21 +147,21 @@ func toolProviderEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			activateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
+			activateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool, projectRepo)
 			return
 		case "deactivate":
 			if r.Method != nethttp.MethodPut {
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			deactivateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
+			deactivateToolProvider(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool, projectRepo)
 			return
 		case "credential":
 			switch r.Method {
 			case nethttp.MethodPut:
-				upsertToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, db, directPool)
+				upsertToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, pool, directPool, projectRepo)
 			case nethttp.MethodDelete:
-				clearToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, db, directPool)
+				clearToolProviderCredential(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, secretsRepo, pool, directPool, projectRepo)
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
@@ -144,7 +171,7 @@ func toolProviderEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			updateToolProviderConfig(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, db, directPool)
+			updateToolProviderConfig(w, r, traceID, group, provider, authService, membershipRepo, toolProvidersRepo, pool, directPool, projectRepo)
 			return
 		default:
 			httpkit.WriteNotFound(w, r)
@@ -153,13 +180,42 @@ func toolProviderEntry(
 	}
 }
 
+func resolveToolProviderScope(
+	ctx context.Context,
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	actor *httpkit.Actor,
+	projectRepo *data.ProjectRepository,
+) (string, *uuid.UUID, bool) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "platform"
+	}
+	if scope != "project" && scope != "platform" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
+		return "", nil, false
+	}
+	if scope == "platform" {
+		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
+			return "", nil, false
+		}
+		return "platform", nil, true
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
+		return "", nil, false
+	}
+	return "user", &actor.UserID, true
+}
+
 func listToolProviders(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
 	traceID string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -175,28 +231,12 @@ func listToolProviders(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
 	}
 
-	orgID := uuid.Nil
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-	}
-
-	configs, err := toolProvidersRepo.ListByScope(r.Context(), orgID, scope)
+	configs, err := toolProvidersRepo.ListByOwner(r.Context(), ownerKind, ownerUserID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -226,6 +266,7 @@ func listToolProviders(
 				RequiresAPIKey:  def.RequiresAPIKey,
 				RequiresBaseURL: def.RequiresBaseURL,
 				Configured:      false,
+				ConfigFields:    def.ConfigFields,
 			}
 
 			var secretConfigured bool
@@ -262,16 +303,17 @@ func activateToolProvider(
 	groupName string,
 	providerName string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || db == nil {
+	if toolProvidersRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -281,37 +323,24 @@ func activateToolProvider(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
 	}
 
-	orgID := uuid.Nil
 	notifyPayload := "platform"
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-		notifyPayload = actor.OrgID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 
-	tx, err := db.Begin(r.Context())
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 	defer tx.Rollback(r.Context())
 
-	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), orgID, scope, groupName, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).Activate(r.Context(), ownerKind, ownerUserID, groupName, providerName); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			httpkit.WriteError(w, nethttp.StatusConflict, "tool_provider.active_conflict", "active tool provider conflict", traceID, nil)
@@ -326,7 +355,7 @@ func activateToolProvider(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -337,16 +366,17 @@ func deactivateToolProvider(
 	groupName string,
 	providerName string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || db == nil {
+	if toolProvidersRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -356,35 +386,21 @@ func deactivateToolProvider(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
 	}
 
-	orgID := uuid.Nil
-	notifyPayload := "platform"
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-		notifyPayload = actor.OrgID.String()
-	}
-
-	if err := toolProvidersRepo.Deactivate(r.Context(), orgID, scope, groupName, providerName); err != nil {
+	if err := toolProvidersRepo.Deactivate(r.Context(), ownerKind, ownerUserID, groupName, providerName); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
+	notifyPayload := "platform"
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
+	}
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -395,17 +411,18 @@ func upsertToolProviderCredential(
 	groupName string,
 	providerName string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || db == nil {
+	if toolProvidersRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -417,27 +434,14 @@ func upsertToolProviderCredential(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
 	}
 
-	orgID := uuid.Nil
 	notifyPayload := "platform"
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-		notifyPayload = actor.OrgID.String()
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
 	}
 
 	var req upsertToolProviderCredentialRequest
@@ -487,7 +491,7 @@ func upsertToolProviderCredential(
 
 	secretName := "tool_provider:" + providerName
 
-	tx, err := db.Begin(r.Context())
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -509,10 +513,10 @@ func upsertToolProviderCredential(
 			secret data.Secret
 			err    error
 		)
-		if scope == "platform" {
+		if ownerKind == "platform" {
 			secret, err = secretsRepo.WithTx(tx).UpsertPlatform(r.Context(), secretName, apiKey)
 		} else {
-			secret, err = secretsRepo.WithTx(tx).Upsert(r.Context(), orgID, secretName, apiKey)
+			secret, err = secretsRepo.WithTx(tx).Upsert(r.Context(), *ownerUserID, secretName, apiKey)
 		}
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -524,7 +528,7 @@ func upsertToolProviderCredential(
 		keyPrefix = &prefix
 	}
 
-	if _, err := txProviders.UpsertConfig(r.Context(), orgID, scope, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
+	if _, err := txProviders.UpsertConfig(r.Context(), ownerKind, ownerUserID, groupName, providerName, secretID, keyPrefix, baseURLPtr, nil); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -534,7 +538,7 @@ func upsertToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -545,17 +549,18 @@ func clearToolProviderCredential(
 	groupName string,
 	providerName string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || db == nil {
+	if toolProvidersRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -569,32 +574,14 @@ func clearToolProviderCredential(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
-	}
-
-	orgID := uuid.Nil
-	notifyPayload := "platform"
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-		notifyPayload = actor.OrgID.String()
 	}
 
 	secretName := "tool_provider:" + providerName
 
-	tx, err := db.Begin(r.Context())
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -602,10 +589,10 @@ func clearToolProviderCredential(
 	defer tx.Rollback(r.Context())
 
 	var delErr error
-	if scope == "platform" {
+	if ownerKind == "platform" {
 		delErr = secretsRepo.WithTx(tx).DeletePlatform(r.Context(), secretName)
 	} else {
-		delErr = secretsRepo.WithTx(tx).Delete(r.Context(), orgID, secretName)
+		delErr = secretsRepo.WithTx(tx).Delete(r.Context(), *ownerUserID, secretName)
 	}
 	if delErr != nil {
 		var notFound data.SecretNotFoundError
@@ -615,7 +602,7 @@ func clearToolProviderCredential(
 		}
 	}
 
-	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), orgID, scope, providerName); err != nil {
+	if err := toolProvidersRepo.WithTx(tx).ClearCredential(r.Context(), ownerKind, ownerUserID, providerName); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
@@ -625,7 +612,11 @@ func clearToolProviderCredential(
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
+	notifyPayload := "platform"
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
+	}
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -636,16 +627,17 @@ func updateToolProviderConfig(
 	groupName string,
 	providerName string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	toolProvidersRepo *data.ToolProviderConfigsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
+	projectRepo *data.ProjectRepository,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if toolProvidersRepo == nil || db == nil {
+	if toolProvidersRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -655,27 +647,9 @@ func updateToolProviderConfig(
 		return
 	}
 
-	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
-	if scope == "" {
-		scope = "platform"
-	}
-	if scope != "org" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be org or platform", traceID, nil)
+	ownerKind, ownerUserID, ok := resolveToolProviderScope(r.Context(), w, r, traceID, actor, projectRepo)
+	if !ok {
 		return
-	}
-
-	orgID := uuid.Nil
-	notifyPayload := "platform"
-	if scope == "platform" {
-		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
-			return
-		}
-	} else {
-		if !httpkit.RequirePerm(actor, auth.PermDataSecrets, w, traceID) {
-			return
-		}
-		orgID = actor.OrgID
-		notifyPayload = actor.OrgID.String()
 	}
 
 	var raw json.RawMessage
@@ -687,12 +661,16 @@ func updateToolProviderConfig(
 		raw = json.RawMessage("{}")
 	}
 
-	if _, err := toolProvidersRepo.UpsertConfig(r.Context(), orgID, scope, groupName, providerName, nil, nil, nil, raw); err != nil {
+	if _, err := toolProvidersRepo.UpsertConfig(r.Context(), ownerKind, ownerUserID, groupName, providerName, nil, nil, nil, raw); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
-	notifyToolProviderChanged(r.Context(), directPool, db, notifyPayload)
+	notifyPayload := "platform"
+	if ownerKind != "platform" && ownerUserID != nil {
+		notifyPayload = ownerUserID.String()
+	}
+	notifyToolProviderChanged(r.Context(), directPool, pool, notifyPayload)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -707,15 +685,13 @@ func findProviderDef(groupName string, providerName string) (toolProviderDefinit
 	return toolProviderDefinition{}, false
 }
 
-func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, db database.DB, payload string) {
-	var q database.DB
-	if directPool != nil {
-		q = pgadapter.New(directPool)
-	} else {
-		q = db
+func notifyToolProviderChanged(ctx context.Context, directPool *pgxpool.Pool, pool *pgxpool.Pool, payload string) {
+	db := directPool
+	if db == nil {
+		db = pool
 	}
-	if q == nil {
+	if db == nil {
 		return
 	}
-	_, _ = q.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", payload)
+	_, _ = db.Exec(ctx, "SELECT pg_notify('tool_provider_config_changed', $1)", payload)
 }

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type Referral struct {
@@ -79,7 +79,7 @@ func (r *ReferralRepository) GetByInviteeUserID(ctx context.Context, inviteeUser
 		 FROM referrals WHERE invitee_user_id = $1`,
 		inviteeUserID,
 	).Scan(&ref.ID, &ref.InviterUserID, &ref.InviteeUserID, &ref.InviteCodeID, &ref.Credited, &ref.CreatedAt)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

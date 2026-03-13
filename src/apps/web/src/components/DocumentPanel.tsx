@@ -1,18 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, FileText, Download, Eye, Code } from 'lucide-react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { useLocale } from '../contexts/LocaleContext'
 
 const toggleButtonWidth = 36
 const toggleButtonHeight = 30
 const toggleButtonGap = 2
 const toggleButtonOffset = toggleButtonWidth + toggleButtonGap
 const actionButtonSize = 30
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 const textLikeMimeTypes = new Set([
   'application/json',
@@ -81,6 +78,7 @@ type LoadState =
   | { status: 'error'; message: string }
 
 export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose }: Props) {
+  const { t } = useLocale()
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
   const [downloading, setDownloading] = useState(false)
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -100,7 +98,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
         }
       })
       .catch((err: unknown) => {
-        setLoadState({ status: 'error', message: err instanceof Error ? err.message : '加载失败' })
+        setLoadState({ status: 'error', message: err instanceof Error ? err.message : 'unknown' })
       })
   }, [artifact.filename, artifact.key, artifact.mime_type, accessToken])
 
@@ -192,7 +190,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               />
               <button
                 onClick={() => setMode('preview')}
-                title="预览"
+                title={t.documentPanel.preview}
                 style={{
                   width: `${toggleButtonWidth}px`,
                   height: `${toggleButtonHeight}px`,
@@ -213,7 +211,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               </button>
               <button
                 onClick={() => setMode('source')}
-                title="源码"
+                title={t.documentPanel.source}
                 style={{
                   width: `${toggleButtonWidth}px`,
                   height: `${toggleButtonHeight}px`,
@@ -237,7 +235,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
           <button
             onClick={() => void handleDownload()}
             disabled={downloading}
-            title="下载"
+            title={t.documentPanel.download}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -341,7 +339,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               textAlign: 'center',
             }}
           >
-            <span>该格式暂不支持预览</span>
+            <span>{t.documentPanel.previewUnsupported}</span>
             <button
               onClick={() => void handleDownload()}
               disabled={downloading}
@@ -367,7 +365,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               }}
             >
               <Download size={14} />
-              下载文件
+              {t.documentPanel.downloadFile}
             </button>
           </div>
         )}
@@ -381,7 +379,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               textAlign: 'center',
             }}
           >
-            加载失败：{loadState.message}
+            {t.documentPanel.loadFailed(loadState.message)}
           </div>
         )}
       </div>

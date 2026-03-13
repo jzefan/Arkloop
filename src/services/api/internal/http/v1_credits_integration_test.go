@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -19,11 +17,11 @@ func TestCreditsIntegration(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_credits")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -36,27 +34,27 @@ func TestCreditsIntegration(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	creditsRepo, err := data.NewCreditsRepository(appDB)
+	creditsRepo, err := data.NewCreditsRepository(pool)
 	if err != nil {
 		t.Fatalf("new credits repo: %v", err)
 	}
@@ -65,11 +63,11 @@ func TestCreditsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -77,12 +75,12 @@ func TestCreditsIntegration(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		CreditsRepo:         creditsRepo,
 		UsersRepo:           userRepo,
 	})
@@ -120,7 +118,7 @@ func TestCreditsIntegration(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminResp.Body.Bytes())
 
-	if _, err = appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err = pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login",
@@ -134,15 +132,15 @@ func TestCreditsIntegration(t *testing.T) {
 	if meResp.Code != nethttp.StatusOK {
 		t.Fatalf("get me: %d %s", meResp.Code, meResp.Body.String())
 	}
-	type meResponse struct {
-		OrgID string `json:"org_id"`
+	type meMinimalResponse struct {
+		AccountID string `json:"account_id"`
 	}
-	meData := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := meData.OrgID
+	meData := decodeJSONBody[meMinimalResponse](t, meResp.Body.Bytes())
+	accountID := meData.AccountID
 
 	t.Run("admin adjust positive writes audit", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
-			map[string]any{"org_id": orgID, "amount": 500, "note": "test top-up"},
+			map[string]any{"account_id": accountID, "amount": 500, "note": "test top-up"},
 			authHeader(adminToken))
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("adjust: %d %s", resp.Code, resp.Body.String())
@@ -153,11 +151,11 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected balance 1500, got %d", payload.Balance)
 		}
 
-		log := latestAuditLogByAction(t, ctx, appDB, "credits.adjust")
+		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
 		if log.TargetType == nil || *log.TargetType != "org" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
-		if log.TargetID == nil || *log.TargetID != orgID {
+		if log.TargetID == nil || *log.TargetID != accountID {
 			t.Fatalf("unexpected target_id: %#v", log.TargetID)
 		}
 		if log.Metadata["amount"] != float64(500) || log.Metadata["note"] != "test top-up" {
@@ -170,7 +168,7 @@ func TestCreditsIntegration(t *testing.T) {
 
 	t.Run("admin adjust negative writes audit", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
-			map[string]any{"org_id": orgID, "amount": -200, "note": "test deduction"},
+			map[string]any{"account_id": accountID, "amount": -200, "note": "test deduction"},
 			authHeader(adminToken))
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("adjust: %d %s", resp.Code, resp.Body.String())
@@ -180,11 +178,11 @@ func TestCreditsIntegration(t *testing.T) {
 		if payload.Balance != 1300 {
 			t.Fatalf("expected balance 1300, got %d", payload.Balance)
 		}
-		if count := countAuditLogByAction(t, ctx, appDB, "credits.adjust"); count != 2 {
+		if count := countAuditLogByAction(t, ctx, pool, "credits.adjust"); count != 2 {
 			t.Fatalf("expected 2 credits.adjust audit logs, got %d", count)
 		}
 
-		log := latestAuditLogByAction(t, ctx, appDB, "credits.adjust")
+		log := latestAuditLogByAction(t, ctx, pool, "credits.adjust")
 		if log.Metadata["amount"] != float64(-200) || log.Metadata["note"] != "test deduction" {
 			t.Fatalf("unexpected metadata: %#v", log.Metadata)
 		}
@@ -195,20 +193,20 @@ func TestCreditsIntegration(t *testing.T) {
 
 	t.Run("admin adjust requires note", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
-			map[string]any{"org_id": orgID, "amount": 100, "note": ""},
+			map[string]any{"account_id": accountID, "amount": 100, "note": ""},
 			authHeader(adminToken))
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 
 	t.Run("admin view org credits", func(t *testing.T) {
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?org_id="+orgID, nil,
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?account_id="+accountID, nil,
 			authHeader(adminToken))
 		if resp.Code != nethttp.StatusOK {
 			t.Fatalf("admin credits: %d %s", resp.Code, resp.Body.String())
 		}
 
 		type adminResp struct {
-			OrgID        string                      `json:"org_id"`
+			AccountID        string                      `json:"account_id"`
 			Balance      int64                       `json:"balance"`
 			Transactions []creditTransactionResponse `json:"transactions"`
 		}
@@ -222,7 +220,7 @@ func TestCreditsIntegration(t *testing.T) {
 	})
 
 	t.Run("non-admin forbidden", func(t *testing.T) {
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?org_id="+orgID, nil,
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?account_id="+accountID, nil,
 			authHeader(token))
 		if resp.Code != nethttp.StatusForbidden {
 			t.Fatalf("expected 403, got %d", resp.Code)
@@ -245,7 +243,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected affected 2, got %d", payload.Affected)
 		}
 
-		log := latestAuditLogByAction(t, ctx, appDB, "credits.bulk_adjust")
+		log := latestAuditLogByAction(t, ctx, pool, "credits.bulk_adjust")
 		if log.TargetType == nil || *log.TargetType != "credits_batch" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -270,7 +268,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("expected affected 2, got %d", payload.Affected)
 		}
 
-		log := latestAuditLogByAction(t, ctx, appDB, "credits.reset_all")
+		log := latestAuditLogByAction(t, ctx, pool, "credits.reset_all")
 		if log.TargetType == nil || *log.TargetType != "credits_batch" {
 			t.Fatalf("unexpected target_type: %#v", log.TargetType)
 		}
@@ -278,7 +276,7 @@ func TestCreditsIntegration(t *testing.T) {
 			t.Fatalf("unexpected metadata: %#v", log.Metadata)
 		}
 
-		checkResp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?org_id="+orgID, nil, authHeader(adminToken))
+		checkResp := doJSON(handler, nethttp.MethodGet, "/v1/admin/credits?account_id="+accountID, nil, authHeader(adminToken))
 		if checkResp.Code != nethttp.StatusOK {
 			t.Fatalf("view after reset: %d %s", checkResp.Code, checkResp.Body.String())
 		}
@@ -293,7 +291,7 @@ func TestCreditsIntegration(t *testing.T) {
 
 	t.Run("insufficient credits", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/credits/adjust",
-			map[string]any{"org_id": orgID, "amount": -99999, "note": "drain test"},
+			map[string]any{"account_id": accountID, "amount": -99999, "note": "drain test"},
 			authHeader(adminToken))
 		if resp.Code != nethttp.StatusConflict {
 			t.Fatalf("expected 409, got %d %s", resp.Code, resp.Body.String())

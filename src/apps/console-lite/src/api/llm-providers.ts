@@ -1,6 +1,6 @@
 import { apiFetch } from './client'
 
-export type LlmProviderScope = 'org' | 'platform'
+export type LlmProviderScope = 'project' | 'platform'
 
 function withScope(path: string, scope: LlmProviderScope): string {
   const sep = path.includes('?') ? '&' : '?'
@@ -25,7 +25,7 @@ export type LlmProviderModel = {
 
 export type LlmProvider = {
   id: string
-  org_id?: string | null
+  account_id?: string | null
   scope: LlmProviderScope
   provider: string
   name: string

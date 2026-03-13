@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -19,21 +17,21 @@ func TestProjectRepositoryGetOrCreateDefaultByOwner(t *testing.T) {
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	defer pool.Close()
 
-	orgRepo, err := NewOrgRepository(appDB)
+	orgRepo, err := NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
-	userRepo, err := NewUserRepository(appDB)
+	userRepo, err := NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	repo, err := NewProjectRepository(appDB)
+	repo, err := NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}

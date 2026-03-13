@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type AsrCredential = {
   id: string
-  org_id: string | null
+  account_id: string | null
   scope: string
   provider: string
   name: string

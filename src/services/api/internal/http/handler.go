@@ -10,7 +10,7 @@ import (
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
-	"arkloop/services/api/internal/http/orgapi"
+	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/http/platformapi"
 
 	"arkloop/services/api/internal/audit"
@@ -21,10 +21,7 @@ import (
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
-	"arkloop/services/shared/runlimit"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -44,7 +41,7 @@ func defaultSSEConfig() SSEConfig {
 }
 
 type HandlerConfig struct {
-	DB                     database.DB
+	Pool                     *pgxpool.Pool
 	DirectPool               *pgxpool.Pool // LISTEN/NOTIFY 专用，不走 PgBouncer
 	InvalidationListenerCtx  context.Context
 	DirectPoolAcquireTimeout time.Duration
@@ -58,8 +55,8 @@ type HandlerConfig struct {
 	RegistrationService  *auth.RegistrationService
 	EmailVerifyService   *auth.EmailVerifyService
 	EmailOTPLoginService *auth.EmailOTPLoginService
-	OrgService           *auth.OrgService
-	OrgMembershipRepo    *data.OrgMembershipRepository
+	AccountService       *auth.AccountService
+	AccountMembershipRepo *data.AccountMembershipRepository
 	ThreadRepo           *data.ThreadRepository
 	ThreadStarRepo       *data.ThreadStarRepository
 	ThreadShareRepo      *data.ThreadShareRepository
@@ -84,7 +81,6 @@ type HandlerConfig struct {
 	WorkspaceRegistriesRepo      *data.WorkspaceRegistriesRepository
 	IPRulesRepo                  *data.IPRulesRepository
 	APIKeysRepo                  *data.APIKeysRepository
-	OrgInvitationsRepo           *data.OrgInvitationsRepository
 	TeamRepo                     *data.TeamRepository
 	ProjectRepo                  *data.ProjectRepository
 	WebhookRepo                  *data.WebhookEndpointRepository
@@ -110,7 +106,7 @@ type HandlerConfig struct {
 	SmtpProviderRepo     *data.SmtpProviderRepository
 
 	UsersRepo *data.UserRepository
-	OrgRepo   *data.OrgRepository
+	AccountRepo *data.AccountRepository
 
 	UserCredentialRepo *data.UserCredentialRepository
 
@@ -128,11 +124,9 @@ type HandlerConfig struct {
 	TurnstileEnvAllowedHost string
 
 	RedisClient *redis.Client
-	EventBus    eventbus.EventBus
 	// 网关相关 key 专用 Redis（未设置时回退到 RedisClient）。
-	GatewayRedisClient   *redis.Client
-	RunLimiter           *data.RunLimiter
-	ConcurrencyLimiter   runlimit.ConcurrencyLimiter
+	GatewayRedisClient *redis.Client
+	RunLimiter         *data.RunLimiter
 
 	SSEConfig SSEConfig
 
@@ -177,7 +171,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		if cfg.RedisClient != nil && cacheTTL > 0 {
 			cache = sharedconfig.NewRedisCache(cfg.RedisClient)
 		}
-		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(cfg.DB), cache, cacheTTL)
+		fallback, _ := sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(cfg.Pool), cache, cacheTTL)
 		resolver = fallback
 	}
 	invalidator := cfg.ConfigInvalidator
@@ -214,8 +208,8 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		EmailOTPLoginService: cfg.EmailOTPLoginService,
 		FeatureFlagService:   cfg.FeatureFlagService,
 		AuditWriter:          cfg.AuditWriter,
-		OrgMembershipRepo:    cfg.OrgMembershipRepo,
-		OrgRepo:              cfg.OrgRepo,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
+		AccountRepo:              cfg.AccountRepo,
 		UserCredentialRepo:   cfg.UserCredentialRepo,
 		UsersRepo:            cfg.UsersRepo,
 		ConfigResolver:       resolver,
@@ -223,7 +217,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
 		AuthService:              cfg.AuthService,
-		OrgMembershipRepo:        cfg.OrgMembershipRepo,
+		AccountMembershipRepo:        cfg.AccountMembershipRepo,
 		ThreadRepo:               cfg.ThreadRepo,
 		ThreadStarRepo:           cfg.ThreadStarRepo,
 		ThreadShareRepo:          cfg.ThreadShareRepo,
@@ -234,28 +228,26 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ProjectRepo:              cfg.ProjectRepo,
 		TeamRepo:                 cfg.TeamRepo,
 		AuditWriter:              cfg.AuditWriter,
-		DB:                     cfg.DB,
+		Pool:                     cfg.Pool,
 		DirectPool:               cfg.DirectPool,
 		DirectPoolAcquireTimeout: cfg.DirectPoolAcquireTimeout,
 		APIKeysRepo:              cfg.APIKeysRepo,
 		RunLimiter:               cfg.RunLimiter,
 		EntitlementService:       cfg.EntitlementService,
-		ConcurrencyLimiter:       cfg.ConcurrencyLimiter,
-		EventBus:                 cfg.EventBus,
+		RedisClient:              cfg.RedisClient,
 		ConfigResolver:           resolver,
 		SSEConfig:                conversationapi.SSEConfig(sseConfig),
 		MessageAttachmentStore:   cfg.MessageAttachmentStore,
 		ArtifactStore:            cfg.ArtifactStore,
-		FeatureFlagService:       cfg.FeatureFlagService,
 	})
 
 	catalogapi.RegisterRoutes(mux, catalogapi.Deps{
 		AuthService:                  cfg.AuthService,
-		OrgMembershipRepo:            cfg.OrgMembershipRepo,
+		AccountMembershipRepo:            cfg.AccountMembershipRepo,
 		LlmCredentialsRepo:           cfg.LlmCredentialsRepo,
 		LlmRoutesRepo:                cfg.LlmRoutesRepo,
 		SecretsRepo:                  cfg.SecretsRepo,
-		DB:                         cfg.DB,
+		Pool:                         cfg.Pool,
 		DirectPool:                   cfg.DirectPool,
 		AsrCredentialsRepo:           cfg.AsrCredentialsRepo,
 		MCPConfigsRepo:               cfg.MCPConfigsRepo,
@@ -269,6 +261,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		WorkspaceRegistriesRepo:      cfg.WorkspaceRegistriesRepo,
 		PlatformSettingsRepo:         cfg.PlatformSettingsRepo,
 		APIKeysRepo:                  cfg.APIKeysRepo,
+		ProjectRepo:                  cfg.ProjectRepo,
 		AuditWriter:                  cfg.AuditWriter,
 		SkillStore:                   cfg.SkillStore,
 		RepoPersonas:                 cfg.RepoPersonas,
@@ -279,7 +272,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{
 		AuthService:         cfg.AuthService,
-		OrgMembershipRepo:   cfg.OrgMembershipRepo,
+		AccountMembershipRepo:   cfg.AccountMembershipRepo,
 		PlansRepo:           cfg.PlansRepo,
 		EntitlementsRepo:    cfg.EntitlementsRepo,
 		APIKeysRepo:         cfg.APIKeysRepo,
@@ -291,33 +284,30 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ReferralsRepo:       cfg.ReferralsRepo,
 		RedemptionCodesRepo: cfg.RedemptionCodesRepo,
 		AuditWriter:         cfg.AuditWriter,
-		DB:                cfg.DB,
+		Pool:                cfg.Pool,
 	})
 
-	orgapi.RegisterRoutes(mux, orgapi.Deps{
-		AuthService:        cfg.AuthService,
-		OrgMembershipRepo:  cfg.OrgMembershipRepo,
-		TeamRepo:           cfg.TeamRepo,
-		ProjectRepo:        cfg.ProjectRepo,
-		APIKeysRepo:        cfg.APIKeysRepo,
-		AuditWriter:        cfg.AuditWriter,
-		EntitlementService: cfg.EntitlementService,
-		DB:               cfg.DB,
-		OrgRepo:            cfg.OrgRepo,
-		OrgService:         cfg.OrgService,
-		OrgInvitationsRepo: cfg.OrgInvitationsRepo,
-		WebhookRepo:        cfg.WebhookRepo,
+	accountapi.RegisterRoutes(mux, accountapi.Deps{
+		AuthService:           cfg.AuthService,
+		AccountMembershipRepo: cfg.AccountMembershipRepo,
+		TeamRepo:              cfg.TeamRepo,
+		ProjectRepo:           cfg.ProjectRepo,
+		APIKeysRepo:           cfg.APIKeysRepo,
+		AuditWriter:           cfg.AuditWriter,
+		EntitlementService:    cfg.EntitlementService,
+		Pool:                  cfg.Pool,
+		AccountRepo:           cfg.AccountRepo,
+		AccountService:        cfg.AccountService,
+		WebhookRepo:           cfg.WebhookRepo,
 		SecretsRepo:        cfg.SecretsRepo,
 		EnvironmentStore:   cfg.EnvironmentStore,
 		RunEventRepo:       cfg.RunEventRepo,
 		GatewayRedisClient: gatewayRedis,
-		ThreadRepo:         cfg.ThreadRepo,
-		FeatureFlagService: cfg.FeatureFlagService,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{
 		AuthService:          cfg.AuthService,
-		OrgMembershipRepo:    cfg.OrgMembershipRepo,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
 		FeatureFlagsRepo:     cfg.FeatureFlagsRepo,
 		FeatureFlagService:   cfg.FeatureFlagService,
 		APIKeysRepo:          cfg.APIKeysRepo,
@@ -334,11 +324,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	adminapi.RegisterRoutes(mux, adminapi.Deps{
 		AuthService:          cfg.AuthService,
-		OrgMembershipRepo:    cfg.OrgMembershipRepo,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
 		UsersRepo:            cfg.UsersRepo,
 		RunEventRepo:         cfg.RunEventRepo,
 		UsageRepo:            cfg.UsageRepo,
-		OrgRepo:              cfg.OrgRepo,
+		AccountRepo:              cfg.AccountRepo,
 		APIKeysRepo:          cfg.APIKeysRepo,
 		MessageRepo:          cfg.MessageRepo,
 		LlmCredentialsRepo:   cfg.LlmCredentialsRepo,
@@ -350,7 +340,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:          cfg.CreditsRepo,
 		RedemptionCodesRepo:  cfg.RedemptionCodesRepo,
 		NotificationsRepo:    cfg.NotificationsRepo,
-		DB:                 cfg.DB,
+		Pool:                 cfg.Pool,
 		Logger:               cfg.Logger,
 		GatewayRedisClient:   gatewayRedis,
 		PlatformSettingsRepo: cfg.PlatformSettingsRepo,

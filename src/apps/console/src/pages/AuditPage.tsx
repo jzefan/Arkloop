@@ -4,7 +4,7 @@ import { RefreshCw, ClipboardList, ChevronDown, ChevronRight } from 'lucide-reac
 import type { ConsoleOutletContext } from '../layouts/ConsoleLayout'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/EmptyState'
-import { useToast } from '../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { listAuditLogs, type AuditLog } from '../api/audit'
 
 const PAGE_SIZE = 50
@@ -20,9 +20,9 @@ const ACTION_OPTIONS = [
   { value: 'threads.delete', label: 'threads.delete' },
   { value: 'api_keys.create', label: 'api_keys.create' },
   { value: 'api_keys.revoke', label: 'api_keys.revoke' },
-  { value: 'org_invitations.create', label: 'org_invitations.create' },
-  { value: 'org_invitations.accept', label: 'org_invitations.accept' },
-  { value: 'org_invitations.revoke', label: 'org_invitations.revoke' },
+  { value: 'account_invitations.create', label: 'account_invitations.create' },
+  { value: 'account_invitations.accept', label: 'account_invitations.accept' },
+  { value: 'account_invitations.revoke', label: 'account_invitations.revoke' },
 ]
 
 function truncateId(id: string): string {

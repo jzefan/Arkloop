@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Modal } from '../components/Modal'
 import { FormField } from '../components/FormField'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { useToast } from '../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { isApiError } from '../api'
 import {
@@ -326,6 +326,7 @@ export function AgentsPage() {
         }, accessToken)
 
       notifyToolCatalogChanged()
+      addToast(t.saved, 'success')
       const fresh = await load()
       const updated = fresh.find((item) => item.id === saved.id)
         ?? fresh.find((item) => item.persona_key === saved.persona_key && item.source === 'db')
@@ -338,7 +339,7 @@ export function AgentsPage() {
     } finally {
       setSaving(false)
     }
-  }, [accessToken, addToast, form, load, scope, selected, t.requestFailed])
+  }, [accessToken, addToast, form, load, scope, selected, t.requestFailed, t.saved])
 
   const handleDelete = useCallback(async () => {
     if (!selected) return
@@ -751,7 +752,7 @@ export function AgentsPage() {
               className="w-[112px] rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-1 text-xs text-[var(--c-text-primary)] outline-none transition-colors focus:border-[var(--c-border-focus)]"
             >
               <option value="platform">{ta.scopePlatform}</option>
-              <option value="org">{ta.scopeOrg}</option>
+              <option value="project">{ta.scopeProject}</option>
             </select>
             <button
               onClick={() => {

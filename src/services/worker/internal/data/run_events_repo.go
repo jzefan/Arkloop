@@ -4,26 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
-type RunEventsRepository struct{
-	Dialect database.DialectHelper
-}
+type RunEventsRepository struct{}
 
-func (r RunEventsRepository) dialect() database.DialectHelper {
-	if r.Dialect != nil {
-		return r.Dialect
-	}
-	return database.PostgresDialect{}
-}
-
-func (r RunEventsRepository) GetLatestEventType(
+func (RunEventsRepository) GetLatestEventType(
 	ctx context.Context,
-	tx database.Tx,
+	tx pgx.Tx,
 	runID uuid.UUID,
 	types []string,
 ) (string, error) {
@@ -34,17 +24,17 @@ func (r RunEventsRepository) GetLatestEventType(
 	var eventType string
 	err := tx.QueryRow(
 		ctx,
-		fmt.Sprintf(`SELECT type
+		`SELECT type
 		 FROM run_events
 		 WHERE run_id = $1
-		   AND %s
+		   AND type = ANY($2)
 		 ORDER BY seq DESC
-		 LIMIT 1`, r.dialect().ArrayAny("type", 2)),
+		 LIMIT 1`,
 		runID,
 		types,
 	).Scan(&eventType)
 	if err != nil {
-		if errors.Is(err, database.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -54,7 +44,7 @@ func (r RunEventsRepository) GetLatestEventType(
 
 func (r RunEventsRepository) AppendEvent(
 	ctx context.Context,
-	tx database.Tx,
+	tx pgx.Tx,
 	runID uuid.UUID,
 	eventType string,
 	dataJSON map[string]any,
@@ -73,11 +63,11 @@ func (r RunEventsRepository) AppendEvent(
 
 	_, err = tx.Exec(
 		ctx,
-		fmt.Sprintf(`INSERT INTO run_events (
+		`INSERT INTO run_events (
 			run_id, seq, type, data_json, tool_name, error_class
 		) VALUES (
-			$1, $2, $3, %s, $5, $6
-		)`, r.dialect().JSONCast("$4")),
+			$1, $2, $3, $4::jsonb, $5, $6
+		)`,
 		runID,
 		seq,
 		eventType,
@@ -94,7 +84,7 @@ func (r RunEventsRepository) AppendEvent(
 
 func (RunEventsRepository) FirstEventData(
 	ctx context.Context,
-	tx database.Tx,
+	tx pgx.Tx,
 	runID uuid.UUID,
 ) (string, map[string]any, error) {
 	var (
@@ -111,7 +101,7 @@ func (RunEventsRepository) FirstEventData(
 		runID,
 	).Scan(&eventType, &rawJSON)
 	if err != nil {
-		if errors.Is(err, database.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil, nil
 		}
 		return "", nil, err
@@ -132,9 +122,9 @@ func (RunEventsRepository) FirstEventData(
 	return eventType, obj, nil
 }
 
-func (r RunEventsRepository) allocateSeq(ctx context.Context, tx database.Tx) (int64, error) {
+func (RunEventsRepository) allocateSeq(ctx context.Context, tx pgx.Tx) (int64, error) {
 	var seq int64
-	err := tx.QueryRow(ctx, fmt.Sprintf("SELECT %s", r.dialect().Sequence("run_events_seq_global"))).Scan(&seq)
+	err := tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq)
 	if err != nil {
 		return 0, err
 	}

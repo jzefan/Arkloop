@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type IPRule = {
   id: string
-  org_id: string
+  account_id: string
   type: 'allowlist' | 'blocklist'
   cidr: string
   note?: string

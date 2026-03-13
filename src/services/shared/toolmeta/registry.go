@@ -114,7 +114,37 @@ var registry = []ToolMeta{
 		Name:           "spawn_agent",
 		Group:          GroupOrchestration,
 		Label:          "Spawn agent",
-		LLMDescription: "spawn a sub-agent to execute a task with a specific persona, returns the sub-agent output",
+		LLMDescription: "spawn a sub-agent to execute a task with a specific persona. Returns a handle with sub_agent_id, run state, and related identifiers instead of waiting for the final output.",
+	},
+	{
+		Name:           "send_input",
+		Group:          GroupOrchestration,
+		Label:          "Send input",
+		LLMDescription: "send a follow-up input to an existing sub-agent by sub_agent_id. Use this before resume_agent when continuing a previous collaboration thread.",
+	},
+	{
+		Name:           "wait_agent",
+		Group:          GroupOrchestration,
+		Label:          "Wait agent",
+		LLMDescription: "wait for a sub-agent to reach a resolved state and return its latest status snapshot, including output when available.",
+	},
+	{
+		Name:           "resume_agent",
+		Group:          GroupOrchestration,
+		Label:          "Resume agent",
+		LLMDescription: "resume a resumable sub-agent after new input has been sent.",
+	},
+	{
+		Name:           "close_agent",
+		Group:          GroupOrchestration,
+		Label:          "Close agent",
+		LLMDescription: "close a sub-agent handle once no further collaboration is needed.",
+	},
+	{
+		Name:           "interrupt_agent",
+		Group:          GroupOrchestration,
+		Label:          "Interrupt agent",
+		LLMDescription: "interrupt the currently active run of a sub-agent.",
 	},
 	{
 		Name:           "summarize_thread",
@@ -127,6 +157,12 @@ var registry = []ToolMeta{
 		Group:          GroupOrchestration,
 		Label:          "Timeline title",
 		LLMDescription: "UI metadata tool that sets a short label shown in the user-facing thinking timeline. Call this tool in parallel with your first tool call of each round (include it in the same tool_use batch). Also call it when you are only thinking without other tools, to describe what you are considering. The label parameter must be a single-line plain-text phrase (no quotes, no Markdown, no numbering) in the same language as the user's input. Keep it concise: 8-16 characters for Chinese, <=8 words for English. You may prefix with stage words such as 'Searching for ...', 'Analyzing ...', 'Reviewing ...', etc. Call this tool as often as possible to keep the timeline informative.",
+	},
+	{
+		Name:           "ask_user",
+		Group:          GroupOrchestration,
+		Label:          "Ask user",
+		LLMDescription: "ask the user structured questions with predefined options. Use when you need the user to make a clear choice between specific options rather than free-text input.",
 	},
 }
 

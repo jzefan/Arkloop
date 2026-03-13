@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -57,7 +58,7 @@ type updateGatewayConfigRequest struct {
 
 func adminGatewayConfigEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	settingsRepo *data.PlatformSettingsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	rdb *redis.Client,
@@ -157,17 +158,24 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			return err
 		}
 		if invalidator != nil {
-			_ = invalidator.Invalidate(ctx, settingGatewayIPMode, sharedconfig.Scope{})
+			if err := invalidator.Invalidate(ctx, settingGatewayIPMode, sharedconfig.Scope{}); err != nil {
+				slog.Warn("cache invalidation failed", "key", settingGatewayIPMode, "error", err)
+			}
 		}
 	}
 
 	cidrs := filterCIDRs(body.TrustedCIDRs)
-	encoded, _ := json.Marshal(cidrs)
+	encoded, err := json.Marshal(cidrs)
+	if err != nil {
+		return fmt.Errorf("marshal trusted CIDRs: %w", err)
+	}
 	if _, err := settingsRepo.Set(ctx, settingGatewayTrustedCIDRs, string(encoded)); err != nil {
 		return err
 	}
 	if invalidator != nil {
-		_ = invalidator.Invalidate(ctx, settingGatewayTrustedCIDRs, sharedconfig.Scope{})
+		if err := invalidator.Invalidate(ctx, settingGatewayTrustedCIDRs, sharedconfig.Scope{}); err != nil {
+			slog.Warn("cache invalidation failed", "key", settingGatewayTrustedCIDRs, "error", err)
+		}
 	}
 
 	if body.RiskRejectThreshold != nil {
@@ -176,7 +184,9 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			return err
 		}
 		if invalidator != nil {
-			_ = invalidator.Invalidate(ctx, settingGatewayRiskRejectThreshold, sharedconfig.Scope{})
+			if err := invalidator.Invalidate(ctx, settingGatewayRiskRejectThreshold, sharedconfig.Scope{}); err != nil {
+				slog.Warn("cache invalidation failed", "key", settingGatewayRiskRejectThreshold, "error", err)
+			}
 		}
 	}
 	if body.RateLimitCapacity != nil {
@@ -185,7 +195,9 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			return err
 		}
 		if invalidator != nil {
-			_ = invalidator.Invalidate(ctx, settingGatewayRateLimitCapacity, sharedconfig.Scope{})
+			if err := invalidator.Invalidate(ctx, settingGatewayRateLimitCapacity, sharedconfig.Scope{}); err != nil {
+				slog.Warn("cache invalidation failed", "key", settingGatewayRateLimitCapacity, "error", err)
+			}
 		}
 	}
 	if body.RateLimitPerMinute != nil {
@@ -194,7 +206,9 @@ func saveGatewayConfig(ctx context.Context, settingsRepo *data.PlatformSettingsR
 			return err
 		}
 		if invalidator != nil {
-			_ = invalidator.Invalidate(ctx, settingGatewayRateLimitPerMinute, sharedconfig.Scope{})
+			if err := invalidator.Invalidate(ctx, settingGatewayRateLimitPerMinute, sharedconfig.Scope{}); err != nil {
+				slog.Warn("cache invalidation failed", "key", settingGatewayRateLimitPerMinute, "error", err)
+			}
 		}
 	}
 

@@ -7,25 +7,17 @@ import (
 	"log/slog"
 	"strings"
 
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 const settingTitleSummarizerModel = "title_summarizer.model"
 
-func defaultDialect(d database.DialectHelper) database.DialectHelper {
-	if d != nil {
-		return d
-	}
-	return database.PostgresDialect{}
-}
-
-func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stubGateway llm.Gateway, emitDebugEvents bool, dialect database.DialectHelper, loaders ...*routing.ConfigLoader) RunMiddleware {
+func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, rdb *redis.Client, stubGateway llm.Gateway, emitDebugEvents bool, loaders ...*routing.ConfigLoader) RunMiddleware {
 	var configLoader *routing.ConfigLoader
 	if len(loaders) > 0 {
 		configLoader = loaders[0]
@@ -36,7 +28,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stu
 		}
 
 		threadID := rc.Run.ThreadID
-		orgID := rc.Run.OrgID
+		projectID := rc.Run.ProjectID
 		firstRun, err := isFirstRunOfThread(ctx, pool, threadID)
 		if err != nil {
 			slog.WarnContext(ctx, "title_summarizer: check failed", "err", err.Error())
@@ -57,14 +49,14 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stu
 		maxTokens := rc.TitleSummarizer.MaxTokens
 		llmMaxResponseBytes := rc.LlmMaxResponseBytes
 
-		d := defaultDialect(dialect)
 		go func() {
+			// goroutine 超出请求生命周期，需要独立 context
 			bgCtx := context.Background()
-			gateway, model := resolveTitleGateway(bgCtx, pool, orgID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
+			gateway, model := resolveTitleGateway(bgCtx, pool, projectID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader)
 			if gateway == nil {
 				return
 			}
-			generateTitle(pool, bus, gateway, runID, threadID, model, messages, prompt, maxTokens, d)
+			generateTitle(pool, rdb, gateway, runID, threadID, model, messages, prompt, maxTokens)
 		}()
 
 		return next(ctx, rc)
@@ -74,7 +66,7 @@ func NewTitleSummarizerMiddleware(pool *pgxpool.Pool, bus eventbus.EventBus, stu
 func resolveTitleGateway(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	orgID uuid.UUID,
+	projectID *uuid.UUID,
 	fallbackGateway llm.Gateway,
 	fallbackModel string,
 	stubGateway llm.Gateway,
@@ -95,7 +87,7 @@ func resolveTitleGateway(
 	if configLoader == nil {
 		return fallbackGateway, fallbackModel
 	}
-	routingCfg, err := configLoader.Load(ctx, orgID)
+	routingCfg, err := configLoader.Load(ctx, projectID)
 	if err != nil {
 		slog.Warn("title_summarizer: load routing config failed", "err", err.Error())
 		return fallbackGateway, fallbackModel
@@ -131,7 +123,7 @@ func isFirstRunOfThread(ctx context.Context, pool *pgxpool.Pool, threadID uuid.U
 
 func generateTitle(
 	pool *pgxpool.Pool,
-	bus eventbus.EventBus,
+	rdb *redis.Client,
 	gateway llm.Gateway,
 	runID uuid.UUID,
 	threadID uuid.UUID,
@@ -139,8 +131,8 @@ func generateTitle(
 	messages []llm.Message,
 	prompt string,
 	maxTokens int,
-	dialect database.DialectHelper,
 ) {
+	// 由 fire-and-forget goroutine 调用，需要独立 context
 	ctx := context.Background()
 
 	userText := extractUserText(messages)
@@ -196,20 +188,17 @@ func generateTitle(
 		return
 	}
 
-	emitTitleEvent(ctx, pool, bus, runID, threadID, title, dialect)
+	emitTitleEvent(ctx, pool, rdb, runID, threadID, title)
 }
 
 func emitTitleEvent(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	bus eventbus.EventBus,
+	rdb *redis.Client,
 	runID uuid.UUID,
 	threadID uuid.UUID,
 	title string,
-	dialect database.DialectHelper,
 ) {
-	dialect = defaultDialect(dialect)
-
 	dataJSON := map[string]any{
 		"thread_id": threadID.String(),
 		"title":     title,
@@ -226,13 +215,14 @@ func emitTitleEvent(
 	defer tx.Rollback(ctx)
 
 	var seq int64
-	seqSQL := fmt.Sprintf("SELECT %s", dialect.Sequence("run_events_seq_global"))
-	if err = tx.QueryRow(ctx, seqSQL).Scan(&seq); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT nextval('run_events_seq_global')`).Scan(&seq); err != nil {
 		return
 	}
 
-	insertSQL := fmt.Sprintf("INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, %s)", dialect.JSONCast("$4"))
-	_, err = tx.Exec(ctx, insertSQL, runID, seq, "thread.title.updated", string(encoded))
+	_, err = tx.Exec(ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, $4::jsonb)`,
+		runID, seq, "thread.title.updated", string(encoded),
+	)
 	if err != nil {
 		return
 	}
@@ -241,13 +231,11 @@ func emitTitleEvent(
 		return
 	}
 
-	if dialect.Name() == database.DialectPostgres {
-		pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
-		_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
-	}
-	if bus != nil {
+	pgChannel := fmt.Sprintf(`"run_events:%s"`, runID.String())
+	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+	if rdb != nil {
 		rdbChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
-		_ = bus.Publish(ctx, rdbChannel, "ping")
+		_, _ = rdb.Publish(ctx, rdbChannel, "ping").Result()
 	}
 }
 

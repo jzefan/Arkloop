@@ -8,18 +8,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type WebhookEndpoint struct {
-	ID            uuid.UUID
-	OrgID         uuid.UUID
-	URL           string
-	SecretID      *uuid.UUID
-	SigningSecret *string
-	Events        []string
-	Enabled       bool
-	CreatedAt     time.Time
+	ID        uuid.UUID
+	AccountID     uuid.UUID
+	URL       string
+	SecretID  *uuid.UUID
+	Events    []string
+	Enabled   bool
+	CreatedAt time.Time
 }
 
 type WebhookEndpointRepository struct {
@@ -33,13 +32,13 @@ func NewWebhookEndpointRepository(db Querier) (*WebhookEndpointRepository, error
 	return &WebhookEndpointRepository{db: db}, nil
 }
 
-func (r *WebhookEndpointRepository) WithTx(tx database.Tx) *WebhookEndpointRepository {
+func (r *WebhookEndpointRepository) WithTx(tx pgx.Tx) *WebhookEndpointRepository {
 	return &WebhookEndpointRepository{db: tx}
 }
 
-func (r *WebhookEndpointRepository) Create(ctx context.Context, id uuid.UUID, orgID uuid.UUID, url string, secretID uuid.UUID, events []string) (WebhookEndpoint, error) {
-	if orgID == uuid.Nil {
-		return WebhookEndpoint{}, fmt.Errorf("webhooks: org_id must not be empty")
+func (r *WebhookEndpointRepository) Create(ctx context.Context, id uuid.UUID, accountID uuid.UUID, url string, secretID uuid.UUID, events []string) (WebhookEndpoint, error) {
+	if accountID == uuid.Nil {
+		return WebhookEndpoint{}, fmt.Errorf("webhooks: account_id must not be empty")
 	}
 	if strings.TrimSpace(url) == "" {
 		return WebhookEndpoint{}, fmt.Errorf("webhooks: url must not be empty")
@@ -57,12 +56,12 @@ func (r *WebhookEndpointRepository) Create(ctx context.Context, id uuid.UUID, or
 	var ep WebhookEndpoint
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO webhook_endpoints (id, org_id, url, secret_id, signing_secret, events)
-		 VALUES ($1, $2, $3, $4, NULL, $5)
-		 RETURNING id, org_id, url, secret_id, signing_secret, events, enabled, created_at`,
-		id, orgID, url, secretID, events,
+		`INSERT INTO webhook_endpoints (id, account_id, url, secret_id, events)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, account_id, url, secret_id, events, enabled, created_at`,
+		id, accountID, url, secretID, events,
 	).Scan(
-		&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
+		&ep.ID, &ep.AccountID, &ep.URL, &ep.SecretID,
 		&ep.Events, &ep.Enabled, &ep.CreatedAt,
 	)
 	if err != nil {
@@ -75,14 +74,14 @@ func (r *WebhookEndpointRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	var ep WebhookEndpoint
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, org_id, url, secret_id, signing_secret, events, enabled, created_at
+		`SELECT id, account_id, url, secret_id, events, enabled, created_at
 		 FROM webhook_endpoints WHERE id = $1`,
 		id,
 	).Scan(
-		&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
+		&ep.ID, &ep.AccountID, &ep.URL, &ep.SecretID,
 		&ep.Events, &ep.Enabled, &ep.CreatedAt,
 	)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -91,14 +90,14 @@ func (r *WebhookEndpointRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	return &ep, nil
 }
 
-func (r *WebhookEndpointRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]WebhookEndpoint, error) {
+func (r *WebhookEndpointRepository) ListByOrg(ctx context.Context, accountID uuid.UUID) ([]WebhookEndpoint, error) {
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT id, org_id, url, secret_id, signing_secret, events, enabled, created_at
+		`SELECT id, account_id, url, secret_id, events, enabled, created_at
 		 FROM webhook_endpoints
-		 WHERE org_id = $1
+		 WHERE account_id = $1
 		 ORDER BY created_at ASC`,
-		orgID,
+		accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("webhooks.ListByOrg: %w", err)
@@ -109,7 +108,7 @@ func (r *WebhookEndpointRepository) ListByOrg(ctx context.Context, orgID uuid.UU
 	for rows.Next() {
 		var ep WebhookEndpoint
 		if err := rows.Scan(
-			&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
+			&ep.ID, &ep.AccountID, &ep.URL, &ep.SecretID,
 			&ep.Events, &ep.Enabled, &ep.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("webhooks.ListByOrg scan: %w", err)
@@ -122,64 +121,19 @@ func (r *WebhookEndpointRepository) ListByOrg(ctx context.Context, orgID uuid.UU
 	return endpoints, nil
 }
 
-func (r *WebhookEndpointRepository) ListLegacySecrets(ctx context.Context) ([]WebhookEndpoint, error) {
-	rows, err := r.db.Query(
-		ctx,
-		`SELECT id, org_id, url, secret_id, signing_secret, events, enabled, created_at
-		 FROM webhook_endpoints
-		 WHERE secret_id IS NULL AND signing_secret IS NOT NULL
-		 ORDER BY created_at ASC`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("webhooks.ListLegacySecrets: %w", err)
-	}
-	defer rows.Close()
-
-	legacy := []WebhookEndpoint{}
-	for rows.Next() {
-		var ep WebhookEndpoint
-		if err := rows.Scan(
-			&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
-			&ep.Events, &ep.Enabled, &ep.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("webhooks.ListLegacySecrets scan: %w", err)
-		}
-		legacy = append(legacy, ep)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("webhooks.ListLegacySecrets rows: %w", err)
-	}
-	return legacy, nil
-}
-
-func (r *WebhookEndpointRepository) AttachSecret(ctx context.Context, id uuid.UUID, secretID uuid.UUID) error {
-	_, err := r.db.Exec(
-		ctx,
-		`UPDATE webhook_endpoints
-		 SET secret_id = $2, signing_secret = NULL
-		 WHERE id = $1`,
-		id,
-		secretID,
-	)
-	if err != nil {
-		return fmt.Errorf("webhooks.AttachSecret: %w", err)
-	}
-	return nil
-}
-
 func (r *WebhookEndpointRepository) SetEnabled(ctx context.Context, id uuid.UUID, enabled bool) (*WebhookEndpoint, error) {
 	var ep WebhookEndpoint
 	err := r.db.QueryRow(
 		ctx,
 		`UPDATE webhook_endpoints SET enabled = $2
 		 WHERE id = $1
-		 RETURNING id, org_id, url, secret_id, signing_secret, events, enabled, created_at`,
+		 RETURNING id, account_id, url, secret_id, events, enabled, created_at`,
 		id, enabled,
 	).Scan(
-		&ep.ID, &ep.OrgID, &ep.URL, &ep.SecretID, &ep.SigningSecret,
+		&ep.ID, &ep.AccountID, &ep.URL, &ep.SecretID,
 		&ep.Events, &ep.Enabled, &ep.CreatedAt,
 	)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -188,12 +142,12 @@ func (r *WebhookEndpointRepository) SetEnabled(ctx context.Context, id uuid.UUID
 	return &ep, nil
 }
 
-// Delete 删除指定 org 下的 webhook 端点，通过 org_id 条件避免越权删除。
-func (r *WebhookEndpointRepository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+// Delete 删除指定 org 下的 webhook 端点，通过 account_id 条件避免越权删除。
+func (r *WebhookEndpointRepository) Delete(ctx context.Context, id uuid.UUID, accountID uuid.UUID) error {
 	tag, err := r.db.Exec(
 		ctx,
-		`DELETE FROM webhook_endpoints WHERE id = $1 AND org_id = $2`,
-		id, orgID,
+		`DELETE FROM webhook_endpoints WHERE id = $1 AND account_id = $2`,
+		id, accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("webhooks.Delete: %w", err)

@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -27,13 +28,12 @@ func NewCancelGuardMiddleware(
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
 	hub *RunControlHub,
-	bus eventbus.EventBus,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		db := rc.DB
+		pool := rc.Pool
 		run := rc.Run
 
-		cancelType, err := readLatestEventType(ctx, db, eventsRepo, run.ID, cancelEventTypes)
+		cancelType, err := readLatestEventType(ctx, pool, eventsRepo, run.ID, cancelEventTypes)
 		if err != nil {
 			return err
 		}
@@ -41,11 +41,11 @@ func NewCancelGuardMiddleware(
 			return nil
 		}
 		if cancelType == "run.cancel_requested" {
-			return appendAndCommitSingle(ctx, db, run, runsRepo, eventsRepo,
-				rc.Emitter.Emit("run.cancelled", map[string]any{}, nil, nil), nil, bus)
+			return appendAndCommitSingle(ctx, pool, run, runsRepo, eventsRepo,
+				rc.Emitter.Emit("run.cancelled", map[string]any{}, nil, nil), nil, rc.BroadcastRDB)
 		}
 
-		terminalType, err := readLatestEventType(ctx, db, eventsRepo, run.ID, terminalEventTypes)
+		terminalType, err := readLatestEventType(ctx, pool, eventsRepo, run.ID, terminalEventTypes)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func NewCancelGuardMiddleware(
 		var lastSeq int64
 		rc.WaitForInput = func(ctx context.Context) (string, bool) {
 			for {
-				content, seq, ok := fetchLatestInput(ctx, db, run.ID, lastSeq)
+				content, seq, ok := fetchLatestInput(ctx, pool, run.ID, lastSeq)
 				if ok {
 					lastSeq = seq
 					return content, true
@@ -111,12 +111,12 @@ func NewCancelGuardMiddleware(
 
 func readLatestEventType(
 	ctx context.Context,
-	db database.DB,
+	pool *pgxpool.Pool,
 	eventsRepo data.RunEventsRepository,
 	runID uuid.UUID,
 	types []string,
 ) (string, error) {
-	tx, err := db.Begin(ctx)
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -127,15 +127,15 @@ func readLatestEventType(
 // appendAndCommitSingle 写入单个事件并提交，用于短路场景。
 func appendAndCommitSingle(
 	ctx context.Context,
-	db database.DB,
+	pool *pgxpool.Pool,
 	run data.Run,
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
 	ev events.RunEvent,
 	releaseSlot func(),
-	bus eventbus.EventBus,
+	rdb *redis.Client,
 ) error {
-	tx, err := db.Begin(ctx)
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
@@ -151,6 +151,28 @@ func appendAndCommitSingle(
 		}); err != nil {
 			return err
 		}
+
+		// 同步 sub_agents 终态，避免 wait_agent 永久轮询
+		subAgent, err := (data.SubAgentRepository{}).GetByCurrentRunID(ctx, tx, run.ID)
+		if err != nil {
+			return err
+		}
+		if subAgent != nil {
+			var lastError *string
+			if msg := terminalStatusMessage(ev.DataJSON); msg != "" {
+				lastError = &msg
+			}
+			if err := (data.SubAgentRepository{}).TransitionToTerminal(ctx, tx, run.ID, status, lastError); err != nil {
+				return err
+			}
+			eventType, err := data.SubAgentTerminalEventType(status)
+			if err != nil {
+				return err
+			}
+			if _, err := (data.SubAgentEventAppender{}).Append(ctx, tx, subAgent.ID, &run.ID, eventType, ev.DataJSON, ev.ErrorClass); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -158,22 +180,22 @@ func appendAndCommitSingle(
 	}
 
 	channel := fmt.Sprintf("run_events:%s", run.ID.String())
-	_, _ = db.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+	_, _ = pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
 
-	if bus != nil {
+	if rdb != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", run.ID.String())
-		_ = bus.Publish(ctx, redisChannel, "")
+		_, _ = rdb.Publish(ctx, redisChannel, "").Result()
 	}
 
 	if _, ok := TerminalStatuses[ev.Type]; ok && releaseSlot != nil {
 		releaseSlot()
 	}
 
-	if bus != nil {
+	if rdb != nil {
 		if termStatus, ok := TerminalStatuses[ev.Type]; ok {
 			payload := truncateChildRunPayload(terminalStatusMessage(ev.DataJSON))
 			ch := fmt.Sprintf("run.child.%s.done", run.ID.String())
-			_ = bus.Publish(ctx, ch, termStatus+"\n"+payload)
+			_, _ = rdb.Publish(ctx, ch, termStatus+"\n"+payload).Result()
 		}
 	}
 
@@ -204,10 +226,10 @@ var TerminalStatuses = map[string]string{
 
 // fetchLatestInput 查询 run_events 中 seq > sinceSeq 的最新 run.input_provided 事件。
 // 返回 (content, seq, true) 或 ("", 0, false)。
-func fetchLatestInput(ctx context.Context, db database.DB, runID uuid.UUID, sinceSeq int64) (string, int64, bool) {
+func fetchLatestInput(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID, sinceSeq int64) (string, int64, bool) {
 	var rawJSON []byte
 	var seq int64
-	err := db.QueryRow(
+	err := pool.QueryRow(
 		ctx,
 		`SELECT data_json, seq
 		 FROM run_events
@@ -221,7 +243,7 @@ func fetchLatestInput(ctx context.Context, db database.DB, runID uuid.UUID, sinc
 		sinceSeq,
 	).Scan(&rawJSON, &seq)
 	if err != nil {
-		if errors.Is(err, database.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", 0, false
 		}
 		return "", 0, false

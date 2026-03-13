@@ -58,10 +58,6 @@ type WarmPool struct {
 
 	totalCreated   atomic.Int64
 	totalDestroyed atomic.Int64
-
-	// sessionID -> entry 映射，用于 Destroy
-	activeMu sync.Mutex
-	active   map[string]*entry
 }
 
 // New 创建 WarmPool 实例（不启动后台 goroutine）。
@@ -73,11 +69,10 @@ func New(cfg Config) *WarmPool {
 		}
 	}
 	return &WarmPool{
-		cfg:    cfg,
-		ready:  ready,
-		sem:    make(chan struct{}, cfg.MaxRefillConcurrency),
-		stop:   make(chan struct{}),
-		active: make(map[string]*entry),
+		cfg:   cfg,
+		ready: ready,
+		sem:   make(chan struct{}, cfg.MaxRefillConcurrency),
+		stop:  make(chan struct{}),
 	}
 }
 
@@ -93,26 +88,19 @@ func (p *WarmPool) Start() {
 }
 
 // Acquire 获取一个就绪的 VM。优先从 warm pool 取，pool 为空时按需创建。
-func (p *WarmPool) Acquire(ctx context.Context, sessionID, tier string) (*session.Session, error) {
-	var e *entry
+func (p *WarmPool) Acquire(ctx context.Context, tier string) (*session.Session, *os.Process, error) {
 	if ch, ok := p.ready[tier]; ok {
 		select {
-		case e = <-ch:
+		case e := <-ch:
+			return e.session, e.process, nil
 		default:
 		}
 	}
-	if e == nil {
-		var err error
-		e, err = p.createVM(ctx, tier)
-		if err != nil {
-			return nil, err
-		}
+	e, err := p.createVM(ctx, tier)
+	if err != nil {
+		return nil, nil, err
 	}
-	e.session.ID = sessionID
-	p.activeMu.Lock()
-	p.active[sessionID] = e
-	p.activeMu.Unlock()
-	return e.session, nil
+	return e.session, e.process, nil
 }
 
 // Ready 返回所有启用了预热的 tier 是否已达到目标数量。
@@ -147,44 +135,17 @@ func (p *WarmPool) Stats() Stats {
 	}
 }
 
-// Drain 停止所有 refiller 并销毁所有预热 VM 和活跃 VM。Graceful shutdown 时调用。
+// Drain 停止所有 refiller 并销毁所有预热 VM。Graceful shutdown 时调用。
 func (p *WarmPool) Drain(ctx context.Context) {
 	close(p.stop)
 	p.wg.Wait()
 	for _, ch := range p.ready {
 		p.drainChannel(ch)
 	}
-
-	p.activeMu.Lock()
-	remaining := make(map[string]*entry, len(p.active))
-	for id, e := range p.active {
-		remaining[id] = e
-	}
-	p.active = make(map[string]*entry)
-	p.activeMu.Unlock()
-
-	for _, e := range remaining {
-		p.destroyResources(e.process, e.session.SocketDir)
-	}
 }
 
-// Destroy 销毁 sessionID 对应的 VM 并释放所有关联资源。
-func (p *WarmPool) Destroy(sessionID string) {
-	p.activeMu.Lock()
-	e, ok := p.active[sessionID]
-	if ok {
-		delete(p.active, sessionID)
-	}
-	p.activeMu.Unlock()
-
-	if ok {
-		p.destroyResources(e.process, e.session.SocketDir)
-	} else {
-		p.totalDestroyed.Add(1)
-	}
-}
-
-func (p *WarmPool) destroyResources(proc *os.Process, socketDir string) {
+// DestroyVM 销毁一个 VM：kill 进程 + 清理 socket 目录。
+func (p *WarmPool) DestroyVM(proc *os.Process, socketDir string) {
 	if proc != nil {
 		_ = proc.Kill()
 		_, _ = proc.Wait()
@@ -202,7 +163,7 @@ func (p *WarmPool) destroyEntry(e *entry) {
 	if e == nil {
 		return
 	}
-	p.destroyResources(e.process, e.session.SocketDir)
+	p.DestroyVM(e.process, e.session.SocketDir)
 }
 
 func (p *WarmPool) drainChannel(ch chan *entry) {
@@ -286,8 +247,8 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 		return nil, fmt.Errorf("snapshot not available for %q", tmpl.ID)
 	}
 
-	suffix := generateID()
-	socketDir := filepath.Join(p.cfg.SocketBaseDir, suffix)
+	id := generateID()
+	socketDir := filepath.Join(p.cfg.SocketBaseDir, id)
 	if err := os.MkdirAll(socketDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create socket dir: %w", err)
 	}
@@ -340,6 +301,7 @@ func (p *WarmPool) createFromSnapshot(ctx context.Context, tier string, tmpl *te
 	}
 
 	s := &session.Session{
+		ID:        id,
 		Tier:      tier,
 		Dial:      session.NewVsockDialer(vsockPath, p.cfg.GuestAgentPort),
 		CreatedAt: time.Now(),
@@ -373,8 +335,8 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 		rootfsPath = tmpl.RootfsPath
 	}
 
-	suffix := generateID()
-	socketDir := filepath.Join(p.cfg.SocketBaseDir, suffix)
+	id := generateID()
+	socketDir := filepath.Join(p.cfg.SocketBaseDir, id)
 	if err := os.MkdirAll(socketDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create socket dir: %w", err)
 	}
@@ -424,6 +386,7 @@ func (p *WarmPool) createCold(ctx context.Context, tier string, tmpl *template.T
 	}
 
 	s := &session.Session{
+		ID:        id,
 		Tier:      tier,
 		Dial:      session.NewVsockDialer(vsockPath, p.cfg.GuestAgentPort),
 		CreatedAt: time.Now(),

@@ -488,11 +488,11 @@ func TestLoadFromDBIgnoresGlobalPersonaRows(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	orgID := uuid.New()
-	insertWorkerPersonaRow(t, pool, &orgID, "custom-only", "Custom Only")
+	projectID := uuid.New()
+	insertWorkerPersonaRow(t, pool, &projectID, "custom-only", "Custom Only")
 	insertWorkerPersonaRow(t, pool, nil, "ghost", "Ghost")
 
-	defs, err := LoadFromDB(context.Background(), pool, orgID)
+	defs, err := LoadFromDB(context.Background(), pool, &projectID)
 	if err != nil {
 		t.Fatalf("LoadFromDB failed: %v", err)
 	}
@@ -512,11 +512,11 @@ func TestMergeRegistryUsesOrgOverrideOnly(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	orgID := uuid.New()
-	insertWorkerPersonaRow(t, pool, &orgID, "normal", "Custom Normal")
+	projectID := uuid.New()
+	insertWorkerPersonaRow(t, pool, &projectID, "normal", "Custom Normal")
 	insertWorkerPersonaRow(t, pool, nil, "normal", "Ghost Normal")
 
-	defs, err := LoadFromDB(context.Background(), pool, orgID)
+	defs, err := LoadFromDB(context.Background(), pool, &projectID)
 	if err != nil {
 		t.Fatalf("LoadFromDB failed: %v", err)
 	}
@@ -614,20 +614,20 @@ func TestLoadFromDBParsesLayeredBudgets(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	orgID := uuid.New()
+	projectID := uuid.New()
 	_, err = pool.Exec(
 		context.Background(),
 		`INSERT INTO personas
-			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
+			(project_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
 		 VALUES ($1, 'db-budget', '1', 'DB Budget', 'prompt', '{}', '{}', $2::jsonb, 'agent.simple', '{}'::jsonb)`,
-		orgID,
+		projectID,
 		`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"write_stdin":{"max_continuations":7,"max_output_bytes":12345}}}`,
 	)
 	if err != nil {
 		t.Fatalf("insert persona row failed: %v", err)
 	}
 
-	defs, err := LoadFromDB(context.Background(), pool, orgID)
+	defs, err := LoadFromDB(context.Background(), pool, &projectID)
 	if err != nil {
 		t.Fatalf("LoadFromDB failed: %v", err)
 	}
@@ -652,15 +652,119 @@ func TestLoadFromDBParsesLayeredBudgets(t *testing.T) {
 	}
 }
 
-func insertWorkerPersonaRow(t *testing.T, pool *pgxpool.Pool, orgID *uuid.UUID, personaKey string, displayName string) {
+func TestLoadPersonaParsesRoleOverrides(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "role_overlay",
+		"id: role_overlay\nversion: \"1\"\ntitle: Role Overlay\nroles:\n  worker:\n    soul_md: worker soul\n    prompt_md: worker prompt\n    tool_allowlist:\n      - web_search\n    tool_denylist:\n      - exec_command\n    budgets:\n      max_output_tokens: 256\n    model: worker^gpt-5-mini\n    preferred_credential: worker-cred\n    reasoning_mode: high\n    prompt_cache_control: system_prompt\n",
+		"base prompt",
+	)
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("role_overlay")
+	if !ok {
+		t.Fatal("expected role_overlay persona")
+	}
+	override, ok := def.Roles["worker"]
+	if !ok {
+		t.Fatal("expected worker role override")
+	}
+	if !override.SoulMD.Set || override.SoulMD.Value != "worker soul" {
+		t.Fatalf("unexpected soul override: %#v", override.SoulMD)
+	}
+	if !override.PromptMD.Set || override.PromptMD.Value != "worker prompt" {
+		t.Fatalf("unexpected prompt override: %#v", override.PromptMD)
+	}
+	if !override.HasToolAllowlist || len(override.ToolAllowlist) != 1 || override.ToolAllowlist[0] != "web_search" {
+		t.Fatalf("unexpected tool allowlist override: %#v", override.ToolAllowlist)
+	}
+	if !override.HasToolDenylist || len(override.ToolDenylist) != 1 || override.ToolDenylist[0] != "exec_command" {
+		t.Fatalf("unexpected tool denylist override: %#v", override.ToolDenylist)
+	}
+	if !override.Budgets.HasMaxOutputTokens || override.Budgets.MaxOutputTokens == nil || *override.Budgets.MaxOutputTokens != 256 {
+		t.Fatalf("unexpected max_output_tokens override: %#v", override.Budgets)
+	}
+	if !override.Model.Set || override.Model.Value == nil || *override.Model.Value != "worker^gpt-5-mini" {
+		t.Fatalf("unexpected model override: %#v", override.Model)
+	}
+	if !override.PreferredCredential.Set || override.PreferredCredential.Value == nil || *override.PreferredCredential.Value != "worker-cred" {
+		t.Fatalf("unexpected credential override: %#v", override.PreferredCredential)
+	}
+	if !override.ReasoningMode.Set || override.ReasoningMode.Value != "high" {
+		t.Fatalf("unexpected reasoning override: %#v", override.ReasoningMode)
+	}
+	if !override.PromptCacheControl.Set || override.PromptCacheControl.Value != "system_prompt" {
+		t.Fatalf("unexpected prompt cache override: %#v", override.PromptCacheControl)
+	}
+}
+
+func TestLoadPersonaRejectsUnsupportedRoleField(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "bad_role",
+		"id: bad_role\nversion: \"1\"\ntitle: Bad Role\nroles:\n  worker:\n    executor_type: agent.lua\n",
+		"base prompt",
+	)
+
+	_, err := LoadRegistry(dir)
+	if err == nil || err.Error() != "roles.worker contains unsupported field: executor_type" {
+		t.Fatalf("expected unsupported role field error, got %v", err)
+	}
+}
+
+func TestLoadFromDBParsesRoleOverrides(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_personas_role_db")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New failed: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	projectID := uuid.New()
+	_, err = pool.Exec(
+		context.Background(),
+		`INSERT INTO personas
+			(project_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, roles_json, executor_type, executor_config_json)
+		 VALUES ($1, 'db-role', '1', 'DB Role', 'prompt', '{}', '{}', '{}'::jsonb, $2::jsonb, 'agent.simple', '{}'::jsonb)`,
+		projectID,
+		`{"worker":{"prompt_md":"db worker","model":"db^gpt-5-mini","budgets":{"temperature":0.2}}}`,
+	)
+	if err != nil {
+		t.Fatalf("insert persona row failed: %v", err)
+	}
+
+	defs, err := LoadFromDB(context.Background(), pool, &projectID)
+	if err != nil {
+		t.Fatalf("LoadFromDB failed: %v", err)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("expected 1 persona, got %d", len(defs))
+	}
+	override, ok := defs[0].Roles["worker"]
+	if !ok {
+		t.Fatal("expected worker role override from db")
+	}
+	if !override.PromptMD.Set || override.PromptMD.Value != "db worker" {
+		t.Fatalf("unexpected db prompt override: %#v", override.PromptMD)
+	}
+	if !override.Model.Set || override.Model.Value == nil || *override.Model.Value != "db^gpt-5-mini" {
+		t.Fatalf("unexpected db model override: %#v", override.Model)
+	}
+	if !override.Budgets.HasTemperature || override.Budgets.Temperature == nil || *override.Budgets.Temperature != 0.2 {
+		t.Fatalf("unexpected db temperature override: %#v", override.Budgets)
+	}
+}
+
+func insertWorkerPersonaRow(t *testing.T, pool *pgxpool.Pool, projectID *uuid.UUID, personaKey string, displayName string) {
 	t.Helper()
 
 	_, err := pool.Exec(
 		context.Background(),
 		`INSERT INTO personas
-			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
+			(project_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
 		 VALUES ($1, $2, '1', $3, 'prompt', '{}', '{}', '{}'::jsonb, 'agent.simple', '{}'::jsonb)`,
-		orgID,
+		projectID,
 		personaKey,
 		displayName,
 	)

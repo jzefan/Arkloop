@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import { Loader2, Save } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getPlatformSetting, setPlatformSetting } from '../../api/platform-settings'
@@ -115,7 +115,7 @@ export function MemoryConfigPage() {
                     className={inputCls}
                     value={form.baseUrl}
                     onChange={set('baseUrl')}
-                    placeholder="http://openviking:8000"
+                    placeholder="http://openviking:19000"
                   />
                 </div>
                 <div>

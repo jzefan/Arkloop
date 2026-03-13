@@ -87,7 +87,7 @@ func (p *Pool) Start() {
 
 // Acquire returns a ready VM session. It tries the warm pool first and
 // falls back to on-demand creation.
-func (p *Pool) Acquire(ctx context.Context, sessionID, tier string) (*session.Session, error) {
+func (p *Pool) Acquire(ctx context.Context, tier string) (*session.Session, *os.Process, error) {
 	var e *entry
 	if ch, ok := p.ready[tier]; ok {
 		select {
@@ -99,27 +99,31 @@ func (p *Pool) Acquire(ctx context.Context, sessionID, tier string) (*session.Se
 		var err error
 		e, err = p.createVM(ctx, tier)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	e.session.ID = sessionID
-	p.mu.Lock()
-	p.active[sessionID] = e
-	p.mu.Unlock()
-	return e.session, nil
+	return e.session, nil, nil
 }
 
 // Destroy tears down the VM associated with sessionID.
-func (p *Pool) Destroy(sessionID string) {
+func (p *Pool) DestroyVM(_ *os.Process, socketDir string) {
 	p.mu.Lock()
-	e, ok := p.active[sessionID]
-	if ok {
-		delete(p.active, sessionID)
+	var found *entry
+	var foundID string
+	for id, e := range p.active {
+		if e.session.SocketDir == socketDir {
+			found = e
+			foundID = id
+			break
+		}
+	}
+	if found != nil {
+		delete(p.active, foundID)
 	}
 	p.mu.Unlock()
 
-	if ok {
-		p.destroyResources(e.vm, e.session.SocketDir)
+	if found != nil {
+		p.destroyResources(found.vm, socketDir)
 	} else {
 		p.totalDestroyed.Add(1)
 	}

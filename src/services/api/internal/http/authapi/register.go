@@ -17,14 +17,17 @@ type Deps struct {
 	EmailOTPLoginService *auth.EmailOTPLoginService
 	FeatureFlagService   *featureflag.Service
 	AuditWriter          *audit.Writer
-	OrgMembershipRepo    *data.OrgMembershipRepository
-	OrgRepo              *data.OrgRepository
+	AccountMembershipRepo    *data.AccountMembershipRepository
+	AccountRepo              *data.AccountRepository
 	UserCredentialRepo   *data.UserCredentialRepository
 	UsersRepo            *data.UserRepository
 	ConfigResolver       sharedconfig.Resolver
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
+	mux.HandleFunc("POST /v1/bootstrap/init", bootstrapInit(deps.RegistrationService))
+	mux.HandleFunc("GET /v1/bootstrap/verify/{token}", bootstrapVerify(deps.RegistrationService))
+	mux.HandleFunc("POST /v1/bootstrap/setup", bootstrapSetup(deps.RegistrationService))
 	mux.HandleFunc("GET /v1/auth/captcha-config", captchaConfig(deps.ConfigResolver))
 	mux.HandleFunc("POST /v1/auth/resolve", resolveIdentity(deps.AuthService, deps.FeatureFlagService, deps.AuditWriter, deps.ConfigResolver))
 	mux.HandleFunc("/v1/auth/login", login(deps.AuthService, deps.AuditWriter, deps.ConfigResolver))
@@ -38,5 +41,5 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/auth/email/otp/verify", emailOTPVerify(deps.EmailOTPLoginService, deps.AuthService, deps.AuditWriter))
 	mux.HandleFunc("POST /v1/auth/resolve/otp/send", resolveEmailOTPSend(deps.AuthService, deps.EmailOTPLoginService, deps.AuditWriter, deps.ConfigResolver))
 	mux.HandleFunc("POST /v1/auth/resolve/otp/verify", resolveEmailOTPVerify(deps.AuthService, deps.EmailOTPLoginService, deps.AuditWriter))
-	mux.HandleFunc("/v1/me", me(deps.AuthService, deps.OrgMembershipRepo, deps.OrgRepo, deps.UserCredentialRepo, deps.UsersRepo, deps.FeatureFlagService))
+	mux.HandleFunc("/v1/me", me(deps.AuthService, deps.AccountMembershipRepo, deps.AccountRepo, deps.UserCredentialRepo, deps.UsersRepo, deps.FeatureFlagService))
 }

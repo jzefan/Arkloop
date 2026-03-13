@@ -6,10 +6,11 @@ import (
 	"math"
 
 	"arkloop/services/shared/creditpolicy"
-	"arkloop/services/shared/database"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // BillingConfig 存储 sandbox 计费参数。
@@ -73,25 +74,30 @@ func CalcBaseOnlyCredits(cfg BillingConfig, policy creditpolicy.CreditDeductionP
 	return credits, meta
 }
 
+// TxBeginner 抽象 pgxpool.Pool 的 Begin 方法，便于测试。
+type TxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // BillingExecutor 装饰原始 sandbox executor，在调用完成后立即扣减积分。
 type BillingExecutor struct {
 	inner       tools.Executor
-	db          database.DB
+	pool        TxBeginner
 	creditsRepo data.CreditsRepository
 	resolver    *sharedent.Resolver
 	cfg         BillingConfig
 }
 
-// NewBillingExecutor 创建计费装饰器。db 和 resolver 不应为 nil。
+// NewBillingExecutor 创建计费装饰器。pool 和 resolver 不应为 nil。
 func NewBillingExecutor(
 	inner tools.Executor,
-	db database.DB,
+	pool TxBeginner,
 	resolver *sharedent.Resolver,
 	cfg BillingConfig,
 ) *BillingExecutor {
 	return &BillingExecutor{
 		inner:    inner,
-		db:       db,
+		pool:     pool,
 		resolver: resolver,
 		cfg:      cfg,
 	}
@@ -106,13 +112,13 @@ func (b *BillingExecutor) Execute(
 ) tools.ExecutionResult {
 	result := b.inner.Execute(ctx, toolName, args, execCtx, toolCallID)
 
-	if execCtx.OrgID == nil {
+	if execCtx.AccountID == nil {
 		return result
 	}
 
 	policy := creditpolicy.DefaultPolicy
 	if b.resolver != nil {
-		if p, err := b.resolver.ResolveDeductionPolicy(ctx, *execCtx.OrgID); err == nil {
+		if p, err := b.resolver.ResolveDeductionPolicy(ctx, *execCtx.AccountID); err == nil {
 			policy = p
 		}
 	}
@@ -130,10 +136,10 @@ func (b *BillingExecutor) Execute(
 		return result
 	}
 
-	err := b.creditsRepo.DeductStandalone(ctx, b.db, *execCtx.OrgID, credits, execCtx.RunID, "sandbox", meta)
+	err := b.creditsRepo.DeductStandalone(ctx, b.pool, *execCtx.AccountID, credits, execCtx.RunID, "sandbox", meta)
 	if err != nil {
 		slog.WarnContext(ctx, "sandbox billing: deduct failed",
-			"org_id", execCtx.OrgID,
+			"account_id", execCtx.AccountID,
 			"run_id", execCtx.RunID,
 			"credits", credits,
 			"error", err,

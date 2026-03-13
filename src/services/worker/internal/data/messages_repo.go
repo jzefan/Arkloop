@@ -3,29 +3,24 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type MessagesRepository struct{
-	Dialect database.DialectHelper
-}
-
-func (r MessagesRepository) dialect() database.DialectHelper {
-	if r.Dialect != nil {
-		return r.Dialect
-	}
-	return database.PostgresDialect{}
-}
+type MessagesRepository struct{}
 
 type ThreadMessage struct {
+	ID          uuid.UUID
 	Role        string
 	Content     string
 	ContentJSON json.RawMessage
+	CreatedAt   time.Time
 }
 
 type ConversationSearchHit struct {
@@ -35,16 +30,16 @@ type ConversationSearchHit struct {
 	CreatedAt time.Time
 }
 
-func (r MessagesRepository) InsertAssistantMessage(
+func (MessagesRepository) InsertAssistantMessage(
 	ctx context.Context,
-	tx database.Tx,
-	orgID uuid.UUID,
+	tx pgx.Tx,
+	accountID uuid.UUID,
 	threadID uuid.UUID,
 	runID uuid.UUID,
 	content string,
-) error {
+) (uuid.UUID, error) {
 	if strings.TrimSpace(content) == "" {
-		return nil
+		return uuid.Nil, nil
 	}
 	metadataJSON := map[string]any{}
 	if runID != uuid.Nil {
@@ -52,28 +47,69 @@ func (r MessagesRepository) InsertAssistantMessage(
 	}
 	metadataRaw, err := json.Marshal(metadataJSON)
 	if err != nil {
-		return fmt.Errorf("marshal metadata_json: %w", err)
+		return uuid.Nil, fmt.Errorf("marshal metadata_json: %w", err)
 	}
-	_, err = tx.Exec(
+	var messageID uuid.UUID
+	err = tx.QueryRow(
 		ctx,
-		fmt.Sprintf(`INSERT INTO messages (
-			org_id, thread_id, created_by_user_id, role, content, metadata_json
+		`INSERT INTO messages (
+			account_id, thread_id, created_by_user_id, role, content, metadata_json
 		) VALUES (
-			$1, $2, NULL, $3, $4, %s
-		)`, r.dialect().JSONCast("$5")),
-		orgID,
+			$1, $2, NULL, $3, $4, $5::jsonb
+		)
+		 RETURNING id`,
+		accountID,
 		threadID,
 		"assistant",
 		content,
 		string(metadataRaw),
+	).Scan(&messageID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return messageID, nil
+}
+
+func (MessagesRepository) FindAssistantMessageByRunID(
+	ctx context.Context,
+	tx pgx.Tx,
+	runID uuid.UUID,
+) (*uuid.UUID, string, error) {
+	if tx == nil {
+		return nil, "", fmt.Errorf("tx must not be nil")
+	}
+	if runID == uuid.Nil {
+		return nil, "", fmt.Errorf("run_id must not be empty")
+	}
+
+	var (
+		messageID uuid.UUID
+		content   string
 	)
-	return err
+	err := tx.QueryRow(
+		ctx,
+		`SELECT id, content
+		   FROM messages
+		  WHERE role = 'assistant'
+		    AND metadata_json->>'run_id' = $1
+		    AND deleted_at IS NULL
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT 1`,
+		runID.String(),
+	).Scan(&messageID, &content)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	return &messageID, strings.TrimSpace(content), nil
 }
 
 func (MessagesRepository) ListByThread(
 	ctx context.Context,
-	tx database.Tx,
-	orgID uuid.UUID,
+	tx pgx.Tx,
+	accountID uuid.UUID,
 	threadID uuid.UUID,
 	limit int,
 ) ([]ThreadMessage, error) {
@@ -82,15 +118,15 @@ func (MessagesRepository) ListByThread(
 	}
 	rows, err := tx.Query(
 		ctx,
-		`SELECT role, content, content_json
+		`SELECT id, role, content, content_json, created_at
 		 FROM messages
-		 WHERE org_id = $1
+		 WHERE account_id = $1
 		   AND thread_id = $2
 		   AND hidden = FALSE
 		   AND deleted_at IS NULL
 		 ORDER BY created_at ASC
 		 LIMIT $3`,
-		orgID,
+		accountID,
 		threadID,
 		limit,
 	)
@@ -102,7 +138,7 @@ func (MessagesRepository) ListByThread(
 	out := []ThreadMessage{}
 	for rows.Next() {
 		var item ThreadMessage
-		if err := rows.Scan(&item.Role, &item.Content, &item.ContentJSON); err != nil {
+		if err := rows.Scan(&item.ID, &item.Role, &item.Content, &item.ContentJSON, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.Role = strings.TrimSpace(item.Role)
@@ -118,10 +154,168 @@ func (MessagesRepository) ListByThread(
 	return out, nil
 }
 
-func (r MessagesRepository) SearchVisibleByOwner(
+func (MessagesRepository) ListByIDs(
 	ctx context.Context,
-	pool database.DB,
+	tx pgx.Tx,
 	orgID uuid.UUID,
+	threadID uuid.UUID,
+	messageIDs []uuid.UUID,
+) ([]ThreadMessage, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if orgID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("org_id and thread_id must not be empty")
+	}
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := tx.Query(
+		ctx,
+		`SELECT id, role, content, content_json, created_at
+		 FROM messages
+		 WHERE org_id = $1
+		   AND thread_id = $2
+		   AND id = ANY($3)
+		   AND hidden = FALSE
+		   AND deleted_at IS NULL
+		 ORDER BY created_at ASC, id ASC`,
+		orgID,
+		threadID,
+		messageIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ThreadMessage, 0, len(messageIDs))
+	for rows.Next() {
+		var item ThreadMessage
+		if err := rows.Scan(&item.ID, &item.Role, &item.Content, &item.ContentJSON, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.Role = strings.TrimSpace(item.Role)
+		item.Content = strings.TrimSpace(item.Content)
+		if item.Role == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (MessagesRepository) ListRecentByThread(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID uuid.UUID,
+	threadID uuid.UUID,
+	limit int,
+) ([]ThreadMessage, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if orgID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("org_id and thread_id must not be empty")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be positive")
+	}
+	rows, err := tx.Query(
+		ctx,
+		`SELECT id, role, content, content_json, created_at
+		 FROM (
+		 	SELECT id, role, content, content_json, created_at
+		 	  FROM messages
+		 	 WHERE org_id = $1
+		 	   AND thread_id = $2
+		 	   AND hidden = FALSE
+		 	   AND deleted_at IS NULL
+		 	 ORDER BY created_at DESC, id DESC
+		 	 LIMIT $3
+		 ) recent
+		 ORDER BY created_at ASC, id ASC`,
+		orgID,
+		threadID,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ThreadMessage, 0, limit)
+	for rows.Next() {
+		var item ThreadMessage
+		if err := rows.Scan(&item.ID, &item.Role, &item.Content, &item.ContentJSON, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.Role = strings.TrimSpace(item.Role)
+		item.Content = strings.TrimSpace(item.Content)
+		if item.Role == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (MessagesRepository) InsertThreadMessage(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID uuid.UUID,
+	threadID uuid.UUID,
+	role string,
+	content string,
+	contentJSON json.RawMessage,
+	createdByUserID *uuid.UUID,
+) (uuid.UUID, error) {
+	if tx == nil {
+		return uuid.Nil, fmt.Errorf("tx must not be nil")
+	}
+	if orgID == uuid.Nil || threadID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("org_id and thread_id must not be empty")
+	}
+	trimmedRole := strings.TrimSpace(role)
+	if trimmedRole == "" {
+		return uuid.Nil, fmt.Errorf("role must not be empty")
+	}
+	trimmedContent := strings.TrimSpace(content)
+	if trimmedContent == "" {
+		return uuid.Nil, fmt.Errorf("content must not be empty")
+	}
+	var messageID uuid.UUID
+	err := tx.QueryRow(
+		ctx,
+		`INSERT INTO messages (
+			org_id, thread_id, created_by_user_id, role, content, content_json
+		) VALUES (
+			$1, $2, $3, $4, $5, $6
+		)
+		 RETURNING id`,
+		orgID,
+		threadID,
+		createdByUserID,
+		trimmedRole,
+		trimmedContent,
+		contentJSON,
+	).Scan(&messageID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return messageID, nil
+}
+
+func (MessagesRepository) SearchVisibleByOwner(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	ownerUserID uuid.UUID,
 	query string,
 	limit int,
@@ -143,20 +337,20 @@ func (r MessagesRepository) SearchVisibleByOwner(
 	like := "%" + escapeILikePattern(trimmedQuery) + "%"
 	rows, err := pool.Query(
 		ctx,
-		fmt.Sprintf(`SELECT m.thread_id, m.role, m.content, m.created_at
+		`SELECT m.thread_id, m.role, m.content, m.created_at
 		 FROM messages m
 		 JOIN threads t ON t.id = m.thread_id
-		 WHERE m.org_id = $1
-		   AND t.org_id = $1
+		 WHERE m.account_id = $1
+		   AND t.account_id = $1
 		   AND t.created_by_user_id = $2
 		   AND t.deleted_at IS NULL
 		   AND t.is_private = FALSE
 		   AND m.deleted_at IS NULL
 		   AND m.hidden = FALSE
-		   AND m.content %s $3 ESCAPE '!'
+		   AND m.content ILIKE $3 ESCAPE '!'
 		 ORDER BY m.created_at DESC, m.id DESC
-		 LIMIT $4`, r.dialect().ILike()),
-		orgID, ownerUserID, like, limit,
+		 LIMIT $4`,
+		accountID, ownerUserID, like, limit,
 	)
 	if err != nil {
 		return nil, err

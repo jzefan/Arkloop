@@ -38,12 +38,12 @@ func (m *repoMock) SearchVisibleByOwner(_ context.Context, _ database.DB, _ uuid
 }
 
 func newExecCtx() tools.ExecutionContext {
-	orgID := uuid.New()
+	accountID := uuid.New()
 	userID := uuid.New()
 	return tools.ExecutionContext{
 		RunID:   uuid.New(),
 		TraceID: "trace",
-		OrgID:   &orgID,
+		AccountID:   &accountID,
 		UserID:  &userID,
 		Emitter: events.NewEmitter("trace"),
 	}

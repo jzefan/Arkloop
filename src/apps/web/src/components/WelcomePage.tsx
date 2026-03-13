@@ -4,7 +4,6 @@ import { Glasses } from 'lucide-react'
 import { ChatInput, type Attachment } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
-import { ModeSwitch } from './ModeSwitch'
 import { createThread, createMessage, createRun, uploadThreadAttachment, isApiError, type ThreadResponse, type MeResponse } from '../api'
 import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
@@ -41,9 +40,8 @@ type OutletContext = {
   isSearchMode: boolean
   onEnterSearchMode: () => void
   onExitSearchMode: () => void
-  appMode: import('../storage').AppMode
-  availableAppModes: import('../storage').AppMode[]
-  onSetAppMode: (mode: import('../storage').AppMode) => void
+  pendingSkillPrompt?: string | null
+  onConsumeSkillPrompt?: () => void
 }
 
 // 按时段、星期、节日生成问候语，全部基于浏览器本地时间。
@@ -115,7 +113,7 @@ function buildGreeting(name: string | null, now: Date): string {
 
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, appMode, availableAppModes, onSetAppMode } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, pendingSkillPrompt, onConsumeSkillPrompt } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentsRef = useRef<Attachment[]>([])
@@ -127,6 +125,13 @@ export function WelcomePage() {
   const draftThreadPromiseRef = useRef<Promise<ThreadResponse> | null>(null)
 
   const greeting = useMemo(() => buildGreeting(me?.username ?? null, new Date()), [me?.username])
+
+  useEffect(() => {
+    if (pendingSkillPrompt) {
+      setDraft(pendingSkillPrompt)
+      onConsumeSkillPrompt?.()
+    }
+  }, [pendingSkillPrompt, onConsumeSkillPrompt])
 
   const [typedGreeting, setTypedGreeting] = useState('')
   useEffect(() => {
@@ -147,7 +152,7 @@ export function WelcomePage() {
   const ensureDraftThread = useCallback((): Promise<ThreadResponse> => {
     if (draftThreadRef.current) return Promise.resolve(draftThreadRef.current)
     if (draftThreadPromiseRef.current) return draftThreadPromiseRef.current
-    const promise = createThread(accessToken, { title: t.newChatTitle, is_private: isPrivateMode, mode: 'chat' })
+    const promise = createThread(accessToken, { title: t.newChatTitle, is_private: isPrivateMode })
       .then((thread) => { draftThreadRef.current = thread; return thread })
     draftThreadPromiseRef.current = promise
     return promise
@@ -253,7 +258,7 @@ export function WelcomePage() {
       const title = deriveTitle(text, t.newChatTitle)
       const thread = draftThreadRef.current
         ? draftThreadRef.current
-        : await createThread(accessToken, { title, is_private: isPrivateMode, mode: 'chat' })
+        : await createThread(accessToken, { title, is_private: isPrivateMode })
       const uploaded = await Promise.all(
         attachments.map(async (attachment) => {
           if (attachment.uploaded) return attachment.uploaded
@@ -286,12 +291,6 @@ export function WelcomePage() {
     <div className="flex h-full flex-col">
       {/* 顶部 header */}
       <div className="relative z-10 flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        <ModeSwitch
-          mode={appMode}
-          onChange={onSetAppMode}
-          labels={{ chat: t.modeChat, claw: t.modeClaw }}
-          availableModes={availableAppModes}
-        />
         <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
         <button
           onClick={onTogglePrivateMode}

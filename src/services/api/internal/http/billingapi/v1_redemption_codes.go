@@ -12,9 +12,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type redemptionCodeResponse struct {
@@ -55,11 +55,11 @@ func toRedemptionCodeResponse(rc data.RedemptionCode) redemptionCodeResponse {
 
 func adminRedemptionCodesBatch(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	redemptionRepo *data.RedemptionCodesRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	type batchRequest struct {
 		Count     int     `json:"count"`
@@ -134,7 +134,7 @@ func adminRedemptionCodesBatch(
 		}
 
 		ctx := r.Context()
-		tx, err := db.Begin(ctx)
+		tx, err := pool.Begin(ctx)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -180,7 +180,7 @@ func adminRedemptionCodesBatch(
 
 func adminRedemptionCodesEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	redemptionRepo *data.RedemptionCodesRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -239,7 +239,7 @@ func adminRedemptionCodesEntry(
 
 func adminRedemptionCodeEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	redemptionRepo *data.RedemptionCodesRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -268,7 +268,7 @@ func patchAdminRedemptionCode(
 	r *nethttp.Request,
 	id uuid.UUID,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	redemptionRepo *data.RedemptionCodesRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	traceID string,
@@ -324,12 +324,12 @@ func patchAdminRedemptionCode(
 
 func meRedeem(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	redemptionRepo *data.RedemptionCodesRepository,
 	creditsRepo *data.CreditsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	type redeemRequest struct {
 		Code string `json:"code"`
@@ -404,7 +404,7 @@ func meRedeem(
 			return
 		}
 
-		tx, err := db.Begin(ctx)
+		tx, err := pool.Begin(ctx)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -423,7 +423,7 @@ func meRedeem(
 			return
 		}
 
-		_, err = txRedemption.RecordRedemption(ctx, rc.ID, actor.UserID, actor.OrgID)
+		_, err = txRedemption.RecordRedemption(ctx, rc.ID, actor.UserID, actor.AccountID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -434,7 +434,7 @@ func meRedeem(
 			if amount > 0 {
 				txCredits := creditsRepo.WithTx(tx)
 				refType := "redemption_code"
-				if err := txCredits.Add(ctx, actor.OrgID, amount, "redemption", &refType, &rc.ID, nil); err != nil {
+				if err := txCredits.Add(ctx, actor.AccountID, amount, "redemption", &refType, &rc.ID, nil); err != nil {
 					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 					return
 				}
@@ -447,7 +447,7 @@ func meRedeem(
 		}
 
 		if auditWriter != nil {
-			auditWriter.WriteRedemptionCodeRedeemed(ctx, traceID, actor.OrgID, actor.UserID, rc.ID, rc.Type, rc.Value)
+			auditWriter.WriteRedemptionCodeRedeemed(ctx, traceID, actor.AccountID, actor.UserID, rc.ID, rc.Type, rc.Value)
 		}
 
 		type redeemResponse struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -15,21 +15,12 @@ const (
 	BindingScopeThread  = "thread"
 )
 
-type DefaultWorkspaceBindingsRepository struct{
-	Dialect database.DialectHelper
-}
-
-func (r DefaultWorkspaceBindingsRepository) dialect() database.DialectHelper {
-	if r.Dialect != nil {
-		return r.Dialect
-	}
-	return database.PostgresDialect{}
-}
+type DefaultWorkspaceBindingsRepository struct{}
 
 func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	ctx context.Context,
-	tx database.Tx,
-	orgID uuid.UUID,
+	tx pgx.Tx,
+	accountID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	profileRef string,
 	bindingScope string,
@@ -42,8 +33,8 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	if tx == nil {
 		return "", false, fmt.Errorf("tx must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return "", false, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return "", false, fmt.Errorf("account_id must not be empty")
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	if profileRef == "" {
@@ -65,12 +56,12 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		ctx,
 		`SELECT workspace_ref
 		   FROM default_workspace_bindings
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND binding_scope = $3
 		    AND binding_target_id = $4
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		profileRef,
 		bindingScope,
 		bindingTargetID,
@@ -78,7 +69,7 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 	if err == nil {
 		return existing, false, nil
 	}
-	if !errors.Is(err, database.ErrNoRows) {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, err
 	}
 
@@ -87,15 +78,15 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		`INSERT INTO default_workspace_bindings (
 			profile_ref,
 			owner_user_id,
-			org_id,
+			account_id,
 			binding_scope,
 			binding_target_id,
 			workspace_ref
 		 ) VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (org_id, profile_ref, binding_scope, binding_target_id) DO NOTHING`,
+		 ON CONFLICT (account_id, profile_ref, binding_scope, binding_target_id) DO NOTHING`,
 		profileRef,
 		ownerUserID,
-		orgID,
+		accountID,
 		bindingScope,
 		bindingTargetID,
 		workspaceRef,
@@ -111,12 +102,12 @@ func (DefaultWorkspaceBindingsRepository) GetOrCreate(
 		ctx,
 		`SELECT workspace_ref
 		   FROM default_workspace_bindings
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND binding_scope = $3
 		    AND binding_target_id = $4
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		profileRef,
 		bindingScope,
 		bindingTargetID,

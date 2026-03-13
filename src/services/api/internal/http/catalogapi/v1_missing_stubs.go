@@ -9,7 +9,7 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
 
-	"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func writeNotImplementedJSON(w nethttp.ResponseWriter, traceID string) {
@@ -96,7 +96,7 @@ func profileDefaultSkillsEntry(
 	_workspaceSkillEnableRepo *data.WorkspaceSkillEnablementsRepository,
 	_profileRegistriesRepo *data.ProfileRegistriesRepository,
 	_workspaceRegistriesRepo *data.WorkspaceRegistriesRepository,
-	_db database.DB,
+	_pool *pgxpool.Pool,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
