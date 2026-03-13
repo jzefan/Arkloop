@@ -118,7 +118,7 @@ func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Varia
 	op.AppendLog("model directory: " + d.modelDir)
 
 	// Skip download if model files already exist.
-	if d.modelFilesExist() {
+	if d.ModelFilesExist() {
 		op.AppendLog("model files already present, skipping download")
 		d.logger.Info("prompt-guard model already installed", map[string]any{
 			"variant": v.ID, "model_dir": d.modelDir,
@@ -151,7 +151,8 @@ func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Varia
 	return fmt.Errorf("no download method succeeded for %s", v.ID)
 }
 
-func (d *Downloader) modelFilesExist() bool {
+// ModelFilesExist reports whether model.onnx and tokenizer.json exist.
+func (d *Downloader) ModelFilesExist() bool {
 	for _, f := range []string{"model.onnx", "tokenizer.json"} {
 		if _, err := os.Stat(filepath.Join(d.modelDir, f)); err != nil {
 			return false

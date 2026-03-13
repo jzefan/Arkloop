@@ -110,9 +110,10 @@ func (h *Handler) getModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // moduleStatus queries Docker for the live status of a module's compose service.
+// For virtual modules (no compose service), it delegates to custom status checks.
 func (h *Handler) moduleStatus(ctx context.Context, def *module.ModuleDefinition) module.ModuleStatus {
 	if def.ComposeService == "" {
-		return module.StatusNotInstalled
+		return h.virtualModuleStatus(def)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
@@ -128,6 +129,14 @@ func (h *Handler) moduleStatus(ctx context.Context, def *module.ModuleDefinition
 	}
 
 	return mapRawStatus(raw)
+}
+
+// virtualModuleStatus checks file-based status for virtual modules.
+func (h *Handler) virtualModuleStatus(def *module.ModuleDefinition) module.ModuleStatus {
+	if def.ID == "prompt-guard" && h.modelDL != nil && h.modelDL.ModelFilesExist() {
+		return module.StatusInstalledDisconnected
+	}
+	return module.StatusNotInstalled
 }
 
 // mapRawStatus converts the raw string from Compose.ContainerStatus to a
