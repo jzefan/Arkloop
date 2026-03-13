@@ -44,7 +44,7 @@ export const en: LocaleStrings = {
     platformDefault: 'Platform Default',
     fieldScope: 'Scope',
     scopePlatform: 'Platform',
-    scopeOrg: 'Org',
+    scopeProject: 'Project',
     hybrid: 'Hybrid',
     toolsSelected: (selected: number, total: number) => `${selected}/${total} selected`,
     enableAllTools: 'Enable all',

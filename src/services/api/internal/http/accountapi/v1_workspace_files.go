@@ -1,4 +1,4 @@
-package orgapi
+package accountapi
 
 import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
@@ -24,7 +24,7 @@ const workspaceRootPath = "/workspace"
 
 func workspaceFilesEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,

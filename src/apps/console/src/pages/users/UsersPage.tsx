@@ -231,7 +231,7 @@ export function UsersPage() {
   }, [])
 
   const handleOpenCredit = useCallback((d: AdminUserDetail) => {
-    const projectID = d.orgs[0]?.org_id
+    const projectID = d.accounts?.[0]?.account_id
     if (!projectID) return
     setCreditTarget({ projectID, username: d.username })
     setCreditForm({ amount: '', note: '' })
@@ -258,7 +258,7 @@ export function UsersPage() {
     setCreditAdjusting(true)
     setCreditError('')
     try {
-      await adjustAdminCredits({ org_id: creditTarget.projectID, amount, note }, accessToken)
+      await adjustAdminCredits({ account_id: creditTarget.projectID, amount, note }, accessToken)
       addToast(tc.toastCreditAdjusted, 'success')
       setCreditTarget(null)
     } catch (err) {
@@ -734,7 +734,7 @@ function UserRow({
                       <DetailField label={tc.detailTimezone} value={renderDetail.timezone ?? '--'} />
                     </div>
                     <div className="ml-4 flex shrink-0 gap-2">
-                      {renderDetail.orgs.length > 0 && (
+                      {(renderDetail.accounts?.length ?? 0) > 0 && (
                         <button
                           onClick={() => onCredit(renderDetail)}
                           className="flex items-center gap-1.5 rounded-lg bg-[var(--c-bg-tag)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep2)]"
@@ -754,28 +754,28 @@ function UserRow({
 
                   <div>
                     <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
-                      {tc.detailProjects}
+                      {tc.detailAccounts}
                     </span>
-                    {renderDetail.orgs.length > 0 ? (
+                    {(renderDetail.accounts?.length ?? 0) > 0 ? (
                       <table className="mt-2 w-full text-xs">
                         <thead>
                           <tr className="border-b border-[var(--c-border)]">
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailProjectId}
+                              {tc.detailAccountId}
                             </th>
                             <th className="py-1.5 text-left font-medium text-[var(--c-text-muted)]">
-                              {tc.detailProjectRole}
+                              {tc.detailAccountRole}
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {renderDetail.orgs.map((o) => (
+                          {(renderDetail.accounts ?? []).map((o) => (
                             <tr
-                              key={o.org_id}
+                              key={o.account_id}
                               className="border-b border-[var(--c-border)] last:border-0"
                             >
                               <td className="py-1.5 font-mono text-[var(--c-text-primary)]">
-                                {o.org_id}
+                                {o.account_id}
                               </td>
                               <td className="py-1.5 text-[var(--c-text-secondary)]">{o.role}</td>
                             </tr>
@@ -784,7 +784,7 @@ function UserRow({
                       </table>
                     ) : (
                       <p className="py-2 text-xs text-[var(--c-text-muted)]">
-                        {tc.detailNoProjects}
+                        {tc.detailNoAccounts}
                       </p>
                     )}
                   </div>

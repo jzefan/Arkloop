@@ -8,6 +8,8 @@ import (
 
 	nethttp "net/http"
 
+	httpkit "arkloop/services/api/internal/http/httpkit"
+
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
@@ -17,9 +19,9 @@ import (
 )
 
 type actor struct {
-	OrgID       uuid.UUID
+	AccountID   uuid.UUID
 	UserID      uuid.UUID
-	OrgRole     string
+	AccountRole string
 	Permissions []string
 }
 
@@ -39,7 +41,7 @@ func authenticateActor(
 	r *nethttp.Request,
 	traceID string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 ) (*actor, bool) {
 	_ = membershipRepo
 
@@ -74,18 +76,18 @@ func authenticateActor(
 		return nil, false
 	}
 
-	if verified.OrgID == uuid.Nil || strings.TrimSpace(verified.OrgRole) == "" {
-		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
+	if verified.AccountID == uuid.Nil || strings.TrimSpace(verified.AccountRole) == "" {
+		WriteError(w, nethttp.StatusForbidden, "auth.no_account_membership", "user has no account membership", traceID, nil)
 		return nil, false
 	}
 
 	// v1：权限通过 PermissionsForRole 静态映射，无额外 DB 查询。
-	// verified.OrgRole 为后续自定义角色动态加载预留，届时改为查询 rbac_roles 表。
+	// verified.AccountRole 为后续自定义角色动态加载预留，届时改为查询 rbac_roles 表。
 	return &actor{
-		OrgID:       verified.OrgID,
+		AccountID:   verified.AccountID,
 		UserID:      verified.UserID,
-		OrgRole:     verified.OrgRole,
-		Permissions: auth.PermissionsForRole(verified.OrgRole),
+		AccountRole: verified.AccountRole,
+		Permissions: auth.PermissionsForRole(verified.AccountRole),
 	}, true
 }
 
@@ -96,7 +98,7 @@ func resolveActor(
 	r *nethttp.Request,
 	traceID string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 ) (*actor, bool) {
@@ -135,16 +137,16 @@ func resolveActor(
 		return nil, false
 	}
 
-	if verified.OrgID == uuid.Nil || strings.TrimSpace(verified.OrgRole) == "" {
-		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
+	if verified.AccountID == uuid.Nil || strings.TrimSpace(verified.AccountRole) == "" {
+		WriteError(w, nethttp.StatusForbidden, "auth.no_account_membership", "user has no account membership", traceID, nil)
 		return nil, false
 	}
 
 	return &actor{
-		OrgID:       verified.OrgID,
+		AccountID:   verified.AccountID,
 		UserID:      verified.UserID,
-		OrgRole:     verified.OrgRole,
-		Permissions: auth.PermissionsForRole(verified.OrgRole),
+		AccountRole: verified.AccountRole,
+		Permissions: auth.PermissionsForRole(verified.AccountRole),
 	}, true
 }
 
@@ -153,7 +155,7 @@ func resolveActorFromAPIKey(
 	r *nethttp.Request,
 	traceID string,
 	rawKey string,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
 ) (*actor, bool) {
@@ -174,18 +176,18 @@ func resolveActorFromAPIKey(
 		return nil, false
 	}
 
-	membership, err := membershipRepo.GetByOrgAndUser(r.Context(), apiKey.OrgID, apiKey.UserID)
+	membership, err := membershipRepo.GetByOrgAndUser(r.Context(), apiKey.AccountID, apiKey.UserID)
 	if err != nil {
 		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return nil, false
 	}
 	if membership == nil {
-		WriteError(w, nethttp.StatusForbidden, "auth.no_org_membership", "user has no org membership", traceID, nil)
+		WriteError(w, nethttp.StatusForbidden, "auth.no_account_membership", "user has no account membership", traceID, nil)
 		return nil, false
 	}
 
 	keyID := apiKey.ID
-	orgID := apiKey.OrgID
+	accountID := apiKey.AccountID
 	userID := apiKey.UserID
 
 	// 异步更新 last_used_at，不阻塞请求
@@ -197,16 +199,16 @@ func resolveActorFromAPIKey(
 	}()
 
 	if auditWriter != nil {
-		auditWriter.WriteAPIKeyUsed(r.Context(), traceID, orgID, userID, keyID, "api_key.used")
+		auditWriter.WriteAPIKeyUsed(r.Context(), traceID, accountID, userID, keyID, "api_key.used")
 	}
 
 	normalizedScopes, _ := auth.NormalizePermissions(apiKey.Scopes)
 	effectivePermissions := auth.IntersectPermissions(auth.PermissionsForRole(membership.Role), normalizedScopes)
 
 	return &actor{
-		OrgID:       membership.OrgID,
+		AccountID:   membership.AccountID,
 		UserID:      apiKey.UserID,
-		OrgRole:     membership.Role,
+		AccountRole: membership.Role,
 		Permissions: effectivePermissions,
 	}, true
 }
@@ -214,4 +216,22 @@ func resolveActorFromAPIKey(
 func writeNotFound(w nethttp.ResponseWriter, r *nethttp.Request) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	WriteError(w, nethttp.StatusNotFound, "http.method_not_allowed", "Not Found", traceID, nil)
+}
+
+func parseBearerToken(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (string, bool) {
+	authorization := r.Header.Get("Authorization")
+	if strings.TrimSpace(authorization) == "" {
+		WriteError(w, nethttp.StatusUnauthorized, "auth.missing_token", "missing Authorization Bearer token", traceID, nil)
+		return "", false
+	}
+	scheme, rest, ok := strings.Cut(authorization, " ")
+	if !ok || strings.TrimSpace(rest) == "" || strings.ToLower(scheme) != "bearer" {
+		WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_authorization", "Authorization header must be: Bearer <token>", traceID, nil)
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
+}
+
+func writeAuthNotConfigured(w nethttp.ResponseWriter, traceID string) {
+	httpkit.WriteAuthNotConfigured(w, traceID)
 }

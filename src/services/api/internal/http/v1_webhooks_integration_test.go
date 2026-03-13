@@ -45,7 +45,7 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 
 	userRepo, _ := data.NewUserRepository(pool)
 	credRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
 	webhookRepo, _ := data.NewWebhookEndpointRepository(pool)
@@ -58,7 +58,7 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		WebhookRepo:         webhookRepo,
 		APIKeysRepo:         nil,
 		SecretsRepo:         secretsRepo,

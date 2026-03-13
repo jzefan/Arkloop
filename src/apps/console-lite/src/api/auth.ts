@@ -38,8 +38,8 @@ export type MeResponse = {
   id: string
   username: string
   created_at: string
-  org_id: string
-  org_name: string
+  account_id: string
+  account_name: string
   role: string
   permissions: string[]
 }

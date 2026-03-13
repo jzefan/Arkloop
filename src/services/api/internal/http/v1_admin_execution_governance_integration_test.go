@@ -44,7 +44,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
@@ -114,7 +114,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("register admin: %d %s", adminReg.Code, adminReg.Body.String())
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
-	if _, err := pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID); err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
 	adminLogin := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
@@ -131,7 +131,7 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	accountID := uuid.MustParse(me.AccountID)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
 		('limit.agent_reasoning_iterations', '12', now()),
@@ -141,17 +141,17 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`); err != nil {
 		t.Fatalf("seed platform settings: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO org_settings (org_id, key, value, updated_at) VALUES
+	if _, err := pool.Exec(ctx, `INSERT INTO account_settings (account_id, key, value, updated_at) VALUES
 		($1, 'limit.agent_reasoning_iterations', '9', now()),
 		($1, 'limit.tool_continuation_budget', '18', now())
-		ON CONFLICT (org_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, orgID); err != nil {
+		ON CONFLICT (account_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, accountID); err != nil {
 		t.Fatalf("seed org settings: %v", err)
 	}
 
 	customBudgets := json.RawMessage(`{"max_output_tokens":2048,"tool_continuation_budget":15,"temperature":0.7}`)
 	_, err = personasRepo.Create(
 		ctx,
-		orgID,
+		accountID,
 		"custom-bound",
 		"1",
 		"Custom Bound",
@@ -177,13 +177,13 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	}
 	noOrgBody := decodeJSONBody[executionGovernanceResponse](t, noOrgResp.Body.Bytes())
 	if len(noOrgBody.Personas) != 0 {
-		t.Fatalf("expected no personas without org_id, got %d", len(noOrgBody.Personas))
+		t.Fatalf("expected no personas without project_id, got %d", len(noOrgBody.Personas))
 	}
 	if noOrgBody.TitleSummarizerModel == nil || *noOrgBody.TitleSummarizerModel != "summary-cred^gpt-summary" {
 		t.Fatalf("unexpected title summarizer model without org: %#v", noOrgBody.TitleSummarizerModel)
 	}
 
-	resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/execution-governance?org_id="+orgID.String(), nil, authHeader(adminToken))
+	resp := doJSON(handler, nethttp.MethodGet, "/v1/admin/execution-governance?project_id="+accountID.String(), nil, authHeader(adminToken))
 	if resp.Code != nethttp.StatusOK {
 		t.Fatalf("execution governance: %d %s", resp.Code, resp.Body.String())
 	}
