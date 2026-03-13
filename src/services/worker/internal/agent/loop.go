@@ -963,7 +963,7 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
 }
 
@@ -1071,7 +1071,7 @@ func toolResultMessageDedup(result llm.StreamToolResult, refToolCallID string) l
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
 }
 

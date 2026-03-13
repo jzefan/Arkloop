@@ -239,6 +239,14 @@ func RegisterTrackA(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},
+		{
+			Key:         "security.injection_scan.trust_source_enabled",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "Trust Source 标记开关",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+		},
 	}
 
 	for _, e := range entries {

@@ -297,6 +297,8 @@ export const en: LocaleStrings = {
     layerRegexDesc: 'Pattern-based detection for known injection signatures. Microsecond latency.',
     layerSemantic: 'Semantic Scanner',
     layerSemanticDesc: 'ML-based detection using Prompt Guard model. Catches variant and implicit injections.',
+    layerTrustSource: 'Trust Source Tagging',
+    layerTrustSourceDesc: 'Mark content origin (user/tool/memory/mcp) and inject security policy into system prompt.',
     statusEnabled: 'Enabled',
     statusDisabled: 'Disabled',
     statusComingSoon: 'Coming Soon',
