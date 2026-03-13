@@ -437,11 +437,12 @@ function ModelsSection({
     try {
       const personas = await listPersonas(accessToken)
       let count = 0
+      const combo = `${provider.name}^${modelName}`
       for (const p of personas) {
         try {
           await patchPersona(accessToken, p.id, {
-            model: modelName,
-            preferred_credential: provider.id,
+            model: combo,
+            preferred_credential: '',
           }, p.scope)
           count++
         } catch {
