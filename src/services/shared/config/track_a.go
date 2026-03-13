@@ -247,6 +247,14 @@ func RegisterTrackA(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},
+		{
+			Key:         "security.injection_scan.semantic_enabled",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "Prompt Guard 语义扫描开关",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+		},
 	}
 
 	for _, e := range entries {

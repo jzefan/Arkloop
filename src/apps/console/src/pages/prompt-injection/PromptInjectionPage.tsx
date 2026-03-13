@@ -12,6 +12,7 @@ import { listAuditLogs, type AuditLog } from '../../api/audit'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
+const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
 const AUDIT_ACTION = 'security.injection_detected'
 const AUDIT_PAGE_SIZE = 30
 
@@ -25,7 +26,7 @@ type Layer = {
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: KEY_TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: null },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: KEY_SEMANTIC_ENABLED },
 ]
 
 type Tab = 'layers' | 'audit'
@@ -204,13 +205,15 @@ export function PromptInjectionPage() {
   const loadSettings = useCallback(async () => {
     setLoading(true)
     try {
-      const [regexResult, trustResult] = await Promise.all([
+      const [regexResult, trustResult, semanticResult] = await Promise.all([
         getPlatformSetting(KEY_REGEX_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(KEY_TRUST_SOURCE_ENABLED, accessToken).catch(() => ({ value: 'true' })),
+        getPlatformSetting(KEY_SEMANTIC_ENABLED, accessToken).catch(() => ({ value: 'true' })),
       ])
       setSettings({
         [KEY_REGEX_ENABLED]: regexResult.value === 'true',
         [KEY_TRUST_SOURCE_ENABLED]: trustResult.value === 'true',
+        [KEY_SEMANTIC_ENABLED]: semanticResult.value === 'true',
       })
     } catch (err) {
       addToast(isApiError(err) ? err.message : tp.toastLoadFailed, 'error')
