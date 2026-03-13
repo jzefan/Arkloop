@@ -22,6 +22,7 @@ import {
   Puzzle,
   Cpu,
   Bot,
+  Wifi,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -44,19 +45,26 @@ import type { Theme } from '../storage'
 import { SkillsSettingsContent } from './SkillsSettingsContent'
 import { ModelConfigContent } from './ModelConfigContent'
 import { AgentSettingsContent } from './AgentSettingsContent'
+import { ConnectionSettingsContent } from './ConnectionSettingsContent'
+import { isDesktop } from '@arkloop/shared/desktop'
 
 
-export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents'
+export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents' | 'connection'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
-const NAV_ITEMS: NavItem[] = [
+const BASE_NAV_ITEMS: NavItem[] = [
   { key: 'account',  icon: User     },
   { key: 'settings', icon: Settings },
   { key: 'skills',   icon: Puzzle   },
   { key: 'models',   icon: Cpu      },
   { key: 'agents',   icon: Bot      },
   { key: 'credits',  icon: Coins    },
+]
+
+const DESKTOP_NAV_ITEMS: NavItem[] = [
+  ...BASE_NAV_ITEMS,
+  { key: 'connection', icon: Wifi },
 ]
 
 type Props = {
@@ -75,6 +83,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
   const [profileView, setProfileView] = useState(false)
+  const navItems = isDesktop() ? DESKTOP_NAV_ITEMS : BASE_NAV_ITEMS
   const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
   const activeLabel = t.nav[activeKey as keyof typeof t.nav] ?? t.nav.account
 
@@ -107,7 +116,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
           </div>
 
           <nav className="flex flex-col gap-[2px] px-2">
-            {NAV_ITEMS.map(({ key, icon: Icon }) => (
+            {navItems.map(({ key, icon: Icon }) => (
               <button
                 key={key}
                 onClick={() => handleTabChange(key)}
@@ -191,6 +200,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             )}
             {activeKey === 'agents' && (
               <AgentSettingsContent accessToken={accessToken} />
+            )}
+            {activeKey === 'connection' && (
+              <ConnectionSettingsContent />
             )}
           </div>
         </div>
