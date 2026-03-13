@@ -58,10 +58,10 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 		}
 
 		var userProviders []toolprovider.ActiveProviderConfig
-		if rc.Run.ProjectID != nil {
-			userProviders, err = cache.GetUser(ctx, rc.Pool, *rc.Run.ProjectID)
+		if rc.Run.CreatedByUserID != nil {
+			userProviders, err = cache.GetUser(ctx, rc.Pool, *rc.Run.CreatedByUserID)
 			if err != nil {
-				slog.WarnContext(ctx, "tool provider: load project failed, skipping", "project_id", *rc.Run.ProjectID, "err", err.Error())
+				slog.WarnContext(ctx, "tool provider: load user failed, skipping", "user_id", *rc.Run.CreatedByUserID, "err", err.Error())
 				userProviders = nil
 			}
 		}
