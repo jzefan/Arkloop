@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useOutletContext, useNavigate } from 'react-router-dom'
 import { ShieldAlert, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react'
 import type { LiteOutletContext } from '../layouts/LiteLayout'
 import { PageHeader } from '../components/PageHeader'
@@ -11,30 +11,76 @@ import {
   isApiError,
 } from '../api'
 import { listAuditLogs, type AuditLog } from '../api/audit'
+import { bridgeClient, checkBridgeAvailable, type ModuleStatus } from '../api/bridge'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
 const AUDIT_ACTION = 'security.injection_detected'
 const AUDIT_PAGE_SIZE = 30
+const PROMPT_GUARD_MODULE_ID = 'prompt-guard'
 
 type Layer = {
   id: string
   nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
   descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
-  settingKey: string | null
+  settingKey: string
+  requiresModule?: string
 }
 
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingKey: KEY_TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: KEY_SEMANTIC_ENABLED },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: KEY_SEMANTIC_ENABLED, requiresModule: PROMPT_GUARD_MODULE_ID },
 ]
 
+const MODULE_READY_STATUSES: Set<ModuleStatus> = new Set(['running', 'installed_disconnected'])
+
 type Tab = 'layers' | 'audit'
+const TABS: Tab[] = ['layers', 'audit']
 
 function truncateId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function TabBar({ tabs, active, onChange }: {
+  tabs: { key: Tab; label: string }[]
+  active: Tab
+  onChange: (t: Tab) => void
+}) {
+  const barRef = useRef<HTMLDivElement>(null)
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+
+  useEffect(() => {
+    const container = barRef.current
+    if (!container) return
+    const btn = container.querySelector<HTMLButtonElement>(`[data-tab="${active}"]`)
+    if (!btn) return
+    setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth })
+  }, [active])
+
+  return (
+    <div ref={barRef} className="relative mb-5 flex gap-1 border-b border-[var(--c-border-console)]">
+      {tabs.map(tab => (
+        <button
+          key={tab.key}
+          data-tab={tab.key}
+          onClick={() => onChange(tab.key)}
+          className={`relative px-3 py-1.5 text-xs transition-colors ${
+            active === tab.key
+              ? 'font-medium text-[var(--c-text-primary)]'
+              : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]'
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+      <span
+        className="absolute bottom-0 h-0.5 bg-[var(--c-text-primary)] transition-all duration-200"
+        style={{ left: indicator.left, width: indicator.width }}
+      />
+    </div>
+  )
 }
 
 function AuditTab({ accessToken }: { accessToken: string }) {
@@ -152,7 +198,7 @@ function AuditTab({ accessToken }: { accessToken: string }) {
                 {expanded && (
                   <tr className="bg-[var(--c-bg-deep2)]">
                     <td colSpan={5} className="px-4 py-3">
-                      <pre className="overflow-auto rounded-md bg-[var(--c-bg-deep3,var(--c-bg-tag))] p-3 text-xs leading-relaxed text-[var(--c-text-secondary)]">
+                      <pre className="overflow-auto rounded-md bg-[var(--c-bg-tag)] p-3 text-xs leading-relaxed text-[var(--c-text-secondary)]">
                         {JSON.stringify(meta, null, 2)}
                       </pre>
                     </td>
@@ -166,7 +212,7 @@ function AuditTab({ accessToken }: { accessToken: string }) {
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t border-[var(--c-border-console)] px-3 py-2">
           <span className="text-xs text-[var(--c-text-muted)]">
-            {offset + 1}–{Math.min(offset + AUDIT_PAGE_SIZE, total)} / {total}
+            {offset + 1}--{Math.min(offset + AUDIT_PAGE_SIZE, total)} / {total}
           </span>
           <div className="flex gap-2">
             <button
@@ -196,11 +242,13 @@ export function SecurityPage() {
   const { addToast } = useToast()
   const { t } = useLocale()
   const ts = t.security
+  const navigate = useNavigate()
 
   const [activeTab, setActiveTab] = useState<Tab>('layers')
   const [values, setValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<string | null>(null)
+  const [moduleStatuses, setModuleStatuses] = useState<Record<string, ModuleStatus>>({})
 
   const load = useCallback(async () => {
     try {
@@ -208,6 +256,14 @@ export function SecurityPage() {
       const map: Record<string, string> = {}
       for (const s of list) map[s.key] = s.value
       setValues(map)
+
+      const bridgeOnline = await checkBridgeAvailable()
+      if (bridgeOnline) {
+        const modules = await bridgeClient.listModules()
+        const statuses: Record<string, ModuleStatus> = {}
+        for (const m of modules) statuses[m.id] = m.status
+        setModuleStatuses(statuses)
+      }
     } catch (err) {
       if (isApiError(err)) addToast(ts.toastLoadFailed, 'error')
     } finally {
@@ -232,10 +288,10 @@ export function SecurityPage() {
 
   const isEnabled = (key: string) => values[key] === 'true'
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'layers', label: ts.tabLayers },
-    { key: 'audit', label: ts.tabAudit },
-  ]
+  const tabItems = TABS.map(key => ({
+    key,
+    label: key === 'layers' ? ts.tabLayers : ts.tabAudit,
+  }))
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -251,21 +307,7 @@ export function SecurityPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <p className="mb-4 text-xs text-[var(--c-text-muted)]">{ts.description}</p>
 
-        <div className="mb-5 flex gap-1 border-b border-[var(--c-border-console)]">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-3 py-1.5 text-xs transition-colors ${
-                activeTab === tab.key
-                  ? 'border-b-2 border-[var(--c-text-primary)] font-medium text-[var(--c-text-primary)]'
-                  : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'layers' && (
           loading ? (
@@ -275,9 +317,12 @@ export function SecurityPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {LAYERS.map((layer) => {
-                const configurable = layer.settingKey !== null
-                const enabled = configurable && isEnabled(layer.settingKey!)
+                const enabled = isEnabled(layer.settingKey)
                 const busy = toggling === layer.settingKey
+                const moduleReady = !layer.requiresModule
+                  || MODULE_READY_STATUSES.has(moduleStatuses[layer.requiresModule])
+                const moduleNotInstalled = layer.requiresModule
+                  && (!moduleStatuses[layer.requiresModule] || moduleStatuses[layer.requiresModule] === 'not_installed')
 
                 return (
                   <div
@@ -289,18 +334,17 @@ export function SecurityPage() {
                         <span className="text-sm font-medium text-[var(--c-text-primary)]">
                           {ts[layer.nameKey]}
                         </span>
-                        {!configurable && (
-                          <span className="rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]">
-                            {ts.statusComingSoon}
+                        {moduleNotInstalled ? (
+                          <span className="rounded-md bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]">
+                            {ts.statusNotInstalled}
                           </span>
-                        )}
-                        {configurable && (
+                        ) : (
                           <span
                             className={[
-                              'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              'rounded-md px-1.5 py-0.5 text-[10px] font-medium',
                               enabled
-                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-[var(--c-bg-tag)] text-[var(--c-text-muted)]',
+                                ? 'bg-[var(--c-status-success-bg)] text-[var(--c-status-success-text)]'
+                                : 'bg-[var(--c-status-warning-bg)] text-[var(--c-status-warning-text)]',
                             ].join(' ')}
                           >
                             {enabled ? ts.statusEnabled : ts.statusDisabled}
@@ -312,22 +356,29 @@ export function SecurityPage() {
                       </p>
                     </div>
 
-                    {configurable && (
+                    {moduleNotInstalled ? (
                       <button
-                        disabled={busy}
-                        onClick={() => void toggle(layer.settingKey!, enabled)}
+                        onClick={() => navigate('/modules')}
+                        className="shrink-0 rounded-md border border-[var(--c-border-console)] px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+                      >
+                        {ts.actionInstall}
+                      </button>
+                    ) : (
+                      <button
+                        disabled={busy || !moduleReady}
+                        onClick={() => void toggle(layer.settingKey, enabled)}
                         className={[
-                          'relative ml-4 h-5 w-9 shrink-0 rounded-full transition-colors',
-                          enabled ? 'bg-emerald-500' : 'bg-[var(--c-bg-tag)]',
-                          busy ? 'opacity-50' : 'cursor-pointer',
+                          'shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                          enabled
+                            ? 'border-[var(--c-border-console)] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-sub)]'
+                            : 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]',
+                          (busy || !moduleReady) ? 'opacity-50 cursor-not-allowed' : '',
                         ].join(' ')}
                       >
-                        <span
-                          className={[
-                            'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform',
-                            enabled ? 'translate-x-[18px]' : 'translate-x-0.5',
-                          ].join(' ')}
-                        />
+                        {busy
+                          ? <Loader2 size={12} className="inline animate-spin" />
+                          : enabled ? ts.actionDisable : ts.actionEnable
+                        }
                       </button>
                     )}
                   </div>
