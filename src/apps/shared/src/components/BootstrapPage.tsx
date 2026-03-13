@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, useRef, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { verifyBootstrapToken, setupBootstrapAdmin } from '../api/bootstrap'
-import { isApiError } from '../api/client'
-import { ErrorCallout, type AppError } from './ErrorCallout'
+import { ErrorCallout } from './ErrorCallout'
+import {
+  SpinnerIcon, normalizeError, Reveal, PasswordEye, AuthLayout,
+  TRANSITION, inputCls, inputStyle, labelStyle,
+} from './auth-ui'
 import type { Locale } from '../contexts/LocaleContext'
 
 export type BootstrapTranslations = {
@@ -22,7 +25,10 @@ export type BootstrapTranslations = {
     expiresAt: (value: string) => string
   }
   loading: string
+  requestFailed: string
 }
+
+type Phase = 'verifying' | 'invalid' | 'form' | 'success'
 
 type Props = {
   onLoggedIn: (accessToken: string) => void
@@ -30,55 +36,60 @@ type Props = {
   locale: Locale
 }
 
-function normalizeError(error: unknown): AppError {
-  if (isApiError(error)) return { message: error.message, traceId: error.traceId, code: error.code }
-  if (error instanceof Error) return { message: error.message }
-  return { message: 'Request failed' }
-}
-
 export function BootstrapPage({ onLoggedIn, t, locale }: Props) {
   const { token = '' } = useParams()
   const navigate = useNavigate()
 
-  const [valid, setValid] = useState<boolean | null>(null)
+  const [phase, setPhase] = useState<Phase>('verifying')
   const [expiresAt, setExpiresAt] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [success, setSuccess] = useState(false)
   const [pendingAccessToken, setPendingAccessToken] = useState<string | null>(null)
-  const [error, setError] = useState<AppError | null>(null)
+  const [error, setError] = useState<ReturnType<typeof normalizeError> | null>(null)
+
+  const usernameRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
-    setValid(null)
+    setPhase('verifying')
     setError(null)
 
     verifyBootstrapToken(token)
       .then((resp) => {
         if (cancelled) return
-        setValid(resp.valid)
-        setExpiresAt(resp.expires_at)
+        if (resp.valid) {
+          setExpiresAt(resp.expires_at)
+          setPhase('form')
+        } else {
+          setPhase('invalid')
+        }
       })
       .catch((err) => {
         if (cancelled) return
-        setValid(false)
-        setError(normalizeError(err))
+        setPhase('invalid')
+        setError(normalizeError(err, t.requestFailed))
       })
 
-    return () => {
-      cancelled = true
-    }
-  }, [token])
+    return () => { cancelled = true }
+  }, [token, t.requestFailed])
 
   useEffect(() => {
-    if (!success || !pendingAccessToken) return
+    if (phase !== 'form') return
+    const timer = setTimeout(() => usernameRef.current?.focus(), 420)
+    return () => clearTimeout(timer)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'success' || !pendingAccessToken) return
     const timer = window.setTimeout(() => {
       onLoggedIn(pendingAccessToken)
       navigate('/dashboard', { replace: true })
     }, 900)
     return () => window.clearTimeout(timer)
-  }, [navigate, onLoggedIn, pendingAccessToken, success])
+  }, [navigate, onLoggedIn, pendingAccessToken, phase])
 
   const expiresLabel = useMemo(() => {
     if (!expiresAt) return ''
@@ -92,9 +103,14 @@ export function BootstrapPage({ onLoggedIn, t, locale }: Props) {
     return t.bootstrap.expiresAt(formatted)
   }, [expiresAt, locale, t.bootstrap])
 
+  const canSubmit = useMemo(() => {
+    if (submitting) return false
+    return username.trim().length > 0 && password.length > 0
+  }, [submitting, username, password])
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!token || !username.trim() || !password) return
+    if (!canSubmit || !token) return
     setSubmitting(true)
     setError(null)
     try {
@@ -105,134 +121,168 @@ export function BootstrapPage({ onLoggedIn, t, locale }: Props) {
         locale,
       })
       setPendingAccessToken(resp.access_token)
-      setSuccess(true)
+      setPhase('success')
     } catch (err) {
-      const normalized = normalizeError(err)
+      const normalized = normalizeError(err, t.requestFailed)
       setError(normalized)
       if (normalized.code === 'bootstrap.invalid_token' || normalized.code === 'bootstrap.already_initialized') {
-        setValid(false)
+        setPhase('invalid')
       }
     } finally {
       setSubmitting(false)
     }
   }
 
+  const phaseSubtitles: Partial<Record<Phase, string>> = {
+    form: t.bootstrap.subtitle,
+    success: t.bootstrap.successBody,
+  }
+
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px',
-        background: 'var(--c-bg-page)',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '440px',
-          borderRadius: '24px',
-          border: '1px solid var(--c-border-auth)',
-          background: 'var(--c-bg-card)',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
-          padding: '28px',
-        }}
-      >
-        <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--c-text-primary)' }}>{t.bootstrap.title}</div>
-        <div style={{ marginTop: '8px', fontSize: '14px', color: 'var(--c-text-secondary)' }}>{t.bootstrap.subtitle}</div>
+    <AuthLayout>
+          {/* header */}
+          <div style={{ height: '64px', marginBottom: '20px' }}>
+            <div style={{
+              display: 'block',
+              width: 'fit-content',
+              position: 'relative',
+              left: phase === 'verifying' || phase === 'success' ? '50%' : '0',
+              transform: phase === 'verifying' || phase === 'success' ? 'translateX(-50%)' : 'translateX(0)',
+              transition: `left ${TRANSITION}, transform ${TRANSITION}`,
+              fontSize: '28px',
+              fontWeight: 500,
+              color: 'var(--c-text-primary)',
+              lineHeight: 1,
+            }}>
+              Arkloop
+            </div>
 
-        {valid === null && (
-          <div style={{ marginTop: '20px', fontSize: '14px', color: 'var(--c-text-secondary)' }}>{t.bootstrap.verifying}</div>
-        )}
+            <div style={{ position: 'relative', height: '22px', marginTop: '8px' }}>
+              <div style={{
+                position: 'absolute', width: '100%', textAlign: 'center',
+                fontSize: '15px', fontWeight: 500, color: 'var(--c-placeholder)',
+                opacity: phase === 'verifying' ? 1 : 0,
+                transition: 'opacity 0.2s ease',
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}>
+                {t.bootstrap.verifying}
+              </div>
+              <div style={{
+                position: 'absolute', left: 0, top: 0,
+                fontSize: '13px', fontWeight: 500, color: 'var(--c-placeholder)',
+                opacity: phase === 'form' || phase === 'invalid' ? 1 : 0,
+                transform: phase === 'form' || phase === 'invalid' ? 'translateY(0)' : 'translateY(3px)',
+                transition: 'opacity 0.25s ease 0.12s, transform 0.25s ease 0.12s',
+                pointerEvents: 'none',
+                userSelect: 'none',
+                whiteSpace: 'nowrap',
+              }}>
+                {phase === 'invalid' ? t.bootstrap.invalidTitle : (phaseSubtitles[phase] ?? '')}
+              </div>
+              <div style={{
+                position: 'absolute', width: '100%', textAlign: 'center',
+                fontSize: '15px', fontWeight: 500, color: 'var(--c-placeholder)',
+                opacity: phase === 'success' ? 1 : 0,
+                transition: 'opacity 0.25s ease 0.12s',
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}>
+                {t.bootstrap.successTitle}
+              </div>
+            </div>
 
-        {valid === false && (
-          <div style={{ marginTop: '20px' }}>
-            <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text-primary)' }}>{t.bootstrap.invalidTitle}</div>
-            <div style={{ marginTop: '8px', fontSize: '14px', color: 'var(--c-text-secondary)' }}>{t.bootstrap.invalidBody}</div>
-            {error && <ErrorCallout error={error} locale={locale} requestFailedText={locale === 'zh' ? '请求失败' : 'Request failed'} />}
+            <Reveal active={phase === 'verifying'}>
+              <div style={{ textAlign: 'center', fontSize: '12px', fontWeight: 500, color: 'var(--c-placeholder)', letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginTop: '2px' }}>
+                {t.bootstrap.title}
+              </div>
+            </Reveal>
           </div>
-        )}
 
-        {valid && !success && (
-          <form onSubmit={handleSubmit} style={{ marginTop: '20px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--c-text-secondary)' }}>
-              {t.bootstrap.username}
-            </label>
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder={t.bootstrap.usernamePlaceholder}
-              autoComplete="username"
-              style={{
-                marginTop: '8px',
-                width: '100%',
-                height: '40px',
-                borderRadius: '12px',
-                border: '1px solid var(--c-border-auth)',
-                background: 'var(--c-bg-input)',
-                color: 'var(--c-text-primary)',
-                padding: '0 14px',
-                outline: 'none',
-              }}
-            />
+          {/* invalid state */}
+          <Reveal active={phase === 'invalid'}>
+            <div style={{ paddingTop: '4px' }}>
+              <div style={{ fontSize: '13px', color: 'var(--c-text-secondary)' }}>
+                {t.bootstrap.invalidBody}
+              </div>
+              {error && <ErrorCallout error={error} locale={locale} requestFailedText={t.requestFailed} />}
+            </div>
+          </Reveal>
 
-            <label style={{ display: 'block', marginTop: '16px', fontSize: '12px', fontWeight: 600, color: 'var(--c-text-secondary)' }}>
-              {t.bootstrap.password}
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder={t.bootstrap.passwordPlaceholder}
-              autoComplete="new-password"
-              style={{
-                marginTop: '8px',
-                width: '100%',
-                height: '40px',
-                borderRadius: '12px',
-                border: '1px solid var(--c-border-auth)',
-                background: 'var(--c-bg-input)',
-                color: 'var(--c-text-primary)',
-                padding: '0 14px',
-                outline: 'none',
-              }}
-            />
+          {/* success state */}
+          <Reveal active={phase === 'success'}>
+            <div style={{ paddingTop: '4px', textAlign: 'center' }}>
+              <div style={{ fontSize: '13px', color: 'var(--c-text-secondary)' }}>
+                {t.bootstrap.successBody}
+              </div>
+            </div>
+          </Reveal>
 
-            {expiresLabel && (
-              <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--c-text-secondary)' }}>{expiresLabel}</div>
-            )}
+          {/* form */}
+          <Reveal active={phase === 'form'}>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column' as const }}>
 
-            {error && <ErrorCallout error={error} locale={locale} requestFailedText={locale === 'zh' ? '请求失败' : 'Request failed'} />}
+              <label style={labelStyle}>{t.bootstrap.username}</label>
+              <input
+                ref={usernameRef}
+                className={inputCls}
+                style={inputStyle}
+                type="text"
+                placeholder={t.bootstrap.usernamePlaceholder}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+              />
 
-            <button
-              type="submit"
-              disabled={submitting || !username.trim() || !password}
-              style={{
-                marginTop: '20px',
-                width: '100%',
-                height: '42px',
-                border: 'none',
-                borderRadius: '12px',
-                background: 'var(--c-accent, #6366f1)',
-                color: '#fff',
-                fontWeight: 700,
-                cursor: submitting ? 'progress' : 'pointer',
-                opacity: submitting ? 0.7 : 1,
-              }}
-            >
-              {submitting ? t.loading : t.bootstrap.submit}
-            </button>
-          </form>
-        )}
+              <div style={{ paddingTop: '10px' }}>
+                <label style={labelStyle}>{t.bootstrap.password}</label>
+                <PasswordEye
+                  inputRef={passwordRef}
+                  placeholder={t.bootstrap.passwordPlaceholder}
+                  value={password}
+                  onChange={setPassword}
+                  showPassword={showPassword}
+                  onToggleShow={() => setShowPassword((v) => !v)}
+                  autoComplete="new-password"
+                />
+              </div>
 
-        {success && (
-          <div style={{ marginTop: '20px' }}>
-            <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--c-text-primary)' }}>{t.bootstrap.successTitle}</div>
-            <div style={{ marginTop: '8px', fontSize: '14px', color: 'var(--c-text-secondary)' }}>{t.bootstrap.successBody}</div>
-          </div>
-        )}
-      </div>
-    </div>
+              {expiresLabel && (
+                <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--c-placeholder)', paddingLeft: '2px' }}>
+                  {expiresLabel}
+                </div>
+              )}
+
+              {error && <ErrorCallout error={error} locale={locale} requestFailedText={t.requestFailed} />}
+
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                style={{
+                  height: '38px',
+                  marginTop: '12px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  fontFamily: 'inherit',
+                  background: 'var(--c-btn-bg)',
+                  color: 'var(--c-btn-text)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  width: '100%',
+                }}
+                className="disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? <><SpinnerIcon />{t.loading}</> : t.bootstrap.submit}
+              </button>
+            </form>
+          </Reveal>
+    </AuthLayout>
   )
 }
