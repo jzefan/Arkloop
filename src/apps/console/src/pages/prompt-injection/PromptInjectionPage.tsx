@@ -10,16 +10,18 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { getPlatformSetting, setPlatformSetting } from '../../api/platform-settings'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
+const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 
 type Layer = {
   id: string
-  nameKey: 'layerRegex' | 'layerSemantic'
-  descKey: 'layerRegexDesc' | 'layerSemanticDesc'
+  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
+  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
   settingsKey: string | null
 }
 
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: KEY_REGEX_ENABLED },
+  { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: KEY_TRUST_SOURCE_ENABLED },
   { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: null },
 ]
 
@@ -36,9 +38,14 @@ export function PromptInjectionPage() {
   const loadSettings = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await getPlatformSetting(KEY_REGEX_ENABLED, accessToken)
-        .catch(() => ({ value: 'true' }))
-      setSettings({ [KEY_REGEX_ENABLED]: result.value === 'true' })
+      const [regexResult, trustResult] = await Promise.all([
+        getPlatformSetting(KEY_REGEX_ENABLED, accessToken).catch(() => ({ value: 'true' })),
+        getPlatformSetting(KEY_TRUST_SOURCE_ENABLED, accessToken).catch(() => ({ value: 'true' })),
+      ])
+      setSettings({
+        [KEY_REGEX_ENABLED]: regexResult.value === 'true',
+        [KEY_TRUST_SOURCE_ENABLED]: trustResult.value === 'true',
+      })
     } catch (err) {
       addToast(isApiError(err) ? err.message : tp.toastLoadFailed, 'error')
     } finally {

@@ -1089,6 +1089,8 @@ export interface LocaleStrings {
       layerRegexDesc: string
       layerSemantic: string
       layerSemanticDesc: string
+      layerTrustSource: string
+      layerTrustSourceDesc: string
       statusEnabled: string
       statusDisabled: string
       statusComingSoon: string

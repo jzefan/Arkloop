@@ -1017,6 +1017,8 @@ export const zh: LocaleStrings = {
       layerRegexDesc: '基于模式匹配检测已知注入特征，微秒级延迟。',
       layerSemantic: '语义扫描',
       layerSemanticDesc: '基于 Prompt Guard 模型的 ML 检测，捕获变体和隐式注入。',
+      layerTrustSource: '来源标记',
+      layerTrustSourceDesc: '标记内容来源（用户/工具/记忆/MCP），并在 System Prompt 中注入安全策略。',
       statusEnabled: '已启用',
       statusDisabled: '已禁用',
       statusComingSoon: '即将推出',

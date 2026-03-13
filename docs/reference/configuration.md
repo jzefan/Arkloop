@@ -74,7 +74,8 @@
 | sandbox.warm_browser | int | platform | 1 | false | browser tier 预热实例数 |
 | sandbox.warm_lite | int | platform | 3 | false | lite tier 预热实例数 |
 | sandbox.warm_pro | int | platform | 2 | false | pro tier 预热实例数 |
-| sandbox.warm_ultra | int | platform | 1 | false | ultra tier 预热实例数 |
+| security.injection_scan.regex_enabled | bool | platform | true | false | Regex Scanner 开关 |
+| security.injection_scan.trust_source_enabled | bool | platform | true | false | Trust Source 标记开关 |
 | skills.market.skillsmp_api_key | string | platform |  | true | SkillsMP 官方市场 API Key |
 | skills.market.skillsmp_base_url | string | platform | https://skillsmp.com | false | SkillsMP 官方市场基础地址 |
 | skills.registry.api_base_url | string | platform |  | false | 官方技能 Registry API 基础地址，留空则沿用 Base URL |

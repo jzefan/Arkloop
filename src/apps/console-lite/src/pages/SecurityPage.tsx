@@ -12,11 +12,12 @@ import {
 } from '../api'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
+const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 
 type Layer = {
   id: string
-  nameKey: 'layerRegex' | 'layerSemantic'
-  descKey: 'layerRegexDesc' | 'layerSemanticDesc'
+  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
+  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
   settingKey: string | null
 }
 
@@ -26,6 +27,12 @@ const LAYERS: Layer[] = [
     nameKey: 'layerRegex',
     descKey: 'layerRegexDesc',
     settingKey: KEY_REGEX_ENABLED,
+  },
+  {
+    id: 'trust-source',
+    nameKey: 'layerTrustSource',
+    descKey: 'layerTrustSourceDesc',
+    settingKey: KEY_TRUST_SOURCE_ENABLED,
   },
   {
     id: 'semantic',
