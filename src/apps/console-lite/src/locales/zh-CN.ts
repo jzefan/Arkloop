@@ -43,7 +43,7 @@ export const zhCN: LocaleStrings = {
     platformDefault: '平台默认',
     fieldScope: '范围',
     scopePlatform: '平台',
-    scopeOrg: '组织',
+    scopeProject: '项目',
     hybrid: 'Hybrid',
     toolsSelected: (selected: number, total: number) => `已选 ${selected}/${total}`,
     enableAllTools: '全部开启',

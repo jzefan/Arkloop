@@ -46,7 +46,7 @@ export interface LocaleStrings {
     platformDefault: string
     fieldScope: string
     scopePlatform: string
-    scopeOrg: string
+    scopeProject: string
     hybrid: string
     toolsSelected: (selected: number, total: number) => string
     enableAllTools: string

@@ -3,7 +3,7 @@ import type { ToolCatalogGroup } from './tool-providers'
 
 export type { ToolCatalogGroup, ToolCatalogItem } from './tool-providers'
 
-export type AgentScope = 'org' | 'platform'
+export type AgentScope = 'project' | 'platform'
 
 function withScope(path: string, scope: AgentScope): string {
   const sep = path.includes('?') ? '&' : '?'
