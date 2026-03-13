@@ -417,11 +417,14 @@ services:
       HOST: "0.0.0.0"
       NUM_WORKERS_PER_QUEUE: "${ARKLOOP_FIRECRAWL_WORKERS:-4}"
       PLAYWRIGHT_MICROSERVICE_URL: "http://firecrawl-playwright:3000/chromium"
+      NUQ_DATABASE_URL: "postgres://firecrawl:firecrawl@firecrawl-postgres:5432/firecrawl"
     depends_on:
       firecrawl-redis:
         condition: service_healthy
       firecrawl-playwright:
         condition: service_started
+      firecrawl-postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:19012/"]
       interval: 30s
@@ -453,6 +456,23 @@ services:
       timeout: 3s
       retries: 20
 
+  firecrawl-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles:
+      - firecrawl
+    environment:
+      POSTGRES_USER: firecrawl
+      POSTGRES_PASSWORD: firecrawl
+      POSTGRES_DB: firecrawl
+    volumes:
+      - firecrawl_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firecrawl"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   bridge:
     build:
       context: .
@@ -476,6 +496,7 @@ volumes:
   redis_data:
   seaweedfs_data:
   openviking_data:
+  firecrawl_pgdata:
   sandbox_sockets:
   arkloop_storage:
   searxng_data:
