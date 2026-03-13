@@ -11,9 +11,14 @@ import (
 
 // NewInjectionScanMiddleware 在 Pipeline 中执行注入扫描。
 // scanner 为 nil 时整个 middleware 为 no-op。
-func NewInjectionScanMiddleware(scanner *security.RegexScanner, configResolver sharedconfig.Resolver) RunMiddleware {
+func NewInjectionScanMiddleware(
+	scanner *security.RegexScanner,
+	auditor *security.SecurityAuditor,
+	configResolver sharedconfig.Resolver,
+) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if scanner == nil {
+			security.ScanTotal.WithLabelValues("skipped").Inc()
 			return next(ctx, rc)
 		}
 
@@ -21,6 +26,8 @@ func NewInjectionScanMiddleware(scanner *security.RegexScanner, configResolver s
 		if !regexEnabled {
 			return next(ctx, rc)
 		}
+
+		var allDetections []security.ScanResult
 
 		for _, msg := range rc.Messages {
 			if msg.Role != "user" {
@@ -39,8 +46,17 @@ func NewInjectionScanMiddleware(scanner *security.RegexScanner, configResolver s
 						"category", r.Category,
 						"severity", r.Severity,
 					)
+					security.DetectionTotal.WithLabelValues(r.Category).Inc()
 				}
+				allDetections = append(allDetections, results...)
 			}
+		}
+
+		if len(allDetections) > 0 {
+			security.ScanTotal.WithLabelValues("detected").Inc()
+			auditor.EmitInjectionDetected(ctx, rc.Run.ID, rc.Run.AccountID, rc.UserID, allDetections)
+		} else {
+			security.ScanTotal.WithLabelValues("clean").Inc()
 		}
 
 		return next(ctx, rc)

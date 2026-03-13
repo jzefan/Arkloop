@@ -1013,6 +1013,8 @@ export const en: LocaleStrings = {
     promptInjection: {
       title: 'Prompt Injection Protection',
       description: 'Manage input scanning layers to detect and block injection attacks.',
+      tabLayers: 'Protection Layers',
+      tabAudit: 'Audit Log',
       layerRegex: 'Regex Scanner',
       layerRegexDesc: 'Pattern-based detection for known injection signatures. Microsecond latency.',
       layerSemantic: 'Semantic Scanner',
@@ -1025,6 +1027,12 @@ export const en: LocaleStrings = {
       toastUpdated: 'Updated',
       toastFailed: 'Update failed',
       toastLoadFailed: 'Failed to load',
+      auditEmpty: 'No injection events recorded',
+      auditLoading: 'Loading...',
+      auditColTime: 'Time',
+      auditColRunId: 'Run ID',
+      auditColPatterns: 'Patterns',
+      auditColCount: 'Count',
     },
     email: {
       title: 'Email',
