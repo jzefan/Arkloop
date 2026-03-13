@@ -1,14 +1,14 @@
 ---
 ---
 
-# 组织 (Orgs)
+# 账户 (Accounts)
 
 所有端点需要 Bearer Token 认证。
 
-## 创建组织（工作区）
+## 创建账户（工作区）
 
 ```http
-POST /v1/orgs
+POST /v1/accounts
 ```
 
 **请求体**
@@ -32,44 +32,44 @@ POST /v1/orgs
 
 ---
 
-## 获取当前用户的组织列表
+## 获取当前用户的账户列表
 
 ```http
-GET /v1/orgs/me
+GET /v1/accounts/me
 ```
 
 ---
 
-## 获取组织详情
+## 获取账户详情
 
 ```http
-GET /v1/orgs/{org_id}
+GET /v1/accounts/{account_id}
 ```
 
 ---
 
-## 获取组织用量（月度）
+## 获取账户用量（月度）
 
 ```http
-GET /v1/orgs/{org_id}/usage
+GET /v1/accounts/{account_id}/usage
 ```
 
 查询参数同 [`GET /v1/me/usage`](./me#用量统计月度)。
 
 ---
 
-## 获取组织用量（按日）
+## 获取账户用量（按日）
 
 ```http
-GET /v1/orgs/{org_id}/usage/daily
+GET /v1/accounts/{account_id}/usage/daily
 ```
 
 ---
 
-## 获取组织用量（按模型）
+## 获取账户用量（按模型）
 
 ```http
-GET /v1/orgs/{org_id}/usage/by-model
+GET /v1/accounts/{account_id}/usage/by-model
 ```
 
 ---
@@ -93,7 +93,7 @@ POST /v1/teams
 ```json
 {
   "id": "...",
-  "org_id": "...",
+  "account_id": "...",
   "name": "法务团队",
   "members_count": 0,
   "created_at": "2024-01-01T00:00:00Z"
@@ -157,7 +157,7 @@ DELETE /v1/teams/{team_id}/members/{user_id}
 ### 发送邀请
 
 ```http
-POST /v1/orgs/{org_id}/invitations
+POST /v1/accounts/{account_id}/invitations
 ```
 
 **请求体**
@@ -172,7 +172,7 @@ POST /v1/orgs/{org_id}/invitations
 ```json
 {
   "id": "...",
-  "org_id": "...",
+  "account_id": "...",
   "invited_by_user_id": "...",
   "email": "bob@example.com",
   "role": "member",
@@ -186,13 +186,13 @@ POST /v1/orgs/{org_id}/invitations
 ### 列出邀请
 
 ```http
-GET /v1/orgs/{org_id}/invitations
+GET /v1/accounts/{account_id}/invitations
 ```
 
 ### 接受邀请
 
 ```http
-POST /v1/org-invitations/{token}/accept
+POST /v1/account-invitations/{token}/accept
 ```
 
 **响应**
@@ -204,5 +204,5 @@ POST /v1/org-invitations/{token}/accept
 ### 撤销邀请
 
 ```http
-DELETE /v1/org-invitations/{invitation_id}
+DELETE /v1/account-invitations/{invitation_id}
 ```

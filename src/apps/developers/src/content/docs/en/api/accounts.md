@@ -1,14 +1,14 @@
 ---
 ---
 
-# Organizations (Orgs)
+# Accounts
 
 All endpoints require Bearer Token authentication.
 
-## Create Organization (Workspace)
+## Create Account (Workspace)
 
 ```http
-POST /v1/orgs
+POST /v1/accounts
 ```
 
 **Request Body**
@@ -32,44 +32,44 @@ POST /v1/orgs
 
 ---
 
-## Get Current User's Organization List
+## Get Current User's Account List
 
 ```http
-GET /v1/orgs/me
+GET /v1/accounts/me
 ```
 
 ---
 
-## Get Organization Details
+## Get Account Details
 
 ```http
-GET /v1/orgs/{org_id}
+GET /v1/accounts/{account_id}
 ```
 
 ---
 
-## Get Organization Usage (Monthly)
+## Get Account Usage (Monthly)
 
 ```http
-GET /v1/orgs/{org_id}/usage
+GET /v1/accounts/{account_id}/usage
 ```
 
 Query parameters are the same as [`GET /v1/me/usage`](./me#usage-statistics-monthly).
 
 ---
 
-## Get Organization Usage (Daily)
+## Get Account Usage (Daily)
 
 ```http
-GET /v1/orgs/{org_id}/usage/daily
+GET /v1/accounts/{account_id}/usage/daily
 ```
 
 ---
 
-## Get Organization Usage (by Model)
+## Get Account Usage (by Model)
 
 ```http
-GET /v1/orgs/{org_id}/usage/by-model
+GET /v1/accounts/{account_id}/usage/by-model
 ```
 
 ---
@@ -93,7 +93,7 @@ POST /v1/teams
 ```json
 {
   "id": "...",
-  "org_id": "...",
+  "account_id": "...",
   "name": "Legal Team",
   "members_count": 0,
   "created_at": "2024-01-01T00:00:00Z"
@@ -157,7 +157,7 @@ DELETE /v1/teams/{team_id}/members/{user_id}
 ### Send Invitation
 
 ```http
-POST /v1/orgs/{org_id}/invitations
+POST /v1/accounts/{account_id}/invitations
 ```
 
 **Request Body**
@@ -172,7 +172,7 @@ POST /v1/orgs/{org_id}/invitations
 ```json
 {
   "id": "...",
-  "org_id": "...",
+  "account_id": "...",
   "invited_by_user_id": "...",
   "email": "bob@example.com",
   "role": "member",
@@ -186,13 +186,13 @@ POST /v1/orgs/{org_id}/invitations
 ### List Invitations
 
 ```http
-GET /v1/orgs/{org_id}/invitations
+GET /v1/accounts/{account_id}/invitations
 ```
 
 ### Accept Invitation
 
 ```http
-POST /v1/org-invitations/{token}/accept
+POST /v1/account-invitations/{token}/accept
 ```
 
 **Response**
@@ -204,5 +204,5 @@ POST /v1/org-invitations/{token}/accept
 ### Revoke Invitation
 
 ```http
-DELETE /v1/org-invitations/{invitation_id}
+DELETE /v1/account-invitations/{invitation_id}
 ```
