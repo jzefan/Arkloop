@@ -39,6 +39,7 @@ func NewInjectionScanMiddleware(
 		})
 
 		var allDetections []security.ScanResult
+		var semanticResult *security.SemanticResult
 		injectionDetected := false
 
 		for _, msg := range rc.Messages {
@@ -66,14 +67,17 @@ func NewInjectionScanMiddleware(
 					allDetections = append(allDetections, result.RegexMatches...)
 				}
 
-				if semanticEnabled && result.SemanticResult != nil && result.SemanticResult.IsInjection {
-					slog.WarnContext(ctx, "semantic injection detected",
-						"run_id", rc.Run.ID,
-						"label", result.SemanticResult.Label,
-						"score", result.SemanticResult.Score,
-					)
-					security.DetectionTotal.WithLabelValues("semantic_"+strings.ToLower(result.SemanticResult.Label)).Inc()
-					injectionDetected = true
+				if semanticEnabled && result.SemanticResult != nil {
+					if result.SemanticResult.IsInjection {
+						slog.WarnContext(ctx, "semantic injection detected",
+							"run_id", rc.Run.ID,
+							"label", result.SemanticResult.Label,
+							"score", result.SemanticResult.Score,
+						)
+						security.DetectionTotal.WithLabelValues("semantic_"+strings.ToLower(result.SemanticResult.Label)).Inc()
+						injectionDetected = true
+					}
+					semanticResult = result.SemanticResult
 				}
 
 				if result.IsInjection {
@@ -94,11 +98,18 @@ func NewInjectionScanMiddleware(
 					"severity":   d.Severity,
 				})
 			}
-			emitRunEvent(ctx, rc, eventsRepo, "security.injection.detected", map[string]any{
+			eventData := map[string]any{
 				"detection_count": len(allDetections),
 				"patterns":        patterns,
 				"injection":       injectionDetected,
-			})
+			}
+			if semanticResult != nil {
+				eventData["semantic"] = map[string]any{
+					"label": semanticResult.Label,
+					"score": semanticResult.Score,
+				}
+			}
+			emitRunEvent(ctx, rc, eventsRepo, "security.injection.detected", eventData)
 		} else {
 			security.ScanTotal.WithLabelValues("clean").Inc()
 			emitRunEvent(ctx, rc, eventsRepo, "security.scan.clean", nil)
