@@ -21,7 +21,7 @@ type SemanticResult struct {
 type SemanticScanner struct {
 	mu        sync.RWMutex
 	session   *ort.DynamicAdvancedSession
-	tokenizer *BPETokenizer
+	tokenizer *Tokenizer
 	threshold float32
 	labels    []string
 }

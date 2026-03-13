@@ -3,43 +3,41 @@ package security
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
-	"sort"
 	"strings"
 	"unicode/utf8"
 )
 
-// BPETokenizer 从 HuggingFace tokenizer.json 解析的 BPE tokenizer。
-type BPETokenizer struct {
-	vocab   map[string]int64
-	merges  []mergePair
-	added   map[string]int64
-	clsID   int64
-	sepID   int64
-	padID   int64
-	unkID   int64
-	maxLen  int
-}
+const metaspaceReplacement = '▁'
 
-type mergePair struct {
-	a, b string
+// Tokenizer 从 HuggingFace tokenizer.json 加载，支持 Unigram 和 BPE。
+type Tokenizer struct {
+	tokenToID   map[string]int64
+	scores      map[string]float64 // unigram scores
+	added       map[string]int64
+	maxTokenLen int
+	clsID       int64
+	sepID       int64
+	padID       int64
+	unkID       int64
+	maxLen      int
 }
 
 type tokenizerJSON struct {
 	Model struct {
-		Type  string            `json:"type"`
-		Vocab map[string]int64  `json:"vocab"`
-		Merges []string         `json:"merges"`
+		Type  string          `json:"type"`
+		Vocab json.RawMessage `json:"vocab"`
+		UNKId *int            `json:"unk_id"`
 	} `json:"model"`
 	AddedTokens []struct {
 		Content string `json:"content"`
 		ID      int    `json:"id"`
-		Special bool   `json:"special"`
 	} `json:"added_tokens"`
 }
 
-// LoadTokenizer 从 HuggingFace tokenizer.json 加载 BPE tokenizer。
-func LoadTokenizer(path string, maxLen int) (*BPETokenizer, error) {
+// LoadTokenizer 从 HuggingFace tokenizer.json 加载 tokenizer。
+func LoadTokenizer(path string, maxLen int) (*Tokenizer, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read tokenizer.json: %w", err)
@@ -50,57 +48,78 @@ func LoadTokenizer(path string, maxLen int) (*BPETokenizer, error) {
 		return nil, fmt.Errorf("parse tokenizer.json: %w", err)
 	}
 
-	if raw.Model.Type != "BPE" {
-		return nil, fmt.Errorf("unsupported tokenizer type: %s", raw.Model.Type)
-	}
-
-	merges := make([]mergePair, 0, len(raw.Model.Merges))
-	for _, m := range raw.Model.Merges {
-		parts := strings.SplitN(m, " ", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		merges = append(merges, mergePair{a: parts[0], b: parts[1]})
-	}
-
-	added := make(map[string]int64, len(raw.AddedTokens))
-	var clsID, sepID, padID, unkID int64
-	for _, t := range raw.AddedTokens {
-		added[t.Content] = int64(t.ID)
-		switch t.Content {
-		case "[CLS]":
-			clsID = int64(t.ID)
-		case "[SEP]":
-			sepID = int64(t.ID)
-		case "[PAD]":
-			padID = int64(t.ID)
-		case "[UNK]":
-			unkID = int64(t.ID)
-		}
-	}
-
 	if maxLen <= 0 {
 		maxLen = 512
 	}
 
-	return &BPETokenizer{
-		vocab:  raw.Model.Vocab,
-		merges: merges,
-		added:  added,
-		clsID:  clsID,
-		sepID:  sepID,
-		padID:  padID,
-		unkID:  unkID,
-		maxLen: maxLen,
-	}, nil
+	t := &Tokenizer{
+		tokenToID: make(map[string]int64),
+		scores:    make(map[string]float64),
+		added:     make(map[string]int64),
+		maxLen:    maxLen,
+	}
+
+	switch raw.Model.Type {
+	case "Unigram":
+		if err := t.parseUnigramVocab(raw.Model.Vocab); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported tokenizer type: %s", raw.Model.Type)
+	}
+
+	for _, tok := range raw.AddedTokens {
+		t.added[tok.Content] = int64(tok.ID)
+		switch tok.Content {
+		case "[CLS]":
+			t.clsID = int64(tok.ID)
+		case "[SEP]":
+			t.sepID = int64(tok.ID)
+		case "[PAD]":
+			t.padID = int64(tok.ID)
+		case "[UNK]":
+			t.unkID = int64(tok.ID)
+		}
+	}
+
+	return t, nil
 }
 
-// Encode 将文本编码为 token ID 序列，包含 [CLS] 和 [SEP]。
-// 返回 (input_ids, attention_mask)。
-func (t *BPETokenizer) Encode(text string) ([]int64, []int64) {
-	tokens := t.tokenize(text)
+func (t *Tokenizer) parseUnigramVocab(raw json.RawMessage) error {
+	var entries [][]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return fmt.Errorf("parse unigram vocab: %w", err)
+	}
 
-	// [CLS] + tokens + [SEP]，截断到 maxLen
+	for i, entry := range entries {
+		if len(entry) < 2 {
+			continue
+		}
+		var token string
+		var score float64
+		if err := json.Unmarshal(entry[0], &token); err != nil {
+			continue
+		}
+		if err := json.Unmarshal(entry[1], &score); err != nil {
+			continue
+		}
+		t.tokenToID[token] = int64(i)
+		t.scores[token] = score
+		if tl := utf8.RuneCountInString(token); tl > t.maxTokenLen {
+			t.maxTokenLen = tl
+		}
+	}
+	return nil
+}
+
+// Encode 将文本编码为 token ID 序列 (input_ids, attention_mask)。
+func (t *Tokenizer) Encode(text string) ([]int64, []int64) {
+	pieces := t.preTokenize(text)
+	var tokens []string
+	for _, piece := range pieces {
+		tokens = append(tokens, t.segment(piece)...)
+	}
+
 	maxTokens := t.maxLen - 2
 	if len(tokens) > maxTokens {
 		tokens = tokens[:maxTokens]
@@ -109,7 +128,7 @@ func (t *BPETokenizer) Encode(text string) ([]int64, []int64) {
 	ids := make([]int64, 0, len(tokens)+2)
 	ids = append(ids, t.clsID)
 	for _, tok := range tokens {
-		if id, ok := t.vocab[tok]; ok {
+		if id, ok := t.tokenToID[tok]; ok {
 			ids = append(ids, id)
 		} else if id, ok := t.added[tok]; ok {
 			ids = append(ids, id)
@@ -123,119 +142,128 @@ func (t *BPETokenizer) Encode(text string) ([]int64, []int64) {
 	for i := range mask {
 		mask[i] = 1
 	}
-
-	// pad to maxLen
 	for len(ids) < t.maxLen {
 		ids = append(ids, t.padID)
 		mask = append(mask, 0)
 	}
-
 	return ids, mask
 }
 
-// tokenize 将文本拆分为 BPE 子词。
-func (t *BPETokenizer) tokenize(text string) []string {
-	// pre-tokenize: 按空白分词
-	words := splitWords(text)
-	var result []string
-	for _, word := range words {
-		result = append(result, t.bpe(word)...)
+// preTokenize 执行 Metaspace 预分词：
+// 将空格替换为 ▁，在文本开头也添加 ▁。
+func (t *Tokenizer) preTokenize(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
 	}
-	return result
-}
 
-// splitWords 按空白和标点进行初步分词。
-func splitWords(text string) []string {
-	var words []string
 	var buf strings.Builder
-	for i := 0; i < len(text); {
-		r, size := utf8.DecodeRuneInString(text[i:])
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-			if buf.Len() > 0 {
-				words = append(words, buf.String())
-				buf.Reset()
-			}
-			i += size
-			continue
+	buf.WriteRune(metaspaceReplacement)
+
+	for _, r := range text {
+		if r == ' ' {
+			buf.WriteRune(metaspaceReplacement)
+		} else {
+			buf.WriteRune(r)
 		}
-		buf.WriteRune(r)
-		i += size
 	}
-	if buf.Len() > 0 {
-		words = append(words, buf.String())
-	}
-	return words
+	return []string{buf.String()}
 }
 
-// bpe 对单个词应用 BPE 合并。
-func (t *BPETokenizer) bpe(word string) []string {
-	// 将词拆分为单字符
-	symbols := make([]string, 0, len(word))
-	for _, r := range word {
-		symbols = append(symbols, string(r))
-	}
-	if len(symbols) <= 1 {
-		return symbols
+// segment 使用 Viterbi 算法对单个 piece 做 Unigram 分词。
+func (t *Tokenizer) segment(text string) []string {
+	runes := []rune(text)
+	n := len(runes)
+	if n == 0 {
+		return nil
 	}
 
-	// 构建合并优先级 lookup
-	mergeRank := make(map[string]int, len(t.merges))
-	for i, m := range t.merges {
-		mergeRank[m.a+" "+m.b] = i
+	const negInf = -1e18
+	// best[i] = 从位置 i 到末尾的最优分词分数
+	best := make([]float64, n+1)
+	// backPtr[i] = 从位置 i 开始的最优 token 长度（rune 数）
+	backPtr := make([]int, n+1)
+	for i := range best {
+		best[i] = negInf
+	}
+	best[n] = 0
+
+	maxTokLen := t.maxTokenLen
+	if maxTokLen <= 0 {
+		maxTokLen = 64
 	}
 
-	for {
-		if len(symbols) < 2 {
-			break
+	// 从右向左 DP
+	for i := n - 1; i >= 0; i-- {
+		limit := n - i
+		if limit > maxTokLen {
+			limit = maxTokLen
 		}
-
-		// 找最高优先级的相邻对
-		bestIdx := -1
-		bestRank := len(t.merges)
-		for i := 0; i < len(symbols)-1; i++ {
-			key := symbols[i] + " " + symbols[i+1]
-			if rank, ok := mergeRank[key]; ok && rank < bestRank {
-				bestRank = rank
-				bestIdx = i
+		for l := 1; l <= limit; l++ {
+			tok := string(runes[i : i+l])
+			score, ok := t.scores[tok]
+			if !ok {
+				if l == 1 {
+					// 单字符 fallback，给一个很低的分数
+					score = -100.0
+				} else {
+					continue
+				}
+			}
+			total := score + best[i+l]
+			if total > best[i] {
+				best[i] = total
+				backPtr[i] = l
 			}
 		}
-
-		if bestIdx < 0 {
-			break
+		// 如果没有任何匹配（不应该发生，因为有单字符 fallback）
+		if best[i] == negInf {
+			best[i] = -200.0 + best[i+1]
+			backPtr[i] = 1
 		}
-
-		merged := symbols[bestIdx] + symbols[bestIdx+1]
-		newSymbols := make([]string, 0, len(symbols)-1)
-		newSymbols = append(newSymbols, symbols[:bestIdx]...)
-		newSymbols = append(newSymbols, merged)
-		if bestIdx+2 < len(symbols) {
-			newSymbols = append(newSymbols, symbols[bestIdx+2:]...)
-		}
-		symbols = newSymbols
 	}
 
-	return symbols
+	var tokens []string
+	for pos := 0; pos < n; {
+		l := backPtr[pos]
+		if l <= 0 {
+			l = 1
+		}
+		tok := string(runes[pos : pos+l])
+		if _, ok := t.tokenToID[tok]; ok {
+			tokens = append(tokens, tok)
+		} else {
+			// 分解为单字符
+			for _, r := range tok {
+				tokens = append(tokens, string(r))
+			}
+		}
+		pos += l
+	}
+	return tokens
 }
 
 // VocabSize 返回词表大小。
-func (t *BPETokenizer) VocabSize() int {
-	return len(t.vocab) + len(t.added)
+func (t *Tokenizer) VocabSize() int {
+	return len(t.tokenToID) + len(t.added)
 }
 
-// SortedVocab 返回按 ID 排序的词表（调试用）。
-func (t *BPETokenizer) SortedVocab() []string {
-	type entry struct {
-		token string
-		id    int64
+// softmaxFloat64 对 float64 slice 做 softmax。
+func softmaxFloat64(x []float64) []float64 {
+	max := x[0]
+	for _, v := range x[1:] {
+		if v > max {
+			max = v
+		}
 	}
-	entries := make([]entry, 0, len(t.vocab))
-	for tok, id := range t.vocab {
-		entries = append(entries, entry{tok, id})
+	sum := 0.0
+	out := make([]float64, len(x))
+	for i, v := range x {
+		out[i] = math.Exp(v - max)
+		sum += out[i]
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].id < entries[j].id })
-	result := make([]string, len(entries))
-	for i, e := range entries {
-		result[i] = e.token
+	for i := range out {
+		out[i] /= sum
 	}
-	return result
+	return out
 }
