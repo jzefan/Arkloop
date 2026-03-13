@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -26,35 +24,35 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog")
 
 	ctx := context.Background()
-	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(appDB)
+	credRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(appDB)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	overridesRepo, err := data.NewToolDescriptionOverridesRepository(appDB)
+	overridesRepo, err := data.NewToolDescriptionOverridesRepository(pool)
 	if err != nil {
 		t.Fatalf("tool description repo: %v", err)
 	}
@@ -100,12 +98,12 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		DirectPool:              directPool,
+		Pool:                         pool,
+		DirectPool:                   pool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
@@ -159,54 +157,54 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 		t.Fatalf("expected platform source, got %s", webSearch.DescriptionSource)
 	}
 
-	listOrg := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=org", nil, authHeader(adminToken))
+	listOrg := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=project", nil, authHeader(adminToken))
 	if listOrg.Code != nethttp.StatusOK {
-		t.Fatalf("list org: %d %s", listOrg.Code, listOrg.Body.String())
+		t.Fatalf("list project: %d %s", listOrg.Code, listOrg.Body.String())
 	}
 	orgCatalog := decodeJSONBody[toolCatalogResponse](t, listOrg.Body.Bytes())
 	webSearch, _ = findCatalogTool(orgCatalog, "web_search", "web_search")
 	if webSearch.LLMDescription != "platform override for web search" {
-		t.Fatalf("org view should inherit platform override, got %s", webSearch.LLMDescription)
+		t.Fatalf("project view should inherit platform override, got %s", webSearch.LLMDescription)
 	}
 	if webSearch.HasOverride {
-		t.Fatal("org inherited description should not set has_override")
+		t.Fatal("project inherited description should not set has_override")
 	}
 	if webSearch.DescriptionSource != toolDescriptionSourcePlatform {
-		t.Fatalf("expected platform source in org scope, got %s", webSearch.DescriptionSource)
+		t.Fatalf("expected platform source in project scope, got %s", webSearch.DescriptionSource)
 	}
 
-	orgOverride := map[string]any{"description": "org override for web search"}
-	putOrg := doJSON(handler, nethttp.MethodPut, "/v1/tool-catalog/web_search/description?scope=org", orgOverride, authHeader(adminToken))
+	orgOverride := map[string]any{"description": "project override for web search"}
+	putOrg := doJSON(handler, nethttp.MethodPut, "/v1/tool-catalog/web_search/description?scope=project", orgOverride, authHeader(adminToken))
 	if putOrg.Code != nethttp.StatusNoContent {
-		t.Fatalf("put org override: %d %s", putOrg.Code, putOrg.Body.String())
+		t.Fatalf("put project override: %d %s", putOrg.Code, putOrg.Body.String())
 	}
 
-	listOrg = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=org", nil, authHeader(adminToken))
+	listOrg = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=project", nil, authHeader(adminToken))
 	orgCatalog = decodeJSONBody[toolCatalogResponse](t, listOrg.Body.Bytes())
 	webSearch, _ = findCatalogTool(orgCatalog, "web_search", "web_search")
-	if webSearch.LLMDescription != "org override for web search" {
+	if webSearch.LLMDescription != "project override for web search" {
 		t.Fatalf("unexpected org description: %s", webSearch.LLMDescription)
 	}
 	if !webSearch.HasOverride {
 		t.Fatal("org override should set has_override")
 	}
-	if webSearch.DescriptionSource != toolDescriptionSourceOrg {
+	if webSearch.DescriptionSource != toolDescriptionSourceProject {
 		t.Fatalf("expected org source, got %s", webSearch.DescriptionSource)
 	}
 
-	deleteOrg := doJSON(handler, nethttp.MethodDelete, "/v1/tool-catalog/web_search/description?scope=org", nil, authHeader(adminToken))
+	deleteOrg := doJSON(handler, nethttp.MethodDelete, "/v1/tool-catalog/web_search/description?scope=project", nil, authHeader(adminToken))
 	if deleteOrg.Code != nethttp.StatusNoContent {
-		t.Fatalf("delete org override: %d %s", deleteOrg.Code, deleteOrg.Body.String())
+		t.Fatalf("delete project override: %d %s", deleteOrg.Code, deleteOrg.Body.String())
 	}
 
-	listOrg = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=org", nil, authHeader(adminToken))
+	listOrg = doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=project", nil, authHeader(adminToken))
 	orgCatalog = decodeJSONBody[toolCatalogResponse](t, listOrg.Body.Bytes())
 	webSearch, _ = findCatalogTool(orgCatalog, "web_search", "web_search")
 	if webSearch.LLMDescription != "platform override for web search" {
-		t.Fatalf("org reset should fall back to platform, got %s", webSearch.LLMDescription)
+		t.Fatalf("project reset should fall back to platform, got %s", webSearch.LLMDescription)
 	}
 	if webSearch.HasOverride {
-		t.Fatal("org reset should clear has_override")
+		t.Fatal("project reset should clear has_override")
 	}
 	if webSearch.DescriptionSource != toolDescriptionSourcePlatform {
 		t.Fatalf("expected platform source after org reset, got %s", webSearch.DescriptionSource)
@@ -237,34 +235,34 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog_perms")
 
 	ctx := context.Background()
-	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(appDB)
+	credRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("refresh repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(appDB)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	overridesRepo, err := data.NewToolDescriptionOverridesRepository(appDB)
+	overridesRepo, err := data.NewToolDescriptionOverridesRepository(pool)
 	if err != nil {
 		t.Fatalf("tool description repo: %v", err)
 	}
@@ -289,10 +287,10 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create member: %v", err)
 	}
-	if _, err := membershipRepo.Create(ctx, org.ID, member.ID, auth.RoleOrgMember); err != nil {
+	if _, err := membershipRepo.Create(ctx, org.ID, member.ID, auth.RoleAccountMember); err != nil {
 		t.Fatalf("create member membership: %v", err)
 	}
-	memberToken, err := tokenService.Issue(member.ID, org.ID, auth.RoleOrgMember, time.Now().UTC())
+	memberToken, err := tokenService.Issue(member.ID, org.ID, auth.RoleAccountMember, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue member token: %v", err)
 	}
@@ -300,44 +298,44 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		DirectPool:              directPool,
+		Pool:                         pool,
+		DirectPool:                   pool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
 	platformResp := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog", nil, authHeader(memberToken))
 	if platformResp.Code != nethttp.StatusForbidden {
-		t.Fatalf("org member platform scope should be 403, got %d", platformResp.Code)
+		t.Fatalf("account member platform scope should be 403, got %d", platformResp.Code)
 	}
 
-	orgResp := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=org", nil, authHeader(memberToken))
+	orgResp := doJSON(handler, nethttp.MethodGet, "/v1/tool-catalog?scope=project", nil, authHeader(memberToken))
 	if orgResp.Code != nethttp.StatusForbidden {
-		t.Fatalf("org member org scope should be 403, got %d", orgResp.Code)
+		t.Fatalf("account member project scope should be 403, got %d", orgResp.Code)
 	}
 }
 
 func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_tool_catalog_effective")
 	ctx := context.Background()
-	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	userRepo, _ := data.NewUserRepository(appDB)
-	credRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	mcpRepo, _ := data.NewMCPConfigsRepository(appDB)
-	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(appDB)
-	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(appDB)
-	orgRepo, _ := data.NewOrgRepository(appDB)
+	userRepo, _ := data.NewUserRepository(pool)
+	credRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	mcpRepo, _ := data.NewMCPConfigsRepository(pool)
+	toolProvidersRepo, _ := data.NewToolProviderConfigsRepository(pool)
+	overridesRepo, _ := data.NewToolDescriptionOverridesRepository(pool)
+	orgRepo, _ := data.NewAccountRepository(pool)
 	passwordHasher, _ := auth.NewBcryptPasswordHasher(0)
 	tokenService, _ := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
@@ -376,32 +374,32 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	orgID := org.ID
+	accountID := org.ID
 	user, err := userRepo.Create(ctx, "effective-user", "effective@test.com", "en")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := membershipRepo.Create(ctx, orgID, user.ID, auth.RoleOrgAdmin); err != nil {
+	if _, err := membershipRepo.Create(ctx, accountID, user.ID, auth.RoleAccountAdmin); err != nil {
 		t.Fatalf("create membership: %v", err)
 	}
-	token, err := tokenService.Issue(user.ID, orgID, auth.RoleOrgAdmin, time.Now().UTC())
+	token, err := tokenService.Issue(user.ID, accountID, auth.RoleAccountAdmin, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
 
-	if _, err := mcpRepo.Create(ctx, orgID, "org-demo", "streamable_http", strPtrCatalogTest(mcpServer.URL), nil, nil, nil, nil, nil, false, 3000); err != nil {
+	if _, err := mcpRepo.Create(ctx, accountID, "org-demo", "streamable_http", strPtrCatalogTest(mcpServer.URL), nil, nil, nil, nil, nil, false, 3000); err != nil {
 		t.Fatalf("create org mcp config: %v", err)
 	}
 	listenerCtx, cancelListener := context.WithCancel(ctx)
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		DirectPool:              directPool,
+		Pool:                         pool,
+		DirectPool:                   pool,
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		OrgMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:            membershipRepo,
 		ToolProviderConfigsRepo:      toolProvidersRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 		ArtifactStore:                newFakeHTTPArtifactStore(),
@@ -431,7 +429,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 		t.Fatalf("unexpected mcp label: %s", item.Label)
 	}
 
-	if err := overridesRepo.SetDisabled(ctx, uuid.Nil, "platform", "document_write", true); err != nil {
+	if err := overridesRepo.SetDisabled(ctx, "document_write", true); err != nil {
 		t.Fatalf("disable document_write: %v", err)
 	}
 

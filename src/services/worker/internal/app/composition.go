@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package app
 
 import (
@@ -11,12 +9,8 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
-	"arkloop/services/shared/database"
-	"arkloop/services/shared/database/pgadapter"
 	sharedent "arkloop/services/shared/entitlement"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
-	"arkloop/services/shared/runlimit"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
@@ -34,7 +28,6 @@ import (
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	memorytool "arkloop/services/worker/internal/tools/memory"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,15 +39,10 @@ const runtimeSnapshotTTL = 5 * time.Second
 // directPool 不为 nil 时用于 LISTEN/NOTIFY 直连（绕过 PgBouncer）。
 // rdb 不为 nil 时在 run 终态时 DECR 并发计数器。
 // execRegistry 为 executor 注册表，不得为 nil。
-// jobQueue 可选；非 nil 时启用 SpawnChildRun。
-func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, bus eventbus.EventBus, cfg Config, execRegistry pipeline.AgentExecutorBuilder, jobQueue queue.JobQueue) (*runengine.EngineV1, error) {
+// jobQueue 可选；非 nil 时启用 SubAgentControl。
+func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pgxpool.Pool, rdb *redis.Client, cfg Config, execRegistry pipeline.AgentExecutorBuilder, jobQueue queue.JobQueue) (*runengine.EngineV1, error) {
 	if ctx == nil {
 		ctx = context.Background()
-	}
-
-	var db database.DB
-	if pool != nil {
-		db = pgadapter.New(pool)
 	}
 
 	configRegistry := sharedconfig.DefaultRegistry()
@@ -63,7 +51,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	if rdb != nil && configCacheTTL > 0 {
 		configCache = sharedconfig.NewRedisCache(rdb)
 	}
-	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(db), configCache, configCacheTTL)
+	configResolver, _ := sharedconfig.NewResolver(configRegistry, sharedconfig.NewPGXStore(pool), configCache, configCacheTTL)
 
 	routingCfg, err := loadRoutingConfig(ctx, pool)
 	if err != nil {
@@ -98,7 +86,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
-	executors := builtin.Executors(pool, bus, configResolver)
+	executors := builtin.Executors(pool, rdb, configResolver)
 	allLlmSpecs := builtin.LlmSpecs()
 	allLlmSpecs = append(allLlmSpecs, sandboxtool.LlmSpecs()...)
 	allLlmSpecs = append(allLlmSpecs, sandboxtool.BrowserLlmSpec)
@@ -166,13 +154,13 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		runtimeManager.StartToolProviderInvalidationListener(ctx, directPool)
 	}
 
-	sandboxExecutorFactory := workerruntime.NewSandboxExecutorFactory(db)
+	sandboxExecutorFactory := workerruntime.NewSandboxExecutorFactory(pool)
 	dynamicSandboxExec := workerruntime.NewDynamicSandboxExecutor(runtimeManager, sandboxExecutorFactory)
 	var sandboxExec tools.Executor = dynamicSandboxExec
 	if pool != nil {
 		billingCfg := resolveSandboxBillingConfig(ctx, configResolver)
-		entResolver := sharedent.NewResolver(db, rdb)
-		sandboxExec = sandboxtool.NewBillingExecutor(dynamicSandboxExec, db, entResolver, billingCfg)
+		entResolver := sharedent.NewResolver(pool, rdb)
+		sandboxExec = sandboxtool.NewBillingExecutor(dynamicSandboxExec, pool, entResolver, billingCfg)
 	}
 	for _, spec := range sandboxtool.AgentSpecs() {
 		executors[spec.Name] = sandboxExec
@@ -180,14 +168,14 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	executors[sandboxtool.BrowserSpec.Name] = dynamicSandboxExec
 
 	memoryProviderFactory := workerruntime.NewMemoryProviderFactory()
-	memoryExecutorFactory := workerruntime.NewMemoryExecutorFactory(db, data.MemorySnapshotRepository{})
+	memoryExecutorFactory := workerruntime.NewMemoryExecutorFactory(pool, data.MemorySnapshotRepository{})
 	dynamicMemoryExec := workerruntime.NewDynamicMemoryExecutor(runtimeManager, memoryProviderFactory, memoryExecutorFactory)
 	for _, spec := range memorytool.AgentSpecs() {
 		executors[spec.Name] = dynamicMemoryExec
 	}
 
 	if pool != nil {
-		convExecutor := conversationtool.NewToolExecutor(db, data.MessagesRepository{Dialect: database.PostgresDialect{}})
+		convExecutor := conversationtool.NewToolExecutor(pool, data.MessagesRepository{})
 		for _, spec := range conversationtool.AgentSpecs() {
 			if err := toolRegistry.Register(spec); err != nil {
 				return nil, err
@@ -209,7 +197,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	var toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
 	if pool != nil {
-		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(db)
+		toolDescriptionOverridesRepo, err = data.NewToolDescriptionOverridesRepository(pool)
 		if err != nil {
 			return nil, err
 		}
@@ -237,11 +225,6 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 
 	baseAllowlistNames := resolveBaseToolAllowlistNames(ctx, toolRegistry)
 
-	var concurrencyLimiter runlimit.ConcurrencyLimiter
-	if rdb != nil {
-		concurrencyLimiter = runlimit.NewRedisConcurrencyLimiter(rdb)
-	}
-
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                       router,
 		DBPool:                       pool,
@@ -262,11 +245,8 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		ExecutorRegistry:             execRegistry,
 		JobQueue:                     jobQueue,
 		RunLimiterRDB:                rdb,
-		ConcurrencyLimiter:           concurrencyLimiter,
-		EventBus:                     bus,
 		LlmRetryMaxAttempts:          llmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:          llmRetryBaseDelayMs,
-		Dialect:                      database.PostgresDialect{},
 		RuntimeManager:               runtimeManager,
 		MemoryProviderFactory:        memoryProviderFactory,
 		RoutingConfigLoader:          routingLoader,
@@ -337,7 +317,7 @@ func resolveBaseToolAllowlistNames(ctx context.Context, toolRegistry *tools.Regi
 // loadRoutingConfig 优先从 DB 加载路由配置，无数据时回退到环境变量。
 func loadRoutingConfig(ctx context.Context, pool *pgxpool.Pool) (routing.ProviderRoutingConfig, error) {
 	if pool != nil {
-		dbCfg, err := routing.LoadRoutingConfigFromDB(ctx, pool, uuid.Nil)
+		dbCfg, err := routing.LoadRoutingConfigFromDB(ctx, pool, nil)
 		if err != nil {
 			slog.WarnContext(ctx, "routing: db load failed, falling back to env", "err", err.Error())
 		} else if len(dbCfg.Routes) > 0 {

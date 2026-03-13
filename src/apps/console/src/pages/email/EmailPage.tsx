@@ -4,7 +4,7 @@ import { Loader2, Save, Send } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { Badge } from '../../components/Badge'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {

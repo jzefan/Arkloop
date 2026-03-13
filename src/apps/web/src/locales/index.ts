@@ -21,6 +21,8 @@ export interface LocaleStrings {
     settings: string
     skills: string
     credits: string
+    models: string
+    agents: string
   }
   // settings
   getHelp: string
@@ -41,6 +43,8 @@ export interface LocaleStrings {
     title: string
     subtitle: string
     searchPlaceholder: string
+    registryTab: string
+    localTab: string
     officialOnly: string
     officialOnlyShort: string
     officialUnconfigured: string
@@ -123,7 +127,21 @@ export interface LocaleStrings {
     officialDialogSubtitle: string
     officialDialogHintTitle: string
     officialDialogHintBody: string
+    scanStatusLabel: (status: string) => string
+    riskConfirm: (name: string, status: string, summary?: string) => string
     cancelAction: string
+    trySkill: string
+    download: string
+    replace: string
+    disable: string
+    disableFailed: string
+    detailTitle: string
+    trySkillPrompt: (skillKey: string) => string
+    detailVersion: string
+    detailSource: string
+    detailUpdatedAt: string
+    detailDescription: string
+    noDescription: string
   }
   // invite code
   inviteCode: string
@@ -319,10 +337,88 @@ export interface LocaleStrings {
   shellRanCommand: string
   shellSuccess: string
   shellFailed: string
+  shellCompleted: string
   shellNoOutput: string
   // pasted content
   pastedContent: string
   pastedLines: (n: number) => string
+  // user input card
+  userInput: {
+    dismiss: string
+    submit: string
+    submitting: string
+    next: string
+    back: string
+  }
+  // document panel
+  documentPanel: {
+    preview: string
+    source: string
+    download: string
+    previewUnsupported: string
+    downloadFile: string
+    loadFailed: (detail: string) => string
+  }
+  // message actions
+  copyAction: string
+  editAction: string
+  // model config
+  models: {
+    addProvider: string
+    editProvider: string
+    deleteProvider: string
+    deleteProviderConfirm: string
+    providerName: string
+    providerVendor: string
+    apiKey: string
+    apiKeyPlaceholder: string
+    baseUrl: string
+    baseUrlPlaceholder: string
+    save: string
+    saving: string
+    cancel: string
+    noProviders: string
+    noProvidersDesc: string
+    modelsSection: string
+    importAll: string
+    importing: string
+    noModels: string
+    deleteModel: string
+    addModel: string
+    modelName: string
+    modelNamePlaceholder: string
+    loadFailed: string
+    saveFailed: string
+    deleteFailed: string
+    vendorOpenaiResponses: string
+    vendorOpenaiChatCompletions: string
+    vendorAnthropicMessage: string
+    applyToAll: string
+    applyingToAll: string
+    applyDone: string
+    deleteAll: string
+  }
+  // agent settings
+  agentSettings: {
+    title: string
+    subtitle: string
+    model: string
+    reasoningMode: string
+    credential: string
+    credentialDefault: string
+    temperature: string
+    maxOutputTokens: string
+    noPersonas: string
+    saveFailed: string
+    reasoningModes: {
+      default: string
+      enabled: string
+      disabled: string
+    }
+  }
+  // chat page
+  checkInPlaceholder: string
+  replyPlaceholder: string
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

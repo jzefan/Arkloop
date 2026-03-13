@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -67,7 +67,7 @@ func (r *resolvedSession) ThreadID(fallback *uuid.UUID) *uuid.UUID {
 }
 
 type sessionOrchestrator struct {
-	db              database.DB
+	pool            *pgxpool.Pool
 	sessionType     string
 	sessionsRepo    data.ShellSessionsRepository
 	registryService *registryService
@@ -77,16 +77,16 @@ type sessionOrchestrator struct {
 	memorySessions map[string]data.ShellSessionRecord
 }
 
-func newSessionOrchestrator(db database.DB) *sessionOrchestrator {
-	return newSessionOrchestratorWithType(db, data.ShellSessionTypeShell)
+func newSessionOrchestrator(pool *pgxpool.Pool) *sessionOrchestrator {
+	return newSessionOrchestratorWithType(pool, data.ShellSessionTypeShell)
 }
 
-func newSessionOrchestratorWithType(db database.DB, sessionType string) *sessionOrchestrator {
+func newSessionOrchestratorWithType(pool *pgxpool.Pool, sessionType string) *sessionOrchestrator {
 	return &sessionOrchestrator{
-		db:              db,
+		pool:            pool,
 		sessionType:     normalizeSessionType(sessionType),
-		registryService: newRegistryService(db),
-		acl:             newSessionACLEvaluator(db),
+		registryService: newRegistryService(pool),
+		acl:             newSessionACLEvaluator(pool),
 		memorySessions:  map[string]data.ShellSessionRecord{},
 	}
 }
@@ -264,7 +264,7 @@ func (o *sessionOrchestrator) lookupRunDefault(ctx context.Context, execCtx tool
 	if execCtx.RunID == uuid.Nil {
 		return nil
 	}
-	record, found, err := o.lookupLatestByRun(ctx, derefUUID(execCtx.OrgID), execCtx.RunID)
+	record, found, err := o.lookupLatestByRun(ctx, derefUUID(execCtx.AccountID), execCtx.RunID)
 	if err != nil || !found || record.SessionRef == strings.TrimSpace(skipSessionRef) {
 		return nil
 	}
@@ -287,13 +287,13 @@ func (o *sessionOrchestrator) lookupDefaultBinding(
 	skipSessionRef string,
 	resolvedVia string,
 ) *resolvedSession {
-	orgID := derefUUID(execCtx.OrgID)
+	accountID := derefUUID(execCtx.AccountID)
 	profileRef := strings.TrimSpace(execCtx.ProfileRef)
 	defaultBindingKey = strings.TrimSpace(defaultBindingKey)
-	if orgID == uuid.Nil || profileRef == "" || defaultBindingKey == "" {
+	if accountID == uuid.Nil || profileRef == "" || defaultBindingKey == "" {
 		return nil
 	}
-	record, found, err := o.lookupByDefaultBindingKey(ctx, orgID, profileRef, defaultBindingKey)
+	record, found, err := o.lookupByDefaultBindingKey(ctx, accountID, profileRef, defaultBindingKey)
 	if err != nil || !found || record.SessionRef == strings.TrimSpace(skipSessionRef) {
 		return nil
 	}
@@ -336,7 +336,7 @@ func (o *sessionOrchestrator) createSessionWithRef(
 	record := data.ShellSessionRecord{
 		SessionRef:        sessionRef,
 		SessionType:       o.sessionType,
-		OrgID:             derefUUID(execCtx.OrgID),
+		AccountID:             derefUUID(execCtx.AccountID),
 		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
 		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
 		ProjectID:         uuidPtr(execCtx.ProjectID),
@@ -347,9 +347,9 @@ func (o *sessionOrchestrator) createSessionWithRef(
 		DefaultBindingKey: defaultBindingKey,
 		MetadataJSON:      map[string]any{},
 	}
-	if o.db != nil {
-		if record.OrgID == uuid.Nil {
-			return nil, sandboxArgsError("org_id is required for shell sessions")
+	if o.pool != nil {
+		if record.AccountID == uuid.Nil {
+			return nil, sandboxArgsError("account_id is required for shell sessions")
 		}
 		if record.ProfileRef == "" || record.WorkspaceRef == "" {
 			return nil, sandboxArgsError("profile_ref and workspace_ref are required for shell sessions")
@@ -380,7 +380,7 @@ func (o *sessionOrchestrator) createForkedSession(
 	record := *base.Record
 	record.SessionRef = newSessionRef(o.sessionType)
 	record.SessionType = o.sessionType
-	record.OrgID = derefUUID(execCtx.OrgID)
+	record.AccountID = derefUUID(execCtx.AccountID)
 	record.RunID = uuidPtr(execCtx.RunID)
 	record.State = data.ShellSessionStateReady
 	record.LiveSessionID = nil
@@ -436,16 +436,16 @@ func (o *sessionOrchestrator) resolveBrowserSession(
 
 func (o *sessionOrchestrator) lookupLatestByRun(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 ) (data.ShellSessionRecord, bool, error) {
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		var selected data.ShellSessionRecord
 		found := false
 		for _, record := range o.memorySessions {
-			if record.OrgID != orgID || record.SessionType != o.sessionType || record.RunID == nil || *record.RunID != runID || record.State == data.ShellSessionStateClosed {
+			if record.AccountID != accountID || record.SessionType != o.sessionType || record.RunID == nil || *record.RunID != runID || record.State == data.ShellSessionStateClosed {
 				continue
 			}
 			if !found || record.LastUsedAt.After(selected.LastUsedAt) || (record.LastUsedAt.Equal(selected.LastUsedAt) && record.UpdatedAt.After(selected.UpdatedAt)) {
@@ -455,7 +455,7 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetLatestByRunAndType(ctx, o.db, orgID, runID, o.sessionType)
+	record, err := o.sessionsRepo.GetLatestByRunAndType(ctx, o.pool, accountID, runID, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -467,17 +467,17 @@ func (o *sessionOrchestrator) lookupLatestByRun(
 
 func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	profileRef string,
 	defaultBindingKey string,
 ) (data.ShellSessionRecord, bool, error) {
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		var selected data.ShellSessionRecord
 		found := false
 		for _, record := range o.memorySessions {
-			if record.OrgID != orgID || record.SessionType != o.sessionType || strings.TrimSpace(record.ProfileRef) != strings.TrimSpace(profileRef) {
+			if record.AccountID != accountID || record.SessionType != o.sessionType || strings.TrimSpace(record.ProfileRef) != strings.TrimSpace(profileRef) {
 				continue
 			}
 			if strings.TrimSpace(stringPtrValue(record.DefaultBindingKey)) != strings.TrimSpace(defaultBindingKey) || record.State == data.ShellSessionStateClosed {
@@ -489,7 +489,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 		}
 		return selected, found, nil
 	}
-	record, err := o.sessionsRepo.GetByDefaultBindingKeyAndType(ctx, o.db, orgID, profileRef, defaultBindingKey, o.sessionType)
+	record, err := o.sessionsRepo.GetByDefaultBindingKeyAndType(ctx, o.pool, accountID, profileRef, defaultBindingKey, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -500,7 +500,7 @@ func (o *sessionOrchestrator) lookupByDefaultBindingKey(
 }
 
 func (o *sessionOrchestrator) lookupSession(ctx context.Context, execCtx tools.ExecutionContext, sessionRef string) (data.ShellSessionRecord, bool, error) {
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[sessionRef]
@@ -509,7 +509,7 @@ func (o *sessionOrchestrator) lookupSession(ctx context.Context, execCtx tools.E
 		}
 		return data.ShellSessionRecord{}, false, nil
 	}
-	record, err := o.sessionsRepo.GetBySessionRefAndType(ctx, o.db, derefUUID(execCtx.OrgID), sessionRef, o.sessionType)
+	record, err := o.sessionsRepo.GetBySessionRefAndType(ctx, o.pool, derefUUID(execCtx.AccountID), sessionRef, o.sessionType)
 	if err != nil {
 		if data.IsShellSessionNotFound(err) {
 			return data.ShellSessionRecord{}, false, nil
@@ -523,7 +523,7 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 	now := time.Now().UTC()
 	record.LastUsedAt = now
 	record.UpdatedAt = now
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		if record.DefaultBindingKey != nil {
@@ -532,7 +532,7 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 				if sessionRef == record.SessionRef {
 					continue
 				}
-				if existing.OrgID != record.OrgID || existing.SessionType != record.SessionType || existing.State == data.ShellSessionStateClosed {
+				if existing.AccountID != record.AccountID || existing.SessionType != record.SessionType || existing.State == data.ShellSessionStateClosed {
 					continue
 				}
 				if strings.TrimSpace(existing.ProfileRef) != strings.TrimSpace(record.ProfileRef) || stringPtrValue(existing.DefaultBindingKey) != bindingKey {
@@ -547,17 +547,17 @@ func (o *sessionOrchestrator) saveSession(ctx context.Context, execCtx tools.Exe
 		o.memorySessions[record.SessionRef] = record
 		return nil
 	}
-	if err := o.registryService.UpsertProfileRegistry(ctx, record.OrgID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
+	if err := o.registryService.UpsertProfileRegistry(ctx, record.AccountID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
 		return err
 	}
-	if err := o.registryService.UpsertWorkspaceRegistry(ctx, record.OrgID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, nil); err != nil {
+	if err := o.registryService.UpsertWorkspaceRegistry(ctx, record.AccountID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, nil); err != nil {
 		return err
 	}
-	return o.sessionsRepo.Upsert(ctx, o.db, record)
+	return o.sessionsRepo.Upsert(ctx, o.pool, record)
 }
 
 func (o *sessionOrchestrator) clearLiveSession(ctx context.Context, execCtx tools.ExecutionContext, sessionRef string) error {
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[sessionRef]
@@ -573,7 +573,7 @@ func (o *sessionOrchestrator) clearLiveSession(ctx context.Context, execCtx tool
 		o.memorySessions[sessionRef] = record
 		return nil
 	}
-	return o.sessionsRepo.ClearLiveSession(ctx, o.db, derefUUID(execCtx.OrgID), sessionRef)
+	return o.sessionsRepo.ClearLiveSession(ctx, o.pool, derefUUID(execCtx.AccountID), sessionRef)
 }
 
 func (o *sessionOrchestrator) markResult(
@@ -585,7 +585,7 @@ func (o *sessionOrchestrator) markResult(
 	if resolution == nil {
 		return
 	}
-	orgID := derefUUID(execCtx.OrgID)
+	accountID := derefUUID(execCtx.AccountID)
 	state := data.ShellSessionStateReady
 	if resp.Running {
 		state = data.ShellSessionStateBusy
@@ -593,7 +593,7 @@ func (o *sessionOrchestrator) markResult(
 	record := data.ShellSessionRecord{
 		SessionRef:        resolution.SessionRef,
 		SessionType:       o.sessionType,
-		OrgID:             orgID,
+		AccountID:             accountID,
 		ProfileRef:        resolution.ProfileRef(execCtx.ProfileRef),
 		WorkspaceRef:      resolution.WorkspaceRef(execCtx.WorkspaceRef),
 		ProjectID:         resolution.ProjectID(execCtx.ProjectID),
@@ -607,7 +607,7 @@ func (o *sessionOrchestrator) markResult(
 	}
 	if resolution.Record != nil {
 		record = *resolution.Record
-		record.OrgID = orgID
+		record.AccountID = accountID
 		record.SessionType = o.sessionType
 		record.RunID = uuidPtr(execCtx.RunID)
 		record.State = state
@@ -625,23 +625,23 @@ func (o *sessionOrchestrator) markResult(
 	}
 	record.LastUsedAt = time.Now().UTC()
 	record.UpdatedAt = record.LastUsedAt
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		o.memorySessions[resolution.SessionRef] = record
 		return
 	}
-	if err := o.sessionsRepo.Upsert(ctx, o.db, record); err != nil {
+	if err := o.sessionsRepo.Upsert(ctx, o.pool, record); err != nil {
 		return
 	}
-	if err := o.registryService.UpsertProfileRegistry(ctx, orgID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
+	if err := o.registryService.UpsertProfileRegistry(ctx, accountID, execCtx.UserID, record.ProfileRef, stringPtr(record.WorkspaceRef)); err != nil {
 		return
 	}
 	var defaultShellSessionRef *string
 	if o.sessionType == data.ShellSessionTypeShell && strings.HasPrefix(stringPtrValue(record.DefaultBindingKey), "workspace:") {
 		defaultShellSessionRef = stringPtr(record.SessionRef)
 	}
-	_ = o.registryService.UpsertWorkspaceRegistry(ctx, orgID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, defaultShellSessionRef)
+	_ = o.registryService.UpsertWorkspaceRegistry(ctx, accountID, execCtx.UserID, record.ProjectID, record.WorkspaceRef, defaultShellSessionRef)
 }
 
 func normalizeSessionMode(value string) string {
@@ -672,7 +672,7 @@ func normalizeRequestedShareScope(value string) (string, error) {
 	switch strings.TrimSpace(value) {
 	case "":
 		return "", nil
-	case data.ShellShareScopeRun, data.ShellShareScopeThread, data.ShellShareScopeWorkspace, data.ShellShareScopeOrg:
+	case data.ShellShareScopeRun, data.ShellShareScopeThread, data.ShellShareScopeWorkspace, data.ShellShareScopeAccount:
 		return strings.TrimSpace(value), nil
 	default:
 		return "", fmt.Errorf("parameter share_scope must be one of run, thread, workspace, org")
@@ -821,7 +821,7 @@ func (o *sessionOrchestrator) releaseWriterLease(ctx context.Context, execCtx to
 	if resolution == nil || strings.TrimSpace(ownerID) == "" {
 		return
 	}
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[resolution.SessionRef]
@@ -836,7 +836,7 @@ func (o *sessionOrchestrator) releaseWriterLease(ctx context.Context, execCtx to
 		resolution.Record = &record
 		return
 	}
-	if err := o.sessionsRepo.ReleaseWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID); err != nil {
+	if err := o.sessionsRepo.ReleaseWriterLease(ctx, o.pool, derefUUID(execCtx.AccountID), resolution.SessionRef, ownerID); err != nil {
 		return
 	}
 	if resolution.Record != nil {
@@ -849,7 +849,7 @@ func (o *sessionOrchestrator) clearFinishedWriterLease(ctx context.Context, exec
 	if resolution == nil {
 		return nil
 	}
-	if o.db == nil {
+	if o.pool == nil {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		record, ok := o.memorySessions[resolution.SessionRef]
@@ -865,7 +865,7 @@ func (o *sessionOrchestrator) clearFinishedWriterLease(ctx context.Context, exec
 		resolution.Record = &record
 		return nil
 	}
-	if err := o.sessionsRepo.ClearFinishedWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef); err != nil && !data.IsShellSessionNotFound(err) {
+	if err := o.sessionsRepo.ClearFinishedWriterLease(ctx, o.pool, derefUUID(execCtx.AccountID), resolution.SessionRef); err != nil && !data.IsShellSessionNotFound(err) {
 		return err
 	}
 	if resolution.Record != nil {
@@ -908,7 +908,7 @@ func (o *sessionOrchestrator) updateWriterLease(
 	if resolution == nil || ownerID == "" {
 		return data.ShellSessionRecord{}, sandboxArgsError("run_id is required for shell writer lease")
 	}
-	if o.db == nil {
+	if o.pool == nil {
 		return o.updateMemoryWriterLease(execCtx, resolution, ownerID, leaseUntil, renewOnly)
 	}
 	var (
@@ -916,9 +916,9 @@ func (o *sessionOrchestrator) updateWriterLease(
 		err    error
 	)
 	if renewOnly {
-		record, err = o.sessionsRepo.RenewWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+		record, err = o.sessionsRepo.RenewWriterLease(ctx, o.pool, derefUUID(execCtx.AccountID), resolution.SessionRef, ownerID, leaseUntil)
 	} else {
-		record, err = o.sessionsRepo.AcquireWriterLease(ctx, o.db, derefUUID(execCtx.OrgID), resolution.SessionRef, ownerID, leaseUntil)
+		record, err = o.sessionsRepo.AcquireWriterLease(ctx, o.pool, derefUUID(execCtx.AccountID), resolution.SessionRef, ownerID, leaseUntil)
 	}
 	if err == nil {
 		return record, nil
@@ -972,7 +972,7 @@ func (o *sessionOrchestrator) sessionRecord(execCtx tools.ExecutionContext, reso
 	}
 	return data.ShellSessionRecord{
 		SessionRef:        resolution.SessionRef,
-		OrgID:             derefUUID(execCtx.OrgID),
+		AccountID:             derefUUID(execCtx.AccountID),
 		ProfileRef:        strings.TrimSpace(execCtx.ProfileRef),
 		WorkspaceRef:      strings.TrimSpace(execCtx.WorkspaceRef),
 		ProjectID:         uuidPtr(execCtx.ProjectID),

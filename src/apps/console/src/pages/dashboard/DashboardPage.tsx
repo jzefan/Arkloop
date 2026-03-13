@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDashboard, type DashboardData } from '../../api/dashboard'
 import { isApiError } from '../../api'
@@ -74,7 +74,7 @@ export function DashboardPage() {
             <StatCard label={tc.cardInputTokens} value={formatNumber(data.total_input_tokens)} />
             <StatCard label={tc.cardOutputTokens} value={formatNumber(data.total_output_tokens)} />
             <StatCard label={tc.cardCostUSD} value={formatCost(data.total_cost_usd)} />
-            <StatCard label={tc.cardActiveOrgs} value={formatNumber(data.active_orgs)} />
+            <StatCard label={tc.cardActiveUsers} value={formatNumber(data.active_accounts)} />
           </div>
         ) : loading ? (
           <div className="flex flex-1 items-center justify-center">

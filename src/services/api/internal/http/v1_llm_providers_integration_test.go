@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -14,13 +12,13 @@ import (
 	apiCrypto "arkloop/services/api/internal/crypto"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type llmProvidersTestEnv struct {
 	handler     nethttp.Handler
-	appDB        database.DB
+	pool        *pgxpool.Pool
 	adminToken  string
 	memberToken string
 }
@@ -30,38 +28,38 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 
 	db := setupTestDatabase(t, "api_go_llm_providers")
 	ctx := context.Background()
-	appDB, directPool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("user repo: %v", err)
 	}
-	userCredRepo, err := data.NewUserCredentialRepository(appDB)
+	userCredRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("user cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("refresh token repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(appDB)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
-	llmCredentialsRepo, err := data.NewLlmCredentialsRepository(appDB)
+	llmCredentialsRepo, err := data.NewLlmCredentialsRepository(pool)
 	if err != nil {
 		t.Fatalf("llm credentials repo: %v", err)
 	}
-	llmRoutesRepo, err := data.NewLlmRoutesRepository(appDB)
+	llmRoutesRepo, err := data.NewLlmRoutesRepository(pool)
 	if err != nil {
 		t.Fatalf("llm routes repo: %v", err)
 	}
@@ -74,7 +72,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("new key ring: %v", err)
 	}
-	secretsRepo, err := data.NewSecretsRepository(appDB, ring)
+	secretsRepo, err := data.NewSecretsRepository(pool, ring)
 	if err != nil {
 		t.Fatalf("secrets repo: %v", err)
 	}
@@ -107,14 +105,14 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if _, err := membershipRepo.Create(ctx, org.ID, adminUser.ID, auth.RolePlatformAdmin); err != nil {
 		t.Fatalf("create admin membership: %v", err)
 	}
-	if _, err := membershipRepo.Create(ctx, org.ID, memberUser.ID, auth.RoleOrgMember); err != nil {
+	if _, err := membershipRepo.Create(ctx, org.ID, memberUser.ID, auth.RoleAccountMember); err != nil {
 		t.Fatalf("create member membership: %v", err)
 	}
 	adminToken, err := tokenService.Issue(adminUser.ID, org.ID, auth.RolePlatformAdmin, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue admin token: %v", err)
 	}
-	memberToken, err := tokenService.Issue(memberUser.ID, org.ID, auth.RoleOrgMember, time.Now().UTC())
+	memberToken, err := tokenService.Issue(memberUser.ID, org.ID, auth.RoleAccountMember, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue member token: %v", err)
 	}
@@ -122,12 +120,12 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	t.Cleanup(cancelListener)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		DirectPool:              directPool,
+		Pool:                    pool,
+		DirectPool:              pool,
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
-		OrgMembershipRepo:       membershipRepo,
+		AccountMembershipRepo:       membershipRepo,
 		LlmCredentialsRepo:      llmCredentialsRepo,
 		LlmRoutesRepo:           llmRoutesRepo,
 		SecretsRepo:             secretsRepo,
@@ -135,7 +133,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 
 	return llmProvidersTestEnv{
 		handler:     handler,
-		appDB:            appDB,
+		pool:        pool,
 		adminToken:  adminToken,
 		memberToken: memberToken,
 	}
@@ -484,7 +482,7 @@ func TestLlmProvidersDeleteRemovesSecret(t *testing.T) {
 	}
 
 	var count int
-	if err := env.appDB.QueryRow(context.Background(), `SELECT COUNT(*) FROM secrets WHERE name = $1`, "llm_cred:"+provider.ID).Scan(&count); err != nil {
+	if err := env.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM secrets WHERE name = $1`, "llm_cred:"+provider.ID).Scan(&count); err != nil {
 		t.Fatalf("count secret: %v", err)
 	}
 	if count != 0 {

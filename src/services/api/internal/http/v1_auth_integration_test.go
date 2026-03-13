@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -21,19 +19,19 @@ import (
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/testutil"
-	"arkloop/services/shared/database"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -46,23 +44,23 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
@@ -71,11 +69,11 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -87,7 +85,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	registerBody := map[string]any{"login": "alice", "password": "pwd12345", "email": "alice@test.com"}
@@ -147,7 +145,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	meAfterLogout := doJSON(handler, nethttp.MethodGet, "/v1/me", nil, authHeader(refreshPayload.AccessToken))
 	assertErrorEnvelope(t, meAfterLogout, nethttp.StatusUnauthorized, "auth.invalid_token")
 
-	actions, err := countAuditActions(ctx, appDB)
+	actions, err := countAuditActions(ctx, pool)
 	if err != nil {
 		t.Fatalf("count audit actions: %v", err)
 	}
@@ -253,7 +251,7 @@ func TestAuthResolveOTPFlow(t *testing.T) {
 		t.Fatalf("unexpected otp send status: %d body=%s", sendResp.Code, sendResp.Body.String())
 	}
 
-	code := extractLatestEmailOTPCode(t, env.appDB, "alice@test.com")
+	code := extractLatestEmailOTPCode(t, env.pool, "alice@test.com")
 	verifyResp := doJSON(env.handler, nethttp.MethodPost, "/v1/auth/resolve/otp/verify", map[string]any{
 		"flow_token": resolvePayload.FlowToken,
 		"code":       code,
@@ -302,11 +300,11 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_password_policy")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -318,23 +316,23 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
@@ -343,11 +341,11 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -358,7 +356,7 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	cases := []struct {
@@ -402,11 +400,11 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_legacy_password")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -418,27 +416,27 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(appDB)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
@@ -447,11 +445,11 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -462,7 +460,7 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	legacyUser, err := userRepo.Create(ctx, "legacy-user", "legacy-user@test.com", "")
@@ -501,11 +499,11 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_me_membership")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -518,23 +516,23 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
@@ -543,11 +541,11 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -559,7 +557,7 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
@@ -569,9 +567,9 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	}
 	registerPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
 
-	_, err = appDB.Exec(ctx, `DELETE FROM org_memberships m
-		USING orgs o
-		WHERE m.org_id = o.id
+	_, err = pool.Exec(ctx, `DELETE FROM account_memberships m
+		USING accounts o
+		WHERE m.account_id = o.id
 		  AND m.user_id = $1::uuid
 		  AND o.type = 'personal'`, registerPayload.UserID)
 	if err != nil {
@@ -592,11 +590,11 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_relogin")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -609,23 +607,23 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
@@ -634,11 +632,11 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -650,7 +648,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	// register
@@ -712,11 +710,11 @@ func TestAuthCookieIsolation(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_auth_cookie_iso")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -728,18 +726,18 @@ func TestAuthCookieIsolation(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	jobRepo, _ := data.NewJobRepository(appDB)
+	userRepo, _ := data.NewUserRepository(pool)
+	credentialRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	auditRepo, _ := data.NewAuditLogRepository(pool)
+	jobRepo, _ := data.NewJobRepository(pool)
 
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -750,7 +748,7 @@ func TestAuthCookieIsolation(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	// register two users
@@ -933,7 +931,7 @@ func countAuditActions(ctx context.Context, db data.Querier) (map[string]int, er
 
 type authResolveTestEnv struct {
 	handler          nethttp.Handler
-	appDB        database.DB
+	pool             *pgxpool.Pool
 	featureFlagsRepo *data.FeatureFlagRepository
 }
 
@@ -954,11 +952,11 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 
 	db := setupTestDatabase(t, dbName)
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -970,35 +968,35 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	otpRepo, err := data.NewEmailOTPTokenRepository(appDB)
+	otpRepo, err := data.NewEmailOTPTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new email otp repo: %v", err)
 	}
-	featureFlagsRepo, err := data.NewFeatureFlagRepository(appDB)
+	featureFlagsRepo, err := data.NewFeatureFlagRepository(pool)
 	if err != nil {
 		t.Fatalf("new feature flags repo: %v", err)
 	}
@@ -1013,7 +1011,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 	}
 	authService.SetFlagService(featureFlagSvc)
 
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -1029,7 +1027,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 		RegistrationService:  registrationService,
 		EmailOTPLoginService: emailOTPLoginService,
 		AuditWriter:          auditWriter,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		UsersRepo:            userRepo,
 		UserCredentialRepo:   credentialRepo,
 		FeatureFlagService:   featureFlagSvc,
@@ -1037,16 +1035,16 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 
 	return authResolveTestEnv{
 		handler:          handler,
-		appDB:            appDB,
+		pool:             pool,
 		featureFlagsRepo: featureFlagsRepo,
 	}
 }
 
-func extractLatestEmailOTPCode(t *testing.T, db database.DB, email string) string {
+func extractLatestEmailOTPCode(t *testing.T, pool *pgxpool.Pool, email string) string {
 	t.Helper()
 
 	var raw []byte
-	err := db.QueryRow(
+	err := pool.QueryRow(
 		context.Background(),
 		`SELECT payload_json::text
 		 FROM jobs

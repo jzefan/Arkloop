@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 )
@@ -24,24 +23,19 @@ const (
 )
 
 type JobRepository struct {
-	db      Querier
-	dialect database.DialectHelper
+	db Querier
 }
 
-func NewJobRepository(db Querier, dialect ...database.DialectHelper) (*JobRepository, error) {
+func NewJobRepository(db Querier) (*JobRepository, error) {
 	if db == nil {
 		return nil, errors.New("db must not be nil")
 	}
-	d := database.DialectHelper(database.PostgresDialect{})
-	if len(dialect) > 0 && dialect[0] != nil {
-		d = dialect[0]
-	}
-	return &JobRepository{db: db, dialect: d}, nil
+	return &JobRepository{db: db}, nil
 }
 
 func (r *JobRepository) EnqueueRun(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 	traceID string,
 	queueJobType string,
@@ -51,8 +45,8 @@ func (r *JobRepository) EnqueueRun(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if orgID == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("account_id must not be empty")
 	}
 	if runID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("run_id must not be empty")
@@ -75,7 +69,7 @@ func (r *JobRepository) EnqueueRun(
 		"job_id":   jobID.String(),
 		"type":     RunExecuteJobType,
 		"trace_id": chosenTraceID,
-		"org_id":   orgID.String(),
+		"account_id":   accountID.String(),
 		"run_id":   runID.String(),
 		"payload":  payloadCopy,
 	}
@@ -96,7 +90,7 @@ func (r *JobRepository) EnqueueRun(
 		   id, job_type, payload_json, status, available_at,
 		   leased_until, lease_token, attempts, created_at, updated_at
 		 ) VALUES (
-		   $1, $2, `+r.dialect.JSONCast("$3")+`, $4, COALESCE($5, now()),
+		   $1, $2, $3::jsonb, $4, COALESCE($5, now()),
 		   NULL, NULL, 0, now(), now()
 		 )`,
 		jobID,
@@ -155,7 +149,7 @@ func (r *JobRepository) EnqueueEmail(ctx context.Context, to, subject, html, tex
 		   id, job_type, payload_json, status, available_at,
 		   leased_until, lease_token, attempts, created_at, updated_at
 		 ) VALUES (
-		   $1, $2, `+r.dialect.JSONCast("$3")+`, $4, now(),
+		   $1, $2, $3::jsonb, $4, now(),
 		   NULL, NULL, 0, now(), now()
 		 )`,
 		jobID,

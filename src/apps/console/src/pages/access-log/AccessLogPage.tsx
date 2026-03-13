@@ -4,7 +4,7 @@ import { RefreshCw, Shield, Search, X } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { EmptyState } from '../../components/EmptyState'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { listAccessLog, type AccessLogEntry, type AccessLogParams } from '../../api/access-log'
 
@@ -43,15 +43,15 @@ function identityLabel(entry: AccessLogEntry, anonLabel: string) {
   if (entry.identity_type === 'jwt') {
     const label = entry.username || entry.user_id?.slice(0, 8) || '--'
     return (
-      <span className="font-mono text-xs" title={`user: ${entry.user_id}\norg: ${entry.org_id}`}>
+      <span className="font-mono text-xs" title={`user: ${entry.user_id}\naccount: ${entry.account_id}`}>
         {label}
       </span>
     )
   }
   if (entry.identity_type === 'api_key') {
     return (
-      <span className="text-xs" title={`org: ${entry.org_id}`}>
-        API Key / {entry.org_id?.slice(0, 8) || '--'}
+      <span className="text-xs" title={`account: ${entry.account_id}`}>
+        API Key / {entry.account_id?.slice(0, 8) || '--'}
       </span>
     )
   }

@@ -19,19 +19,15 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
-	"arkloop/services/api/internal/featureflag"
-	"arkloop/services/api/internal/http/featuregate"
 	"arkloop/services/api/internal/observability"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/pgnotify"
 	"arkloop/services/shared/runlimit"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"arkloop/services/shared/eventbus"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -41,7 +37,6 @@ var (
 )
 
 const (
-	clawDefaultPersonaID        = "claw"
 	searchOutputModelKeyGPT5    = "gpt5"
 	searchOutputModelKeyClaude4 = "claude4"
 	searchOutputModelKeyGemini3 = "gemini3"
@@ -76,7 +71,7 @@ type threadRunResponse struct {
 
 type runResponse struct {
 	RunID           string   `json:"run_id"`
-	OrgID           string   `json:"org_id"`
+	AccountID           string   `json:"account_id"`
 	ThreadID        string   `json:"thread_id"`
 	CreatedByUserID *string  `json:"created_by_user_id"`
 	ParentRunID     *string  `json:"parent_run_id,omitempty"`
@@ -96,7 +91,7 @@ type submitInputResponse struct {
 
 type globalRunResponse struct {
 	RunID             string   `json:"run_id"`
-	OrgID             string   `json:"org_id"`
+	AccountID             string   `json:"account_id"`
 	ThreadID          string   `json:"thread_id"`
 	Status            string   `json:"status"`
 	Model             *string  `json:"model,omitempty"`
@@ -119,15 +114,14 @@ type globalRunResponse struct {
 
 func createThreadRun(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
 	limiter *data.RunLimiter,
 	entSvc *entitlement.Service,
-	concurrencyLimiter runlimit.ConcurrencyLimiter,
-	flagService *featureflag.Service,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -140,7 +134,7 @@ func createThreadRun(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || db == nil {
+		if threadRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -209,16 +203,11 @@ func createThreadRun(
 			return
 		}
 
-		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.create", thread, auditWriter, flagService) {
+		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.create", thread, auditWriter) {
 			return
 		}
-		if thread.Mode == data.ThreadModeClaw {
-			if _, exists := startedData["persona_id"]; !exists {
-				startedData["persona_id"] = clawDefaultPersonaID
-			}
-		}
 		if outputRouteID == "" && outputModelKey != "" {
-			resolvedOutputRouteID, err := resolveSearchOutputRouteID(r.Context(), db, thread, outputModelKey)
+			resolvedOutputRouteID, err := resolveSearchOutputRouteID(r.Context(), pool, thread, outputModelKey)
 			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
@@ -229,38 +218,38 @@ func createThreadRun(
 		}
 
 		var acquired bool
-		if entSvc != nil && concurrencyLimiter != nil {
-			// 从权益系统获取该 org 的并发上限，动态解析覆盖全局配置。
-			limitVal, err := entSvc.Resolve(r.Context(), thread.OrgID, "limit.concurrent_runs")
+		if entSvc != nil && rdb != nil {
+			// 从权益系统获取该 account 的并发上限，动态解析覆盖全局配置。
+			limitVal, err := entSvc.Resolve(r.Context(), thread.AccountID, "limit.concurrent_runs")
 			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
-			key := runlimit.Key(thread.OrgID.String())
-			if !concurrencyLimiter.TryAcquire(r.Context(), key, limitVal.Int()) {
+			key := runlimit.Key(thread.AccountID.String())
+			if !runlimit.TryAcquire(r.Context(), rdb, key, limitVal.Int()) {
 				httpkit.WriteError(w, nethttp.StatusTooManyRequests, "runs.limit_exceeded", "concurrent run limit exceeded", traceID, nil)
 				return
 			}
 			acquired = true
 			defer func() {
 				if acquired {
-					concurrencyLimiter.Release(r.Context(), key)
+					runlimit.Release(r.Context(), rdb, key)
 				}
 			}()
 		} else if limiter != nil {
-			if !limiter.TryAcquire(r.Context(), thread.OrgID) {
+			if !limiter.TryAcquire(r.Context(), thread.AccountID) {
 				httpkit.WriteError(w, nethttp.StatusTooManyRequests, "runs.limit_exceeded", "concurrent run limit exceeded", traceID, nil)
 				return
 			}
 			acquired = true
 			defer func() {
 				if acquired {
-					limiter.Release(r.Context(), thread.OrgID)
+					limiter.Release(r.Context(), thread.AccountID)
 				}
 			}()
 		}
 
-		tx, err := db.Begin(r.Context())
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -280,7 +269,7 @@ func createThreadRun(
 
 		run, _, err := runRepo.CreateRunWithStartedEvent(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			thread.ID,
 			&actor.UserID,
 			"run.started",
@@ -293,7 +282,7 @@ func createThreadRun(
 
 		_, err = jobRepo.EnqueueRun(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			run.ID,
 			traceID,
 			data.RunExecuteJobType,
@@ -335,12 +324,12 @@ func normalizeSearchOutputModelKey(raw string) string {
 
 func resolveSearchOutputRouteID(
 	ctx context.Context,
-	db database.DB,
+	pool *pgxpool.Pool,
 	thread *data.Thread,
 	outputModelKey string,
 ) (string, error) {
-	if db != nil && thread != nil {
-		routeID, err := resolveSearchOutputRouteIDFromPlatformSetting(ctx, db, thread.OrgID, outputModelKey)
+	if pool != nil && thread != nil {
+		routeID, err := resolveSearchOutputRouteIDFromPlatformSetting(ctx, pool, thread.AccountID, outputModelKey)
 		if err != nil {
 			return "", err
 		}
@@ -353,12 +342,12 @@ func resolveSearchOutputRouteID(
 
 func resolveSearchOutputRouteIDFromPlatformSetting(
 	ctx context.Context,
-	db database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	outputModelKey string,
 ) (string, error) {
 	var raw string
-	if err := db.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT value FROM platform_settings WHERE key = $1`,
 		searchHybridOutputModelsKey,
 	).Scan(&raw); err != nil {
@@ -376,7 +365,7 @@ func resolveSearchOutputRouteIDFromPlatformSetting(
 	if selector == "" {
 		return "", nil
 	}
-	return resolveSearchOutputRouteIDByModelSelector(ctx, db, orgID, selector)
+	return resolveSearchOutputRouteIDByModelSelector(ctx, pool, accountID, selector)
 }
 
 func pickSearchOutputModelSelector(models map[string]any, outputModelKey string) string {
@@ -396,8 +385,8 @@ func pickSearchOutputModelSelector(models map[string]any, outputModelKey string)
 
 func resolveSearchOutputRouteIDByModelSelector(
 	ctx context.Context,
-	db database.DB,
-	orgID uuid.UUID,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
 	selector string,
 ) (string, error) {
 	cleanedSelector := strings.TrimSpace(selector)
@@ -408,18 +397,18 @@ func resolveSearchOutputRouteIDByModelSelector(
 	parts := strings.SplitN(cleanedSelector, "^", 2)
 	var routeID uuid.UUID
 	if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
-		err := db.QueryRow(
+		err := pool.QueryRow(
 			ctx,
 			`SELECT r.id
 			 FROM llm_routes r
 			 JOIN llm_credentials c ON c.id = r.credential_id
-			 WHERE r.org_id = $1
+			 WHERE r.account_id = $1
 			   AND c.revoked_at IS NULL
 			   AND lower(c.name) = lower($2)
 			   AND lower(r.model) = lower($3)
 			 ORDER BY r.priority DESC, r.is_default DESC
 			 LIMIT 1`,
-			orgID,
+			accountID,
 			strings.TrimSpace(parts[0]),
 			strings.TrimSpace(parts[1]),
 		).Scan(&routeID)
@@ -430,17 +419,17 @@ func resolveSearchOutputRouteIDByModelSelector(
 			return "", err
 		}
 	} else {
-		err := db.QueryRow(
+		err := pool.QueryRow(
 			ctx,
 			`SELECT r.id
 			 FROM llm_routes r
 			 JOIN llm_credentials c ON c.id = r.credential_id
-			 WHERE r.org_id = $1
+			 WHERE r.account_id = $1
 			   AND c.revoked_at IS NULL
 			   AND lower(r.model) = lower($2)
 			 ORDER BY r.priority DESC, r.is_default DESC
 			 LIMIT 1`,
-			orgID,
+			accountID,
 			cleanedSelector,
 		).Scan(&routeID)
 		if err != nil {
@@ -480,12 +469,11 @@ func resolveSearchOutputRouteIDFromEnv(outputModelKey string) string {
 
 func listThreadRuns(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	runRepo *data.RunEventRepository,
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodGet {
@@ -526,11 +514,11 @@ func listThreadRuns(
 			return
 		}
 
-		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.list", thread, auditWriter, flagService) {
+		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.list", thread, auditWriter) {
 			return
 		}
 
-		runs, err := runRepo.ListRunsByThread(r.Context(), actor.OrgID, threadID, limit)
+		runs, err := runRepo.ListRunsByThread(r.Context(), actor.AccountID, threadID, limit)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -560,12 +548,10 @@ func listThreadRuns(
 
 func getRun(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -597,9 +583,6 @@ func getRun(
 		}
 
 		if !authorizeRunOrAudit(w, r, traceID, actor, "runs.get", run, auditWriter) {
-			return
-		}
-		if !featuregate.EnsureClawEnabledForRun(w, traceID, r.Context(), run, threadRepo, flagService) {
 			return
 		}
 
@@ -637,7 +620,7 @@ func getRun(
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, runResponse{
 			RunID:           run.ID.String(),
-			OrgID:           run.OrgID.String(),
+			AccountID:           run.AccountID.String(),
 			ThreadID:        run.ThreadID.String(),
 			CreatedByUserID: createdByUserID,
 			ParentRunID:     parentRunID,
@@ -651,13 +634,11 @@ func getRun(
 
 func cancelRun(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -665,7 +646,7 @@ func cancelRun(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if runRepo == nil || db == nil {
+		if runRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -691,11 +672,8 @@ func cancelRun(
 		if !authorizeRunOrAudit(w, r, traceID, actor, "runs.cancel", run, auditWriter) {
 			return
 		}
-		if !featuregate.EnsureClawEnabledForRun(w, traceID, r.Context(), run, threadRepo, flagService) {
-			return
-		}
 
-		tx, err := db.Begin(r.Context())
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -725,10 +703,10 @@ func cancelRun(
 		}
 
 		// 通知 worker 立即中断，失败可忽略（worker 有 DB 兜底检查）
-		_, _ = db.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
 
 		if auditWriter != nil {
-			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.OrgID, actor.UserID, run.ID)
+			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.AccountID, actor.UserID, run.ID)
 		}
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, cancelRunResponse{OK: true})
@@ -737,14 +715,12 @@ func cancelRun(
 
 func submitRunInput(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
 	resolver sharedconfig.Resolver,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -752,7 +728,7 @@ func submitRunInput(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if runRepo == nil || db == nil {
+		if runRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -779,8 +755,7 @@ func submitRunInput(
 
 		limitBytes := 32768
 		if resolver != nil {
-			orgID := actor.OrgID
-			raw, err := resolver.Resolve(r.Context(), "limit.max_input_content_bytes", sharedconfig.Scope{OrgID: &orgID})
+			raw, err := resolver.Resolve(r.Context(), "limit.max_input_content_bytes", sharedconfig.Scope{})
 			if err == nil {
 				if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && v > 0 {
 					limitBytes = v
@@ -806,11 +781,8 @@ func submitRunInput(
 		if !authorizeRunOrAudit(w, r, traceID, actor, "runs.input", run, auditWriter) {
 			return
 		}
-		if !featuregate.EnsureClawEnabledForRun(w, traceID, r.Context(), run, threadRepo, flagService) {
-			return
-		}
 
-		tx, err := db.Begin(r.Context())
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -839,7 +811,7 @@ func submitRunInput(
 		}
 
 		// 唤醒 Worker 侧的 WaitForInput LISTEN goroutine
-		_, _ = db.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, run.ID.String())
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, run.ID.String())
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, submitInputResponse{OK: true})
 	}
@@ -847,16 +819,14 @@ func submitRunInput(
 
 func streamRunEvents(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
 	directPool *pgxpool.Pool,
 	directPoolAcquireTimeout time.Duration,
 	sseConfig SSEConfig,
 	apiKeysRepo *data.APIKeysRepository,
-	bus eventbus.EventBus,
-	flagService *featureflag.Service,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -888,9 +858,6 @@ func streamRunEvents(
 		}
 
 		if !authorizeRunOrAudit(w, r, traceID, actor, "runs.events", run, auditWriter) {
-			return
-		}
-		if !featuregate.EnsureClawEnabledForRun(w, traceID, r.Context(), run, threadRepo, flagService) {
 			return
 		}
 
@@ -953,38 +920,36 @@ func streamRunEvents(
 			}
 		}
 
-		// EventBus 跨实例广播（Redis 模式）或进程内广播（Local 模式）
-		var busCh <-chan struct{}
-		if follow && bus != nil {
+		// Redis Pub/Sub 跨实例广播
+		var redisCh <-chan struct{}
+		if follow && rdb != nil {
 			redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
-			sub, subErr := bus.Subscribe(r.Context(), redisChannel)
-			if subErr == nil {
-				msgCh := sub.Channel()
-				ch := make(chan struct{}, 1)
-				busCh = ch
-				go func() {
-					defer sub.Close()
-					for {
-						select {
-						case <-r.Context().Done():
+			sub := rdb.Subscribe(r.Context(), redisChannel)
+			msgCh := sub.Channel()
+			ch := make(chan struct{}, 1)
+			redisCh = ch
+			go func() {
+				defer sub.Close()
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case _, ok := <-msgCh:
+						if !ok {
 							return
-						case _, ok := <-msgCh:
-							if !ok {
-								return
-							}
-							select {
-							case ch <- struct{}{}:
-							default:
-							}
+						}
+						select {
+						case ch <- struct{}{}:
+						default:
 						}
 					}
-				}()
-			}
+				}
+			}()
 		}
 
-		// 合并 pg_notify + EventBus 为单一持久信号 channel，避免循环内重复创建 goroutine。
+		// 合并 pg_notify + Redis Pub/Sub 为单一持久信号 channel，避免循环内重复创建 goroutine。
 		var sigCh <-chan struct{}
-		if notifyCh != nil && busCh != nil {
+		if notifyCh != nil && redisCh != nil {
 			merged := make(chan struct{}, 1)
 			sigCh = merged
 			go func() {
@@ -993,7 +958,7 @@ func streamRunEvents(
 					case <-r.Context().Done():
 						return
 					case <-notifyCh:
-					case <-busCh:
+					case <-redisCh:
 					}
 					select {
 					case merged <- struct{}{}:
@@ -1003,8 +968,8 @@ func streamRunEvents(
 			}()
 		} else if notifyCh != nil {
 			sigCh = notifyCh
-		} else if busCh != nil {
-			sigCh = busCh
+		} else if redisCh != nil {
+			sigCh = redisCh
 		}
 
 		cursor := afterSeq
@@ -1148,23 +1113,21 @@ func parseInt64(raw string) (int64, error) {
 
 func runEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	directPool *pgxpool.Pool,
 	directPoolAcquireTimeout time.Duration,
 	sseConfig SSEConfig,
 	apiKeysRepo *data.APIKeysRepository,
 	resolver sharedconfig.Resolver,
-	bus eventbus.EventBus,
-	flagService *featureflag.Service,
+	rdb *redis.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
-	get := getRun(authService, membershipRepo, runRepo, threadRepo, auditWriter, apiKeysRepo, flagService)
-	cancel := cancelRun(authService, membershipRepo, runRepo, threadRepo, auditWriter, db, apiKeysRepo, flagService)
-	submitInput := submitRunInput(authService, membershipRepo, runRepo, threadRepo, auditWriter, db, apiKeysRepo, resolver, flagService)
-	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, threadRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, bus, flagService)
+	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
+	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
+	submitInput := submitRunInput(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo, resolver)
+	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, rdb)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -1262,8 +1225,8 @@ func authorizeRunOrAudit(
 	}
 
 	denyReason := "owner_mismatch"
-	if actor.OrgID != run.OrgID {
-		denyReason = "org_mismatch"
+	if actor.AccountID != run.AccountID {
+		denyReason = "account_mismatch"
 	} else if run.CreatedByUserID == nil {
 		denyReason = "no_owner"
 	} else if *run.CreatedByUserID == actor.UserID {
@@ -1274,12 +1237,12 @@ func authorizeRunOrAudit(
 		auditWriter.WriteAccessDenied(
 			r.Context(),
 			traceID,
-			actor.OrgID,
+			actor.AccountID,
 			actor.UserID,
 			action,
 			"run",
 			run.ID.String(),
-			run.OrgID,
+			run.AccountID,
 			run.CreatedByUserID,
 			denyReason,
 		)
@@ -1298,11 +1261,9 @@ func authorizeRunOrAudit(
 
 func listGlobalRuns(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
-	threadRepo *data.ThreadRepository,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -1348,35 +1309,25 @@ func listGlobalRuns(
 			}
 		}
 
-		if rawOrg := q.Get("org_id"); rawOrg != "" {
-			parsed, err := uuid.Parse(rawOrg)
+		if rawAccount := q.Get("account_id"); rawAccount != "" {
+			parsed, err := uuid.Parse(rawAccount)
 			if err != nil {
-				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid org_id", traceID, nil)
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid account_id", traceID, nil)
 				return
 			}
-			if !isPlatformAdmin && parsed != actor.OrgID {
+			if !isPlatformAdmin && parsed != actor.AccountID {
 				httpkit.WriteError(w, nethttp.StatusForbidden, "auth.forbidden", "access denied", traceID, nil)
 				return
 			}
-			params.OrgID = &parsed
+			params.AccountID = &parsed
 		} else if !isPlatformAdmin {
-			params.OrgID = &actor.OrgID
+			params.AccountID = &actor.AccountID
 		}
 
 		if rawThreadID := strings.TrimSpace(q.Get("thread_id")); rawThreadID != "" {
 			parsed, err := uuid.Parse(rawThreadID)
 			if err == nil {
 				params.ThreadID = &parsed
-				if threadRepo != nil {
-					thread, err := threadRepo.GetByID(r.Context(), parsed)
-					if err != nil {
-						httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-						return
-					}
-					if thread != nil && !featuregate.EnsureClawEnabledForThread(w, traceID, r.Context(), thread, flagService) {
-						return
-					}
-				}
 			} else {
 				if !uuidPrefixRegex.MatchString(rawThreadID) {
 					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid thread_id", traceID, nil)
@@ -1462,28 +1413,11 @@ func listGlobalRuns(
 			return
 		}
 
-		clawEnabled := featureflag.IsClawEnabled(r.Context(), flagService)
 		resp := make([]globalRunResponse, 0, len(runs))
-		visibleTotal := 0
 		for _, rw := range runs {
-			if !clawEnabled && threadRepo != nil {
-				thread, err := threadRepo.GetByID(r.Context(), rw.ThreadID)
-				if err != nil {
-					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-					return
-				}
-				if thread == nil {
-					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-					return
-				}
-				if thread.Mode == data.ThreadModeClaw {
-					continue
-				}
-			}
-			visibleTotal++
 			item := globalRunResponse{
 				RunID:             rw.ID.String(),
-				OrgID:             rw.OrgID.String(),
+				AccountID:             rw.AccountID.String(),
 				ThreadID:          rw.ThreadID.String(),
 				Status:            rw.Status,
 				Model:             rw.Model,
@@ -1518,13 +1452,8 @@ func listGlobalRuns(
 		}
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]any{
-			"data": resp,
-			"total": func() int {
-				if clawEnabled || threadRepo == nil {
-					return int(total)
-				}
-				return visibleTotal
-			}(),
+			"data":  resp,
+			"total": total,
 		})
 	}
 }

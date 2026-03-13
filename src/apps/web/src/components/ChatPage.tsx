@@ -3,11 +3,13 @@ import { useParams, useLocation, useOutletContext, useNavigate } from 'react-rou
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2, X } from 'lucide-react'
+import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
+import UserInputCard from './UserInputCard'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { ShareModal } from './ShareModal'
@@ -35,6 +37,7 @@ import {
   buildMessageBrowserActionsFromRunEvents,
 } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
+import type { UserInputRequest, UserInputResponse, RequestedSchema } from '../userInputTypes'
 import {
   createMessage,
   createRun,
@@ -229,6 +232,7 @@ export function ChatPage() {
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
   const [checkInSubmitting, setCheckInSubmitting] = useState(false)
+  const [pendingUserInput, setPendingUserInput] = useState<UserInputRequest | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [sharingMessageId, setSharingMessageId] = useState<string | null>(null)
@@ -728,6 +732,7 @@ export function ChatPage() {
     clearTimeout(liveTimelineExitTimerRef.current)
     setCancelSubmitting(false)
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     pendingMessageRef.current = null
     setQueuedDraft(null)
@@ -1058,7 +1063,23 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.input_requested') {
-        setAwaitingInput(true)
+        const data = event.data as Record<string, unknown> | undefined
+        const message = data?.message as string | undefined
+        const schema = data?.requestedSchema as RequestedSchema | undefined
+        if (message && schema && schema.properties && Object.keys(schema.properties).length > 0) {
+          // 规范化 required 字段，防止 LLM 传非数组值导致前端崩溃
+          const safeSchema: RequestedSchema = {
+            ...schema,
+            required: Array.isArray(schema.required) ? schema.required : undefined,
+          }
+          setPendingUserInput({
+            request_id: (data?.request_id as string) ?? '',
+            message,
+            requestedSchema: safeSchema,
+          })
+        } else {
+          setAwaitingInput(true)
+        }
         continue
       }
 
@@ -1086,6 +1107,7 @@ export function ChatPage() {
         }
         setQueuedDraft(null)
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
@@ -1162,6 +1184,7 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const data = event.data as { trace_id?: unknown }
@@ -1182,6 +1205,7 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
         setAwaitingInput(false)
+        setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const obj = event.data as { message?: unknown; error_class?: unknown }
@@ -1235,6 +1259,7 @@ export function ChatPage() {
     if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
     setQueuedDraft(null)
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     if (threadId) onRunEnded(threadId)
     refreshCredits()
@@ -1557,6 +1582,7 @@ export function ChatPage() {
       await provideInput(accessToken, activeRunId, text)
       setCheckInDraft('')
       setAwaitingInput(false)
+      setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -1568,6 +1594,38 @@ export function ChatPage() {
     }
   }, [activeRunId, accessToken, checkInDraft, checkInSubmitting, onLoggedOut])
 
+  const handleUserInputSubmit = useCallback(async (response: UserInputResponse) => {
+    if (!activeRunId) return
+    setError(null)
+    try {
+      await provideInput(accessToken, activeRunId, JSON.stringify(response.answers))
+      setPendingUserInput(null)
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    }
+  }, [accessToken, activeRunId, onLoggedOut])
+
+  const handleUserInputDismiss = useCallback(async () => {
+    if (!activeRunId) return
+    const req = pendingUserInput
+    if (!req) return
+    setError(null)
+    try {
+      await provideInput(accessToken, activeRunId, JSON.stringify({}))
+      setPendingUserInput(null)
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    }
+  }, [accessToken, activeRunId, pendingUserInput, onLoggedOut])
+
   const handleCancel = useCallback(() => {
     if (!activeRunId || cancelSubmitting) return
     const runId = activeRunId
@@ -1576,6 +1634,7 @@ export function ChatPage() {
     setActiveRunId(null)
     setAssistantDraft('')
     setAwaitingInput(false)
+    setPendingUserInput(null)
     setCheckInDraft('')
     setCancelSubmitting(true)
     setError(null)
@@ -1847,14 +1906,14 @@ export function ChatPage() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScrollContainerScroll}
-            className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)]"
+            className="relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)] [scrollbar-gutter:stable]"
           >
         <div
           style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? '32px' : '60px'} 200px`, transition: 'padding 280ms cubic-bezier(0.16,1,0.3,1)' }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
-            <div className="py-20 text-center text-sm text-[var(--c-text-muted)]">加载中...</div>
+            <div className="py-20 text-center text-sm text-[var(--c-text-muted)]">{t.loading}</div>
           ) : (
             <>
               {messages.map((msg, idx) => {
@@ -2040,17 +2099,15 @@ export function ChatPage() {
                                   width: '8px',
                                   height: '8px',
                                   borderRadius: '50%',
-                                  background: ce.exitCode != null
-                                    ? 'var(--c-border-subtle)'
-                                    : 'var(--c-text-secondary)',
+                                  background: codeExecutionAccentColor(ce.status),
                                   border: '2px solid var(--c-bg-page)',
                                   zIndex: 1,
                                 }}
                               />
                             )}
                             {ce.language === 'shell'
-                              ? <ShellExecutionBlock code={ce.code} output={ce.output} exitCode={ce.exitCode} isStreaming={isStreaming} />
-                              : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
+                              ? <ShellExecutionBlock code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                              : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
                             }
                           </motion.div>
                         )
@@ -2103,8 +2160,8 @@ export function ChatPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {dedupedTopLevelCodeExecutions.map((ce) =>
                     ce.language === 'shell'
-                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} exitCode={ce.exitCode} />
-                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} exitCode={ce.exitCode} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
+                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
                   )}
                 </div>
               )}
@@ -2137,7 +2194,7 @@ export function ChatPage() {
                     disabled={checkInSubmitting}
                     className="w-full resize-none rounded-lg bg-transparent px-1 py-0.5 text-sm outline-none"
                     style={{ color: 'var(--c-text-primary)', caretColor: 'var(--c-text-primary)' }}
-                    placeholder="Type your response..."
+                    placeholder={t.checkInPlaceholder}
                   />
                   <div className="flex justify-end">
                     <button
@@ -2225,25 +2282,44 @@ export function ChatPage() {
             </button>
           </div>
         )}
-        <ChatInput
-          value={draft}
-          onChange={setDraft}
-          onSubmit={handleSend}
-          onCancel={handleCancel}
-          placeholder="Reply..."
-          disabled={sending}
-          isStreaming={isStreaming}
-          canCancel={canCancel}
-          cancelSubmitting={cancelSubmitting}
-          attachments={attachments}
-          onAttachFiles={handleAttachFiles}
-          onPasteContent={handlePasteContent}
-          onRemoveAttachment={handleRemoveAttachment}
-          accessToken={accessToken}
-          onAsrError={handleAsrError}
-          searchMode={isSearchThread}
-          onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
-        />
+        {pendingUserInput ? (
+          <motion.div
+            key="user-input-card"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="w-full max-w-[840px] px-4"
+          >
+            <UserInputCard
+              key={pendingUserInput.request_id}
+              request={pendingUserInput}
+              onSubmit={handleUserInputSubmit}
+              onDismiss={handleUserInputDismiss}
+              disabled={!activeRunId}
+            />
+          </motion.div>
+        ) : (
+          <ChatInput
+            value={draft}
+            onChange={setDraft}
+            onSubmit={handleSend}
+            onCancel={handleCancel}
+            placeholder={t.replyPlaceholder}
+            disabled={sending}
+            isStreaming={isStreaming}
+            canCancel={canCancel}
+            cancelSubmitting={cancelSubmitting}
+            attachments={attachments}
+            onAttachFiles={handleAttachFiles}
+            onPasteContent={handlePasteContent}
+            onRemoveAttachment={handleRemoveAttachment}
+            accessToken={accessToken}
+            onAsrError={handleAsrError}
+            searchMode={isSearchThread}
+            onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
+          />
+        )}
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>
           Arkloop is AI and can make mistakes. Please double-check responses.
         </p>

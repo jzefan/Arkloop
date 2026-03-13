@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -19,13 +17,13 @@ func TestSchemaRepositoryCurrentSchemaVersion(t *testing.T) {
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	defer pool.Close()
 
-	repo, err := NewSchemaRepository(appDB)
+	repo, err := NewSchemaRepository(pool)
 	if err != nil {
 		t.Fatalf("new repo: %v", err)
 	}

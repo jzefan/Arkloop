@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -12,7 +10,7 @@ import (
 	"arkloop/services/api/internal/testutil"
 )
 
-func setupSecretsTestRepo(t *testing.T) (*SecretsRepository, *OrgRepository, context.Context) {
+func setupSecretsTestRepo(t *testing.T) (*SecretsRepository, *AccountRepository, context.Context) {
 	t.Helper()
 
 	db := testutil.SetupPostgresDatabase(t, "api_go_secrets")
@@ -22,11 +20,11 @@ func setupSecretsTestRepo(t *testing.T) (*SecretsRepository, *OrgRepository, con
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	appDB, _, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := NewPool(ctx, db.DSN, PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	key := make([]byte, 32)
 	for i := range key {
@@ -37,12 +35,12 @@ func setupSecretsTestRepo(t *testing.T) (*SecretsRepository, *OrgRepository, con
 		t.Fatalf("new key ring: %v", err)
 	}
 
-	repo, err := NewSecretsRepository(appDB, ring)
+	repo, err := NewSecretsRepository(pool, ring)
 	if err != nil {
 		t.Fatalf("new secrets repo: %v", err)
 	}
 
-	orgRepo, err := NewOrgRepository(appDB)
+	orgRepo, err := NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}

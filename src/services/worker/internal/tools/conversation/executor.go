@@ -8,11 +8,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -26,31 +26,31 @@ const (
 )
 
 type searchRepository interface {
-	SearchVisibleByOwner(ctx context.Context, db database.DB, orgID uuid.UUID, ownerUserID uuid.UUID, query string, limit int) ([]data.ConversationSearchHit, error)
+	SearchVisibleByOwner(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, ownerUserID uuid.UUID, query string, limit int) ([]data.ConversationSearchHit, error)
 }
 
 type ToolExecutor struct {
-	db   database.DB
+	pool *pgxpool.Pool
 	repo searchRepository
 }
 
-func NewToolExecutor(db database.DB, repo searchRepository) *ToolExecutor {
+func NewToolExecutor(pool *pgxpool.Pool, repo searchRepository) *ToolExecutor {
 	if repo == nil {
 		repo = data.MessagesRepository{}
 	}
-	return &ToolExecutor{db: db, repo: repo}
+	return &ToolExecutor{pool: pool, repo: repo}
 }
 
 func (e *ToolExecutor) Execute(ctx context.Context, _ string, args map[string]any, execCtx tools.ExecutionContext, _ string) tools.ExecutionResult {
 	started := time.Now()
-	if execCtx.OrgID == nil || execCtx.UserID == nil {
-		return executionError(errorIdentityMissing, "org_id and user_id are required", started)
+	if execCtx.AccountID == nil || execCtx.UserID == nil {
+		return executionError(errorIdentityMissing, "account_id and user_id are required", started)
 	}
 	query, ok := args["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
 		return executionError(errorArgsInvalid, "query must be a non-empty string", started)
 	}
-	if e.db == nil {
+	if e.pool == nil {
 		return executionError(errorSearchFailed, "conversation search pool not available", started)
 	}
 	if e.repo == nil {
@@ -58,7 +58,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, _ string, args map[string]an
 	}
 
 	limit := parseLimit(args, defaultLimit)
-	hits, err := e.repo.SearchVisibleByOwner(ctx, e.db, *execCtx.OrgID, *execCtx.UserID, query, limit)
+	hits, err := e.repo.SearchVisibleByOwner(ctx, e.pool, *execCtx.AccountID, *execCtx.UserID, query, limit)
 	if err != nil {
 		return executionError(errorSearchFailed, fmt.Sprintf("conversation search failed: %s", err.Error()), started)
 	}

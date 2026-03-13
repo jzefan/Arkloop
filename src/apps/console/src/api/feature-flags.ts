@@ -9,8 +9,8 @@ export type FeatureFlag = {
   created_at: string
 }
 
-export type OrgFeatureOverride = {
-  org_id: string
+export type AccountFeatureOverride = {
+  account_id: string
   flag_key: string
   enabled: boolean
   created_at: string
@@ -26,8 +26,8 @@ export type UpdateFeatureFlagRequest = {
   default_value: boolean
 }
 
-export type SetOrgOverrideRequest = {
-  org_id: string
+export type SetAccountOverrideRequest = {
+  account_id: string
   enabled: boolean
 }
 
@@ -72,31 +72,31 @@ export async function deleteFeatureFlag(
   })
 }
 
-export async function listFlagOrgOverrides(
+export async function listFlagAccountOverrides(
   flagKey: string,
   accessToken: string,
-): Promise<OrgFeatureOverride[]> {
-  return apiFetch<OrgFeatureOverride[]>(`/v1/feature-flags/${flagKey}/org-overrides`, { accessToken })
+): Promise<AccountFeatureOverride[]> {
+  return apiFetch<AccountFeatureOverride[]>(`/v1/feature-flags/${flagKey}/account-overrides`, { accessToken })
 }
 
-export async function setFlagOrgOverride(
+export async function setFlagAccountOverride(
   flagKey: string,
-  body: SetOrgOverrideRequest,
+  body: SetAccountOverrideRequest,
   accessToken: string,
-): Promise<OrgFeatureOverride> {
-  return apiFetch<OrgFeatureOverride>(`/v1/feature-flags/${flagKey}/org-overrides`, {
+): Promise<AccountFeatureOverride> {
+  return apiFetch<AccountFeatureOverride>(`/v1/feature-flags/${flagKey}/account-overrides`, {
     method: 'POST',
     body: JSON.stringify(body),
     accessToken,
   })
 }
 
-export async function deleteFlagOrgOverride(
+export async function deleteFlagAccountOverride(
   flagKey: string,
-  orgId: string,
+  accountId: string,
   accessToken: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/v1/feature-flags/${flagKey}/org-overrides/${orgId}`, {
+  return apiFetch<{ ok: boolean }>(`/v1/feature-flags/${flagKey}/account-overrides/${accountId}`, {
     method: 'DELETE',
     accessToken,
   })

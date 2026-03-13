@@ -7,29 +7,29 @@ import (
 	apicrypto "arkloop/services/api/internal/crypto"
 	sharedconfig "arkloop/services/shared/config"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
-	"arkloop/services/shared/database"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 )
 
 func buildEffectiveBuiltinToolNameSet(
 	ctx context.Context,
-	db database.DB,
+	pool *pgxpool.Pool,
 	artifactStoreAvailable bool,
 ) map[string]struct{} {
 	resolver, _ := sharedconfig.NewResolver(
 		sharedconfig.DefaultRegistry(),
-		sharedconfig.NewPGXStore(db),
+		sharedconfig.NewPGXStore(pool),
 		nil,
 		0,
 	)
 
 	snapshot, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
 		ConfigResolver:         resolver,
-		HasConversationSearch:  db != nil,
+		HasConversationSearch:  pool != nil,
 		ArtifactStoreAvailable: artifactStoreAvailable,
 		LoadPlatformProviders: func(loadCtx context.Context) ([]sharedtoolruntime.ProviderConfig, error) {
-			return sharedtoolruntime.LoadPlatformProviders(loadCtx, db, decryptPlatformProviderSecret)
+			return sharedtoolruntime.LoadPlatformProviders(loadCtx, pool, decryptPlatformProviderSecret)
 		},
 	})
 	if err != nil {

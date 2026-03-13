@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type EmailVerificationToken struct {
@@ -83,7 +83,7 @@ func (r *EmailVerificationTokenRepository) Consume(
 		tokenHash,
 	).Scan(&userID)
 	if err != nil {
-		if errors.Is(err, database.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return uuid.Nil, false, nil
 		}
 		return uuid.Nil, false, fmt.Errorf("email_verification_tokens.Consume: %w", err)

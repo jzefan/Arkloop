@@ -11,9 +11,10 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type createMCPConfigRequest struct {
@@ -39,7 +40,7 @@ type patchMCPConfigRequest struct {
 
 type mcpConfigResponse struct {
 	ID               string   `json:"id"`
-	OrgID            string   `json:"org_id"`
+	AccountID            string   `json:"account_id"`
 	Name             string   `json:"name"`
 	Transport        string   `json:"transport"`
 	URL              *string  `json:"url,omitempty"`
@@ -62,16 +63,16 @@ var validMCPTransports = map[string]bool{
 
 func mcpConfigsEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodPost:
-			createMCPConfig(w, r, traceID, authService, membershipRepo, mcpRepo, secretsRepo, db)
+			createMCPConfig(w, r, traceID, authService, membershipRepo, mcpRepo, secretsRepo, pool)
 		case nethttp.MethodGet:
 			listMCPConfigs(w, r, traceID, authService, membershipRepo, mcpRepo)
 		default:
@@ -82,10 +83,10 @@ func mcpConfigsEntry(
 
 func mcpConfigEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -105,9 +106,9 @@ func mcpConfigEntry(
 
 		switch r.Method {
 		case nethttp.MethodPatch:
-			patchMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, secretsRepo, db)
+			patchMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, secretsRepo, pool)
 		case nethttp.MethodDelete:
-			deleteMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, db)
+			deleteMCPConfig(w, r, traceID, configID, authService, membershipRepo, mcpRepo, pool)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -119,16 +120,16 @@ func createMCPConfig(
 	r *nethttp.Request,
 	traceID string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if mcpRepo == nil || db == nil {
+	if mcpRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -189,7 +190,7 @@ func createMCPConfig(
 	argsJSON, _ := json.Marshal(req.Args)
 	envJSON, _ := json.Marshal(req.Env)
 
-	tx, err := db.Begin(r.Context())
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -200,7 +201,7 @@ func createMCPConfig(
 
 	cfg, err := txMCP.Create(
 		r.Context(),
-		actor.OrgID,
+		actor.AccountID,
 		req.Name,
 		req.Transport,
 		req.URL,
@@ -224,12 +225,12 @@ func createMCPConfig(
 
 	if req.BearerToken != nil && strings.TrimSpace(*req.BearerToken) != "" {
 		txSecrets := secretsRepo.WithTx(tx)
-		secret, err := txSecrets.Create(r.Context(), actor.OrgID, "mcp_cred:"+cfg.ID.String(), *req.BearerToken)
+		secret, err := txSecrets.Create(r.Context(), actor.AccountID, "mcp_cred:"+cfg.ID.String(), *req.BearerToken)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
-		if err := txMCP.UpdateAuthSecret(r.Context(), actor.OrgID, cfg.ID, secret.ID); err != nil {
+		if err := txMCP.UpdateAuthSecret(r.Context(), actor.AccountID, cfg.ID, secret.ID); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
@@ -242,7 +243,7 @@ func createMCPConfig(
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.AccountID.String())
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toMCPConfigResponse(cfg))
 }
@@ -252,7 +253,7 @@ func listMCPConfigs(
 	r *nethttp.Request,
 	traceID string,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 ) {
 	if authService == nil {
@@ -269,7 +270,7 @@ func listMCPConfigs(
 		return
 	}
 
-	configs, err := mcpRepo.ListByOrg(r.Context(), actor.OrgID)
+	configs, err := mcpRepo.ListByOrg(r.Context(), actor.AccountID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -289,16 +290,16 @@ func patchMCPConfig(
 	traceID string,
 	configID uuid.UUID,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
 	secretsRepo *data.SecretsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if mcpRepo == nil || db == nil {
+	if mcpRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -311,7 +312,7 @@ func patchMCPConfig(
 		return
 	}
 
-	existing, err := mcpRepo.GetByID(r.Context(), actor.OrgID, configID)
+	existing, err := mcpRepo.GetByID(r.Context(), actor.AccountID, configID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -332,7 +333,7 @@ func patchMCPConfig(
 		return
 	}
 
-	tx, err := db.Begin(r.Context())
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -344,13 +345,13 @@ func patchMCPConfig(
 	if req.BearerToken != nil && strings.TrimSpace(*req.BearerToken) != "" {
 		txSecrets := secretsRepo.WithTx(tx)
 		secretName := "mcp_cred:" + configID.String()
-		secret, err := txSecrets.Upsert(r.Context(), actor.OrgID, secretName, *req.BearerToken)
+		secret, err := txSecrets.Upsert(r.Context(), actor.AccountID, secretName, *req.BearerToken)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 		if existing.AuthSecretID == nil || *existing.AuthSecretID != secret.ID {
-			if err := txMCP.UpdateAuthSecret(r.Context(), actor.OrgID, configID, secret.ID); err != nil {
+			if err := txMCP.UpdateAuthSecret(r.Context(), actor.AccountID, configID, secret.ID); err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
@@ -364,7 +365,7 @@ func patchMCPConfig(
 		IsActive:      req.IsActive,
 	}
 
-	updated, err := txMCP.Patch(r.Context(), actor.OrgID, configID, patch)
+	updated, err := txMCP.Patch(r.Context(), actor.AccountID, configID, patch)
 	if err != nil {
 		var nameConflict data.MCPConfigNameConflictError
 		if errors.As(err, &nameConflict) {
@@ -385,7 +386,7 @@ func patchMCPConfig(
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.AccountID.String())
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toMCPConfigResponse(*updated))
 }
@@ -396,9 +397,9 @@ func deleteMCPConfig(
 	traceID string,
 	configID uuid.UUID,
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	mcpRepo *data.MCPConfigsRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -417,7 +418,7 @@ func deleteMCPConfig(
 		return
 	}
 
-	existing, err := mcpRepo.GetByID(r.Context(), actor.OrgID, configID)
+	existing, err := mcpRepo.GetByID(r.Context(), actor.AccountID, configID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -427,14 +428,14 @@ func deleteMCPConfig(
 		return
 	}
 
-	if err := mcpRepo.Delete(r.Context(), actor.OrgID, configID); err != nil {
+	if err := mcpRepo.Delete(r.Context(), actor.AccountID, configID); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
 
 	// 主动失效 Worker 侧 MCP 发现缓存
-	if db != nil {
-		_, _ = db.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.OrgID.String())
+	if pool != nil {
+		_, _ = pool.Exec(r.Context(), "SELECT pg_notify('mcp_config_changed', $1)", actor.AccountID.String())
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
@@ -451,7 +452,7 @@ func toMCPConfigResponse(cfg data.MCPConfig) mcpConfigResponse {
 
 	return mcpConfigResponse{
 		ID:               cfg.ID.String(),
-		OrgID:            cfg.OrgID.String(),
+		AccountID:            cfg.AccountID.String(),
 		Name:             cfg.Name,
 		Transport:        cfg.Transport,
 		URL:              cfg.URL,

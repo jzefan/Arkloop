@@ -20,6 +20,8 @@ import {
   Pencil,
   Flag,
   Puzzle,
+  Cpu,
+  Bot,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -40,9 +42,11 @@ import { useTheme } from '../contexts/ThemeContext'
 import type { Locale } from '../locales'
 import type { Theme } from '../storage'
 import { SkillsSettingsContent } from './SkillsSettingsContent'
+import { ModelConfigContent } from './ModelConfigContent'
+import { AgentSettingsContent } from './AgentSettingsContent'
 
 
-export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits'
+export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
@@ -50,6 +54,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'account',  icon: User     },
   { key: 'settings', icon: Settings },
   { key: 'skills',   icon: Puzzle   },
+  { key: 'models',   icon: Cpu      },
+  { key: 'agents',   icon: Bot      },
   { key: 'credits',  icon: Coins    },
 ]
 
@@ -61,9 +67,10 @@ type Props = {
   onLogout: () => void
   onCreditsChanged?: (balance: number) => void
   onMeUpdated?: (me: MeResponse) => void
+  onTrySkill?: (prompt: string) => void
 }
 
-export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout, onCreditsChanged, onMeUpdated }: Props) {
+export function SettingsModal({ me, accessToken, initialTab = 'account', onClose, onLogout, onCreditsChanged, onMeUpdated, onTrySkill }: Props) {
   const { t, locale, setLocale } = useLocale()
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
@@ -174,10 +181,16 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
               </div>
             )}
             {activeKey === 'skills' && (
-              <SkillsSettingsContent accessToken={accessToken} />
+              <SkillsSettingsContent accessToken={accessToken} onTrySkill={(prompt) => { onClose(); onTrySkill?.(prompt) }} />
             )}
             {activeKey === 'credits' && (
               <CreditsContent accessToken={accessToken} onCreditsChanged={onCreditsChanged} />
+            )}
+            {activeKey === 'models' && (
+              <ModelConfigContent accessToken={accessToken} />
+            )}
+            {activeKey === 'agents' && (
+              <AgentSettingsContent accessToken={accessToken} />
             )}
           </div>
         </div>
@@ -554,15 +567,12 @@ function LanguageContent({
                 key={value}
                 type="button"
                 onClick={() => { setLocale(value); setOpen(false) }}
-                className="flex w-full items-center px-3 py-2 text-sm transition-colors duration-100"
+                className="flex w-full items-center px-3 py-2 text-sm transition-colors duration-100 bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
                 style={{
                   borderRadius: '8px',
                   fontWeight: locale === value ? 600 : 400,
                   color: locale === value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-                  background: 'var(--c-bg-menu)',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--c-bg-deep)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--c-bg-menu)')}
               >
                 {optLabel}
               </button>

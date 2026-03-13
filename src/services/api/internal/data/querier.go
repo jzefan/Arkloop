@@ -1,6 +1,14 @@
 package data
 
-import "arkloop/services/shared/database"
+import (
+	"context"
 
-// Querier is the shared query interface for both DB connections and transactions.
-type Querier = database.Querier
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+type Querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}

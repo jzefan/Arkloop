@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 const shareTokenAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -152,7 +152,7 @@ func (r *ThreadShareRepository) GetByToken(ctx context.Context, token string) (*
 		&share.CreatedByUserID, &share.CreatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, database.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

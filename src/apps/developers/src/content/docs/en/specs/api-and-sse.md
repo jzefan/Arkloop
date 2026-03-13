@@ -147,6 +147,8 @@ SSE Conventions:
 
 Note: External naming has migrated from `skills` to `personas` (`/v1/skills` -> `/v1/personas`, `skill_key/skill_id` -> `persona_key/persona_id`). Execution now reads model selectors directly from Persona, so there is no separate Agent Config or Prompt Template layer.
 
+Addendum: Persona management APIs accept an optional `roles` object. Each `roles.<role>` entry can override role-specific prompt additions, tool policy, budgets, `model`, `preferred_credential`, `reasoning_mode`, and `prompt_cache_control`, but cannot override executor type or executor config.
+
 - `GET /v1/me/selectable-personas` -- Effective selectable personas for the current user, resolved as `org > platform > builtin`
 - `GET /v1/personas`
 - `POST /v1/personas`
@@ -375,7 +377,7 @@ Request processing order:
 
 | Variable | Description |
 |------|------|
-| `ARKLOOP_API_GO_ADDR` | Listening address (default `127.0.0.1:8001`) |
+| `ARKLOOP_API_GO_ADDR` | Listening address (default `127.0.0.1:19001`) |
 | `ARKLOOP_DATABASE_URL` | PostgreSQL connection |
 | `ARKLOOP_DATABASE_DIRECT_URL` | Direct connection (SSE LISTEN/NOTIFY, bypassing PgBouncer) |
 | `ARKLOOP_REDIS_URL` | Redis (rate limiting, run concurrency control) |

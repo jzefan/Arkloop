@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -9,7 +7,6 @@ import (
 
 	"arkloop/services/worker/internal/testutil"
 
-	"arkloop/services/shared/database/pgadapter"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,10 +19,9 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("new pool: %v", err)
 	}
 	defer pool.Close()
-	dbPool := pgadapter.New(pool)
 
 	repo := MessagesRepository{}
-	orgID := uuid.New()
+	accountID := uuid.New()
 	userID := uuid.New()
 	otherUserID := uuid.New()
 	visibleThreadID := uuid.New()
@@ -34,13 +30,13 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 	otherUserThreadID := uuid.New()
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO threads (id, org_id, created_by_user_id, is_private, deleted_at, created_at)
+		INSERT INTO threads (id, account_id, created_by_user_id, is_private, deleted_at, created_at)
 		VALUES
 			($1, $2, $3, FALSE, NULL, now() - interval '2 hour'),
 			($4, $2, $3, TRUE, NULL, now() - interval '90 minute'),
 			($5, $2, $3, FALSE, now(), now() - interval '80 minute'),
 			($6, $2, $7, FALSE, NULL, now() - interval '70 minute')`,
-		visibleThreadID, orgID, userID,
+		visibleThreadID, accountID, userID,
 		privateThreadID,
 		deletedThreadID,
 		otherUserThreadID, otherUserID,
@@ -51,13 +47,13 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 
 	now := time.Now().UTC()
 	_, err = pool.Exec(ctx, `
-		INSERT INTO messages (id, org_id, thread_id, role, content, hidden, deleted_at, created_at)
+		INSERT INTO messages (id, account_id, thread_id, role, content, hidden, deleted_at, created_at)
 		VALUES
 			($1, $2, $3, 'assistant', 'alpha memory', FALSE, NULL, $8),
 			($4, $2, $3, 'user', '100!% sure', FALSE, NULL, $9),
 			($5, $2, $6, 'assistant', 'alpha hidden', FALSE, NULL, $10),
 			($7, $2, $3, 'assistant', 'alpha deleted', FALSE, now(), $11)`,
-		uuid.New(), orgID, visibleThreadID,
+		uuid.New(), accountID, visibleThreadID,
 		uuid.New(),
 		uuid.New(), privateThreadID,
 		uuid.New(),
@@ -71,7 +67,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("update hidden message: %v", err)
 	}
 
-	hits, err := repo.SearchVisibleByOwner(ctx, dbPool, orgID, userID, "alpha", 10)
+	hits, err := repo.SearchVisibleByOwner(ctx, pool, accountID, userID, "alpha", 10)
 	if err != nil {
 		t.Fatalf("search visible by owner: %v", err)
 	}
@@ -85,7 +81,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 		t.Fatalf("unexpected content: %q", hits[0].Content)
 	}
 
-	escapedHits, err := repo.SearchVisibleByOwner(ctx, dbPool, orgID, userID, "100!% sure", 10)
+	escapedHits, err := repo.SearchVisibleByOwner(ctx, pool, accountID, userID, "100!% sure", 10)
 	if err != nil {
 		t.Fatalf("escaped search failed: %v", err)
 	}

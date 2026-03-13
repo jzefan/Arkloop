@@ -10,7 +10,9 @@ export interface LocaleStrings {
     models: string
     tools: string
     runs: string
+    modules: string
     settings: string
+    installTasks: string
   }
   dashboard: {
     title: string
@@ -45,7 +47,7 @@ export interface LocaleStrings {
     platformDefault: string
     fieldScope: string
     scopePlatform: string
-    scopeOrg: string
+    scopeProject: string
     hybrid: string
     toolsSelected: (selected: number, total: number) => string
     enableAllTools: string
@@ -145,6 +147,22 @@ export interface LocaleStrings {
     fieldMaxLifetimeBrowser: string
     fieldCostPerCommit: string
     fieldCostPerCommitHint: string
+    sectionEmbeddingConfig: string
+    fieldEmbeddingProvider: string
+    fieldEmbeddingModel: string
+    fieldEmbeddingApiKey: string
+    fieldEmbeddingApiBase: string
+    fieldEmbeddingDimension: string
+    sectionVLMConfig: string
+    fieldVLMProvider: string
+    fieldVLMModel: string
+    fieldVLMApiKey: string
+    fieldVLMApiBase: string
+    fieldVLMProviderHint: string
+    ovRestartWarning: string
+    applyAndRestart: string
+    toastOVConfigApplied: string
+    toastOVConfigFailed: string
     editDescription: string
     resetDescription: string
     disableTool: string
@@ -225,6 +243,55 @@ export interface LocaleStrings {
     default: string
     signOut: string
   }
+  modules: {
+    title: string
+    bridgeOnline: string
+    bridgeOffline: string
+    tabAll: string
+    tabMemory: string
+    tabSandbox: string
+    tabSearch: string
+    tabBrowser: string
+    tabConsole: string
+    statusUnknown: string
+    statusNotInstalled: string
+    statusDisconnected: string
+    statusPendingBootstrap: string
+    statusRunning: string
+    statusStopped: string
+    statusError: string
+    actionInstall: string
+    actionStart: string
+    actionStop: string
+    actionRestart: string
+    actionConfigure: string
+    actionBootstrap: string
+    actionOpen: string
+    copyCommand: string
+    copyAgentPrompt: string
+    copied: string
+    port: string
+    dependsOn: string
+    noModules: string
+    requires: (deps: string) => string
+  }
+  systemSection: {
+    title: string
+    version: string
+    bridgeStatus: string
+    bridgeOnline: string
+    bridgeOffline: string
+    upgradeMode: string
+    modeDev: string
+    modeProd: string
+    targetVersion: string
+    targetVersionPlaceholder: string
+    upgradeBtn: string
+    upgrading: string
+    upgradeComplete: string
+    upgradeFailed: string
+    logs: string
+  }
   settingsPage: {
     title: string
     sectionGeneral: string
@@ -253,8 +320,11 @@ export interface LocaleStrings {
     sandboxProvider: string
     sandboxBaseUrl: string
     sandboxDockerImage: string
+    skillsProvider: string
     skillsApiKey: string
     skillsBaseUrl: string
+    skillsApiBaseUrl: string
+    skillsApiBaseUrlHint: string
     skillsBaseUrlHint: string
     creditsEnabled: string
     creditsDisabledHint: string
@@ -263,6 +333,21 @@ export interface LocaleStrings {
     toastTestSent: string
     toastTestFailed: string
     toastDeleted: string
+  }
+  bootstrap: {
+    title: string
+    subtitle: string
+    username: string
+    usernamePlaceholder: string
+    password: string
+    passwordPlaceholder: string
+    submit: string
+    verifying: string
+    successTitle: string
+    successBody: string
+    invalidTitle: string
+    invalidBody: string
+    expiresAt: (value: string) => string
   }
   loginMode: string
   enterYourPasswordTitle: string
@@ -281,6 +366,7 @@ export interface LocaleStrings {
   otpSendingCountdown: (s: number) => string
   otpVerifyBtn: string
   requestFailed: string
+  saved: string
   loading: string
   accessDenied: string
   noAdminAccess: string

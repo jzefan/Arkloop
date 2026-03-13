@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -14,7 +12,6 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
-	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
@@ -24,11 +21,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -41,31 +38,31 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
@@ -74,11 +71,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -86,11 +83,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
@@ -114,23 +111,11 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("unexpected create thread status: %d body=%s", threadResp.Code, threadResp.Body.String())
 	}
 	threadPayload := decodeJSONBody[threadResponse](t, threadResp.Body.Bytes())
-	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.OrgID == "" {
+	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.AccountID == "" {
 		t.Fatalf("unexpected thread payload: %#v", threadPayload)
-	}
-	if threadPayload.Mode != string(data.ThreadModeChat) {
-		t.Fatalf("expected default thread mode %q, got %#v", data.ThreadModeChat, threadPayload)
 	}
 	if threadPayload.ProjectID == nil || *threadPayload.ProjectID == "" {
 		t.Fatalf("expected project_id in thread payload: %#v", threadPayload)
-	}
-
-	getResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+threadPayload.ID, nil, headers)
-	if getResp.Code != nethttp.StatusOK {
-		t.Fatalf("unexpected get thread status: %d body=%s", getResp.Code, getResp.Body.String())
-	}
-	getPayload := decodeJSONBody[threadResponse](t, getResp.Body.Bytes())
-	if getPayload.Mode != string(data.ThreadModeChat) {
-		t.Fatalf("unexpected get payload: %#v", getPayload)
 	}
 
 	cursorIncomplete := doJSON(handler, nethttp.MethodGet, "/v1/threads?before_id="+threadPayload.ID, nil, headers)
@@ -172,11 +157,8 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if updatedPayload.Title == nil || *updatedPayload.Title != "new" {
 		t.Fatalf("unexpected patch payload: %#v", updatedPayload)
 	}
-	if updatedPayload.Mode != string(data.ThreadModeChat) {
-		t.Fatalf("expected patched thread mode %q, got %#v", data.ThreadModeChat, updatedPayload)
-	}
 
-	deniedCount, err := countDeniedAudit(ctx, appDB, "threads.get", "org_mismatch")
+	deniedCount, err := countDeniedAudit(ctx, pool, "threads.get", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -189,11 +171,11 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_patch_delete")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -206,35 +188,35 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
@@ -243,18 +225,18 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
@@ -291,7 +273,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("create patch thread: %d body=%s", patchThreadResp.Code, patchThreadResp.Body.String())
 	}
 	patchThread := decodeJSONBody[threadResponse](t, patchThreadResp.Body.Bytes())
-	aliceOrgID, err := uuid.Parse(patchThread.OrgID)
+	aliceAccountID, err := uuid.Parse(patchThread.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}
@@ -333,7 +315,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 			bobHeaders,
 		)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, appDB, "threads.update", "org_mismatch")
+		count, err := countDeniedAudit(ctx, pool, "threads.update", "org_mismatch")
 		if err != nil {
 			t.Fatalf("count patch denied audit: %v", err)
 		}
@@ -354,8 +336,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerTitle := "no-owner"
-	noOwnerPatchProject := mustCreateTestProject(t, ctx, appDB, aliceOrgID, nil, "no-owner-patch")
-	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerPatchProject.ID, data.ThreadModeChat, &noOwnerTitle, false)
+	noOwnerPatchProject := mustCreateTestProject(t, ctx, pool, aliceAccountID, nil, "no-owner-patch")
+	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceAccountID, nil, noOwnerPatchProject.ID, &noOwnerTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner patch thread: %v", err)
 	}
@@ -369,7 +351,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 			aliceHeaders,
 		)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, appDB, "threads.update", "no_owner")
+		count, err := countDeniedAudit(ctx, pool, "threads.update", "no_owner")
 		if err != nil {
 			t.Fatalf("count patch no-owner denied audit: %v", err)
 		}
@@ -387,7 +369,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	t.Run("non owner delete denied", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodDelete, "/v1/threads/"+deleteThread.ID, nil, bobHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, appDB, "threads.delete", "org_mismatch")
+		count, err := countDeniedAudit(ctx, pool, "threads.delete", "org_mismatch")
 		if err != nil {
 			t.Fatalf("count delete denied audit: %v", err)
 		}
@@ -412,7 +394,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		if stored != nil {
 			t.Fatalf("expected deleted thread to be hidden, got %#v", stored)
 		}
-		count, err := countAuditResult(ctx, appDB, "threads.delete", "deleted", deleteThread.ID)
+		count, err := countAuditResult(ctx, pool, "threads.delete", "deleted", deleteThread.ID)
 		if err != nil {
 			t.Fatalf("count delete success audit: %v", err)
 		}
@@ -427,8 +409,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerDeleteTitle := "no-owner-delete"
-	noOwnerDeleteProject := mustCreateTestProject(t, ctx, appDB, aliceOrgID, nil, "no-owner-delete")
-	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerDeleteProject.ID, data.ThreadModeChat, &noOwnerDeleteTitle, false)
+	noOwnerDeleteProject := mustCreateTestProject(t, ctx, pool, aliceAccountID, nil, "no-owner-delete")
+	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceAccountID, nil, noOwnerDeleteProject.ID, &noOwnerDeleteTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner delete thread: %v", err)
 	}
@@ -436,7 +418,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	t.Run("delete no owner keeps denied semantics", func(t *testing.T) {
 		resp := doJSON(handler, nethttp.MethodDelete, "/v1/threads/"+noOwnerDeleteThread.ID.String(), nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "policy.denied")
-		count, err := countDeniedAudit(ctx, appDB, "threads.delete", "no_owner")
+		count, err := countDeniedAudit(ctx, pool, "threads.delete", "no_owner")
 		if err != nil {
 			t.Fatalf("count delete no-owner denied audit: %v", err)
 		}
@@ -450,11 +432,11 @@ func TestThreadListActiveRunID(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_threads_active_run")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -467,36 +449,29 @@ func TestThreadListActiveRunID(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	threadRepo, _ := data.NewThreadRepository(appDB)
-	projectRepo, _ := data.NewProjectRepository(appDB)
-	runRepo, _ := data.NewRunEventRepository(appDB)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
+	userRepo, _ := data.NewUserRepository(pool)
+	credentialRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	auditRepo, _ := data.NewAuditLogRepository(pool)
+	threadRepo, _ := data.NewThreadRepository(pool)
+	projectRepo, _ := data.NewProjectRepository(pool)
+	runRepo, _ := data.NewRunEventRepository(pool)
 
 	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(appDB)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	jobRepo, _ := data.NewJobRepository(pool)
+	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
-		t.Fatalf("enable claw flag: %v", err)
-	}
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                 pool,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
-		FeatureFlagsRepo:     featureFlagsRepo,
-		FeatureFlagService:   featureFlagSvc,
 		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,
 	})
@@ -563,7 +538,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	}
 
 	// mark run completed — active_run_id must become null
-	if _, err := appDB.Exec(ctx,
+	if _, err := pool.Exec(ctx,
 		`UPDATE runs SET status = 'completed' WHERE id = $1`,
 		runPayload.RunID,
 	); err != nil {
@@ -650,303 +625,4 @@ func countAuditResult(ctx context.Context, db data.Querier, action string, resul
 		targetID,
 	).Scan(&count)
 	return count, err
-}
-
-func TestThreadModeCreateListSearchAndFork(t *testing.T) {
-	db := setupTestDatabase(t, "api_go_threads_mode")
-
-	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
-	if err != nil {
-		t.Fatalf("new pool: %v", err)
-	}
-	defer appDB.Close()
-
-	logger := observability.NewJSONLogger("test", io.Discard)
-
-	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
-	if err != nil {
-		t.Fatalf("new password hasher: %v", err)
-	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
-	if err != nil {
-		t.Fatalf("new token service: %v", err)
-	}
-
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	threadRepo, _ := data.NewThreadRepository(appDB)
-	projectRepo, _ := data.NewProjectRepository(appDB)
-	runRepo, _ := data.NewRunEventRepository(appDB)
-
-	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	jobRepo, _ := data.NewJobRepository(appDB)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
-	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-
-	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		Logger:               logger,
-		AuthService:          authService,
-		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
-		ThreadRepo:           threadRepo,
-		ProjectRepo:          projectRepo,
-		RunEventRepo:         runRepo,
-		AuditWriter:          auditWriter,
-		TrustIncomingTraceID: true,
-	})
-
-	registerResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/auth/register",
-		map[string]any{"login": "mode-alice", "password": "pwd12345", "email": "mode-alice@test.com"},
-		nil,
-	)
-	if registerResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected register status: %d body=%s", registerResp.Code, registerResp.Body.String())
-	}
-	alice := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
-	headers := authHeader(alice.AccessToken)
-
-	defaultThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "chat-default"}, headers)
-	if defaultThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected default create status: %d body=%s", defaultThreadResp.Code, defaultThreadResp.Body.String())
-	}
-	defaultThread := decodeJSONBody[threadResponse](t, defaultThreadResp.Body.Bytes())
-	if defaultThread.Mode != string(data.ThreadModeChat) {
-		t.Fatalf("expected default mode %q, got %#v", data.ThreadModeChat, defaultThread)
-	}
-
-	clawThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "claw-thread", "mode": "claw"}, headers)
-	if clawThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected claw create status: %d body=%s", clawThreadResp.Code, clawThreadResp.Body.String())
-	}
-	clawThread := decodeJSONBody[threadResponse](t, clawThreadResp.Body.Bytes())
-	if clawThread.Mode != string(data.ThreadModeClaw) {
-		t.Fatalf("expected claw mode %q, got %#v", data.ThreadModeClaw, clawThread)
-	}
-
-	invalidCreateResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "bad", "mode": "weird"}, headers)
-	assertErrorEnvelope(t, invalidCreateResp, nethttp.StatusUnprocessableEntity, "validation.error")
-
-	for _, tc := range []struct {
-		threadID string
-		content  string
-	}{
-		{threadID: defaultThread.ID, content: "shared-mode-query"},
-		{threadID: clawThread.ID, content: "shared-mode-query"},
-	} {
-		resp := doJSON(
-			handler,
-			nethttp.MethodPost,
-			"/v1/threads/"+tc.threadID+"/messages",
-			map[string]any{"content": tc.content},
-			headers,
-		)
-		if resp.Code != nethttp.StatusCreated {
-			t.Fatalf("create message for %s: %d %s", tc.threadID, resp.Code, resp.Body.String())
-		}
-	}
-
-	getClawResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+clawThread.ID, nil, headers)
-	if getClawResp.Code != nethttp.StatusOK {
-		t.Fatalf("unexpected claw get status: %d body=%s", getClawResp.Code, getClawResp.Body.String())
-	}
-	if payload := decodeJSONBody[threadResponse](t, getClawResp.Body.Bytes()); payload.Mode != string(data.ThreadModeClaw) {
-		t.Fatalf("unexpected claw get payload: %#v", payload)
-	}
-
-	listChatResp := doJSON(handler, nethttp.MethodGet, "/v1/threads?mode=chat", nil, headers)
-	if listChatResp.Code != nethttp.StatusOK {
-		t.Fatalf("list chat threads: %d %s", listChatResp.Code, listChatResp.Body.String())
-	}
-	chatThreads := decodeJSONBody[[]threadResponse](t, listChatResp.Body.Bytes())
-	if len(chatThreads) != 1 || chatThreads[0].ID != defaultThread.ID || chatThreads[0].Mode != string(data.ThreadModeChat) {
-		t.Fatalf("unexpected chat thread list: %#v", chatThreads)
-	}
-
-	listClawResp := doJSON(handler, nethttp.MethodGet, "/v1/threads?mode=claw", nil, headers)
-	if listClawResp.Code != nethttp.StatusOK {
-		t.Fatalf("list claw threads: %d %s", listClawResp.Code, listClawResp.Body.String())
-	}
-	clawThreads := decodeJSONBody[[]threadResponse](t, listClawResp.Body.Bytes())
-	if len(clawThreads) != 1 || clawThreads[0].ID != clawThread.ID || clawThreads[0].Mode != string(data.ThreadModeClaw) {
-		t.Fatalf("unexpected claw thread list: %#v", clawThreads)
-	}
-
-	listAllResp := doJSON(handler, nethttp.MethodGet, "/v1/threads", nil, headers)
-	if listAllResp.Code != nethttp.StatusOK {
-		t.Fatalf("list all threads: %d %s", listAllResp.Code, listAllResp.Body.String())
-	}
-	allThreads := decodeJSONBody[[]threadResponse](t, listAllResp.Body.Bytes())
-	if len(allThreads) != 2 {
-		t.Fatalf("expected 2 threads without mode filter, got %#v", allThreads)
-	}
-
-	invalidListResp := doJSON(handler, nethttp.MethodGet, "/v1/threads?mode=weird", nil, headers)
-	assertErrorEnvelope(t, invalidListResp, nethttp.StatusUnprocessableEntity, "validation.error")
-
-	searchChatResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=shared-mode-query&mode=chat", nil, headers)
-	if searchChatResp.Code != nethttp.StatusOK {
-		t.Fatalf("search chat threads: %d %s", searchChatResp.Code, searchChatResp.Body.String())
-	}
-	searchChat := decodeJSONBody[[]threadResponse](t, searchChatResp.Body.Bytes())
-	if len(searchChat) != 1 || searchChat[0].ID != defaultThread.ID || searchChat[0].Mode != string(data.ThreadModeChat) {
-		t.Fatalf("unexpected chat search results: %#v", searchChat)
-	}
-
-	searchClawResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=shared-mode-query&mode=claw", nil, headers)
-	if searchClawResp.Code != nethttp.StatusOK {
-		t.Fatalf("search claw threads: %d %s", searchClawResp.Code, searchClawResp.Body.String())
-	}
-	searchClaw := decodeJSONBody[[]threadResponse](t, searchClawResp.Body.Bytes())
-	if len(searchClaw) != 1 || searchClaw[0].ID != clawThread.ID || searchClaw[0].Mode != string(data.ThreadModeClaw) {
-		t.Fatalf("unexpected claw search results: %#v", searchClaw)
-	}
-
-	invalidSearchResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=shared-mode-query&mode=weird", nil, headers)
-	assertErrorEnvelope(t, invalidSearchResp, nethttp.StatusUnprocessableEntity, "validation.error")
-
-	forkMessageResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/threads/"+clawThread.ID+"/messages",
-		map[string]any{"content": "fork source"},
-		headers,
-	)
-	if forkMessageResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create fork source message: %d %s", forkMessageResp.Code, forkMessageResp.Body.String())
-	}
-	forkSourceMessage := decodeJSONBody[messageResponse](t, forkMessageResp.Body.Bytes())
-
-	forkResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/threads/"+clawThread.ID+":fork",
-		map[string]any{"message_id": forkSourceMessage.ID},
-		headers,
-	)
-	if forkResp.Code != nethttp.StatusCreated {
-		t.Fatalf("fork thread: %d %s", forkResp.Code, forkResp.Body.String())
-	}
-	forked := decodeJSONBody[forkThreadResponse](t, forkResp.Body.Bytes())
-	if forked.Mode != string(data.ThreadModeClaw) {
-		t.Fatalf("expected forked thread to inherit claw mode, got %#v", forked)
-	}
-}
-
-func TestThreadClawFeatureFlagBlocksEndpoints(t *testing.T) {
-	db := setupTestDatabase(t, "api_go_threads_claw_flag")
-
-	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
-	if err != nil {
-		t.Fatalf("new pool: %v", err)
-	}
-	defer appDB.Close()
-
-	logger := observability.NewJSONLogger("test", io.Discard)
-	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
-	if err != nil {
-		t.Fatalf("new password hasher: %v", err)
-	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
-	if err != nil {
-		t.Fatalf("new token service: %v", err)
-	}
-
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	threadRepo, _ := data.NewThreadRepository(appDB)
-	projectRepo, _ := data.NewProjectRepository(appDB)
-	runRepo, _ := data.NewRunEventRepository(appDB)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
-
-	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(appDB)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
-	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-
-	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		Logger:               logger,
-		AuthService:          authService,
-		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
-		ThreadRepo:           threadRepo,
-		ProjectRepo:          projectRepo,
-		RunEventRepo:         runRepo,
-		FeatureFlagsRepo:     featureFlagsRepo,
-		FeatureFlagService:   featureFlagSvc,
-		AuditWriter:          auditWriter,
-		TrustIncomingTraceID: true,
-	})
-
-	registerResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/auth/register",
-		map[string]any{"login": "claw-flag-alice", "password": "pwd12345", "email": "claw-flag-alice@test.com"},
-		nil,
-	)
-	if registerResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected register status: %d body=%s", registerResp.Code, registerResp.Body.String())
-	}
-	alice := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
-	headers := authHeader(alice.AccessToken)
-
-	chatResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "chat-ok"}, headers)
-	if chatResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create chat thread: %d %s", chatResp.Code, chatResp.Body.String())
-	}
-
-	createClawDenied := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "claw-no", "mode": "claw"}, headers)
-	assertErrorEnvelope(t, createClawDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	listClawDenied := doJSON(handler, nethttp.MethodGet, "/v1/threads?mode=claw", nil, headers)
-	assertErrorEnvelope(t, listClawDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	searchClawDenied := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=test&mode=claw", nil, headers)
-	assertErrorEnvelope(t, searchClawDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
-		t.Fatalf("enable claw flag: %v", err)
-	}
-
-	clawThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "claw-yes", "mode": "claw"}, headers)
-	if clawThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create claw thread: %d %s", clawThreadResp.Code, clawThreadResp.Body.String())
-	}
-	clawThread := decodeJSONBody[threadResponse](t, clawThreadResp.Body.Bytes())
-
-	clawMessageResp := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+"/messages", map[string]any{"content": "hello claw"}, headers)
-	if clawMessageResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create claw message: %d %s", clawMessageResp.Code, clawMessageResp.Body.String())
-	}
-	clawMessage := decodeJSONBody[messageResponse](t, clawMessageResp.Body.Bytes())
-
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, false); err != nil {
-		t.Fatalf("disable claw flag: %v", err)
-	}
-
-	getClawDenied := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+clawThread.ID, nil, headers)
-	assertErrorEnvelope(t, getClawDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	messageDenied := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+"/messages", map[string]any{"content": "blocked"}, headers)
-	assertErrorEnvelope(t, messageDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	forkDenied := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+":fork", map[string]any{"message_id": clawMessage.ID}, headers)
-	assertErrorEnvelope(t, forkDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	starDenied := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+":star", nil, headers)
-	assertErrorEnvelope(t, starDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
 }

@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -17,11 +15,11 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_admin_reports")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -34,31 +32,31 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	threadReportRepo, err := data.NewThreadReportRepository(appDB)
+	threadReportRepo, err := data.NewThreadReportRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread report repo: %v", err)
 	}
@@ -67,21 +65,21 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		ThreadReportRepo:    threadReportRepo,
@@ -97,7 +95,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
 
-	_, err = appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
+	_, err = pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
 	if err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}

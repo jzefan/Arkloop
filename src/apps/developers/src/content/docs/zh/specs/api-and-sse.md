@@ -147,6 +147,8 @@ SSE 约定：
 
 说明：对外命名已从 `skills` 迁移为 `personas`（`/v1/skills` -> `/v1/personas`，`skill_key/skill_id` -> `persona_key/persona_id`）。执行配置直接收敛到 Persona，因此不再存在独立的 Agent Config / Prompt Template 层。
 
+补充：Persona 管理接口支持可选 `roles` 对象。`roles.<role>` 可覆盖协作角色的 prompt 追加段、工具策略、budgets、`model`、`preferred_credential`、`reasoning_mode`、`prompt_cache_control`，但不允许覆盖执行器类型与执行器配置。
+
 - `GET /v1/me/selectable-personas` -- 当前用户可选的人格有效结果，按 `org > platform > builtin` 解析
 - `GET /v1/personas`
 - `POST /v1/personas`
@@ -375,7 +377,7 @@ HTTP Header 同时返回 `X-Trace-Id`。
 
 | 变量 | 说明 |
 |------|------|
-| `ARKLOOP_API_GO_ADDR` | 监听地址（默认 `127.0.0.1:8001`） |
+| `ARKLOOP_API_GO_ADDR` | 监听地址（默认 `127.0.0.1:19001`） |
 | `ARKLOOP_DATABASE_URL` | PostgreSQL 连接 |
 | `ARKLOOP_DATABASE_DIRECT_URL` | 直连（SSE LISTEN/NOTIFY，绕过 PgBouncer） |
 | `ARKLOOP_REDIS_URL` | Redis（速率限制、运行并发控制） |

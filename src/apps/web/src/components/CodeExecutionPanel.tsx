@@ -34,7 +34,12 @@ type Props = {
 
 export function CodeExecutionPanel({ execution, onClose }: Props) {
   const isPython = execution.language === 'python'
-  const failed = execution.exitCode != null && execution.exitCode !== 0
+  const failed = execution.status === 'failed'
+  const outputText = execution.output && execution.output.trim()
+    ? execution.output
+    : execution.errorMessage && execution.errorMessage.trim()
+      ? execution.errorMessage
+      : undefined
 
   const highlightedCode = useMemo(() => {
     if (!execution.code) return ''
@@ -92,13 +97,11 @@ export function CodeExecutionPanel({ execution, onClose }: Props) {
             height: '28px',
             borderRadius: '8px',
             border: 'none',
-            background: 'transparent',
             color: 'var(--c-text-secondary)',
             cursor: 'pointer',
             transition: 'background 150ms',
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+          className="hover:bg-[var(--c-bg-deep)]"
         >
           <X size={18} />
         </button>
@@ -125,7 +128,7 @@ export function CodeExecutionPanel({ execution, onClose }: Props) {
           </pre>
         )}
 
-        {execution.output && (
+        {outputText && (
           <div style={{ padding: '0 20px 16px', marginTop: execution.code ? '4px' : '0' }}>
             <div style={{ fontSize: '11px', color: 'var(--c-text-muted)', marginBottom: '6px', fontWeight: 500 }}>
               output
@@ -144,7 +147,7 @@ export function CodeExecutionPanel({ execution, onClose }: Props) {
                 overflow: 'auto',
               }}
             >
-              {execution.output.trimEnd()}
+              {outputText.trimEnd()}
             </pre>
           </div>
         )}

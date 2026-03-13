@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"arkloop/services/api/internal/data"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ToolCatalogItem = toolCatalogItem
@@ -21,11 +21,11 @@ type LLMProviderAvailableModelsResponse = llmProviderAvailableModelsResponse
 
 func BuildEffectiveToolCatalogCompat(
 	ctx context.Context,
-	orgID uuid.UUID,
+	projectID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
-	db database.DB,
+	pool *pgxpool.Pool,
 	mcpCache *EffectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (ToolCatalogResponse, error) {
-	return buildEffectiveToolCatalog(ctx, orgID, overridesRepo, db, mcpCache, artifactStoreAvailable)
+	return buildEffectiveToolCatalog(ctx, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 }

@@ -3,12 +3,13 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// PoolStats 是 Provider 的运行时统计。
+// PoolStats 是 VMPool 的运行时统计。
 type PoolStats struct {
 	ReadyByTier    map[string]int
 	TargetByTier   map[string]int
@@ -16,23 +17,12 @@ type PoolStats struct {
 	TotalDestroyed int64
 }
 
-// Provider 抽象隔离执行环境（microVM / 容器 / Vz VM）的获取与销毁。
-// Firecracker、Docker、Vz 等后端均实现此接口。
-type Provider interface {
-	// Acquire 获取一个就绪的隔离执行环境，返回可用的 Session。
-	// sessionID 由调用方指定，provider 必须将其设置为返回 Session 的 ID。
-	Acquire(ctx context.Context, sessionID, tier string) (*Session, error)
-
-	// Destroy 销毁 sessionID 对应的执行环境并释放所有关联资源。
-	Destroy(sessionID string)
-
-	// Ready 返回 provider 是否完成初始预热。
+// VMPool 抽象 VM 的获取与销毁，由 pool.WarmPool 实现。
+type VMPool interface {
+	Acquire(ctx context.Context, tier string) (*Session, *os.Process, error)
+	DestroyVM(proc *os.Process, socketDir string)
 	Ready() bool
-
-	// Stats 返回运行时统计。
 	Stats() PoolStats
-
-	// Drain 停止 provider 并销毁所有预热环境。Graceful shutdown 时调用。
 	Drain(ctx context.Context)
 }
 
@@ -56,19 +46,20 @@ type DeleteOptions struct {
 // ManagerConfig 持有 Manager 所需的外部配置。
 type ManagerConfig struct {
 	MaxSessions  int
-	Pool         Provider
+	Pool         VMPool
 	IdleTimeouts map[string]int // 秒
 	MaxLifetimes map[string]int // 秒
 	BeforeDelete BeforeDeleteFunc
 }
 
-// Manager 线程安全地管理所有活跃 Session。
-// Session 的创建/预热由 Provider 负责，Manager 处理 sessionID 绑定和生命周期。
+// Manager 线程安全地管理所有活跃 Session（microVM 实例）。
+// VM 的创建/预热由 VMPool 负责，Manager 处理 sessionID 绑定和生命周期。
 type Manager struct {
 	cfg      ManagerConfig
 	mu       sync.Mutex
 	sessions map[string]*Session
-	creating sync.Map // session_id -> chan *createResult
+	procs    map[string]*os.Process // session_id -> Firecracker 进程
+	creating sync.Map               // session_id -> chan *createResult
 	pending  int
 
 	totalReclaimed atomic.Int64
@@ -79,6 +70,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 	return &Manager{
 		cfg:      cfg,
 		sessions: make(map[string]*Session),
+		procs:    make(map[string]*os.Process),
 	}
 }
 
@@ -93,9 +85,9 @@ type createResult struct {
 	err     error
 }
 
-// GetOrCreate 返回已有 Session；若不存在则从 Provider 获取一个执行环境并绑定。
-// orgID 非空时绑定到 session，已有 session 需匹配 orgID。
-func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, orgID string) (*Session, error) {
+// GetOrCreate 返回已有 Session；若不存在则从 VMPool 获取一个 VM 并绑定。
+// accountID 非空时绑定到 session，已有 session 需匹配 accountID。
+func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, accountID string) (*Session, error) {
 	if err := ValidTier(tier); err != nil {
 		return nil, err
 	}
@@ -103,8 +95,8 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, orgID string
 	m.mu.Lock()
 	if s, ok := m.sessions[sessionID]; ok {
 		m.mu.Unlock()
-		if orgID != "" && s.OrgID != "" && s.OrgID != orgID {
-			return nil, fmt.Errorf("session %s: org mismatch", sessionID)
+		if accountID != "" && s.AccountID != "" && s.AccountID != accountID {
+			return nil, fmt.Errorf("session %s: account mismatch", sessionID)
 		}
 		return s, nil
 	}
@@ -115,8 +107,8 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, orgID string
 		if result.err != nil {
 			return nil, result.err
 		}
-		if orgID != "" && result.session.OrgID != "" && result.session.OrgID != orgID {
-			return nil, fmt.Errorf("session %s: org mismatch", sessionID)
+		if accountID != "" && result.session.AccountID != "" && result.session.AccountID != accountID {
+			return nil, fmt.Errorf("session %s: account mismatch", sessionID)
 		}
 		return result.session, nil
 	}
@@ -131,7 +123,7 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, orgID string
 	m.creating.Store(sessionID, done)
 	m.mu.Unlock()
 
-	s, err := m.acquireAndBind(ctx, sessionID, tier, orgID)
+	s, err := m.acquireAndBind(ctx, sessionID, tier, accountID)
 
 	m.mu.Lock()
 	m.pending--
@@ -145,13 +137,14 @@ func (m *Manager) GetOrCreate(ctx context.Context, sessionID, tier, orgID string
 	return s, err
 }
 
-func (m *Manager) acquireAndBind(ctx context.Context, sessionID, tier, orgID string) (*Session, error) {
-	s, err := m.cfg.Pool.Acquire(ctx, sessionID, tier)
+func (m *Manager) acquireAndBind(ctx context.Context, sessionID, tier, accountID string) (*Session, error) {
+	s, proc, err := m.cfg.Pool.Acquire(ctx, tier)
 	if err != nil {
 		return nil, err
 	}
 
-	s.OrgID = orgID
+	s.ID = sessionID
+	s.AccountID = accountID
 	s.IdleTimeout = time.Duration(m.idleTimeoutFor(tier)) * time.Second
 	s.MaxLifetime = time.Duration(m.maxLifetimeFor(tier)) * time.Second
 	s.StartTimers(m.onSessionExpired)
@@ -160,22 +153,23 @@ func (m *Manager) acquireAndBind(ctx context.Context, sessionID, tier, orgID str
 	if existing, ok := m.sessions[sessionID]; ok {
 		m.mu.Unlock()
 		s.StopTimers()
-		m.cfg.Pool.Destroy(s.ID)
+		m.cfg.Pool.DestroyVM(proc, s.SocketDir)
 		return existing, nil
 	}
 	m.sessions[sessionID] = s
+	m.procs[sessionID] = proc
 	m.mu.Unlock()
 
 	return s, nil
 }
 
 // Delete 停止并销毁指定 Session 的 microVM。
-// orgID 非空时校验归属，不匹配则拒绝。
-func (m *Manager) Delete(ctx context.Context, sessionID, orgID string) error {
-	return m.DeleteWithOptions(ctx, sessionID, orgID, DeleteOptions{Reason: DeleteReasonExplicit})
+// accountID 非空时校验归属，不匹配则拒绝。
+func (m *Manager) Delete(ctx context.Context, sessionID, accountID string) error {
+	return m.DeleteWithOptions(ctx, sessionID, accountID, DeleteOptions{Reason: DeleteReasonExplicit})
 }
 
-func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, orgID string, opts DeleteOptions) error {
+func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, accountID string, opts DeleteOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -185,12 +179,14 @@ func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, orgID string
 
 	m.mu.Lock()
 	s, ok := m.sessions[sessionID]
+	proc := m.procs[sessionID]
 	if ok {
-		if orgID != "" && s.OrgID != "" && s.OrgID != orgID {
+		if accountID != "" && s.AccountID != "" && s.AccountID != accountID {
 			m.mu.Unlock()
-			return fmt.Errorf("session %s: org mismatch", sessionID)
+			return fmt.Errorf("session %s: account mismatch", sessionID)
 		}
 		delete(m.sessions, sessionID)
+		delete(m.procs, sessionID)
 	}
 	m.mu.Unlock()
 
@@ -201,18 +197,19 @@ func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, orgID string
 		if err := m.cfg.BeforeDelete(ctx, s, opts.Reason); err != nil && !opts.IgnoreHookError {
 			m.mu.Lock()
 			m.sessions[sessionID] = s
+			m.procs[sessionID] = proc
 			m.mu.Unlock()
 			return err
 		}
 	}
 
 	s.StopTimers()
-	m.cfg.Pool.Destroy(sessionID)
+	m.cfg.Pool.DestroyVM(proc, s.SocketDir)
 	return nil
 }
 
-func (m *Manager) DeleteSkipHook(ctx context.Context, sessionID, orgID string) error {
-	return m.DeleteWithOptions(ctx, sessionID, orgID, DeleteOptions{Reason: DeleteReasonExplicit, SkipBeforeDelete: true})
+func (m *Manager) DeleteSkipHook(ctx context.Context, sessionID, accountID string) error {
+	return m.DeleteWithOptions(ctx, sessionID, accountID, DeleteOptions{Reason: DeleteReasonExplicit, SkipBeforeDelete: true})
 }
 
 // CloseAll 终止所有活跃 Session。服务关闭时调用。
@@ -252,17 +249,17 @@ func (m *Manager) TotalReclaimed() int64 {
 	return m.totalReclaimed.Load()
 }
 
-// PoolStats 返回底层 Provider 的运行时统计。
+// PoolStats 返回底层 VMPool 的运行时统计。
 func (m *Manager) PoolStats() PoolStats {
 	return m.cfg.Pool.Stats()
 }
 
-// PoolReady 返回底层 Provider 是否完成初始预热。
+// PoolReady 返回底层 VMPool 是否完成初始预热。
 func (m *Manager) PoolReady() bool {
 	return m.cfg.Pool.Ready()
 }
 
-// DrainPool 停止底层 Provider 的 refiller 并销毁所有预热环境。
+// DrainPool 停止底层 VMPool 的 refiller 并销毁所有预热 VM。
 func (m *Manager) DrainPool(ctx context.Context) {
 	m.cfg.Pool.Drain(ctx)
 }
@@ -291,7 +288,7 @@ func (m *Manager) maxLifetimeFor(tier string) int {
 	return m.cfg.MaxLifetimes[TierLite]
 }
 
-// WaitForAgent 轮询等待 Guest Agent 端口就绪。
+// WaitForAgent 轮询等待 Guest Agent vsock 端口就绪。
 func WaitForAgent(ctx context.Context, s *Session, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	pingJob := ExecJob{Language: "shell", Code: "echo ready", TimeoutMs: 1000}

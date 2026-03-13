@@ -9,22 +9,21 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
-	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func editThreadMessage(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID, messageID uuid.UUID) {
 		if r.Method != nethttp.MethodPatch {
@@ -37,7 +36,7 @@ func editThreadMessage(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || messageRepo == nil || db == nil {
+		if threadRepo == nil || messageRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -66,11 +65,11 @@ func editThreadMessage(
 			return
 		}
 
-		if !authorizeThreadOrAudit(w, r, traceID, actor, "messages.edit", thread, auditWriter, flagService) {
+		if !authorizeThreadOrAudit(w, r, traceID, actor, "messages.edit", thread, auditWriter) {
 			return
 		}
 
-		tx, err := db.Begin(r.Context())
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -83,7 +82,7 @@ func editThreadMessage(
 			return
 		}
 
-		existingMessage, err := txMessageRepo.GetByID(r.Context(), thread.OrgID, threadID, messageID)
+		existingMessage, err := txMessageRepo.GetByID(r.Context(), thread.AccountID, threadID, messageID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -99,13 +98,13 @@ func editThreadMessage(
 			return
 		}
 
-		_, err = txMessageRepo.UpdateStructuredContent(r.Context(), thread.OrgID, threadID, messageID, projection, contentJSON)
+		_, err = txMessageRepo.UpdateStructuredContent(r.Context(), thread.AccountID, threadID, messageID, projection, contentJSON)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusNotFound, "messages.not_found", "message not found or not editable", traceID, nil)
 			return
 		}
 
-		if err := txMessageRepo.HideMessagesAfter(r.Context(), thread.OrgID, threadID, messageID); err != nil {
+		if err := txMessageRepo.HideMessagesAfter(r.Context(), thread.AccountID, threadID, messageID); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
@@ -123,7 +122,7 @@ func editThreadMessage(
 
 		run, _, err := runRepo.CreateRunWithStartedEvent(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			thread.ID,
 			&actor.UserID,
 			"run.started",
@@ -136,7 +135,7 @@ func editThreadMessage(
 
 		_, err = jobRepo.EnqueueRun(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			run.ID,
 			traceID,
 			data.RunExecuteJobType,
@@ -162,13 +161,12 @@ func editThreadMessage(
 
 func retryThread(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	threadRepo *data.ThreadRepository,
 	messageRepo *data.MessageRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	apiKeysRepo *data.APIKeysRepository,
-	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -181,7 +179,7 @@ func retryThread(
 			httpkit.WriteAuthNotConfigured(w, traceID)
 			return
 		}
-		if threadRepo == nil || messageRepo == nil || db == nil {
+		if threadRepo == nil || messageRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 			return
 		}
@@ -204,11 +202,11 @@ func retryThread(
 			return
 		}
 
-		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.create", thread, auditWriter, flagService) {
+		if !authorizeThreadOrAudit(w, r, traceID, actor, "runs.create", thread, auditWriter) {
 			return
 		}
 
-		tx, err := db.Begin(r.Context())
+		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -221,7 +219,7 @@ func retryThread(
 			return
 		}
 
-		_, err = txMessageRepo.HideLastAssistantMessage(r.Context(), thread.OrgID, thread.ID)
+		_, err = txMessageRepo.HideLastAssistantMessage(r.Context(), thread.AccountID, thread.ID)
 		if err != nil {
 			var noMsg data.NoAssistantMessageError
 			if errors.As(err, &noMsg) {
@@ -245,7 +243,7 @@ func retryThread(
 
 		run, _, err := runRepo.CreateRunWithStartedEvent(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			thread.ID,
 			&actor.UserID,
 			"run.started",
@@ -258,7 +256,7 @@ func retryThread(
 
 		_, err = jobRepo.EnqueueRun(
 			r.Context(),
-			thread.OrgID,
+			thread.AccountID,
 			run.ID,
 			traceID,
 			data.RunExecuteJobType,

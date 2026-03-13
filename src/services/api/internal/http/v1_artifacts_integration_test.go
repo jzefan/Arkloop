@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -16,31 +14,28 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
-	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/testutil"
 	"arkloop/services/shared/objectstore"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type artifactTestEnv struct {
-	handler          nethttp.Handler
-	appDB        database.DB
-	apiKeysRepo      *data.APIKeysRepository
-	membershipRepo   *data.OrgMembershipRepository
-	threadRepo       *data.ThreadRepository
-	threadShareRepo  *data.ThreadShareRepository
-	runRepo          *data.RunEventRepository
-	featureFlagsRepo *data.FeatureFlagRepository
-	featureFlagSvc   *featureflag.Service
-	tokenService     *auth.JwtAccessTokenService
-	aliceToken       string
-	aliceUserID      uuid.UUID
-	aliceOrgID       uuid.UUID
-	store            *fakeHTTPArtifactStore
+	handler         nethttp.Handler
+	pool            *pgxpool.Pool
+	apiKeysRepo     *data.APIKeysRepository
+	membershipRepo  *data.AccountMembershipRepository
+	threadRepo      *data.ThreadRepository
+	threadShareRepo *data.ThreadShareRepository
+	runRepo         *data.RunEventRepository
+	tokenService    *auth.JwtAccessTokenService
+	aliceToken      string
+	aliceUserID     uuid.UUID
+	aliceAccountID      uuid.UUID
+	store           *fakeHTTPArtifactStore
 }
 
 type fakeArtifactObject struct {
@@ -123,11 +118,11 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	}
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	t.Cleanup(func() { appDB.Close() })
+	t.Cleanup(pool.Close)
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -139,62 +134,51 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credRepo, err := data.NewUserCredentialRepository(appDB)
+	credRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	threadShareRepo, err := data.NewThreadShareRepository(appDB)
+	threadShareRepo, err := data.NewThreadShareRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread share repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(appDB)
+	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
-	featureFlagsRepo, err := data.NewFeatureFlagRepository(appDB)
-	if err != nil {
-		t.Fatalf("new feature flags repo: %v", err)
-	}
-	featureFlagSvc, err := featureflag.NewService(featureFlagsRepo, nil)
-	if err != nil {
-		t.Fatalf("new feature flag service: %v", err)
-	}
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
-		t.Fatalf("enable claw flag: %v", err)
-	}
-	shellSessionRepo, err := data.NewShellSessionRepository(appDB)
+	shellSessionRepo, err := data.NewShellSessionRepository(pool)
 	if err != nil {
 		t.Fatalf("new shell session repo: %v", err)
 	}
-	apiKeysRepo, err := data.NewAPIKeysRepository(appDB)
+	apiKeysRepo, err := data.NewAPIKeysRepository(pool)
 	if err != nil {
 		t.Fatalf("new api keys repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
@@ -202,7 +186,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -210,17 +194,15 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	store := newFakeHTTPArtifactStore()
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                   pool,
 		Logger:                 logger,
 		AuthService:            authService,
 		RegistrationService:    registrationService,
-		OrgMembershipRepo:      membershipRepo,
+		AccountMembershipRepo:      membershipRepo,
 		ThreadRepo:             threadRepo,
 		ProjectRepo:            projectRepo,
 		ThreadShareRepo:        threadShareRepo,
 		RunEventRepo:           runRepo,
-		FeatureFlagsRepo:       featureFlagsRepo,
-		FeatureFlagService:     featureFlagSvc,
 		ShellSessionRepo:       shellSessionRepo,
 		AuditWriter:            auditWriter,
 		APIKeysRepo:            apiKeysRepo,
@@ -250,20 +232,18 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	}
 
 	return artifactTestEnv{
-		handler:          handler,
-		appDB:            appDB,
-		apiKeysRepo:      apiKeysRepo,
-		membershipRepo:   membershipRepo,
-		threadRepo:       threadRepo,
-		threadShareRepo:  threadShareRepo,
-		runRepo:          runRepo,
-		featureFlagsRepo: featureFlagsRepo,
-		featureFlagSvc:   featureFlagSvc,
-		tokenService:     tokenService,
-		aliceToken:       regPayload.AccessToken,
-		aliceUserID:      aliceUserID,
-		aliceOrgID:       membership.OrgID,
-		store:            store,
+		handler:         handler,
+		pool:            pool,
+		apiKeysRepo:     apiKeysRepo,
+		membershipRepo:  membershipRepo,
+		threadRepo:      threadRepo,
+		threadShareRepo: threadShareRepo,
+		runRepo:         runRepo,
+		tokenService:    tokenService,
+		aliceToken:      regPayload.AccessToken,
+		aliceUserID:     aliceUserID,
+		aliceAccountID:      membership.AccountID,
+		store:           store,
 	}
 }
 
@@ -280,19 +260,19 @@ func doArtifactRequest(t *testing.T, handler nethttp.Handler, path string, heade
 
 func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "artifact-thread-read")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "artifact-thread-read")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
-	artifactKey := env.aliceOrgID.String() + "/" + run.ID.String() + "/report.txt"
-	env.store.put(artifactKey, []byte("owner-visible"), "text/plain", objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, run.ID.String(), env.aliceOrgID.String(), nil))
+	artifactKey := env.aliceAccountID.String() + "/" + run.ID.String() + "/report.txt"
+	env.store.put(artifactKey, []byte("owner-visible"), "text/plain", objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, run.ID.String(), env.aliceAccountID.String(), nil))
 
 	ownerResp := doArtifactRequest(t, env.handler, "/v1/artifacts/"+artifactKey, authHeader(env.aliceToken))
 	if ownerResp.Code != nethttp.StatusOK || ownerResp.Body.String() != "owner-visible" {
@@ -311,10 +291,10 @@ func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse other user id: %v", err)
 	}
-	if _, err := env.membershipRepo.Create(context.Background(), env.aliceOrgID, otherUserID, auth.RoleOrgMember); err != nil {
+	if _, err := env.membershipRepo.Create(context.Background(), env.aliceAccountID, otherUserID, auth.RoleAccountMember); err != nil {
 		t.Fatalf("add org membership: %v", err)
 	}
-	_, otherKey, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, otherUserID, "other-reader", []string{auth.PermDataRunsRead})
+	_, otherKey, err := env.apiKeysRepo.Create(context.Background(), env.aliceAccountID, otherUserID, "other-reader", []string{auth.PermDataRunsRead})
 	if err != nil {
 		t.Fatalf("create other key: %v", err)
 	}
@@ -343,7 +323,7 @@ func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 	wrongShare := doArtifactRequest(t, env.handler, "/v1/artifacts/"+artifactKey+"?share_token=wrong-token", nil)
 	assertErrorEnvelope(t, wrongShare, nethttp.StatusForbidden, "artifacts.forbidden")
 
-	legacyKey := env.aliceOrgID.String() + "/" + run.ID.String() + "/legacy.txt"
+	legacyKey := env.aliceAccountID.String() + "/" + run.ID.String() + "/legacy.txt"
 	env.store.put(legacyKey, []byte("legacy-visible"), "text/plain", nil)
 	legacyResp := doArtifactRequest(t, env.handler, "/v1/artifacts/"+legacyKey, authHeader(env.aliceToken))
 	if legacyResp.Code != nethttp.StatusOK || legacyResp.Body.String() != "legacy-visible" {
@@ -353,9 +333,9 @@ func TestArtifactsAuthorizationByRunOwnerAndShare(t *testing.T) {
 
 func TestThreadAttachmentsUploadAndRead(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "artifact-attachments")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "artifact-attachments")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
@@ -411,33 +391,33 @@ func TestThreadAttachmentsUploadAndRead(t *testing.T) {
 
 func TestArtifactsAuthorizationByBrowserSessionOwnerFallback(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "artifact-browser-session")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "artifact-browser-session")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 
 	sessionRef := "brref_browserartifact"
-	if _, err := env.appDB.Exec(context.Background(), `
+	if _, err := env.pool.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
-			session_ref, session_type, org_id, profile_ref, workspace_ref,
+			session_ref, session_type, account_id, profile_ref, workspace_ref,
 			thread_id, run_id, share_scope, state, metadata_json
 		) VALUES ($1, 'browser', $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
-	`, sessionRef, env.aliceOrgID, "pref_test", "wsref_test", thread.ID, run.ID, "thread", "idle"); err != nil {
+	`, sessionRef, env.aliceAccountID, "pref_test", "wsref_test", thread.ID, run.ID, "thread", "idle"); err != nil {
 		t.Fatalf("insert shell session: %v", err)
 	}
 
-	artifactKey := env.aliceOrgID.String() + "/" + sessionRef + "/1/browser-screenshot.png"
+	artifactKey := env.aliceAccountID.String() + "/" + sessionRef + "/1/browser-screenshot.png"
 	env.store.put(
 		artifactKey,
 		[]byte("png-bytes"),
 		"image/png",
-		objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, sessionRef, env.aliceOrgID.String(), nil),
+		objectstore.ArtifactMetadata(objectstore.ArtifactOwnerKindRun, sessionRef, env.aliceAccountID.String(), nil),
 	)
 
 	resp := doArtifactRequest(t, env.handler, "/v1/artifacts/"+artifactKey, authHeader(env.aliceToken))

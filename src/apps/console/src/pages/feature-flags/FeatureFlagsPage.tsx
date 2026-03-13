@@ -8,7 +8,7 @@ import { Badge } from '../../components/Badge'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -16,11 +16,11 @@ import {
   createFeatureFlag,
   updateFeatureFlagDefault,
   deleteFeatureFlag,
-  listFlagOrgOverrides,
-  setFlagOrgOverride,
-  deleteFlagOrgOverride,
+  listFlagAccountOverrides,
+  setFlagAccountOverride,
+  deleteFlagAccountOverride,
   type FeatureFlag,
-  type OrgFeatureOverride,
+  type AccountFeatureOverride,
 } from '../../api/feature-flags'
 
 export function FeatureFlagsPage() {
@@ -44,20 +44,20 @@ export function FeatureFlagsPage() {
   const [deleteTarget, setDeleteTarget] = useState<FeatureFlag | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  // expanded row for org overrides
+  // expanded row for account overrides
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
-  const [overrides, setOverrides] = useState<OrgFeatureOverride[]>([])
+  const [overrides, setOverrides] = useState<AccountFeatureOverride[]>([])
   const [overridesLoading, setOverridesLoading] = useState(false)
 
   // add override
   const [addOverrideOpen, setAddOverrideOpen] = useState(false)
-  const [overrideOrgId, setOverrideOrgId] = useState('')
+  const [overrideAccountId, setOverrideAccountId] = useState('')
   const [overrideEnabled, setOverrideEnabled] = useState(true)
   const [addingOverride, setAddingOverride] = useState(false)
   const [overrideError, setOverrideError] = useState('')
 
   // delete override
-  const [deleteOverrideTarget, setDeleteOverrideTarget] = useState<OrgFeatureOverride | null>(null)
+  const [deleteOverrideTarget, setDeleteOverrideTarget] = useState<AccountFeatureOverride | null>(null)
   const [deletingOverride, setDeletingOverride] = useState(false)
 
   const fetchAll = useCallback(async () => {
@@ -76,18 +76,10 @@ export function FeatureFlagsPage() {
     void fetchAll()
   }, [fetchAll])
 
-  const expandedFlag = flags.find((flag) => flag.key === expandedKey) ?? null
-
-  useEffect(() => {
-    if (expandedFlag === null || expandedFlag.supports_org_overrides) return
-    setExpandedKey(null)
-    setOverrides([])
-  }, [expandedFlag])
-
   const fetchOverrides = useCallback(async (flagKey: string) => {
     setOverridesLoading(true)
     try {
-      const list = await listFlagOrgOverrides(flagKey, accessToken)
+      const list = await listFlagAccountOverrides(flagKey, accessToken)
       setOverrides(list)
     } catch {
       setOverrides([])
@@ -96,14 +88,13 @@ export function FeatureFlagsPage() {
     }
   }, [accessToken])
 
-  const handleToggleExpand = useCallback((flag: FeatureFlag) => {
-    if (!flag.supports_org_overrides) return
-    if (expandedKey === flag.key) {
+  const handleToggleExpand = useCallback((flagKey: string) => {
+    if (expandedKey === flagKey) {
       setExpandedKey(null)
       setOverrides([])
     } else {
-      setExpandedKey(flag.key)
-      void fetchOverrides(flag.key)
+      setExpandedKey(flagKey)
+      void fetchOverrides(flagKey)
     }
   }, [expandedKey, fetchOverrides])
 
@@ -177,24 +168,23 @@ export function FeatureFlagsPage() {
 
   // override handlers
   const handleOpenAddOverride = useCallback(() => {
-    if (expandedFlag == null || !expandedFlag.supports_org_overrides) return
-    setOverrideOrgId('')
+    setOverrideAccountId('')
     setOverrideEnabled(true)
     setOverrideError('')
     setAddOverrideOpen(true)
-  }, [expandedFlag])
+  }, [])
 
   const handleAddOverride = useCallback(async () => {
     if (!expandedKey) return
-    const orgId = overrideOrgId.trim()
-    if (!orgId) {
-      setOverrideError(tc.errOrgIdRequired)
+    const accountId = overrideAccountId.trim()
+    if (!accountId) {
+      setOverrideError(tc.errAccountIdRequired)
       return
     }
     setAddingOverride(true)
     setOverrideError('')
     try {
-      await setFlagOrgOverride(expandedKey, { org_id: orgId, enabled: overrideEnabled }, accessToken)
+      await setFlagAccountOverride(expandedKey, { account_id: accountId, enabled: overrideEnabled }, accessToken)
       addToast(tc.toastOverrideSet, 'success')
       setAddOverrideOpen(false)
       void fetchOverrides(expandedKey)
@@ -203,13 +193,13 @@ export function FeatureFlagsPage() {
     } finally {
       setAddingOverride(false)
     }
-  }, [expandedKey, overrideOrgId, overrideEnabled, accessToken, fetchOverrides, addToast, tc])
+  }, [expandedKey, overrideAccountId, overrideEnabled, accessToken, fetchOverrides, addToast, tc])
 
   const handleDeleteOverride = useCallback(async () => {
     if (!deleteOverrideTarget || !expandedKey) return
     setDeletingOverride(true)
     try {
-      await deleteFlagOrgOverride(expandedKey, deleteOverrideTarget.org_id, accessToken)
+      await deleteFlagAccountOverride(expandedKey, deleteOverrideTarget.account_id, accessToken)
       addToast(tc.toastOverrideDeleted, 'success')
       setDeleteOverrideTarget(null)
       void fetchOverrides(expandedKey)
@@ -224,15 +214,13 @@ export function FeatureFlagsPage() {
     {
       key: 'expand',
       header: '',
-      render: (row) => row.supports_org_overrides ? (
+      render: (row) => (
         <button
-          onClick={(e) => { e.stopPropagation(); handleToggleExpand(row) }}
+          onClick={(e) => { e.stopPropagation(); handleToggleExpand(row.key) }}
           className="flex items-center justify-center rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)]"
         >
           {expandedKey === row.key ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </button>
-      ) : (
-        <span className="block h-[22px] w-[22px]" />
       ),
     },
     {
@@ -311,12 +299,12 @@ export function FeatureFlagsPage() {
           emptyIcon={<Flag size={28} />}
         />
 
-        {/* expanded org overrides section */}
-        {expandedKey && expandedFlag?.supports_org_overrides && (
+        {/* expanded account overrides section */}
+        {expandedKey && (
           <div className="border-t border-[var(--c-border)] px-6 py-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-medium text-[var(--c-text-secondary)]">
-                {tc.orgOverrides} ({expandedKey})
+                {tc.accountOverrides} ({expandedKey})
               </h3>
               <button
                 onClick={handleOpenAddOverride}
@@ -335,7 +323,7 @@ export function FeatureFlagsPage() {
               <table className="mt-3 w-full text-xs">
                 <thead>
                   <tr className="text-left text-[var(--c-text-muted)]">
-                    <th className="pb-2 font-medium">{tc.overrideOrgId}</th>
+                    <th className="pb-2 font-medium">{tc.overrideAccountId}</th>
                     <th className="pb-2 font-medium">{tc.overrideEnabled}</th>
                     <th className="pb-2 font-medium">{tc.colCreatedAt}</th>
                     <th className="pb-2" />
@@ -343,8 +331,8 @@ export function FeatureFlagsPage() {
                 </thead>
                 <tbody>
                   {overrides.map((o) => (
-                    <tr key={o.org_id} className="border-t border-[var(--c-border)]">
-                      <td className="py-2 font-mono text-[var(--c-text-primary)]">{o.org_id}</td>
+                    <tr key={o.account_id} className="border-t border-[var(--c-border)]">
+                      <td className="py-2 font-mono text-[var(--c-text-primary)]">{o.account_id}</td>
                       <td className="py-2">
                         <Badge variant={o.enabled ? 'success' : 'neutral'}>
                           {o.enabled ? tc.enabled : tc.disabled}
@@ -432,12 +420,12 @@ export function FeatureFlagsPage() {
         width="400px"
       >
         <div className="flex flex-col gap-4">
-          <FormField label={tc.overrideOrgId}>
+          <FormField label={tc.overrideAccountId}>
             <input
               type="text"
-              value={overrideOrgId}
-              onChange={(e) => { setOverrideOrgId(e.target.value); setOverrideError('') }}
-              placeholder="org uuid"
+              value={overrideAccountId}
+              onChange={(e) => { setOverrideAccountId(e.target.value); setOverrideError('') }}
+              placeholder="account uuid"
               className={inputCls}
               autoFocus
             />
@@ -493,7 +481,7 @@ export function FeatureFlagsPage() {
         onClose={() => { if (!deletingOverride) setDeleteOverrideTarget(null) }}
         onConfirm={handleDeleteOverride}
         title={tc.deleteOverrideTitle}
-        message={tc.deleteOverrideMessage(deleteOverrideTarget?.org_id ?? '')}
+        message={tc.deleteOverrideMessage(deleteOverrideTarget?.account_id ?? '')}
         confirmLabel={tc.deleteOverrideConfirm}
         loading={deletingOverride}
       />

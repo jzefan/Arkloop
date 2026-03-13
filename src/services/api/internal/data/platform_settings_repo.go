@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type PlatformSetting struct {
@@ -37,7 +37,7 @@ func (r *PlatformSettingsRepository) Get(ctx context.Context, key string) (*Plat
 		`SELECT key, value, updated_at FROM platform_settings WHERE key = $1`,
 		key,
 	).Scan(&s.Key, &s.Value, &s.UpdatedAt)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

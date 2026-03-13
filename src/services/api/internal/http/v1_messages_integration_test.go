@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -21,11 +19,11 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_messages")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -38,35 +36,35 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	messageRepo, err := data.NewMessageRepository(appDB)
+	messageRepo, err := data.NewMessageRepository(pool)
 	if err != nil {
 		t.Fatalf("new message repo: %v", err)
 	}
@@ -75,11 +73,11 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -87,11 +85,11 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
@@ -169,7 +167,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	denyList := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+threadPayload.ID+"/messages", nil, bobHeaders)
 	assertErrorEnvelope(t, denyList, nethttp.StatusForbidden, "policy.denied")
 
-	deniedCreateCount, err := countDeniedAudit(ctx, appDB, "messages.create", "org_mismatch")
+	deniedCreateCount, err := countDeniedAudit(ctx, pool, "messages.create", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -177,7 +175,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		t.Fatalf("unexpected denied create audit count: %d", deniedCreateCount)
 	}
 
-	deniedListCount, err := countDeniedAudit(ctx, appDB, "messages.list", "org_mismatch")
+	deniedListCount, err := countDeniedAudit(ctx, pool, "messages.list", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -190,11 +188,11 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_messages_run_id")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -206,31 +204,31 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	threadRepo, _ := data.NewThreadRepository(appDB)
-	projectRepo, _ := data.NewProjectRepository(appDB)
-	messageRepo, _ := data.NewMessageRepository(appDB)
-	jobRepo, _ := data.NewJobRepository(appDB)
+	userRepo, _ := data.NewUserRepository(pool)
+	credentialRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	auditRepo, _ := data.NewAuditLogRepository(pool)
+	threadRepo, _ := data.NewThreadRepository(pool)
+	projectRepo, _ := data.NewProjectRepository(pool)
+	messageRepo, _ := data.NewMessageRepository(pool)
+	jobRepo, _ := data.NewJobRepository(pool)
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
@@ -259,7 +257,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse thread id: %v", err)
 	}
-	orgID, err := uuid.Parse(threadPayload.OrgID)
+	accountID, err := uuid.Parse(threadPayload.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}
@@ -268,11 +266,11 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
 	}
-	_, err = appDB.Exec(
+	_, err = pool.Exec(
 		ctx,
-		`INSERT INTO messages (org_id, thread_id, created_by_user_id, role, content, metadata_json)
+		`INSERT INTO messages (account_id, thread_id, created_by_user_id, role, content, metadata_json)
 		 VALUES ($1, $2, NULL, 'assistant', $3, $4::jsonb)`,
-		orgID,
+		accountID,
 		threadID,
 		"hello from assistant",
 		string(metadataRaw),

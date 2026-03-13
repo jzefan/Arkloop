@@ -11,10 +11,10 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type broadcastResponse struct {
@@ -56,11 +56,11 @@ func toBroadcastResponse(b data.NotificationBroadcast) broadcastResponse {
 
 func adminBroadcastsEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	logger *observability.JSONLogger,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -68,7 +68,7 @@ func adminBroadcastsEntry(
 		case nethttp.MethodGet:
 			listBroadcasts(authService, membershipRepo, notifRepo, apiKeysRepo)(w, r)
 		case nethttp.MethodPost:
-			createBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo, auditWriter, db, logger)(w, r)
+			createBroadcast(authService, membershipRepo, notifRepo, apiKeysRepo, auditWriter, pool, logger)(w, r)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -77,7 +77,7 @@ func adminBroadcastsEntry(
 
 func adminBroadcastEntry(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -118,11 +118,11 @@ type createBroadcastRequest struct {
 
 func createBroadcast(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	auditWriter *audit.Writer,
-	db database.DB,
+	pool *pgxpool.Pool,
 	logger *observability.JSONLogger,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -156,16 +156,16 @@ func createBroadcast(
 			return
 		}
 
-		// target 格式: "all" 或 org UUID
+		// target 格式: "all" 或 account UUID
 		targetType := "all"
 		var targetID *uuid.UUID
 		if req.Target != "" && req.Target != "all" {
 			parsed, err := uuid.Parse(req.Target)
 			if err != nil {
-				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "target must be 'all' or a valid org_id", traceID, nil)
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "target must be 'all' or a valid account_id", traceID, nil)
 				return
 			}
-			targetType = "org"
+			targetType = "account"
 			targetID = &parsed
 		}
 
@@ -190,7 +190,7 @@ func createBroadcast(
 			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			bgRepo, err := data.NewNotificationsRepository(db)
+			bgRepo, err := data.NewNotificationsRepository(pool)
 			if err != nil {
 				if logger != nil {
 					logger.Error("broadcast: failed to create bg repo", observability.LogFields{TraceID: &traceID}, map[string]any{"error": err.Error()})
@@ -233,7 +233,7 @@ func createBroadcast(
 
 func listBroadcasts(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -278,7 +278,7 @@ func listBroadcasts(
 
 func getBroadcast(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
@@ -314,7 +314,7 @@ func getBroadcast(
 
 func deleteBroadcast(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	notifRepo *data.NotificationsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {

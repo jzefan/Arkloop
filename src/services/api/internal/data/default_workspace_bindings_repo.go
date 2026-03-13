@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -90,7 +90,7 @@ func (r *DefaultWorkspaceBindingsRepository) Get(
 		&record.CreatedAt,
 		&record.UpdatedAt,
 	)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -101,7 +101,7 @@ func (r *DefaultWorkspaceBindingsRepository) Get(
 
 func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 	ctx context.Context,
-	tx database.Tx,
+	tx pgx.Tx,
 	orgID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	profileRef string,
@@ -146,7 +146,7 @@ func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 	if err == nil {
 		return existing, false, nil
 	}
-	if !errors.Is(err, database.ErrNoRows) {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, err
 	}
 

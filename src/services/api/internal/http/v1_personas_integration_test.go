@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -22,11 +20,11 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_personas")
 	ctx := context.Background()
 
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -38,31 +36,31 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(appDB)
+	personasRepo, err := data.NewPersonasRepository(pool)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -71,19 +69,19 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
@@ -99,7 +97,10 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 				ToolAllowlist:      []string{"web.search"},
 				ToolDenylist:       []string{"exec_command"},
 				Budgets:            map[string]any{"max_output_tokens": 2048},
-				PromptMD:           "builtin prompt",
+				Roles: map[string]any{
+					"worker": map[string]any{"prompt_md": "builtin worker prompt"},
+				},
+				PromptMD: "builtin prompt",
 			},
 			{
 				ID:                 "shadowed",
@@ -128,13 +129,13 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	accountID := uuid.MustParse(me.AccountID)
 
-	ghostID := insertGlobalPersonaHTTP(t, ctx, appDB, "ghost", "Ghost Persona")
+	ghostID := insertGlobalPersonaHTTP(t, ctx, pool, "ghost", "Ghost Persona")
 
 	_, err = personasRepo.Create(
 		ctx,
-		orgID,
+		accountID,
 		"shadowed",
 		"1",
 		"Custom Shadowed",
@@ -143,6 +144,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		nil,
 		nil,
 		json.RawMessage(`{"max_output_tokens":512}`),
+		nil,
 		nil,
 		strPtrPersonaLocal("custom-shadow^model"),
 		"high",
@@ -155,7 +157,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	}
 	_, err = personasRepo.Create(
 		ctx,
-		orgID,
+		accountID,
 		"custom-only",
 		"1",
 		"Custom Only",
@@ -164,6 +166,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		[]string{"web.search"},
 		[]string{"exec_command"},
 		json.RawMessage(`{"temperature":0.3}`),
+		nil,
 		strPtrPersonaLocal("cred-custom"),
 		strPtrPersonaLocal("custom-only^gpt-4.1-mini"),
 		"high",
@@ -183,6 +186,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		"tool_allowlist":       []string{"web.search"},
 		"tool_denylist":        []string{"exec_command"},
 		"budgets":              map[string]any{"max_output_tokens": 1024, "top_p": 0.9},
+		"roles":                map[string]any{"worker": map[string]any{"prompt_md": "worker prompt"}},
 		"preferred_credential": "cred-api",
 		"model":                "api-cred^gpt-5-mini",
 		"reasoning_mode":       "medium",
@@ -205,6 +209,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	if len(created.ToolDenylist) != 1 || created.ToolDenylist[0] != "exec_command" {
 		t.Fatalf("unexpected created tool_denylist: %#v", created.ToolDenylist)
 	}
+	assertJSONContainsRolePrompt(t, created.RolesJSON, "worker", "worker prompt")
 
 	copyResp := doJSON(handler, nethttp.MethodPost, "/v1/personas", map[string]any{
 		"copy_from_repo_persona_key": "builtin-only",
@@ -260,6 +265,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	if len(builtinOnly.ToolDenylist) != 1 || builtinOnly.ToolDenylist[0] != "exec_command" {
 		t.Fatalf("unexpected builtin tool_denylist: %#v", builtinOnly.ToolDenylist)
 	}
+	assertJSONContainsRolePrompt(t, builtinOnly.RolesJSON, "worker", "builtin worker prompt")
 
 	shadowed, ok := byKey["shadowed"]
 	if !ok {
@@ -303,6 +309,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		"tool_denylist":        []string{"write_stdin"},
 		"reasoning_mode":       "high",
 		"prompt_cache_control": "none",
+		"roles":                map[string]any{},
 	}, headers)
 	if patchResp.Code != nethttp.StatusOK {
 		t.Fatalf("patch persona: %d %s", patchResp.Code, patchResp.Body.String())
@@ -320,6 +327,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	if len(patched.ToolDenylist) != 1 || patched.ToolDenylist[0] != "write_stdin" {
 		t.Fatalf("unexpected patched tool_denylist: %#v", patched.ToolDenylist)
 	}
+	assertJSONContainsEmptyObject(t, patched.RolesJSON)
 
 	ghostPatchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+ghostID.String(), map[string]any{
 		"display_name": "Ghost Renamed",
@@ -331,11 +339,11 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_personas_member_read")
 	ctx := context.Background()
 
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -347,31 +355,31 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(appDB)
+	personasRepo, err := data.NewPersonasRepository(pool)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -380,19 +388,19 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
@@ -425,12 +433,12 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 		t.Fatalf("register: %d %s", reg.Code, reg.Body.String())
 	}
 	regBody := decodeJSONBody[registerResponse](t, reg.Body.Bytes())
-	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleOrgMember); err != nil {
+	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleAccountMember); err != nil {
 		t.Fatalf("set member role: %v", err)
 	}
 
 	headers := authHeader(regBody.AccessToken)
-	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=org", nil, headers)
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=project", nil, headers)
 	if listResp.Code != nethttp.StatusOK {
 		t.Fatalf("list personas: %d %s", listResp.Code, listResp.Body.String())
 	}
@@ -458,11 +466,11 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_selectable_personas")
 	ctx := context.Background()
 
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -474,31 +482,31 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	personasRepo, err := data.NewPersonasRepository(appDB)
+	personasRepo, err := data.NewPersonasRepository(pool)
 	if err != nil {
 		t.Fatalf("new personas repo: %v", err)
 	}
@@ -507,19 +515,19 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		PersonasRepo:        personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
@@ -559,7 +567,7 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("register: %d %s", reg.Code, reg.Body.String())
 	}
 	regBody := decodeJSONBody[registerResponse](t, reg.Body.Bytes())
-	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleOrgMember); err != nil {
+	if err := membershipRepo.SetRoleForUser(ctx, uuid.MustParse(regBody.UserID), auth.RoleAccountMember); err != nil {
 		t.Fatalf("set member role: %v", err)
 	}
 
@@ -568,28 +576,28 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("me: %d %s", meResp.Code, meResp.Body.String())
 	}
 	me := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
-	orgID := uuid.MustParse(me.OrgID)
+	accountID := uuid.MustParse(me.AccountID)
 
-	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "extended-search", "1", "Platform Search", nil, "platform search prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^search"), "auto", "none", "agent.simple", nil); err != nil {
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "extended-search", "1", "Platform Search", nil, "platform search prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, nil, strPtrPersonaLocal("platform^search"), "auto", "none", "agent.simple", nil); err != nil {
 		t.Fatalf("create platform search: %v", err)
 	}
-	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "hidden-builtin", "1", "Platform Hidden", nil, "platform hidden prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^hidden"), "auto", "none", "agent.simple", nil); err != nil {
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "hidden-builtin", "1", "Platform Hidden", nil, "platform hidden prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, nil, strPtrPersonaLocal("platform^hidden"), "auto", "none", "agent.simple", nil); err != nil {
 		t.Fatalf("create platform hidden: %v", err)
 	}
-	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "platform-custom", "1", "Platform Custom", nil, "platform custom prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, strPtrPersonaLocal("platform^custom"), "auto", "none", "agent.simple", nil); err != nil {
+	if _, err := personasRepo.CreateInScope(ctx, uuid.Nil, data.PersonaScopePlatform, "platform-custom", "1", "Platform Custom", nil, "platform custom prompt", nil, nil, json.RawMessage(`{"temperature":0.4}`), nil, nil, strPtrPersonaLocal("platform^custom"), "auto", "none", "agent.simple", nil); err != nil {
 		t.Fatalf("create platform custom: %v", err)
 	}
-	if _, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "normal", "1", "Org Normal", nil, "org normal prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^normal"), "high", "system_prompt", "agent.simple", nil); err != nil {
+	if _, err := personasRepo.CreateInScope(ctx, accountID, data.PersonaScopeProject, "normal", "1", "Account Normal", nil, "account normal prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, nil, strPtrPersonaLocal("org^normal"), "high", "system_prompt", "agent.simple", nil); err != nil {
 		t.Fatalf("create org normal: %v", err)
 	}
-	if _, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "org-custom", "1", "Org Custom", nil, "org custom prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^custom"), "high", "system_prompt", "agent.simple", nil); err != nil {
+	if _, err := personasRepo.CreateInScope(ctx, accountID, data.PersonaScopeProject, "org-custom", "1", "Account Custom", nil, "account custom prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, nil, strPtrPersonaLocal("org^custom"), "high", "system_prompt", "agent.simple", nil); err != nil {
 		t.Fatalf("create org custom: %v", err)
 	}
-	inactive, err := personasRepo.CreateInScope(ctx, orgID, data.PersonaScopeOrg, "extended-search", "1", "Org Search Inactive", nil, "org inactive search prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, strPtrPersonaLocal("org^search"), "high", "system_prompt", "agent.simple", nil)
+	inactive, err := personasRepo.CreateInScope(ctx, accountID, data.PersonaScopeProject, "extended-search", "1", "Account Search Inactive", nil, "account inactive search prompt", nil, nil, json.RawMessage(`{"temperature":0.2}`), nil, nil, strPtrPersonaLocal("org^search"), "high", "system_prompt", "agent.simple", nil)
 	if err != nil {
 		t.Fatalf("create org search inactive: %v", err)
 	}
-	if _, err := personasRepo.PatchInScope(ctx, orgID, inactive.ID, data.PersonaScopeOrg, data.PersonaPatch{IsActive: boolPtrPersonaLocal(false)}); err != nil {
+	if _, err := personasRepo.PatchInScope(ctx, accountID, inactive.ID, data.PersonaScopeProject, data.PersonaPatch{IsActive: boolPtrPersonaLocal(false)}); err != nil {
 		t.Fatalf("deactivate org search: %v", err)
 	}
 
@@ -621,18 +629,15 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	if _, exists := byKey["org-custom"]; exists {
 		t.Fatal("expected org custom excluded from selectable list")
 	}
-	if _, exists := byKey["claw"]; exists {
-		t.Fatal("expected claw builtin excluded from selectable list")
-	}
 
 	normal, ok := byKey["normal"]
 	if !ok {
 		t.Fatal("expected normal persona in selectable list")
 	}
-	if normal.DisplayName != "Org Normal" {
+	if normal.DisplayName != "Account Normal" {
 		t.Fatalf("unexpected normal display name: %q", normal.DisplayName)
 	}
-	if normal.Scope != data.PersonaScopeOrg {
+	if normal.Scope != data.PersonaScopeProject {
 		t.Fatalf("unexpected normal scope: %q", normal.Scope)
 	}
 	if normal.Source != "custom" {
@@ -666,6 +671,32 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	}
 }
 
+func assertJSONContainsRolePrompt(t *testing.T, raw json.RawMessage, role string, prompt string) {
+	t.Helper()
+	var parsed map[string]map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal roles json failed: %v", err)
+	}
+	roleObj, ok := parsed[role]
+	if !ok {
+		t.Fatalf("expected role %q in %#v", role, parsed)
+	}
+	if roleObj["prompt_md"] != prompt {
+		t.Fatalf("unexpected prompt for role %q: %#v", role, roleObj)
+	}
+}
+
+func assertJSONContainsEmptyObject(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal empty roles json failed: %v", err)
+	}
+	if len(parsed) != 0 {
+		t.Fatalf("expected empty object, got %#v", parsed)
+	}
+}
+
 func intPtrPersonaLocal(value int) *int {
 	return &value
 }
@@ -678,14 +709,14 @@ func strPtrPersonaLocal(value string) *string {
 	return &value
 }
 
-func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, db data.Querier, personaKey string, displayName string) uuid.UUID {
+func insertGlobalPersonaHTTP(t *testing.T, ctx context.Context, pool data.Querier, personaKey string, displayName string) uuid.UUID {
 	t.Helper()
 
 	var id uuid.UUID
-	err := db.QueryRow(
+	err := pool.QueryRow(
 		ctx,
 		`INSERT INTO personas
-			(org_id, persona_key, version, display_name, prompt_md, tool_allowlist, budgets_json, executor_type, executor_config_json)
+			(account_id, persona_key, version, display_name, prompt_md, tool_allowlist, budgets_json, executor_type, executor_config_json)
 		 VALUES (NULL, $1, '1', $2, 'ghost prompt', '{}', '{}'::jsonb, 'agent.simple', '{}'::jsonb)
 		 RETURNING id`,
 		personaKey,

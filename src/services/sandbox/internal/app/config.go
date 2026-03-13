@@ -13,7 +13,6 @@ import (
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
-	"arkloop/services/shared/database/pgadapter"
 	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -106,7 +105,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:                       "0.0.0.0:8002",
+		Addr:                       "0.0.0.0:19002",
 		Provider:                   ProviderFirecracker,
 		FirecrackerBin:             "/usr/bin/firecracker",
 		KernelImagePath:            "/opt/sandbox/vmlinux",
@@ -267,7 +266,7 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	if dbPool != nil {
-		resolver, _ = sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(pgadapter.New(dbPool)), nil, 0)
+		resolver, _ = sharedconfig.NewResolver(registry, sharedconfig.NewPGXStore(dbPool), nil, 0)
 		defer dbPool.Close()
 	} else {
 		resolver, _ = sharedconfig.NewResolver(registry, nil, nil, 0)

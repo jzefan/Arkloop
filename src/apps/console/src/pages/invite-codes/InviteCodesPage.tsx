@@ -16,7 +16,7 @@ import { Badge, type BadgeVariant } from '../../components/Badge'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {

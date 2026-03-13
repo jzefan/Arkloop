@@ -14,10 +14,10 @@ import (
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
 	sharedexec "arkloop/services/shared/executionconfig"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var executionGovernanceKeys = []string{
@@ -62,12 +62,12 @@ type executionGovernancePersonaEffective struct {
 
 func adminExecutionGovernance(
 	authService *auth.Service,
-	membershipRepo *data.OrgMembershipRepository,
+	membershipRepo *data.AccountMembershipRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	personasRepo *data.PersonasRepository,
 	repoPersonas []repopersonas.RepoPersona,
 	registry *sharedconfig.Registry,
-	db database.DB,
+	pool *pgxpool.Pool,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodGet {
@@ -87,13 +87,13 @@ func adminExecutionGovernance(
 			registry = sharedconfig.DefaultRegistry()
 		}
 
-		orgID, ok := parseExecutionGovernanceOrgID(w, r, traceID)
+		projectID, ok := parseExecutionGovernanceProjectID(w, r, traceID)
 		if !ok {
 			return
 		}
 
-		store := sharedconfig.NewPGXStore(db)
-		scope := sharedconfig.Scope{OrgID: orgID}
+		store := sharedconfig.NewPGXStore(pool)
+		scope := sharedconfig.Scope{ProjectID: projectID}
 		resp := executionGovernanceResponse{
 			Limits:   make([]sharedconfig.SettingInspection, 0, len(executionGovernanceKeys)),
 			Personas: []executionGovernancePersona{},
@@ -109,13 +109,13 @@ func adminExecutionGovernance(
 			resp.Limits = append(resp.Limits, inspection)
 			inspections[key] = inspection
 		}
-		if db != nil {
-			if model, err := loadTitleSummarizerModel(r.Context(), db); err == nil {
+		if pool != nil {
+			if model, err := loadTitleSummarizerModel(r.Context(), pool); err == nil {
 				resp.TitleSummarizerModel = model
 			}
 		}
 
-		if orgID == nil {
+		if projectID == nil {
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
 			return
 		}
@@ -125,7 +125,7 @@ func adminExecutionGovernance(
 		}
 
 		platformLimits := executionGovernancePlatformLimits(inspections)
-		customDefs, err := personasRepo.ListByOrg(r.Context(), *orgID)
+		customDefs, err := personasRepo.ListByProject(r.Context(), *projectID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -140,14 +140,14 @@ func adminExecutionGovernance(
 	}
 }
 
-func parseExecutionGovernanceOrgID(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (*uuid.UUID, bool) {
-	raw := strings.TrimSpace(r.URL.Query().Get("org_id"))
+func parseExecutionGovernanceProjectID(w nethttp.ResponseWriter, r *nethttp.Request, traceID string) (*uuid.UUID, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	if raw == "" {
 		return nil, true
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid org_id", traceID, nil)
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid project_id", traceID, nil)
 		return nil, false
 	}
 	return &parsed, true
@@ -168,12 +168,12 @@ func inspectionEffectiveInt(inspection sharedconfig.SettingInspection) int {
 	return value
 }
 
-func loadTitleSummarizerModel(ctx context.Context, db database.DB) (*string, error) {
-	if db == nil {
+func loadTitleSummarizerModel(ctx context.Context, pool *pgxpool.Pool) (*string, error) {
+	if pool == nil {
 		return nil, nil
 	}
 	var value string
-	if err := db.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT value FROM platform_settings WHERE key = $1`,
 		"title_summarizer.model",
 	).Scan(&value); err != nil {

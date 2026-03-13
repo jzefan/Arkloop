@@ -9,7 +9,7 @@ import (
 	vzpool "arkloop/services/sandbox/internal/vz"
 )
 
-func buildVzPool(cfg app.Config, logger *logging.JSONLogger) (session.Provider, error) {
+func buildVzPool(cfg app.Config, logger *logging.JSONLogger) (session.VMPool, error) {
 	pool := vzpool.New(vzpool.Config{
 		WarmSizes:             cfg.WarmSizes(),
 		RefillIntervalSeconds: cfg.RefillIntervalSeconds,

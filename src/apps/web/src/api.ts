@@ -88,6 +88,20 @@ export type SkillPackageResponse = {
   bundle_key: string
   platforms?: string[]
   is_active: boolean
+  registry_provider?: string
+  registry_slug?: string
+  registry_owner_handle?: string
+  registry_version?: string
+  registry_detail_url?: string
+  registry_download_url?: string
+  registry_source_kind?: string
+  registry_source_url?: string
+  scan_status?: 'clean' | 'suspicious' | 'malicious' | 'pending' | 'error' | 'unknown'
+  scan_has_warnings?: boolean
+  scan_checked_at?: string
+  scan_engine?: string
+  scan_summary?: string
+  moderation_verdict?: string
 }
 
 export type InstalledSkill = SkillPackageResponse & {
@@ -111,6 +125,21 @@ export type MarketSkill = {
   updated_at?: string
   detail_url?: string
   repository_url?: string
+  registry_provider?: string
+  registry_slug?: string
+  owner_handle?: string
+  stats?: {
+    comments?: number
+    downloads?: number
+    installs_all_time?: number
+    installs_current?: number
+    stars?: number
+    versions?: number
+  }
+  scan_status?: 'clean' | 'suspicious' | 'malicious' | 'pending' | 'error' | 'unknown'
+  scan_has_warnings?: boolean
+  scan_summary?: string
+  moderation_verdict?: string
   installed: boolean
   enabled_by_default: boolean
 }
@@ -133,8 +162,8 @@ export type GitHubImportResponse = {
 
 export type Persona = {
   id: string
-  org_id: string | null
-  scope: 'org' | 'platform'
+  project_id: string | null
+  scope: 'platform' | 'project'
   source?: 'builtin' | 'custom'
   persona_key: string
   version: string
@@ -248,9 +277,20 @@ export async function searchMarketSkills(accessToken: string, query: string, off
   return response.items ?? []
 }
 
+export async function importRegistrySkill(
+  accessToken: string,
+  payload: { slug?: string; version?: string; skill_key?: string; detail_url?: string; repository_url?: string },
+): Promise<SkillPackageResponse> {
+  return await apiFetch<SkillPackageResponse>('/v1/skill-packages/import/registry', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function importSkillsMPSkill(
   accessToken: string,
-  payload: { skill_key: string; detail_url: string; repository_url?: string },
+  payload: { slug?: string; version?: string; skill_key?: string; detail_url?: string; repository_url?: string },
 ): Promise<SkillPackageResponse> {
   return await apiFetch<SkillPackageResponse>('/v1/skill-packages/import/skillsmp', {
     method: 'POST',
@@ -261,9 +301,9 @@ export async function importSkillsMPSkill(
 
 export async function importMarketSkill(
   accessToken: string,
-  payload: { skill_key: string; detail_url: string; repository_url?: string },
+  payload: { slug?: string; version?: string; skill_key?: string; detail_url?: string; repository_url?: string },
 ): Promise<SkillPackageResponse> {
-  return await importSkillsMPSkill(accessToken, payload)
+  return await importRegistrySkill(accessToken, payload)
 }
 
 export async function installSkill(accessToken: string, skill: SkillReference): Promise<void> {
@@ -307,11 +347,15 @@ export async function importSkillFromUpload(
   })
 }
 
-export async function listSelectablePersonas(accessToken: string): Promise<SelectablePersona[]> {
-  const personas = await apiFetch<Persona[]>('/v1/me/selectable-personas', {
+export async function listPersonas(accessToken: string): Promise<Persona[]> {
+  return await apiFetch<Persona[]>('/v1/me/selectable-personas', {
     method: 'GET',
     accessToken,
   })
+}
+
+export async function listSelectablePersonas(accessToken: string): Promise<SelectablePersona[]> {
+  const personas = await listPersonas(accessToken)
 
   return personas
     .filter((persona) => persona.user_selectable)
@@ -400,7 +444,7 @@ export type ThreadMode = 'chat' | 'claw'
 
 export type ThreadResponse = {
   id: string
-  org_id: string
+  account_id: string
   created_by_user_id: string
   mode: ThreadMode
   title: string | null
@@ -620,7 +664,7 @@ export type CreateMessageRequest = {
 
 export type MessageResponse = {
   id: string
-  org_id: string
+  account_id: string
   thread_id: string
   created_by_user_id: string
   role: string
@@ -840,7 +884,7 @@ export async function retryThread(
 
 export type CreditTransaction = {
   id: string
-  org_id: string
+  account_id: string
   amount: number
   type: string
   reference_type?: string
@@ -871,7 +915,7 @@ export async function getMyCredits(
 }
 
 export type MeUsageSummary = {
-  org_id: string
+  account_id: string
   year: number
   month: number
   total_input_tokens: number
@@ -943,7 +987,7 @@ export async function resetMyInviteCode(
 export type NotificationItem = {
   id: string
   user_id: string
-  org_id: string
+  account_id: string
   type: string
   title: string
   body: string
@@ -1124,5 +1168,179 @@ export async function verifySharePassword(
   return await apiFetch<VerifyShareResponse>(`/v1/s/${token}/verify`, {
     method: 'POST',
     body: JSON.stringify({ password }),
+  })
+}
+
+// LLM Providers API (BYOK)
+
+export type LlmProviderModel = {
+  id: string
+  provider_id: string
+  model: string
+  priority: number
+  is_default: boolean
+  tags: string[]
+  when: Record<string, unknown>
+  advanced_json?: Record<string, unknown> | null
+  multiplier: number
+  cost_per_1k_input?: number | null
+  cost_per_1k_output?: number | null
+  cost_per_1k_cache_write?: number | null
+  cost_per_1k_cache_read?: number | null
+}
+
+export type LlmProvider = {
+  id: string
+  account_id?: string | null
+  scope: string
+  provider: string
+  name: string
+  key_prefix: string | null
+  base_url: string | null
+  openai_api_mode: string | null
+  advanced_json?: Record<string, unknown> | null
+  created_at: string
+  models: LlmProviderModel[]
+}
+
+export type CreateLlmProviderRequest = {
+  scope?: string
+  name: string
+  provider: string
+  api_key: string
+  base_url?: string
+  openai_api_mode?: string
+}
+
+export type UpdateLlmProviderRequest = {
+  scope?: string
+  name?: string
+  provider?: string
+  api_key?: string
+  base_url?: string | null
+  openai_api_mode?: string | null
+}
+
+export type CreateModelRequest = {
+  scope?: string
+  model: string
+  priority?: number
+  is_default?: boolean
+  tags?: string[]
+}
+
+export type AvailableModel = {
+  id: string
+  name: string
+  configured: boolean
+}
+
+const BYOK_SCOPE = 'project'
+
+function withScope(path: string, scope: string): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}scope=${scope}`
+}
+
+export async function listLlmProviders(accessToken: string): Promise<LlmProvider[]> {
+  return await apiFetch<LlmProvider[]>(withScope('/v1/llm-providers', BYOK_SCOPE), {
+    method: 'GET',
+    accessToken,
+  })
+}
+
+export async function createLlmProvider(
+  accessToken: string,
+  req: CreateLlmProviderRequest,
+): Promise<LlmProvider> {
+  return await apiFetch<LlmProvider>(withScope('/v1/llm-providers', BYOK_SCOPE), {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({ ...req, scope: BYOK_SCOPE }),
+  })
+}
+
+export async function updateLlmProvider(
+  accessToken: string,
+  id: string,
+  req: UpdateLlmProviderRequest,
+): Promise<LlmProvider> {
+  return await apiFetch<LlmProvider>(withScope(`/v1/llm-providers/${id}`, BYOK_SCOPE), {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ ...req, scope: BYOK_SCOPE }),
+  })
+}
+
+export async function deleteLlmProvider(
+  accessToken: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  return await apiFetch<{ ok: boolean }>(withScope(`/v1/llm-providers/${id}`, BYOK_SCOPE), {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+export async function createProviderModel(
+  accessToken: string,
+  providerId: string,
+  req: CreateModelRequest,
+): Promise<LlmProviderModel> {
+  return await apiFetch<LlmProviderModel>(
+    withScope(`/v1/llm-providers/${providerId}/models`, BYOK_SCOPE),
+    {
+      method: 'POST',
+      accessToken,
+      body: JSON.stringify({ ...req, scope: BYOK_SCOPE }),
+    },
+  )
+}
+
+export async function deleteProviderModel(
+  accessToken: string,
+  providerId: string,
+  modelId: string,
+): Promise<{ ok: boolean }> {
+  return await apiFetch<{ ok: boolean }>(
+    withScope(`/v1/llm-providers/${providerId}/models/${modelId}`, BYOK_SCOPE),
+    {
+      method: 'DELETE',
+      accessToken,
+    },
+  )
+}
+
+export async function listAvailableModels(
+  accessToken: string,
+  providerId: string,
+): Promise<{ models: AvailableModel[] }> {
+  return await apiFetch<{ models: AvailableModel[] }>(
+    withScope(`/v1/llm-providers/${providerId}/available-models`, BYOK_SCOPE),
+    {
+      method: 'GET',
+      accessToken,
+    },
+  )
+}
+
+export type PatchPersonaRequest = {
+  model?: string
+  reasoning_mode?: string
+  preferred_credential?: string
+  budgets?: Record<string, unknown>
+}
+
+export async function patchPersona(
+  accessToken: string,
+  personaId: string,
+  req: PatchPersonaRequest,
+  scope?: string,
+): Promise<Persona> {
+  const qs = scope ? `?scope=${scope}` : ''
+  return await apiFetch<Persona>(`/v1/personas/${personaId}${qs}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify(req),
   })
 }

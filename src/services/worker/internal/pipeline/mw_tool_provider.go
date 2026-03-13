@@ -57,13 +57,16 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			platformProviders = nil
 		}
 
-		orgProviders, err := cache.GetOrg(ctx, rc.Pool, rc.Run.OrgID)
-		if err != nil {
-			slog.WarnContext(ctx, "tool provider: load org failed, skipping", "org_id", rc.Run.OrgID, "err", err.Error())
-			orgProviders = nil
+		var userProviders []toolprovider.ActiveProviderConfig
+		if rc.Run.ProjectID != nil {
+			userProviders, err = cache.GetUser(ctx, rc.Pool, *rc.Run.ProjectID)
+			if err != nil {
+				slog.WarnContext(ctx, "tool provider: load project failed, skipping", "project_id", *rc.Run.ProjectID, "err", err.Error())
+				userProviders = nil
+			}
 		}
 
-		if len(platformProviders) == 0 && len(orgProviders) == 0 {
+		if len(platformProviders) == 0 && len(userProviders) == 0 {
 			return next(ctx, rc)
 		}
 
@@ -91,11 +94,11 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			}
 		}
 
-		// platform 兜底先注入，org 覆盖后注入。
+		// platform 兜底先注入，project 覆盖后注入。
 		for _, cfg := range platformProviders {
 			apply(cfg, false)
 		}
-		for _, cfg := range orgProviders {
+		for _, cfg := range userProviders {
 			apply(cfg, true)
 		}
 

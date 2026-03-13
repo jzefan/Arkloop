@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
 )
 
 type SmtpProvider struct {
@@ -84,7 +84,7 @@ func (r *SmtpProviderRepository) Get(ctx context.Context, id uuid.UUID) (*SmtpPr
 		 FROM smtp_providers WHERE id = $1`, id,
 	).Scan(&s.ID, &s.Name, &s.FromAddr, &s.SmtpHost, &s.SmtpPort,
 		&s.SmtpUser, &s.SmtpPass, &s.TLSMode, &s.IsDefault, &s.CreatedAt, &s.UpdatedAt)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -100,7 +100,7 @@ func (r *SmtpProviderRepository) GetDefault(ctx context.Context) (*SmtpProvider,
 		 FROM smtp_providers WHERE is_default = true LIMIT 1`,
 	).Scan(&s.ID, &s.Name, &s.FromAddr, &s.SmtpHost, &s.SmtpPort,
 		&s.SmtpUser, &s.SmtpPass, &s.TLSMode, &s.IsDefault, &s.CreatedAt, &s.UpdatedAt)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -179,7 +179,7 @@ func (r *SmtpProviderRepository) Update(ctx context.Context, id uuid.UUID, p Upd
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&s.ID, &s.Name, &s.FromAddr, &s.SmtpHost, &s.SmtpPort,
 		&s.SmtpUser, &s.SmtpPass, &s.TLSMode, &s.IsDefault, &s.CreatedAt, &s.UpdatedAt)
-	if errors.Is(err, database.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type AuditLog = {
   id: string
-  org_id?: string
+  account_id?: string
   actor_user_id?: string
   action: string
   target_type?: string

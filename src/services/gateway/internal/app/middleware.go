@@ -18,6 +18,7 @@ import (
 	"arkloop/services/gateway/internal/geoip"
 	"arkloop/services/gateway/internal/identity"
 	"arkloop/services/gateway/internal/ua"
+	"arkloop/services/shared/httputil"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -25,38 +26,11 @@ import (
 const (
 	traceIDHeader          = "X-Trace-Id"
 	cspHeaderValue         = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'"
+	frontendCSPHeaderValue = "default-src 'self'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com http://localhost:19003 http://127.0.0.1:19003 http://[::1]:19003; frame-src https://challenges.cloudflare.com"
 	corsAllowMethodsValue  = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
 	corsAllowHeadersValue  = "Authorization,Content-Type,Accept,X-Client-App,X-Trace-Id"
 	corsExposeHeadersValue = traceIDHeader
 )
-
-type statusRecorder struct {
-	http.ResponseWriter
-	statusCode  int
-	wroteHeader bool
-}
-
-func (r *statusRecorder) WriteHeader(statusCode int) {
-	if r.wroteHeader {
-		return
-	}
-	r.wroteHeader = true
-	r.statusCode = statusCode
-	r.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (r *statusRecorder) Write(payload []byte) (int, error) {
-	if !r.wroteHeader {
-		r.WriteHeader(http.StatusOK)
-	}
-	return r.ResponseWriter.Write(payload)
-}
-
-func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
 
 func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rdb *goredis.Client, redisTimeout time.Duration, jwtSecret []byte, trustIncomingTraceID bool) http.Handler {
 	var logWriter *accesslog.Writer
@@ -75,7 +49,7 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 		}
 		r.Header.Set(traceIDHeader, traceID)
 
-		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		recorder := &httputil.StatusRecorder{ResponseWriter: w, StatusCode: http.StatusOK}
 		recorder.Header().Set(traceIDHeader, traceID)
 
 		next.ServeHTTP(recorder, r)
@@ -109,7 +83,7 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 			extra := map[string]any{
 				"method":      r.Method,
 				"path":        r.URL.Path,
-				"status_code": recorder.statusCode,
+				"status_code": recorder.StatusCode,
 				"duration_ms": durationMs,
 				"client_ip":   ip,
 				"user_agent":  uaInfo.Raw,
@@ -131,7 +105,7 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 				TraceID:      traceID,
 				Method:       r.Method,
 				Path:         r.URL.Path,
-				StatusCode:   recorder.statusCode,
+				StatusCode:   recorder.StatusCode,
 				DurationMs:   durationMs,
 				ClientIP:     ip,
 				Country:      geoResult.Country,
@@ -140,7 +114,7 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 				UAType:       string(uaInfo.Type),
 				RiskScore:    riskScore,
 				IdentityType: string(ident.Type),
-				OrgID:        ident.OrgID,
+				AccountID:    ident.AccountID,
 				UserID:       ident.UserID,
 			})
 		}
@@ -157,7 +131,11 @@ func securityHeadersMiddleware(allowedOrigins []string, next http.Handler) http.
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", cspHeaderValue)
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.Header().Set("Content-Security-Policy", cspHeaderValue)
+		} else {
+			w.Header().Set("Content-Security-Policy", frontendCSPHeaderValue)
+		}
 
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin != "" {

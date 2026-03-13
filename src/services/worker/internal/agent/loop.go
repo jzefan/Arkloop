@@ -15,6 +15,7 @@ import (
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/stablejson"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"github.com/google/uuid"
 )
 
@@ -22,11 +23,13 @@ const (
 	ErrorClassAgentReasoningIterationsExceeded = "agent.reasoning_iterations_exceeded"
 	ErrorClassToolContinuationBudgetExceeded   = "tool.continuation_budget_exceeded"
 	ErrorClassToolContinuationLimitExceeded    = "tool.continuation_limit_exceeded"
+
+	askUserToolName = "ask_user"
 )
 
 type RunContext struct {
 	RunID                  uuid.UUID
-	OrgID                  *uuid.UUID
+	AccountID                  *uuid.UUID
 	UserID                 *uuid.UUID
 	AgentID                string
 	ThreadID               *uuid.UUID
@@ -34,6 +37,11 @@ type RunContext struct {
 	ProfileRef             string
 	WorkspaceRef           string
 	EnabledSkills          []skillstore.ResolvedSkill
+	ToolAllowlist          []string
+	ToolDenylist           []string
+	RouteID                string
+	Model                  string
+	MemoryScope            string
 	TraceID                string
 	InputJSON              map[string]any
 	ReasoningIterations    int
@@ -43,6 +51,8 @@ type RunContext struct {
 	ToolTimeoutMs          *int
 	ToolBudget             map[string]any
 	PerToolSoftLimits      tools.PerToolSoftLimits
+	MaxCostMicros          *int64
+	MaxTotalOutputTokens   *int64
 	ToolExecutor           *tools.DispatchingExecutor
 	ToolSpecs              []llm.ToolSpec
 	PendingMemoryWrites    *memory.PendingWriteBuffer
@@ -59,6 +69,10 @@ type RunContext struct {
 
 	// PreIterHook 在每轮迭代开始（LLM 调用之前）时被调用。
 	PreIterHook func(ctx context.Context, iter int) error
+
+	// WaitForInput 阻塞等待用户输入，供 ask_user 工具使用。
+	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
+	WaitForInput func(ctx context.Context) (string, bool)
 }
 
 type Loop struct {
@@ -158,6 +172,10 @@ func (l *Loop) Run(
 		}
 		completionTotals.Add(turn.CompletedDataJSON)
 
+		if msg, exceeded := costBudgetExceeded(completionTotals, runCtx.MaxCostMicros, runCtx.MaxTotalOutputTokens); exceeded {
+			return yield(emitter.Emit("run.failed", completionTotals.Apply(costBudgetExceededError(msg)), nil, stringPtr(llm.ErrorClassBudgetExceeded)))
+		}
+
 		if len(turn.ToolCalls) == 0 {
 			reasoningTurnsUsed++
 			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
@@ -175,60 +193,154 @@ func (l *Loop) Run(
 			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
-		if runCtx.ToolExecutor == nil {
-			return fmt.Errorf("tool executor not initialized")
+		// 分离 ask_user 调用，先执行其他工具，最后处理 ask_user
+		var askUserCall *llm.ToolCall
+		regularPending := pending[:0:0]
+		for i := range pending {
+			if pending[i].ToolName == askUserToolName {
+				askUserCall = &pending[i]
+			} else {
+				regularPending = append(regularPending, pending[i])
+			}
 		}
-		executedCalls := l.executePendingToolCalls(ctx, runCtx, pending, emitter, &continuationState)
+
+		// 执行非 ask_user 的常规工具
 		continuationRejected := false
-		for _, executed := range executedCalls {
-			call := executed.Call
-			result := executed.Result
-			if isContinuationBudgetError(result.Error) {
-				continuationRejected = true
+		if len(regularPending) > 0 {
+			if runCtx.ToolExecutor == nil {
+				return fmt.Errorf("tool executor not initialized")
 			}
-			emittedToolCall := false
-			for _, ev := range result.Events {
-				if ev.Type == "tool.call" {
-					emittedToolCall = true
+			executedCalls := l.executePendingToolCalls(ctx, runCtx, regularPending, emitter, &continuationState)
+			for _, executed := range executedCalls {
+				call := executed.Call
+				result := executed.Result
+				if isContinuationBudgetError(result.Error) {
+					continuationRejected = true
 				}
-				if err := yield(ev); err != nil {
-					return err
-				}
-			}
-			if !emittedToolCall {
-				if err := yield(emitter.Emit("tool.call", call.ToDataJSON(), stringPtr(call.ToolName), nil)); err != nil {
-					return err
-				}
-			}
-
-			resolvedID := resolveToolCallID(call.ToolCallID, result.Events)
-			toolResult := toolResultFromExecution(resolvedID, call.ToolName, result)
-
-			// web_search 结果注入累计的 1-based 引用 ID（web:N）
-			if call.ToolName == "web_search" {
-				webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
-			}
-
-			dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
-			if ok {
-				if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
-					messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
-				} else {
-					seenToolResultKeys[dedupKey] = toolResultDedupInfo{
-						ToolCallID: toolResult.ToolCallID,
-						Signature:  sig,
+				emittedToolCall := false
+				for _, ev := range result.Events {
+					if ev.Type == "tool.call" {
+						emittedToolCall = true
 					}
+					if err := yield(ev); err != nil {
+						return err
+					}
+				}
+				if !emittedToolCall {
+					if err := yield(emitter.Emit("tool.call", call.ToDataJSON(), stringPtr(call.ToolName), nil)); err != nil {
+						return err
+					}
+				}
+
+				resolvedID := resolveToolCallID(call.ToolCallID, result.Events)
+				toolResult := toolResultFromExecution(resolvedID, call.ToolName, result)
+
+				if call.ToolName == "web_search" {
+					webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
+				}
+
+				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
+				if ok {
+					if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
+						messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
+					} else {
+						seenToolResultKeys[dedupKey] = toolResultDedupInfo{
+							ToolCallID: toolResult.ToolCallID,
+							Signature:  sig,
+						}
+						messages = append(messages, toolResultMessage(toolResult))
+					}
+				} else {
 					messages = append(messages, toolResultMessage(toolResult))
 				}
-			} else {
-				messages = append(messages, toolResultMessage(toolResult))
+
+				var errorClass *string
+				if toolResult.Error != nil {
+					errorClass = stringPtr(toolResult.Error.ErrorClass)
+				}
+				if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
+					return err
+				}
+			}
+		}
+
+		// ask_user 拦截：不走 dispatcher，直接 yield 事件并阻塞等待用户输入
+		if askUserCall != nil {
+			if err := yield(emitter.Emit("tool.call", askUserCall.ToDataJSON(), stringPtr(askUserToolName), nil)); err != nil {
+				return err
 			}
 
-			var errorClass *string
-			if toolResult.Error != nil {
-				errorClass = stringPtr(toolResult.Error.ErrorClass)
+			requestID := askUserCall.ToolCallID
+			callArgs := askUserCall.ArgumentsJSON
+
+			message, schema, normErr := askuser.ValidateAndNormalize(callArgs)
+			if normErr != nil {
+				answerResult := llm.StreamToolResult{
+					ToolCallID: requestID,
+					ToolName:   askUserToolName,
+					Error: &llm.GatewayError{
+						ErrorClass: "tool.args_invalid",
+						Message:    normErr.Error(),
+					},
+				}
+				messages = append(messages, toolResultMessage(answerResult))
+				askErrorClass := stringPtr(answerResult.Error.ErrorClass)
+				if err := yield(emitter.Emit("tool.result", answerResult.ToDataJSON(), stringPtr(askUserToolName), askErrorClass)); err != nil {
+					return err
+				}
+				continue
 			}
-			if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
+
+			if err := yield(emitter.Emit("run.input_requested", map[string]any{
+				"request_id":      requestID,
+				"message":         message,
+				"requestedSchema": schema,
+			}, nil, nil)); err != nil {
+				return err
+			}
+
+			var answerResult llm.StreamToolResult
+			if runCtx.WaitForInput != nil {
+				text, ok := runCtx.WaitForInput(ctx)
+				if ok && text != "" {
+					var parsed map[string]any
+					if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+						answerResult = llm.StreamToolResult{
+							ToolCallID: requestID,
+							ToolName:   askUserToolName,
+							ResultJSON: map[string]any{"user_response": parsed},
+						}
+					} else {
+						answerResult = llm.StreamToolResult{
+							ToolCallID: requestID,
+							ToolName:   askUserToolName,
+							ResultJSON: map[string]any{"user_response": text},
+						}
+					}
+				} else {
+					answerResult = llm.StreamToolResult{
+						ToolCallID: requestID,
+						ToolName:   askUserToolName,
+						ResultJSON: map[string]any{"user_response": "", "dismissed": true},
+					}
+				}
+			} else {
+				answerResult = llm.StreamToolResult{
+					ToolCallID: requestID,
+					ToolName:   askUserToolName,
+					Error: &llm.GatewayError{
+						ErrorClass: "tool.not_available",
+						Message:    "ask_user requires human-in-the-loop support",
+					},
+				}
+			}
+
+			messages = append(messages, toolResultMessage(answerResult))
+			var askErrorClass *string
+			if answerResult.Error != nil {
+				askErrorClass = stringPtr(answerResult.Error.ErrorClass)
+			}
+			if err := yield(emitter.Emit("tool.result", answerResult.ToDataJSON(), stringPtr(askUserToolName), askErrorClass)); err != nil {
 				return err
 			}
 		}
@@ -335,13 +447,18 @@ func (l *Loop) executeToolCall(
 	execCtx := tools.ExecutionContext{
 		RunID:               runCtx.RunID,
 		TraceID:             runCtx.TraceID,
-		OrgID:               runCtx.OrgID,
+		AccountID:               runCtx.AccountID,
 		ThreadID:            runCtx.ThreadID,
 		ProjectID:           runCtx.ProjectID,
 		UserID:              runCtx.UserID,
 		ProfileRef:          runCtx.ProfileRef,
 		WorkspaceRef:        runCtx.WorkspaceRef,
 		EnabledSkills:       append([]skillstore.ResolvedSkill(nil), runCtx.EnabledSkills...),
+		ToolAllowlist:       append([]string(nil), runCtx.ToolAllowlist...),
+		ToolDenylist:        append([]string(nil), runCtx.ToolDenylist...),
+		RouteID:             runCtx.RouteID,
+		Model:               runCtx.Model,
+		MemoryScope:         runCtx.MemoryScope,
 		AgentID:             runCtx.AgentID,
 		TimeoutMs:           runCtx.ToolTimeoutMs,
 		Budget:              copyMap(runCtx.ToolBudget),
@@ -514,6 +631,23 @@ type turnResult struct {
 	ToolResults       []llm.StreamToolResult
 	AssistantText     string
 	CompletedDataJSON map[string]any
+}
+
+func costBudgetExceeded(totals *completionTotals, maxCostMicros *int64, maxTotalOutputTokens *int64) (string, bool) {
+	if maxCostMicros != nil && *maxCostMicros > 0 && totals.hasCostMicros && totals.costMicros > *maxCostMicros {
+		return fmt.Sprintf("cost budget exceeded: %d/%d micros", totals.costMicros, *maxCostMicros), true
+	}
+	if maxTotalOutputTokens != nil && *maxTotalOutputTokens > 0 && totals.hasOutputTokens && totals.outputTokens > *maxTotalOutputTokens {
+		return fmt.Sprintf("output token budget exceeded: %d/%d tokens", totals.outputTokens, *maxTotalOutputTokens), true
+	}
+	return "", false
+}
+
+func costBudgetExceededError(message string) map[string]any {
+	return map[string]any{
+		"error_class": llm.ErrorClassBudgetExceeded,
+		"message":     message,
+	}
 }
 
 type completionTotals struct {

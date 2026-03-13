@@ -3,7 +3,7 @@ import type { ToolCatalogGroup } from './tool-providers'
 
 export type { ToolCatalogGroup, ToolCatalogItem } from './tool-providers'
 
-export type AgentScope = 'org' | 'platform'
+export type AgentScope = 'project' | 'platform'
 
 function withScope(path: string, scope: AgentScope): string {
   const sep = path.includes('?') ? '&' : '?'
@@ -80,9 +80,10 @@ export async function patchLiteAgent(
   accessToken: string,
 ): Promise<LiteAgent> {
   const scope = req.scope ?? 'platform'
+  const { scope: _scope, ...body } = req
   return apiFetch<LiteAgent>(withScope(`/v1/lite/agents/${id}`, scope), {
     method: 'PATCH',
-    body: JSON.stringify(req),
+    body: JSON.stringify(body),
     accessToken,
   })
 }

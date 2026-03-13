@@ -8,7 +8,7 @@ import { Badge } from '../../components/Badge'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -44,7 +44,7 @@ function emptyForm(): CreateFormState {
     base_url: '',
     model: 'whisper-large-v3-turbo',
     is_default: false,
-    scope: 'org',
+    scope: 'platform',
   }
 }
 
@@ -115,7 +115,7 @@ export function AsrCredentialsPage() {
           base_url: form.base_url.trim() || undefined,
           model,
           is_default: form.is_default,
-          scope: isPlatformAdmin ? form.scope : 'org',
+          scope: isPlatformAdmin ? form.scope : 'platform',
         },
         accessToken,
       )
@@ -294,7 +294,7 @@ export function AsrCredentialsPage() {
                 onChange={(e) => handleFormField('scope', e.target.value)}
                 className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-1.5 text-sm text-[var(--c-text-secondary)] focus:outline-none"
               >
-                <option value="org">org</option>
+                <option value="project">account</option>
                 <option value="platform">platform</option>
               </select>
             </FormField>

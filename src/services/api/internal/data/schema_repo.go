@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SchemaRepository struct {
-	db database.DB
+	pool *pgxpool.Pool
 }
 
-func NewSchemaRepository(db database.DB) (*SchemaRepository, error) {
-	if db == nil {
-		return nil, fmt.Errorf("db must not be nil")
+func NewSchemaRepository(pool *pgxpool.Pool) (*SchemaRepository, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("pool must not be nil")
 	}
-	return &SchemaRepository{db: db}, nil
+	return &SchemaRepository{pool: pool}, nil
 }
 
 func (r *SchemaRepository) CurrentSchemaVersion(ctx context.Context) (int64, error) {
@@ -24,7 +24,7 @@ func (r *SchemaRepository) CurrentSchemaVersion(ctx context.Context) (int64, err
 	}
 
 	var version int64
-	err := r.db.QueryRow(ctx,
+	err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = true`,
 	).Scan(&version)
 	if err != nil {

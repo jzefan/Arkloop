@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"strings"
 
-	"arkloop/services/shared/database"
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/data"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SkillResolver interface {
-	ResolveEnabledSkills(ctx context.Context, db database.DB, orgID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error)
+	ResolveEnabledSkills(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error)
 }
 
-func NewSkillContextMiddleware(db database.DB, resolver SkillResolver) RunMiddleware {
+func NewSkillContextMiddleware(pool *pgxpool.Pool, resolver SkillResolver) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if resolver == nil {
 			resolver = data.SkillsRepository{}
 		}
-		if db == nil || rc.Run.OrgID == uuid.Nil || strings.TrimSpace(rc.ProfileRef) == "" || strings.TrimSpace(rc.WorkspaceRef) == "" {
+		if pool == nil || rc.Run.AccountID == uuid.Nil || strings.TrimSpace(rc.ProfileRef) == "" || strings.TrimSpace(rc.WorkspaceRef) == "" {
 			return next(ctx, rc)
 		}
-		skills, err := resolver.ResolveEnabledSkills(ctx, db, rc.Run.OrgID, rc.ProfileRef, rc.WorkspaceRef)
+		skills, err := resolver.ResolveEnabledSkills(ctx, pool, rc.Run.AccountID, rc.ProfileRef, rc.WorkspaceRef)
 		if err != nil {
 			return fmt.Errorf("resolve enabled skills: %w", err)
 		}

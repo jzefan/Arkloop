@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type Team = {
   id: string
-  org_id: string
+  account_id: string
   name: string
   members_count: number
   created_at: string

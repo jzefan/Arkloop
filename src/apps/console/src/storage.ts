@@ -57,3 +57,4 @@ export function writeLocaleToStorage(locale: import('./locales').Locale): void {
     // ignore
   }
 }
+

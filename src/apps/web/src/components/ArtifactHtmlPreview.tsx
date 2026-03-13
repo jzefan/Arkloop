@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
-
-function apiBaseUrl(): string {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-  return raw.replace(/\/$/, '')
-}
 
 type Props = {
   artifact: ArtifactRef

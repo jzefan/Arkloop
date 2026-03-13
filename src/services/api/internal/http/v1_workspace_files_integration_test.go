@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -9,25 +7,24 @@ import (
 	"testing"
 
 	"arkloop/services/api/internal/auth"
-	"arkloop/services/api/internal/data"
 	"arkloop/services/shared/workspaceblob"
 	"github.com/google/uuid"
 )
 
 func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "workspace-files-owner")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "workspace-files-owner")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 	workspaceRef := "wsref_test_workspace_viewer"
-	if _, err := env.appDB.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
+	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
 	setWorkspaceLatestManifest(t, env, workspaceRef, "rev-1")
@@ -85,7 +82,7 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 	})
 
 	t.Run("missing workspace ref returns not found", func(t *testing.T) {
-		run2, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+		run2, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 		if err != nil {
 			t.Fatalf("create run2: %v", err)
 		}
@@ -106,10 +103,10 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse other user id: %v", err)
 		}
-		if _, err := env.membershipRepo.Create(context.Background(), env.aliceOrgID, otherUserID, auth.RoleOrgMember); err != nil {
+		if _, err := env.membershipRepo.Create(context.Background(), env.aliceAccountID, otherUserID, auth.RoleAccountMember); err != nil {
 			t.Fatalf("add org membership: %v", err)
 		}
-		_, otherKey, err := env.apiKeysRepo.Create(context.Background(), env.aliceOrgID, otherUserID, "workspace-reader", []string{auth.PermDataRunsRead})
+		_, otherKey, err := env.apiKeysRepo.Create(context.Background(), env.aliceAccountID, otherUserID, "workspace-reader", []string{auth.PermDataRunsRead})
 		if err != nil {
 			t.Fatalf("create other key: %v", err)
 		}
@@ -120,18 +117,18 @@ func TestWorkspaceFilesReadAndAuthorize(t *testing.T) {
 
 func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "workspace-files-manifest")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "workspace-files-manifest")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 	workspaceRef := "wsref_test_workspace_manifest"
-	if _, err := env.appDB.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
+	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
 	setWorkspaceLatestManifest(t, env, workspaceRef, "rev-1")
@@ -150,18 +147,18 @@ func TestWorkspaceFilesReadFromManifestState(t *testing.T) {
 
 func TestWorkspaceFilesRejectLegacyArchiveOnly(t *testing.T) {
 	env := buildArtifactEnv(t)
-	project := mustCreateTestProject(t, context.Background(), env.appDB, env.aliceOrgID, &env.aliceUserID, "workspace-files-json")
+	project := mustCreateTestProject(t, context.Background(), env.pool, env.aliceAccountID, &env.aliceUserID, "workspace-files-json")
 
-	thread, err := env.threadRepo.Create(context.Background(), env.aliceOrgID, &env.aliceUserID, project.ID, data.ThreadModeChat, nil, false)
+	thread, err := env.threadRepo.Create(context.Background(), env.aliceAccountID, &env.aliceUserID, project.ID, nil, false)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceOrgID, thread.ID, &env.aliceUserID, "run.started", nil)
+	run, _, err := env.runRepo.CreateRunWithStartedEvent(context.Background(), env.aliceAccountID, thread.ID, &env.aliceUserID, "run.started", nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 	workspaceRef := "wsref_test_workspace_legacy_only"
-	if _, err := env.appDB.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
+	if _, err := env.pool.Exec(context.Background(), `UPDATE runs SET workspace_ref = $2 WHERE id = $1`, run.ID, workspaceRef); err != nil {
 		t.Fatalf("update run workspace_ref: %v", err)
 	}
 
@@ -191,12 +188,12 @@ func mustWorkspaceBlob(t *testing.T, data []byte) []byte {
 
 func setWorkspaceLatestManifest(t *testing.T, env artifactTestEnv, workspaceRef, revision string) {
 	t.Helper()
-	if _, err := env.appDB.Exec(context.Background(), `
-		INSERT INTO workspace_registries (workspace_ref, org_id, latest_manifest_rev)
+	if _, err := env.pool.Exec(context.Background(), `
+		INSERT INTO workspace_registries (workspace_ref, account_id, latest_manifest_rev)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (workspace_ref) DO UPDATE SET
 			latest_manifest_rev = EXCLUDED.latest_manifest_rev,
-			updated_at = now()`, workspaceRef, env.aliceOrgID, revision); err != nil {
+			updated_at = now()`, workspaceRef, env.aliceAccountID, revision); err != nil {
 		t.Fatalf("upsert workspace registry: %v", err)
 	}
 }

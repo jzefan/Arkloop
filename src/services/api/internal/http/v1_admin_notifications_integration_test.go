@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -19,11 +17,11 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_admin_broadcasts")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -36,27 +34,27 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	notifRepo, err := data.NewNotificationsRepository(appDB)
+	notifRepo, err := data.NewNotificationsRepository(pool)
 	if err != nil {
 		t.Fatalf("new notifications repo: %v", err)
 	}
@@ -65,11 +63,11 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -77,11 +75,11 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		NotificationsRepo:   notifRepo,
 		AuditWriter:         auditWriter,
 	})
@@ -95,7 +93,7 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
 
 	// 提升为 platform_admin
-	_, err = appDB.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
+	_, err = pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
 	if err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
@@ -200,15 +198,15 @@ func TestAdminBroadcastsCreateListAndForbidden(t *testing.T) {
 
 	// 广播到指定 org
 	t.Run("broadcast to org", func(t *testing.T) {
-		// 获取 alice 的 org_id
-		var aliceOrgID string
-		err := appDB.QueryRow(ctx, "SELECT org_id FROM org_memberships WHERE user_id = $1 LIMIT 1", alicePayload.UserID).Scan(&aliceOrgID)
+		// 获取 alice 的 account_id
+		var aliceAccountID string
+		err := pool.QueryRow(ctx, "SELECT account_id FROM account_memberships WHERE user_id = $1 LIMIT 1", alicePayload.UserID).Scan(&aliceAccountID)
 		if err != nil {
 			t.Fatalf("get alice org: %v", err)
 		}
 
 		resp := doJSON(handler, nethttp.MethodPost, "/v1/admin/notifications/broadcasts",
-			map[string]any{"type": "maintenance", "title": "Org Maintenance", "body": "scheduled downtime", "target": aliceOrgID},
+			map[string]any{"type": "maintenance", "title": "Org Maintenance", "body": "scheduled downtime", "target": aliceAccountID},
 			authHeader(adminToken))
 		if resp.Code != nethttp.StatusAccepted {
 			t.Fatalf("create org broadcast: %d %s", resp.Code, resp.Body.String())

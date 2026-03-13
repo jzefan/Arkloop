@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -24,11 +22,11 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
@@ -45,22 +43,22 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 		t.Fatalf("new key ring: %v", err)
 	}
 
-	userRepo, _ := data.NewUserRepository(appDB)
-	credRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	jobRepo, _ := data.NewJobRepository(appDB)
-	webhookRepo, _ := data.NewWebhookEndpointRepository(appDB)
-	secretsRepo, _ := data.NewSecretsRepository(appDB, keyRing)
+	userRepo, _ := data.NewUserRepository(pool)
+	credRepo, _ := data.NewUserCredentialRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
+	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
+	jobRepo, _ := data.NewJobRepository(pool)
+	webhookRepo, _ := data.NewWebhookEndpointRepository(pool)
+	secretsRepo, _ := data.NewSecretsRepository(pool, keyRing)
 	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		WebhookRepo:         webhookRepo,
 		APIKeysRepo:         nil,
 		SecretsRepo:         secretsRepo,
@@ -85,17 +83,13 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 	created := decodeJSONBody[webhookEndpointResponse](t, createResp.Body.Bytes())
 
 	var secretID *string
-	var signingSecret *string
-	if err := appDB.QueryRow(ctx,
-		"SELECT secret_id::text, signing_secret FROM webhook_endpoints WHERE id = $1",
+	if err := pool.QueryRow(ctx,
+		"SELECT secret_id::text FROM webhook_endpoints WHERE id = $1",
 		created.ID,
-	).Scan(&secretID, &signingSecret); err != nil {
+	).Scan(&secretID); err != nil {
 		t.Fatalf("query webhook row: %v", err)
 	}
 	if secretID == nil || *secretID == "" {
 		t.Fatal("expected secret_id to be set")
-	}
-	if signingSecret != nil {
-		t.Fatalf("expected signing_secret to be null, got %q", *signingSecret)
 	}
 }

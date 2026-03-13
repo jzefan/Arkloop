@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package http
 
 import (
@@ -15,7 +13,6 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
-	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
@@ -25,11 +22,11 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -42,76 +39,63 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(appDB)
+	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
-	}
-	featureFlagsRepo, err := data.NewFeatureFlagRepository(appDB)
-	if err != nil {
-		t.Fatalf("new feature flags repo: %v", err)
 	}
 
 	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	featureFlagSvc, err := featureflag.NewService(featureFlagsRepo, nil)
-	if err != nil {
-		t.Fatalf("new feature flag service: %v", err)
-	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
-		t.Fatalf("enable claw flag: %v", err)
-	}
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                 pool,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
-		FeatureFlagsRepo:     featureFlagsRepo,
-		FeatureFlagService:   featureFlagSvc,
 		AuditWriter:          auditWriter,
 		TrustIncomingTraceID: true,
 	})
@@ -151,7 +135,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	createdRunID := uuid.MustParse(runPayload.RunID)
 
 	var startedCount int
-	if err := appDB.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM run_events WHERE run_id = $1 AND type = 'run.started'`,
 		createdRunID,
 	).Scan(&startedCount); err != nil {
@@ -165,7 +149,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		startedSeq  int64
 		startedJSON []byte
 	)
-	if err := appDB.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT seq, data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		createdRunID,
 	).Scan(&startedSeq, &startedJSON); err != nil {
@@ -198,7 +182,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputRoute := decodeJSONBody[createRunResponse](t, runWithOutputRouteResp.Body.Bytes())
 	runWithOutputRouteID := uuid.MustParse(runWithOutputRoute.RunID)
 	var startedJSONWithOutputRoute []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputRouteID,
@@ -216,52 +200,52 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected started output_route_id: %#v", startedDataWithOutputRoute["output_route_id"])
 	}
 
-	threadOrgID := uuid.MustParse(threadPayload.OrgID)
+	threadAccountID := uuid.MustParse(threadPayload.AccountID)
 	var outputCredentialID uuid.UUID
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_credentials (org_id, provider, name)
+		`INSERT INTO llm_credentials (account_id, provider, name)
 		 VALUES ($1, 'anthropic', 'hybrid-output-cred')
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 	).Scan(&outputCredentialID); err != nil {
 		t.Fatalf("create output credential: %v", err)
 	}
 	var outputRouteFromAgent uuid.UUID
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, when_json, multiplier)
+		`INSERT INTO llm_routes (account_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ($1, $2, 'claude-3-5-haiku', 120, true, '{}'::jsonb, 1.0)
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 		outputCredentialID,
 	).Scan(&outputRouteFromAgent); err != nil {
 		t.Fatalf("create output route for exact selector: %v", err)
 	}
 
 	var gptCredentialID uuid.UUID
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_credentials (org_id, provider, name)
+		`INSERT INTO llm_credentials (account_id, provider, name)
 		 VALUES ($1, 'openai', 'gpt-output-cred')
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 	).Scan(&gptCredentialID); err != nil {
 		t.Fatalf("create gpt output credential: %v", err)
 	}
 	var outputRouteFromModel uuid.UUID
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (id, org_id, credential_id, model, priority, is_default, when_json, multiplier)
+		`INSERT INTO llm_routes (id, account_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ('11111111-1111-1111-1111-111111111111', $1, $2, 'gpt-5', 120, true, '{}'::jsonb, 1.0)
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 		gptCredentialID,
 	).Scan(&outputRouteFromModel); err != nil {
 		t.Fatalf("create output route for bare model selector: %v", err)
 	}
 
-	if _, err := appDB.Exec(
+	if _, err := pool.Exec(
 		ctx,
 		`INSERT INTO platform_settings (key, value, updated_at)
 		 VALUES ('search_hybrid_output_models', $1, now())
@@ -287,7 +271,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModel := decodeJSONBody[createRunResponse](t, runWithOutputModelResp.Body.Bytes())
 	runWithOutputModelID := uuid.MustParse(runWithOutputModel.RunID)
 	var startedJSONWithOutputModel []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelID,
@@ -322,7 +306,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithBothOutput := decodeJSONBody[createRunResponse](t, runWithBothOutputResp.Body.Bytes())
 	runWithBothOutputID := uuid.MustParse(runWithBothOutput.RunID)
 	var startedJSONWithBothOutput []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithBothOutputID,
@@ -356,7 +340,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelFromAgentName := decodeJSONBody[createRunResponse](t, runWithOutputModelFromAgentNameResp.Body.Bytes())
 	runWithOutputModelFromAgentNameID := uuid.MustParse(runWithOutputModelFromAgentName.RunID)
 	var startedJSONWithOutputModelFromAgentName []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelFromAgentNameID,
@@ -391,7 +375,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelEnv := decodeJSONBody[createRunResponse](t, runWithOutputModelEnvResp.Body.Bytes())
 	runWithOutputModelEnvID := uuid.MustParse(runWithOutputModelEnv.RunID)
 	var startedJSONWithOutputModelEnv []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelEnvID,
@@ -426,7 +410,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	runWithOutputModelNoMapping := decodeJSONBody[createRunResponse](t, runWithOutputModelNoMappingResp.Body.Bytes())
 	runWithOutputModelNoMappingID := uuid.MustParse(runWithOutputModelNoMapping.RunID)
 	var startedJSONWithOutputModelNoMapping []byte
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
 		runWithOutputModelNoMappingID,
@@ -471,7 +455,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		jobType    string
 		jobPayload []byte
 	)
-	if err := appDB.QueryRow(
+	if err := pool.QueryRow(
 		ctx,
 		`SELECT id, job_type, payload_json
 		 FROM jobs
@@ -497,8 +481,8 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if jobJSON["trace_id"] != runPayload.TraceID {
 		t.Fatalf("unexpected payload trace_id: %#v", jobJSON["trace_id"])
 	}
-	if jobJSON["org_id"] != threadPayload.OrgID {
-		t.Fatalf("unexpected payload org_id: %#v", jobJSON["org_id"])
+	if jobJSON["account_id"] != threadPayload.AccountID {
+		t.Fatalf("unexpected payload account_id: %v", jobJSON["account_id"])
 	}
 	if jobJSON["run_id"] != runPayload.RunID {
 		t.Fatalf("unexpected payload run_id: %#v", jobJSON["run_id"])
@@ -544,7 +528,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected get run status: %d body=%s", getRunResp.Code, getRunResp.Body.String())
 	}
 	getRunPayload := decodeJSONBody[runResponse](t, getRunResp.Body.Bytes())
-	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.OrgID != threadPayload.OrgID {
+	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.AccountID != threadPayload.AccountID {
 		t.Fatalf("unexpected get run payload: %#v", getRunPayload)
 	}
 	if getRunPayload.CreatedByUserID == nil || *getRunPayload.CreatedByUserID != alice.UserID {
@@ -569,7 +553,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 
 	var cancelRequestedCount int
-	if err := appDB.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM run_events WHERE run_id = $1 AND type = 'run.cancel_requested'`,
 		createdRunID,
 	).Scan(&cancelRequestedCount); err != nil {
@@ -594,7 +578,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	denyGet := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID, nil, authHeader(bob.AccessToken))
 	assertErrorEnvelope(t, denyGet, nethttp.StatusForbidden, "policy.denied")
 
-	deniedCount, err := countDeniedAudit(ctx, appDB, "runs.get", "org_mismatch")
+	deniedCount, err := countDeniedAudit(ctx, pool, "runs.get", "org_mismatch")
 	if err != nil {
 		t.Fatalf("count denied audit: %v", err)
 	}
@@ -603,175 +587,15 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 }
 
-func TestRunsCreateDefaultsClawPersonaForClawThreads(t *testing.T) {
-	db := setupTestDatabase(t, "api_go_runs_claw_default")
-
-	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
-	if err != nil {
-		t.Fatalf("new pool: %v", err)
-	}
-	defer appDB.Close()
-
-	logger := observability.NewJSONLogger("test", io.Discard)
-
-	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
-	if err != nil {
-		t.Fatalf("new password hasher: %v", err)
-	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
-	if err != nil {
-		t.Fatalf("new token service: %v", err)
-	}
-
-	userRepo, err := data.NewUserRepository(appDB)
-	if err != nil {
-		t.Fatalf("new user repo: %v", err)
-	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
-	if err != nil {
-		t.Fatalf("new credential repo: %v", err)
-	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
-	if err != nil {
-		t.Fatalf("new membership repo: %v", err)
-	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
-	if err != nil {
-		t.Fatalf("new refresh token repo: %v", err)
-	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
-	if err != nil {
-		t.Fatalf("new audit repo: %v", err)
-	}
-	threadRepo, err := data.NewThreadRepository(appDB)
-	if err != nil {
-		t.Fatalf("new thread repo: %v", err)
-	}
-	projectRepo, err := data.NewProjectRepository(appDB)
-	if err != nil {
-		t.Fatalf("new project repo: %v", err)
-	}
-	runRepo, err := data.NewRunEventRepository(appDB)
-	if err != nil {
-		t.Fatalf("new run repo: %v", err)
-	}
-
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	if err != nil {
-		t.Fatalf("new auth service: %v", err)
-	}
-	jobRepo, err := data.NewJobRepository(appDB)
-	if err != nil {
-		t.Fatalf("new job repo: %v", err)
-	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
-	if err != nil {
-		t.Fatalf("new registration service: %v", err)
-	}
-
-	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-
-	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		Logger:               logger,
-		AuthService:          authService,
-		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
-		ThreadRepo:           threadRepo,
-		ProjectRepo:          projectRepo,
-		RunEventRepo:         runRepo,
-		AuditWriter:          auditWriter,
-		TrustIncomingTraceID: true,
-	})
-
-	aliceRegister := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/auth/register",
-		map[string]any{"login": "alice", "password": "pwd12345", "email": "alice@test.com"},
-		nil,
-	)
-	if aliceRegister.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected register status: %d body=%s", aliceRegister.Code, aliceRegister.Body.String())
-	}
-	alice := decodeJSONBody[registerResponse](t, aliceRegister.Body.Bytes())
-	aliceHeaders := authHeader(alice.AccessToken)
-
-	chatThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "chat-thread"}, aliceHeaders)
-	if chatThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected chat thread create status: %d body=%s", chatThreadResp.Code, chatThreadResp.Body.String())
-	}
-	chatThread := decodeJSONBody[threadResponse](t, chatThreadResp.Body.Bytes())
-
-	clawThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "claw-thread", "mode": "claw"}, aliceHeaders)
-	if clawThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected claw thread create status: %d body=%s", clawThreadResp.Code, clawThreadResp.Body.String())
-	}
-	clawThread := decodeJSONBody[threadResponse](t, clawThreadResp.Body.Bytes())
-
-	loadStarted := func(runID string) map[string]any {
-		t.Helper()
-		var startedJSON []byte
-		if err := appDB.QueryRow(ctx,
-			`SELECT data_json FROM run_events WHERE run_id = $1 AND type = 'run.started' LIMIT 1`,
-			uuid.MustParse(runID),
-		).Scan(&startedJSON); err != nil {
-			t.Fatalf("load started event: %v", err)
-		}
-		var startedData map[string]any
-		if err := json.Unmarshal(startedJSON, &startedData); err != nil {
-			t.Fatalf("decode started json: %v raw=%s", err, string(startedJSON))
-		}
-		return startedData
-	}
-
-	defaultClawRunResp := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+"/runs", nil, aliceHeaders)
-	if defaultClawRunResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected default claw run create status: %d body=%s", defaultClawRunResp.Code, defaultClawRunResp.Body.String())
-	}
-	defaultClawRun := decodeJSONBody[createRunResponse](t, defaultClawRunResp.Body.Bytes())
-	defaultClawStarted := loadStarted(defaultClawRun.RunID)
-	if defaultClawStarted["persona_id"] != "claw" {
-		t.Fatalf("expected default claw persona_id, got %#v", defaultClawStarted)
-	}
-
-	overriddenClawRunResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/threads/"+clawThread.ID+"/runs",
-		map[string]any{"persona_id": "normal"},
-		aliceHeaders,
-	)
-	if overriddenClawRunResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected overridden claw run create status: %d body=%s", overriddenClawRunResp.Code, overriddenClawRunResp.Body.String())
-	}
-	overriddenClawRun := decodeJSONBody[createRunResponse](t, overriddenClawRunResp.Body.Bytes())
-	overriddenClawStarted := loadStarted(overriddenClawRun.RunID)
-	if overriddenClawStarted["persona_id"] != "normal" {
-		t.Fatalf("expected explicit persona override preserved, got %#v", overriddenClawStarted)
-	}
-
-	chatRunResp := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+chatThread.ID+"/runs", nil, aliceHeaders)
-	if chatRunResp.Code != nethttp.StatusCreated {
-		t.Fatalf("unexpected chat run create status: %d body=%s", chatRunResp.Code, chatRunResp.Body.String())
-	}
-	chatRun := decodeJSONBody[createRunResponse](t, chatRunResp.Body.Bytes())
-	chatStarted := loadStarted(chatRun.RunID)
-	if _, exists := chatStarted["persona_id"]; exists {
-		t.Fatalf("expected chat thread to keep empty persona_id, got %#v", chatStarted)
-	}
-}
-
 func TestStreamRunEvents(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_sse")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -784,35 +608,35 @@ func TestStreamRunEvents(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(appDB)
+	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
@@ -821,11 +645,11 @@ func TestStreamRunEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -833,11 +657,11 @@ func TestStreamRunEvents(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                pool,
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		RunEventRepo:        runRepo,
@@ -976,11 +800,11 @@ func TestListGlobalRuns(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_global_runs")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
-	defer appDB.Close()
+	defer pool.Close()
 
 	logger := observability.NewJSONLogger("test", io.Discard)
 
@@ -993,35 +817,35 @@ func TestListGlobalRuns(t *testing.T) {
 		t.Fatalf("new token service: %v", err)
 	}
 
-	userRepo, err := data.NewUserRepository(appDB)
+	userRepo, err := data.NewUserRepository(pool)
 	if err != nil {
 		t.Fatalf("new user repo: %v", err)
 	}
-	credentialRepo, err := data.NewUserCredentialRepository(appDB)
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(appDB)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	refreshTokenRepo, err := data.NewRefreshTokenRepository(appDB)
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
 	if err != nil {
 		t.Fatalf("new refresh token repo: %v", err)
 	}
-	auditRepo, err := data.NewAuditLogRepository(appDB)
+	auditRepo, err := data.NewAuditLogRepository(pool)
 	if err != nil {
 		t.Fatalf("new audit repo: %v", err)
 	}
-	threadRepo, err := data.NewThreadRepository(appDB)
+	threadRepo, err := data.NewThreadRepository(pool)
 	if err != nil {
 		t.Fatalf("new thread repo: %v", err)
 	}
-	projectRepo, err := data.NewProjectRepository(appDB)
+	projectRepo, err := data.NewProjectRepository(pool)
 	if err != nil {
 		t.Fatalf("new project repo: %v", err)
 	}
-	runRepo, err := data.NewRunEventRepository(appDB)
+	runRepo, err := data.NewRunEventRepository(pool)
 	if err != nil {
 		t.Fatalf("new run repo: %v", err)
 	}
@@ -1030,11 +854,11 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	jobRepo, err := data.NewJobRepository(appDB)
+	jobRepo, err := data.NewJobRepository(pool)
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	registrationService, err := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
@@ -1042,11 +866,11 @@ func TestListGlobalRuns(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
+		Pool:                 pool,
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
@@ -1078,7 +902,7 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse run id: %v", err)
 	}
-	_, err = appDB.Exec(ctx, "UPDATE runs SET model = $1, persona_id = $2 WHERE id = $3", "gpt-4o-mini", "ops-trace", runID)
+	_, err = pool.Exec(ctx, "UPDATE runs SET model = $1, persona_id = $2 WHERE id = $3", "gpt-4o-mini", "ops-trace", runID)
 	if err != nil {
 		t.Fatalf("seed run model/persona: %v", err)
 	}
@@ -1115,15 +939,15 @@ func TestListGlobalRuns(t *testing.T) {
 		if len(body.Data) != 1 || body.Data[0].RunID != runPayload.RunID {
 			t.Fatalf("unexpected data: %#v", body.Data)
 		}
-		if body.Data[0].OrgID != threadPayload.OrgID {
-			t.Fatalf("unexpected org_id: %q", body.Data[0].OrgID)
+		if body.Data[0].AccountID != threadPayload.AccountID {
+			t.Fatalf("unexpected account_id: %q", body.Data[0].AccountID)
 		}
 	})
 
-	t.Run("org member cannot query another org_id", func(t *testing.T) {
+	t.Run("member cannot query another account_id", func(t *testing.T) {
 		// 用一个随机的合法 UUID 当作其他 org
-		fakeOrgID := uuid.New().String()
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?org_id="+fakeOrgID, nil, aliceHeaders)
+		fakeAccountID := uuid.New().String()
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?account_id="+fakeAccountID, nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "auth.forbidden")
 	})
 
@@ -1317,8 +1141,8 @@ func TestListGlobalRuns(t *testing.T) {
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 
-	t.Run("invalid org_id returns 422", func(t *testing.T) {
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?org_id=notauuid", nil, aliceHeaders)
+	t.Run("invalid account_id returns 422", func(t *testing.T) {
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?account_id=notauuid", nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 
@@ -1328,107 +1152,4 @@ func TestListGlobalRuns(t *testing.T) {
 			t.Fatalf("expected 405, got %d body=%s", resp.Code, resp.Body.String())
 		}
 	})
-}
-
-func TestRunsClawFeatureFlagBlocksExistingRunAccess(t *testing.T) {
-	db := setupTestDatabase(t, "api_go_runs_claw_flag")
-
-	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
-	if err != nil {
-		t.Fatalf("new pool: %v", err)
-	}
-	defer appDB.Close()
-
-	logger := observability.NewJSONLogger("test", io.Discard)
-	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
-	if err != nil {
-		t.Fatalf("new password hasher: %v", err)
-	}
-	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
-	if err != nil {
-		t.Fatalf("new token service: %v", err)
-	}
-
-	userRepo, _ := data.NewUserRepository(appDB)
-	credentialRepo, _ := data.NewUserCredentialRepository(appDB)
-	membershipRepo, _ := data.NewOrgMembershipRepository(appDB)
-	refreshTokenRepo, _ := data.NewRefreshTokenRepository(appDB)
-	auditRepo, _ := data.NewAuditLogRepository(appDB)
-	threadRepo, _ := data.NewThreadRepository(appDB)
-	projectRepo, _ := data.NewProjectRepository(appDB)
-	runRepo, _ := data.NewRunEventRepository(appDB)
-	featureFlagsRepo, _ := data.NewFeatureFlagRepository(appDB)
-
-	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
-	featureFlagSvc, _ := featureflag.NewService(featureFlagsRepo, nil)
-	jobRepo, _ := data.NewJobRepository(appDB)
-	registrationService, _ := auth.NewRegistrationService(appDB, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
-	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
-
-	handler := NewHandler(HandlerConfig{
-		DB:                appDB,
-		Logger:               logger,
-		AuthService:          authService,
-		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
-		ThreadRepo:           threadRepo,
-		ProjectRepo:          projectRepo,
-		RunEventRepo:         runRepo,
-		FeatureFlagsRepo:     featureFlagsRepo,
-		FeatureFlagService:   featureFlagSvc,
-		AuditWriter:          auditWriter,
-		TrustIncomingTraceID: true,
-	})
-
-	registerResp := doJSON(
-		handler,
-		nethttp.MethodPost,
-		"/v1/auth/register",
-		map[string]any{"login": "claw-run-flag", "password": "pwd12345", "email": "claw-run-flag@test.com"},
-		nil,
-	)
-	if registerResp.Code != nethttp.StatusCreated {
-		t.Fatalf("register: %d %s", registerResp.Code, registerResp.Body.String())
-	}
-	alice := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
-	headers := authHeader(alice.AccessToken)
-
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, true); err != nil {
-		t.Fatalf("enable claw flag: %v", err)
-	}
-
-	clawThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "claw-run-thread", "mode": "claw"}, headers)
-	if clawThreadResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create claw thread: %d %s", clawThreadResp.Code, clawThreadResp.Body.String())
-	}
-	clawThread := decodeJSONBody[threadResponse](t, clawThreadResp.Body.Bytes())
-
-	runResp := doJSON(handler, nethttp.MethodPost, "/v1/threads/"+clawThread.ID+"/runs", nil, headers)
-	if runResp.Code != nethttp.StatusCreated {
-		t.Fatalf("create claw run: %d %s", runResp.Code, runResp.Body.String())
-	}
-	runPayload := decodeJSONBody[createRunResponse](t, runResp.Body.Bytes())
-
-	if _, err := featureFlagsRepo.UpdateFlagDefaultValue(ctx, featureflag.ClawEnabledKey, false); err != nil {
-		t.Fatalf("disable claw flag: %v", err)
-	}
-
-	getDenied := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID, nil, headers)
-	assertErrorEnvelope(t, getDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	eventsDenied := doJSON(handler, nethttp.MethodGet, "/v1/runs/"+runPayload.RunID+"/events?follow=false&after_seq=0", nil, headers)
-	assertErrorEnvelope(t, eventsDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	cancelDenied := doJSON(handler, nethttp.MethodPost, "/v1/runs/"+runPayload.RunID+":cancel", nil, headers)
-	assertErrorEnvelope(t, cancelDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	inputDenied := doJSON(handler, nethttp.MethodPost, "/v1/runs/"+runPayload.RunID+"/input", map[string]any{"content": "continue"}, headers)
-	assertErrorEnvelope(t, inputDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	threadRunsDenied := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+clawThread.ID+"/runs", nil, headers)
-	assertErrorEnvelope(t, threadRunsDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
-
-	globalRunsDenied := doJSON(handler, nethttp.MethodGet, "/v1/runs?thread_id="+clawThread.ID, nil, headers)
-	assertErrorEnvelope(t, globalRunsDenied, nethttp.StatusForbidden, "feature_flags.claw_disabled")
 }

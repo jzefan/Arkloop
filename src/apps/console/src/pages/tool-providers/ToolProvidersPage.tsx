@@ -8,7 +8,7 @@ import { Badge } from '../../components/Badge'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isApiError } from '../../api'
 import {
@@ -274,7 +274,7 @@ export function ToolProvidersPage() {
               className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] focus:outline-none"
             >
               <option value="platform">platform</option>
-              <option value="org">org</option>
+              <option value="project">account</option>
             </select>
           </div>
         )}

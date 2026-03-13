@@ -7,7 +7,7 @@ import {
 } from 'recharts'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
-import { useToast } from '../../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
   getMeUsage,

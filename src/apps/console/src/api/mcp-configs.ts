@@ -2,7 +2,7 @@ import { apiFetch } from './client'
 
 export type MCPConfig = {
   id: string
-  org_id: string
+  account_id: string
   name: string
   transport: string
   url?: string

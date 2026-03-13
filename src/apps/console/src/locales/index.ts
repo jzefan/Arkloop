@@ -10,9 +10,9 @@ export interface LocaleStrings {
     configuration: string
     integration: string
     security: string
-    organization: string
     billing: string
     platform: string
+    infrastructure: string
   }
   // nav item labels
   nav: {
@@ -31,7 +31,6 @@ export interface LocaleStrings {
     accessLog: string
     members: string
     teams: string
-    projects: string
     plans: string
     subscriptions: string
     entitlements: string
@@ -53,6 +52,7 @@ export interface LocaleStrings {
     memoryConfig: string
     executionGovernance: string
     reports: string
+    modules: string
   }
   // settings
   account: string
@@ -109,7 +109,7 @@ export interface LocaleStrings {
       modalTitle: string
       fieldScope: string
       scopePlatform: string
-      scopeOrg: string
+      scopeAccount: string
       fieldName: string
       fieldProvider: string
       fieldApiKey: string
@@ -254,6 +254,22 @@ export interface LocaleStrings {
       sectionTimeout: string
       fieldCostPerCommit: string
       fieldCostPerCommitHint: string
+      sectionEmbeddingConfig: string
+      fieldEmbeddingProvider: string
+      fieldEmbeddingModel: string
+      fieldEmbeddingApiKey: string
+      fieldEmbeddingApiBase: string
+      fieldEmbeddingDimension: string
+      sectionVLMConfig: string
+      fieldVLMProvider: string
+      fieldVLMModel: string
+      fieldVLMApiKey: string
+      fieldVLMApiBase: string
+      fieldVLMProviderHint: string
+      ovRestartWarning: string
+      applyAndRestart: string
+      toastOVConfigApplied: string
+      toastOVConfigFailed: string
       fieldSkillsMpApiKey: string
       fieldSkillsMpBaseUrl: string
       fieldSkillsMpBaseUrlHint: string
@@ -349,7 +365,7 @@ export interface LocaleStrings {
       fieldLastSyncedAt: string
       fieldScope: string
       scopePlatform: string
-      scopeOrg: string
+      scopeAccount: string
       selectorMeta: (name: string, order: number) => string
       valuePlatformDefault: string
       valueNotSet: string
@@ -477,8 +493,11 @@ export interface LocaleStrings {
       title: string
       sectionMarket: string
       hint: string
+      fieldProvider: string
       fieldApiKey: string
       fieldBaseUrl: string
+      fieldApiBaseUrl: string
+      fieldApiBaseUrlHint: string
       fieldBaseUrlHint: string
       save: string
       toastLoadFailed: string
@@ -594,7 +613,7 @@ export interface LocaleStrings {
       cardInputTokens: string
       cardOutputTokens: string
       cardCostUSD: string
-      cardActiveOrgs: string
+      cardActiveUsers: string
       toastLoadFailed: string
     }
     myUsage: {
@@ -641,10 +660,10 @@ export interface LocaleStrings {
       detailEmailNotVerified: string
       detailLocale: string
       detailTimezone: string
-      detailOrgs: string
-      detailOrgId: string
-      detailOrgRole: string
-      detailNoOrgs: string
+      detailAccounts: string
+      detailAccountId: string
+      detailAccountRole: string
+      detailNoAccounts: string
       suspendTitle: string
       suspendMessage: (name: string) => string
       suspendConfirm: string
@@ -858,19 +877,19 @@ export interface LocaleStrings {
       deleteTitle: string
       deleteMessage: (key: string) => string
       deleteConfirm: string
-      // org overrides
-      orgOverrides: string
+      // account overrides
+      accountOverrides: string
       overridesEmpty: string
       addOverride: string
-      overrideOrgId: string
+      overrideAccountId: string
       overrideEnabled: string
       deleteOverride: string
       deleteOverrideTitle: string
-      deleteOverrideMessage: (orgId: string) => string
+      deleteOverrideMessage: (accountId: string) => string
       deleteOverrideConfirm: string
       // errors
       errKeyRequired: string
-      errOrgIdRequired: string
+      errAccountIdRequired: string
       // toasts
       toastCreated: string
       toastUpdated: string
@@ -986,9 +1005,9 @@ export interface LocaleStrings {
       title: string
       filterTitle: string
       filterPlatformOnly: string
-      filterActive: (orgId: string) => string
-      fieldOrgId: string
-      fieldOrgIdPlaceholder: string
+      filterActive: (accountId: string) => string
+      fieldAccountId: string
+      fieldAccountIdPlaceholder: string
       apply: string
       reset: string
       gotoEntitlements: string
@@ -1001,7 +1020,7 @@ export interface LocaleStrings {
       colSource: string
       colLayers: string
       layerEnv: string
-      layerOrg: string
+      layerAccount: string
       layerPlatform: string
       layerDefault: string
       defaultEmpty: string
@@ -1088,7 +1107,7 @@ export interface LocaleStrings {
       filterRunPlaceholder: string
       filterThreadPlaceholder: string
       filterUserPlaceholder: string
-      filterOrgPlaceholder: string
+      filterAccountPlaceholder: string
       filterParentRunPlaceholder: string
       filterStatusLabel: string
       filterModelLabel: string
@@ -1104,7 +1123,7 @@ export interface LocaleStrings {
       // table columns
       colId: string
       colUser: string
-      colOrg: string
+      colAccount: string
       colThread: string
       colStatus: string
       colModel: string
@@ -1147,7 +1166,7 @@ export interface LocaleStrings {
       usageTotal: string
       labelUser: string
       labelThread: string
-      labelOrg: string
+      labelAccount: string
       labelPersona: string
       labelPersonaModel: string
       labelCredential: string
@@ -1189,6 +1208,37 @@ export interface LocaleStrings {
       prev: string
       next: string
       toastLoadFailed: string
+    }
+    modules: {
+      title: string
+      bridgeOnline: string
+      bridgeOffline: string
+      tabAll: string
+      tabMemory: string
+      tabSandbox: string
+      tabSearch: string
+      tabBrowser: string
+      tabConsole: string
+      statusUnknown: string
+      statusNotInstalled: string
+      statusDisconnected: string
+      statusPendingBootstrap: string
+      statusRunning: string
+      statusStopped: string
+      statusError: string
+      actionInstall: string
+      actionStart: string
+      actionStop: string
+      actionRestart: string
+      actionConfigure: string
+      actionBootstrap: string
+      copyCommand: string
+      copyAgentPrompt: string
+      copied: string
+      port: string
+      dependsOn: string
+      noModules: string
+      requires: (deps: string) => string
     }
   }
 }

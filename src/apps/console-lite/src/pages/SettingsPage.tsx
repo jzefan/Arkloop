@@ -1,12 +1,12 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { Loader2, Plus, Trash2, Star, Send, ChevronDown } from 'lucide-react'
 import type { LiteOutletContext } from '../layouts/LiteLayout'
 import { PageHeader } from '../components/PageHeader'
 import { FormField } from '../components/FormField'
 import { Modal } from '../components/Modal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { useToast } from '../components/useToast'
+import { useToast } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import type { LocaleStrings } from '../locales'
 import {
@@ -29,10 +29,11 @@ import {
   clearToolProviderCredential,
   type ToolProviderItem,
 } from '../api/tool-providers'
+import { bridgeClient, checkBridgeAvailable } from '../api/bridge'
 
-type Section = 'general' | 'email' | 'sandbox' | 'skills' | 'credits'
+type Section = 'general' | 'email' | 'sandbox' | 'skills' | 'credits' | 'system'
 
-const SECTIONS: Section[] = ['general', 'email', 'sandbox', 'skills', 'credits']
+const SECTIONS: Section[] = ['general', 'email', 'sandbox', 'skills', 'credits', 'system']
 
 const TLS_MODES = ['starttls', 'tls', 'none'] as const
 const SANDBOX_PROVIDERS = ['firecracker', 'docker'] as const
@@ -108,8 +109,11 @@ export function SettingsPage() {
   const { t } = useLocale()
   const tc = t.settingsPage
 
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sectionParam = searchParams.get('section') ?? ''
+  const section: Section = SECTIONS.includes(sectionParam as Section) ? sectionParam as Section : 'general'
+
   const [loading, setLoading] = useState(true)
-  const [section, setSection] = useState<Section>('general')
 
   const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([])
   const [smtpList, setSmtpList] = useState<SmtpProvider[]>([])
@@ -126,9 +130,11 @@ export function SettingsPage() {
   // Credits
   const [creditsOn, setCreditsOn] = useState(true)
 
-  // Skills
+  // Registry
+  const [skillsRegistryProvider, setSkillsRegistryProvider] = useState('clawhub')
   const [skillsMarketApiKey, setSkillsMarketApiKey] = useState('')
-  const [skillsMarketBaseUrl, setSkillsMarketBaseUrl] = useState('https://skillsmp.com')
+  const [skillsMarketBaseUrl, setSkillsMarketBaseUrl] = useState('https://clawhub.ai')
+  const [skillsMarketApiBaseUrl, setSkillsMarketApiBaseUrl] = useState('')
 
   // SMTP
   const [selectedSmtpId, setSelectedSmtpId] = useState<string>('')
@@ -183,8 +189,10 @@ export function SettingsPage() {
       setSandboxProvider(sandboxProviderValue(activeSandbox))
       setSandboxBaseUrl(activeSandbox?.base_url ?? '')
       setSandboxDockerImage(map['sandbox.docker_image'] ?? '')
-      setSkillsMarketApiKey(map['skills.market.skillsmp_api_key'] ?? '')
-      setSkillsMarketBaseUrl(map['skills.market.skillsmp_base_url'] ?? 'https://skillsmp.com')
+      setSkillsRegistryProvider(map['skills.registry.provider'] ?? 'clawhub')
+      setSkillsMarketApiKey(map['skills.registry.api_key'] ?? map['skills.market.skillsmp_api_key'] ?? '')
+      setSkillsMarketBaseUrl(map['skills.registry.base_url'] ?? map['skills.market.skillsmp_base_url'] ?? 'https://clawhub.ai')
+      setSkillsMarketApiBaseUrl(map['skills.registry.api_base_url'] ?? '')
       setCreditsOn(isCreditsEnabled(map['credit.deduction_policy'] ?? ''))
 
       // 默认选中第一个 SMTP provider
@@ -265,8 +273,10 @@ export function SettingsPage() {
     setSavingSkills(true)
     try {
       await Promise.all([
-        updatePlatformSetting('skills.market.skillsmp_api_key', skillsMarketApiKey.trim(), accessToken),
-        updatePlatformSetting('skills.market.skillsmp_base_url', skillsMarketBaseUrl.trim() || 'https://skillsmp.com', accessToken),
+        updatePlatformSetting('skills.registry.provider', skillsRegistryProvider.trim() || 'clawhub', accessToken),
+        updatePlatformSetting('skills.registry.api_key', skillsMarketApiKey.trim(), accessToken),
+        updatePlatformSetting('skills.registry.base_url', skillsMarketBaseUrl.trim() || 'https://clawhub.ai', accessToken),
+        updatePlatformSetting('skills.registry.api_base_url', skillsMarketApiBaseUrl.trim(), accessToken),
       ])
       addToast(tc.toastSaved, 'success')
     } catch {
@@ -274,7 +284,7 @@ export function SettingsPage() {
     } finally {
       setSavingSkills(false)
     }
-  }, [skillsMarketApiKey, skillsMarketBaseUrl, accessToken, addToast, tc])
+  }, [skillsMarketApiBaseUrl, skillsMarketApiKey, skillsMarketBaseUrl, skillsRegistryProvider, accessToken, addToast, tc])
 
   const handleSaveCredits = useCallback(async () => {
     setSavingCredits(true)
@@ -376,6 +386,7 @@ export function SettingsPage() {
     sandbox: tc.sectionSandbox,
     skills: tc.sectionSkills,
     credits: tc.sectionCredits,
+    system: t.systemSection.title,
   }
 
   return (
@@ -394,7 +405,11 @@ export function SettingsPage() {
               {SECTIONS.map((s) => (
                 <button
                   key={s}
-                  onClick={() => setSection(s)}
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams)
+                    next.set('section', s)
+                    setSearchParams(next, { replace: true })
+                  }}
                   className={[
                     'flex h-[30px] items-center rounded-[5px] px-3 text-sm font-medium transition-colors',
                     s === section
@@ -507,10 +522,14 @@ export function SettingsPage() {
                 )}
                 {section === 'skills' && (
                   <SkillsSection
+                    provider={skillsRegistryProvider}
+                    setProvider={setSkillsRegistryProvider}
                     apiKey={skillsMarketApiKey}
                     setApiKey={setSkillsMarketApiKey}
                     baseUrl={skillsMarketBaseUrl}
                     setBaseUrl={setSkillsMarketBaseUrl}
+                    apiBaseUrl={skillsMarketApiBaseUrl}
+                    setApiBaseUrl={setSkillsMarketApiBaseUrl}
                     saving={savingSkills}
                     onSave={handleSaveSkills}
                     tc={tc}
@@ -526,6 +545,9 @@ export function SettingsPage() {
                     tc={tc}
                     tCommon={t.common}
                   />
+                )}
+                {section === 'system' && (
+                  <SystemSection ts={t.systemSection} />
                 )}
               </div>
             </div>
@@ -826,7 +848,7 @@ function SandboxSection({
         </div>
       </FormField>
       <FormField label={tc.sandboxBaseUrl}>
-        <input value={sandboxBaseUrl} onChange={(e) => setSandboxBaseUrl(e.target.value)} className={inputCls} placeholder="http://localhost:8002" />
+        <input value={sandboxBaseUrl} onChange={(e) => setSandboxBaseUrl(e.target.value)} className={inputCls} placeholder="http://localhost:19002" />
       </FormField>
       {sandboxProvider === 'docker' && (
         <FormField label={tc.sandboxDockerImage}>
@@ -891,19 +913,27 @@ function CreditsSection({
 }
 
 function SkillsSection({
+  provider,
+  setProvider,
   apiKey,
   setApiKey,
   baseUrl,
   setBaseUrl,
+  apiBaseUrl,
+  setApiBaseUrl,
   saving,
   onSave,
   tc,
   tCommon,
 }: {
+  provider: string
+  setProvider: (value: string) => void
   apiKey: string
   setApiKey: (value: string) => void
   baseUrl: string
   setBaseUrl: (value: string) => void
+  apiBaseUrl: string
+  setApiBaseUrl: (value: string) => void
   saving: boolean
   onSave: () => void
   tc: SettingsLocale
@@ -911,6 +941,14 @@ function SkillsSection({
 }) {
   return (
     <>
+      <FormField label={tc.skillsProvider}>
+        <input
+          value={provider}
+          onChange={(e) => setProvider(e.target.value)}
+          className={inputCls}
+          placeholder="clawhub"
+        />
+      </FormField>
       <FormField label={tc.skillsApiKey}>
         <input
           type="password"
@@ -925,15 +963,169 @@ function SkillsSection({
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           className={inputCls}
-          placeholder="https://skillsmp.com"
+          placeholder="https://clawhub.ai"
         />
         <p className="text-xs text-[var(--c-text-muted)]">{tc.skillsBaseUrlHint}</p>
+      </FormField>
+      <FormField label={tc.skillsApiBaseUrl}>
+        <input
+          value={apiBaseUrl}
+          onChange={(e) => setApiBaseUrl(e.target.value)}
+          className={inputCls}
+          placeholder={tc.skillsApiBaseUrlHint}
+        />
       </FormField>
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving} className={btnPrimaryCls}>
           {saving ? '...' : tCommon.save}
         </button>
       </div>
+    </>
+  )
+}
+
+// --- System section ---
+
+type SystemLocale = LocaleStrings['systemSection']
+
+function SystemSection({ ts }: { ts: SystemLocale }) {
+  const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null)
+  const [version, setVersion] = useState('')
+  const [mode, setMode] = useState<'prod' | 'dev'>('prod')
+  const [targetVersion, setTargetVersion] = useState('')
+  const [upgrading, setUpgrading] = useState(false)
+  const [logs, setLogs] = useState<string[]>([])
+  const [result, setResult] = useState<{ status: string; error?: string } | null>(null)
+  const logsEndRef = useRef<HTMLDivElement>(null)
+  const cleanupRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const online = await checkBridgeAvailable()
+      if (cancelled) return
+      setBridgeOnline(online)
+      if (online) {
+        try {
+          const info = await bridgeClient.systemVersion()
+          if (!cancelled) setVersion(info.version)
+        } catch {
+          /* version unavailable */
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
+
+  useEffect(() => {
+    return () => { cleanupRef.current?.() }
+  }, [])
+
+  const handleUpgrade = useCallback(async () => {
+    setUpgrading(true)
+    setLogs([])
+    setResult(null)
+    try {
+      const req = mode === 'prod' && targetVersion.trim()
+        ? { mode, target_version: targetVersion.trim() } as const
+        : { mode } as const
+      const { operation_id } = await bridgeClient.systemUpgrade(req)
+      cleanupRef.current = bridgeClient.streamOperation(
+        operation_id,
+        (line) => setLogs((prev) => [...prev, line]),
+        (res) => {
+          setResult(res)
+          setUpgrading(false)
+          cleanupRef.current = null
+        },
+      )
+    } catch {
+      setResult({ status: 'failed', error: 'Request failed' })
+      setUpgrading(false)
+    }
+  }, [mode, targetVersion])
+
+  return (
+    <>
+      <FormField label={ts.version}>
+        <p className="text-sm text-[var(--c-text-primary)]">{version || '--'}</p>
+      </FormField>
+
+      <FormField label={ts.bridgeStatus}>
+        {bridgeOnline === null ? (
+          <Loader2 size={16} className="animate-spin text-[var(--c-text-muted)]" />
+        ) : bridgeOnline ? (
+          <span className="inline-flex items-center gap-1.5 text-sm text-[var(--c-status-success-text)]">
+            <span className="h-2 w-2 rounded-full bg-[var(--c-status-success-text)]" />
+            {ts.bridgeOnline}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-sm text-[var(--c-status-error-text)]">
+            <span className="h-2 w-2 rounded-full bg-[var(--c-status-error-text)]" />
+            {ts.bridgeOffline}
+          </span>
+        )}
+      </FormField>
+
+      <FormField label={ts.upgradeMode}>
+        <div className="relative">
+          <select value={mode} onChange={(e) => setMode(e.target.value as 'prod' | 'dev')} className={selectCls}>
+            <option value="prod">{ts.modeProd}</option>
+            <option value="dev">{ts.modeDev}</option>
+          </select>
+          <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
+        </div>
+      </FormField>
+
+      {mode === 'prod' && (
+        <FormField label={ts.targetVersion}>
+          <input
+            value={targetVersion}
+            onChange={(e) => setTargetVersion(e.target.value)}
+            className={inputCls}
+            placeholder={ts.targetVersionPlaceholder}
+          />
+        </FormField>
+      )}
+
+      <div className="flex justify-end">
+        <button
+          onClick={handleUpgrade}
+          disabled={upgrading || !bridgeOnline}
+          className={btnPrimaryCls}
+        >
+          {upgrading ? ts.upgrading : ts.upgradeBtn}
+        </button>
+      </div>
+
+      {logs.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-[var(--c-text-secondary)]">{ts.logs}</p>
+          <div className="max-h-64 overflow-y-auto rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-input)] p-3 font-mono text-xs leading-5 text-[var(--c-text-primary)]">
+            {logs.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+            <div ref={logsEndRef} />
+          </div>
+        </div>
+      )}
+
+      {result && (
+        <div
+          className={[
+            'rounded-md border px-4 py-3 text-sm',
+            result.status === 'completed'
+              ? 'border-[var(--c-status-success-text)] bg-[var(--c-status-success-bg)] text-[var(--c-status-success-text)]'
+              : 'border-[var(--c-status-error-text)] bg-[var(--c-status-error-bg)] text-[var(--c-status-error-text)]',
+          ].join(' ')}
+        >
+          {result.status === 'completed' ? ts.upgradeComplete : `${ts.upgradeFailed}${result.error ? `: ${result.error}` : ''}`}
+        </div>
+      )}
     </>
   )
 }
