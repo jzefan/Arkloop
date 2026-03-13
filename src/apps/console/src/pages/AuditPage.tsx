@@ -20,9 +20,9 @@ const ACTION_OPTIONS = [
   { value: 'threads.delete', label: 'threads.delete' },
   { value: 'api_keys.create', label: 'api_keys.create' },
   { value: 'api_keys.revoke', label: 'api_keys.revoke' },
-  { value: 'org_invitations.create', label: 'org_invitations.create' },
-  { value: 'org_invitations.accept', label: 'org_invitations.accept' },
-  { value: 'org_invitations.revoke', label: 'org_invitations.revoke' },
+  { value: 'account_invitations.create', label: 'account_invitations.create' },
+  { value: 'account_invitations.accept', label: 'account_invitations.accept' },
+  { value: 'account_invitations.revoke', label: 'account_invitations.revoke' },
 ]
 
 function truncateId(id: string): string {
