@@ -1028,6 +1028,8 @@ export const en: LocaleStrings = {
       actionDisable: 'Disable',
       actionConfigure: 'Configure',
       actionSave: 'Save',
+      actionInstallModel: 'Install Model',
+      semanticInstallStarted: 'Install started',
       actionReconfigure: 'Reconfigure',
       statusPendingInstall: 'Pending Install',
       semanticProviderLocal: 'Local Model',

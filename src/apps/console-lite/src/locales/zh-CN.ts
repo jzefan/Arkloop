@@ -308,6 +308,8 @@ export const zhCN: LocaleStrings = {
     actionDisable: '禁用',
     actionConfigure: '配置',
     actionSave: '保存',
+    actionInstallModel: '安装模型',
+    semanticInstallStarted: '安装已启动',
     actionReconfigure: '重新配置',
     statusPendingInstall: '待安装',
     semanticProviderLocal: '本地模型',
