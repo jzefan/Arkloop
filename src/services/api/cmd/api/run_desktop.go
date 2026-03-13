@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"arkloop/services/worker/internal/desktoprun"
+	"arkloop/services/api/internal/app"
 )
 
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return desktoprun.RunDesktop(ctx)
+	return app.RunDesktop(ctx)
 }
