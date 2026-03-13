@@ -707,8 +707,6 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 			tool_denylist = EXCLUDED.tool_denylist,
 			budgets_json = EXCLUDED.budgets_json,
 			title_summarize_json = EXCLUDED.title_summarize_json,
-			preferred_credential = EXCLUDED.preferred_credential,
-			model = EXCLUDED.model,
 			reasoning_mode = EXCLUDED.reasoning_mode,
 			prompt_cache_control = EXCLUDED.prompt_cache_control,
 			executor_type = EXCLUDED.executor_type,
