@@ -349,7 +349,7 @@ export const en: LocaleStrings = {
       toolModeInherit: 'Inherit All',
       toolModeCustom: 'Custom Set',
       fieldBudgetsJSON: 'Budgets (JSON)',
-      fieldIsActive: 'Enabled',
+      fieldIsActive: 'Enable this agent',
       fieldExecutorType: 'Executor Type',
       fieldExecutorConfig: 'Executor Config (JSON)',
       fieldPreferredCredential: 'Preferred Credential',

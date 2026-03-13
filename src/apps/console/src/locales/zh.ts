@@ -349,7 +349,7 @@ export const zh: LocaleStrings = {
       toolModeInherit: '继承全部',
       toolModeCustom: '自定义子集',
       fieldBudgetsJSON: '预算（JSON）',
-      fieldIsActive: '启用',
+      fieldIsActive: '启用此智能体',
       fieldExecutorType: '执行器类型',
       fieldExecutorConfig: '执行器配置（JSON）',
       fieldPreferredCredential: '首选凭证',
