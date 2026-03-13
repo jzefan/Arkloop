@@ -157,6 +157,15 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 	}
 
+	// bootstrap 页面始终由 console-lite 提供
+	var bootstrapProxy http.Handler
+	if a.config.BootstrapUpstream != "" && a.config.BootstrapUpstream != a.config.FrontendUpstream {
+		bootstrapProxy, err = proxy.New(proxy.Config{Upstream: a.config.BootstrapUpstream})
+		if err != nil {
+			return fmt.Errorf("bootstrap proxy: %w", err)
+		}
+	}
+
 	// GeoIP 初始化
 	var geo geoip.Lookup = geoip.Noop{}
 	if a.config.GeoIPLicenseKey != "" {
@@ -186,7 +195,7 @@ func (a *Application) Run(ctx context.Context) error {
 	if a.config.EnableBenchz {
 		mux.HandleFunc("/benchz", healthz)
 	}
-	mux.Handle("/", routeRequest(apiProxy, frontendProxy))
+	mux.Handle("/", routeRequest(apiProxy, frontendProxy, bootstrapProxy))
 
 	var (
 		limiter  ratelimit.Limiter

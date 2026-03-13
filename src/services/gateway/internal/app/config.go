@@ -17,6 +17,7 @@ const (
 	gatewayAddrEnv            = "ARKLOOP_GATEWAY_ADDR"
 	gatewayUpstreamEnv        = "ARKLOOP_GATEWAY_UPSTREAM"
 	gatewayFrontendEnv        = "ARKLOOP_GATEWAY_FRONTEND_UPSTREAM"
+	gatewayBootstrapEnv       = "ARKLOOP_GATEWAY_BOOTSTRAP_UPSTREAM"
 	redisURLEnv               = "ARKLOOP_REDIS_URL"
 	gatewayRedisURLEnv        = "ARKLOOP_GATEWAY_REDIS_URL"
 	jwtSecretEnv              = "ARKLOOP_AUTH_JWT_SECRET"
@@ -31,7 +32,8 @@ const (
 	riskRejectThresholdEnv    = "ARKLOOP_GATEWAY_RISK_REJECT_THRESHOLD"
 
 	defaultAddr       = "0.0.0.0:19000"
-	defaultUpstream   = "http://127.0.0.1:19001"
+	defaultUpstream          = "http://127.0.0.1:19001"
+	defaultBootstrapUpstream = "http://console-lite:80"
 	defaultGeoIPDBDir = "/data/geoip"
 
 	defaultRedisTimeoutMs = 150
@@ -55,6 +57,7 @@ type Config struct {
 	Addr                 string
 	Upstream             string
 	FrontendUpstream     string
+	BootstrapUpstream    string
 	RedisURL             string
 	RedisTimeout         time.Duration
 	JWTSecret            string
@@ -72,9 +75,10 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:               defaultAddr,
-		Upstream:           defaultUpstream,
-		RateLimit:          ratelimit.DefaultConfig(),
+		Addr:              defaultAddr,
+		Upstream:          defaultUpstream,
+		BootstrapUpstream: defaultBootstrapUpstream,
+		RateLimit:         ratelimit.DefaultConfig(),
 		RedisTimeout:       defaultRedisTimeoutMs * time.Millisecond,
 		CORSAllowedOrigins: append([]string(nil), defaultCORSAllowedOrigins...),
 	}
@@ -90,6 +94,9 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.Upstream = raw
 	}
 	cfg.FrontendUpstream = strings.TrimSpace(os.Getenv(gatewayFrontendEnv))
+	if raw := strings.TrimSpace(os.Getenv(gatewayBootstrapEnv)); raw != "" {
+		cfg.BootstrapUpstream = raw
+	}
 	cfg.RedisURL = strings.TrimSpace(os.Getenv(gatewayRedisURLEnv))
 	if cfg.RedisURL == "" {
 		cfg.RedisURL = strings.TrimSpace(os.Getenv(redisURLEnv))
