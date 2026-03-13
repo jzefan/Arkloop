@@ -253,17 +253,16 @@ function SemanticSetupPanel({
   const [endpoint, setEndpoint] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [saving, setSaving] = useState(false)
+  const [installError, setInstallError] = useState('')
 
-  const handleSave = async () => {
-    if (mode === 'api' && !endpoint.trim()) return
+  const handleSaveApi = async () => {
+    if (!endpoint.trim()) return
     setSaving(true)
     try {
-      await setPlatformSetting(KEY_SEMANTIC_PROVIDER, mode, accessToken)
-      if (mode === 'api') {
-        await setPlatformSetting(KEY_SEMANTIC_API_ENDPOINT, endpoint.trim(), accessToken)
-        if (apiKey.trim()) {
-          await setPlatformSetting(KEY_SEMANTIC_API_KEY, apiKey.trim(), accessToken)
-        }
+      await setPlatformSetting(KEY_SEMANTIC_PROVIDER, 'api', accessToken)
+      await setPlatformSetting(KEY_SEMANTIC_API_ENDPOINT, endpoint.trim(), accessToken)
+      if (apiKey.trim()) {
+        await setPlatformSetting(KEY_SEMANTIC_API_KEY, apiKey.trim(), accessToken)
       }
       addToast(tp.toastUpdated, 'success')
       onSaved()
@@ -274,9 +273,26 @@ function SemanticSetupPanel({
     }
   }
 
+  const handleInstallLocal = async () => {
+    setSaving(true)
+    setInstallError('')
+    try {
+      await setPlatformSetting(KEY_SEMANTIC_PROVIDER, 'local', accessToken)
+      const { operation_id } = await bridgeClient.performAction('prompt-guard', 'install')
+      addToast(`${tp.semanticInstallStarted} (${operation_id.slice(0, 8)})`, 'success')
+      onSaved()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : tp.toastFailed
+      setInstallError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const modeBtn = (value: 'local' | 'api', label: string) => (
     <button
-      onClick={() => setMode(value)}
+      onClick={() => { setMode(value); setInstallError('') }}
       className={[
         'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
         mode === value
@@ -301,9 +317,12 @@ function SemanticSetupPanel({
           {!bridgeAvailable && (
             <p className="text-xs text-[var(--c-status-warning-text)]">{tp.semanticBridgeRequired}</p>
           )}
+          {installError && (
+            <p className="text-xs text-[var(--c-status-error-text,red)]">{installError}</p>
+          )}
           <button
             disabled={!bridgeAvailable || saving}
-            onClick={handleSave}
+            onClick={handleInstallLocal}
             className={[
               'w-fit rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
               bridgeAvailable
@@ -311,7 +330,7 @@ function SemanticSetupPanel({
                 : 'border-[var(--c-border-console)] text-[var(--c-text-muted)] opacity-50 cursor-not-allowed',
             ].join(' ')}
           >
-            {saving ? <Loader2 size={12} className="inline animate-spin" /> : tp.actionSave}
+            {saving ? <Loader2 size={12} className="inline animate-spin" /> : tp.actionInstallModel}
           </button>
         </div>
       )}
@@ -335,7 +354,7 @@ function SemanticSetupPanel({
           />
           <button
             disabled={saving || !endpoint.trim()}
-            onClick={handleSave}
+            onClick={handleSaveApi}
             className={[
               'w-fit rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
               endpoint.trim()
