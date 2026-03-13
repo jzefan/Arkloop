@@ -14,6 +14,7 @@ import (
 
 	"arkloop/services/bridge/internal/audit"
 	"arkloop/services/bridge/internal/docker"
+	"arkloop/services/bridge/internal/model"
 	"arkloop/services/bridge/internal/module"
 	"arkloop/services/bridge/internal/openviking"
 	"arkloop/services/bridge/internal/platform"
@@ -35,6 +36,7 @@ type Handler struct {
 	operations *docker.OperationStore
 	auditLog   *audit.Logger
 	appLogger  AppLogger
+	modelDL    *model.Downloader
 	version    string
 	upgradeMu  sync.Mutex
 	upgrading  bool
@@ -47,6 +49,7 @@ func NewHandler(
 	operations *docker.OperationStore,
 	auditLog *audit.Logger,
 	logger AppLogger,
+	modelDL *model.Downloader,
 	version string,
 ) *Handler {
 	return &Handler{
@@ -55,6 +58,7 @@ func NewHandler(
 		operations: operations,
 		auditLog:   auditLog,
 		appLogger:  logger,
+		modelDL:    modelDL,
 		version:    version,
 	}
 }
@@ -194,7 +198,17 @@ func (h *Handler) moduleAction(w http.ResponseWriter, r *http.Request) {
 	opCtx := context.WithoutCancel(r.Context())
 
 	switch action {
-	case module.ActionInstall, module.ActionStart, module.ActionStop, module.ActionRestart:
+	case module.ActionInstall:
+		if def.ComposeService == "" && def.Virtual {
+			op, err = h.handleVirtualInstall(opCtx, id, req.Params)
+		} else if def.ComposeService == "" {
+			writeError(w, http.StatusBadRequest, "module.no_service",
+				fmt.Sprintf("module %q has no compose service", id))
+			return
+		} else {
+			op, err = h.compose.Install(opCtx, def.ComposeService, def.ComposeProfile)
+		}
+	case module.ActionStart, module.ActionStop, module.ActionRestart:
 		if def.ComposeService == "" {
 			writeError(w, http.StatusBadRequest, "module.virtual",
 				fmt.Sprintf("module %q is virtual and has no compose service", id))
@@ -202,22 +216,21 @@ func (h *Handler) moduleAction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	switch action {
-	case module.ActionInstall:
-		op, err = h.compose.Install(opCtx, def.ComposeService, def.ComposeProfile)
-	case module.ActionStart:
-		op, err = h.compose.Start(opCtx, def.ComposeService)
-	case module.ActionStop:
-		op, err = h.compose.Stop(opCtx, def.ComposeService)
-	case module.ActionRestart:
-		op, err = h.compose.Restart(opCtx, def.ComposeService)
-	case module.ActionConfigure:
-		op, err = h.handleConfigure(opCtx, id, def.ComposeService, req.Params)
-	case module.ActionConfigureConnection, module.ActionBootstrapDefaults:
-		// Placeholder: return a synthetic operation ID for future implementation.
-		placeholderID := uuid.New().String()
-		writeJSON(w, http.StatusAccepted, actionResponse{OperationID: placeholderID})
-		return
+	if op == nil && err == nil {
+		switch action {
+		case module.ActionStart:
+			op, err = h.compose.Start(opCtx, def.ComposeService)
+		case module.ActionStop:
+			op, err = h.compose.Stop(opCtx, def.ComposeService)
+		case module.ActionRestart:
+			op, err = h.compose.Restart(opCtx, def.ComposeService)
+		case module.ActionConfigure:
+			op, err = h.handleConfigure(opCtx, id, def.ComposeService, req.Params)
+		case module.ActionConfigureConnection, module.ActionBootstrapDefaults:
+			placeholderID := uuid.New().String()
+			writeJSON(w, http.StatusAccepted, actionResponse{OperationID: placeholderID})
+			return
+		}
 	}
 
 	if err != nil {
@@ -695,4 +708,24 @@ func toStringMap(m map[string]any) map[string]string {
 		out[k] = fmt.Sprintf("%v", v)
 	}
 	return out
+}
+
+// handleVirtualInstall routes install actions for virtual modules (no compose
+// service) to the appropriate installer. Currently supports prompt-guard.
+func (h *Handler) handleVirtualInstall(ctx context.Context, moduleID string, params map[string]any) (*docker.Operation, error) {
+	switch moduleID {
+	case "prompt-guard":
+		if h.modelDL == nil {
+			return nil, fmt.Errorf("model downloader not configured")
+		}
+		variant := "22m"
+		if v, ok := params["variant"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				variant = s
+			}
+		}
+		return h.modelDL.Install(ctx, variant)
+	default:
+		return nil, fmt.Errorf("module %q is virtual but has no custom installer", moduleID)
+	}
 }
