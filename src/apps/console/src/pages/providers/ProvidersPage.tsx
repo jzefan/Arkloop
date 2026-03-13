@@ -123,10 +123,10 @@ function modelToForm(model: LlmProviderModel): ModelFormState {
     whenJSON: JSON.stringify(model.when ?? {}, null, 2),
     advancedJSON: JSON.stringify(model.advanced_json ?? {}, null, 2),
     multiplier: String(model.multiplier ?? 1),
-    costInput: model.cost_per_1k_input != null ? String(model.cost_per_1k_input) : '',
-    costOutput: model.cost_per_1k_output != null ? String(model.cost_per_1k_output) : '',
-    costCacheWrite: model.cost_per_1k_cache_write != null ? String(model.cost_per_1k_cache_write) : '',
-    costCacheRead: model.cost_per_1k_cache_read != null ? String(model.cost_per_1k_cache_read) : '',
+    costInput: model.cost_per_1k_input != null ? String(model.cost_per_1k_input * 1000) : '',
+    costOutput: model.cost_per_1k_output != null ? String(model.cost_per_1k_output * 1000) : '',
+    costCacheWrite: model.cost_per_1k_cache_write != null ? String(model.cost_per_1k_cache_write * 1000) : '',
+    costCacheRead: model.cost_per_1k_cache_read != null ? String(model.cost_per_1k_cache_read * 1000) : '',
   }
 }
 
@@ -382,10 +382,10 @@ export function ProvidersPage() {
       when: whenJSON,
       advanced_json: advancedJSON,
       multiplier: parseOptionalNumber(modelForm.multiplier),
-      cost_per_1k_input: parseOptionalNumber(modelForm.costInput),
-      cost_per_1k_output: parseOptionalNumber(modelForm.costOutput),
-      cost_per_1k_cache_write: parseOptionalNumber(modelForm.costCacheWrite),
-      cost_per_1k_cache_read: parseOptionalNumber(modelForm.costCacheRead),
+      cost_per_1k_input: parseOptionalNumber(modelForm.costInput) != null ? parseOptionalNumber(modelForm.costInput)! / 1000 : undefined,
+      cost_per_1k_output: parseOptionalNumber(modelForm.costOutput) != null ? parseOptionalNumber(modelForm.costOutput)! / 1000 : undefined,
+      cost_per_1k_cache_write: parseOptionalNumber(modelForm.costCacheWrite) != null ? parseOptionalNumber(modelForm.costCacheWrite)! / 1000 : undefined,
+      cost_per_1k_cache_read: parseOptionalNumber(modelForm.costCacheRead) != null ? parseOptionalNumber(modelForm.costCacheRead)! / 1000 : undefined,
     }
 
     setSavingModel(true)
@@ -677,10 +677,10 @@ export function ProvidersPage() {
                               <div>{tc.routeWhen}: {JSON.stringify(model.when ?? {})}</div>
                               <div>{tc.routeAdvancedJson}: {model.advanced_json && Object.keys(model.advanced_json).length > 0 ? tc.routeAdvancedConfigured : '--'}</div>
                               <div>{tc.routeMultiplier}: {model.multiplier ?? 1}</div>
-                              <div>{tc.routeCostInput}: {model.cost_per_1k_input ?? '--'}</div>
-                              <div>{tc.routeCostOutput}: {model.cost_per_1k_output ?? '--'}</div>
-                              <div>{tc.routeCostCacheWrite}: {model.cost_per_1k_cache_write ?? '--'}</div>
-                              <div>{tc.routeCostCacheRead}: {model.cost_per_1k_cache_read ?? '--'}</div>
+                              <div>{tc.routeCostInput}: {model.cost_per_1k_input != null ? (model.cost_per_1k_input * 1000) : '--'}</div>
+                              <div>{tc.routeCostOutput}: {model.cost_per_1k_output != null ? (model.cost_per_1k_output * 1000) : '--'}</div>
+                              <div>{tc.routeCostCacheWrite}: {model.cost_per_1k_cache_write != null ? (model.cost_per_1k_cache_write * 1000) : '--'}</div>
+                              <div>{tc.routeCostCacheRead}: {model.cost_per_1k_cache_read != null ? (model.cost_per_1k_cache_read * 1000) : '--'}</div>
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
