@@ -165,7 +165,7 @@ func (MessagesRepository) ListByIDs(
 		return nil, fmt.Errorf("tx must not be nil")
 	}
 	if orgID == uuid.Nil || threadID == uuid.Nil {
-		return nil, fmt.Errorf("org_id and thread_id must not be empty")
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
 	}
 	if len(messageIDs) == 0 {
 		return nil, nil
@@ -219,7 +219,7 @@ func (MessagesRepository) ListRecentByThread(
 		return nil, fmt.Errorf("tx must not be nil")
 	}
 	if orgID == uuid.Nil || threadID == uuid.Nil {
-		return nil, fmt.Errorf("org_id and thread_id must not be empty")
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
 	}
 	if limit <= 0 {
 		return nil, fmt.Errorf("limit must be positive")
@@ -280,7 +280,7 @@ func (MessagesRepository) InsertThreadMessage(
 		return uuid.Nil, fmt.Errorf("tx must not be nil")
 	}
 	if orgID == uuid.Nil || threadID == uuid.Nil {
-		return uuid.Nil, fmt.Errorf("org_id and thread_id must not be empty")
+		return uuid.Nil, fmt.Errorf("account_id and thread_id must not be empty")
 	}
 	trimmedRole := strings.TrimSpace(role)
 	if trimmedRole == "" {

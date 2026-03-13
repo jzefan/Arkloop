@@ -38,7 +38,7 @@ func (f *SubAgentRunFactory) CreateSpawnRun(
 		return data.SubAgentRecord{}, uuid.Nil, err
 	}
 	createdSubAgent, err := (data.SubAgentRepository{}).Create(ctx, tx, data.SubAgentCreateParams{
-		OrgID:          parentRun.AccountID,
+		AccountID:          parentRun.AccountID,
 		ParentRunID:    parentRun.ID,
 		ParentThreadID: parentRun.ThreadID,
 		RootRunID:      lineage.RootRunID,
@@ -119,7 +119,7 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 	}
 	trimmedInput := strings.TrimSpace(input)
 	if trimmedInput != "" {
-		messageID, err := insertUserMessage(ctx, tx, subAgent.OrgID, threadID, trimmedInput)
+		messageID, err := insertUserMessage(ctx, tx, subAgent.AccountID, threadID, trimmedInput)
 		if err != nil {
 			return uuid.Nil, fmt.Errorf("insert sub_agent input: %w", err)
 		}
@@ -163,7 +163,7 @@ func (f *SubAgentRunFactory) CreateRunFromPendingInputs(ctx context.Context, tx 
 	if err != nil {
 		return nil, err
 	}
-	messageID, err := insertUserMessage(ctx, tx, subAgent.OrgID, threadID, combined)
+	messageID, err := insertUserMessage(ctx, tx, subAgent.AccountID, threadID, combined)
 	if err != nil {
 		return nil, fmt.Errorf("insert pending input message: %w", err)
 	}
