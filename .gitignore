@@ -43,3 +43,4 @@ src/apps/developers/dist
 src/apps/developers/.astro
 src/services/api/api
 src/services/desktop/bin/
+src/apps/desktop/dist/
