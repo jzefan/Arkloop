@@ -145,6 +145,8 @@ services:
       context: .
       dockerfile: src/apps/console-lite/Dockerfile
     restart: unless-stopped
+    ports:
+      - "${ARKLOOP_CONSOLE_LITE_PORT:-19082}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 15s
@@ -160,6 +162,19 @@ services:
       - console-full
     ports:
       - "${ARKLOOP_CONSOLE_PORT:-19081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: src/apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ARKLOOP_WEB_PORT:-19080}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 15s
