@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useOutletContext, useNavigate } from 'react-router-dom'
 import { Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
@@ -9,30 +9,76 @@ import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getPlatformSetting, setPlatformSetting } from '../../api/platform-settings'
 import { listAuditLogs, type AuditLog } from '../../api/audit'
+import { bridgeClient, checkBridgeAvailable, type ModuleStatus } from '../../api/bridge'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
 const AUDIT_ACTION = 'security.injection_detected'
 const AUDIT_PAGE_SIZE = 30
+const PROMPT_GUARD_MODULE_ID = 'prompt-guard'
 
 type Layer = {
   id: string
   nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
   descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
-  settingsKey: string | null
+  settingsKey: string
+  requiresModule?: string
 }
 
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: KEY_TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: KEY_SEMANTIC_ENABLED },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: KEY_SEMANTIC_ENABLED, requiresModule: PROMPT_GUARD_MODULE_ID },
 ]
 
+const MODULE_READY_STATUSES: Set<ModuleStatus> = new Set(['running', 'installed_disconnected'])
+
 type Tab = 'layers' | 'audit'
+const TABS: Tab[] = ['layers', 'audit']
 
 function truncateId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function TabBar({ tabs, active, onChange }: {
+  tabs: { key: Tab; label: string }[]
+  active: Tab
+  onChange: (t: Tab) => void
+}) {
+  const barRef = useRef<HTMLDivElement>(null)
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+
+  useEffect(() => {
+    const container = barRef.current
+    if (!container) return
+    const btn = container.querySelector<HTMLButtonElement>(`[data-tab="${active}"]`)
+    if (!btn) return
+    setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth })
+  }, [active])
+
+  return (
+    <div ref={barRef} className="relative mb-6 flex gap-1 border-b border-[var(--c-border-console)]">
+      {tabs.map(tab => (
+        <button
+          key={tab.key}
+          data-tab={tab.key}
+          onClick={() => onChange(tab.key)}
+          className={`relative px-4 py-2 text-sm transition-colors ${
+            active === tab.key
+              ? 'font-medium text-[var(--c-text-primary)]'
+              : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]'
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+      <span
+        className="absolute bottom-0 h-0.5 bg-[var(--c-text-primary)] transition-all duration-200"
+        style={{ left: indicator.left, width: indicator.width }}
+      />
+    </div>
+  )
 }
 
 function AuditTab({ accessToken }: { accessToken: string }) {
@@ -152,7 +198,7 @@ function AuditTab({ accessToken }: { accessToken: string }) {
                 {expanded && (
                   <tr className="bg-[var(--c-bg-deep2)]">
                     <td colSpan={5} className="px-6 py-3">
-                      <pre className="overflow-auto rounded-md bg-[var(--c-bg-deep3,var(--c-bg-tag))] p-3 text-xs leading-relaxed text-[var(--c-text-secondary)]">
+                      <pre className="overflow-auto rounded-md bg-[var(--c-bg-tag)] p-3 text-xs leading-relaxed text-[var(--c-text-secondary)]">
                         {JSON.stringify(meta, null, 2)}
                       </pre>
                     </td>
@@ -166,7 +212,7 @@ function AuditTab({ accessToken }: { accessToken: string }) {
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t border-[var(--c-border-console)] px-4 py-2">
           <span className="text-xs text-[var(--c-text-muted)]">
-            {offset + 1}–{Math.min(offset + AUDIT_PAGE_SIZE, total)} / {total}
+            {offset + 1}--{Math.min(offset + AUDIT_PAGE_SIZE, total)} / {total}
           </span>
           <div className="flex gap-2">
             <button
@@ -196,11 +242,13 @@ export function PromptInjectionPage() {
   const { addToast } = useToast()
   const { t } = useLocale()
   const tp = t.pages.promptInjection
+  const navigate = useNavigate()
 
   const [activeTab, setActiveTab] = useState<Tab>('layers')
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState('')
   const [settings, setSettings] = useState<Record<string, boolean>>({})
+  const [moduleStatuses, setModuleStatuses] = useState<Record<string, ModuleStatus>>({})
 
   const loadSettings = useCallback(async () => {
     setLoading(true)
@@ -215,6 +263,14 @@ export function PromptInjectionPage() {
         [KEY_TRUST_SOURCE_ENABLED]: trustResult.value === 'true',
         [KEY_SEMANTIC_ENABLED]: semanticResult.value === 'true',
       })
+
+      const bridgeOnline = await checkBridgeAvailable()
+      if (bridgeOnline) {
+        const modules = await bridgeClient.listModules()
+        const statuses: Record<string, ModuleStatus> = {}
+        for (const m of modules) statuses[m.id] = m.status
+        setModuleStatuses(statuses)
+      }
     } catch (err) {
       addToast(isApiError(err) ? err.message : tp.toastLoadFailed, 'error')
     } finally {
@@ -238,10 +294,10 @@ export function PromptInjectionPage() {
     }
   }, [toggling, accessToken, addToast, tp.toastUpdated, tp.toastFailed])
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'layers', label: tp.tabLayers },
-    { key: 'audit', label: tp.tabAudit },
-  ]
+  const tabItems = TABS.map(key => ({
+    key,
+    label: key === 'layers' ? tp.tabLayers : tp.tabAudit,
+  }))
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -249,21 +305,7 @@ export function PromptInjectionPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <p className="mb-4 text-sm text-[var(--c-text-secondary)]">{tp.description}</p>
 
-        <div className="mb-6 flex gap-1 border-b border-[var(--c-border-console)]">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-4 py-2 text-sm transition-colors ${
-                activeTab === tab.key
-                  ? 'border-b-2 border-[var(--c-text-primary)] font-medium text-[var(--c-text-primary)]'
-                  : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'layers' && (
           loading ? (
@@ -273,9 +315,13 @@ export function PromptInjectionPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {LAYERS.map(layer => {
-                const enabled = layer.settingsKey ? settings[layer.settingsKey] ?? true : false
-                const comingSoon = !layer.settingsKey
+                const enabled = settings[layer.settingsKey] ?? true
                 const isToggling = toggling === layer.settingsKey
+
+                const moduleReady = !layer.requiresModule
+                  || MODULE_READY_STATUSES.has(moduleStatuses[layer.requiresModule])
+                const moduleNotInstalled = layer.requiresModule
+                  && (!moduleStatuses[layer.requiresModule] || moduleStatuses[layer.requiresModule] === 'not_installed')
 
                 return (
                   <div
@@ -287,8 +333,8 @@ export function PromptInjectionPage() {
                         <span className="text-sm font-medium text-[var(--c-text-primary)]">
                           {tp[layer.nameKey]}
                         </span>
-                        {comingSoon ? (
-                          <Badge variant="neutral">{tp.statusComingSoon}</Badge>
+                        {moduleNotInstalled ? (
+                          <Badge variant="neutral">{tp.statusNotInstalled}</Badge>
                         ) : (
                           <Badge variant={enabled ? 'success' : 'warning'}>
                             {enabled ? tp.statusEnabled : tp.statusDisabled}
@@ -300,25 +346,29 @@ export function PromptInjectionPage() {
                       </span>
                     </div>
 
-                    {!comingSoon && (
+                    {moduleNotInstalled ? (
                       <button
-                        onClick={() => handleToggle(layer.settingsKey!, enabled)}
-                        disabled={isToggling || loading}
-                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${
-                          enabled
-                            ? 'bg-[var(--c-status-success)]'
-                            : 'bg-[var(--c-border-console)]'
-                        } ${(isToggling || loading) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => navigate('/modules')}
+                        className="shrink-0 rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
                       >
-                        {isToggling ? (
-                          <Loader2 size={12} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white" />
-                        ) : (
-                          <span
-                            className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${
-                              enabled ? 'translate-x-[22px]' : 'translate-x-[3px]'
-                            }`}
-                          />
-                        )}
+                        {tp.actionInstall}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleToggle(layer.settingsKey, enabled)}
+                        disabled={isToggling || loading || !moduleReady}
+                        className={[
+                          'shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                          enabled
+                            ? 'border-[var(--c-border-console)] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-sub)]'
+                            : 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]',
+                          (isToggling || loading || !moduleReady) ? 'opacity-50 cursor-not-allowed' : '',
+                        ].join(' ')}
+                      >
+                        {isToggling
+                          ? <Loader2 size={12} className="inline animate-spin" />
+                          : enabled ? tp.actionDisable : tp.actionEnable
+                        }
                       </button>
                     )}
                   </div>
