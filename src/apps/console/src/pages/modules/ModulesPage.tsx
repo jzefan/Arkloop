@@ -97,6 +97,7 @@ function actionLabel(action: ModuleAction, t: ModulesLocale): string {
     start: t.actionStart,
     stop: t.actionStop,
     restart: t.actionRestart,
+    configure: t.actionConfigure,
     configure_connection: t.actionConfigure,
     bootstrap_defaults: t.actionBootstrap,
   }
