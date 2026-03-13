@@ -1085,6 +1085,8 @@ export interface LocaleStrings {
     promptInjection: {
       title: string
       description: string
+      tabLayers: string
+      tabAudit: string
       layerRegex: string
       layerRegexDesc: string
       layerSemantic: string
@@ -1097,6 +1099,12 @@ export interface LocaleStrings {
       toastUpdated: string
       toastFailed: string
       toastLoadFailed: string
+      auditEmpty: string
+      auditLoading: string
+      auditColTime: string
+      auditColRunId: string
+      auditColPatterns: string
+      auditColCount: string
     }
     email: {
       title: string

@@ -1013,6 +1013,8 @@ export const zh: LocaleStrings = {
     promptInjection: {
       title: '提示词注入防护',
       description: '管理输入扫描层，检测和拦截注入攻击。',
+      tabLayers: '防护层',
+      tabAudit: '审计日志',
       layerRegex: '正则扫描',
       layerRegexDesc: '基于模式匹配检测已知注入特征，微秒级延迟。',
       layerSemantic: '语义扫描',
@@ -1025,6 +1027,12 @@ export const zh: LocaleStrings = {
       toastUpdated: '已更新',
       toastFailed: '更新失败',
       toastLoadFailed: '加载失败',
+      auditEmpty: '暂无注入检测事件',
+      auditLoading: '加载中...',
+      auditColTime: '时间',
+      auditColRunId: 'Run ID',
+      auditColPatterns: '匹配模式',
+      auditColCount: '检测数',
     },
     email: {
       title: '邮件',
