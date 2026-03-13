@@ -418,6 +418,7 @@ services:
       NUM_WORKERS_PER_QUEUE: "${ARKLOOP_FIRECRAWL_WORKERS:-4}"
       PLAYWRIGHT_MICROSERVICE_URL: "http://firecrawl-playwright:3000/chromium"
       NUQ_DATABASE_URL: "postgres://firecrawl:firecrawl@firecrawl-postgres:5432/firecrawl"
+      NUQ_RABBITMQ_URL: "amqp://guest:guest@firecrawl-rabbitmq:5672"
     depends_on:
       firecrawl-redis:
         condition: service_healthy
@@ -425,8 +426,10 @@ services:
         condition: service_started
       firecrawl-postgres:
         condition: service_healthy
+      firecrawl-rabbitmq:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:19012/"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:19012/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 10
@@ -457,7 +460,8 @@ services:
       retries: 20
 
   firecrawl-postgres:
-    image: postgres:16-alpine
+    build:
+      context: config/firecrawl-postgres
     restart: unless-stopped
     profiles:
       - firecrawl
@@ -471,6 +475,17 @@ services:
       test: ["CMD-SHELL", "pg_isready -U firecrawl"]
       interval: 10s
       timeout: 3s
+      retries: 10
+
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-alpine
+    restart: unless-stopped
+    profiles:
+      - firecrawl
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 10
 
   bridge:
