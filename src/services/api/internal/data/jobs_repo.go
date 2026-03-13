@@ -22,6 +22,10 @@ const (
 	JobPayloadVersionV1 = 1
 )
 
+// jobEnqueueNotify 在 job INSERT 后调用，桌面合并模式下将作业转发到 Worker 内存队列。
+// 由 jobs_repo_desktop.go 的 init 设置，非桌面构建保持 nil。
+var jobEnqueueNotify func(ctx context.Context, accountID, runID uuid.UUID, traceID, jobType string, payload map[string]any, availableAt *time.Time)
+
 type JobRepository struct {
 	db Querier
 }
@@ -105,6 +109,10 @@ func (r *JobRepository) EnqueueRun(
 
 	// 通知 Worker 有新 job 入队
 	_, _ = r.db.Exec(ctx, `SELECT pg_notify('arkloop:jobs', '')`)
+
+	if jobEnqueueNotify != nil {
+		jobEnqueueNotify(ctx, accountID, runID, chosenTraceID, chosenJobType, payloadCopy, availableAt)
+	}
 
 	return jobID, nil
 }
