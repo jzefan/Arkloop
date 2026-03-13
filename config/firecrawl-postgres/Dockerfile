@@ -1,3 +1,7 @@
+# Firecrawl NUQ PostgreSQL with pg_cron
+# Schema sourced from: https://github.com/firecrawl/firecrawl/blob/main/apps/nuq-postgres/
+# Update nuq.sql when upgrading firecrawl image version
+
 ARG PG_MAJOR=17
 FROM postgres:${PG_MAJOR}
 
