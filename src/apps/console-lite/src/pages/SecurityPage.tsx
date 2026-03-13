@@ -14,6 +14,7 @@ import { listAuditLogs, type AuditLog } from '../api/audit'
 
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
+const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
 const AUDIT_ACTION = 'security.injection_detected'
 const AUDIT_PAGE_SIZE = 30
 
@@ -27,7 +28,7 @@ type Layer = {
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingKey: KEY_TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: null },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: KEY_SEMANTIC_ENABLED },
 ]
 
 type Tab = 'layers' | 'audit'

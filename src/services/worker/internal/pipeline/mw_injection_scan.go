@@ -10,24 +10,27 @@ import (
 )
 
 // NewInjectionScanMiddleware 在 Pipeline 中执行注入扫描。
-// scanner 为 nil 时整个 middleware 为 no-op。
+// composite 为 nil 时整个 middleware 为 no-op。
 func NewInjectionScanMiddleware(
-	scanner *security.RegexScanner,
+	composite *security.CompositeScanner,
 	auditor *security.SecurityAuditor,
 	configResolver sharedconfig.Resolver,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		if scanner == nil {
+		if composite == nil {
 			security.ScanTotal.WithLabelValues("skipped").Inc()
 			return next(ctx, rc)
 		}
 
 		regexEnabled := resolveEnabled(configResolver, "security.injection_scan.regex_enabled", true)
-		if !regexEnabled {
+		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", true)
+
+		if !regexEnabled && !semanticEnabled {
 			return next(ctx, rc)
 		}
 
 		var allDetections []security.ScanResult
+		injectionDetected := false
 
 		for _, msg := range rc.Messages {
 			if msg.Role != "user" {
@@ -38,21 +41,39 @@ func NewInjectionScanMiddleware(
 				if text == "" {
 					continue
 				}
-				results := scanner.Scan(text)
-				for _, r := range results {
-					slog.WarnContext(ctx, "injection pattern detected",
-						"run_id", rc.Run.ID,
-						"pattern_id", r.PatternID,
-						"category", r.Category,
-						"severity", r.Severity,
-					)
-					security.DetectionTotal.WithLabelValues(r.Category).Inc()
+
+				result := composite.Scan(text)
+
+				if regexEnabled {
+					for _, r := range result.RegexMatches {
+						slog.WarnContext(ctx, "injection pattern detected",
+							"run_id", rc.Run.ID,
+							"pattern_id", r.PatternID,
+							"category", r.Category,
+							"severity", r.Severity,
+						)
+						security.DetectionTotal.WithLabelValues(r.Category).Inc()
+					}
+					allDetections = append(allDetections, result.RegexMatches...)
 				}
-				allDetections = append(allDetections, results...)
+
+				if semanticEnabled && result.SemanticResult != nil && result.SemanticResult.IsInjection {
+					slog.WarnContext(ctx, "semantic injection detected",
+						"run_id", rc.Run.ID,
+						"label", result.SemanticResult.Label,
+						"score", result.SemanticResult.Score,
+					)
+					security.DetectionTotal.WithLabelValues("semantic_"+strings.ToLower(result.SemanticResult.Label)).Inc()
+					injectionDetected = true
+				}
+
+				if result.IsInjection {
+					injectionDetected = true
+				}
 			}
 		}
 
-		if len(allDetections) > 0 {
+		if injectionDetected || len(allDetections) > 0 {
 			security.ScanTotal.WithLabelValues("detected").Inc()
 			auditor.EmitInjectionDetected(ctx, rc.Run.ID, rc.Run.AccountID, rc.UserID, allDetections)
 		} else {
