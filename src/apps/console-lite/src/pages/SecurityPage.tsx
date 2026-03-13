@@ -8,6 +8,7 @@ import { useLocale } from '../contexts/LocaleContext'
 import {
   listPlatformSettings,
   updatePlatformSetting,
+  deletePlatformSetting,
   isApiError,
 } from '../api'
 import { listAuditLogs, type AuditLog } from '../api/audit'
@@ -412,7 +413,9 @@ export function SecurityPage() {
 
   const handleReconfigure = useCallback(async () => {
     try {
-      await updatePlatformSetting(KEY_SEMANTIC_PROVIDER, '', accessToken)
+      await deletePlatformSetting(KEY_SEMANTIC_PROVIDER, accessToken).catch(() => {})
+      await deletePlatformSetting(KEY_SEMANTIC_API_ENDPOINT, accessToken).catch(() => {})
+      await deletePlatformSetting(KEY_SEMANTIC_API_KEY, accessToken).catch(() => {})
       await updatePlatformSetting(KEY_SEMANTIC_ENABLED, 'false', accessToken)
       setSemanticProvider('')
       setValues(prev => ({ ...prev, [KEY_SEMANTIC_ENABLED]: 'false', [KEY_SEMANTIC_PROVIDER]: '' }))

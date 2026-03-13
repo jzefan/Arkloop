@@ -7,7 +7,7 @@ import { Badge } from '../../components/Badge'
 import { useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { getPlatformSetting, setPlatformSetting } from '../../api/platform-settings'
+import { getPlatformSetting, setPlatformSetting, deletePlatformSetting } from '../../api/platform-settings'
 import { listAuditLogs, type AuditLog } from '../../api/audit'
 import { bridgeClient, checkBridgeAvailable } from '../../api/bridge'
 
@@ -422,7 +422,9 @@ export function PromptInjectionPage() {
 
   const handleReconfigure = useCallback(async () => {
     try {
-      await setPlatformSetting(KEY_SEMANTIC_PROVIDER, '', accessToken)
+      await deletePlatformSetting(KEY_SEMANTIC_PROVIDER, accessToken).catch(() => {})
+      await deletePlatformSetting(KEY_SEMANTIC_API_ENDPOINT, accessToken).catch(() => {})
+      await deletePlatformSetting(KEY_SEMANTIC_API_KEY, accessToken).catch(() => {})
       await setPlatformSetting(KEY_SEMANTIC_ENABLED, 'false', accessToken)
       setSemanticProvider('')
       setSettings(prev => ({ ...prev, [KEY_SEMANTIC_ENABLED]: false }))
