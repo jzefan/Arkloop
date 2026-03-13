@@ -40,6 +40,7 @@
   --c-error-border: rgba(127, 29, 29, 0.40);
   --c-error-text: #fca5a5;
   --c-error-subtext: rgba(248, 113, 113, 0.70);
+  --c-accent: #6366f1;
   --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.32);
 }
 
@@ -83,6 +84,7 @@
     --c-error-border: #fecaca;
     --c-error-text: #b91c1c;
     --c-error-subtext: #ef4444;
+    --c-accent: #4f46e5;
     --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.08);
   }
 }
@@ -126,6 +128,7 @@
   --c-error-border: #fecaca;
   --c-error-text: #b91c1c;
   --c-error-subtext: #ef4444;
+  --c-accent: #4f46e5;
   --c-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.08);
 }
 
