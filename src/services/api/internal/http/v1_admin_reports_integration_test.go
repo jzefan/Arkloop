@@ -40,7 +40,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		ThreadReportRepo:    threadReportRepo,
@@ -95,7 +95,7 @@ func TestAdminReportsListAndFilters(t *testing.T) {
 	}
 	adminPayload := decodeJSONBody[registerResponse](t, adminReg.Body.Bytes())
 
-	_, err = pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
+	_, err = pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
 	if err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}

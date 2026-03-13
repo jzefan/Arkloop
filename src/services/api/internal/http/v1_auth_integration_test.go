@@ -52,7 +52,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	registerBody := map[string]any{"login": "alice", "password": "pwd12345", "email": "alice@test.com"}
@@ -324,7 +324,7 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	cases := []struct {
@@ -424,11 +424,11 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("new org repo: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	legacyUser, err := userRepo.Create(ctx, "legacy-user", "legacy-user@test.com", "")
@@ -524,7 +524,7 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
@@ -567,9 +567,9 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	}
 	registerPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
 
-	_, err = pool.Exec(ctx, `DELETE FROM org_memberships m
-		USING orgs o
-		WHERE m.org_id = o.id
+	_, err = pool.Exec(ctx, `DELETE FROM account_memberships m
+		USING accounts o
+		WHERE m.account_id = o.id
 		  AND m.user_id = $1::uuid
 		  AND o.type = 'personal'`, registerPayload.UserID)
 	if err != nil {
@@ -615,7 +615,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -648,7 +648,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	// register
@@ -728,7 +728,7 @@ func TestAuthCookieIsolation(t *testing.T) {
 
 	userRepo, _ := data.NewUserRepository(pool)
 	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
@@ -748,7 +748,7 @@ func TestAuthCookieIsolation(t *testing.T) {
 		AuthService:         authService,
 		RegistrationService: registrationService,
 		AuditWriter:         auditWriter,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 	})
 
 	// register two users
@@ -976,7 +976,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -1027,7 +1027,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 		RegistrationService:  registrationService,
 		EmailOTPLoginService: emailOTPLoginService,
 		AuditWriter:          auditWriter,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		UsersRepo:            userRepo,
 		UserCredentialRepo:   credentialRepo,
 		FeatureFlagService:   featureFlagSvc,

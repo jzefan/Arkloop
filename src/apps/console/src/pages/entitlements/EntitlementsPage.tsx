@@ -275,7 +275,7 @@ export function EntitlementsPage() {
     try {
       const saved = await upsertEntitlementOverride(
         {
-          org_id: id,
+          account_id: id,
           key,
           value: checked.value,
           value_type: 'int',
@@ -430,7 +430,7 @@ export function EntitlementsPage() {
               type="text"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              placeholder="project_id"
+              placeholder="account_id"
               className={inputClass}
             />
             <button

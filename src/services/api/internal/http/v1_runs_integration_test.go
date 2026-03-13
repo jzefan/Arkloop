@@ -47,7 +47,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
@@ -200,24 +200,24 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected started output_route_id: %#v", startedDataWithOutputRoute["output_route_id"])
 	}
 
-	threadOrgID := uuid.MustParse(threadPayload.OrgID)
+	threadAccountID := uuid.MustParse(threadPayload.AccountID)
 	var outputCredentialID uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_credentials (org_id, provider, name)
+		`INSERT INTO llm_credentials (account_id, provider, name)
 		 VALUES ($1, 'anthropic', 'hybrid-output-cred')
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 	).Scan(&outputCredentialID); err != nil {
 		t.Fatalf("create output credential: %v", err)
 	}
 	var outputRouteFromAgent uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (org_id, credential_id, model, priority, is_default, when_json, multiplier)
+		`INSERT INTO llm_routes (account_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ($1, $2, 'claude-3-5-haiku', 120, true, '{}'::jsonb, 1.0)
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 		outputCredentialID,
 	).Scan(&outputRouteFromAgent); err != nil {
 		t.Fatalf("create output route for exact selector: %v", err)
@@ -226,20 +226,20 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	var gptCredentialID uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_credentials (org_id, provider, name)
+		`INSERT INTO llm_credentials (account_id, provider, name)
 		 VALUES ($1, 'openai', 'gpt-output-cred')
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 	).Scan(&gptCredentialID); err != nil {
 		t.Fatalf("create gpt output credential: %v", err)
 	}
 	var outputRouteFromModel uuid.UUID
 	if err := pool.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (id, org_id, credential_id, model, priority, is_default, when_json, multiplier)
+		`INSERT INTO llm_routes (id, account_id, credential_id, model, priority, is_default, when_json, multiplier)
 		 VALUES ('11111111-1111-1111-1111-111111111111', $1, $2, 'gpt-5', 120, true, '{}'::jsonb, 1.0)
 		 RETURNING id`,
-		threadOrgID,
+		threadAccountID,
 		gptCredentialID,
 	).Scan(&outputRouteFromModel); err != nil {
 		t.Fatalf("create output route for bare model selector: %v", err)
@@ -481,8 +481,8 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	if jobJSON["trace_id"] != runPayload.TraceID {
 		t.Fatalf("unexpected payload trace_id: %#v", jobJSON["trace_id"])
 	}
-	if jobJSON["org_id"] != threadPayload.OrgID {
-		t.Fatalf("unexpected payload org_id: %#v", jobJSON["org_id"])
+	if jobJSON["account_id"] != threadPayload.AccountID {
+		t.Fatalf("unexpected payload account_id: %v", jobJSON["account_id"])
 	}
 	if jobJSON["run_id"] != runPayload.RunID {
 		t.Fatalf("unexpected payload run_id: %#v", jobJSON["run_id"])
@@ -528,7 +528,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 		t.Fatalf("unexpected get run status: %d body=%s", getRunResp.Code, getRunResp.Body.String())
 	}
 	getRunPayload := decodeJSONBody[runResponse](t, getRunResp.Body.Bytes())
-	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.OrgID != threadPayload.OrgID {
+	if getRunPayload.RunID != runPayload.RunID || getRunPayload.ThreadID != threadPayload.ID || getRunPayload.AccountID != threadPayload.AccountID {
 		t.Fatalf("unexpected get run payload: %#v", getRunPayload)
 	}
 	if getRunPayload.CreatedByUserID == nil || *getRunPayload.CreatedByUserID != alice.UserID {
@@ -616,7 +616,7 @@ func TestStreamRunEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestStreamRunEvents(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		RunEventRepo:        runRepo,
@@ -825,7 +825,7 @@ func TestListGlobalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -870,7 +870,7 @@ func TestListGlobalRuns(t *testing.T) {
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,
@@ -939,15 +939,15 @@ func TestListGlobalRuns(t *testing.T) {
 		if len(body.Data) != 1 || body.Data[0].RunID != runPayload.RunID {
 			t.Fatalf("unexpected data: %#v", body.Data)
 		}
-		if body.Data[0].OrgID != threadPayload.OrgID {
-			t.Fatalf("unexpected org_id: %q", body.Data[0].OrgID)
+		if body.Data[0].AccountID != threadPayload.AccountID {
+			t.Fatalf("unexpected account_id: %q", body.Data[0].AccountID)
 		}
 	})
 
-	t.Run("org member cannot query another org_id", func(t *testing.T) {
+	t.Run("member cannot query another account_id", func(t *testing.T) {
 		// 用一个随机的合法 UUID 当作其他 org
-		fakeOrgID := uuid.New().String()
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?org_id="+fakeOrgID, nil, aliceHeaders)
+		fakeAccountID := uuid.New().String()
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?account_id="+fakeAccountID, nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "auth.forbidden")
 	})
 
@@ -1141,8 +1141,8 @@ func TestListGlobalRuns(t *testing.T) {
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 
-	t.Run("invalid org_id returns 422", func(t *testing.T) {
-		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?org_id=notauuid", nil, aliceHeaders)
+	t.Run("invalid account_id returns 422", func(t *testing.T) {
+		resp := doJSON(handler, nethttp.MethodGet, "/v1/runs?account_id=notauuid", nil, aliceHeaders)
 		assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 	})
 

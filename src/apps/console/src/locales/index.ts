@@ -109,7 +109,7 @@ export interface LocaleStrings {
       modalTitle: string
       fieldScope: string
       scopePlatform: string
-      scopeProject: string
+      scopeAccount: string
       fieldName: string
       fieldProvider: string
       fieldApiKey: string
@@ -365,7 +365,7 @@ export interface LocaleStrings {
       fieldLastSyncedAt: string
       fieldScope: string
       scopePlatform: string
-      scopeProject: string
+      scopeAccount: string
       selectorMeta: (name: string, order: number) => string
       valuePlatformDefault: string
       valueNotSet: string
@@ -613,7 +613,7 @@ export interface LocaleStrings {
       cardInputTokens: string
       cardOutputTokens: string
       cardCostUSD: string
-      cardActiveProjects: string
+      cardActiveUsers: string
       toastLoadFailed: string
     }
     myUsage: {
@@ -660,10 +660,10 @@ export interface LocaleStrings {
       detailEmailNotVerified: string
       detailLocale: string
       detailTimezone: string
-      detailProjects: string
-      detailProjectId: string
-      detailProjectRole: string
-      detailNoProjects: string
+      detailAccounts: string
+      detailAccountId: string
+      detailAccountRole: string
+      detailNoAccounts: string
       suspendTitle: string
       suspendMessage: (name: string) => string
       suspendConfirm: string
@@ -877,19 +877,19 @@ export interface LocaleStrings {
       deleteTitle: string
       deleteMessage: (key: string) => string
       deleteConfirm: string
-      // project overrides
-      projectOverrides: string
+      // account overrides
+      accountOverrides: string
       overridesEmpty: string
       addOverride: string
-      overrideProjectId: string
+      overrideAccountId: string
       overrideEnabled: string
       deleteOverride: string
       deleteOverrideTitle: string
-      deleteOverrideMessage: (projectId: string) => string
+      deleteOverrideMessage: (accountId: string) => string
       deleteOverrideConfirm: string
       // errors
       errKeyRequired: string
-      errProjectIdRequired: string
+      errAccountIdRequired: string
       // toasts
       toastCreated: string
       toastUpdated: string
@@ -1005,9 +1005,9 @@ export interface LocaleStrings {
       title: string
       filterTitle: string
       filterPlatformOnly: string
-      filterActive: (projectId: string) => string
-      fieldProjectId: string
-      fieldProjectIdPlaceholder: string
+      filterActive: (accountId: string) => string
+      fieldAccountId: string
+      fieldAccountIdPlaceholder: string
       apply: string
       reset: string
       gotoEntitlements: string
@@ -1020,7 +1020,7 @@ export interface LocaleStrings {
       colSource: string
       colLayers: string
       layerEnv: string
-      layerProject: string
+      layerAccount: string
       layerPlatform: string
       layerDefault: string
       defaultEmpty: string
@@ -1107,7 +1107,7 @@ export interface LocaleStrings {
       filterRunPlaceholder: string
       filterThreadPlaceholder: string
       filterUserPlaceholder: string
-      filterProjectPlaceholder: string
+      filterAccountPlaceholder: string
       filterParentRunPlaceholder: string
       filterStatusLabel: string
       filterModelLabel: string
@@ -1123,7 +1123,7 @@ export interface LocaleStrings {
       // table columns
       colId: string
       colUser: string
-      colProject: string
+      colAccount: string
       colThread: string
       colStatus: string
       colModel: string
@@ -1166,7 +1166,7 @@ export interface LocaleStrings {
       usageTotal: string
       labelUser: string
       labelThread: string
-      labelProject: string
+      labelAccount: string
       labelPersona: string
       labelPersonaModel: string
       labelCredential: string

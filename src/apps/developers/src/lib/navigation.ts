@@ -115,7 +115,7 @@ const zhApiSidebar: SidebarGroup[] = [
       { label: '消息', href: '/api/messages' },
       { label: '运行', href: '/api/runs' },
       { label: '项目', href: '/api/projects' },
-      { label: '组织', href: '/api/orgs' },
+      { label: '账户', href: '/api/accounts' },
     ],
   },
   {
@@ -166,7 +166,7 @@ const enApiSidebar: SidebarGroup[] = [
       { label: 'Messages', href: '/en/api/messages' },
       { label: 'Runs', href: '/en/api/runs' },
       { label: 'Projects', href: '/en/api/projects' },
-      { label: 'Organizations', href: '/en/api/orgs' },
+      { label: 'Accounts', href: '/en/api/accounts' },
     ],
   },
   {
@@ -271,14 +271,14 @@ export function getHomeCards(locale: Locale) {
   if (locale === 'zh') {
     return [
       { title: '工程文档', description: '架构设计、部署指南、配置注册表与演进路线图。', href: '/docs' },
-      { title: 'API 参考', description: '认证、线程、运行、组织、计费与管理端点。', href: '/api' },
+      { title: 'API 参考', description: '认证、线程、运行、账户、计费与管理端点。', href: '/api' },
       { title: 'Research', description: 'Arkloop 运行时、Agent Loop 与系统设计研究。', href: '/research' },
     ];
   }
 
   return [
     { title: 'Documentation', description: 'Architecture, deployment, configuration registry, and roadmap.', href: '/en/docs' },
-    { title: 'API Reference', description: 'Auth, threads, runs, orgs, billing, and admin endpoints.', href: '/en/api' },
+    { title: 'API Reference', description: 'Auth, threads, runs, accounts, billing, and admin endpoints.', href: '/en/api' },
     { title: 'Research', description: 'Runtime, Agent Loop, and system design papers from Arkloop.', href: '/research' },
   ];
 }

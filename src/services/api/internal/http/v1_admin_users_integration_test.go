@@ -41,7 +41,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		UsersRepo:           userRepo,
 		AuditWriter:         auditWriter,
 	})
@@ -88,7 +88,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 	adminToken := adminPayload.AccessToken
 
 	// 提升为 platform_admin
-	_, err = pool.Exec(ctx, "UPDATE org_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
+	_, err = pool.Exec(ctx, "UPDATE account_memberships SET role = $1 WHERE user_id = $2", auth.RolePlatformAdmin, adminPayload.UserID)
 	if err != nil {
 		t.Fatalf("promote admin: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestAdminUsersListSearchPatchAndForbidden(t *testing.T) {
 		if detail.Username != "alice@test.com" {
 			t.Fatalf("expected alice@test.com, got %s", detail.Username)
 		}
-		if len(detail.Orgs) == 0 {
+		if len(detail.Accounts) == 0 {
 			t.Fatal("expected at least one org")
 		}
 	})

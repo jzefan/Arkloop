@@ -43,7 +43,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("user cred repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("membership repo: %v", err)
 	}
@@ -51,7 +51,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("refresh token repo: %v", err)
 	}
-	orgRepo, err := data.NewOrgRepository(pool)
+	orgRepo, err := data.NewAccountRepository(pool)
 	if err != nil {
 		t.Fatalf("org repo: %v", err)
 	}
@@ -105,14 +105,14 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if _, err := membershipRepo.Create(ctx, org.ID, adminUser.ID, auth.RolePlatformAdmin); err != nil {
 		t.Fatalf("create admin membership: %v", err)
 	}
-	if _, err := membershipRepo.Create(ctx, org.ID, memberUser.ID, auth.RoleOrgMember); err != nil {
+	if _, err := membershipRepo.Create(ctx, org.ID, memberUser.ID, auth.RoleAccountMember); err != nil {
 		t.Fatalf("create member membership: %v", err)
 	}
 	adminToken, err := tokenService.Issue(adminUser.ID, org.ID, auth.RolePlatformAdmin, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue admin token: %v", err)
 	}
-	memberToken, err := tokenService.Issue(memberUser.ID, org.ID, auth.RoleOrgMember, time.Now().UTC())
+	memberToken, err := tokenService.Issue(memberUser.ID, org.ID, auth.RoleAccountMember, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue member token: %v", err)
 	}
@@ -125,7 +125,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
-		OrgMembershipRepo:       membershipRepo,
+		AccountMembershipRepo:       membershipRepo,
 		LlmCredentialsRepo:      llmCredentialsRepo,
 		LlmRoutesRepo:           llmRoutesRepo,
 		SecretsRepo:             secretsRepo,

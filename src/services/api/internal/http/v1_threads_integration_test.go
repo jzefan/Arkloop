@@ -46,7 +46,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
@@ -111,7 +111,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("unexpected create thread status: %d body=%s", threadResp.Code, threadResp.Body.String())
 	}
 	threadPayload := decodeJSONBody[threadResponse](t, threadResp.Body.Bytes())
-	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.OrgID == "" {
+	if threadPayload.ID == "" || threadPayload.CreatedAt == "" || threadPayload.AccountID == "" {
 		t.Fatalf("unexpected thread payload: %#v", threadPayload)
 	}
 	if threadPayload.ProjectID == nil || *threadPayload.ProjectID == "" {
@@ -196,7 +196,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		AuditWriter:         auditWriter,
@@ -273,7 +273,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("create patch thread: %d body=%s", patchThreadResp.Code, patchThreadResp.Body.String())
 	}
 	patchThread := decodeJSONBody[threadResponse](t, patchThreadResp.Body.Bytes())
-	aliceOrgID, err := uuid.Parse(patchThread.OrgID)
+	aliceAccountID, err := uuid.Parse(patchThread.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}
@@ -336,8 +336,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerTitle := "no-owner"
-	noOwnerPatchProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-patch")
-	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerPatchProject.ID, &noOwnerTitle, false)
+	noOwnerPatchProject := mustCreateTestProject(t, ctx, pool, aliceAccountID, nil, "no-owner-patch")
+	noOwnerPatchThread, err := threadRepo.Create(ctx, aliceAccountID, nil, noOwnerPatchProject.ID, &noOwnerTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner patch thread: %v", err)
 	}
@@ -409,8 +409,8 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 	})
 
 	noOwnerDeleteTitle := "no-owner-delete"
-	noOwnerDeleteProject := mustCreateTestProject(t, ctx, pool, aliceOrgID, nil, "no-owner-delete")
-	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceOrgID, nil, noOwnerDeleteProject.ID, &noOwnerDeleteTitle, false)
+	noOwnerDeleteProject := mustCreateTestProject(t, ctx, pool, aliceAccountID, nil, "no-owner-delete")
+	noOwnerDeleteThread, err := threadRepo.Create(ctx, aliceAccountID, nil, noOwnerDeleteProject.ID, &noOwnerDeleteTitle, false)
 	if err != nil {
 		t.Fatalf("create no-owner delete thread: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 
 	userRepo, _ := data.NewUserRepository(pool)
 	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	threadRepo, _ := data.NewThreadRepository(pool)
@@ -468,7 +468,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 		Logger:               logger,
 		AuthService:          authService,
 		RegistrationService:  registrationService,
-		OrgMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:    membershipRepo,
 		ThreadRepo:           threadRepo,
 		ProjectRepo:          projectRepo,
 		RunEventRepo:         runRepo,

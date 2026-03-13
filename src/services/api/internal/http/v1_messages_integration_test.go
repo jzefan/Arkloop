@@ -44,7 +44,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new credential repo: %v", err)
 	}
-	membershipRepo, err := data.NewOrgMembershipRepository(pool)
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
 	if err != nil {
 		t.Fatalf("new membership repo: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
@@ -206,7 +206,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 
 	userRepo, _ := data.NewUserRepository(pool)
 	credentialRepo, _ := data.NewUserCredentialRepository(pool)
-	membershipRepo, _ := data.NewOrgMembershipRepository(pool)
+	membershipRepo, _ := data.NewAccountMembershipRepository(pool)
 	refreshTokenRepo, _ := data.NewRefreshTokenRepository(pool)
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	threadRepo, _ := data.NewThreadRepository(pool)
@@ -228,7 +228,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 		Logger:              logger,
 		AuthService:         authService,
 		RegistrationService: registrationService,
-		OrgMembershipRepo:   membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		ThreadRepo:          threadRepo,
 		ProjectRepo:         projectRepo,
 		MessageRepo:         messageRepo,
@@ -257,7 +257,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse thread id: %v", err)
 	}
-	orgID, err := uuid.Parse(threadPayload.OrgID)
+	accountID, err := uuid.Parse(threadPayload.AccountID)
 	if err != nil {
 		t.Fatalf("parse org id: %v", err)
 	}
@@ -268,9 +268,9 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	}
 	_, err = pool.Exec(
 		ctx,
-		`INSERT INTO messages (org_id, thread_id, created_by_user_id, role, content, metadata_json)
+		`INSERT INTO messages (account_id, thread_id, created_by_user_id, role, content, metadata_json)
 		 VALUES ($1, $2, NULL, 'assistant', $3, $4::jsonb)`,
-		orgID,
+		accountID,
 		threadID,
 		"hello from assistant",
 		string(metadataRaw),
