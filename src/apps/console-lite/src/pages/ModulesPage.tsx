@@ -98,6 +98,7 @@ function actionLabel(action: ModuleAction, t: ModulesLocale): string {
     start: t.actionStart,
     stop: t.actionStop,
     restart: t.actionRestart,
+    configure: t.actionConfigure,
     configure_connection: t.actionConfigure,
     bootstrap_defaults: t.actionBootstrap,
   }
@@ -109,6 +110,7 @@ const ACTION_LABELS_PROGRESS: Record<ModuleAction, string> = {
   start: 'Starting…',
   stop: 'Stopping…',
   restart: 'Restarting…',
+  configure: 'Configuring…',
   configure_connection: 'Configuring…',
   bootstrap_defaults: 'Bootstrapping…',
 }

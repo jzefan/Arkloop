@@ -835,7 +835,7 @@ function SandboxConfigSection({
 }
 
 function MemoryConfigSection({
-  form, onChange, onSave, configSaving, configDirty, inputCls, labelCls, sectionCls, tc,
+  form, onChange, onSave, configSaving, configDirty: _configDirty, inputCls, labelCls, sectionCls, tc,
 }: {
   form: Record<string, string>
   onChange: (key: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void
