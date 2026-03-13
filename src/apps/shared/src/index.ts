@@ -39,3 +39,6 @@ export { AuthPage } from './components/AuthPage'
 export type { AuthPageTranslations, AuthApi } from './components/AuthPage'
 export { SettingsModal } from './components/SettingsModal'
 export type { SettingsModalTranslations } from './components/SettingsModal'
+
+export { isDesktop, getDesktopApi, getDesktopMode, isLocalMode } from './desktop'
+export type { ConnectionMode, ArkloopDesktopApi } from './desktop'

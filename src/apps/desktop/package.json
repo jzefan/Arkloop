@@ -1,0 +1,26 @@
+{
+  "name": "@arkloop/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "concurrently -n web,electron -c blue,green \"pnpm --filter @arkloop/web dev\" \"pnpm dev:electron\"",
+    "dev:electron": "node scripts/dev.mjs",
+    "build": "pnpm build:web && pnpm build:electron",
+    "build:web": "pnpm --filter @arkloop/web build",
+    "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "pack": "pnpm build && electron-builder --dir",
+    "dist": "pnpm build && electron-builder",
+    "type-check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.0",
+    "concurrently": "^9.1.2",
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.9.3"
+  }
+}

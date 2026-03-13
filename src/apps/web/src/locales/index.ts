@@ -23,6 +23,7 @@ export interface LocaleStrings {
     credits: string
     models: string
     agents: string
+    connection: string
   }
   // settings
   getHelp: string
@@ -419,6 +420,27 @@ export interface LocaleStrings {
   // chat page
   checkInPlaceholder: string
   replyPlaceholder: string
+  // connection settings (desktop only)
+  connection: {
+    title: string
+    local: string
+    localDesc: string
+    saas: string
+    saasDesc: string
+    selfHosted: string
+    selfHostedDesc: string
+    baseUrl: string
+    status: string
+    running: string
+    stopped: string
+    starting: string
+    crashed: string
+    restart: string
+    testConnection: string
+    connected: string
+    failed: string
+    save: string
+  }
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

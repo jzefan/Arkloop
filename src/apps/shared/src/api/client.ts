@@ -53,6 +53,12 @@ export function setClientApp(app: string): void {
 }
 
 export function apiBaseUrl(): string {
+  // 桌面模式: 优先使用 Electron 注入的 API 地址
+  const desktop = (globalThis as Record<string, unknown>).__ARKLOOP_DESKTOP__ as
+    | { apiBaseUrl?: string }
+    | undefined
+  if (desktop?.apiBaseUrl) return desktop.apiBaseUrl.replace(/\/$/, '')
+
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
   return raw.replace(/\/$/, '')
 }
