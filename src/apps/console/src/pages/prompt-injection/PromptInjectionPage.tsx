@@ -250,6 +250,7 @@ function SemanticSetupPanel({
   const tp = t.pages.promptInjection
 
   const [mode, setMode] = useState<'local' | 'api'>('api')
+  const [variant, setVariant] = useState<'22m' | '86m'>('22m')
   const [endpoint, setEndpoint] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [saving, setSaving] = useState(false)
@@ -278,7 +279,7 @@ function SemanticSetupPanel({
     setInstallError('')
     try {
       await setPlatformSetting(KEY_SEMANTIC_PROVIDER, 'local', accessToken)
-      const { operation_id } = await bridgeClient.performAction('prompt-guard', 'install')
+      const { operation_id } = await bridgeClient.performAction('prompt-guard', 'install', { variant })
       addToast(`${tp.semanticInstallStarted} (${operation_id.slice(0, 8)})`, 'success')
       onSaved()
     } catch (err) {
@@ -314,6 +315,25 @@ function SemanticSetupPanel({
       {mode === 'local' && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-[var(--c-text-muted)]">{tp.semanticLocalDesc}</p>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-[var(--c-text-secondary)]">{tp.semanticModelVariant}</span>
+            <div className="flex gap-2">
+              {(['22m', '86m'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setVariant(v)}
+                  className={[
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    variant === v
+                      ? 'bg-[var(--c-text-primary)] text-[var(--c-bg-card)]'
+                      : 'bg-[var(--c-bg-tag)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
+                  ].join(' ')}
+                >
+                  {v === '22m' ? tp.semanticModel22m : tp.semanticModel86m}
+                </button>
+              ))}
+            </div>
+          </div>
           {!bridgeAvailable && (
             <p className="text-xs text-[var(--c-status-warning-text)]">{tp.semanticBridgeRequired}</p>
           )}
