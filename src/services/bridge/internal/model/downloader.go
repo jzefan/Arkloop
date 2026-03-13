@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,27 +16,28 @@ import (
 
 // Variant describes a downloadable model variant.
 type Variant struct {
-	ID    string // "22m" or "86m"
-	Name  string
-	Image string // OCI image containing model files
-	Size  string // human-readable size hint
+	ID              string // "22m" or "86m"
+	Name            string
+	Image           string // OCI image containing model files
+	ModelScopeRepo  string // ModelScope repo for fallback download
+	Size            string // human-readable size hint
 }
 
 // Variants is the registry of known prompt-guard model variants.
-// Image names follow: ghcr.io/arkloop/prompt-guard-{variant}-onnx:latest
-// Each image stores model.onnx + tokenizer.json under /models/.
 var Variants = map[string]Variant{
 	"22m": {
-		ID:    "22m",
-		Name:  "Prompt Guard 2 (22M)",
-		Image: "ghcr.io/arkloop/prompt-guard-22m-onnx:latest",
-		Size:  "~22 MB",
+		ID:             "22m",
+		Name:           "Prompt Guard 2 (22M)",
+		Image:          "ghcr.io/arkloop/prompt-guard-22m-onnx:latest",
+		ModelScopeRepo: "LLM-Research/Llama-Prompt-Guard-2-22M",
+		Size:           "~270 MB",
 	},
 	"86m": {
-		ID:    "86m",
-		Name:  "Prompt Guard (86M)",
-		Image: "ghcr.io/arkloop/prompt-guard-86m-onnx:latest",
-		Size:  "~88 MB",
+		ID:             "86m",
+		Name:           "Prompt Guard (86M)",
+		Image:          "ghcr.io/arkloop/prompt-guard-86m-onnx:latest",
+		ModelScopeRepo: "LLM-Research/Llama-Prompt-Guard-2-86M",
+		Size:           "~690 MB",
 	},
 }
 
@@ -110,51 +112,131 @@ func (d *Downloader) Install(ctx context.Context, variantID string) (*docker.Ope
 func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Variant) error {
 	op.AppendLog(fmt.Sprintf("variant: %s (%s)", v.Name, v.Size))
 
-	// 1. Create target directory
 	if err := os.MkdirAll(d.modelDir, 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", d.modelDir, err)
 	}
 	op.AppendLog("model directory: " + d.modelDir)
 
-	// 2. Pull image
-	op.AppendLog(fmt.Sprintf("pulling %s ...", v.Image))
-	if err := d.run(ctx, op, "docker", "pull", v.Image); err != nil {
-		return fmt.Errorf("docker pull: %w", err)
+	// Skip download if model files already exist.
+	if d.modelFilesExist() {
+		op.AppendLog("model files already present, skipping download")
+		d.logger.Info("prompt-guard model already installed", map[string]any{
+			"variant": v.ID, "model_dir": d.modelDir,
+		})
+		return nil
 	}
 
-	// 3. Create temporary container
+	// Strategy 1: Docker image pull + extract.
+	if override := os.Getenv("ARKLOOP_PROMPT_GUARD_IMAGE_" + strings.ToUpper(v.ID)); override != "" {
+		v.Image = override
+	}
+	op.AppendLog(fmt.Sprintf("trying docker pull %s ...", v.Image))
+	if err := d.tryDockerInstall(ctx, op, v); err == nil {
+		return d.verifyFiles(op, v)
+	} else {
+		op.AppendLog(fmt.Sprintf("docker pull failed: %s", err))
+	}
+
+	// Strategy 2: ModelScope download + ONNX export.
+	if v.ModelScopeRepo != "" {
+		op.AppendLog(fmt.Sprintf("falling back to modelscope: %s", v.ModelScopeRepo))
+		if err := d.tryModelScopeInstall(ctx, op, v); err == nil {
+			return d.verifyFiles(op, v)
+		} else {
+			op.AppendLog(fmt.Sprintf("modelscope failed: %s", err))
+			return fmt.Errorf("all download methods failed for %s", v.ID)
+		}
+	}
+
+	return fmt.Errorf("no download method succeeded for %s", v.ID)
+}
+
+func (d *Downloader) modelFilesExist() bool {
+	for _, f := range []string{"model.onnx", "tokenizer.json"} {
+		if _, err := os.Stat(filepath.Join(d.modelDir, f)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Downloader) verifyFiles(op *docker.Operation, v Variant) error {
+	for _, f := range []string{"model.onnx", "tokenizer.json"} {
+		p := filepath.Join(d.modelDir, f)
+		if _, err := os.Stat(p); err != nil {
+			return fmt.Errorf("expected file missing: %s", p)
+		}
+	}
+	op.AppendLog("model installed to " + d.modelDir)
+	d.logger.Info("prompt-guard model installed", map[string]any{
+		"variant": v.ID, "model_dir": d.modelDir,
+	})
+	return nil
+}
+
+func (d *Downloader) tryDockerInstall(ctx context.Context, op *docker.Operation, v Variant) error {
+	if err := d.run(ctx, op, "docker", "pull", v.Image); err != nil {
+		return err
+	}
 	containerName := "arkloop-model-extract-" + v.ID
-	// Remove any leftover container from a previous failed run.
 	_ = d.run(ctx, op, "docker", "rm", "-f", containerName)
 
 	op.AppendLog("extracting model files...")
 	if err := d.run(ctx, op, "docker", "create", "--name", containerName, v.Image); err != nil {
-		return fmt.Errorf("docker create: %w", err)
+		return err
 	}
-
-	// 4. Copy model files out
 	src := containerName + ":/models/."
-	if err := d.run(ctx, op, "docker", "cp", src, d.modelDir); err != nil {
-		_ = d.run(ctx, op, "docker", "rm", "-f", containerName)
-		return fmt.Errorf("docker cp: %w", err)
+	err := d.run(ctx, op, "docker", "cp", src, d.modelDir)
+	_ = d.run(ctx, op, "docker", "rm", "-f", containerName)
+	return err
+}
+
+func (d *Downloader) tryModelScopeInstall(ctx context.Context, op *docker.Operation, v Variant) error {
+	tmpDir := filepath.Join(os.TempDir(), "arkloop-prompt-guard-"+v.ID)
+	onnxDir := tmpDir + "-onnx"
+
+	// Download from ModelScope.
+	op.AppendLog("downloading model weights...")
+	if err := d.run(ctx, op, "modelscope", "download",
+		"--model", v.ModelScopeRepo,
+		"--local_dir", tmpDir,
+	); err != nil {
+		return fmt.Errorf("modelscope download: %w", err)
 	}
 
-	// 5. Cleanup
-	_ = d.run(ctx, op, "docker", "rm", "-f", containerName)
+	// Export to ONNX via optimum.
+	op.AppendLog("exporting to ONNX format...")
+	script := fmt.Sprintf(
+		"from optimum.onnxruntime import ORTModelForSequenceClassification; "+
+			"m = ORTModelForSequenceClassification.from_pretrained(%q, export=True); "+
+			"m.save_pretrained(%q); print('onnx_export_ok')",
+		tmpDir, onnxDir,
+	)
+	if err := d.run(ctx, op, "python3", "-c", script); err != nil {
+		return fmt.Errorf("ONNX export: %w", err)
+	}
 
-	// 6. Verify essential files exist
-	for _, f := range []string{"model.onnx", "tokenizer.json"} {
-		path := d.modelDir + "/" + f
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("expected file missing after extract: %s", path)
+	// Copy files to target.
+	onnxModel := filepath.Join(onnxDir, "model.onnx")
+	tokenizer := filepath.Join(tmpDir, "tokenizer.json")
+	for _, pair := range [][2]string{
+		{onnxModel, filepath.Join(d.modelDir, "model.onnx")},
+		{tokenizer, filepath.Join(d.modelDir, "tokenizer.json")},
+	} {
+		data, err := os.ReadFile(pair[0])
+		if err != nil {
+			return fmt.Errorf("read %s: %w", pair[0], err)
+		}
+		if err := os.WriteFile(pair[1], data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", pair[1], err)
 		}
 	}
 
-	op.AppendLog("model installed to " + d.modelDir)
-	d.logger.Info("prompt-guard model installed", map[string]any{
-		"variant":   v.ID,
-		"model_dir": d.modelDir,
-	})
+	// Cleanup temp dirs.
+	_ = os.RemoveAll(tmpDir)
+	_ = os.RemoveAll(onnxDir)
+
+	op.AppendLog("ONNX export and copy complete")
 	return nil
 }
 
