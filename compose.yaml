@@ -390,10 +390,12 @@ services:
   searxng:
     image: searxng/searxng:2025.9.29-77fd3ee53
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "/opt/patch-settings.sh"]
     profiles:
       - searxng
     volumes:
       - searxng_data:/etc/searxng
+      - ./config/searxng/patch-settings.sh:/opt/patch-settings.sh:ro
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/"]
       interval: 30s
