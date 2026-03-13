@@ -246,6 +246,10 @@ func (s *Service) resolveDefaultAccount(ctx context.Context, userID uuid.UUID) (
 }
 
 func (s *Service) AuthenticateUser(ctx context.Context, token string) (*data.User, error) {
+	if user, ok := interceptDesktopUser(ctx, s.userRepo); ok {
+		return user, nil
+	}
+
 	verified, err := s.tokenService.Verify(token)
 	if err != nil {
 		return nil, err
@@ -279,6 +283,10 @@ func (s *Service) VerifyAccessTokenForActor(ctx context.Context, token string) (
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if vat, ok := interceptDesktopActor(); ok {
+		return vat, nil
 	}
 
 	verified, err := s.tokenService.Verify(token)
