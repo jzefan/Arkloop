@@ -25,7 +25,7 @@ export function SemanticSetupPanel({
 }: SemanticSetupPanelProps) {
   const { addToast } = useToast()
 
-  const [mode, setMode] = useState<'local' | 'api'>('api')
+  const [mode, setMode] = useState<'local' | 'api'>('local')
   const [variant, setVariant] = useState<'22m' | '86m'>('22m')
   const [endpoint, setEndpoint] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -74,7 +74,7 @@ export function SemanticSetupPanel({
         'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
         mode === value
           ? 'bg-[var(--c-text-primary)] text-[var(--c-bg-card)]'
-          : 'bg-[var(--c-bg-tag)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
+          : 'border border-[var(--c-border-mid)] bg-[var(--c-bg-card)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
       ].join(' ')}
     >
       {label}
@@ -102,7 +102,7 @@ export function SemanticSetupPanel({
                     'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     variant === v
                       ? 'bg-[var(--c-text-primary)] text-[var(--c-bg-card)]'
-                      : 'bg-[var(--c-bg-tag)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
+                      : 'border border-[var(--c-border-mid)] bg-[var(--c-bg-card)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
                   ].join(' ')}
                 >
                   {v === '22m' ? texts.semanticModel22m : texts.semanticModel86m}

@@ -21,6 +21,7 @@ const (
 	CategorySearch         ModuleCategory = "search"
 	CategoryBrowser        ModuleCategory = "browser"
 	CategoryConsole        ModuleCategory = "console"
+	CategorySecurity       ModuleCategory = "security"
 	CategoryInfrastructure ModuleCategory = "infrastructure"
 )
 
