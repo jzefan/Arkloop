@@ -443,6 +443,52 @@ export interface LocaleStrings {
     failed: string
     save: string
   }
+
+  // onboarding wizard (desktop)
+  onboarding: {
+    welcomeTitle: string
+    welcomeDesc: string
+    getStarted: string
+    modeTitle: string
+    modeDesc: string
+    saasTitle: string
+    saasDesc: string
+    localTitle: string
+    localDesc: string
+    selfHostTitle: string
+    selfHostDesc: string
+    saasLoginHint: string
+    localDownloading: string
+    localDownloadFailed: string
+    localRetryDownload: string
+    localDownloadComplete: string
+    localStarting: string
+    localProviderTitle: string
+    localProviderDesc: string
+    localProviderVendor: string
+    localProviderApiKey: string
+    localProviderApiKeyPlaceholder: string
+    localProviderBaseUrl: string
+    localProviderBaseUrlPlaceholder: string
+    localProviderVerify: string
+    localProviderVerifying: string
+    localProviderVerified: string
+    localProviderFailed: string
+    localProviderSkip: string
+    selfHostUrlLabel: string
+    selfHostUrlPlaceholder: string
+    selfHostTest: string
+    selfHostTesting: string
+    selfHostConnected: string
+    selfHostFailed: string
+    completionTitle: string
+    completionDesc: string
+    startChatting: string
+    back: string
+    next: string
+    skip: string
+    stepOf: (current: number, total: number) => string
+  }
 }
 
 export const locales: Record<Locale, LocaleStrings> = { zh, en }

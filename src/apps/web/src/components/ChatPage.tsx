@@ -3,6 +3,7 @@ import { useParams, useLocation, useOutletContext, useNavigate } from 'react-rou
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2, X } from 'lucide-react'
+import { isDesktop } from '@arkloop/shared/desktop'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
@@ -1861,12 +1862,14 @@ export function ChatPage() {
 
         {/* 右侧：操作按钮 */}
         <div className="flex items-center gap-2">
-          <ModeSwitch
-            mode={appMode}
-            onChange={onSetAppMode}
-            labels={{ chat: t.modeChat, claw: t.modeClaw }}
-            availableModes={availableAppModes}
-          />
+          {!isDesktop() && (
+            <ModeSwitch
+              mode={appMode}
+              onChange={onSetAppMode}
+              labels={{ chat: t.modeChat, claw: t.modeClaw }}
+              availableModes={availableAppModes}
+            />
+          )}
           {threadId && privateThreadIds.has(threadId) && (
             <span className="text-xs font-medium text-[var(--c-text-muted)]">{t.incognitoLabel}</span>
           )}

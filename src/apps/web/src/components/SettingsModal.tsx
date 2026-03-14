@@ -46,7 +46,7 @@ import { SkillsSettingsContent } from './SkillsSettingsContent'
 import { ModelConfigContent } from './ModelConfigContent'
 import { AgentSettingsContent } from './AgentSettingsContent'
 import { ConnectionSettingsContent } from './ConnectionSettingsContent'
-import { isDesktop } from '@arkloop/shared/desktop'
+import { isDesktop, isLocalMode } from '@arkloop/shared/desktop'
 
 
 export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents' | 'connection'
@@ -83,7 +83,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
   const [profileView, setProfileView] = useState(false)
-  const navItems = isDesktop() ? DESKTOP_NAV_ITEMS : BASE_NAV_ITEMS
+  const localMode = isLocalMode()
+  const navItems = (isDesktop() ? DESKTOP_NAV_ITEMS : BASE_NAV_ITEMS)
+    .filter(item => !(localMode && item.key === 'credits'))
   const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
   const activeLabel = t.nav[activeKey as keyof typeof t.nav] ?? t.nav.account
 
@@ -192,7 +194,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             {activeKey === 'skills' && (
               <SkillsSettingsContent accessToken={accessToken} onTrySkill={(prompt) => { onClose(); onTrySkill?.(prompt) }} />
             )}
-            {activeKey === 'credits' && (
+            {activeKey === 'credits' && !localMode && (
               <CreditsContent accessToken={accessToken} onCreditsChanged={onCreditsChanged} />
             )}
             {activeKey === 'models' && (

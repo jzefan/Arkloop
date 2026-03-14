@@ -37,6 +37,7 @@ type Props = {
   onThreadTitleUpdated: (threadId: string, title: string) => void
   onThreadDeleted: (threadId: string) => void
   narrow?: boolean
+  desktopMode?: boolean
 }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
@@ -60,6 +61,7 @@ export function Sidebar({
   onThreadTitleUpdated,
   onThreadDeleted,
   narrow,
+  desktopMode,
 }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -191,33 +193,36 @@ export function Sidebar({
             : 'min-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 200ms 150ms',
         }}
       >
-      {/* 顶部标题栏 */}
-      <div className="flex min-h-[56px] items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <h1 className="text-[16px] font-semibold tracking-tight text-[var(--c-text-primary)] shrink-0">Arkloop</h1>
-          {/* 从右滑入 */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              opacity: isPrivateMode ? 1 : 0,
-              transform: isPrivateMode ? 'translateX(0)' : 'translateX(14px)',
-              transition: 'opacity 0.18s ease, transform 0.18s ease',
-              pointerEvents: 'none',
-            }}
-          >
-            <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--c-text-tertiary)]" style={{ opacity: 0.5 }} />
-            <span className="text-[12px] font-medium text-[var(--c-text-tertiary)] whitespace-nowrap">{t.incognitoMode}</span>
+      {/* 顶部标题栏 (desktop mode uses titlebar instead) */}
+      {!desktopMode && (
+        <div className="flex min-h-[56px] items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <h1 className="text-[16px] font-semibold tracking-tight text-[var(--c-text-primary)] shrink-0">Arkloop</h1>
+            {/* 从右滑入 */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                opacity: isPrivateMode ? 1 : 0,
+                transform: isPrivateMode ? 'translateX(0)' : 'translateX(14px)',
+                transition: 'opacity 0.18s ease, transform 0.18s ease',
+                pointerEvents: 'none',
+              }}
+            >
+              <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--c-text-tertiary)]" style={{ opacity: 0.5 }} />
+              <span className="text-[12px] font-medium text-[var(--c-text-tertiary)] whitespace-nowrap">{t.incognitoMode}</span>
+            </div>
           </div>
+          <button
+            onClick={onToggleCollapse}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          >
+            <PanelLeftClose size={16} />
+          </button>
         </div>
-        <button
-          onClick={onToggleCollapse}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-        >
-          <PanelLeftClose size={16} />
-        </button>
-      </div>
+      )}
+      {desktopMode && <div className="h-2" />}
 
       {/* 导航 */}
       <nav className="flex flex-col gap-px px-2">

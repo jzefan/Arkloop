@@ -62,6 +62,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return checkSidecarVersion()
   })
 
+  ipcMain.handle('arkloop:onboarding:status', () => {
+    const config = loadConfig()
+    return { completed: config.onboarding_completed }
+  })
+
+  ipcMain.handle('arkloop:onboarding:complete', () => {
+    const config = loadConfig()
+    config.onboarding_completed = true
+    saveConfig(config)
+    return { ok: true }
+  })
+
   ipcMain.handle('arkloop:app:version', () => {
     const { app } = require('electron')
     return app.getVersion()

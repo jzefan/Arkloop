@@ -8,6 +8,7 @@ export type AppConfig = {
   selfHosted: { baseUrl: string }
   local: { port: number }
   window: { width: number; height: number }
+  onboarding_completed: boolean
 }
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
@@ -42,6 +43,10 @@ export type ArkloopDesktopApi = {
     checkUpdate: () => Promise<SidecarVersionInfo>
     onStatusChanged: (callback: (status: SidecarStatus) => void) => () => void
     onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
+  }
+  onboarding: {
+    getStatus: () => Promise<{ completed: boolean }>
+    complete: () => Promise<{ ok: boolean }>
   }
   app: {
     getVersion: () => Promise<string>
@@ -103,6 +108,11 @@ const api: ArkloopDesktopApi = {
       ipcRenderer.on('arkloop:sidecar:download-progress', handler)
       return () => ipcRenderer.removeListener('arkloop:sidecar:download-progress', handler)
     },
+  },
+
+  onboarding: {
+    getStatus: () => ipcRenderer.invoke('arkloop:onboarding:status'),
+    complete: () => ipcRenderer.invoke('arkloop:onboarding:complete'),
   },
 
   app: {
