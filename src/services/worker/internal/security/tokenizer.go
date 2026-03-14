@@ -13,8 +13,10 @@ const metaspaceReplacement = '▁'
 
 // Tokenizer 从 HuggingFace tokenizer.json 加载，支持 Unigram 和 BPE。
 type Tokenizer struct {
+	modelType   string // "Unigram" 或 "BPE"
 	tokenToID   map[string]int64
-	scores      map[string]float64 // unigram scores
+	scores      map[string]float64    // unigram 专用
+	mergeRanks  map[[2]string]int     // BPE 专用：merge pair -> 优先级
 	added       map[string]int64
 	maxTokenLen int
 	clsID       int64
@@ -26,9 +28,10 @@ type Tokenizer struct {
 
 type tokenizerJSON struct {
 	Model struct {
-		Type  string          `json:"type"`
-		Vocab json.RawMessage `json:"vocab"`
-		UNKId *int            `json:"unk_id"`
+		Type   string          `json:"type"`
+		Vocab  json.RawMessage `json:"vocab"`
+		Merges []string        `json:"merges"`
+		UNKId  *int            `json:"unk_id"`
 	} `json:"model"`
 	AddedTokens []struct {
 		Content string `json:"content"`
@@ -59,9 +62,14 @@ func LoadTokenizer(path string, maxLen int) (*Tokenizer, error) {
 		maxLen:    maxLen,
 	}
 
+	t.modelType = raw.Model.Type
 	switch raw.Model.Type {
 	case "Unigram":
 		if err := t.parseUnigramVocab(raw.Model.Vocab); err != nil {
+			return nil, err
+		}
+	case "BPE":
+		if err := t.parseBPEVocab(raw.Model.Vocab, raw.Model.Merges); err != nil {
 			return nil, err
 		}
 	default:
@@ -108,6 +116,30 @@ func (t *Tokenizer) parseUnigramVocab(raw json.RawMessage) error {
 		if tl := utf8.RuneCountInString(token); tl > t.maxTokenLen {
 			t.maxTokenLen = tl
 		}
+	}
+	return nil
+}
+
+func (t *Tokenizer) parseBPEVocab(vocabRaw json.RawMessage, merges []string) error {
+	var vocab map[string]int64
+	if err := json.Unmarshal(vocabRaw, &vocab); err != nil {
+		return fmt.Errorf("parse BPE vocab: %w", err)
+	}
+
+	for token, id := range vocab {
+		t.tokenToID[token] = id
+		if tl := utf8.RuneCountInString(token); tl > t.maxTokenLen {
+			t.maxTokenLen = tl
+		}
+	}
+
+	t.mergeRanks = make(map[[2]string]int, len(merges))
+	for rank, merge := range merges {
+		parts := strings.SplitN(merge, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		t.mergeRanks[[2]string{parts[0], parts[1]}] = rank
 	}
 	return nil
 }
@@ -170,8 +202,16 @@ func (t *Tokenizer) preTokenize(text string) []string {
 	return []string{buf.String()}
 }
 
-// segment 使用 Viterbi 算法对单个 piece 做 Unigram 分词。
+// segment 根据 modelType 分派到对应的分词算法。
 func (t *Tokenizer) segment(text string) []string {
+	if t.modelType == "BPE" {
+		return t.segmentBPE(text)
+	}
+	return t.segmentUnigram(text)
+}
+
+// segmentUnigram 使用 Viterbi 算法做 Unigram 分词。
+func (t *Tokenizer) segmentUnigram(text string) []string {
 	runes := []rune(text)
 	n := len(runes)
 	if n == 0 {
@@ -241,6 +281,50 @@ func (t *Tokenizer) segment(text string) []string {
 		pos += l
 	}
 	return tokens
+}
+
+// segmentBPE 使用 merge 优先级做 BPE 分词。
+func (t *Tokenizer) segmentBPE(text string) []string {
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return nil
+	}
+
+	// 初始化：每个字符作为一个独立 symbol
+	symbols := make([]string, len(runes))
+	for i, r := range runes {
+		symbols[i] = string(r)
+	}
+
+	for len(symbols) >= 2 {
+		// 找优先级最高（rank 最小）的相邻 pair
+		bestRank := math.MaxInt
+		bestPair := [2]string{}
+		for i := 0; i < len(symbols)-1; i++ {
+			pair := [2]string{symbols[i], symbols[i+1]}
+			if rank, ok := t.mergeRanks[pair]; ok && rank < bestRank {
+				bestRank = rank
+				bestPair = pair
+			}
+		}
+		if bestRank == math.MaxInt {
+			break
+		}
+
+		// 合并所有该 pair 的出现
+		merged := make([]string, 0, len(symbols))
+		for i := 0; i < len(symbols); {
+			if i < len(symbols)-1 && symbols[i] == bestPair[0] && symbols[i+1] == bestPair[1] {
+				merged = append(merged, symbols[i]+symbols[i+1])
+				i += 2
+			} else {
+				merged = append(merged, symbols[i])
+				i++
+			}
+		}
+		symbols = merged
+	}
+	return symbols
 }
 
 // VocabSize 返回词表大小。
