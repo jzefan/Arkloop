@@ -255,6 +255,22 @@ func RegisterTrackA(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},
+		{
+			Key:         "security.injection_scan.blocking_enabled",
+			Type:        TypeBool,
+			Default:     "false",
+			Description: "检测到注入时直接拦截请求",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+		},
+		{
+			Key:         "security.injection_scan.tool_output_scan_enabled",
+			Type:        TypeBool,
+			Default:     "true",
+			Description: "扫描工具输出中的间接注入",
+			Sensitive:   false,
+			Scope:       ScopePlatform,
+		},
 	}
 
 	for _, e := range entries {
