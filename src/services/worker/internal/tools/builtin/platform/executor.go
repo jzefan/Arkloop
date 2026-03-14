@@ -42,6 +42,17 @@ func NewExecutor(apiBaseURL, bridgeBaseURL string, tp *TokenProvider) *Executor 
 	}
 }
 
+// validatePathSegment ensures a value is safe for URL path interpolation.
+// Allows alphanumeric, dots, hyphens, underscores, colons (covers UUIDs, setting keys, module names).
+var safePathSegmentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$`)
+
+func validatePathSegment(name, value string) error {
+	if !safePathSegmentRe.MatchString(value) {
+		return fmt.Errorf("invalid %s: must be alphanumeric with ._:- (got %q)", name, value)
+	}
+	return nil
+}
+
 func (e *Executor) Execute(
 	ctx context.Context,
 	_ string,
@@ -175,6 +186,9 @@ func (e *Executor) setSetting(ctx context.Context, a map[string]any, t time.Time
 	if key == "" {
 		return argErr("key is required", t)
 	}
+	if err := validatePathSegment("key", key); err != nil {
+		return argErr(err.Error(), t)
+	}
 	val, ok := a["value"].(string)
 	if !ok {
 		return argErr("value is required", t)
@@ -293,6 +307,9 @@ func (e *Executor) updateProvider(ctx context.Context, a map[string]any, t time.
 	if id == "" {
 		return argErr("id is required", t)
 	}
+	if err := validatePathSegment("id", id); err != nil {
+		return argErr(err.Error(), t)
+	}
 	body := make(map[string]any)
 	for _, k := range []string{"name", "api_key", "base_url"} {
 		if v := str(a, k); v != "" {
@@ -303,16 +320,26 @@ func (e *Executor) updateProvider(ctx context.Context, a map[string]any, t time.
 }
 
 func (e *Executor) listModels(ctx context.Context, a map[string]any, t time.Time) tools.ExecutionResult {
-	if str(a, "provider_id") == "" {
+	pid := str(a, "provider_id")
+	if pid == "" {
 		return argErr("provider_id is required", t)
 	}
-	return e.get(ctx, "/v1/llm-providers/"+str(a, "provider_id")+"/models", t)
+	if err := validatePathSegment("provider_id", pid); err != nil {
+		return argErr(err.Error(), t)
+	}
+	return e.get(ctx, "/v1/llm-providers/"+pid+"/models", t)
 }
 
 func (e *Executor) configureModel(ctx context.Context, a map[string]any, t time.Time) tools.ExecutionResult {
 	pid, mid := str(a, "provider_id"), str(a, "model_id")
 	if pid == "" || mid == "" {
 		return argErr("provider_id and model_id are required", t)
+	}
+	if err := validatePathSegment("provider_id", pid); err != nil {
+		return argErr(err.Error(), t)
+	}
+	if err := validatePathSegment("model_id", mid); err != nil {
+		return argErr(err.Error(), t)
 	}
 	body := make(map[string]any)
 	if cfg, ok := a["config"]; ok && cfg != nil {
@@ -343,6 +370,9 @@ func (e *Executor) updateAgent(ctx context.Context, a map[string]any, t time.Tim
 	id := str(a, "id")
 	if id == "" {
 		return argErr("id is required", t)
+	}
+	if err := validatePathSegment("id", id); err != nil {
+		return argErr(err.Error(), t)
 	}
 	body := make(map[string]any)
 	for k, v := range a {
@@ -429,6 +459,9 @@ func (e *Executor) updateMCPConfig(ctx context.Context, a map[string]any, t time
 	if v, ok := a["is_active"]; ok {
 		body["is_active"] = v
 	}
+	if err := validatePathSegment("id", id); err != nil {
+		return argErr(err.Error(), t)
+	}
 	return e.patch(ctx, "/v1/mcp-configs/"+id, body, t)
 }
 
@@ -436,6 +469,12 @@ func (e *Executor) addToolProvider(ctx context.Context, a map[string]any, t time
 	g, p := str(a, "group"), str(a, "provider")
 	if g == "" || p == "" {
 		return argErr("group and provider are required", t)
+	}
+	if err := validatePathSegment("group", g); err != nil {
+		return argErr(err.Error(), t)
+	}
+	if err := validatePathSegment("provider", p); err != nil {
+		return argErr(err.Error(), t)
 	}
 	body := make(map[string]any)
 	if v := str(a, "api_key"); v != "" {
@@ -451,6 +490,12 @@ func (e *Executor) updateToolProvider(ctx context.Context, a map[string]any, t t
 	g, p := str(a, "group"), str(a, "provider")
 	if g == "" || p == "" {
 		return argErr("group and provider are required", t)
+	}
+	if err := validatePathSegment("group", g); err != nil {
+		return argErr(err.Error(), t)
+	}
+	if err := validatePathSegment("provider", p); err != nil {
+		return argErr(err.Error(), t)
 	}
 	body := make(map[string]any)
 	if cfg, ok := a["config"].(map[string]any); ok {
@@ -532,6 +577,9 @@ func (e *Executor) installModule(ctx context.Context, a map[string]any, t time.T
 	name := str(a, "name")
 	if name == "" {
 		return argErr("name is required", t)
+	}
+	if err := validatePathSegment("name", name); err != nil {
+		return argErr(err.Error(), t)
 	}
 	data, _ := json.Marshal(map[string]any{"action": "install"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
