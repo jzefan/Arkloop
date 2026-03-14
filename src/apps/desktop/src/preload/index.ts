@@ -12,6 +12,20 @@ export type AppConfig = {
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
+export type DownloadProgress = {
+  phase: 'connecting' | 'downloading' | 'verifying' | 'done' | 'error'
+  percent: number
+  bytesDownloaded: number
+  bytesTotal: number
+  error?: string
+}
+
+export type SidecarVersionInfo = {
+  current: string | null
+  latest: string | null
+  updateAvailable: boolean
+}
+
 export type ArkloopDesktopApi = {
   isDesktop: true
   config: {
@@ -23,7 +37,11 @@ export type ArkloopDesktopApi = {
   sidecar: {
     getStatus: () => Promise<SidecarStatus>
     restart: () => Promise<SidecarStatus>
+    download: () => Promise<{ ok: boolean }>
+    isAvailable: () => Promise<boolean>
+    checkUpdate: () => Promise<SidecarVersionInfo>
     onStatusChanged: (callback: (status: SidecarStatus) => void) => () => void
+    onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
   }
   app: {
     getVersion: () => Promise<string>
@@ -72,10 +90,18 @@ const api: ArkloopDesktopApi = {
   sidecar: {
     getStatus: () => ipcRenderer.invoke('arkloop:sidecar:status'),
     restart: () => ipcRenderer.invoke('arkloop:sidecar:restart'),
+    download: () => ipcRenderer.invoke('arkloop:sidecar:download'),
+    isAvailable: () => ipcRenderer.invoke('arkloop:sidecar:is-available'),
+    checkUpdate: () => ipcRenderer.invoke('arkloop:sidecar:check-update'),
     onStatusChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, status: SidecarStatus) => callback(status)
       ipcRenderer.on('arkloop:sidecar:status-changed', handler)
       return () => ipcRenderer.removeListener('arkloop:sidecar:status-changed', handler)
+    },
+    onDownloadProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: DownloadProgress) => callback(progress)
+      ipcRenderer.on('arkloop:sidecar:download-progress', handler)
+      return () => ipcRenderer.removeListener('arkloop:sidecar:download-progress', handler)
     },
   },
 

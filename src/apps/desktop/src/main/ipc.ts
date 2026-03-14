@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { loadConfig, saveConfig, getConfigPath } from './config'
-import { getSidecarStatus, startSidecar, stopSidecar } from './sidecar'
+import { getSidecarStatus, startSidecar, stopSidecar, downloadSidecar, isSidecarAvailable, checkSidecarVersion } from './sidecar'
 import type { AppConfig } from './types'
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
@@ -44,6 +44,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     await stopSidecar()
     await startSidecar(config.local.port)
     return getSidecarStatus()
+  })
+
+  ipcMain.handle('arkloop:sidecar:download', async () => {
+    await downloadSidecar((progress) => {
+      const win = getWindow()
+      if (win) win.webContents.send('arkloop:sidecar:download-progress', progress)
+    })
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:sidecar:is-available', () => {
+    return isSidecarAvailable()
+  })
+
+  ipcMain.handle('arkloop:sidecar:check-update', async () => {
+    return checkSidecarVersion()
   })
 
   ipcMain.handle('arkloop:app:version', () => {

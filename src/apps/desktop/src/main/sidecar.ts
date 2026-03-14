@@ -1,13 +1,27 @@
 import { ChildProcess, spawn } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
+import * as https from 'https'
+import * as os from 'os'
+import * as fs from 'fs'
 import { app } from 'electron'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
+export type DownloadProgress = {
+  phase: 'connecting' | 'downloading' | 'verifying' | 'done' | 'error'
+  percent: number
+  bytesDownloaded: number
+  bytesTotal: number
+  error?: string
+}
+
 const HEALTH_POLL_MS = 500
 const HEALTH_TIMEOUT_MS = 30_000
 const MAX_RESTARTS = 3
+const SIDECAR_DIR = path.join(os.homedir(), '.arkloop', 'bin')
+const VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
+const DEFAULT_DOWNLOAD_BASE = 'https://github.com/nicepkg/arkloop/releases/download'
 
 let proc: ChildProcess | null = null
 let status: SidecarStatus = 'stopped'
@@ -27,16 +41,191 @@ function setStatus(s: SidecarStatus): void {
   onStatusChange?.(s)
 }
 
-function resolveBinaryPath(): string {
-  const isPackaged = app.isPackaged
-  if (isPackaged) {
-    return path.join(process.resourcesPath, 'sidecar', 'desktop')
+function getSidecarBinaryName(): string {
+  const platform = process.platform
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  const name = `desktop-${platform}-${arch}`
+  return platform === 'win32' ? `${name}.exe` : name
+}
+
+export function getSidecarPath(): string {
+  return path.join(SIDECAR_DIR, getSidecarBinaryName())
+}
+
+export function isSidecarAvailable(): boolean {
+  // 优先检查下载目录
+  try {
+    fs.accessSync(getSidecarPath(), fs.constants.X_OK)
+    return true
+  } catch {}
+
+  // dev 模式回退
+  if (!app.isPackaged) {
+    const devPath = path.resolve(
+      __dirname, '..', '..', '..', '..', 'services', 'desktop', 'bin', 'desktop',
+    )
+    try {
+      fs.accessSync(devPath, fs.constants.X_OK)
+      return true
+    } catch {}
   }
-  // dev: 从 Go 构建产物读取
-  return path.resolve(
-    __dirname,
-    '..', '..', '..', '..', 'services', 'desktop', 'bin', 'desktop',
-  )
+
+  // 打包模式回退
+  if (app.isPackaged) {
+    const bundledPath = path.join(process.resourcesPath, 'sidecar', 'desktop')
+    try {
+      fs.accessSync(bundledPath, fs.constants.X_OK)
+      return true
+    } catch {}
+  }
+
+  return false
+}
+
+function httpsGet(url: string, maxRedirects = 5): Promise<http.IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error('too many redirects'))
+      return
+    }
+    https.get(url, { headers: { 'User-Agent': 'arkloop-desktop' } }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume()
+        httpsGet(res.headers.location, maxRedirects - 1).then(resolve, reject)
+        return
+      }
+      resolve(res)
+    }).on('error', reject)
+  })
+}
+
+export async function checkSidecarVersion(): Promise<{
+  current: string | null
+  latest: string | null
+  updateAvailable: boolean
+}> {
+  let current: string | null = null
+  try {
+    const raw = fs.readFileSync(VERSION_FILE, 'utf-8')
+    current = JSON.parse(raw).version ?? null
+  } catch {}
+
+  let latest: string | null = null
+  try {
+    const res = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const body = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString()))
+      res.on('error', reject)
+    })
+    if (res.statusCode === 200) {
+      const data = JSON.parse(body)
+      latest = data.tag_name?.replace(/^v/, '') ?? null
+    }
+  } catch {
+    return { current, latest: null, updateAvailable: false }
+  }
+
+  const updateAvailable = !!(latest && latest !== current)
+  return { current, latest, updateAvailable }
+}
+
+export async function downloadSidecar(
+  onProgress?: (progress: DownloadProgress) => void,
+): Promise<void> {
+  const emit = (p: DownloadProgress) => onProgress?.(p)
+  const tmpPath = getSidecarPath() + '.tmp'
+
+  emit({ phase: 'connecting', percent: 0, bytesDownloaded: 0, bytesTotal: 0 })
+
+  try {
+    // 获取最新版本
+    const releaseRes = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const releaseBody = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      releaseRes.on('data', (c: Buffer) => chunks.push(c))
+      releaseRes.on('end', () => resolve(Buffer.concat(chunks).toString()))
+      releaseRes.on('error', reject)
+    })
+    if (releaseRes.statusCode !== 200) {
+      throw new Error(`failed to fetch release info: ${releaseRes.statusCode}`)
+    }
+    const release = JSON.parse(releaseBody)
+    const version = (release.tag_name as string)?.replace(/^v/, '')
+    if (!version) throw new Error('invalid release: missing tag_name')
+
+    const downloadBase = process.env.ARKLOOP_SIDECAR_DOWNLOAD_URL || DEFAULT_DOWNLOAD_BASE
+    const binaryName = getSidecarBinaryName()
+    const url = `${downloadBase}/v${version}/${binaryName}`
+
+    fs.mkdirSync(SIDECAR_DIR, { recursive: true })
+
+    // 下载二进制
+    const dlRes = await httpsGet(url)
+    if (dlRes.statusCode !== 200) {
+      dlRes.resume()
+      throw new Error(`download failed: ${dlRes.statusCode}`)
+    }
+
+    const bytesTotal = parseInt(dlRes.headers['content-length'] || '0', 10)
+    let bytesDownloaded = 0
+
+    emit({ phase: 'downloading', percent: 0, bytesDownloaded: 0, bytesTotal })
+
+    const ws = fs.createWriteStream(tmpPath)
+    await new Promise<void>((resolve, reject) => {
+      dlRes.on('data', (chunk: Buffer) => {
+        bytesDownloaded += chunk.length
+        const percent = bytesTotal > 0 ? Math.round((bytesDownloaded / bytesTotal) * 100) : 0
+        emit({ phase: 'downloading', percent, bytesDownloaded, bytesTotal })
+      })
+      dlRes.pipe(ws)
+      ws.on('finish', resolve)
+      ws.on('error', reject)
+      dlRes.on('error', reject)
+    })
+
+    emit({ phase: 'verifying', percent: 100, bytesDownloaded, bytesTotal })
+
+    // 设置可执行权限
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tmpPath, 0o755)
+    }
+
+    // 原子替换
+    fs.renameSync(tmpPath, getSidecarPath())
+
+    // 写入版本信息
+    fs.writeFileSync(VERSION_FILE, JSON.stringify({
+      version,
+      downloadedAt: new Date().toISOString(),
+    }))
+
+    emit({ phase: 'done', percent: 100, bytesDownloaded, bytesTotal })
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath) } catch {}
+    const message = err instanceof Error ? err.message : String(err)
+    emit({ phase: 'error', percent: 0, bytesDownloaded: 0, bytesTotal: 0, error: message })
+    throw err
+  }
+}
+
+function resolveBinaryPath(): string {
+  // 优先使用下载的二进制
+  const downloaded = getSidecarPath()
+  if (fs.existsSync(downloaded)) return downloaded
+
+  // dev 模式回退
+  if (!app.isPackaged) {
+    const devPath = path.resolve(
+      __dirname, '..', '..', '..', '..', 'services', 'desktop', 'bin', 'desktop',
+    )
+    if (fs.existsSync(devPath)) return devPath
+  }
+
+  // 打包模式回退
+  return path.join(process.resourcesPath, 'sidecar', 'desktop')
 }
 
 function healthCheck(port: number): Promise<boolean> {
@@ -65,6 +254,9 @@ export async function startSidecar(port: number): Promise<void> {
   if (proc) return
 
   const binPath = resolveBinaryPath()
+  if (!fs.existsSync(binPath)) {
+    throw new Error('sidecar binary not found, call downloadSidecar() first')
+  }
   setStatus('starting')
 
   proc = spawn(binPath, [], {
