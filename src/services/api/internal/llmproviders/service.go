@@ -135,19 +135,10 @@ func NewService(
 	}
 }
 
-// resolveProjectID translates (accountID, userID, scope) into the actual
-// project UUID needed by llm_routes. For "project" scope the user's default
-// project is looked up; for "platform" scope uuid.Nil is returned because
-// platform routes have NULL project_id.
-func (s *Service) resolveProjectID(ctx context.Context, accountID uuid.UUID, userID *uuid.UUID, scope string) (uuid.UUID, error) {
-	if scope != "project" || userID == nil {
-		return uuid.Nil, nil
-	}
-	proj, err := s.projects.GetOrCreateDefaultByOwner(ctx, accountID, *userID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("resolve default project: %w", err)
-	}
-	return proj.ID, nil
+// resolveProjectID is retained for backward compatibility but always returns
+// uuid.Nil. User/BYOK routes are now account-scoped, not project-bound.
+func (s *Service) resolveProjectID(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ string) (uuid.UUID, error) {
+	return uuid.Nil, nil
 }
 
 func (s *Service) ListProviders(ctx context.Context, accountID uuid.UUID, scope string, userID *uuid.UUID) ([]Provider, error) {
@@ -159,11 +150,7 @@ func (s *Service) ListProviders(ctx context.Context, accountID uuid.UUID, scope 
 	if err != nil {
 		return nil, err
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return nil, err
-	}
-	routes, err := s.routes.ListByScope(ctx, projectID, scope)
+	routes, err := s.routes.ListByScope(ctx, accountID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -193,11 +180,7 @@ func (s *Service) GetProvider(ctx context.Context, accountID, providerID uuid.UU
 	if cred == nil {
 		return Provider{}, ProviderNotFoundError{ID: providerID}
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return Provider{}, err
-	}
-	models, err := s.routes.ListByCredential(ctx, projectID, providerID, scope)
+	models, err := s.routes.ListByCredential(ctx, accountID, providerID, scope)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -354,11 +337,7 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 	if err := ValidateAdvancedJSONForProvider(provider.Provider, input.AdvancedJSON); err != nil {
 		return data.LlmRoute{}, err
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return data.LlmRoute{}, err
-	}
-	existing, err := s.routes.ListByCredential(ctx, projectID, providerID, scope)
+	existing, err := s.routes.ListByCredential(ctx, accountID, providerID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -375,7 +354,8 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 
 	txRoutes := s.routes.WithTx(tx)
 	created, err := txRoutes.Create(ctx, data.CreateLlmRouteParams{
-		ProjectID:               projectID,
+		AccountID:           accountID,
+		ProjectID:           uuid.Nil,
 		Scope:               scope,
 		CredentialID:        providerID,
 		Model:               input.Model,
@@ -394,18 +374,18 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 		return data.LlmRoute{}, err
 	}
 	if desiredDefault && len(existing) > 0 {
-		if _, err := txRoutes.SetDefaultByCredential(ctx, projectID, providerID, created.ID, scope); err != nil {
+		if _, err := txRoutes.SetDefaultByCredential(ctx, accountID, providerID, created.ID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	} else if !desiredDefault && !hasDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, projectID, providerID, scope); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, accountID, providerID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return data.LlmRoute{}, err
 	}
-	stored, err := s.routes.GetByID(ctx, projectID, created.ID, scope)
+	stored, err := s.routes.GetByID(ctx, accountID, created.ID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -427,11 +407,7 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 	if provider == nil {
 		return data.LlmRoute{}, ProviderNotFoundError{ID: providerID}
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return data.LlmRoute{}, err
-	}
-	current, err := s.routes.GetByID(ctx, projectID, modelID, scope)
+	current, err := s.routes.GetByID(ctx, accountID, modelID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -495,12 +471,12 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 
 	txRoutes := s.routes.WithTx(tx)
 	if input.IsDefaultSet && *input.IsDefault && !current.IsDefault {
-		if _, err := txRoutes.SetDefaultByCredential(ctx, projectID, providerID, modelID, scope); err != nil {
+		if _, err := txRoutes.SetDefaultByCredential(ctx, accountID, providerID, modelID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if _, err := txRoutes.Update(ctx, data.UpdateLlmRouteParams{
-		ProjectID:               projectID,
+		AccountID:           accountID,
 		Scope:               scope,
 		RouteID:             modelID,
 		Model:               model,
@@ -518,14 +494,14 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 		return data.LlmRoute{}, err
 	}
 	if current.IsDefault && input.IsDefaultSet && !*input.IsDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, projectID, providerID, scope); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, accountID, providerID, scope); err != nil {
 			return data.LlmRoute{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return data.LlmRoute{}, err
 	}
-	stored, err := s.routes.GetByID(ctx, projectID, modelID, scope)
+	stored, err := s.routes.GetByID(ctx, accountID, modelID, scope)
 	if err != nil {
 		return data.LlmRoute{}, err
 	}
@@ -547,11 +523,7 @@ func (s *Service) DeleteModel(ctx context.Context, accountID, providerID, modelI
 	if provider == nil {
 		return ProviderNotFoundError{ID: providerID}
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return err
-	}
-	current, err := s.routes.GetByID(ctx, projectID, modelID, scope)
+	current, err := s.routes.GetByID(ctx, accountID, modelID, scope)
 	if err != nil {
 		return err
 	}
@@ -566,11 +538,11 @@ func (s *Service) DeleteModel(ctx context.Context, accountID, providerID, modelI
 	defer tx.Rollback(ctx)
 
 	txRoutes := s.routes.WithTx(tx)
-	if err := txRoutes.DeleteByID(ctx, projectID, modelID, scope); err != nil {
+	if err := txRoutes.DeleteByID(ctx, accountID, modelID, scope); err != nil {
 		return err
 	}
 	if current.IsDefault {
-		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, projectID, providerID, scope); err != nil {
+		if _, err := txRoutes.PromoteHighestPriorityToDefault(ctx, accountID, providerID, scope); err != nil {
 			return err
 		}
 	}
@@ -599,11 +571,7 @@ func (s *Service) ListAvailableModels(ctx context.Context, accountID, providerID
 	if apiKey == nil || strings.TrimSpace(*apiKey) == "" {
 		return nil, ProviderSecretMissingError{ProviderID: providerID}
 	}
-	projectID, err := s.resolveProjectID(ctx, accountID, userID, scope)
-	if err != nil {
-		return nil, err
-	}
-	configuredRoutes, err := s.routes.ListByCredential(ctx, projectID, providerID, scope)
+	configuredRoutes, err := s.routes.ListByCredential(ctx, accountID, providerID, scope)
 	if err != nil {
 		return nil, err
 	}

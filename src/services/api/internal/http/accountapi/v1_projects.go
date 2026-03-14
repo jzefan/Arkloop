@@ -77,6 +77,8 @@ func projectEntry(
 		switch r.Method {
 		case nethttp.MethodGet:
 			getProject(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo)
+		case nethttp.MethodDelete:
+			deleteProject(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -239,6 +241,56 @@ func getProject(
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toProjectResponse(*project))
+}
+
+func deleteProject(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	projectID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	projectRepo *data.ProjectRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) {
+	if authService == nil {
+		httpkit.WriteAuthNotConfigured(w, traceID)
+		return
+	}
+	if projectRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := httpkit.ResolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+	if !ok {
+		return
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataProjectsManage, w, traceID) {
+		return
+	}
+
+	project, err := projectRepo.GetByID(r.Context(), projectID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if project == nil || project.AccountID != actor.AccountID {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "projects.not_found", "project not found", traceID, nil)
+		return
+	}
+
+	if project.IsDefault {
+		httpkit.WriteError(w, nethttp.StatusForbidden, "projects.delete_default", "default project cannot be deleted", traceID, nil)
+		return
+	}
+
+	if err := projectRepo.SoftDelete(r.Context(), projectID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func toProjectResponse(p data.Project) projectResponse {

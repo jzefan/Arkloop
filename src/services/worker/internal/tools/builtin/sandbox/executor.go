@@ -24,7 +24,7 @@ const (
 	errorSandboxTimeout     = "tool.sandbox_timeout"
 	errorPermissionDenied   = "tool.permission_denied"
 	errorArgsInvalid        = "tool.args_invalid"
-	errorNotConfigured      = "tool.not_configured"
+	errorNotConfigured      = "config.missing"
 
 	defaultTimeoutMs  = 30_000
 	maxOutputBytes    = 32 * 1024

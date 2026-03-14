@@ -44,6 +44,14 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, FriendlyText> = {
   'budget.exceeded': { zh: '对话预算已用尽', en: 'Conversation budget exceeded.' },
   'bootstrap.invalid_token': { zh: '初始化链接已失效', en: 'Bootstrap link expired.' },
   'bootstrap.already_initialized': { zh: '平台管理员已初始化', en: 'Platform admin already initialized.' },
+  'config.missing': { zh: '工具未配置，请检查工具提供商设置', en: 'Tool not configured. Please check tool provider settings.' },
+  'config.invalid': { zh: '配置无效，请检查平台设置', en: 'Invalid configuration. Please check platform settings.' },
+  'runtime_policy.denied': { zh: '运行时策略拒绝', en: 'Denied by runtime policy.' },
+  'external_provider.failed': { zh: '外部服务商请求失败', en: 'External provider request failed.' },
+  'internal_platform.error': { zh: '平台内部错误，请联系管理员', en: 'Internal platform error. Please contact admin.' },
+  'policy.byok_disabled': { zh: 'BYOK 未启用，请检查用户密钥设置', en: 'BYOK not enabled. Please check your API key settings.' },
+  'routing.model_not_found': { zh: '指定模型未找到，请检查 LLM 供应商配置', en: 'Specified model not found. Please check LLM provider settings.' },
+  'projects.delete_default': { zh: '默认项目不可删除', en: 'Default project cannot be deleted.' },
 }
 
 function hasCjk(text: string): boolean {

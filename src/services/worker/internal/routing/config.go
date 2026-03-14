@@ -525,6 +525,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 		LEFT JOIN secrets s ON s.id = c.secret_id
 		WHERE c.revoked_at IS NULL
 		  AND r.project_id IS NULL
+		  AND r.account_id IS NULL
 		ORDER BY r.is_default DESC,
 		         r.priority DESC,
 		         r.created_at ASC,
@@ -543,8 +544,9 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 		LEFT JOIN secrets s ON s.id = c.secret_id
 		WHERE c.revoked_at IS NULL
 		  AND (
-			r.project_id IS NULL
-			OR (r.project_id = $1 AND ($2::UUID IS NULL OR r.account_id = $2))
+			(r.project_id IS NULL AND r.account_id IS NULL)
+			OR (r.project_id IS NULL AND r.account_id = $2)
+			OR (r.project_id = $1 AND r.account_id = $2)
 		  )
 		ORDER BY CASE WHEN r.project_id IS NOT NULL THEN 0 ELSE 1 END ASC,
 		         r.is_default DESC,

@@ -192,6 +192,20 @@ func (r *ProjectRepository) GetByID(ctx context.Context, projectID uuid.UUID) (*
 	return &p, nil
 }
 
+func (r *ProjectRepository) SoftDelete(ctx context.Context, projectID uuid.UUID) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if projectID == uuid.Nil {
+		return fmt.Errorf("project_id must not be empty")
+	}
+	_, err := r.db.Exec(ctx,
+		`UPDATE projects SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		projectID,
+	)
+	return err
+}
+
 func (r *ProjectRepository) ListByOrg(ctx context.Context, accountID uuid.UUID) ([]Project, error) {
 	if ctx == nil {
 		ctx = context.Background()

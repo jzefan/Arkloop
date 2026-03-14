@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	errorNotConfigured = "tool.not_configured"
+	errorNotConfigured = "config.missing"
 	errorUnavailable   = "tool.unavailable"
 )
 

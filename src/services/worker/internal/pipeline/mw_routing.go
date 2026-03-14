@@ -12,7 +12,6 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
-	"arkloop/services/worker/internal/tools"
 )
 
 type RouteNotFoundError struct {
@@ -50,8 +49,8 @@ func NewRoutingMiddleware(
 		}
 
 		byokEnabled := false
-		if resolver != nil && rc.Run.ProjectID != nil {
-			raw, err := resolver.Resolve(ctx, *rc.Run.ProjectID, "feature.byok_enabled")
+		if resolver != nil {
+			raw, err := resolver.Resolve(ctx, rc.Run.AccountID, "feature.byok_enabled")
 			if err == nil {
 				byokEnabled = raw == "true"
 			}
@@ -128,8 +127,8 @@ func NewRoutingMiddleware(
 					} else {
 						decision = routing.ProviderRouteDecision{
 							Denied: &routing.ProviderRouteDenied{
-								ErrorClass: tools.PolicyDeniedCode,
-								Code:       "policy.route_denied",
+								ErrorClass: llm.ErrorClassRoutingNotFound,
+								Code:       "routing.not_found",
 								Message:    err.Error(),
 							},
 						}
@@ -251,9 +250,9 @@ func splitModelSelector(selector string) (string, string, bool) {
 func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routing.ProviderRouteDenied {
 	if cred.OwnerKind == routing.CredentialScopeUser && !byokEnabled {
 		return &routing.ProviderRouteDenied{
-			ErrorClass: tools.PolicyDeniedCode,
+			ErrorClass: llm.ErrorClassRuntimePolicyDenied,
 			Code:       "policy.byok_disabled",
-			Message:    "BYOK not enabled for this project",
+			Message:    "BYOK not enabled",
 		}
 	}
 	return nil

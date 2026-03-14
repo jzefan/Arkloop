@@ -40,7 +40,7 @@ func (e notConfiguredExecutor) Execute(
 
 	return tools.ExecutionResult{
 		Error: &tools.ExecutionError{
-			ErrorClass: "tool.not_configured",
+			ErrorClass: "config.missing",
 			Message:    "tool provider not configured",
 			Details:    details,
 		},
