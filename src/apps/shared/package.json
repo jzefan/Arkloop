@@ -10,7 +10,8 @@
     "./storage": "./src/storage/tokens.ts",
     "./desktop": "./src/desktop.ts",
     "./contexts/theme": "./src/contexts/ThemeContext.tsx",
-    "./contexts/locale": "./src/contexts/LocaleContext.tsx"
+    "./contexts/locale": "./src/contexts/LocaleContext.tsx",
+    "./components/auth-ui": "./src/components/auth-ui.tsx"
   },
   "peerDependencies": {
     "lucide-react": ">=0.400.0",

@@ -273,6 +273,9 @@ export async function startSidecar(port: number): Promise<void> {
   proc.stderr?.on('data', (chunk: Buffer) => {
     process.stderr.write(`[sidecar] ${chunk.toString()}`)
   })
+  proc.on('error', () => {})
+  process.stdout.on('error', () => {})
+  process.stderr.on('error', () => {})
 
   proc.on('exit', (code) => {
     proc = null

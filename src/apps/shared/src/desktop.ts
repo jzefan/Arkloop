@@ -9,6 +9,7 @@ export type ArkloopDesktopApi = {
       selfHosted: { baseUrl: string }
       local: { port: number }
       window: { width: number; height: number }
+      onboarding_completed: boolean
     }>
     set: (config: unknown) => Promise<{ ok: boolean }>
     getPath: () => Promise<string>
@@ -17,7 +18,15 @@ export type ArkloopDesktopApi = {
   sidecar: {
     getStatus: () => Promise<'stopped' | 'starting' | 'running' | 'crashed'>
     restart: () => Promise<string>
+    download: () => Promise<{ ok: boolean }>
+    isAvailable: () => Promise<boolean>
+    checkUpdate: () => Promise<{ current: string | null; latest: string | null; updateAvailable: boolean }>
     onStatusChanged: (callback: (status: string) => void) => () => void
+    onDownloadProgress: (callback: (progress: { phase: string; percent: number; bytesDownloaded: number; bytesTotal: number; error?: string }) => void) => () => void
+  }
+  onboarding: {
+    getStatus: () => Promise<{ completed: boolean }>
+    complete: () => Promise<{ ok: boolean }>
   }
   app: {
     getVersion: () => Promise<string>
