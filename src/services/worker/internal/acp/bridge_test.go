@@ -98,6 +98,12 @@ func sessionUpdateLine(sessionID string, u SessionUpdateParams) string {
 		update["summary"] = u.Summary
 	case UpdateTypeError:
 		update["message"] = u.Message
+	case UpdateTypePermission:
+		update["permissionId"] = u.PermissionID
+		update["sensitive"] = u.Sensitive
+		if u.Content != "" {
+			update["textDelta"] = u.Content
+		}
 	}
 	raw := sessionUpdateRaw{
 		SessionID: sessionID,
@@ -435,6 +441,11 @@ func TestMapUpdateToEvent(t *testing.T) {
 			update: SessionUpdateParams{Type: "something_else"},
 			wantOK: false,
 		},
+		{
+			name:   "permission_request",
+			update: SessionUpdateParams{Type: UpdateTypePermission, PermissionID: "p1", Content: "delete file", Sensitive: true},
+			wantOK: false, // permission requests are handled directly in pollUpdates, not mapped
+		},
 	}
 
 	for _, tt := range tests {
@@ -460,5 +471,195 @@ func TestMapUpdateToEvent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBridge_PermissionRequest(t *testing.T) {
+	const acpSID = "acp-session-perm"
+	readCount := 0
+
+	mock := &mockTransport{
+		startFn: func(_ context.Context, _ StartRequest) (*StartResponse, error) {
+			return &StartResponse{ProcessID: "proc-perm", AgentVersion: "local-sandbox/1.0"}, nil
+		},
+		readFn: func(_ context.Context, _ ReadRequest) (*ReadResponse, error) {
+			readCount++
+			switch readCount {
+			case 1:
+				return &ReadResponse{Data: sessionNewResponseLine(1, acpSID), NextCursor: 100}, nil
+			case 2:
+				return &ReadResponse{
+					Data: sessionUpdateLine(acpSID, SessionUpdateParams{
+						Type:         UpdateTypePermission,
+						PermissionID: "perm-001",
+						Content:      "execute rm -rf /tmp/test",
+						Sensitive:    true,
+					}),
+					NextCursor: 200,
+				}, nil
+			case 3:
+				return &ReadResponse{
+					Data:       sessionUpdateLine(acpSID, SessionUpdateParams{Type: UpdateTypeComplete, Summary: "done"}),
+					NextCursor: 300,
+				}, nil
+			default:
+				t.Fatal("unexpected extra read call")
+				return nil, nil
+			}
+		},
+	}
+
+	bridge := NewBridge(mock, testConfig())
+	emitter := events.NewEmitter("trace-perm")
+	var got []events.RunEvent
+
+	err := bridge.Run(context.Background(), "clean up", emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	wantTypes := []string{"run.started", "acp.permission_required", "run.completed"}
+	if len(got) != len(wantTypes) {
+		t.Fatalf("got %d events %v, want %d %v", len(got), eventTypes(got), len(wantTypes), wantTypes)
+	}
+	for i, want := range wantTypes {
+		if got[i].Type != want {
+			t.Errorf("event[%d].Type = %q, want %q", i, got[i].Type, want)
+		}
+	}
+
+	permEvt := got[1]
+	if permEvt.DataJSON["permission_id"] != "perm-001" {
+		t.Errorf("permission_id = %v, want %q", permEvt.DataJSON["permission_id"], "perm-001")
+	}
+	if permEvt.DataJSON["approved"] != true {
+		t.Errorf("approved = %v, want true", permEvt.DataJSON["approved"])
+	}
+	if permEvt.DataJSON["sensitive"] != true {
+		t.Errorf("sensitive = %v, want true", permEvt.DataJSON["sensitive"])
+	}
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	permSent := false
+	for _, w := range mock.writes {
+		if strings.Contains(w.Data, "session/permission") && strings.Contains(w.Data, "perm-001") {
+			permSent = true
+			break
+		}
+	}
+	if !permSent {
+		t.Error("session/permission response was not sent back to OpenCode")
+	}
+}
+
+func TestBridge_EnrichedStartEvent(t *testing.T) {
+	const acpSID = "acp-session-enrich"
+	readCount := 0
+
+	mock := &mockTransport{
+		startFn: func(_ context.Context, req StartRequest) (*StartResponse, error) {
+			if req.KillGraceMs != 3000 {
+				t.Errorf("KillGraceMs = %d, want 3000", req.KillGraceMs)
+			}
+			return &StartResponse{ProcessID: "proc-enrich", AgentVersion: "local-sandbox/1.0"}, nil
+		},
+		readFn: func(_ context.Context, _ ReadRequest) (*ReadResponse, error) {
+			readCount++
+			switch readCount {
+			case 1:
+				return &ReadResponse{Data: sessionNewResponseLine(1, acpSID), NextCursor: 100}, nil
+			case 2:
+				return &ReadResponse{
+					Data:       sessionUpdateLine(acpSID, SessionUpdateParams{Type: UpdateTypeComplete, Summary: "ok"}),
+					NextCursor: 200,
+				}, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+
+	cfg := testConfig()
+	cfg.KillGraceMs = 3000
+	bridge := NewBridge(mock, cfg)
+	emitter := events.NewEmitter("trace-enrich")
+	var got []events.RunEvent
+
+	err := bridge.Run(context.Background(), "test", emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if len(got) < 1 || got[0].Type != "run.started" {
+		t.Fatalf("expected run.started first, got %v", eventTypes(got))
+	}
+	startData := got[0].DataJSON
+	if startData["agent_version"] != "local-sandbox/1.0" {
+		t.Errorf("agent_version = %v, want %q", startData["agent_version"], "local-sandbox/1.0")
+	}
+	if startData["command"] == nil {
+		t.Error("command should be included in start event")
+	}
+}
+
+func TestBridge_ProcessExitWithDiagnostics(t *testing.T) {
+	const acpSID = "acp-session-diag"
+	readCount := 0
+
+	mock := &mockTransport{
+		startFn: func(_ context.Context, _ StartRequest) (*StartResponse, error) {
+			return &StartResponse{ProcessID: "proc-diag", AgentVersion: "local-sandbox/1.0"}, nil
+		},
+		readFn: func(_ context.Context, _ ReadRequest) (*ReadResponse, error) {
+			readCount++
+			switch readCount {
+			case 1:
+				return &ReadResponse{Data: sessionNewResponseLine(1, acpSID), NextCursor: 100}, nil
+			case 2:
+				exitCode := 1
+				return &ReadResponse{
+					NextCursor:   200,
+					Exited:       true,
+					ExitCode:     &exitCode,
+					Stderr:       "fatal error: out of memory",
+					ErrorSummary: "fatal error: out of memory",
+				}, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+
+	bridge := NewBridge(mock, testConfig())
+	emitter := events.NewEmitter("trace-diag")
+	var got []events.RunEvent
+
+	err := bridge.Run(context.Background(), "run something", emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if len(got) < 2 || got[1].Type != "run.failed" {
+		t.Fatalf("expected run.failed, got %v", eventTypes(got))
+	}
+	failData := got[1].DataJSON
+	if failData["layer"] != "opencode" {
+		t.Errorf("layer = %v, want %q", failData["layer"], "opencode")
+	}
+	if failData["error_summary"] != "fatal error: out of memory" {
+		t.Errorf("error_summary = %v, want %q", failData["error_summary"], "fatal error: out of memory")
+	}
+	if failData["agent_version"] != "local-sandbox/1.0" {
+		t.Errorf("agent_version = %v, want %q", failData["agent_version"], "local-sandbox/1.0")
 	}
 }

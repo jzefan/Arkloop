@@ -136,6 +136,8 @@ func (e ToolExecutor) Execute(
 		Command:          cmd,
 		Cwd:              cwd,
 		Env:              env,
+		KillGraceMs:      5000,   // 5 second default grace for ACP tool calls
+		CleanupDelayMs:   300000, // 5 min cleanup delay
 	}
 
 	client := acp.NewClient(rt.SandboxBaseURL, rt.SandboxAuthToken)

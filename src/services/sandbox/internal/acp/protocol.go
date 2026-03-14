@@ -8,19 +8,22 @@ import (
 // --- Service-level types (HTTP handler layer) ---
 
 type StartACPAgentRequest struct {
-	SessionID string            `json:"session_id"`
-	AccountID string            `json:"account_id,omitempty"`
-	Tier      string            `json:"tier,omitempty"`
-	Command   []string          `json:"command"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	SessionID      string            `json:"session_id"`
+	AccountID      string            `json:"account_id,omitempty"`
+	Tier           string            `json:"tier,omitempty"`
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	TimeoutMs      int               `json:"timeout_ms,omitempty"`
+	KillGraceMs    int               `json:"kill_grace_ms,omitempty"`
+	CleanupDelayMs int               `json:"cleanup_delay_ms,omitempty"`
 }
 
 type StartACPAgentResponse struct {
-	SessionID string `json:"session_id"`
-	ProcessID string `json:"process_id"`
-	Status    string `json:"status"`
+	SessionID    string `json:"session_id"`
+	ProcessID    string `json:"process_id"`
+	Status       string `json:"status"`
+	AgentVersion string `json:"agent_version,omitempty"` // version of the agent binary
 }
 
 type WriteACPRequest struct {
@@ -43,19 +46,21 @@ type ReadACPRequest struct {
 }
 
 type ReadACPResponse struct {
-	Data       string `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Truncated  bool   `json:"truncated"`
-	Stderr     string `json:"stderr,omitempty"`
-	Exited     bool   `json:"exited"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Data         string `json:"data"`
+	NextCursor   uint64 `json:"next_cursor"`
+	Truncated    bool   `json:"truncated"`
+	Stderr       string `json:"stderr,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"` // last significant error from stderr
+	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
 type StopACPAgentRequest struct {
-	SessionID string `json:"session_id"`
-	AccountID string `json:"account_id,omitempty"`
-	ProcessID string `json:"process_id"`
-	Force     bool   `json:"force,omitempty"`
+	SessionID     string `json:"session_id"`
+	AccountID     string `json:"account_id,omitempty"`
+	ProcessID     string `json:"process_id"`
+	Force         bool   `json:"force,omitempty"`
+	GracePeriodMs int    `json:"grace_period_ms,omitempty"`
 }
 
 type StopACPAgentResponse struct {
@@ -108,15 +113,18 @@ type agentResponse struct {
 }
 
 type acpStartPayload struct {
-	Command   []string          `json:"command"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	TimeoutMs      int               `json:"timeout_ms,omitempty"`
+	KillGraceMs    int               `json:"kill_grace_ms,omitempty"`
+	CleanupDelayMs int               `json:"cleanup_delay_ms,omitempty"`
 }
 
 type acpStartResult struct {
-	ProcessID string `json:"process_id"`
-	Status    string `json:"status"`
+	ProcessID    string `json:"process_id"`
+	Status       string `json:"status"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type acpWritePayload struct {
@@ -135,17 +143,19 @@ type acpReadPayload struct {
 }
 
 type acpReadResult struct {
-	Data       string `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Truncated  bool   `json:"truncated"`
-	Stderr     string `json:"stderr,omitempty"`
-	Exited     bool   `json:"exited"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Data         string `json:"data"`
+	NextCursor   uint64 `json:"next_cursor"`
+	Truncated    bool   `json:"truncated"`
+	Stderr       string `json:"stderr,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"`
+	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
 type acpStopPayload struct {
-	ProcessID string `json:"process_id"`
-	Force     bool   `json:"force,omitempty"`
+	ProcessID     string `json:"process_id"`
+	Force         bool   `json:"force,omitempty"`
+	GracePeriodMs int    `json:"grace_period_ms,omitempty"`
 }
 
 type acpStopResult struct {

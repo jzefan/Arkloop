@@ -30,18 +30,21 @@ func NewClient(baseURL, authToken string) *Client {
 // --- Request / Response types (worker-local, mirrors sandbox protocol) ---
 
 type StartRequest struct {
-	SessionID string            `json:"session_id"`
-	AccountID string            `json:"account_id,omitempty"`
-	Tier      string            `json:"tier,omitempty"`
-	Command   []string          `json:"command"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	SessionID      string            `json:"session_id"`
+	AccountID      string            `json:"account_id,omitempty"`
+	Tier           string            `json:"tier,omitempty"`
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	TimeoutMs      int               `json:"timeout_ms,omitempty"`
+	KillGraceMs    int               `json:"kill_grace_ms,omitempty"`
+	CleanupDelayMs int               `json:"cleanup_delay_ms,omitempty"`
 }
 
 type StartResponse struct {
-	ProcessID string `json:"process_id"`
-	Status    string `json:"status"`
+	ProcessID    string `json:"process_id"`
+	Status       string `json:"status"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type WriteRequest struct {
@@ -60,19 +63,21 @@ type ReadRequest struct {
 }
 
 type ReadResponse struct {
-	Data       string `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Truncated  bool   `json:"truncated"`
-	Stderr     string `json:"stderr,omitempty"`
-	Exited     bool   `json:"exited"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Data         string `json:"data"`
+	NextCursor   uint64 `json:"next_cursor"`
+	Truncated    bool   `json:"truncated"`
+	Stderr       string `json:"stderr,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"`
+	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
 type StopRequest struct {
-	SessionID string `json:"session_id"`
-	AccountID string `json:"account_id,omitempty"`
-	ProcessID string `json:"process_id"`
-	Force     bool   `json:"force,omitempty"`
+	SessionID     string `json:"session_id"`
+	AccountID     string `json:"account_id,omitempty"`
+	ProcessID     string `json:"process_id"`
+	Force         bool   `json:"force,omitempty"`
+	GracePeriodMs int    `json:"grace_period_ms,omitempty"`
 }
 
 type WaitRequest struct {

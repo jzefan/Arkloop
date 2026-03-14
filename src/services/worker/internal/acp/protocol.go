@@ -73,8 +73,10 @@ type SessionUpdateParams struct {
 	Name      string         `json:"name,omitempty"`
 	Arguments map[string]any `json:"arguments,omitempty"`
 	Output    string         `json:"output,omitempty"`
-	Summary   string         `json:"summary,omitempty"`
-	Message   string         `json:"message,omitempty"`
+	Summary      string         `json:"summary,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	PermissionID string         `json:"permission_id,omitempty"`
+	Sensitive    bool           `json:"sensitive,omitempty"`
 }
 
 const (
@@ -84,6 +86,7 @@ const (
 	UpdateTypeToolResult = "tool_result"
 	UpdateTypeComplete   = "complete"
 	UpdateTypeError      = "error"
+	UpdateTypePermission = "permission_request"
 
 	StatusWorking = "working"
 	StatusIdle    = "idle"
@@ -115,6 +118,28 @@ func NewSessionCancelMessage(id int, sessionID string) ACPMessage {
 		ID:      &id,
 		Method:  "session/cancel",
 		Params:  SessionCancelParams{SessionID: sessionID},
+	}
+}
+
+// SessionPermissionParams are sent back to OpenCode to approve/deny a permission request.
+type SessionPermissionParams struct {
+	SessionID    string `json:"sessionId"`
+	PermissionID string `json:"permissionId"`
+	Approved     bool   `json:"approved"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+func NewSessionPermissionMessage(id int, sessionID, permissionID string, approved bool, reason string) ACPMessage {
+	return ACPMessage{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "session/permission",
+		Params: SessionPermissionParams{
+			SessionID:    sessionID,
+			PermissionID: permissionID,
+			Approved:     approved,
+			Reason:       reason,
+		},
 	}
 }
 
@@ -250,6 +275,13 @@ func normalizeUpdate(sessionID string, u map[string]any) SessionUpdateParams {
 	if v, ok := u["summary"].(string); ok {
 		p.Summary = v
 	}
+	// permission fields
+	if v, ok := u["permissionId"].(string); ok {
+		p.PermissionID = v
+	}
+	if v, ok := u["sensitive"].(bool); ok {
+		p.Sensitive = v
+	}
 
 	return p
 }
@@ -273,6 +305,8 @@ func mapUpdateType(t string) string {
 		return UpdateTypeComplete
 	case "error":
 		return UpdateTypeError
+	case "permission_request", "permissionRequest":
+		return UpdateTypePermission
 	default:
 		return t // pass through unknown types
 	}
