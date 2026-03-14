@@ -79,11 +79,34 @@ func sessionNewResponseLine(id int, sessionID string) string {
 }
 
 func sessionUpdateLine(sessionID string, u SessionUpdateParams) string {
-	u.SessionID = sessionID
+	// Build the nested update object matching opencode's actual format
+	update := map[string]any{
+		"sessionUpdate": u.Type,
+	}
+	switch u.Type {
+	case UpdateTypeTextDelta:
+		update["textDelta"] = u.Content
+	case UpdateTypeToolCall:
+		update["toolName"] = u.Name
+		update["args"] = u.Arguments
+	case UpdateTypeToolResult:
+		update["toolName"] = u.Name
+		update["result"] = u.Output
+	case UpdateTypeStatus:
+		update["status"] = u.Status
+	case UpdateTypeComplete:
+		update["summary"] = u.Summary
+	case UpdateTypeError:
+		update["message"] = u.Message
+	}
+	raw := sessionUpdateRaw{
+		SessionID: sessionID,
+		Update:    update,
+	}
 	return mustMarshalLine(ACPMessage{
 		JSONRPC: "2.0",
 		Method:  "session/update",
-		Params:  u,
+		Params:  raw,
 	})
 }
 

@@ -89,7 +89,7 @@ func (b *Bridge) Run(ctx context.Context, prompt string, emitter events.Emitter,
 	slog.Info("acp: agent process started", "process_id", b.processID, "session_id", b.config.SessionID, "command", cmd[0])
 	defer b.cleanup()
 
-	if err := b.sendMessage(ctx, NewSessionNewMessage(b.nextID(), SessionModeCode)); err != nil {
+	if err := b.sendMessage(ctx, NewSessionNewMessage(b.nextID(), SessionModeCode, b.config.Cwd)); err != nil {
 		return fmt.Errorf("send session/new: %w", err)
 	}
 	if err := b.waitForSessionNew(ctx); err != nil {
@@ -277,6 +277,13 @@ func mapUpdateToEvent(update SessionUpdateParams, emitter events.Emitter) (event
 
 	case UpdateTypeToolCall:
 		name := update.Name
+		// tool_call_update with status "completed" has result content
+		if update.Status == "completed" {
+			return emitter.Emit("tool.result", map[string]any{
+				"tool_name": update.Name,
+				"output":    update.Output,
+			}, &name, nil), true
+		}
 		return emitter.Emit("tool.call", map[string]any{
 			"tool_name": update.Name,
 			"arguments": update.Arguments,
