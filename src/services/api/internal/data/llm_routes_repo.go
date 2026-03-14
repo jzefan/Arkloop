@@ -19,7 +19,7 @@ func (r *LlmRoutesRepository) WithTx(tx pgx.Tx) *LlmRoutesRepository {
 }
 
 const (
-	LlmRouteScopeProject  = "project"
+	LlmRouteScopeUser     = "user"
 	LlmRouteScopePlatform = "platform"
 )
 
@@ -103,11 +103,11 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	if params.CredentialID == uuid.Nil {
 		return LlmRoute{}, fmt.Errorf("credential_id must not be nil")
 	}
-	if params.Scope != LlmRouteScopeProject && params.Scope != LlmRouteScopePlatform {
-		return LlmRoute{}, fmt.Errorf("scope must be project or platform")
+	if params.Scope != LlmRouteScopeUser && params.Scope != LlmRouteScopePlatform {
+		return LlmRoute{}, fmt.Errorf("scope must be user or platform")
 	}
-	if params.Scope == LlmRouteScopeProject && params.AccountID == uuid.Nil {
-		return LlmRoute{}, fmt.Errorf("account_id must not be nil for project scope")
+	if params.Scope == LlmRouteScopeUser && params.AccountID == uuid.Nil {
+		return LlmRoute{}, fmt.Errorf("account_id must not be nil for user scope")
 	}
 	params.Model = strings.TrimSpace(params.Model)
 	if params.Model == "" {
@@ -418,11 +418,11 @@ func appendLlmRouteScopeWhere(base string, args []any, accountID uuid.UUID, scop
 	if scope == LlmRouteScopePlatform {
 		return base + ` WHERE project_id IS NULL AND account_id IS NULL`, args, nil
 	}
-	if scope != LlmRouteScopeProject {
-		return "", nil, fmt.Errorf("scope must be project or platform")
+	if scope != LlmRouteScopeUser {
+		return "", nil, fmt.Errorf("scope must be user or platform")
 	}
 	if accountID == uuid.Nil {
-		return "", nil, fmt.Errorf("account_id must not be nil for project scope")
+		return "", nil, fmt.Errorf("account_id must not be nil for user scope")
 	}
 	args = append(args, accountID)
 	return base + fmt.Sprintf(` WHERE account_id = $%d`, len(args)), args, nil
@@ -440,11 +440,11 @@ func llmRouteScopeClause(accountID uuid.UUID, scope string, index int) (string, 
 	if scope == LlmRouteScopePlatform {
 		return `project_id IS NULL AND account_id IS NULL`, nil, nil
 	}
-	if scope != LlmRouteScopeProject {
-		return "", nil, fmt.Errorf("scope must be project or platform")
+	if scope != LlmRouteScopeUser {
+		return "", nil, fmt.Errorf("scope must be user or platform")
 	}
 	if accountID == uuid.Nil {
-		return "", nil, fmt.Errorf("account_id must not be nil for project scope")
+		return "", nil, fmt.Errorf("account_id must not be nil for user scope")
 	}
 	return fmt.Sprintf(`account_id = $%d`, index), []any{accountID}, nil
 }

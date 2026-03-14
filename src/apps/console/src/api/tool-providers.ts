@@ -1,7 +1,7 @@
 import { apiFetch } from './client'
 import type { ToolCatalogGroup } from './tool-catalog'
 
-export type ToolProviderScope = 'project' | 'platform'
+export type ToolProviderScope = 'user' | 'platform'
 
 export type ConfigFieldDef = {
   key: string

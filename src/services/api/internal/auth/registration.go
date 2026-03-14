@@ -667,6 +667,13 @@ func (s *RegistrationService) SetupBootstrapAdmin(ctx context.Context, token str
 	if err != nil {
 		return BootstrapSetupResult{}, err
 	}
+	projectRepo, err := data.NewProjectRepository(tx)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if _, err := projectRepo.CreateDefaultForOwner(ctx, created.Account.ID, created.User.ID); err != nil {
+		return BootstrapSetupResult{}, err
+	}
 	if err := membershipRepo.SetRoleForUser(ctx, created.User.ID, RolePlatformAdmin); err != nil {
 		return BootstrapSetupResult{}, err
 	}

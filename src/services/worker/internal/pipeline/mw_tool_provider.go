@@ -83,14 +83,24 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 				return
 			}
 
-			if _, exists := rc.ActiveToolProviderByGroup[groupName]; !exists {
+			exec := buildProviderExecutor(cfg)
+
+			_, exists := rc.ActiveToolProviderByGroup[groupName]
+			if exists && override {
+				if nc, ok := exec.(tools.NotConfiguredChecker); ok && nc.IsNotConfigured() {
+					slog.WarnContext(ctx, "tool provider: user provider not configured, keeping platform provider",
+						"group_name", groupName, "provider_name", providerName)
+					return
+				}
+			}
+
+			if !exists {
 				rc.ActiveToolProviderByGroup[groupName] = providerName
 			} else if override {
 				rc.ActiveToolProviderByGroup[groupName] = providerName
 			} else if rc.ActiveToolProviderByGroup[groupName] != providerName {
 				slog.WarnContext(ctx, "tool provider: duplicate active provider", "group_name", groupName, "provider_name", providerName)
 			}
-			exec := buildProviderExecutor(cfg)
 			if exec != nil {
 				rc.ToolExecutors[providerName] = exec
 			}

@@ -148,22 +148,22 @@ func TestPickBestRoute_HigherPriorityWins(t *testing.T) {
 	}
 }
 
-func TestPickBestRoute_ProjectScopedTiebreaker(t *testing.T) {
+func TestPickBestRoute_AccountScopedTiebreaker(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		Credentials: []ProviderCredential{
 			{ID: "cred-a", Name: "my-cred", OwnerKind: CredentialScopePlatform, ProviderKind: ProviderKindStub, AdvancedJSON: map[string]any{}},
 		},
 		Routes: []ProviderRouteRule{
-			{ID: "platform", Model: "m1", CredentialID: "cred-a", When: map[string]any{}, Priority: 50, ProjectScoped: false},
-			{ID: "project", Model: "m1", CredentialID: "cred-a", When: map[string]any{}, Priority: 50, ProjectScoped: true},
+			{ID: "platform", Model: "m1", CredentialID: "cred-a", When: map[string]any{}, Priority: 50, AccountScoped: false},
+			{ID: "account", Model: "m1", CredentialID: "cred-a", When: map[string]any{}, Priority: 50, AccountScoped: true},
 		},
 	}
 	route, _, ok := cfg.GetHighestPriorityRouteByModel("m1", map[string]any{})
 	if !ok {
 		t.Fatal("expected route")
 	}
-	if route.ID != "project" {
-		t.Fatalf("expected project-scoped route at same priority, got %q", route.ID)
+	if route.ID != "account" {
+		t.Fatalf("expected account-scoped route at same priority, got %q", route.ID)
 	}
 }
 

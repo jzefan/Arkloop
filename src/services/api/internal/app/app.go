@@ -502,7 +502,7 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		authService, err = auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, redisClient)
+		authService, err = auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, redisClient, projectRepo)
 		if err != nil {
 			return err
 		}
@@ -533,7 +533,7 @@ func (a *Application) Run(ctx context.Context) error {
 			if redisClient != nil {
 				emailOTPRiskControl = auth.NewRedisEmailOTPRiskControl(redisClient)
 			}
-			emailOTPLoginService, err = auth.NewEmailOTPLoginService(userRepo, emailOTPTokenRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo, emailOTPRiskControl)
+			emailOTPLoginService, err = auth.NewEmailOTPLoginService(userRepo, emailOTPTokenRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo, emailOTPRiskControl, projectRepo)
 			if err != nil {
 				return err
 			}

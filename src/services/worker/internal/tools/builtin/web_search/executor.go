@@ -184,7 +184,7 @@ func (e *ToolExecutor) loadProvider(ctx context.Context, execCtx tools.Execution
 	if e.resolver == nil {
 		return nil, nil
 	}
-	scope := sharedconfig.Scope{ProjectID: execCtx.ProjectID}
+	scope := sharedconfig.Scope{}
 	m, err := e.resolver.ResolvePrefix(ctx, "web_search.", scope)
 	if err != nil {
 		return nil, err
@@ -213,7 +213,7 @@ func buildProvider(cfg *Config) (Provider, error) {
 		}
 		return NewTavilyProvider(cfg.TavilyAPIKey), nil
 	case ProviderKindSerper:
-		return nil, fmt.Errorf("web_search provider not implemented: serper")
+		return nil, nil // not yet implemented
 	default:
 		return nil, fmt.Errorf("web_search provider not implemented")
 	}
@@ -231,6 +231,10 @@ func configFromSettings(m map[string]string, forcedKind ProviderKind) (*Config, 
 			return nil, false, err
 		}
 		kind = parsed
+	}
+
+	if kind == ProviderKindSerper {
+		return nil, false, nil // not yet implemented
 	}
 
 	cfg := &Config{

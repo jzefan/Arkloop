@@ -182,7 +182,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
-	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}

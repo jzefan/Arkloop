@@ -1,14 +1,10 @@
 import { apiFetch } from './client'
 
-export type PersonaScope = 'project' | 'platform'
+export type PersonaScope = 'user' | 'platform'
 
-function withScope(path: string, scope: PersonaScope, projectId?: string): string {
+function withScope(path: string, scope: PersonaScope): string {
   const sep = path.includes('?') ? '&' : '?'
-  let url = `${path}${sep}scope=${scope}`
-  if (scope === 'project' && projectId) {
-    url += `&project_id=${encodeURIComponent(projectId)}`
-  }
-  return url
+  return `${path}${sep}scope=${scope}`
 }
 
 export type Persona = {
@@ -44,7 +40,6 @@ type RawPersona = Omit<Persona, 'scope'> & Record<string, unknown> & { scope: st
 export type CreatePersonaRequest = {
   copy_from_repo_persona_key?: string
   scope?: PersonaScope
-  project_id?: string
   persona_key: string
   version: string
   display_name: string
@@ -64,7 +59,6 @@ export type CreatePersonaRequest = {
 
 export type PatchPersonaRequest = {
   scope?: PersonaScope
-  project_id?: string
   display_name?: string
   description?: string
   prompt_md?: string
@@ -83,12 +77,12 @@ export type PatchPersonaRequest = {
 function normalizePersona(persona: RawPersona): Persona {
   return {
     ...persona,
-    scope: persona.scope === 'platform' ? 'platform' : 'project',
+    scope: persona.scope === 'platform' ? 'platform' : 'user',
   }
 }
 
-export async function listPersonas(accessToken: string, scope: PersonaScope, projectId?: string): Promise<Persona[]> {
-  const personas = await apiFetch<RawPersona[]>(withScope('/v1/personas', scope, projectId), { accessToken })
+export async function listPersonas(accessToken: string, scope: PersonaScope): Promise<Persona[]> {
+  const personas = await apiFetch<RawPersona[]>(withScope('/v1/personas', scope), { accessToken })
   return personas.map(normalizePersona)
 }
 
@@ -97,8 +91,8 @@ export async function createPersona(
   accessToken: string,
 ): Promise<Persona> {
   const scope = req.scope ?? 'platform'
-  const { is_active: _isActive, project_id: _pid, ...body } = req
-  const persona = await apiFetch<RawPersona>(withScope('/v1/personas', scope, req.project_id), {
+  const { is_active: _isActive, ...body } = req
+  const persona = await apiFetch<RawPersona>(withScope('/v1/personas', scope), {
     method: 'POST',
     body: JSON.stringify({ ...body, scope }),
     accessToken,
@@ -112,8 +106,8 @@ export async function patchPersona(
   accessToken: string,
 ): Promise<Persona> {
   const scope = req.scope ?? 'platform'
-  const { scope: _scope, project_id: _pid, ...body } = req
-  const persona = await apiFetch<RawPersona>(withScope(`/v1/personas/${id}`, scope, req.project_id), {
+  const { scope: _scope, ...body } = req
+  const persona = await apiFetch<RawPersona>(withScope(`/v1/personas/${id}`, scope), {
     method: 'PATCH',
     body: JSON.stringify(body),
     accessToken,
@@ -125,9 +119,8 @@ export async function deletePersona(
   id: string,
   scope: PersonaScope,
   accessToken: string,
-  projectId?: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(withScope(`/v1/personas/${id}`, scope, projectId), {
+  return apiFetch<{ ok: boolean }>(withScope(`/v1/personas/${id}`, scope), {
     method: 'DELETE',
     accessToken,
   })

@@ -28,6 +28,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		Env: EnvConfig{
 			MemoryBaseURL:     memoryBaseURL,
 			WebSearchProvider: "searxng",
+			WebSearchBaseURL:  "http://searxng:8080",
 			WebFetchProvider:  "basic",
 		},
 		PlatformProviders: []ProviderConfig{
@@ -114,6 +115,7 @@ func TestResolveBuiltinAddsWebToolsFromEnv(t *testing.T) {
 	resolved := ResolveBuiltin(ResolveInput{
 		Env: EnvConfig{
 			WebSearchProvider: "tavily",
+			WebSearchAPIKey:   "tvly-test-key",
 		},
 	})
 	if _, ok := resolved.ToolNameSet()["web_search"]; !ok {
@@ -121,5 +123,20 @@ func TestResolveBuiltinAddsWebToolsFromEnv(t *testing.T) {
 	}
 	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
 		t.Fatal("web_fetch should be absent without configuration")
+	}
+}
+
+func TestResolveBuiltinHidesWebToolsWhenEnvIncomplete(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		Env: EnvConfig{
+			WebSearchProvider: "tavily",
+			WebFetchProvider:  "jina",
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["web_search"]; ok {
+		t.Fatal("web_search should be absent when tavily has no API key")
+	}
+	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
+		t.Fatal("web_fetch should be absent when jina has no API key")
 	}
 }
