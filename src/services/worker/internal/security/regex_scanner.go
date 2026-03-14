@@ -46,15 +46,18 @@ func NewRegexScanner(defs []PatternDef) (*RegexScanner, error) {
 	return &RegexScanner{patterns: compiled}, nil
 }
 
-// Scan 扫描文本，返回所有匹配结果（并发安全）
+// Scan 扫描文本，返回所有匹配结果（并发安全）。
+// 先做 Unicode 预处理防止字符混淆绕过，再遍历全部 pattern 类别收集匹配。
 func (s *RegexScanner) Scan(text string) []ScanResult {
 	s.mu.RLock()
 	patterns := s.patterns
 	s.mu.RUnlock()
 
+	cleaned := sanitizeInput(text)
+
 	var results []ScanResult
 	for _, p := range patterns {
-		if m := p.re.FindString(text); m != "" {
+		for _, m := range p.re.FindAllString(cleaned, -1) {
 			results = append(results, ScanResult{
 				Matched:     true,
 				PatternID:   p.id,
