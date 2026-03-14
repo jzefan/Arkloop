@@ -354,7 +354,7 @@ modules:
     depends_on: [worker]
     capabilities:
       installable: true
-      configurable: true
+      configurable: false
       healthcheck: false
       bootstrap_supported: false
       external_admin_supported: false

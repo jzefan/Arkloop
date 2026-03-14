@@ -256,6 +256,13 @@ func (h *Handler) moduleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 未匹配的 action 类型会导致 op 保持 nil
+	if op == nil {
+		writeError(w, http.StatusBadRequest, "action.unimplemented",
+			fmt.Sprintf("action %q is not implemented for module %q", req.Action, id))
+		return
+	}
+
 	h.operations.Add(op)
 	writeJSON(w, http.StatusAccepted, actionResponse{OperationID: op.ID})
 }

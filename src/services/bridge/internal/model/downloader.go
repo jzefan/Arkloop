@@ -102,6 +102,12 @@ func (d *Downloader) Install(ctx context.Context, variantID string) (*docker.Ope
 			d.busy = false
 			d.mu.Unlock()
 		}()
+		// 进入 goroutine 后再次检查，避免并发 Install 之间的竞态
+		if d.ModelFilesExist() {
+			op.AppendLog("model files already present, skipping download")
+			op.Complete(nil)
+			return
+		}
 		err := d.download(cancelCtx, op, v)
 		op.Complete(err)
 	}()
@@ -127,9 +133,6 @@ func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Varia
 	}
 
 	// Strategy 1: Docker image pull + extract.
-	if override := os.Getenv("ARKLOOP_PROMPT_GUARD_IMAGE_" + strings.ToUpper(v.ID)); override != "" {
-		v.Image = override
-	}
 	op.AppendLog(fmt.Sprintf("trying docker pull %s ...", v.Image))
 	if err := d.tryDockerInstall(ctx, op, v); err == nil {
 		return d.verifyFiles(op, v)
@@ -233,9 +236,17 @@ func (d *Downloader) tryModelScopeInstall(ctx context.Context, op *docker.Operat
 		}
 	}
 
-	// Cleanup temp dirs.
-	_ = os.RemoveAll(tmpDir)
-	_ = os.RemoveAll(onnxDir)
+	// 清理临时目录
+	if err := os.RemoveAll(tmpDir); err != nil {
+		d.logger.Error("cleanup temp dir failed", map[string]any{
+			"path": tmpDir, "error": err.Error(),
+		})
+	}
+	if err := os.RemoveAll(onnxDir); err != nil {
+		d.logger.Error("cleanup onnx dir failed", map[string]any{
+			"path": onnxDir, "error": err.Error(),
+		})
+	}
 
 	op.AppendLog("ONNX export and copy complete")
 	return nil
