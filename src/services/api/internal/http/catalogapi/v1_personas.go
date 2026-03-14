@@ -746,26 +746,26 @@ func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID
 	}
 	normalized, err := data.NormalizePersonaScope(scope)
 	if err != nil {
-		message := "scope must be project or platform"
-		if fromBody {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
-		} else {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
-		}
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be platform", traceID, nil)
 		return "", false
 	}
-	if normalized == data.PersonaScopePlatform {
+	if normalized == data.PersonaScopeProject {
+		if write {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error",
+				"project-scoped personas are no longer supported, use platform scope", traceID, nil)
+			return "", false
+		}
+		// reads: treat as platform — keeps PermDataPersonasRead below
+		normalized = data.PersonaScopePlatform
+	}
+	if write {
 		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
 			return "", false
 		}
-		return normalized, true
-	}
-	requiredPerm := auth.PermDataPersonasRead
-	if write {
-		requiredPerm = auth.PermDataPersonasManage
-	}
-	if !httpkit.RequirePerm(actor, requiredPerm, w, traceID) {
-		return "", false
+	} else {
+		if !httpkit.RequirePerm(actor, auth.PermDataPersonasRead, w, traceID) {
+			return "", false
+		}
 	}
 	return normalized, true
 }

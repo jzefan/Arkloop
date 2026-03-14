@@ -51,7 +51,8 @@ func (e LlmRouteModelConflictError) Error() string {
 }
 
 type CreateLlmRouteParams struct {
-	ProjectID               uuid.UUID
+	AccountID           uuid.UUID
+	ProjectID           uuid.UUID
 	Scope               string
 	CredentialID        uuid.UUID
 	Model               string
@@ -68,7 +69,7 @@ type CreateLlmRouteParams struct {
 }
 
 type UpdateLlmRouteParams struct {
-	ProjectID               uuid.UUID
+	AccountID           uuid.UUID
 	Scope               string
 	RouteID             uuid.UUID
 	Model               string
@@ -105,8 +106,8 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	if params.Scope != LlmRouteScopeProject && params.Scope != LlmRouteScopePlatform {
 		return LlmRoute{}, fmt.Errorf("scope must be project or platform")
 	}
-	if params.Scope == LlmRouteScopeProject && params.ProjectID == uuid.Nil {
-		return LlmRoute{}, fmt.Errorf("project_id must not be nil for project scope")
+	if params.Scope == LlmRouteScopeProject && params.AccountID == uuid.Nil {
+		return LlmRoute{}, fmt.Errorf("account_id must not be nil for project scope")
 	}
 	params.Model = strings.TrimSpace(params.Model)
 	if params.Model == "" {
@@ -124,19 +125,23 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 		params.Multiplier = 1.0
 	}
 
-	projectIDParam := any(params.ProjectID)
-	if params.Scope == LlmRouteScopePlatform {
-		projectIDParam = nil
+	var projectIDParam any
+	if params.ProjectID != uuid.Nil {
+		projectIDParam = params.ProjectID
+	}
+	var accountIDParam any
+	if params.AccountID != uuid.Nil {
+		accountIDParam = params.AccountID
 	}
 
 	var route LlmRoute
 	var rawAdvancedJSON []byte
 	err = r.db.QueryRow(
 		ctx,
-		`INSERT INTO llm_routes (project_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+		`INSERT INTO llm_routes (account_id, project_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14)
 		 RETURNING id, project_id, credential_id, model, priority, is_default, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		projectIDParam, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON),
+		accountIDParam, projectIDParam, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON),
 		string(advancedJSONBytes), params.Multiplier, params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
 	).Scan(
 		&route.ID, &route.ProjectID, &route.CredentialID, &route.Model,
@@ -154,7 +159,7 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	return route, nil
 }
 
-func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, projectID, credentialID uuid.UUID, scope string) ([]LlmRoute, error) {
+func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, accountID, credentialID uuid.UUID, scope string) ([]LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -163,7 +168,7 @@ func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, projectID, c
 		 WHERE credential_id = $1`
 	args := []any{credentialID}
 	var err error
-	query, args, err = appendLlmRouteScopeFilter(query, args, projectID, scope)
+	query, args, err = appendLlmRouteScopeFilter(query, args, accountID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +176,7 @@ func (r *LlmRoutesRepository) ListByCredential(ctx context.Context, projectID, c
 	return r.list(ctx, query, args...)
 }
 
-func (r *LlmRoutesRepository) ListByScope(ctx context.Context, projectID uuid.UUID, scope string) ([]LlmRoute, error) {
+func (r *LlmRoutesRepository) ListByScope(ctx context.Context, accountID uuid.UUID, scope string) ([]LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -179,7 +184,7 @@ func (r *LlmRoutesRepository) ListByScope(ctx context.Context, projectID uuid.UU
 		 FROM llm_routes`
 	args := []any{}
 	var err error
-	query, args, err = appendLlmRouteScopeWhere(query, args, projectID, scope)
+	query, args, err = appendLlmRouteScopeWhere(query, args, accountID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +205,7 @@ func (r *LlmRoutesRepository) ListAllActive(ctx context.Context) ([]LlmRoute, er
 	)
 }
 
-func (r *LlmRoutesRepository) GetByID(ctx context.Context, projectID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) GetByID(ctx context.Context, accountID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -209,7 +214,7 @@ func (r *LlmRoutesRepository) GetByID(ctx context.Context, projectID, routeID uu
 		 WHERE id = $1`
 	args := []any{routeID}
 	var err error
-	query, args, err = appendLlmRouteScopeFilter(query, args, projectID, scope)
+	query, args, err = appendLlmRouteScopeFilter(query, args, accountID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +260,7 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 		 WHERE id = $1`
 	args := []any{params.RouteID, params.Model, params.Priority, params.IsDefault, params.Tags, string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
 		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead}
-	query, args, err = appendLlmRouteScopeFilter(query, args, params.ProjectID, params.Scope)
+	query, args, err = appendLlmRouteScopeFilter(query, args, params.AccountID, params.Scope)
 	if err != nil {
 		return LlmRoute{}, err
 	}
@@ -271,14 +276,14 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 	return route, nil
 }
 
-func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, projectID, credentialID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, accountID, credentialID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if credentialID == uuid.Nil || routeID == uuid.Nil {
 		return nil, fmt.Errorf("credential_id and route_id must not be nil")
 	}
-	where, args, err := llmRouteScopeClause(projectID, scope, 3)
+	where, args, err := llmRouteScopeClause(accountID, scope, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -303,14 +308,14 @@ func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, projec
 	return &route, nil
 }
 
-func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Context, projectID, credentialID uuid.UUID, scope string) (*LlmRoute, error) {
+func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Context, accountID, credentialID uuid.UUID, scope string) (*LlmRoute, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if credentialID == uuid.Nil {
 		return nil, fmt.Errorf("credential_id must not be nil")
 	}
-	where, args, err := llmRouteScopeClause(projectID, scope, 2)
+	where, args, err := llmRouteScopeClause(accountID, scope, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -341,14 +346,14 @@ func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Contex
 	return &route, nil
 }
 
-func (r *LlmRoutesRepository) DeleteByID(ctx context.Context, projectID, routeID uuid.UUID, scope string) error {
+func (r *LlmRoutesRepository) DeleteByID(ctx context.Context, accountID, routeID uuid.UUID, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	query := `DELETE FROM llm_routes WHERE id = $1`
 	args := []any{routeID}
 	var err error
-	query, args, err = appendLlmRouteScopeFilter(query, args, projectID, scope)
+	query, args, err = appendLlmRouteScopeFilter(query, args, accountID, scope)
 	if err != nil {
 		return err
 	}
@@ -356,14 +361,14 @@ func (r *LlmRoutesRepository) DeleteByID(ctx context.Context, projectID, routeID
 	return err
 }
 
-func (r *LlmRoutesRepository) DeleteByCredential(ctx context.Context, projectID, credentialID uuid.UUID, scope string) error {
+func (r *LlmRoutesRepository) DeleteByCredential(ctx context.Context, accountID, credentialID uuid.UUID, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	query := `DELETE FROM llm_routes WHERE credential_id = $1`
 	args := []any{credentialID}
 	var err error
-	query, args, err = appendLlmRouteScopeFilter(query, args, projectID, scope)
+	query, args, err = appendLlmRouteScopeFilter(query, args, accountID, scope)
 	if err != nil {
 		return err
 	}
@@ -409,39 +414,39 @@ func (r *LlmRoutesRepository) list(ctx context.Context, query string, args ...an
 	return routes, rows.Err()
 }
 
-func appendLlmRouteScopeWhere(base string, args []any, projectID uuid.UUID, scope string) (string, []any, error) {
+func appendLlmRouteScopeWhere(base string, args []any, accountID uuid.UUID, scope string) (string, []any, error) {
 	if scope == LlmRouteScopePlatform {
-		return base + ` WHERE project_id IS NULL`, args, nil
+		return base + ` WHERE project_id IS NULL AND account_id IS NULL`, args, nil
 	}
 	if scope != LlmRouteScopeProject {
 		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
-	if projectID == uuid.Nil {
-		return "", nil, fmt.Errorf("project_id must not be nil for project scope")
+	if accountID == uuid.Nil {
+		return "", nil, fmt.Errorf("account_id must not be nil for project scope")
 	}
-	args = append(args, projectID)
-	return base + fmt.Sprintf(` WHERE project_id = $%d`, len(args)), args, nil
+	args = append(args, accountID)
+	return base + fmt.Sprintf(` WHERE account_id = $%d`, len(args)), args, nil
 }
 
-func appendLlmRouteScopeFilter(base string, args []any, projectID uuid.UUID, scope string) (string, []any, error) {
-	where, extraArgs, err := llmRouteScopeClause(projectID, scope, len(args)+1)
+func appendLlmRouteScopeFilter(base string, args []any, accountID uuid.UUID, scope string) (string, []any, error) {
+	where, extraArgs, err := llmRouteScopeClause(accountID, scope, len(args)+1)
 	if err != nil {
 		return "", nil, err
 	}
 	return base + ` AND ` + where, append(args, extraArgs...), nil
 }
 
-func llmRouteScopeClause(projectID uuid.UUID, scope string, index int) (string, []any, error) {
+func llmRouteScopeClause(accountID uuid.UUID, scope string, index int) (string, []any, error) {
 	if scope == LlmRouteScopePlatform {
-		return `project_id IS NULL`, nil, nil
+		return `project_id IS NULL AND account_id IS NULL`, nil, nil
 	}
 	if scope != LlmRouteScopeProject {
 		return "", nil, fmt.Errorf("scope must be project or platform")
 	}
-	if projectID == uuid.Nil {
-		return "", nil, fmt.Errorf("project_id must not be nil for project scope")
+	if accountID == uuid.Nil {
+		return "", nil, fmt.Errorf("account_id must not be nil for project scope")
 	}
-	return fmt.Sprintf(`project_id = $%d`, index), []any{projectID}, nil
+	return fmt.Sprintf(`account_id = $%d`, index), []any{accountID}, nil
 }
 
 func normalizeRouteTags(tags []string) []string {

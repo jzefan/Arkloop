@@ -18,7 +18,7 @@ import (
 
 const (
 	errorArgsInvalid   = "tool.args_invalid"
-	errorNotConfigured = "tool.not_configured"
+	errorNotConfigured = "config.missing"
 	errorTimeout       = "tool.timeout"
 	errorSearchFailed  = "tool.search_failed"
 
@@ -108,6 +108,13 @@ func NewTavilyExecutor(resolver sharedconfig.Resolver) *ToolExecutor {
 
 func NewToolExecutorWithProvider(provider Provider) *ToolExecutor {
 	return &ToolExecutor{provider: provider, timeout: defaultTimeout}
+}
+
+func (e *ToolExecutor) IsNotConfigured() bool {
+	if e.provider != nil {
+		return false
+	}
+	return e.resolver == nil
 }
 
 func (e *ToolExecutor) Execute(

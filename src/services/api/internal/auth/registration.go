@@ -385,6 +385,15 @@ func (s *RegistrationService) Register(
 		}
 	}
 
+	// 注册时创建 Default Project
+	projectRepo, err := data.NewProjectRepository(tx)
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	if _, err := projectRepo.CreateDefaultForOwner(ctx, account.ID, user.ID); err != nil {
+		return RegisterResult{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return RegisterResult{}, err
 	}

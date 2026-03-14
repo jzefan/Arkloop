@@ -3,6 +3,7 @@ package routing
 import (
 	"strings"
 
+	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 )
 
@@ -91,9 +92,9 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 			if credential.OwnerKind == CredentialScopeUser && !byokEnabled {
 				return ProviderRouteDecision{
 					Denied: &ProviderRouteDenied{
-						ErrorClass: tools.PolicyDeniedCode,
+						ErrorClass: llm.ErrorClassRuntimePolicyDenied,
 						Code:       "policy.byok_disabled",
-						Message:    "BYOK not enabled for this project",
+						Message:    "BYOK not enabled",
 						Details: map[string]any{
 							"route_id":      route.ID,
 							"credential_id": credential.ID,
@@ -116,9 +117,9 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 	if credential.OwnerKind == CredentialScopeUser && !byokEnabled {
 		return ProviderRouteDecision{
 			Denied: &ProviderRouteDenied{
-				ErrorClass: tools.PolicyDeniedCode,
+				ErrorClass: llm.ErrorClassRuntimePolicyDenied,
 				Code:       "policy.byok_disabled",
-				Message:    "BYOK not enabled for this project",
+				Message:    "BYOK not enabled",
 				Details: map[string]any{
 					"route_id":      selectedRoute.ID,
 					"credential_id": credential.ID,

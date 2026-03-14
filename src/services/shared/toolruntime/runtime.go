@@ -17,9 +17,11 @@ type ProviderConfig struct {
 }
 
 type EnvConfig struct {
-	SandboxBaseURL   string
-	MemoryBaseURL    string
-	MemoryRootAPIKey string
+	SandboxBaseURL    string
+	MemoryBaseURL     string
+	MemoryRootAPIKey  string
+	WebSearchProvider string
+	WebFetchProvider  string
 }
 
 type ResolveInput struct {
@@ -79,9 +81,11 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 		ArtifactStoreAvailable: input.ArtifactStoreAvailable,
 		BrowserEnabled:         browserEnabled,
 		Env: EnvConfig{
-			SandboxBaseURL:   strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_BASE_URL")),
-			MemoryBaseURL:    strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL")),
-			MemoryRootAPIKey: strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY")),
+			SandboxBaseURL:    strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_BASE_URL")),
+			MemoryBaseURL:     strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL")),
+			MemoryRootAPIKey:  strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY")),
+			WebSearchProvider: strings.TrimSpace(os.Getenv("ARKLOOP_WEB_SEARCH_PROVIDER")),
+			WebFetchProvider:  strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_PROVIDER")),
 		},
 		PlatformProviders: providers,
 	})
@@ -108,14 +112,20 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		"interrupt_agent":  {},
 		"resume_agent":     {},
 		"send_input":       {},
-		"web_search":       {},
-		"web_fetch":        {},
 		"timeline_title":   {},
 		"spawn_agent":      {},
 		"summarize_thread": {},
 		"ask_user":         {},
 		"wait_agent":       {},
 	}
+
+	if input.Env.WebSearchProvider != "" || findProvider(input.PlatformProviders, "web_search") != nil {
+		available["web_search"] = struct{}{}
+	}
+	if input.Env.WebFetchProvider != "" || findProvider(input.PlatformProviders, "web_fetch") != nil {
+		available["web_fetch"] = struct{}{}
+	}
+
 	if input.HasConversationSearch {
 		available["conversation_search"] = struct{}{}
 	}
