@@ -112,9 +112,18 @@ func (e ToolExecutor) Execute(
 					return errResult("tool.token_issue_failed", fmt.Sprintf("issue session token: %s", err), started)
 				}
 
-				env["OPENCODE_API_BASE"] = defaultLLMProxyBaseURL
+				// opencode reads OPENCODE_API_KEY for its "opencode" provider
+				// and OPENAI_API_KEY / OPENAI_BASE_URL for OpenAI-based models.
+				// Override the provider API URL via config so requests hit our proxy.
 				env["OPENCODE_API_KEY"] = token
-				env["OPENCODE_MODEL"] = mapping.Model
+				env["OPENAI_API_KEY"] = token
+				env["OPENAI_BASE_URL"] = defaultLLMProxyBaseURL
+				env["OPENCODE_CONFIG_CONTENT"] = fmt.Sprintf(
+					`{"provider":{"opencode":{"api":%q}}}`,
+					defaultLLMProxyBaseURL,
+				)
+				env["OPENCODE_DISABLE_AUTOUPDATE"] = "true"
+				env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
 			}
 		}
 	}
