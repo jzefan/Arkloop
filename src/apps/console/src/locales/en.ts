@@ -1051,6 +1051,10 @@ export const en: LocaleStrings = {
       auditColRunId: 'Run ID',
       auditColPatterns: 'Patterns',
       auditColCount: 'Count',
+      layerBlocking: 'Injection Blocking',
+      layerBlockingDesc: 'Block requests when injection is detected, preventing entry to Agent.',
+      layerToolScan: 'Tool Output Scan',
+      layerToolScanDesc: 'Scan tool outputs for indirect injection, sanitize before injecting into context.',
     },
     email: {
       title: 'Email',

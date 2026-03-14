@@ -14,6 +14,8 @@ import { bridgeClient, checkBridgeAvailable } from '../../api/bridge'
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
+const KEY_BLOCKING_ENABLED = 'security.injection_scan.blocking_enabled'
+const KEY_TOOL_SCAN_ENABLED = 'security.injection_scan.tool_output_scan_enabled'
 const KEY_SEMANTIC_PROVIDER = 'security.semantic_scanner.provider'
 const KEY_SEMANTIC_API_ENDPOINT = 'security.semantic_scanner.api_endpoint'
 const KEY_SEMANTIC_API_KEY = 'security.semantic_scanner.api_key'
@@ -22,15 +24,18 @@ const AUDIT_PAGE_SIZE = 30
 
 type Layer = {
   id: string
-  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
-  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
+  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource' | 'layerBlocking' | 'layerToolScan'
+  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc' | 'layerBlockingDesc' | 'layerToolScanDesc'
   settingsKey: string
+  defaultEnabled?: boolean
 }
 
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: KEY_TRUST_SOURCE_ENABLED },
   { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: KEY_SEMANTIC_ENABLED },
+  { id: 'blocking', nameKey: 'layerBlocking', descKey: 'layerBlockingDesc', settingsKey: KEY_BLOCKING_ENABLED, defaultEnabled: false },
+  { id: 'tool-scan', nameKey: 'layerToolScan', descKey: 'layerToolScanDesc', settingsKey: KEY_TOOL_SCAN_ENABLED },
 ]
 
 type Tab = 'layers' | 'audit'
@@ -409,17 +414,21 @@ export function PromptInjectionPage() {
   const loadSettings = useCallback(async () => {
     setLoading(true)
     try {
-      const [regexResult, trustResult, semanticResult, providerResult, endpointResult] = await Promise.all([
+      const [regexResult, trustResult, semanticResult, providerResult, endpointResult, blockingResult, toolScanResult] = await Promise.all([
         getPlatformSetting(KEY_REGEX_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(KEY_TRUST_SOURCE_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(KEY_SEMANTIC_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(KEY_SEMANTIC_PROVIDER, accessToken).catch(() => ({ value: '' })),
         getPlatformSetting(KEY_SEMANTIC_API_ENDPOINT, accessToken).catch(() => ({ value: '' })),
+        getPlatformSetting(KEY_BLOCKING_ENABLED, accessToken).catch(() => ({ value: 'false' })),
+        getPlatformSetting(KEY_TOOL_SCAN_ENABLED, accessToken).catch(() => ({ value: 'true' })),
       ])
       setSettings({
         [KEY_REGEX_ENABLED]: regexResult.value === 'true',
         [KEY_TRUST_SOURCE_ENABLED]: trustResult.value === 'true',
         [KEY_SEMANTIC_ENABLED]: semanticResult.value === 'true',
+        [KEY_BLOCKING_ENABLED]: blockingResult.value === 'true',
+        [KEY_TOOL_SCAN_ENABLED]: toolScanResult.value === 'true',
       })
       setSemanticProvider(providerResult.value)
       setSemanticEndpoint(endpointResult.value)
@@ -501,7 +510,7 @@ export function PromptInjectionPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {LAYERS.map(layer => {
-                const enabled = settings[layer.settingsKey] ?? true
+                const enabled = settings[layer.settingsKey] ?? (layer.defaultEnabled !== undefined ? layer.defaultEnabled : true)
                 const isToggling = toggling === layer.settingsKey
                 const isSemantic = layer.id === 'semantic'
 

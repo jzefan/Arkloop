@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -28,6 +29,8 @@ func NewInjectionScanMiddleware(
 
 		regexEnabled := resolveEnabled(configResolver, "security.injection_scan.regex_enabled", true)
 		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", true)
+		blockingEnabled := resolveEnabled(configResolver, "security.injection_scan.blocking_enabled", false)
+		toolScanEnabled := resolveEnabled(configResolver, "security.injection_scan.tool_output_scan_enabled", true)
 
 		if !regexEnabled && !semanticEnabled {
 			return next(ctx, rc)
@@ -110,12 +113,85 @@ func NewInjectionScanMiddleware(
 				}
 			}
 			emitRunEvent(ctx, rc, eventsRepo, "security.injection.detected", eventData)
+
+			if blockingEnabled {
+				return blockRun(ctx, rc, eventsRepo, eventData)
+			}
 		} else {
 			security.ScanTotal.WithLabelValues("clean").Inc()
 			emitRunEvent(ctx, rc, eventsRepo, "security.scan.clean", nil)
 		}
 
+		// 为 agent loop 注入 tool output 扫描函数
+		if toolScanEnabled {
+			rc.ToolOutputScanFunc = buildToolOutputScanFunc(composite, regexEnabled, semanticEnabled)
+		}
+
 		return next(ctx, rc)
+	}
+}
+
+// blockRun 拦截注入请求：写入 blocked 事件 + run.failed，更新 run 状态。
+func blockRun(ctx context.Context, rc *RunContext, eventsRepo data.RunEventsRepository, detectionData map[string]any) error {
+	emitRunEvent(ctx, rc, eventsRepo, "security.injection.blocked", detectionData)
+
+	failedData := map[string]any{
+		"error_class": "security.injection_blocked",
+		"message":     "message blocked: injection detected",
+	}
+	failedEvent := rc.Emitter.Emit("run.failed", failedData, nil, StringPtr("security.injection_blocked"))
+
+	tx, err := rc.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("injection block tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := eventsRepo.AppendEvent(ctx, tx, rc.Run.ID, failedEvent.Type, failedEvent.DataJSON, failedEvent.ToolName, failedEvent.ErrorClass); err != nil {
+		return fmt.Errorf("injection block append event: %w", err)
+	}
+
+	runsRepo := data.RunsRepository{}
+	if err := runsRepo.UpdateRunTerminalStatus(ctx, tx, rc.Run.ID, data.TerminalStatusUpdate{
+		Status: "failed",
+	}); err != nil {
+		return fmt.Errorf("injection block update status: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("injection block commit: %w", err)
+	}
+
+	slog.WarnContext(ctx, "run blocked: injection detected", "run_id", rc.Run.ID)
+	return nil
+}
+
+// buildToolOutputScanFunc 构建 tool output 扫描函数，用于 agent loop 中的间接注入检测。
+func buildToolOutputScanFunc(
+	composite *security.CompositeScanner,
+	regexEnabled, semanticEnabled bool,
+) func(string, string) (string, bool) {
+	return func(toolName, text string) (string, bool) {
+		result := composite.Scan(text)
+
+		detected := false
+		if regexEnabled && len(result.RegexMatches) > 0 {
+			detected = true
+		}
+		if semanticEnabled && result.SemanticResult != nil && result.SemanticResult.IsInjection {
+			detected = true
+		}
+
+		if !detected {
+			return "", false
+		}
+
+		slog.Warn("indirect injection detected in tool output",
+			"tool_name", toolName,
+			"regex_matches", len(result.RegexMatches),
+		)
+
+		return "[content filtered: potential injection detected in tool output]", true
 	}
 }
 

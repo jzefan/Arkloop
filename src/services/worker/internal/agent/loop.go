@@ -73,6 +73,10 @@ type RunContext struct {
 	// WaitForInput 阻塞等待用户输入，供 ask_user 工具使用。
 	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
 	WaitForInput func(ctx context.Context) (string, bool)
+
+	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
+	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
+	ToolOutputScanFunc func(toolName, text string) (string, bool)
 }
 
 type Loop struct {
@@ -237,6 +241,12 @@ func (l *Loop) Run(
 
 				if call.ToolName == "web_search" {
 					webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
+				}
+
+				if runCtx.ToolOutputScanFunc != nil {
+					if err := scanToolOutput(&toolResult, runCtx.ToolOutputScanFunc, emitter, yield); err != nil {
+						return err
+					}
 				}
 
 				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
@@ -965,6 +975,35 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 		Role:    "tool",
 		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
+}
+
+// scanToolOutput 扫描 tool output 是否包含间接注入。
+// 检测到注入时用消毒后的内容替换 ResultJSON，并发出事件。
+func scanToolOutput(
+	result *llm.StreamToolResult,
+	scanFunc func(string, string) (string, bool),
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+) error {
+	if result.Error != nil || result.ResultJSON == nil {
+		return nil
+	}
+	raw, err := json.Marshal(result.ResultJSON)
+	if err != nil {
+		return nil
+	}
+	sanitized, detected := scanFunc(result.ToolName, string(raw))
+	if !detected {
+		return nil
+	}
+	result.ResultJSON = map[string]any{
+		"warning":            "indirect injection detected, content sanitized",
+		"sanitized_content":  sanitized,
+		"original_tool_name": result.ToolName,
+	}
+	return yield(emitter.Emit("security.tool_injection.detected", map[string]any{
+		"tool_name": result.ToolName,
+	}, nil, nil))
 }
 
 type toolResultDedupInfo struct {

@@ -148,4 +148,9 @@ type RunContext struct {
 
 	// -- PersonaResolutionMiddleware 写入，TitleSummarizerMiddleware 读取 --
 	TitleSummarizer *personas.TitleSummarizerConfig
+
+	// -- InjectionScanMiddleware 写入 --
+	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
+	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
+	ToolOutputScanFunc func(toolName, text string) (string, bool)
 }

@@ -80,6 +80,7 @@ func (e *SimpleExecutor) Execute(
 		LlmRetryMaxAttempts:    rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:    rc.LlmRetryBaseDelayMs,
 		WaitForInput:           rc.WaitForInput,
+		ToolOutputScanFunc:     rc.ToolOutputScanFunc,
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},

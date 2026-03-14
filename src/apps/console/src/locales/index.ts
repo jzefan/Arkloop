@@ -1105,6 +1105,10 @@ export interface LocaleStrings {
       auditColRunId: string
       auditColPatterns: string
       auditColCount: string
+      layerBlocking: string
+      layerBlockingDesc: string
+      layerToolScan: string
+      layerToolScanDesc: string
     }
     email: {
       title: string

@@ -17,6 +17,8 @@ import { bridgeClient, checkBridgeAvailable } from '../api/bridge'
 const KEY_REGEX_ENABLED = 'security.injection_scan.regex_enabled'
 const KEY_TRUST_SOURCE_ENABLED = 'security.injection_scan.trust_source_enabled'
 const KEY_SEMANTIC_ENABLED = 'security.injection_scan.semantic_enabled'
+const KEY_BLOCKING_ENABLED = 'security.injection_scan.blocking_enabled'
+const KEY_TOOL_SCAN_ENABLED = 'security.injection_scan.tool_output_scan_enabled'
 const KEY_SEMANTIC_PROVIDER = 'security.semantic_scanner.provider'
 const KEY_SEMANTIC_API_ENDPOINT = 'security.semantic_scanner.api_endpoint'
 const KEY_SEMANTIC_API_KEY = 'security.semantic_scanner.api_key'
@@ -25,15 +27,18 @@ const AUDIT_PAGE_SIZE = 30
 
 type Layer = {
   id: string
-  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource'
-  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc'
+  nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource' | 'layerBlocking' | 'layerToolScan'
+  descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc' | 'layerBlockingDesc' | 'layerToolScanDesc'
   settingKey: string
+  defaultEnabled?: boolean
 }
 
 const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingKey: KEY_REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingKey: KEY_TRUST_SOURCE_ENABLED },
   { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: KEY_SEMANTIC_ENABLED },
+  { id: 'blocking', nameKey: 'layerBlocking', descKey: 'layerBlockingDesc', settingKey: KEY_BLOCKING_ENABLED, defaultEnabled: false },
+  { id: 'tool-scan', nameKey: 'layerToolScan', descKey: 'layerToolScanDesc', settingKey: KEY_TOOL_SCAN_ENABLED },
 ]
 
 type Tab = 'layers' | 'audit'
@@ -464,7 +469,8 @@ export function SecurityPage() {
     }
   }, [accessToken, addToast, ts.toastFailed])
 
-  const isEnabled = (key: string) => values[key] === 'true'
+  const isEnabled = (key: string, defaultVal = true) =>
+    key in values ? values[key] === 'true' : defaultVal
 
   const semanticConfigured = semanticProvider !== ''
   const semanticEndpoint = values[KEY_SEMANTIC_API_ENDPOINT] ?? ''
@@ -503,7 +509,7 @@ export function SecurityPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {LAYERS.map((layer) => {
-                const enabled = isEnabled(layer.settingKey)
+                const enabled = isEnabled(layer.settingKey, layer.defaultEnabled !== undefined ? layer.defaultEnabled : true)
                 const busy = toggling === layer.settingKey
                 const isSemantic = layer.id === 'semantic'
 
