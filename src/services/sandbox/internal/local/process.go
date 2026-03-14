@@ -60,11 +60,13 @@ func (b *limitedBuffer) String() string {
 
 // process manages a local OS process with ring-buffered stdout/stderr capture.
 type process struct {
-	id     string
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *shellapi.RingBuffer
-	stderr *limitedBuffer
+	id           string
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       *shellapi.RingBuffer
+	stderr       *limitedBuffer
+	killGrace    time.Duration
+	cleanupDelay time.Duration
 
 	mu       sync.Mutex
 	exitCode *int
@@ -72,7 +74,7 @@ type process struct {
 	exitCh   chan struct{}
 }
 
-func startProcess(command []string, cwd string, env map[string]string, timeoutMs int) (*process, error) {
+func startProcess(command []string, cwd string, env map[string]string, timeoutMs int, killGraceMs int, cleanupDelayMs int) (*process, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("command must not be empty")
 	}
@@ -106,13 +108,24 @@ func startProcess(command []string, cwd string, env map[string]string, timeoutMs
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
+	kg := killGrace
+	if killGraceMs > 0 {
+		kg = time.Duration(killGraceMs) * time.Millisecond
+	}
+	cd := cleanupDelay
+	if cleanupDelayMs > 0 {
+		cd = time.Duration(cleanupDelayMs) * time.Millisecond
+	}
+
 	p := &process{
-		id:     uuid.NewString(),
-		cmd:    cmd,
-		stdin:  stdinPipe,
-		stdout: shellapi.NewRingBuffer(stdoutBufSize),
-		stderr: newLimitedBuffer(stderrBufSize),
-		exitCh: make(chan struct{}),
+		id:           uuid.NewString(),
+		cmd:          cmd,
+		stdin:        stdinPipe,
+		stdout:       shellapi.NewRingBuffer(stdoutBufSize),
+		stderr:       newLimitedBuffer(stderrBufSize),
+		killGrace:    kg,
+		cleanupDelay: cd,
+		exitCh:       make(chan struct{}),
 	}
 
 	var pumpDone sync.WaitGroup

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,15 +17,18 @@ import (
 // ---------- request / response ----------
 
 type ACPStartRequest struct {
-	Command   []string          `json:"command"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	TimeoutMs      int               `json:"timeout_ms,omitempty"`
+	KillGraceMs    int               `json:"kill_grace_ms,omitempty"`
+	CleanupDelayMs int               `json:"cleanup_delay_ms,omitempty"`
 }
 
 type ACPStartResponse struct {
-	ProcessID string `json:"process_id"`
-	Status    string `json:"status"`
+	ProcessID    string `json:"process_id"`
+	Status       string `json:"status"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type ACPWriteRequest struct {
@@ -43,17 +47,19 @@ type ACPReadRequest struct {
 }
 
 type ACPReadResponse struct {
-	Data       string `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Truncated  bool   `json:"truncated"`
-	Stderr     string `json:"stderr,omitempty"`
-	Exited     bool   `json:"exited"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Data         string `json:"data"`
+	NextCursor   uint64 `json:"next_cursor"`
+	Truncated    bool   `json:"truncated"`
+	Stderr       string `json:"stderr,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"`
+	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
 type ACPStopRequest struct {
-	ProcessID string `json:"process_id"`
-	Force     bool   `json:"force,omitempty"`
+	ProcessID     string `json:"process_id"`
+	Force         bool   `json:"force,omitempty"`
+	GracePeriodMs int    `json:"grace_period_ms,omitempty"`
 }
 
 type ACPStopResponse struct {
@@ -83,11 +89,13 @@ const (
 )
 
 type acpProcess struct {
-	id     string
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *shellapi.RingBuffer
-	stderr *limitedBuffer
+	id           string
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       *shellapi.RingBuffer
+	stderr       *limitedBuffer
+	killGrace    time.Duration
+	cleanupDelay time.Duration
 
 	mu       sync.Mutex
 	exitCode *int
@@ -131,13 +139,24 @@ func (m *ACPManager) Start(req ACPStartRequest) (*ACPStartResponse, error) {
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
+	kg := acpKillGrace
+	if req.KillGraceMs > 0 {
+		kg = time.Duration(req.KillGraceMs) * time.Millisecond
+	}
+	cd := acpCleanupDelay
+	if req.CleanupDelayMs > 0 {
+		cd = time.Duration(req.CleanupDelayMs) * time.Millisecond
+	}
+
 	p := &acpProcess{
-		id:     uuid.NewString(),
-		cmd:    cmd,
-		stdin:  stdinPipe,
-		stdout: shellapi.NewRingBuffer(acpStdoutBufSize),
-		stderr: newLimitedBuffer(acpStderrBufSize),
-		exitCh: make(chan struct{}),
+		id:           uuid.NewString(),
+		cmd:          cmd,
+		stdin:        stdinPipe,
+		stdout:       shellapi.NewRingBuffer(acpStdoutBufSize),
+		stderr:       newLimitedBuffer(acpStderrBufSize),
+		killGrace:    kg,
+		cleanupDelay: cd,
+		exitCh:       make(chan struct{}),
 	}
 
 	go p.pumpOutput(stdoutPipe, true)
@@ -154,7 +173,7 @@ func (m *ACPManager) Start(req ACPStartRequest) (*ACPStartResponse, error) {
 
 	go m.scheduleCleanup(p)
 
-	return &ACPStartResponse{ProcessID: p.id, Status: "running"}, nil
+	return &ACPStartResponse{ProcessID: p.id, Status: "running", AgentVersion: "guest-agent/1.0"}, nil
 }
 
 // ---------- Write ----------
@@ -194,13 +213,19 @@ func (m *ACPManager) Read(req ACPReadRequest) (*ACPReadResponse, error) {
 	}
 	p.mu.Unlock()
 
+	errSummary := ""
+	if stderrSnap != "" {
+		errSummary = extractErrorSummary(stderrSnap, 512)
+	}
+
 	return &ACPReadResponse{
-		Data:       string(data),
-		NextCursor: next,
-		Truncated:  truncated,
-		Stderr:     stderrSnap,
-		Exited:     exited,
-		ExitCode:   code,
+		Data:         string(data),
+		NextCursor:   next,
+		Truncated:    truncated,
+		Stderr:       stderrSnap,
+		ErrorSummary: errSummary,
+		Exited:       exited,
+		ExitCode:     code,
 	}, nil
 }
 
@@ -223,11 +248,15 @@ func (m *ACPManager) Stop(req ACPStopRequest) (*ACPStopResponse, error) {
 	if req.Force {
 		_ = p.cmd.Process.Kill()
 	} else {
+		grace := p.killGrace
+		if req.GracePeriodMs > 0 {
+			grace = time.Duration(req.GracePeriodMs) * time.Millisecond
+		}
 		_ = p.cmd.Process.Signal(syscall.SIGINT)
 		go func() {
 			select {
 			case <-p.exitCh:
-			case <-time.After(acpKillGrace):
+			case <-time.After(grace):
 				_ = p.cmd.Process.Kill()
 			}
 		}()
@@ -288,7 +317,7 @@ func (m *ACPManager) remove(id string) {
 // 进程退出后延迟清理，避免客户端来不及读取最终输出
 func (m *ACPManager) scheduleCleanup(p *acpProcess) {
 	<-p.exitCh
-	time.Sleep(acpCleanupDelay)
+	time.Sleep(p.cleanupDelay)
 	m.remove(p.id)
 }
 
@@ -338,4 +367,35 @@ func (p *acpProcess) enforceTimeout(d time.Duration) {
 	case <-time.After(d):
 		_ = p.cmd.Process.Kill()
 	}
+}
+
+// extractErrorSummary extracts the last meaningful error line from stderr.
+func extractErrorSummary(stderr string, maxLen int) string {
+	if stderr == "" {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	// scan from the end for lines containing error indicators
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "panic") ||
+			strings.Contains(lower, "fatal") || strings.Contains(lower, "fail") {
+			if len(line) > maxLen {
+				return line[:maxLen]
+			}
+			return line
+		}
+	}
+	// no error keyword found, return last non-empty line
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			if len(line) > maxLen {
+				return line[:maxLen]
+			}
+			return line
+		}
+	}
+	return ""
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,15 +35,18 @@ type agentResponse struct {
 }
 
 type acpStartPayload struct {
-	Command   []string          `json:"command"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	TimeoutMs int               `json:"timeout_ms,omitempty"`
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	TimeoutMs      int               `json:"timeout_ms,omitempty"`
+	KillGraceMs    int               `json:"kill_grace_ms,omitempty"`
+	CleanupDelayMs int               `json:"cleanup_delay_ms,omitempty"`
 }
 
 type acpStartResult struct {
-	ProcessID string `json:"process_id"`
-	Status    string `json:"status"`
+	ProcessID    string `json:"process_id"`
+	Status       string `json:"status"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type acpWritePayload struct {
@@ -61,17 +65,19 @@ type acpReadPayload struct {
 }
 
 type acpReadResult struct {
-	Data       string `json:"data"`
-	NextCursor uint64 `json:"next_cursor"`
-	Truncated  bool   `json:"truncated"`
-	Stderr     string `json:"stderr,omitempty"`
-	Exited     bool   `json:"exited"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	Data         string `json:"data"`
+	NextCursor   uint64 `json:"next_cursor"`
+	Truncated    bool   `json:"truncated"`
+	Stderr       string `json:"stderr,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"`
+	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
 }
 
 type acpStopPayload struct {
-	ProcessID string `json:"process_id"`
-	Force     bool   `json:"force,omitempty"`
+	ProcessID     string `json:"process_id"`
+	Force         bool   `json:"force,omitempty"`
+	GracePeriodMs int    `json:"grace_period_ms,omitempty"`
 }
 
 type acpStopResult struct {
@@ -197,7 +203,7 @@ func (a *Agent) handleStart(req agentRequest) agentResponse {
 	if req.ACPStart == nil {
 		return agentResponse{Action: req.Action, Error: "acp_start payload is required"}
 	}
-	p, err := startProcess(req.ACPStart.Command, req.ACPStart.Cwd, req.ACPStart.Env, req.ACPStart.TimeoutMs)
+	p, err := startProcess(req.ACPStart.Command, req.ACPStart.Cwd, req.ACPStart.Env, req.ACPStart.TimeoutMs, req.ACPStart.KillGraceMs, req.ACPStart.CleanupDelayMs)
 	if err != nil {
 		return agentResponse{Action: req.Action, Error: err.Error()}
 	}
@@ -210,7 +216,7 @@ func (a *Agent) handleStart(req agentRequest) agentResponse {
 
 	return agentResponse{
 		Action:   req.Action,
-		ACPStart: &acpStartResult{ProcessID: p.id, Status: "running"},
+		ACPStart: &acpStartResult{ProcessID: p.id, Status: "running", AgentVersion: "local-sandbox/1.0"},
 	}
 }
 
@@ -256,15 +262,21 @@ func (a *Agent) handleRead(req agentRequest) agentResponse {
 	}
 	p.mu.Unlock()
 
+	errSummary := ""
+	if stderrSnap != "" {
+		errSummary = extractErrorSummary(stderrSnap, 512)
+	}
+
 	return agentResponse{
 		Action: req.Action,
 		ACPRead: &acpReadResult{
-			Data:       string(data),
-			NextCursor: next,
-			Truncated:  truncated,
-			Stderr:     stderrSnap,
-			Exited:     exited,
-			ExitCode:   code,
+			Data:         string(data),
+			NextCursor:   next,
+			Truncated:    truncated,
+			Stderr:       stderrSnap,
+			ErrorSummary: errSummary,
+			Exited:       exited,
+			ExitCode:     code,
 		},
 	}
 }
@@ -293,11 +305,15 @@ func (a *Agent) handleStop(req agentRequest) agentResponse {
 	if req.ACPStop.Force {
 		_ = p.cmd.Process.Kill()
 	} else {
+		grace := p.killGrace
+		if req.ACPStop.GracePeriodMs > 0 {
+			grace = time.Duration(req.ACPStop.GracePeriodMs) * time.Millisecond
+		}
 		_ = p.cmd.Process.Signal(os.Interrupt)
 		go func() {
 			select {
 			case <-p.exitCh:
-			case <-time.After(killGrace):
+			case <-time.After(grace):
 				_ = p.cmd.Process.Kill()
 			}
 		}()
@@ -367,6 +383,37 @@ func (a *Agent) remove(id string) {
 
 func (a *Agent) scheduleCleanup(p *process) {
 	<-p.exitCh
-	time.Sleep(cleanupDelay)
+	time.Sleep(p.cleanupDelay)
 	a.remove(p.id)
+}
+
+// extractErrorSummary extracts the last meaningful error line from stderr.
+func extractErrorSummary(stderr string, maxLen int) string {
+	if stderr == "" {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	// scan from the end for lines containing error indicators
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "panic") ||
+			strings.Contains(lower, "fatal") || strings.Contains(lower, "fail") {
+			if len(line) > maxLen {
+				return line[:maxLen]
+			}
+			return line
+		}
+	}
+	// no error keyword found, return last non-empty line
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			if len(line) > maxLen {
+				return line[:maxLen]
+			}
+			return line
+		}
+	}
+	return ""
 }

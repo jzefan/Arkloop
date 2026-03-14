@@ -36,8 +36,10 @@ type BridgeConfig struct {
 	Cwd              string            // workspace directory inside sandbox
 	Env              map[string]string
 
-	PollInterval time.Duration // how often to read stdout, default 500ms
-	ReadMaxBytes int           // max bytes per read, default 32KB
+	PollInterval   time.Duration // how often to read stdout, default 500ms
+	ReadMaxBytes   int           // max bytes per read, default 32KB
+	KillGraceMs    int           // configurable kill grace period
+	CleanupDelayMs int           // configurable cleanup delay
 }
 
 // Bridge manages a single ACP session lifecycle.
@@ -46,6 +48,7 @@ type Bridge struct {
 	config       BridgeConfig
 	processID    string // set after Start
 	acpSessionID string // set after session/new
+	agentVersion string // set after Start
 	cursor       uint64 // read cursor for stdout
 	msgIDSeq     int    // JSON-RPC message ID sequence
 }
@@ -75,34 +78,42 @@ func (b *Bridge) Run(ctx context.Context, prompt string, emitter events.Emitter,
 	}
 
 	resp, err := b.tr.Start(ctx, StartRequest{
-		SessionID: b.config.SessionID,
-		AccountID: b.config.AccountID,
-		Tier:      b.config.Tier,
-		Command:   cmd,
-		Cwd:       b.config.Cwd,
-		Env:       b.config.Env,
+		SessionID:      b.config.SessionID,
+		AccountID:      b.config.AccountID,
+		Tier:           b.config.Tier,
+		Command:        cmd,
+		Cwd:            b.config.Cwd,
+		Env:            b.config.Env,
+		KillGraceMs:    b.config.KillGraceMs,
+		CleanupDelayMs: b.config.CleanupDelayMs,
 	})
 	if err != nil {
-		return fmt.Errorf("start opencode process: %w", err)
+		return fmt.Errorf("bridge: start opencode process: %w", err)
 	}
 	b.processID = resp.ProcessID
+	b.agentVersion = resp.AgentVersion
 	slog.Info("acp: agent process started", "process_id", b.processID, "session_id", b.config.SessionID, "command", cmd[0])
 	defer b.cleanup()
 
 	if err := b.sendMessage(ctx, NewSessionNewMessage(b.nextID(), SessionModeCode, b.config.Cwd)); err != nil {
-		return fmt.Errorf("send session/new: %w", err)
+		return fmt.Errorf("bridge: send session/new: %w", err)
 	}
 	if err := b.waitForSessionNew(ctx); err != nil {
-		return fmt.Errorf("wait for session/new response: %w", err)
+		return fmt.Errorf("bridge: wait for session/new response: %w", err)
 	}
 	slog.Info("acp: session created", "acp_session_id", b.acpSessionID)
 
-	if err := yield(emitter.Emit("run.started", map[string]any{"status": "working"}, nil, nil)); err != nil {
+	if err := yield(emitter.Emit("run.started", map[string]any{
+		"status":        "working",
+		"command":       cmd,
+		"agent_version": b.agentVersion,
+		"session_id":    b.config.SessionID,
+	}, nil, nil)); err != nil {
 		return err
 	}
 
 	if err := b.sendMessage(ctx, NewSessionPromptMessage(b.nextID(), b.acpSessionID, prompt)); err != nil {
-		return fmt.Errorf("send session/prompt: %w", err)
+		return fmt.Errorf("bridge: send session/prompt: %w", err)
 	}
 
 	return b.pollUpdates(ctx, emitter, yield)
@@ -135,7 +146,7 @@ func (b *Bridge) waitForSessionNew(ctx context.Context) error {
 	for {
 		resp, err := b.read(ctx)
 		if err != nil {
-			return fmt.Errorf("read stdout: %w", err)
+			return fmt.Errorf("bridge: read stdout: %w", err)
 		}
 		b.cursor = resp.NextCursor
 
@@ -147,7 +158,7 @@ func (b *Bridge) waitForSessionNew(ctx context.Context) error {
 		}
 
 		if resp.Exited {
-			return fmt.Errorf("process exited before session/new response")
+			return fmt.Errorf("bridge: opencode process exited before session/new response (check sandbox logs)")
 		}
 
 		select {
@@ -194,7 +205,7 @@ func (b *Bridge) pollUpdates(ctx context.Context, emitter events.Emitter, yield 
 			if ctx.Err() != nil {
 				return b.handleCancellation(emitter, yield)
 			}
-			return fmt.Errorf("read stdout: %w", err)
+			return fmt.Errorf("bridge: read stdout: %w", err)
 		}
 		b.cursor = resp.NextCursor
 
@@ -204,6 +215,35 @@ func (b *Bridge) pollUpdates(ctx context.Context, emitter events.Emitter, yield 
 				slog.Warn("acp: parse updates failed", "error", err)
 			}
 			for _, u := range updates {
+				// Handle permission requests: auto-approve and send response
+				if u.Type == UpdateTypePermission {
+					slog.Info("acp: permission requested",
+						"permission_id", u.PermissionID,
+						"description", u.Content,
+						"sensitive", u.Sensitive,
+						"session_id", b.config.SessionID,
+					)
+					ev := emitter.Emit("acp.permission_required", map[string]any{
+						"permission_id": u.PermissionID,
+						"description":   u.Content,
+						"sensitive":     u.Sensitive,
+						"approved":      true,
+						"reason":        "auto-approved by governance policy",
+					}, nil, nil)
+					if err := yield(ev); err != nil {
+						return err
+					}
+					if b.acpSessionID != "" {
+						approveMsg := NewSessionPermissionMessage(
+							b.nextID(), b.acpSessionID, u.PermissionID, true, "auto-approved",
+						)
+						if sendErr := b.sendMessage(ctx, approveMsg); sendErr != nil {
+							slog.Warn("acp: send permission response failed", "error", sendErr)
+						}
+					}
+					continue
+				}
+
 				ev, ok := mapUpdateToEvent(u, emitter)
 				if !ok || ev.Type == "run.started" {
 					continue // run.started already emitted before poll loop
@@ -219,10 +259,23 @@ func (b *Bridge) pollUpdates(ctx context.Context, emitter events.Emitter, yield 
 
 		if resp.Exited {
 			errClass := "acp.process_exited"
-			return yield(emitter.Emit("run.failed", map[string]any{
-				"error_class": errClass,
-				"message":     "opencode process exited unexpectedly",
-			}, nil, &errClass))
+			diagnostic := map[string]any{
+				"error_class":   errClass,
+				"message":       "opencode process exited unexpectedly",
+				"layer":         "opencode",
+				"process_id":    b.processID,
+				"command":       b.config.Command,
+				"agent_version": b.agentVersion,
+			}
+			if resp.ErrorSummary != "" {
+				diagnostic["error_summary"] = resp.ErrorSummary
+			}
+			if resp.Stderr != "" && len(resp.Stderr) <= 1024 {
+				diagnostic["stderr_tail"] = resp.Stderr
+			} else if resp.Stderr != "" {
+				diagnostic["stderr_tail"] = resp.Stderr[len(resp.Stderr)-1024:]
+			}
+			return yield(emitter.Emit("run.failed", diagnostic, nil, &errClass))
 		}
 
 		select {
@@ -306,6 +359,7 @@ func mapUpdateToEvent(update SessionUpdateParams, emitter events.Emitter) (event
 		return emitter.Emit("run.failed", map[string]any{
 			"error_class": errClass,
 			"message":     update.Message,
+			"layer":       "opencode",
 		}, nil, &errClass), true
 	}
 

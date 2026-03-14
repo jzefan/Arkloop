@@ -20,9 +20,11 @@ const (
 )
 
 type managedACPSession struct {
-	compute   *session.Session
-	accountID string
-	processID string
+	compute        *session.Session
+	accountID      string
+	processID      string
+	killGraceMs    int
+	cleanupDelayMs int
 }
 
 type Manager struct {
@@ -63,10 +65,12 @@ func (m *Manager) StartACPAgent(ctx context.Context, req StartACPAgentRequest) (
 	result, err := m.invokeACPAction(ctx, sn, agentRequest{
 		Action: "acp_start",
 		ACPStart: &acpStartPayload{
-			Command:   req.Command,
-			Cwd:       req.Cwd,
-			Env:       req.Env,
-			TimeoutMs: req.TimeoutMs,
+			Command:        req.Command,
+			Cwd:            req.Cwd,
+			Env:            req.Env,
+			TimeoutMs:      req.TimeoutMs,
+			KillGraceMs:    req.KillGraceMs,
+			CleanupDelayMs: req.CleanupDelayMs,
 		},
 	})
 	if err != nil {
@@ -78,16 +82,19 @@ func (m *Manager) StartACPAgent(ctx context.Context, req StartACPAgentRequest) (
 
 	m.mu.Lock()
 	m.sessions[sid] = &managedACPSession{
-		compute:   sn,
-		accountID: req.AccountID,
-		processID: result.ACPStart.ProcessID,
+		compute:        sn,
+		accountID:      req.AccountID,
+		processID:      result.ACPStart.ProcessID,
+		killGraceMs:    req.KillGraceMs,
+		cleanupDelayMs: req.CleanupDelayMs,
 	}
 	m.mu.Unlock()
 
 	return &StartACPAgentResponse{
-		SessionID: sid,
-		ProcessID: result.ACPStart.ProcessID,
-		Status:    result.ACPStart.Status,
+		SessionID:    sid,
+		ProcessID:    result.ACPStart.ProcessID,
+		Status:       result.ACPStart.Status,
+		AgentVersion: result.ACPStart.AgentVersion,
 	}, nil
 }
 
@@ -137,12 +144,13 @@ func (m *Manager) ReadACP(ctx context.Context, req ReadACPRequest) (*ReadACPResp
 
 	r := result.ACPRead
 	return &ReadACPResponse{
-		Data:       r.Data,
-		NextCursor: r.NextCursor,
-		Truncated:  r.Truncated,
-		Stderr:     r.Stderr,
-		Exited:     r.Exited,
-		ExitCode:   r.ExitCode,
+		Data:         r.Data,
+		NextCursor:   r.NextCursor,
+		Truncated:    r.Truncated,
+		Stderr:       r.Stderr,
+		ErrorSummary: r.ErrorSummary,
+		Exited:       r.Exited,
+		ExitCode:     r.ExitCode,
 	}, nil
 }
 
@@ -155,8 +163,9 @@ func (m *Manager) StopACPAgent(ctx context.Context, req StopACPAgentRequest) (*S
 	result, err := m.invokeACPAction(ctx, entry.compute, agentRequest{
 		Action: "acp_stop",
 		ACPStop: &acpStopPayload{
-			ProcessID: req.ProcessID,
-			Force:     req.Force,
+			ProcessID:     req.ProcessID,
+			Force:         req.Force,
+			GracePeriodMs: req.GracePeriodMs,
 		},
 	})
 	if err != nil {
