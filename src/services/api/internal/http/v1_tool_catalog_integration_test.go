@@ -74,7 +74,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
-	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
-	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	orgRepo, _ := data.NewAccountRepository(pool)
 	passwordHasher, _ := auth.NewBcryptPasswordHasher(0)
 	tokenService, _ := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
-	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 
 	mcpServer := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		var body map[string]any

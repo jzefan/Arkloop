@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type EmailOTPLoginService struct {
 	riskControl      EmailOTPRiskControl
 	settingsRepo     *data.PlatformSettingsRepository
 	envBaseURL       string
+	projectRepo      *data.ProjectRepository
 }
 
 func NewEmailOTPLoginService(
@@ -44,6 +46,7 @@ func NewEmailOTPLoginService(
 	refreshTokenRepo *data.RefreshTokenRepository,
 	membershipRepo *data.AccountMembershipRepository,
 	riskControl EmailOTPRiskControl,
+	projectRepo *data.ProjectRepository,
 ) (*EmailOTPLoginService, error) {
 	if userRepo == nil {
 		return nil, errors.New("userRepo must not be nil")
@@ -71,6 +74,7 @@ func NewEmailOTPLoginService(
 		refreshTokenRepo: refreshTokenRepo,
 		membershipRepo:   membershipRepo,
 		riskControl:      riskControl,
+		projectRepo:      projectRepo,
 	}, nil
 }
 
@@ -224,6 +228,12 @@ func (s *EmailOTPLoginService) issueTokenPair(ctx context.Context, userID uuid.U
 	if membership, err := s.membershipRepo.GetDefaultForUser(ctx, userID); err == nil && membership != nil {
 		accountID = membership.AccountID
 		accountRole = membership.Role
+	}
+
+	if accountID != uuid.Nil && s.projectRepo != nil {
+		if _, err := s.projectRepo.GetOrCreateDefaultByOwner(ctx, accountID, userID); err != nil {
+			slog.WarnContext(ctx, "auth: failed to self-heal default project", "error", err)
+		}
 	}
 
 	accessToken, err := s.tokenService.Issue(userID, accountID, accountRole, now)

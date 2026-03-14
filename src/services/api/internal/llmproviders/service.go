@@ -353,8 +353,12 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 	defer tx.Rollback(ctx)
 
 	txRoutes := s.routes.WithTx(tx)
+	routeAccountID := accountID
+	if scope == "platform" {
+		routeAccountID = uuid.Nil
+	}
 	created, err := txRoutes.Create(ctx, data.CreateLlmRouteParams{
-		AccountID:           accountID,
+		AccountID:           routeAccountID,
 		ProjectID:           uuid.Nil,
 		Scope:               scope,
 		CredentialID:        providerID,

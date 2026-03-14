@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -67,6 +68,7 @@ type Service struct {
 	refreshTokenRepo *data.RefreshTokenRepository
 	flagService      *featureflag.Service
 	redisClient      *redis.Client
+	projectRepo      *data.ProjectRepository
 }
 
 func NewService(
@@ -77,6 +79,7 @@ func NewService(
 	tokenService *JwtAccessTokenService,
 	refreshTokenRepo *data.RefreshTokenRepository,
 	redisClient *redis.Client,
+	projectRepo *data.ProjectRepository,
 ) (*Service, error) {
 	if userRepo == nil {
 		return nil, errors.New("userRepo must not be nil")
@@ -104,6 +107,7 @@ func NewService(
 		tokenService:     tokenService,
 		refreshTokenRepo: refreshTokenRepo,
 		redisClient:      redisClient,
+		projectRepo:      projectRepo,
 	}, nil
 }
 
@@ -214,6 +218,12 @@ func (s *Service) IssueRefreshTokenOnly(ctx context.Context, userID uuid.UUID) (
 func (s *Service) issueTokenPair(ctx context.Context, userID uuid.UUID) (IssuedTokenPair, error) {
 	now := time.Now().UTC()
 	accountID, accountRole := s.resolveDefaultAccount(ctx, userID)
+
+	if accountID != uuid.Nil && s.projectRepo != nil {
+		if _, err := s.projectRepo.GetOrCreateDefaultByOwner(ctx, accountID, userID); err != nil {
+			slog.WarnContext(ctx, "auth: failed to self-heal default project", "error", err)
+		}
+	}
 
 	accessToken, err := s.tokenService.Issue(userID, accountID, accountRole, now)
 	if err != nil {

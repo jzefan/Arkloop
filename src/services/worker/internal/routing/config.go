@@ -84,7 +84,7 @@ type ProviderRouteRule struct {
 	CostPer1kCacheWrite *float64
 	CostPer1kCacheRead  *float64
 	Priority            int
-	ProjectScoped       bool
+	AccountScoped       bool
 }
 
 func (r ProviderRouteRule) Matches(input map[string]any) bool {
@@ -103,6 +103,28 @@ type ProviderRoutingConfig struct {
 	DefaultRouteID string
 	Credentials    []ProviderCredential
 	Routes         []ProviderRouteRule
+}
+
+// PlatformOnly returns a copy with only platform-scoped credentials and non-AccountScoped routes.
+func (c ProviderRoutingConfig) PlatformOnly() ProviderRoutingConfig {
+	out := ProviderRoutingConfig{}
+	for _, cred := range c.Credentials {
+		if cred.OwnerKind == CredentialScopePlatform {
+			out.Credentials = append(out.Credentials, cred)
+		}
+	}
+	for _, r := range c.Routes {
+		if !r.AccountScoped {
+			out.Routes = append(out.Routes, r)
+		}
+	}
+	for _, r := range out.Routes {
+		if r.ID == c.DefaultRouteID {
+			out.DefaultRouteID = r.ID
+			break
+		}
+	}
+	return out
 }
 
 func DefaultRoutingConfig() ProviderRoutingConfig {
@@ -426,8 +448,8 @@ func (c ProviderRoutingConfig) pickBestRoute(match func(ProviderRouteRule) bool,
 		if candidates[i].Priority != candidates[j].Priority {
 			return candidates[i].Priority > candidates[j].Priority
 		}
-		if candidates[i].ProjectScoped != candidates[j].ProjectScoped {
-			return candidates[i].ProjectScoped
+		if candidates[i].AccountScoped != candidates[j].AccountScoped {
+			return candidates[i].AccountScoped
 		}
 		// prefer When-specific over catch-all at same priority
 		return len(candidates[i].When) > len(candidates[j].When)
@@ -496,10 +518,9 @@ func parseOwnerKind(value string) (CredentialScope, error) {
 }
 
 // LoadRoutingConfigFromDB loads routing config from DB.
-// projectID nil: only platform routes; non-nil: platform + project routes (project takes precedence).
-// accountID is used to filter project routes by account, preventing cross-account leakage.
+// accountID nil: only platform routes; non-nil: platform + account routes (account takes precedence).
 // If no routes found (len(Routes)==0), caller should fall back to env config.
-func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID *uuid.UUID, accountID *uuid.UUID) (ProviderRoutingConfig, error) {
+func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID *uuid.UUID) (ProviderRoutingConfig, error) {
 	if pool == nil {
 		return ProviderRoutingConfig{}, fmt.Errorf("pool must not be nil")
 	}
@@ -507,17 +528,16 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 		ctx = context.Background()
 	}
 
-	// 一次 JOIN 拿到所有需要的字段，包含 secrets 的加密值
 	var (
 		rows pgx.Rows
 		err  error
 	)
-	if projectID == nil {
+	if accountID == nil {
 		rows, err = pool.Query(ctx, `
 		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
 		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
-		       r.priority, r.project_id,
+		       r.priority, r.account_id,
 		       c.id, c.owner_kind, c.name, c.provider, c.base_url, c.openai_api_mode, c.advanced_json,
 		       s.encrypted_value, s.key_version
 		FROM llm_routes r
@@ -536,24 +556,21 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
 		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
-		       r.priority, r.project_id,
+		       r.priority, r.account_id,
 		       c.id, c.owner_kind, c.name, c.provider, c.base_url, c.openai_api_mode, c.advanced_json,
 		       s.encrypted_value, s.key_version
 		FROM llm_routes r
 		JOIN llm_credentials c ON c.id = r.credential_id
 		LEFT JOIN secrets s ON s.id = c.secret_id
 		WHERE c.revoked_at IS NULL
-		  AND (
-			(r.project_id IS NULL AND r.account_id IS NULL)
-			OR (r.project_id IS NULL AND r.account_id = $2)
-			OR (r.project_id = $1 AND r.account_id = $2)
-		  )
-		ORDER BY CASE WHEN r.project_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+		  AND r.project_id IS NULL
+		  AND (r.account_id IS NULL OR r.account_id = $1)
+		ORDER BY CASE WHEN r.account_id IS NOT NULL THEN 0 ELSE 1 END ASC,
 		         r.is_default DESC,
 		         r.priority DESC,
 		         r.created_at ASC,
 		         r.id ASC
-	`, *projectID, accountID)
+	`, *accountID)
 	}
 	if err != nil {
 		return ProviderRoutingConfig{}, fmt.Errorf("routing: db query: %w", err)
@@ -573,7 +590,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 			costPer1kCacheWrite *float64
 			costPer1kCacheRead  *float64
 			priority            int
-			projectID           *uuid.UUID
+			accountID           *uuid.UUID
 			credID              uuid.UUID
 			ownerKind           string
 			credName            string
@@ -592,7 +609,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 			&rd.routeID, &rd.credentialID, &rd.model, &rd.whenJSON, &rd.isDefault,
 			&rd.routeAdvancedJSON, &rd.multiplier, &rd.costPer1kInput, &rd.costPer1kOutput,
 			&rd.costPer1kCacheWrite, &rd.costPer1kCacheRead,
-			&rd.priority, &rd.projectID,
+			&rd.priority, &rd.accountID,
 			&rd.credID, &rd.ownerKind, &rd.credName, &rd.provider, &rd.baseURL, &rd.openaiAPIMode, &rd.advancedJSON,
 			&rd.encryptedValue, &rd.keyVersion,
 		); err != nil {
@@ -724,7 +741,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 			CostPer1kCacheWrite: rd.costPer1kCacheWrite,
 			CostPer1kCacheRead:  rd.costPer1kCacheRead,
 			Priority:            rd.priority,
-			ProjectScoped:       rd.projectID != nil,
+			AccountScoped:       rd.accountID != nil,
 		}
 		routes = append(routes, route)
 	}
@@ -733,7 +750,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, projectID 
 		return ProviderRoutingConfig{}, nil
 	}
 
-	// platform 默认路由优先于 project-scoped BYOK 路由
+	// platform 默认路由优先于 account-scoped BYOK 路由
 	if platformDefaultRouteID != "" {
 		defaultRouteID = platformDefaultRouteID
 	}

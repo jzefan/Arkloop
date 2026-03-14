@@ -62,7 +62,7 @@ func TestRBACPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("thread repo: %v", err)
 	}
-	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("auth service: %v", err)
 	}

@@ -2,6 +2,7 @@ package accountapi
 
 import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -194,6 +195,16 @@ func listProjects(
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
+	}
+
+	// 自愈: 旧账号可能缺少默认项目
+	if len(projects) == 0 {
+		dp, err := projectRepo.GetOrCreateDefaultByOwner(r.Context(), actor.AccountID, actor.UserID)
+		if err != nil {
+			slog.WarnContext(r.Context(), "projects: failed to self-heal default project", "error", err)
+		} else {
+			projects = []data.Project{dp}
+		}
 	}
 
 	resp := make([]projectResponse, 0, len(projects))

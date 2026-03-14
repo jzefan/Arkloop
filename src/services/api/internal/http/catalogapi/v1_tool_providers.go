@@ -196,9 +196,12 @@ func resolveToolProviderScope(
 	if scope == "" {
 		scope = "platform"
 	}
-	if scope != "project" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
+	if scope != "user" && scope != "project" && scope != "platform" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be user or platform", traceID, nil)
 		return "", nil, false
+	}
+	if scope == "project" {
+		scope = "user"
 	}
 	if scope == "platform" {
 		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {

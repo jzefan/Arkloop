@@ -62,7 +62,7 @@ func (r *ProviderRouter) Config() ProviderRoutingConfig {
 	return r.config
 }
 
-func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) ProviderRouteDecision {
+func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool, platformOnly bool) ProviderRouteDecision {
 	requestedRoute, exists := inputJSON["route_id"]
 	if exists && requestedRoute != nil {
 		routeText, ok := requestedRoute.(string)
@@ -108,7 +108,7 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 		}
 	}
 
-	selectedRoute := r.pickFirstMatchingRoute(inputJSON)
+	selectedRoute := r.pickFirstMatchingRoute(inputJSON, platformOnly)
 	if selectedRoute.ID == "" {
 		// DB 配置无全局默认，未匹配任何路由
 		return ProviderRouteDecision{Selected: nil}
@@ -132,9 +132,12 @@ func (r *ProviderRouter) Decide(inputJSON map[string]any, byokEnabled bool) Prov
 	}
 }
 
-func (r *ProviderRouter) pickFirstMatchingRoute(inputJSON map[string]any) ProviderRouteRule {
+func (r *ProviderRouter) pickFirstMatchingRoute(inputJSON map[string]any, platformOnly bool) ProviderRouteRule {
 	for _, route := range r.config.Routes {
 		if route.ID == r.config.DefaultRouteID {
+			continue
+		}
+		if platformOnly && route.AccountScoped {
 			continue
 		}
 		// 空 when 的路由只能通过 route_id 显式选择，不参与自动匹配
@@ -147,10 +150,15 @@ func (r *ProviderRouter) pickFirstMatchingRoute(inputJSON map[string]any) Provid
 	}
 	if strings.TrimSpace(r.config.DefaultRouteID) != "" {
 		route, _ := r.config.GetRoute(r.config.DefaultRouteID)
-		return route
+		if !(platformOnly && route.AccountScoped) {
+			return route
+		}
 	}
-	if len(r.config.Routes) > 0 {
-		return r.config.Routes[0]
+	for _, route := range r.config.Routes {
+		if platformOnly && route.AccountScoped {
+			continue
+		}
+		return route
 	}
 	return ProviderRouteRule{}
 }

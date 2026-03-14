@@ -21,7 +21,11 @@ type EnvConfig struct {
 	MemoryBaseURL     string
 	MemoryRootAPIKey  string
 	WebSearchProvider string
+	WebSearchBaseURL  string
+	WebSearchAPIKey   string
 	WebFetchProvider  string
+	WebFetchBaseURL   string
+	WebFetchAPIKey    string
 }
 
 type ResolveInput struct {
@@ -76,6 +80,13 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 	}
 
 	browserEnabled := resolveBrowserEnabled(ctx, input.ConfigResolver)
+
+	webSearchProvider := strings.TrimSpace(os.Getenv("ARKLOOP_WEB_SEARCH_PROVIDER"))
+	webSearchBaseURL, webSearchAPIKey := resolveWebSearchEnv(webSearchProvider)
+
+	webFetchProvider := strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_PROVIDER"))
+	webFetchBaseURL, webFetchAPIKey := resolveWebFetchEnv(webFetchProvider)
+
 	availability := ResolveBuiltin(ResolveInput{
 		HasConversationSearch:  input.HasConversationSearch,
 		ArtifactStoreAvailable: input.ArtifactStoreAvailable,
@@ -84,8 +95,12 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 			SandboxBaseURL:    strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_BASE_URL")),
 			MemoryBaseURL:     strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL")),
 			MemoryRootAPIKey:  strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY")),
-			WebSearchProvider: strings.TrimSpace(os.Getenv("ARKLOOP_WEB_SEARCH_PROVIDER")),
-			WebFetchProvider:  strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_PROVIDER")),
+			WebSearchProvider: webSearchProvider,
+			WebSearchBaseURL:  webSearchBaseURL,
+			WebSearchAPIKey:   webSearchAPIKey,
+			WebFetchProvider:  webFetchProvider,
+			WebFetchBaseURL:   webFetchBaseURL,
+			WebFetchAPIKey:    webFetchAPIKey,
 		},
 		PlatformProviders: providers,
 	})
@@ -119,10 +134,10 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		"wait_agent":       {},
 	}
 
-	if input.Env.WebSearchProvider != "" || findProvider(input.PlatformProviders, "web_search") != nil {
+	if webSearchEnvConfigured(input.Env) || findProvider(input.PlatformProviders, "web_search") != nil {
 		available["web_search"] = struct{}{}
 	}
-	if input.Env.WebFetchProvider != "" || findProvider(input.PlatformProviders, "web_fetch") != nil {
+	if webFetchEnvConfigured(input.Env) || findProvider(input.PlatformProviders, "web_fetch") != nil {
 		available["web_fetch"] = struct{}{}
 	}
 
@@ -245,4 +260,49 @@ func findProvider(providers []ProviderConfig, groupName string) *ProviderConfig 
 
 func normalizeBaseURL(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func webSearchEnvConfigured(env EnvConfig) bool {
+	switch strings.ToLower(env.WebSearchProvider) {
+	case "searxng":
+		return env.WebSearchBaseURL != ""
+	case "tavily":
+		return env.WebSearchAPIKey != ""
+	default:
+		return false
+	}
+}
+
+func webFetchEnvConfigured(env EnvConfig) bool {
+	switch strings.ToLower(env.WebFetchProvider) {
+	case "basic":
+		return true
+	case "firecrawl":
+		return env.WebFetchBaseURL != ""
+	case "jina":
+		return env.WebFetchAPIKey != ""
+	default:
+		return false
+	}
+}
+
+func resolveWebSearchEnv(provider string) (baseURL, apiKey string) {
+	switch strings.ToLower(provider) {
+	case "searxng":
+		baseURL = strings.TrimSpace(os.Getenv("ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL"))
+	case "tavily":
+		apiKey = strings.TrimSpace(os.Getenv("ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"))
+	}
+	return
+}
+
+func resolveWebFetchEnv(provider string) (baseURL, apiKey string) {
+	switch strings.ToLower(provider) {
+	case "firecrawl":
+		baseURL = strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL"))
+		apiKey = strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_FIRECRAWL_API_KEY"))
+	case "jina":
+		apiKey = strings.TrimSpace(os.Getenv("ARKLOOP_WEB_FETCH_JINA_API_KEY"))
+	}
+	return
 }

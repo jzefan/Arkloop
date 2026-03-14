@@ -39,7 +39,7 @@ func NewRoutingMiddleware(
 			selectorConfig = staticRouter.Config()
 		}
 		if configLoader != nil {
-			loaded, dbErr := configLoader.Load(ctx, rc.Run.ProjectID, &rc.Run.AccountID)
+			loaded, dbErr := configLoader.Load(ctx, &rc.Run.AccountID)
 			if dbErr != nil {
 				slog.WarnContext(ctx, "routing: per-run load failed, using static", "err", dbErr.Error())
 			} else if len(loaded.Routes) > 0 {
@@ -47,6 +47,8 @@ func NewRoutingMiddleware(
 				activeRouter = routing.NewProviderRouter(loaded)
 			}
 		}
+
+		platformSelectorConfig := selectorConfig.PlatformOnly()
 
 		byokEnabled := false
 		if resolver != nil {
@@ -66,7 +68,7 @@ func NewRoutingMiddleware(
 				return rc.Gateway, rc.SelectedRoute, nil
 			}
 
-			routeDecision := activeRouter.Decide(map[string]any{"route_id": cleaned}, byokEnabled)
+			routeDecision := activeRouter.Decide(map[string]any{"route_id": cleaned}, byokEnabled, false)
 			if routeDecision.Denied != nil {
 				return nil, nil, fmt.Errorf("%s: %s", routeDecision.Denied.Code, routeDecision.Denied.Message)
 			}
@@ -90,7 +92,7 @@ func NewRoutingMiddleware(
 				}
 				return rc.Gateway, rc.SelectedRoute, nil
 			}
-			selected, err := resolveSelectedRouteBySelector(selectorConfig, cleanedSelector, map[string]any{}, byokEnabled)
+			selected, err := resolveSelectedRouteBySelector(platformSelectorConfig, cleanedSelector, map[string]any{}, byokEnabled)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -106,14 +108,14 @@ func NewRoutingMiddleware(
 
 		var decision routing.ProviderRouteDecision
 		if _, hasRouteID := rc.InputJSON["route_id"]; hasRouteID {
-			decision = activeRouter.Decide(rc.InputJSON, byokEnabled)
+			decision = activeRouter.Decide(rc.InputJSON, byokEnabled, false)
 		} else {
 			selector := ""
 			if rc.AgentConfig != nil && rc.AgentConfig.Model != nil {
 				selector = strings.TrimSpace(*rc.AgentConfig.Model)
 			}
 			if selector != "" {
-				selected, err := resolveSelectedRouteBySelector(selectorConfig, selector, rc.InputJSON, byokEnabled)
+				selected, err := resolveSelectedRouteBySelector(platformSelectorConfig, selector, rc.InputJSON, byokEnabled)
 				if err != nil {
 					var notFound *RouteNotFoundError
 					if errors.As(err, &notFound) {
@@ -138,7 +140,7 @@ func NewRoutingMiddleware(
 				}
 			}
 			if decision.Selected == nil && decision.Denied == nil && rc.PreferredCredentialName != "" {
-				if route, cred, ok := selectorConfig.GetHighestPriorityRouteByCredentialName(rc.PreferredCredentialName, rc.InputJSON); ok {
+				if route, cred, ok := platformSelectorConfig.GetHighestPriorityRouteByCredentialName(rc.PreferredCredentialName, rc.InputJSON); ok {
 					if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
 						decision = routing.ProviderRouteDecision{Denied: denied}
 					} else {
@@ -147,7 +149,7 @@ func NewRoutingMiddleware(
 				}
 			}
 			if decision.Selected == nil && decision.Denied == nil {
-				decision = activeRouter.Decide(rc.InputJSON, byokEnabled)
+				decision = activeRouter.Decide(rc.InputJSON, byokEnabled, true)
 			}
 		}
 

@@ -58,7 +58,7 @@ func TestFeatureFlagsAuditIntegration(t *testing.T) {
 		t.Fatalf("new feature flag repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}

@@ -75,7 +75,7 @@ func newOTPTestEnv(t *testing.T) *otpTestEnv {
 	membershipRepo, _ := data.NewAccountMembershipRepository(membershipQ)
 	tokenSvc, _ := NewJwtAccessTokenService("test-secret-32-bytes-long-enough!", 3600, 86400)
 
-	svc, err := NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{})
+	svc, err := NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{}, nil)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -120,22 +120,22 @@ func TestNewEmailOTPLoginServiceNilDeps(t *testing.T) {
 		call func() (*EmailOTPLoginService, error)
 	}{
 		{"nil_userRepo", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(nil, otpRepo, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{})
+			return NewEmailOTPLoginService(nil, otpRepo, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{}, nil)
 		}},
 		{"nil_otpRepo", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(userRepo, nil, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{})
+			return NewEmailOTPLoginService(userRepo, nil, jobRepo, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{}, nil)
 		}},
 		{"nil_jobRepo", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(userRepo, otpRepo, nil, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{})
+			return NewEmailOTPLoginService(userRepo, otpRepo, nil, tokenSvc, refreshRepo, membershipRepo, noopRiskControl{}, nil)
 		}},
 		{"nil_tokenService", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, nil, refreshRepo, membershipRepo, noopRiskControl{})
+			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, nil, refreshRepo, membershipRepo, noopRiskControl{}, nil)
 		}},
 		{"nil_refreshTokenRepo", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, nil, membershipRepo, noopRiskControl{})
+			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, nil, membershipRepo, noopRiskControl{}, nil)
 		}},
 		{"nil_membershipRepo", func() (*EmailOTPLoginService, error) {
-			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, refreshRepo, nil, noopRiskControl{})
+			return NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenSvc, refreshRepo, nil, noopRiskControl{}, nil)
 		}},
 	}
 	for _, tc := range cases {
