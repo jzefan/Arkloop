@@ -39,7 +39,7 @@ const (
 
 type SubAgentRecord struct {
 	ID                 uuid.UUID
-	OrgID              uuid.UUID
+	AccountID          uuid.UUID
 	ParentRunID        uuid.UUID
 	ParentThreadID     uuid.UUID
 	RootRunID          uuid.UUID
@@ -63,7 +63,7 @@ type SubAgentRecord struct {
 
 type SubAgentCreateParams struct {
 	ID             uuid.UUID
-	OrgID          uuid.UUID
+	AccountID      uuid.UUID
 	ParentRunID    uuid.UUID
 	ParentThreadID uuid.UUID
 	RootRunID      uuid.UUID
@@ -85,8 +85,8 @@ func (SubAgentRepository) Create(ctx context.Context, tx pgx.Tx, params SubAgent
 	if params.ID == uuid.Nil {
 		params.ID = uuid.New()
 	}
-	if params.OrgID == uuid.Nil {
-		return SubAgentRecord{}, fmt.Errorf("org_id must not be empty")
+	if params.AccountID == uuid.Nil {
+		return SubAgentRecord{}, fmt.Errorf("account_id must not be empty")
 	}
 	if params.ParentRunID == uuid.Nil {
 		return SubAgentRecord{}, fmt.Errorf("parent_run_id must not be empty")
@@ -124,7 +124,7 @@ func (SubAgentRepository) Create(ctx context.Context, tx pgx.Tx, params SubAgent
 		           current_run_id, last_completed_run_id, last_output_ref, last_error,
 		           created_at, started_at, completed_at, closed_at`,
 		params.ID,
-		params.OrgID,
+		params.AccountID,
 		params.ParentRunID,
 		params.ParentThreadID,
 		params.RootRunID,
@@ -451,7 +451,7 @@ func scanSubAgent(row pgx.Row) (SubAgentRecord, error) {
 	var record SubAgentRecord
 	err := row.Scan(
 		&record.ID,
-		&record.OrgID,
+		&record.AccountID,
 		&record.ParentRunID,
 		&record.ParentThreadID,
 		&record.RootRunID,
@@ -490,7 +490,7 @@ func scanSubAgentFromRows(rows pgx.Rows) (SubAgentRecord, error) {
 	var record SubAgentRecord
 	err := rows.Scan(
 		&record.ID,
-		&record.OrgID,
+		&record.AccountID,
 		&record.ParentRunID,
 		&record.ParentThreadID,
 		&record.RootRunID,
