@@ -12,8 +12,9 @@ import (
 )
 
 // SemanticScanner 使用 ONNX Runtime 执行 Prompt Guard 模型推理。
+// session.Run() 不是线程安全的，用 sync.Mutex 保护整个推理过程。
 type SemanticScanner struct {
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	session   *ort.DynamicAdvancedSession
 	tokenizer *Tokenizer
 	threshold float32
@@ -82,8 +83,8 @@ func NewSemanticScanner(cfg SemanticScannerConfig) (*SemanticScanner, error) {
 }
 
 func (s *SemanticScanner) Classify(text string) (SemanticResult, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if s.session == nil {
 		return SemanticResult{}, fmt.Errorf("scanner not initialized")
