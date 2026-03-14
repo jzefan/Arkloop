@@ -457,11 +457,13 @@ export function PromptInjectionPage() {
   const handleToggle = useCallback(async (key: string, current: boolean) => {
     if (toggling) return
     setToggling(key)
+    setSettings(prev => ({ ...prev, [key]: !current }))
     try {
       await setPlatformSetting(key, String(!current), accessToken)
-      setSettings(prev => ({ ...prev, [key]: !current }))
       addToast(tp.toastUpdated, 'success')
     } catch (err) {
+      // 请求失败，回滚到原始状态
+      setSettings(prev => ({ ...prev, [key]: current }))
       addToast(isApiError(err) ? err.message : tp.toastFailed, 'error')
     } finally {
       setToggling('')

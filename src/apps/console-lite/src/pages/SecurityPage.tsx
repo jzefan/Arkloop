@@ -29,16 +29,16 @@ type Layer = {
   id: string
   nameKey: 'layerRegex' | 'layerSemantic' | 'layerTrustSource' | 'layerBlocking' | 'layerToolScan'
   descKey: 'layerRegexDesc' | 'layerSemanticDesc' | 'layerTrustSourceDesc' | 'layerBlockingDesc' | 'layerToolScanDesc'
-  settingKey: string
+  settingsKey: string
   defaultEnabled?: boolean
 }
 
 const LAYERS: Layer[] = [
-  { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingKey: KEY_REGEX_ENABLED },
-  { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingKey: KEY_TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingKey: KEY_SEMANTIC_ENABLED },
-  { id: 'blocking', nameKey: 'layerBlocking', descKey: 'layerBlockingDesc', settingKey: KEY_BLOCKING_ENABLED, defaultEnabled: false },
-  { id: 'tool-scan', nameKey: 'layerToolScan', descKey: 'layerToolScanDesc', settingKey: KEY_TOOL_SCAN_ENABLED },
+  { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: KEY_REGEX_ENABLED },
+  { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: KEY_TRUST_SOURCE_ENABLED },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: KEY_SEMANTIC_ENABLED },
+  { id: 'blocking', nameKey: 'layerBlocking', descKey: 'layerBlockingDesc', settingsKey: KEY_BLOCKING_ENABLED, defaultEnabled: false },
+  { id: 'tool-scan', nameKey: 'layerToolScan', descKey: 'layerToolScanDesc', settingsKey: KEY_TOOL_SCAN_ENABLED },
 ]
 
 type Tab = 'layers' | 'audit'
@@ -444,11 +444,13 @@ export function SecurityPage() {
 
   const toggle = useCallback(async (key: string, current: boolean) => {
     setToggling(key)
+    setValues((prev) => ({ ...prev, [key]: String(!current) }))
     try {
       await updatePlatformSetting(key, String(!current), accessToken)
-      setValues((prev) => ({ ...prev, [key]: String(!current) }))
       addToast(ts.toastUpdated, 'success')
     } catch (err) {
+      // 请求失败，回滚到原始状态
+      setValues((prev) => ({ ...prev, [key]: String(current) }))
       if (isApiError(err)) addToast(ts.toastFailed, 'error')
     } finally {
       setToggling(null)
@@ -509,8 +511,8 @@ export function SecurityPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {LAYERS.map((layer) => {
-                const enabled = isEnabled(layer.settingKey, layer.defaultEnabled !== undefined ? layer.defaultEnabled : true)
-                const busy = toggling === layer.settingKey
+                const enabled = isEnabled(layer.settingsKey, layer.defaultEnabled !== undefined ? layer.defaultEnabled : true)
+                const busy = toggling === layer.settingsKey
                 const isSemantic = layer.id === 'semantic'
 
                 const semanticBadge = () => {
@@ -580,7 +582,7 @@ export function SecurityPage() {
                         ) : (
                           <button
                             disabled={busy || !canToggle}
-                            onClick={() => void toggle(layer.settingKey, enabled)}
+                            onClick={() => void toggle(layer.settingsKey, enabled)}
                             className={[
                               'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                               enabled
