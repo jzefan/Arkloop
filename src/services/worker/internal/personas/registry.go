@@ -95,6 +95,10 @@ type Definition struct {
 	PromptCacheControl  string
 	Roles               map[string]RoleOverride
 	TitleSummarizer     *TitleSummarizerConfig // nil 表示此 persona 不自动生成标题
+
+	IsSystem                 bool // 系统级 persona，不可被 DB 覆盖或删除
+	IsBuiltin                bool // 内置 persona，随代码分发
+	AllowPlatformDelegation  bool // 允许 admin 用户调用 call_platform 委托平台管理操作
 }
 
 type Registry struct {
