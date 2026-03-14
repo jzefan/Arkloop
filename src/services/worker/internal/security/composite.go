@@ -30,6 +30,7 @@ func NewCompositeScanner(regex *RegexScanner, semantic *SemanticScanner) *Compos
 }
 
 // Scan 执行综合扫描。
+// 串行策略：regex 命中后跳过 semantic 以减少延迟。
 func (c *CompositeScanner) Scan(text string) CompositeScanResult {
 	result := CompositeScanResult{Source: "none"}
 
@@ -37,7 +38,10 @@ func (c *CompositeScanner) Scan(text string) CompositeScanResult {
 		result.RegexMatches = c.regex.Scan(text)
 	}
 
-	if c.semantic != nil {
+	regexHit := len(result.RegexMatches) > 0
+
+	// regex 已命中，跳过 semantic 减少延迟
+	if !regexHit && c.semantic != nil {
 		sr, err := c.semantic.Classify(text)
 		if err != nil {
 			slog.Warn("semantic scan failed, falling back to regex-only", "error", err)
@@ -46,13 +50,9 @@ func (c *CompositeScanner) Scan(text string) CompositeScanResult {
 		}
 	}
 
-	regexHit := len(result.RegexMatches) > 0
 	semanticHit := result.SemanticResult != nil && result.SemanticResult.IsInjection
 
 	switch {
-	case regexHit && semanticHit:
-		result.IsInjection = true
-		result.Source = "both"
 	case regexHit:
 		result.IsInjection = true
 		result.Source = "regex"
