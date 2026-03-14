@@ -1,3 +1,4 @@
+import type { PromptInjectionTexts } from '@arkloop/shared/components/prompt-injection'
 import { zhCN } from './zh-CN'
 import { en } from './en'
 
@@ -293,33 +294,10 @@ export interface LocaleStrings {
     upgradeFailed: string
     logs: string
   }
-  security: {
+  security: PromptInjectionTexts & {
     title: string
     description: string
-    tabLayers: string
-    tabAudit: string
-    layerRegex: string
-    layerRegexDesc: string
-    layerSemantic: string
-    layerSemanticDesc: string
-    layerTrustSource: string
-    layerTrustSourceDesc: string
-    statusEnabled: string
-    statusDisabled: string
-    statusComingSoon: string
-    toastUpdated: string
-    toastFailed: string
-    toastLoadFailed: string
-    auditEmpty: string
     auditLoading: string
-    auditColTime: string
-    auditColRunId: string
-    auditColPatterns: string
-    auditColCount: string
-    layerBlocking: string
-    layerBlockingDesc: string
-    layerToolScan: string
-    layerToolScanDesc: string
   }
   settingsPage: {
     title: string
