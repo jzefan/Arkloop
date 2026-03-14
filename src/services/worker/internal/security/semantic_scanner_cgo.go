@@ -1,0 +1,159 @@
+//go:build cgo
+
+package security
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+
+	ort "github.com/yalue/onnxruntime_go"
+)
+
+// SemanticScanner 使用 ONNX Runtime 执行 Prompt Guard 模型推理。
+type SemanticScanner struct {
+	mu        sync.RWMutex
+	session   *ort.DynamicAdvancedSession
+	tokenizer *Tokenizer
+	threshold float32
+	labels    []string
+}
+
+var ortInitOnce sync.Once
+
+func NewSemanticScanner(cfg SemanticScannerConfig) (*SemanticScanner, error) {
+	modelPath := filepath.Join(cfg.ModelDir, "model.onnx")
+	tokenizerPath := filepath.Join(cfg.ModelDir, "tokenizer.json")
+
+	if _, err := os.Stat(modelPath); err != nil {
+		return nil, fmt.Errorf("model not found: %w", err)
+	}
+	if _, err := os.Stat(tokenizerPath); err != nil {
+		return nil, fmt.Errorf("tokenizer not found: %w", err)
+	}
+
+	if cfg.OrtLibPath != "" {
+		ort.SetSharedLibraryPath(cfg.OrtLibPath)
+	}
+
+	var initErr error
+	ortInitOnce.Do(func() {
+		initErr = ort.InitializeEnvironment()
+	})
+	if initErr != nil {
+		return nil, fmt.Errorf("onnxruntime init: %w", initErr)
+	}
+
+	maxLen := cfg.MaxSeqLen
+	if maxLen <= 0 {
+		maxLen = 512
+	}
+
+	tokenizer, err := LoadTokenizer(tokenizerPath, maxLen)
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer: %w", err)
+	}
+
+	inputNames := []string{"input_ids", "attention_mask"}
+	outputNames := []string{"logits"}
+
+	session, err := ort.NewDynamicAdvancedSession(
+		modelPath,
+		inputNames,
+		outputNames,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create onnx session: %w", err)
+	}
+
+	threshold := cfg.Threshold
+	if threshold <= 0 {
+		threshold = 0.5
+	}
+
+	return &SemanticScanner{
+		session:   session,
+		tokenizer: tokenizer,
+		threshold: threshold,
+		labels:    []string{"BENIGN", "INJECTION", "JAILBREAK"},
+	}, nil
+}
+
+func (s *SemanticScanner) Classify(text string) (SemanticResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.session == nil {
+		return SemanticResult{}, fmt.Errorf("scanner not initialized")
+	}
+
+	inputIDs, attentionMask := s.tokenizer.Encode(text)
+
+	seqLen := int64(len(inputIDs))
+	shape := ort.Shape{1, seqLen}
+
+	inputIDTensor, err := ort.NewTensor(shape, inputIDs)
+	if err != nil {
+		return SemanticResult{}, fmt.Errorf("create input_ids tensor: %w", err)
+	}
+	defer inputIDTensor.Destroy()
+
+	maskTensor, err := ort.NewTensor(shape, attentionMask)
+	if err != nil {
+		return SemanticResult{}, fmt.Errorf("create attention_mask tensor: %w", err)
+	}
+	defer maskTensor.Destroy()
+
+	inputs := []ort.Value{inputIDTensor, maskTensor}
+	outputs := []ort.Value{nil}
+
+	if err := s.session.Run(inputs, outputs); err != nil {
+		return SemanticResult{}, fmt.Errorf("onnx run: %w", err)
+	}
+	defer func() {
+		for _, t := range outputs {
+			if t != nil {
+				t.Destroy()
+			}
+		}
+	}()
+
+	logitsTensor, ok := outputs[0].(*ort.Tensor[float32])
+	if !ok {
+		return SemanticResult{}, fmt.Errorf("unexpected output tensor type")
+	}
+
+	logits := logitsTensor.GetData()
+	probs := softmax(logits)
+
+	bestIdx := 0
+	bestScore := probs[0]
+	for i := 1; i < len(probs); i++ {
+		if probs[i] > bestScore {
+			bestScore = probs[i]
+			bestIdx = i
+		}
+	}
+
+	label := "UNKNOWN"
+	if bestIdx < len(s.labels) {
+		label = s.labels[bestIdx]
+	}
+
+	return SemanticResult{
+		Label:       label,
+		Score:       bestScore,
+		IsInjection: label != "BENIGN" && bestScore >= s.threshold,
+	}, nil
+}
+
+func (s *SemanticScanner) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.session != nil {
+		s.session.Destroy()
+		s.session = nil
+	}
+}
