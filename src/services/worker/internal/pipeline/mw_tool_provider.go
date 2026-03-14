@@ -152,12 +152,12 @@ func buildProviderExecutor(cfg toolprovider.ActiveProviderConfig) tools.Executor
 		if cfg.APIKeyValue != nil {
 			key = strings.TrimSpace(*cfg.APIKeyValue)
 		}
-		if key == "" {
-			return notConfiguredExecutor{groupName: groupName, providerName: providerName, missing: []string{"api_key"}}
-		}
 		baseURL := ""
 		if cfg.BaseURL != nil {
 			baseURL = strings.TrimRight(strings.TrimSpace(*cfg.BaseURL), "/")
+		}
+		if key == "" && baseURL == "" {
+			return notConfiguredExecutor{groupName: groupName, providerName: providerName, missing: []string{"api_key"}}
 		}
 		provider := webfetch.NewFirecrawlProvider(key, baseURL)
 		return webfetch.NewToolExecutorWithProvider(provider)
