@@ -43,7 +43,7 @@ func (e PersonaConflictError) Error() string {
 
 type Persona struct {
 	ID                  uuid.UUID
-	AccountID               *uuid.UUID
+	AccountID           *uuid.UUID
 	ProjectID           *uuid.UUID
 	PersonaKey          string
 	Version             string
@@ -127,6 +127,22 @@ func NewPersonasRepository(db Querier) (*PersonasRepository, error) {
 	return &PersonasRepository{db: db}, nil
 }
 
+func (r *PersonasRepository) GetOrCreateDefaultProjectIDByOwner(
+	ctx context.Context,
+	accountID uuid.UUID,
+	ownerUserID uuid.UUID,
+) (uuid.UUID, error) {
+	projectRepo, err := NewProjectRepository(r.db)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, accountID, ownerUserID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return project.ID, nil
+}
+
 type personaScanner interface {
 	Scan(dest ...any) error
 }
@@ -146,12 +162,12 @@ func scanPersona(scanner personaScanner, persona *Persona) error {
 
 func NormalizePersonaScope(scope string) (string, error) {
 	switch strings.TrimSpace(scope) {
-	case PersonaScopeProject:
+	case "user", PersonaScopeProject:
 		return PersonaScopeProject, nil
 	case PersonaScopePlatform:
 		return PersonaScopePlatform, nil
 	default:
-		return "", fmt.Errorf("scope must be project or platform")
+		return "", fmt.Errorf("scope must be user or platform")
 	}
 }
 

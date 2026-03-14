@@ -26,7 +26,10 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		ArtifactStoreAvailable: true,
 		BrowserEnabled:         true,
 		Env: EnvConfig{
-			MemoryBaseURL: memoryBaseURL,
+			MemoryBaseURL:     memoryBaseURL,
+			WebSearchProvider: "searxng",
+			WebSearchBaseURL:  "http://searxng:8080",
+			WebFetchProvider:  "basic",
 		},
 		PlatformProviders: []ProviderConfig{
 			{GroupName: "memory", ProviderName: "memory.openviking", APIKeyValue: &memoryAPIKey},
@@ -46,6 +49,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 
 	got := resolved.ToolNames()
 	want := []string{
+		"ask_user",
 		"browser",
 		"close_agent",
 		"conversation_search",
@@ -79,5 +83,60 @@ func TestResolveBuiltinHidesBrowserWhenDisabled(t *testing.T) {
 	})
 	if _, ok := resolved.ToolNameSet()["browser"]; ok {
 		t.Fatal("browser should be absent when BrowserEnabled=false")
+	}
+}
+
+func TestResolveBuiltinHidesWebToolsWhenNotConfigured(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{})
+	if _, ok := resolved.ToolNameSet()["web_search"]; ok {
+		t.Fatal("web_search should be absent without configuration")
+	}
+	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
+		t.Fatal("web_fetch should be absent without configuration")
+	}
+}
+
+func TestResolveBuiltinAddsWebToolsFromPlatformProviders(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		PlatformProviders: []ProviderConfig{
+			{GroupName: "web_search", ProviderName: "web_search.searxng"},
+			{GroupName: "web_fetch", ProviderName: "web_fetch.jina"},
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["web_search"]; !ok {
+		t.Fatal("web_search should be present with platform provider")
+	}
+	if _, ok := resolved.ToolNameSet()["web_fetch"]; !ok {
+		t.Fatal("web_fetch should be present with platform provider")
+	}
+}
+
+func TestResolveBuiltinAddsWebToolsFromEnv(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		Env: EnvConfig{
+			WebSearchProvider: "tavily",
+			WebSearchAPIKey:   "tvly-test-key",
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["web_search"]; !ok {
+		t.Fatal("web_search should be present with env provider")
+	}
+	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
+		t.Fatal("web_fetch should be absent without configuration")
+	}
+}
+
+func TestResolveBuiltinHidesWebToolsWhenEnvIncomplete(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		Env: EnvConfig{
+			WebSearchProvider: "tavily",
+			WebFetchProvider:  "jina",
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["web_search"]; ok {
+		t.Fatal("web_search should be absent when tavily has no API key")
+	}
+	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
+		t.Fatal("web_fetch should be absent when jina has no API key")
 	}
 }

@@ -71,7 +71,7 @@ func TestMessagesCreateListAndAudit(t *testing.T) {
 		t.Fatalf("new message repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestMessagesListIncludesAssistantRunID(t *testing.T) {
 	projectRepo, _ := data.NewProjectRepository(pool)
 	messageRepo, _ := data.NewMessageRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}

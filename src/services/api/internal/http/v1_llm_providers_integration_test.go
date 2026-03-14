@@ -87,7 +87,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
-	authService, err := auth.NewService(userRepo, userCredRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, userCredRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -127,7 +127,7 @@ func setupLlmProvidersTestEnv(t *testing.T) llmProvidersTestEnv {
 		InvalidationListenerCtx: listenerCtx,
 		Logger:                  logger,
 		AuthService:             authService,
-		AccountMembershipRepo:       membershipRepo,
+		AccountMembershipRepo:   membershipRepo,
 		LlmCredentialsRepo:      llmCredentialsRepo,
 		LlmRoutesRepo:           llmRoutesRepo,
 		SecretsRepo:             secretsRepo,
@@ -145,6 +145,12 @@ func TestLlmProvidersRequireSecretsPermission(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 	resp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers", nil, authHeader(env.memberToken))
 	assertErrorEnvelope(t, resp, nethttp.StatusForbidden, "auth.forbidden")
+}
+
+func TestLlmProvidersRejectLegacyProjectIDQuery(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+	resp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers?scope=user&project_id=legacy-account", nil, authHeader(env.adminToken))
+	assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 }
 
 func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {

@@ -157,7 +157,7 @@ func TestEngineV1AppliesClawPersonaPromptAndToolAllowlist(t *testing.T) {
 		t.Fatalf("NewEngineV1 failed: %v", err)
 	}
 
-	run := data.Run{ID: runID, OrgID: orgID, ThreadID: threadID}
+	run := data.Run{ID: runID, AccountID: orgID, ThreadID: threadID}
 	if err := engine.Execute(context.Background(), pool, run, runengine.ExecuteInput{TraceID: "trace"}); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}

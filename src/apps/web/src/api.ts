@@ -163,7 +163,7 @@ export type GitHubImportResponse = {
 export type Persona = {
   id: string
   project_id: string | null
-  scope: 'platform' | 'project'
+  scope: 'platform' | 'user'
   source?: 'builtin' | 'custom'
   persona_key: string
   version: string
@@ -1235,7 +1235,7 @@ export type AvailableModel = {
   configured: boolean
 }
 
-const BYOK_SCOPE = 'project'
+const BYOK_SCOPE = 'user'
 
 function withScope(path: string, scope: string): string {
   const sep = path.includes('?') ? '&' : '?'

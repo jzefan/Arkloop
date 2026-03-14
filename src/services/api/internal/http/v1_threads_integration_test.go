@@ -69,7 +69,7 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 		t.Fatalf("new project repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestThreadsPatchDeleteOwnershipFallbacks(t *testing.T) {
 		t.Fatalf("new job repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestThreadListActiveRunID(t *testing.T) {
 	projectRepo, _ := data.NewProjectRepository(pool)
 	runRepo, _ := data.NewRunEventRepository(pool)
 
-	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, _ := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	jobRepo, _ := data.NewJobRepository(pool)
 	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)

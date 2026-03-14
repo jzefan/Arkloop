@@ -274,7 +274,7 @@ export function ToolProvidersPage() {
               className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-1.5 text-xs text-[var(--c-text-secondary)] focus:outline-none"
             >
               <option value="platform">platform</option>
-              <option value="project">account</option>
+              <option value="user">account</option>
             </select>
           </div>
         )}

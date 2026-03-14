@@ -19,7 +19,7 @@ const (
 	errorTimeout       = "tool.timeout"
 	errorFetchFailed   = "tool.fetch_failed"
 	errorURLDenied     = "tool.url_denied"
-	errorNotConfigured = "tool.not_configured"
+	errorNotConfigured = "config.missing"
 
 	defaultTimeout = 15 * time.Second
 	maxLengthLimit = sharedtoolmeta.WebFetchMaxLengthLimit
@@ -117,6 +117,16 @@ func NewToolExecutorWithProvider(provider Provider) *ToolExecutor {
 		provider: provider,
 		timeout:  defaultTimeout,
 	}
+}
+
+func (e *ToolExecutor) IsNotConfigured() bool {
+	if e.provider != nil {
+		return false
+	}
+	if e.forcedKind == "" || e.forcedKind == ProviderKindBasic {
+		return false
+	}
+	return e.resolver == nil
 }
 
 func (e *ToolExecutor) Execute(
@@ -249,7 +259,7 @@ func (e *ToolExecutor) loadProvider(ctx context.Context, execCtx tools.Execution
 	if e.resolver == nil {
 		return nil, nil
 	}
-	scope := sharedconfig.Scope{ProjectID: execCtx.ProjectID}
+	scope := sharedconfig.Scope{}
 	m, err := e.resolver.ResolvePrefix(ctx, "web_fetch.", scope)
 	if err != nil {
 		return nil, err

@@ -13,6 +13,14 @@ const (
 	ErrorClassPolicyDenied         = "policy.denied"
 	ErrorClassInternalError        = "internal.error"
 	ErrorClassInternalStreamEnded  = "internal.stream_ended"
+	ErrorClassRoutingNotFound      = "routing.not_found"
+
+	// 架构错误契约: 5 类错误分类
+	ErrorClassConfigMissing       = "config.missing"
+	ErrorClassConfigInvalid       = "config.invalid"
+	ErrorClassRuntimePolicyDenied = "runtime_policy.denied"
+	ErrorClassProviderFailed      = "external_provider.failed"
+	ErrorClassPlatformError       = "internal_platform.error"
 )
 
 type Usage struct {

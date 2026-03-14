@@ -714,7 +714,7 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 
 	return personaResponse{
 		ID:                  "builtin:" + s.ID + ":" + s.Version,
-		Scope:               scope,
+		Scope:               personaScopeFromScope(scope),
 		PersonaKey:          s.ID,
 		Version:             s.Version,
 		DisplayName:         s.Title,
@@ -742,30 +742,29 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 func requirePersonaScope(actor *httpkit.Actor, w nethttp.ResponseWriter, traceID, rawScope string, fromBody bool, write bool) (string, bool) {
 	scope := strings.TrimSpace(rawScope)
 	if scope == "" {
-		scope = data.PersonaScopePlatform
+		scope = data.PersonaScopeProject
 	}
 	normalized, err := data.NormalizePersonaScope(scope)
 	if err != nil {
-		message := "scope must be project or platform"
-		if fromBody {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
-		} else {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", message, traceID, nil)
-		}
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be user or platform", traceID, nil)
 		return "", false
 	}
+
 	if normalized == data.PersonaScopePlatform {
 		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
 			return "", false
 		}
 		return normalized, true
 	}
-	requiredPerm := auth.PermDataPersonasRead
+
 	if write {
-		requiredPerm = auth.PermDataPersonasManage
-	}
-	if !httpkit.RequirePerm(actor, requiredPerm, w, traceID) {
-		return "", false
+		if !httpkit.RequirePerm(actor, auth.PermDataPersonasManage, w, traceID) {
+			return "", false
+		}
+	} else {
+		if !httpkit.RequirePerm(actor, auth.PermDataPersonasRead, w, traceID) {
+			return "", false
+		}
 	}
 	return normalized, true
 }
@@ -855,7 +854,14 @@ func personaScopeFromProjectID(projectID *uuid.UUID) string {
 	if projectID == nil {
 		return data.PersonaScopePlatform
 	}
-	return data.PersonaScopeProject
+	return "user"
+}
+
+func personaScopeFromScope(scope string) string {
+	if strings.TrimSpace(scope) == data.PersonaScopePlatform {
+		return data.PersonaScopePlatform
+	}
+	return "user"
 }
 
 func optionalTrimmedStringPtr(value *string) *string {

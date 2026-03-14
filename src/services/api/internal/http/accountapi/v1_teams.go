@@ -18,7 +18,7 @@ import (
 
 type teamResponse struct {
 	ID           string `json:"id"`
-	AccountID        string `json:"account_id"`
+	AccountID    string `json:"account_id"`
 	Name         string `json:"name"`
 	MembersCount int64  `json:"members_count"`
 	CreatedAt    string `json:"created_at"`
@@ -266,7 +266,7 @@ func addTeamMember(
 		return
 	}
 
-	// 确保被添加的用户确实是同一 org 的成员，防止跨 org 数据注入
+	// 确保被添加的用户确实是同一 account 的成员，防止跨 account 数据注入
 	if membershipRepo != nil {
 		exists, err := membershipRepo.ExistsForOrgAndUser(r.Context(), actor.AccountID, userID)
 		if err != nil {
@@ -329,7 +329,7 @@ func addTeamMember(
 func toTeamResponse(t data.Team) teamResponse {
 	return teamResponse{
 		ID:        t.ID.String(),
-		AccountID:     t.AccountID.String(),
+		AccountID: t.AccountID.String(),
 		Name:      t.Name,
 		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -338,7 +338,7 @@ func toTeamResponse(t data.Team) teamResponse {
 func toTeamWithCountResponse(t data.TeamWithCount) teamResponse {
 	return teamResponse{
 		ID:           t.ID.String(),
-		AccountID:        t.AccountID.String(),
+		AccountID:    t.AccountID.String(),
 		Name:         t.Name,
 		MembersCount: t.MembersCount,
 		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339Nano),
