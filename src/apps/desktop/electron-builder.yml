@@ -10,10 +10,6 @@ files:
   - resources/**/*
 
 extraResources:
-  - from: ../../services/desktop/bin/
-    to: sidecar
-    filter:
-      - "**/*"
   - from: ../web/dist/
     to: renderer
     filter:
