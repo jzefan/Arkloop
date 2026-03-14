@@ -1051,6 +1051,10 @@ export const zh: LocaleStrings = {
       auditColRunId: 'Run ID',
       auditColPatterns: '匹配模式',
       auditColCount: '检测数',
+      layerBlocking: '注入拦截',
+      layerBlockingDesc: '检测到注入时直接拦截请求，阻止进入 Agent。',
+      layerToolScan: '工具输出扫描',
+      layerToolScanDesc: '扫描工具返回内容中的间接注入，消毒后再注入上下文。',
     },
     email: {
       title: '邮件',

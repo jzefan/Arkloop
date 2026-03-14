@@ -1499,6 +1499,7 @@ func (rt *luaRuntime) runAgentLoop(
 		Runtime:                rt.rc.Runtime,
 		LlmRetryMaxAttempts:    rt.rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:    rt.rc.LlmRetryBaseDelayMs,
+		ToolOutputScanFunc:     rt.rc.ToolOutputScanFunc,
 		CancelSignal: func() bool {
 			return rt.ctx.Err() != nil
 		},
