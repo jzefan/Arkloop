@@ -235,7 +235,7 @@ type toolDescriptionSource string
 const (
 	toolDescriptionSourceDefault  toolDescriptionSource = "default"
 	toolDescriptionSourcePlatform toolDescriptionSource = "platform"
-	toolDescriptionSourceProject toolDescriptionSource = "project"
+	toolDescriptionSourceProject  toolDescriptionSource = "project"
 )
 
 type toolCatalogItem struct {
@@ -297,6 +297,8 @@ type llmProviderAvailableModel struct {
 
 type personaResponse struct {
 	ID                  string          `json:"id"`
+	Scope               string          `json:"scope"`
+	ProjectID           *string         `json:"project_id"`
 	AccountID           *string         `json:"account_id"`
 	PersonaKey          string          `json:"persona_key"`
 	Version             string          `json:"version"`
@@ -309,6 +311,7 @@ type personaResponse struct {
 	ToolAllowlist       []string        `json:"tool_allowlist"`
 	ToolDenylist        []string        `json:"tool_denylist"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
+	RolesJSON           json.RawMessage `json:"roles"`
 	IsActive            bool            `json:"is_active"`
 	CreatedAt           string          `json:"created_at"`
 	PreferredCredential *string         `json:"preferred_credential,omitempty"`
@@ -322,6 +325,7 @@ type personaResponse struct {
 
 type liteAgentResponse struct {
 	ID              string          `json:"id"`
+	Scope           string          `json:"scope"`
 	PersonaKey      string          `json:"persona_key"`
 	DisplayName     string          `json:"display_name"`
 	Description     *string         `json:"description,omitempty"`
@@ -415,6 +419,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              p.ID.String(),
+		Scope:           liteAgentScopeFromProjectID(p.ProjectID),
 		PersonaKey:      p.PersonaKey,
 		DisplayName:     p.DisplayName,
 		Description:     p.Description,
@@ -466,6 +471,7 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              rp.ID,
+		Scope:           data.PersonaScopePlatform,
 		PersonaKey:      rp.ID,
 		DisplayName:     rp.Title,
 		Description:     optionalLiteTrimmedString(rp.Description),
@@ -483,6 +489,13 @@ func toLiteAgentFromRepo(rp personas.RepoPersona) liteAgentResponse {
 		Source:          "repo",
 		CreatedAt:       "",
 	}
+}
+
+func liteAgentScopeFromProjectID(projectID *uuid.UUID) string {
+	if projectID == nil {
+		return data.PersonaScopePlatform
+	}
+	return "user"
 }
 
 func extractLiteAgentBudgetValues(raw json.RawMessage) (*float64, *int) {

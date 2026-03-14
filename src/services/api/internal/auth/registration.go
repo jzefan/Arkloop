@@ -385,6 +385,15 @@ func (s *RegistrationService) Register(
 		}
 	}
 
+	// 注册时创建 Default Project
+	projectRepo, err := data.NewProjectRepository(tx)
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	if _, err := projectRepo.CreateDefaultForOwner(ctx, account.ID, user.ID); err != nil {
+		return RegisterResult{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return RegisterResult{}, err
 	}
@@ -656,6 +665,13 @@ func (s *RegistrationService) SetupBootstrapAdmin(ctx context.Context, token str
 
 	created, err := s.createLocalAccountTx(ctx, tx, login, password, email, locale)
 	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	projectRepo, err := data.NewProjectRepository(tx)
+	if err != nil {
+		return BootstrapSetupResult{}, err
+	}
+	if _, err := projectRepo.CreateDefaultForOwner(ctx, created.Account.ID, created.User.ID); err != nil {
 		return BootstrapSetupResult{}, err
 	}
 	if err := membershipRepo.SetRoleForUser(ctx, created.User.ID, RolePlatformAdmin); err != nil {

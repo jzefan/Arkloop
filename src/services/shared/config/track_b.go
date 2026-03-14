@@ -24,7 +24,7 @@ func RegisterTrackB(r *Registry) error {
 			Key:         "credit.initial_grant",
 			Type:        TypeInt,
 			Default:     "1000",
-			Description: "新组织初始积分发放数量",
+			Description: "新账户初始积分发放数量",
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},
@@ -93,7 +93,7 @@ func RegisterTrackB(r *Registry) error {
 			Default:     "0",
 			Description: "Agent Loop 主推理回合上限，0 表示不限",
 			Sensitive:   false,
-			Scope:       ScopeBoth,
+			Scope:       ScopePlatform,
 		},
 		{
 			Key:         "limit.tool_continuation_budget",
@@ -101,7 +101,7 @@ func RegisterTrackB(r *Registry) error {
 			Default:     "32",
 			Description: "长工具 continuation 总预算上限",
 			Sensitive:   false,
-			Scope:       ScopeBoth,
+			Scope:       ScopePlatform,
 		},
 		{
 			Key:         "limit.concurrent_runs",

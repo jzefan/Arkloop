@@ -24,20 +24,20 @@ func TestSubAgentContextMiddlewareRestoresRouteAndNarrowsAllowlist(t *testing.T)
 	}
 	t.Cleanup(pool.Close)
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	projectID := uuid.New()
 	parentThreadID := uuid.New()
 	childThreadID := uuid.New()
 	parentRunID := uuid.New()
 	childRunID := uuid.New()
 	subAgentID := uuid.New()
-	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3), ($4, $2, $3)`, parentThreadID, orgID, projectID, childThreadID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3), ($4, $2, $3)`, parentThreadID, accountID, projectID, childThreadID); err != nil {
 		t.Fatalf("insert threads: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`, parentRunID, orgID, parentThreadID, childRunID, childThreadID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`, parentRunID, accountID, parentThreadID, childRunID, childThreadID); err != nil {
 		t.Fatalf("insert runs: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO sub_agents (id, org_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id) VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`, subAgentID, orgID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeForkRecent, data.SubAgentStatusQueued, childRunID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO sub_agents (id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id) VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`, subAgentID, accountID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeForkRecent, data.SubAgentStatusQueued, childRunID); err != nil {
 		t.Fatalf("insert sub_agent: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestSubAgentContextMiddlewareRestoresRouteAndNarrowsAllowlist(t *testing.T)
 	}
 
 	rc := &RunContext{
-		Run:          data.Run{ID: childRunID, OrgID: orgID, ThreadID: childThreadID, ParentRunID: &parentRunID},
+		Run:          data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID},
 		Pool:         pool,
 		InputJSON:    map[string]any{},
 		AllowlistSet: map[string]struct{}{"echo": {}, "noop": {}, "browser": {}},
@@ -109,20 +109,20 @@ func TestSubAgentContextMiddlewareNarrowsRoleExpandedAllowlist(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	projectID := uuid.New()
 	parentThreadID := uuid.New()
 	childThreadID := uuid.New()
 	parentRunID := uuid.New()
 	childRunID := uuid.New()
 	subAgentID := uuid.New()
-	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3), ($4, $2, $3)`, parentThreadID, orgID, projectID, childThreadID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3), ($4, $2, $3)`, parentThreadID, accountID, projectID, childThreadID); err != nil {
 		t.Fatalf("insert threads: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`, parentRunID, orgID, parentThreadID, childRunID, childThreadID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`, parentRunID, accountID, parentThreadID, childRunID, childThreadID); err != nil {
 		t.Fatalf("insert runs: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO sub_agents (id, org_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id) VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`, subAgentID, orgID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeForkRecent, data.SubAgentStatusQueued, childRunID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO sub_agents (id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id) VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`, subAgentID, accountID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeForkRecent, data.SubAgentStatusQueued, childRunID); err != nil {
 		t.Fatalf("insert sub_agent: %v", err)
 	}
 
@@ -174,7 +174,7 @@ func TestSubAgentContextMiddlewareNarrowsRoleExpandedAllowlist(t *testing.T) {
 	}
 
 	rc := &RunContext{
-		Run:          data.Run{ID: childRunID, OrgID: orgID, ThreadID: childThreadID, ParentRunID: &parentRunID},
+		Run:          data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID},
 		Pool:         pool,
 		InputJSON:    map[string]any{"persona_id": "p1", "role": "worker"},
 		AllowlistSet: map[string]struct{}{"tool_a": {}, "tool_b": {}, "tool_c": {}},

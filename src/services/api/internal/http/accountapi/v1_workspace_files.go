@@ -66,7 +66,7 @@ func workspaceFilesEntry(
 			return
 		}
 
-		run, err := runRepo.GetRun(r.Context(), runID)
+		run, err := runRepo.GetRunForAccount(r.Context(), actor.AccountID, runID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return

@@ -2,6 +2,7 @@ package accountapi
 
 import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 
 type projectResponse struct {
 	ID          string  `json:"id"`
-	AccountID       string  `json:"account_id"`
+	AccountID   string  `json:"account_id"`
 	TeamID      *string `json:"team_id,omitempty"`
 	OwnerUserID *string `json:"owner_user_id,omitempty"`
 	Name        string  `json:"name"`
@@ -77,6 +78,8 @@ func projectEntry(
 		switch r.Method {
 		case nethttp.MethodGet:
 			getProject(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo)
+		case nethttp.MethodDelete:
+			deleteProject(w, r, traceID, projectID, authService, membershipRepo, projectRepo, apiKeysRepo)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -131,7 +134,7 @@ func createProject(
 		return
 	}
 
-	// 验证 team_id 归属于同一 org
+	// 验证 team_id 归属于同一 account
 	var teamID *uuid.UUID
 	if req.TeamID != nil {
 		tid, err := uuid.Parse(strings.TrimSpace(*req.TeamID))
@@ -194,6 +197,16 @@ func listProjects(
 		return
 	}
 
+	// 自愈: 旧账号可能缺少默认项目
+	if len(projects) == 0 {
+		dp, err := projectRepo.GetOrCreateDefaultByOwner(r.Context(), actor.AccountID, actor.UserID)
+		if err != nil {
+			slog.WarnContext(r.Context(), "projects: failed to self-heal default project", "error", err)
+		} else {
+			projects = []data.Project{dp}
+		}
+	}
+
 	resp := make([]projectResponse, 0, len(projects))
 	for _, p := range projects {
 		resp = append(resp, toProjectResponse(p))
@@ -241,10 +254,60 @@ func getProject(
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toProjectResponse(*project))
 }
 
+func deleteProject(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	projectID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	projectRepo *data.ProjectRepository,
+	apiKeysRepo *data.APIKeysRepository,
+) {
+	if authService == nil {
+		httpkit.WriteAuthNotConfigured(w, traceID)
+		return
+	}
+	if projectRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := httpkit.ResolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+	if !ok {
+		return
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataProjectsManage, w, traceID) {
+		return
+	}
+
+	project, err := projectRepo.GetByID(r.Context(), projectID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if project == nil || project.AccountID != actor.AccountID {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "projects.not_found", "project not found", traceID, nil)
+		return
+	}
+
+	if project.IsDefault {
+		httpkit.WriteError(w, nethttp.StatusForbidden, "projects.delete_default", "default project cannot be deleted", traceID, nil)
+		return
+	}
+
+	if err := projectRepo.SoftDelete(r.Context(), projectID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	w.WriteHeader(nethttp.StatusNoContent)
+}
+
 func toProjectResponse(p data.Project) projectResponse {
 	resp := projectResponse{
 		ID:          p.ID.String(),
-		AccountID:       p.AccountID.String(),
+		AccountID:   p.AccountID.String(),
 		Name:        p.Name,
 		Description: p.Description,
 		Visibility:  p.Visibility,

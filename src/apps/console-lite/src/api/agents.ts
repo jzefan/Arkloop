@@ -3,7 +3,7 @@ import type { ToolCatalogGroup } from './tool-providers'
 
 export type { ToolCatalogGroup, ToolCatalogItem } from './tool-providers'
 
-export type AgentScope = 'project' | 'platform'
+export type AgentScope = 'user' | 'platform'
 
 function withScope(path: string, scope: AgentScope): string {
   const sep = path.includes('?') ? '&' : '?'
@@ -29,6 +29,19 @@ export type LiteAgent = {
   budgets: Record<string, unknown>
   source: 'db' | 'repo'
   created_at: string
+}
+
+type RawLiteAgent = Omit<LiteAgent, 'scope'> & { scope: string }
+
+function normalizeScope(scope: string): AgentScope {
+  return scope === 'platform' ? 'platform' : 'user'
+}
+
+function normalizeLiteAgent(agent: RawLiteAgent): LiteAgent {
+  return {
+    ...agent,
+    scope: normalizeScope(agent.scope),
+  }
 }
 
 export type CreateLiteAgentRequest = {
@@ -59,7 +72,8 @@ export type PatchLiteAgentRequest = {
 }
 
 export async function listLiteAgents(accessToken: string, scope: AgentScope): Promise<LiteAgent[]> {
-  return apiFetch<LiteAgent[]>(withScope('/v1/lite/agents', scope), { accessToken })
+  const agents = await apiFetch<RawLiteAgent[]>(withScope('/v1/lite/agents', scope), { accessToken })
+  return agents.map(normalizeLiteAgent)
 }
 
 export async function createLiteAgent(
@@ -67,11 +81,12 @@ export async function createLiteAgent(
   accessToken: string,
 ): Promise<LiteAgent> {
   const scope = req.scope ?? 'platform'
-  return apiFetch<LiteAgent>(withScope('/v1/lite/agents', scope), {
+  const agent = await apiFetch<RawLiteAgent>(withScope('/v1/lite/agents', scope), {
     method: 'POST',
     body: JSON.stringify({ ...req, scope }),
     accessToken,
   })
+  return normalizeLiteAgent(agent)
 }
 
 export async function patchLiteAgent(
@@ -81,11 +96,12 @@ export async function patchLiteAgent(
 ): Promise<LiteAgent> {
   const scope = req.scope ?? 'platform'
   const { scope: _scope, ...body } = req
-  return apiFetch<LiteAgent>(withScope(`/v1/lite/agents/${id}`, scope), {
+  const agent = await apiFetch<RawLiteAgent>(withScope(`/v1/lite/agents/${id}`, scope), {
     method: 'PATCH',
     body: JSON.stringify(body),
     accessToken,
   })
+  return normalizeLiteAgent(agent)
 }
 
 export async function deleteLiteAgent(

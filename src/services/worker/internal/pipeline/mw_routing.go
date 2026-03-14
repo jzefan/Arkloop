@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,8 +12,15 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
-	"arkloop/services/worker/internal/tools"
 )
+
+type RouteNotFoundError struct {
+	Selector string
+}
+
+func (e *RouteNotFoundError) Error() string {
+	return fmt.Sprintf("route not found for selector: %s", e.Selector)
+}
 
 func NewRoutingMiddleware(
 	staticRouter *routing.ProviderRouter,
@@ -31,7 +39,7 @@ func NewRoutingMiddleware(
 			selectorConfig = staticRouter.Config()
 		}
 		if configLoader != nil {
-			loaded, dbErr := configLoader.Load(ctx, rc.Run.ProjectID)
+			loaded, dbErr := configLoader.Load(ctx, &rc.Run.AccountID)
 			if dbErr != nil {
 				slog.WarnContext(ctx, "routing: per-run load failed, using static", "err", dbErr.Error())
 			} else if len(loaded.Routes) > 0 {
@@ -40,9 +48,11 @@ func NewRoutingMiddleware(
 			}
 		}
 
+		platformSelectorConfig := selectorConfig.PlatformOnly()
+
 		byokEnabled := false
-		if resolver != nil && rc.Run.ProjectID != nil {
-			raw, err := resolver.Resolve(ctx, *rc.Run.ProjectID, "feature.byok_enabled")
+		if resolver != nil {
+			raw, err := resolver.Resolve(ctx, rc.Run.AccountID, "feature.byok_enabled")
 			if err == nil {
 				byokEnabled = raw == "true"
 			}
@@ -58,7 +68,7 @@ func NewRoutingMiddleware(
 				return rc.Gateway, rc.SelectedRoute, nil
 			}
 
-			routeDecision := activeRouter.Decide(map[string]any{"route_id": cleaned}, byokEnabled)
+			routeDecision := activeRouter.Decide(map[string]any{"route_id": cleaned}, byokEnabled, false)
 			if routeDecision.Denied != nil {
 				return nil, nil, fmt.Errorf("%s: %s", routeDecision.Denied.Code, routeDecision.Denied.Message)
 			}
@@ -82,7 +92,7 @@ func NewRoutingMiddleware(
 				}
 				return rc.Gateway, rc.SelectedRoute, nil
 			}
-			selected, err := resolveSelectedRouteBySelector(selectorConfig, cleanedSelector, map[string]any{}, byokEnabled)
+			selected, err := resolveSelectedRouteBySelector(platformSelectorConfig, cleanedSelector, map[string]any{}, byokEnabled)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -98,28 +108,39 @@ func NewRoutingMiddleware(
 
 		var decision routing.ProviderRouteDecision
 		if _, hasRouteID := rc.InputJSON["route_id"]; hasRouteID {
-			decision = activeRouter.Decide(rc.InputJSON, byokEnabled)
+			decision = activeRouter.Decide(rc.InputJSON, byokEnabled, false)
 		} else {
 			selector := ""
 			if rc.AgentConfig != nil && rc.AgentConfig.Model != nil {
 				selector = strings.TrimSpace(*rc.AgentConfig.Model)
 			}
 			if selector != "" {
-				selected, err := resolveSelectedRouteBySelector(selectorConfig, selector, rc.InputJSON, byokEnabled)
+				selected, err := resolveSelectedRouteBySelector(platformSelectorConfig, selector, rc.InputJSON, byokEnabled)
 				if err != nil {
-					decision = routing.ProviderRouteDecision{
-						Denied: &routing.ProviderRouteDenied{
-							ErrorClass: tools.PolicyDeniedCode,
-							Code:       "policy.route_not_found",
-							Message:    err.Error(),
-						},
+					var notFound *RouteNotFoundError
+					if errors.As(err, &notFound) {
+						decision = routing.ProviderRouteDecision{
+							Denied: &routing.ProviderRouteDenied{
+								ErrorClass: llm.ErrorClassRoutingNotFound,
+								Code:       "routing.model_not_found",
+								Message:    err.Error(),
+							},
+						}
+					} else {
+						decision = routing.ProviderRouteDecision{
+							Denied: &routing.ProviderRouteDenied{
+								ErrorClass: llm.ErrorClassRoutingNotFound,
+								Code:       "routing.not_found",
+								Message:    err.Error(),
+							},
+						}
 					}
 				} else if selected != nil {
 					decision = routing.ProviderRouteDecision{Selected: selected}
 				}
 			}
 			if decision.Selected == nil && decision.Denied == nil && rc.PreferredCredentialName != "" {
-				if route, cred, ok := selectorConfig.GetHighestPriorityRouteByCredentialName(rc.PreferredCredentialName, rc.InputJSON); ok {
+				if route, cred, ok := platformSelectorConfig.GetHighestPriorityRouteByCredentialName(rc.PreferredCredentialName, rc.InputJSON); ok {
 					if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
 						decision = routing.ProviderRouteDecision{Denied: denied}
 					} else {
@@ -128,12 +149,14 @@ func NewRoutingMiddleware(
 				}
 			}
 			if decision.Selected == nil && decision.Denied == nil {
-				decision = activeRouter.Decide(rc.InputJSON, byokEnabled)
+				decision = activeRouter.Decide(rc.InputJSON, byokEnabled, true)
 			}
 		}
 
 		var releaseFn func()
-		if releaseSlot != nil {
+		if rc.ReleaseSlot != nil {
+			releaseFn = rc.ReleaseSlot
+		} else if releaseSlot != nil {
 			run := rc.Run
 			releaseFn = func() { releaseSlot(ctx, run) }
 		}
@@ -195,7 +218,7 @@ func resolveSelectedRouteBySelector(cfg routing.ProviderRoutingConfig, selector 
 	if exact {
 		route, cred, ok := cfg.GetHighestPriorityRouteByCredentialAndModel(credentialName, modelName, inputJSON)
 		if !ok {
-			return nil, fmt.Errorf("route not found for selector: %s", selector)
+			return nil, &RouteNotFoundError{Selector: selector}
 		}
 		if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {
 			return nil, fmt.Errorf("%s: %s", denied.Code, denied.Message)
@@ -229,9 +252,9 @@ func splitModelSelector(selector string) (string, string, bool) {
 func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routing.ProviderRouteDenied {
 	if cred.OwnerKind == routing.CredentialScopeUser && !byokEnabled {
 		return &routing.ProviderRouteDenied{
-			ErrorClass: tools.PolicyDeniedCode,
+			ErrorClass: llm.ErrorClassRuntimePolicyDenied,
 			Code:       "policy.byok_disabled",
-			Message:    "BYOK not enabled for this project",
+			Message:    "BYOK not enabled",
 		}
 	}
 	return nil

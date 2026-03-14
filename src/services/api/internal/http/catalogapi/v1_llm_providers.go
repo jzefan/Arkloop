@@ -46,7 +46,7 @@ type createLlmProviderModelRequest struct {
 
 type llmProviderResponse struct {
 	ID            string                     `json:"id"`
-	AccountID         *string                    `json:"account_id,omitempty"`
+	AccountID     *string                    `json:"account_id,omitempty"`
 	Scope         string                     `json:"scope"`
 	Provider      string                     `json:"provider"`
 	Name          string                     `json:"name"`
@@ -278,7 +278,7 @@ func patchLlmProvider(
 	currentScope := "platform"
 	current, err := service.GetProvider(r.Context(), actor.AccountID, providerID, currentScope, &actor.UserID)
 	if err != nil {
-		currentScope = "project"
+		currentScope = "user"
 		current, err = service.GetProvider(r.Context(), actor.AccountID, providerID, currentScope, &actor.UserID)
 	}
 	if err != nil {
@@ -561,7 +561,7 @@ func patchLlmProviderModel(
 	currentScope := "platform"
 	provider, err := service.GetProvider(r.Context(), actor.AccountID, providerID, currentScope, &actor.UserID)
 	if err != nil {
-		currentScope = "project"
+		currentScope = "user"
 		provider, err = service.GetProvider(r.Context(), actor.AccountID, providerID, currentScope, &actor.UserID)
 	}
 	if err != nil {
@@ -728,6 +728,11 @@ func resolveLlmProviderScope(
 	actor *httpkit.Actor,
 	bodyScope *string,
 ) (string, bool) {
+	if strings.TrimSpace(r.URL.Query().Get("project_id")) != "" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "project_id is not supported", traceID, nil)
+		return "", false
+	}
+
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if scope == "" && bodyScope != nil {
 		scope = strings.TrimSpace(*bodyScope)
@@ -735,9 +740,12 @@ func resolveLlmProviderScope(
 	if scope == "" {
 		scope = "platform"
 	}
-	if scope != "project" && scope != "platform" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be project or platform", traceID, nil)
+	if scope != "user" && scope != "project" && scope != "platform" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be user or platform", traceID, nil)
 		return "", false
+	}
+	if scope == "project" {
+		scope = "user"
 	}
 	if scope == "platform" {
 		if !httpkit.RequirePerm(actor, auth.PermPlatformAdmin, w, traceID) {
@@ -759,8 +767,8 @@ func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 	if name == "" || provider == "" || apiKey == "" {
 		return errors.New("name, provider and api_key are required")
 	}
-	if scope != "" && scope != "project" && scope != "platform" {
-		return errors.New("scope must be project or platform")
+	if scope != "" && scope != "user" && scope != "project" && scope != "platform" {
+		return errors.New("scope must be user or platform")
 	}
 	if strings.Contains(name, "^") {
 		return errors.New("name must not contain ^")
@@ -851,12 +859,9 @@ func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 		accountID = &value
 	}
 	scope := provider.Credential.OwnerKind
-	if scope == "user" {
-		scope = "project"
-	}
 	return llmProviderResponse{
 		ID:            provider.Credential.ID.String(),
-		AccountID:         accountID,
+		AccountID:     accountID,
 		Scope:         scope,
 		Provider:      provider.Credential.Provider,
 		Name:          provider.Credential.Name,

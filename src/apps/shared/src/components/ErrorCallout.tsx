@@ -39,8 +39,19 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, FriendlyText> = {
   'credits.insufficient': { zh: '积分不足', en: 'Insufficient credits.' },
   'provider.non_retryable': { zh: '模型服务商请求失败', en: 'Provider request failed (non-retryable).' },
   'provider.retryable': { zh: '模型服务商暂时不可用，请重试', en: 'Provider temporarily unavailable. Please retry.' },
+  'routing.not_found': { zh: '模型路由未找到，请检查 LLM 供应商配置', en: 'Model route not found. Please check LLM provider settings.' },
+  'entitlement.quota_exceeded': { zh: '用量配额已用尽', en: 'Usage quota exceeded.' },
+  'budget.exceeded': { zh: '对话预算已用尽', en: 'Conversation budget exceeded.' },
   'bootstrap.invalid_token': { zh: '初始化链接已失效', en: 'Bootstrap link expired.' },
   'bootstrap.already_initialized': { zh: '平台管理员已初始化', en: 'Platform admin already initialized.' },
+  'config.missing': { zh: '所需工具未配置', en: 'Required tool not configured.' },
+  'config.invalid': { zh: '配置无效，请检查平台设置', en: 'Invalid configuration. Please check platform settings.' },
+  'runtime_policy.denied': { zh: '运行时策略拒绝', en: 'Denied by runtime policy.' },
+  'external_provider.failed': { zh: '外部服务商请求失败', en: 'External provider request failed.' },
+  'internal_platform.error': { zh: '平台内部错误，请联系管理员', en: 'Internal platform error. Please contact admin.' },
+  'policy.byok_disabled': { zh: '平台未启用自带密钥功能', en: 'Bring-your-own-key is not enabled on this platform.' },
+  'routing.model_not_found': { zh: '指定模型未找到，请检查 LLM 供应商配置', en: 'Specified model not found. Please check LLM provider settings.' },
+  'projects.delete_default': { zh: '默认项目不可删除', en: 'Default project cannot be deleted.' },
 }
 
 function hasCjk(text: string): boolean {

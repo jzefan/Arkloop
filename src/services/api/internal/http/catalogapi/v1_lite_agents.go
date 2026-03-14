@@ -1,6 +1,7 @@
 package catalogapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -134,8 +135,12 @@ func listLiteAgents(
 	if !ok {
 		return
 	}
+	scopeID, ok := resolveLiteAgentScopeID(r.Context(), w, traceID, actor, scope, personasRepo)
+	if !ok {
+		return
+	}
 
-	dbPersonas, err := personasRepo.ListByScope(r.Context(), actor.AccountID, scope)
+	dbPersonas, err := personasRepo.ListByScope(r.Context(), scopeID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -186,6 +191,10 @@ func createLiteAgent(
 	if !ok {
 		return
 	}
+	scopeID, ok := resolveLiteAgentScopeID(r.Context(), w, traceID, actor, scope, personasRepo)
+	if !ok {
+		return
+	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.PromptMD = strings.TrimSpace(req.PromptMD)
@@ -197,7 +206,7 @@ func createLiteAgent(
 			return
 		}
 
-		persona, err := materializeRepoPersonaForLiteAgent(r.Context(), personasRepo, actor.AccountID, scope, *repoPersona, req)
+		persona, err := materializeRepoPersonaForLiteAgent(r.Context(), personasRepo, scopeID, scope, *repoPersona, req)
 		if err != nil {
 			var conflict data.PersonaConflictError
 			if errors.As(err, &conflict) {
@@ -218,7 +227,7 @@ func createLiteAgent(
 
 	persona, err := personasRepo.CreateInScope(
 		r.Context(),
-		actor.AccountID,
+		scopeID,
 		scope,
 		slugify(req.Name),
 		"1.0",
@@ -267,8 +276,12 @@ func patchLiteAgent(
 	if !ok {
 		return
 	}
+	scopeID, ok := resolveLiteAgentScopeID(r.Context(), w, traceID, actor, scope, personasRepo)
+	if !ok {
+		return
+	}
 
-	existing, err := personasRepo.GetByIDInScope(r.Context(), actor.AccountID, personaID, scope)
+	existing, err := personasRepo.GetByIDInScope(r.Context(), scopeID, personaID, scope)
 	if err != nil || existing == nil {
 		httpkit.WriteError(w, nethttp.StatusNotFound, "lite_agents.not_found", "agent not found", traceID, nil)
 		return
@@ -296,7 +309,7 @@ func patchLiteAgent(
 		patch.ToolDenylist = *req.ToolDenylist
 	}
 
-	updated, err := personasRepo.PatchInScope(r.Context(), actor.AccountID, personaID, scope, patch)
+	updated, err := personasRepo.PatchInScope(r.Context(), scopeID, personaID, scope, patch)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -332,7 +345,11 @@ func deleteLiteAgent(
 	if !ok {
 		return
 	}
-	deleted, err := personasRepo.DeleteInScope(r.Context(), actor.AccountID, personaID, scope)
+	scopeID, ok := resolveLiteAgentScopeID(r.Context(), w, traceID, actor, scope, personasRepo)
+	if !ok {
+		return
+	}
+	deleted, err := personasRepo.DeleteInScope(r.Context(), scopeID, personaID, scope)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -375,7 +392,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 	}
 	return liteAgentResponse{
 		ID:              p.ID.String(),
-		Scope:           personaScopeFromProjectID(p.AccountID),
+		Scope:           personaScopeFromProjectID(p.ProjectID),
 		PersonaKey:      p.PersonaKey,
 		DisplayName:     p.DisplayName,
 		Description:     p.Description,
@@ -393,6 +410,29 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 		Source:          "db",
 		CreatedAt:       p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
+}
+
+func resolveLiteAgentScopeID(
+	ctx context.Context,
+	w nethttp.ResponseWriter,
+	traceID string,
+	actor *httpkit.Actor,
+	scope string,
+	personasRepo *data.PersonasRepository,
+) (uuid.UUID, bool) {
+	if scope != data.PersonaScopeProject {
+		return uuid.Nil, true
+	}
+	if personasRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return uuid.Nil, false
+	}
+	projectID, err := personasRepo.GetOrCreateDefaultProjectIDByOwner(ctx, actor.AccountID, actor.UserID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return uuid.Nil, false
+	}
+	return projectID, true
 }
 
 func toLiteAgentFromRepo(rp personas.RepoPersona, scope string) liteAgentResponse {
@@ -432,7 +472,7 @@ func toLiteAgentFromRepo(rp personas.RepoPersona, scope string) liteAgentRespons
 	}
 	return liteAgentResponse{
 		ID:              rp.ID,
-		Scope:           scope,
+		Scope:           personaScopeFromScope(scope),
 		PersonaKey:      rp.ID,
 		DisplayName:     rp.Title,
 		Description:     descPtr,

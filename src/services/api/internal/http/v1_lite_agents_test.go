@@ -57,3 +57,36 @@ func TestToLiteAgentFromRepoIncludesDenylist(t *testing.T) {
 		t.Fatalf("unexpected tool_denylist: %#v", resp.ToolDenylist)
 	}
 }
+
+func TestToLiteAgentFromDBScopeUsesProjectID(t *testing.T) {
+	t.Parallel()
+
+	projectID := uuid.New()
+	userScoped := data.Persona{
+		ID:          uuid.New(),
+		ProjectID:   &projectID,
+		PersonaKey:  "user-agent",
+		DisplayName: "User Agent",
+		PromptMD:    "prompt",
+		BudgetsJSON: json.RawMessage("{}"),
+		CreatedAt:   time.Unix(0, 0),
+	}
+	platformScoped := data.Persona{
+		ID:          uuid.New(),
+		PersonaKey:  "platform-agent",
+		DisplayName: "Platform Agent",
+		PromptMD:    "prompt",
+		BudgetsJSON: json.RawMessage("{}"),
+		CreatedAt:   time.Unix(0, 0),
+	}
+
+	userResp := toLiteAgentFromDB(userScoped)
+	if userResp.Scope != "user" {
+		t.Fatalf("expected user scope, got %q", userResp.Scope)
+	}
+
+	platformResp := toLiteAgentFromDB(platformScoped)
+	if platformResp.Scope != "platform" {
+		t.Fatalf("expected platform scope, got %q", platformResp.Scope)
+	}
+}

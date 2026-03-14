@@ -67,7 +67,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("new personas repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -78,13 +78,13 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
-		PersonasRepo:        personasRepo,
+		Pool:                  pool,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
+		PersonasRepo:          personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
 				ID:                 "builtin-only",
@@ -181,6 +181,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	}
 
 	createResp := doJSON(handler, nethttp.MethodPost, "/v1/personas", map[string]any{
+		"scope":                "user",
 		"persona_key":          "api-created",
 		"version":              "1",
 		"display_name":         "API Created",
@@ -199,6 +200,9 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("create persona: %d %s", createResp.Code, createResp.Body.String())
 	}
 	created := decodeJSONBody[personaResponse](t, createResp.Body.Bytes())
+	if created.Scope != "user" {
+		t.Fatalf("unexpected created scope: %q", created.Scope)
+	}
 	if created.Model == nil || *created.Model != "api-cred^gpt-5-mini" {
 		t.Fatalf("unexpected created model: %#v", created.Model)
 	}
@@ -228,7 +232,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("copy builtin persona: %d %s", copyResp.Code, copyResp.Body.String())
 	}
 
-	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas", nil, headers)
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=user", nil, headers)
 	if listResp.Code != nethttp.StatusOK {
 		t.Fatalf("list personas: %d %s", listResp.Code, listResp.Body.String())
 	}
@@ -251,6 +255,9 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 	}
 	if builtinOnly.Source != "custom" {
 		t.Fatalf("unexpected builtin-only source after copy: %q", builtinOnly.Source)
+	}
+	if builtinOnly.Scope != "user" {
+		t.Fatalf("unexpected builtin-only scope: %q", builtinOnly.Scope)
 	}
 	if builtinOnly.DisplayName != "Builtin Customized" {
 		t.Fatalf("unexpected builtin-only display name: %q", builtinOnly.DisplayName)
@@ -306,7 +313,7 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("unexpected custom-only tool_denylist: %#v", customOnly.ToolDenylist)
 	}
 
-	patchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+created.ID, map[string]any{
+	patchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+created.ID+"?scope=user", map[string]any{
 		"model":                "patched-cred^gpt-5",
 		"tool_denylist":        []string{"write_stdin"},
 		"reasoning_mode":       "high",
@@ -330,6 +337,16 @@ func TestPersonasListCreateAndPatchUsePersonaFields(t *testing.T) {
 		t.Fatalf("unexpected patched tool_denylist: %#v", patched.ToolDenylist)
 	}
 	assertJSONContainsEmptyObject(t, patched.RolesJSON)
+
+	deleteResp := doJSON(handler, nethttp.MethodDelete, "/v1/personas/"+created.ID+"?scope=user", nil, headers)
+	if deleteResp.Code != nethttp.StatusOK {
+		t.Fatalf("delete persona: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	afterDelete := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+created.ID+"?scope=user", map[string]any{
+		"display_name": "after delete",
+	}, headers)
+	assertErrorEnvelope(t, afterDelete, nethttp.StatusNotFound, "personas.not_found")
 
 	ghostPatchResp := doJSON(handler, nethttp.MethodPatch, "/v1/personas/"+ghostID.String(), map[string]any{
 		"display_name": "Ghost Renamed",
@@ -386,7 +403,7 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 		t.Fatalf("new personas repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -397,13 +414,13 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
-		PersonasRepo:        personasRepo,
+		Pool:                  pool,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
+		PersonasRepo:          personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
 				ID:             "normal",
@@ -440,7 +457,7 @@ func TestPersonasListOrgScopeAllowsMemberReadForBuiltinSelector(t *testing.T) {
 	}
 
 	headers := authHeader(regBody.AccessToken)
-	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=project", nil, headers)
+	listResp := doJSON(handler, nethttp.MethodGet, "/v1/personas?scope=user", nil, headers)
 	if listResp.Code != nethttp.StatusOK {
 		t.Fatalf("list personas: %d %s", listResp.Code, listResp.Body.String())
 	}
@@ -513,7 +530,7 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 		t.Fatalf("new personas repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -524,13 +541,13 @@ func TestSelectablePersonasEffectiveForMemberUser(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Pool:                pool,
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
-		PersonasRepo:        personasRepo,
+		Pool:                  pool,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
+		PersonasRepo:          personasRepo,
 		RepoPersonas: []repopersonas.RepoPersona{
 			{
 				ID:             "normal",

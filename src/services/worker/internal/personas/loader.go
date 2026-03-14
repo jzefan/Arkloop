@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/worker/internal/tools"
@@ -465,36 +466,23 @@ func asBudgets(value any) (Budgets, error) {
 	}, nil
 }
 
-// LoadFromDB 从数据库加载运行期有效 persona：platform 为基础层，project 为覆盖层。
-func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, projectID *uuid.UUID) ([]Definition, error) {
+// LoadFromDB 从数据库加载运行期有效的平台 persona。
+func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, _ *uuid.UUID) ([]Definition, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("pool must not be nil")
 	}
 
-	var query string
-	var args []any
-	if projectID != nil {
-		query = `SELECT persona_key, version, display_name, description,
+	query := `SELECT persona_key, version, display_name, description,
 		        soul_md, user_selectable, selector_name, selector_order,
 		        prompt_md, tool_allowlist, COALESCE(tool_denylist, '{}'), budgets_json, COALESCE(roles_json, '{}'::jsonb), title_summarize_json,
 		        executor_type, executor_config_json,
-		        preferred_credential, model, reasoning_mode, prompt_cache_control
-		 FROM personas
-		 WHERE is_active = TRUE AND (project_id IS NULL OR project_id = $1)
-		 ORDER BY CASE WHEN project_id IS NULL THEN 0 ELSE 1 END ASC, created_at ASC`
-		args = []any{*projectID}
-	} else {
-		query = `SELECT persona_key, version, display_name, description,
-		        soul_md, user_selectable, selector_name, selector_order,
-		        prompt_md, tool_allowlist, COALESCE(tool_denylist, '{}'), budgets_json, title_summarize_json,
-		        executor_type, executor_config_json,
-		        preferred_credential, model, reasoning_mode, prompt_cache_control
+		        preferred_credential, model, reasoning_mode, prompt_cache_control,
+		        updated_at
 		 FROM personas
 		 WHERE is_active = TRUE AND project_id IS NULL
 		 ORDER BY created_at ASC`
-	}
 
-	rows, err := pool.Query(ctx, query, args...)
+	rows, err := pool.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -523,11 +511,12 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, projectID *uuid.UUID) (
 			model               *string
 			reasoningMode       string
 			promptCacheControl  string
+			updatedAt           time.Time
 		)
 		if err := rows.Scan(&personaKey, &version, &displayName, &description,
 			&soulMD, &userSelectable, &selectorName, &selectorOrder,
 			&promptMD, &toolAllowlist, &toolDenylist, &budgetsRaw, &rolesRaw, &titleSummarizeRaw,
-			&executorType, &executorConfigRaw, &preferredCredential, &model, &reasoningMode, &promptCacheControl); err != nil {
+			&executorType, &executorConfigRaw, &preferredCredential, &model, &reasoningMode, &promptCacheControl, &updatedAt); err != nil {
 			return nil, err
 		}
 
@@ -576,6 +565,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, projectID *uuid.UUID) (
 			PromptCacheControl:  normalizePersonaPromptCacheControl(strPtrOrNil(promptCacheControl)),
 			Roles:               roles,
 			TitleSummarizer:     titleSummarizer,
+			UpdatedAt:           updatedAt,
 		}
 		if description != nil && strings.TrimSpace(*description) != "" {
 			s := strings.TrimSpace(*description)

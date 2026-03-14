@@ -52,7 +52,7 @@ func TestWebhookCreateStoresSecretReference(t *testing.T) {
 	jobRepo, _ := data.NewJobRepository(pool)
 	webhookRepo, _ := data.NewWebhookEndpointRepository(pool)
 	secretsRepo, _ := data.NewSecretsRepository(pool, keyRing)
-	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, _ := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	registrationService, _ := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
 
 	handler := NewHandler(HandlerConfig{

@@ -67,7 +67,7 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -630,7 +630,7 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 		t.Fatalf("new audit repo: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -735,7 +735,7 @@ func TestAuthCookieIsolation(t *testing.T) {
 	auditRepo, _ := data.NewAuditLogRepository(pool)
 	jobRepo, _ := data.NewJobRepository(pool)
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -1007,7 +1007,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 		t.Fatalf("new feature flag service: %v", err)
 	}
 
-	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil)
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -1017,7 +1017,7 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 	if err != nil {
 		t.Fatalf("new registration service: %v", err)
 	}
-	emailOTPLoginService, err := auth.NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo, nil)
+	emailOTPLoginService, err := auth.NewEmailOTPLoginService(userRepo, otpRepo, jobRepo, tokenService, refreshTokenRepo, membershipRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new email otp login service: %v", err)
 	}
