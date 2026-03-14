@@ -27,6 +27,22 @@ export type SidecarVersionInfo = {
   updateAvailable: boolean
 }
 
+export type RootfsStatus = 'not_installed' | 'downloading' | 'ready' | 'error'
+
+export type RootfsProgress = {
+  phase: 'connecting' | 'downloading' | 'extracting' | 'done' | 'error'
+  percent: number
+  bytesDownloaded: number
+  bytesTotal: number
+  error?: string
+}
+
+export type RootfsVersionInfo = {
+  current: string | null
+  latest: string | null
+  updateAvailable: boolean
+}
+
 export type ArkloopDesktopApi = {
   isDesktop: true
   config: {
@@ -43,6 +59,15 @@ export type ArkloopDesktopApi = {
     checkUpdate: () => Promise<SidecarVersionInfo>
     onStatusChanged: (callback: (status: SidecarStatus) => void) => () => void
     onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
+  }
+  rootfs: {
+    getStatus: () => Promise<RootfsStatus>
+    isAvailable: () => Promise<boolean>
+    getPath: () => Promise<string>
+    checkVersion: () => Promise<RootfsVersionInfo>
+    download: () => Promise<{ ok: boolean }>
+    delete: () => Promise<{ ok: boolean }>
+    onDownloadProgress: (callback: (progress: RootfsProgress) => void) => () => void
   }
   onboarding: {
     getStatus: () => Promise<{ completed: boolean }>
@@ -107,6 +132,20 @@ const api: ArkloopDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, progress: DownloadProgress) => callback(progress)
       ipcRenderer.on('arkloop:sidecar:download-progress', handler)
       return () => ipcRenderer.removeListener('arkloop:sidecar:download-progress', handler)
+    },
+  },
+
+  rootfs: {
+    getStatus: () => ipcRenderer.invoke('arkloop:rootfs:status'),
+    isAvailable: () => ipcRenderer.invoke('arkloop:rootfs:available'),
+    getPath: () => ipcRenderer.invoke('arkloop:rootfs:path'),
+    checkVersion: () => ipcRenderer.invoke('arkloop:rootfs:check-version'),
+    download: () => ipcRenderer.invoke('arkloop:rootfs:download'),
+    delete: () => ipcRenderer.invoke('arkloop:rootfs:delete'),
+    onDownloadProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: RootfsProgress) => callback(progress)
+      ipcRenderer.on('arkloop:rootfs:download-progress', handler)
+      return () => ipcRenderer.removeListener('arkloop:rootfs:download-progress', handler)
     },
   },
 

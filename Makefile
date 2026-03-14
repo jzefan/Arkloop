@@ -2,7 +2,7 @@ SERVICES := api gateway worker sandbox
 SHARED   := src/services/shared
 
 # Default: cloud build (no extra tags required)
-.PHONY: build build-cloud build-desktop build-shared test test-cloud test-desktop lint
+.PHONY: build build-cloud build-desktop build-desktop-sidecar build-desktop-sidecar-all build-shared test test-cloud test-desktop lint
 
 build: build-cloud
 
@@ -13,6 +13,16 @@ build-cloud:
 	cd src/services/gateway && go build ./...
 	cd src/services/worker  && go build ./...
 	cd src/services/sandbox && go build ./...
+
+## build-desktop-sidecar: Cross-compile desktop sidecar for current platform
+build-desktop-sidecar:
+	@echo "==> Building desktop sidecar (current platform)..."
+	node src/apps/desktop/scripts/build-sidecar.mjs
+
+## build-desktop-sidecar-all: Cross-compile desktop sidecar for all platforms
+build-desktop-sidecar-all:
+	@echo "==> Building desktop sidecar (all platforms)..."
+	node src/apps/desktop/scripts/build-sidecar.mjs --all
 
 ## build-desktop: Build worker for local Desktop mode (excludes Redis, PostgreSQL, S3 SDK)
 # Note: api service is cloud-only in Phase 2; desktop support is planned for a later phase.

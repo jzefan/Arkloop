@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { loadConfig, saveConfig, getConfigPath } from './config'
 import { getSidecarStatus, startSidecar, stopSidecar, downloadSidecar, isSidecarAvailable, checkSidecarVersion } from './sidecar'
+import { getRootfsStatus, isRootfsAvailable, getRootfsPath, checkRootfsVersion, downloadRootfs, deleteRootfs } from './rootfs'
 import type { AppConfig } from './types'
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
@@ -60,6 +61,35 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.handle('arkloop:sidecar:check-update', async () => {
     return checkSidecarVersion()
+  })
+
+  ipcMain.handle('arkloop:rootfs:status', () => {
+    return getRootfsStatus()
+  })
+
+  ipcMain.handle('arkloop:rootfs:available', () => {
+    return isRootfsAvailable()
+  })
+
+  ipcMain.handle('arkloop:rootfs:path', () => {
+    return getRootfsPath()
+  })
+
+  ipcMain.handle('arkloop:rootfs:check-version', async () => {
+    return checkRootfsVersion()
+  })
+
+  ipcMain.handle('arkloop:rootfs:download', async () => {
+    await downloadRootfs((progress) => {
+      const win = getWindow()
+      if (win) win.webContents.send('arkloop:rootfs:download-progress', progress)
+    })
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:rootfs:delete', async () => {
+    await deleteRootfs()
+    return { ok: true }
   })
 
   ipcMain.handle('arkloop:onboarding:status', () => {
