@@ -72,7 +72,8 @@ export function isSidecarAvailable(): boolean {
 
   // 打包模式回退
   if (app.isPackaged) {
-    const bundledPath = path.join(process.resourcesPath, 'sidecar', 'desktop')
+    const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
+    const bundledPath = path.join(process.resourcesPath, 'sidecar', bundledName)
     try {
       fs.accessSync(bundledPath, fs.constants.X_OK)
       return true
@@ -225,7 +226,8 @@ function resolveBinaryPath(): string {
   }
 
   // 打包模式回退
-  return path.join(process.resourcesPath, 'sidecar', 'desktop')
+  const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
+  return path.join(process.resourcesPath, 'sidecar', bundledName)
 }
 
 function healthCheck(port: number): Promise<boolean> {

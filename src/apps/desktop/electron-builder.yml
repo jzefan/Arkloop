@@ -15,6 +15,12 @@ extraResources:
     filter:
       - "**/*"
 
+publish:
+  provider: github
+  owner: nicepkg
+  repo: arkloop
+  releaseType: release
+
 mac:
   category: public.app-category.developer-tools
   target:
@@ -23,6 +29,10 @@ mac:
         - arm64
         - x64
   icon: resources/icon.icns
+  notarize: true
+  extraResources:
+    - from: sidecar-bin/desktop-darwin-${arch}
+      to: sidecar/desktop
 
 linux:
   category: Development
@@ -30,11 +40,17 @@ linux:
     - AppImage
     - deb
   icon: resources/icon.png
+  extraResources:
+    - from: sidecar-bin/desktop-linux-${arch}
+      to: sidecar/desktop
 
 win:
   target:
     - nsis
   icon: resources/icon.ico
+  extraResources:
+    - from: sidecar-bin/desktop-win32-${arch}.exe
+      to: sidecar/desktop.exe
 
 nsis:
   oneClick: false

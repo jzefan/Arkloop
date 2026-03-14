@@ -11,6 +11,12 @@
     "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
     "pack": "pnpm build && electron-builder --dir",
     "dist": "pnpm build && electron-builder",
+    "dist:mac": "pnpm build && electron-builder --mac",
+    "dist:mac:arm64": "pnpm build && electron-builder --mac --arm64",
+    "dist:mac:x64": "pnpm build && electron-builder --mac --x64",
+    "dist:linux": "pnpm build && electron-builder --linux",
+    "dist:win": "pnpm build && electron-builder --win",
+    "dist:all": "pnpm build && electron-builder -mwl",
     "type-check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit"
   },
   "dependencies": {
