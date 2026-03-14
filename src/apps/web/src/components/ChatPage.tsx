@@ -2189,15 +2189,7 @@ export function ChatPage() {
               )}
 
               {injectionBlocked && (
-                <div
-                  className="rounded-xl px-4 py-3 text-sm"
-                  style={{
-                    background: 'var(--c-status-error-bg, rgba(239, 68, 68, 0.08))',
-                    border: '0.5px solid var(--c-status-error-border, rgba(239, 68, 68, 0.2))',
-                    color: 'var(--c-status-error-text, #ef4444)',
-                    maxWidth: '720px',
-                  }}
-                >
+                <div className="max-w-[720px] rounded-xl border-[0.5px] border-[var(--c-error-border)] bg-[var(--c-error-bg)] px-4 py-3 text-sm text-[var(--c-error-text)]">
                   {injectionBlocked}
                 </div>
               )}
