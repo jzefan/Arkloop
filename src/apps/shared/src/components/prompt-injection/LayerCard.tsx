@@ -93,7 +93,7 @@ export function LayerCard({
           {isSemantic && !semanticConfigured ? (
             <button
               onClick={onSetupToggle}
-              className="rounded-md border border-[var(--c-border-console)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
+              className="rounded-md border border-[var(--c-border-mid)] bg-[var(--c-bg-card)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-sub)]"
             >
               {texts.actionConfigure}
             </button>
@@ -104,7 +104,7 @@ export function LayerCard({
               className={[
                 'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
                 enabled
-                  ? 'border-[var(--c-border-console)] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-sub)]'
+                  ? 'border-[var(--c-border-mid)] bg-[var(--c-bg-card)] text-[var(--c-text-primary)] hover:bg-[var(--c-bg-sub)]'
                   : 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]',
                 (toggling || !canToggle) ? 'opacity-50 cursor-not-allowed' : '',
               ].join(' ')}

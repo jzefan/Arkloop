@@ -96,20 +96,27 @@ func (a *Application) Run(ctx context.Context) error {
 
 	handler := corsMiddleware(a.config.CORSAllowedOrigins, mux)
 
-	// Parse port from configured address so we can listen on both IPv4 and IPv6.
-	_, portStr, err := net.SplitHostPort(a.config.Addr)
+	// Parse host and port from configured address.
+	hostStr, portStr, err := net.SplitHostPort(a.config.Addr)
 	if err != nil {
 		return fmt.Errorf("parsing addr: %w", err)
 	}
 
-	listener4, err := net.Listen("tcp4", "127.0.0.1:"+portStr)
+	// Determine listen addresses based on configured host.
+	v4Addr := "127.0.0.1:" + portStr
+	v6Addr := "[::1]:" + portStr
+	if hostStr == "0.0.0.0" {
+		v4Addr = "0.0.0.0:" + portStr
+		v6Addr = "[::]:" + portStr
+	}
+
+	listener4, err := net.Listen("tcp4", v4Addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener4.Close() }()
 
-	// Also listen on IPv6 loopback — browsers on macOS resolve localhost to ::1.
-	listener6, err6 := net.Listen("tcp6", "[::1]:"+portStr)
+	listener6, err6 := net.Listen("tcp6", v6Addr)
 	if err6 == nil {
 		defer func() { _ = listener6.Close() }()
 	}
