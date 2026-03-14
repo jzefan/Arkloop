@@ -204,6 +204,10 @@ func createPersona(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "copy_from_repo_persona_key is invalid", traceID, nil)
 			return
 		}
+		if repoPersona.IsSystem {
+			httpkit.WriteError(w, nethttp.StatusForbidden, "personas.system_protected", "system persona cannot be created via API", traceID, nil)
+			return
+		}
 		if req.PersonaKey != "" && req.PersonaKey != repoPersona.ID {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "persona_key must match repo persona key", traceID, nil)
 			return
@@ -235,6 +239,11 @@ func createPersona(
 
 	if req.PersonaKey == "" || req.Version == "" || req.DisplayName == "" || req.PromptMD == "" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "persona_key, version, display_name, and prompt_md are required", traceID, nil)
+		return
+	}
+
+	if isSystemPersonaKey(repoPersonas, req.PersonaKey) {
+		httpkit.WriteError(w, nethttp.StatusForbidden, "personas.system_protected", "system persona cannot be created via API", traceID, nil)
 		return
 	}
 
@@ -871,4 +880,13 @@ func optionalTrimmedString(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func isSystemPersonaKey(repoPersonas []repopersonas.RepoPersona, key string) bool {
+	for _, rp := range repoPersonas {
+		if rp.ID == key && rp.IsSystem {
+			return true
+		}
+	}
+	return false
 }

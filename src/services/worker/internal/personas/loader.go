@@ -202,6 +202,10 @@ func loadSinglePersona(yamlPath string) (Definition, error) {
 		PromptCacheControl:  promptCacheControl,
 		Roles:               roles,
 		TitleSummarizer:     titleSummarizer,
+
+		IsSystem:                asOptionalBool(obj["is_system"]),
+		IsBuiltin:               asOptionalBool(obj["is_builtin"]),
+		AllowPlatformDelegation: asOptionalBool(obj["allow_platform_delegation"]),
 	}, nil
 }
 
@@ -588,6 +592,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, projectID *uuid.UUID) (
 }
 
 // MergeRegistry 以 base 为底，DB persona 按 ID 覆盖同名文件系统 persona。
+// is_system 的 persona 不可被 DB 覆盖。
 func MergeRegistry(base *Registry, overrides []Definition) *Registry {
 	merged := NewRegistry()
 	for _, id := range base.ListIDs() {
@@ -596,6 +601,9 @@ func MergeRegistry(base *Registry, overrides []Definition) *Registry {
 	}
 	for _, def := range overrides {
 		if baseDef, ok := merged.Get(def.ID); ok {
+			if baseDef.IsSystem {
+				continue
+			}
 			merged.Set(mergeDefinition(baseDef, def))
 			continue
 		}
@@ -612,6 +620,10 @@ func mergeDefinition(base Definition, override Definition) Definition {
 	if strings.TrimSpace(merged.SoulMD) == "" {
 		merged.SoulMD = base.SoulMD
 	}
+	// DB 无对应列的字段保留文件系统值
+	merged.IsSystem = base.IsSystem
+	merged.IsBuiltin = base.IsBuiltin
+	merged.AllowPlatformDelegation = base.AllowPlatformDelegation
 	return merged
 }
 
