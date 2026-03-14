@@ -1,11 +1,28 @@
 import { spawn } from 'child_process'
 import { createRequire } from 'module'
 import { resolve, dirname } from 'path'
+import { mkdirSync } from 'fs'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
 const webRoot = resolve(root, '..', 'web')
+const workspaceRoot = resolve(root, '..', '..', '..')
+const desktopBin = resolve(workspaceRoot, 'src', 'services', 'desktop', 'bin', 'desktop')
+
+function runStep(command, args, options = {}) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(command, args, { stdio: 'inherit', ...options })
+    child.on('error', rejectPromise)
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolvePromise()
+        return
+      }
+      rejectPromise(new Error(`${command} ${args.join(' ')} exited with code ${code}`))
+    })
+  })
+}
 
 async function waitForVite(url, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs
@@ -21,6 +38,12 @@ async function waitForVite(url, timeoutMs = 30000) {
 
 async function main() {
   const viteUrl = 'http://localhost:5173'
+
+  console.log('[dev] building desktop sidecar...')
+  mkdirSync(resolve(desktopBin, '..'), { recursive: true })
+  await runStep('go', ['build', '-tags', 'desktop', '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
+    cwd: workspaceRoot,
+  })
 
   // Start Vite directly with sidecar proxy target, overriding .env.local
   console.log('[dev] starting vite dev server...')
@@ -45,15 +68,8 @@ async function main() {
   const require = createRequire(import.meta.url)
   const tscPath = require.resolve('typescript/bin/tsc')
 
-  const tscMain = spawn('node', [tscPath, '-p', 'tsconfig.main.json'], { cwd: root, stdio: 'inherit' })
-  await new Promise((res, rej) => {
-    tscMain.on('exit', (code) => (code === 0 ? res() : rej(new Error(`tsc main: ${code}`))))
-  })
-
-  const tscPreload = spawn('node', [tscPath, '-p', 'tsconfig.preload.json'], { cwd: root, stdio: 'inherit' })
-  await new Promise((res, rej) => {
-    tscPreload.on('exit', (code) => (code === 0 ? res() : rej(new Error(`tsc preload: ${code}`))))
-  })
+  await runStep('node', [tscPath, '-p', 'tsconfig.main.json'], { cwd: root })
+  await runStep('node', [tscPath, '-p', 'tsconfig.preload.json'], { cwd: root })
 
   console.log('[dev] starting electron...')
 
