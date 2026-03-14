@@ -12,6 +12,7 @@ import (
 	"arkloop/services/sandbox/internal/acp"
 	"arkloop/services/sandbox/internal/app"
 	dockerpool "arkloop/services/sandbox/internal/docker"
+	localpool "arkloop/services/sandbox/internal/local"
 	"arkloop/services/sandbox/internal/environment"
 	"arkloop/services/sandbox/internal/firecracker"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
@@ -93,6 +94,8 @@ func run() error {
 		vmPool, err = buildFirecrackerPool(cfg, logger)
 	case app.ProviderDocker:
 		vmPool, err = buildDockerPool(cfg, logger)
+	case app.ProviderLocal:
+		vmPool = localpool.New(localpool.Config{Logger: logger})
 	default:
 		err = fmt.Errorf("unknown provider: %s", cfg.Provider)
 	}
