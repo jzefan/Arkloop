@@ -38,137 +38,187 @@ var groupOrder = []string{
 }
 
 var registry = []ToolMeta{
+	// ── web ──
 	{
-		Name:           "web_search",
-		Group:          GroupWebSearch,
-		Label:          "Web search",
-		LLMDescription: fmt.Sprintf("search the internet and return title, link, and summary for each result. Use the queries array to run up to %d independent searches in a single call; fall back to the scalar query field only when you have a single question. Set max_results per query (default %d, max %d). When formulating queries: (1) decompose a complex question into independent keyword-based queries that together cover the full question with minimal overlap; (2) if a query is vague, rewrite it into a well-defined search by adding context from the conversation; (3) when the timing of an event is uncertain, use neutral phrasing such as 'latest news' or 'updates' instead of assuming a result already exists (good: 'Argentina Elections latest news'; bad: 'Argentina Elections results').", WebSearchMaxQueriesLimit, WebSearchDefaultMaxResults, WebSearchMaxResultsLimit),
+		Name:  "web_search",
+		Group: GroupWebSearch,
+		Label: "Web search",
+		LLMDescription: fmt.Sprintf(
+			"search the web and return title, URL, and snippet for each result. "+
+				"Use the queries array (up to %d) to run independent searches in one call; use the scalar query field for a single question. "+
+				"max_results per query defaults to %d (max %d).",
+			WebSearchMaxQueriesLimit, WebSearchDefaultMaxResults, WebSearchMaxResultsLimit),
 	},
 	{
 		Name:           "web_fetch",
 		Group:          GroupWebFetch,
 		Label:          "Web fetch",
-		LLMDescription: "fetch a web page and return its title and body as plain text. Use this when search results are insufficient but a particular page looks likely to contain deeper information. Prefer official or authoritative pages. Can be called in batch when multiple pages are worth fetching, but avoid re-fetching the same URL.",
+		LLMDescription: "fetch a web page and return its title and body as plain text. Use when search snippets are insufficient and a specific page likely contains deeper information. Prefer official or authoritative sources. Batch-callable; do not re-fetch the same URL.",
+	},
+	// ── sandbox ──
+	{
+		Name:  "python_execute",
+		Group: GroupSandbox,
+		Label: "Python execution",
+		LLMDescription: "execute Python code in an isolated sandbox. Use for calculations, data processing, or visualization instead of computing manually. " +
+			"Pre-installed: numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, kaleido. " +
+			"For charts prefer Plotly; use fig.write_image() for PNG, fall back to fig.write_html() only on failure. Do not set pio.renderers. " +
+			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
+			"Only reference artifact keys that actually appear in result.artifacts. " +
+			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
+			"Never output raw /workspace/ or /tmp/output/ paths. Never invent artifact keys.",
 	},
 	{
-		Name:           "python_execute",
-		Group:          GroupSandbox,
-		Label:          "Python execution",
-		LLMDescription: "execute Python code in an isolated sandbox environment. Use this tool for any numerical calculations or data processing instead of computing manually. Pre-installed libraries include numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, etc. For charts and visualizations, prefer Plotly (plotly.express or plotly.graph_objects) over matplotlib. Use fig.write_image() for PNG output (kaleido is pre-installed). Only fall back to fig.write_html() if write_image fails. Do not set pio.renderers or attempt to open a browser. IMPORTANT: write long-lived working files to /workspace/. Use /tmp/output/ only for final files that should be uploaded as user-visible artifacts. Files written to /tmp/output/ are automatically uploaded; the tool result includes an artifacts array with each file's key, filename, size and mime_type. In your final response, only keys that actually appear in result.artifacts may be referenced as artifact:<key>. If you want to show a file that exists only in /workspace/, you must use Markdown links: images use ![简短说明](workspace:/relative/path), non-images use [文件名](workspace:/relative/path). Never write workspace:/workspace/...; strip the leading /workspace and use workspace:/... instead. Never output malformed forms like ![workspace:path] or bare workspace:/path. Never invent artifact keys from stdout, stderr, or filenames. Never output raw /workspace/... or /tmp/output/... paths as user links.",
+		Name:  "exec_command",
+		Group: GroupSandbox,
+		Label: "Command execution",
+		LLMDescription: "run a shell command in a persistent sandbox session. Use session_mode=auto by default. " +
+			"Reuse the session_ref returned by the first call; do not issue a new exec_command to poll a busy session — use write_stdin instead. " +
+			"If the result shows running=true or only control sequences, continue with write_stdin. " +
+			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
+			"Only reference artifact keys that actually appear in result.artifacts. " +
+			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
+			"Never output raw paths. Never invent artifact keys.",
 	},
 	{
-		Name:           "exec_command",
-		Group:          GroupSandbox,
-		Label:          "Command execution",
-		LLMDescription: "run a command in a persistent shell session inside the isolated sandbox. Use session_mode=auto unless you need a fresh session, an explicit resume, or a fork. You may set share_scope only when a new session should be created; do not pass share_scope on resume or fork. When the tool returns session_ref, keep using that stable reference in later calls instead of any transient sandbox identifier. Short commands usually finish in this first response. If the first response still shows running=true, or stdout only contains shell control sequences such as bracketed-paste markers, you must continue with write_stdin before concluding that the command produced no output. Do not issue another exec_command against the same busy session_ref just to poll for output; use write_stdin instead. Only switch to write_stdin when the result still shows running=true or when you need to send stdin. IMPORTANT: write long-lived working files that later tools should read to /workspace/. Use /tmp/output/ only for final files that should be uploaded as user-visible artifacts. In your final response, only keys that actually appear in result.artifacts may be referenced as artifact:<key>. If you want to show a file that exists only in /workspace/, you must use Markdown links: images use ![简短说明](workspace:/relative/path), non-images use [文件名](workspace:/relative/path). Never write workspace:/workspace/...; strip the leading /workspace and use workspace:/... instead. Never output malformed forms like ![workspace:path] or bare workspace:/path. Never invent artifact keys from stdout, stderr, or filenames. Never output raw /workspace/... or /tmp/output/... paths as user links.",
+		Name:  "write_stdin",
+		Group: GroupSandbox,
+		Label: "Shell stdin",
+		LLMDescription: "send stdin to, or poll output from, a running shell session. " +
+			"Pass the session_ref from exec_command. Use only when exec_command returned running=true or the process awaits stdin. " +
+			"Set chars to a non-empty string to write, or omit/empty to poll new output. " +
+			"Working files go to /workspace/; final files go to /tmp/output/. " +
+			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
+			"Never invent artifact keys.",
 	},
 	{
-		Name:           "write_stdin",
-		Group:          GroupSandbox,
-		Label:          "Shell stdin",
-		LLMDescription: "send stdin to, or poll output from, a running shell session. Pass the session_ref returned by exec_command. Use this only when exec_command returned running=true or when the process is waiting for more stdin. Set chars to a non-empty string to write stdin. Set chars to an empty string, or omit it, to poll for new output without repeating already delivered output. Keep using the same session_ref while you need that shell session's /workspace state. In your final response, only keys that actually appear in result.artifacts may be referenced as artifact:<key>. If you want to show a file that exists only in /workspace/, you must use Markdown links: images use ![简短说明](workspace:/relative/path), non-images use [文件名](workspace:/relative/path). Never write workspace:/workspace/...; strip the leading /workspace and use workspace:/... instead. Never output malformed forms like ![workspace:path] or bare workspace:/path. Never invent artifact keys from stdout, stderr, or filenames. Never output raw /workspace/... or /tmp/output/... paths as user links.",
+		Name:  "browser",
+		Group: GroupSandbox,
+		Label: "Browser automation",
+		LLMDescription: "run browser automation commands in the sandbox. Use only when web_search/web_fetch cannot complete the task (JS rendering, DOM interaction, login flows, multi-tab navigation). " +
+			"Pass the raw subcommand: navigate <url>, snapshot, screenshot, click <ref>, type <ref> <text>, fill <ref> <text>, press <key>, tab list, tab select <index>, console, network. " +
+			"Session reuse, waiting, retry, and recovery are handled by the backend; do not pass session_mode/share_scope. " +
+			"Workflow: navigate -> snapshot (get refs) -> interact -> snapshot again after navigation or UI changes. " +
+			"Snapshot results are compact by default: URL, title, clickable refs, form controls, and visible-text summary. Use screenshot only when you need a visual image. " +
+			"Set yield_time_ms high enough for pages to settle; avoid tiny values such as 50ms, prefer 1500-5000ms. " +
+			"Only reference artifact keys that actually appear in result.artifacts; never invent artifact keys.",
 	},
+	// ── memory ──
 	{
-		Name:           "browser",
-		Group:          GroupSandbox,
-		Label:          "Browser automation",
-		LLMDescription: "execute browser automation commands in the isolated browser sandbox. Use browser only when web_search or web_fetch cannot complete the task because the page requires JavaScript rendering, DOM inspection, real interaction, login-flow reproduction, or multi-step tab navigation. Pass command as the raw agent-browser CLI subcommand, for example: navigate <url>, snapshot, screenshot, click <ref>, type <ref> <text>, fill <ref> <text>, press <key>, tab list, tab select <index>, console, network. Browser session reuse, waiting, retry, and recovery are handled by the backend, so do not pass extra session or pseudo-mode fields such as session_mode/share_scope. Recommended workflow: navigate to the page, use snapshot to inspect structure and obtain fresh refs, then interact with click/type/fill/press, and snapshot again after navigation or major UI changes because refs can become stale. Snapshot results are compact by default: current URL, page title, clickable refs, form controls, and a short visible-text summary. Use screenshot only when you need a visual image. For commands that may need the page to settle, especially navigate, snapshot after navigation, or interactions that trigger rendering, set yield_time_ms high enough to wait for a stable result; avoid tiny values such as 50ms, and prefer roughly 1500-5000ms unless the page is known to respond immediately. If the result includes artifacts, only reference artifact keys that actually appear there; never invent artifact keys or claim a screenshot exists when result.artifacts is empty.",
-	},
-	{
-		Name:           "memory_search",
-		Group:          GroupMemory,
-		Label:          "Memory search",
-		LLMDescription: "search long-term memory for information about the user (preferences, past experiences, constraints, priorities) or past interactions. Use this tool when handling recommendations, comparisons, preference-driven questions, opinions, 'best' options, 'how to' questions, or open-ended problems with multiple valid approaches — user context significantly improves answer quality in areas like shopping, travel planning, and project planning. Call at most once per user query; do not issue multiple memory searches for the same request. Use the results to guide subsequent tool selection — memory provides context, but a complete answer may still require other tools. IMPORTANT: results contain internal fields (such as uri, _ref) that are system identifiers and must never be shown to the user; only present the natural-language content (abstract) to the user, never expose storage paths, URIs, or any internal metadata.",
+		Name:  "memory_search",
+		Group: GroupMemory,
+		Label: "Memory search",
+		LLMDescription: "search long-term memory for user preferences, past experiences, constraints, or prior interactions. " +
+			"Use for recommendations, comparisons, preference-driven questions, or open-ended problems where user context improves quality. " +
+			"Call at most once per query. Results may inform subsequent tool choices but rarely suffice alone. " +
+			"Internal fields (uri, _ref) are system identifiers — never expose them to the user.",
 	},
 	{
 		Name:           "memory_read",
 		Group:          GroupMemory,
 		Label:          "Memory read",
-		LLMDescription: "read the full content of a memory entry by its URI. IMPORTANT: the URI and other internal fields (_ref, storage paths) are system identifiers and must never be exposed to the user; only present the natural-language content to the user.",
+		LLMDescription: "read the full content of a memory entry by URI. Internal fields (uri, _ref, paths) must never be shown to the user.",
 	},
 	{
 		Name:           "memory_write",
 		Group:          GroupMemory,
 		Label:          "Memory write",
-		LLMDescription: "store a piece of knowledge in long-term memory for future reference",
+		LLMDescription: "store knowledge in long-term memory for future reference.",
 	},
 	{
 		Name:           "memory_forget",
 		Group:          GroupMemory,
 		Label:          "Memory forget",
-		LLMDescription: "remove a specific memory entry",
+		LLMDescription: "remove a specific memory entry by URI.",
 	},
 	{
-		Name:           "conversation_search",
-		Group:          GroupMemory,
-		Label:          "Conversation search",
-		LLMDescription: "search the current user's visible conversation history across all threads using keywords. Use this when you need to recall facts previously discussed but not stored in long-term memory. Returns recent matching messages with thread_id, role, content snippet, and created_at. This is keyword search over stored messages, not semantic search, and it does not spend model tokens.",
+		Name:  "conversation_search",
+		Group: GroupMemory,
+		Label: "Conversation search",
+		LLMDescription: "keyword-search the current user's visible conversation history across all threads. " +
+			"Use to recall previously discussed facts not stored in long-term memory. Returns matching messages with thread_id, role, snippet, and timestamp. " +
+			"This is keyword search, not semantic search, and costs no model tokens.",
+	},
+	// ── document ──
+	{
+		Name:  "document_write",
+		Group: GroupDocument,
+		Label: "Document write",
+		LLMDescription: "write a Markdown document and save it as a downloadable artifact. " +
+			"Use when the user requests a report, summary, plan, article, or any long-form document. " +
+			"Reference the result as [label](artifact:<key>).",
+	},
+	// ── orchestration ──
+	{
+		Name:  "acp_agent",
+		Group: GroupOrchestration,
+		Label: "ACP agent",
+		LLMDescription: "delegate a task to an external ACP-compatible coding agent running inside the sandbox (e.g. opencode). " +
+			"The agent operates autonomously with its own LLM, tools, and workspace. " +
+			"Use for code-heavy tasks: implementation, debugging, refactoring, test execution. " +
+			"This tool connects to an external agent process in the sandbox — it does NOT create an Arkloop sub-agent.",
 	},
 	{
-		Name:           "document_write",
-		Group:          GroupDocument,
-		Label:          "Document write",
-		LLMDescription: "write a Markdown document and save it as a downloadable file artifact. Use this tool when the user requests a report, summary, plan, article, or any long-form document. Provide the full Markdown content; the file will be uploaded and returned as a downloadable artifact. Reference the result artifact using [label](artifact:<key>).",
-	},
-	{
-		Name:           "acp_agent",
-		Group:          GroupOrchestration,
-		Label:          "ACP agent",
-		LLMDescription: "delegate a task to an ACP-compatible agent running inside sandbox. The delegated agent can autonomously use its own model, tools, and workspace access for code-heavy or long-running tasks such as implementation, debugging, refactoring, or test execution.",
-	},
-	{
-		Name:           "spawn_agent",
-		Group:          GroupOrchestration,
-		Label:          "Spawn agent",
-		LLMDescription: "spawn a sub-agent to execute a task with a specific persona. Returns a handle with sub_agent_id, run state, and related identifiers instead of waiting for the final output.",
+		Name:  "spawn_agent",
+		Group: GroupOrchestration,
+		Label: "Spawn agent",
+		LLMDescription: "create an Arkloop sub-agent that runs as an independent child run with its own persona, tools, and context. " +
+			"Use to delegate a self-contained subtask to a specific internal persona (e.g. research, specialized analysis). " +
+			"Returns a handle (sub_agent_id) immediately; use wait_agent to retrieve the result. " +
+			"persona_id must be one of the registered personas in this project — an invalid ID will fail. " +
+			"Do NOT confuse with acp_agent, which delegates to an external sandbox agent.",
 	},
 	{
 		Name:           "send_input",
 		Group:          GroupOrchestration,
 		Label:          "Send input",
-		LLMDescription: "send a follow-up input to an existing sub-agent by sub_agent_id. Use this before resume_agent when continuing a previous collaboration thread.",
+		LLMDescription: "send a follow-up message to an existing sub-agent. Call before resume_agent to continue a collaboration thread.",
 	},
 	{
 		Name:           "wait_agent",
 		Group:          GroupOrchestration,
 		Label:          "Wait agent",
-		LLMDescription: "wait for a sub-agent to reach a resolved state and return its latest status snapshot, including output when available.",
+		LLMDescription: "block until a sub-agent reaches a terminal state and return its status snapshot, including output when available.",
 	},
 	{
 		Name:           "resume_agent",
 		Group:          GroupOrchestration,
 		Label:          "Resume agent",
-		LLMDescription: "resume a resumable sub-agent after new input has been sent.",
+		LLMDescription: "resume a paused sub-agent after new input has been sent via send_input.",
 	},
 	{
 		Name:           "close_agent",
 		Group:          GroupOrchestration,
 		Label:          "Close agent",
-		LLMDescription: "close a sub-agent handle once no further collaboration is needed.",
+		LLMDescription: "close a sub-agent handle. Call when no further interaction is needed.",
 	},
 	{
 		Name:           "interrupt_agent",
 		Group:          GroupOrchestration,
 		Label:          "Interrupt agent",
-		LLMDescription: "interrupt the currently active run of a sub-agent.",
+		LLMDescription: "cancel the active run of a sub-agent immediately.",
 	},
 	{
 		Name:           "summarize_thread",
 		Group:          GroupOrchestration,
 		Label:          "Summarize thread",
-		LLMDescription: "update the current thread title with a concise summary",
+		LLMDescription: "update the current thread title with a concise summary.",
 	},
 	{
-		Name:           "timeline_title",
-		Group:          GroupOrchestration,
-		Label:          "Timeline title",
-		LLMDescription: "UI metadata tool that sets a short label shown in the user-facing thinking timeline. Call this tool in parallel with your first tool call of each round (include it in the same tool_use batch). Also call it when you are only thinking without other tools, to describe what you are considering. The label parameter must be a single-line plain-text phrase (no quotes, no Markdown, no numbering) in the same language as the user's input. Keep it concise: 8-16 characters for Chinese, <=8 words for English. You may prefix with stage words such as 'Searching for ...', 'Analyzing ...', 'Reviewing ...', etc. Call this tool as often as possible to keep the timeline informative.",
+		Name:  "timeline_title",
+		Group: GroupOrchestration,
+		Label: "Timeline title",
+		LLMDescription: "set a short label for the user-facing thinking timeline. " +
+			"Call in parallel with your first tool call each round, and whenever you are thinking without other tools. " +
+			"Label: single-line plain text, same language as user input. " +
+			"Length: 8-16 Chinese characters or <=8 English words. " +
+			"May prefix with stage words: 'Searching ...', 'Analyzing ...', etc.",
 	},
 	{
 		Name:           "ask_user",
 		Group:          GroupOrchestration,
 		Label:          "Ask user",
-		LLMDescription: "ask the user structured questions with predefined options. Use when you need the user to make a clear choice between specific options rather than free-text input.",
+		LLMDescription: "present structured multiple-choice questions to the user. Use when a clear choice between specific options is needed.",
 	},
 }
 

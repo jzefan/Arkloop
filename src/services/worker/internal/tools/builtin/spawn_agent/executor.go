@@ -89,10 +89,23 @@ var LlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"persona_id":   map[string]any{"type": "string"},
-			"role":         map[string]any{"type": "string"},
-			"nickname":     map[string]any{"type": "string"},
-			"context_mode": map[string]any{"type": "string", "enum": []string{"isolated", "fork_recent", "fork_thread", "fork_selected", "shared_workspace_only"}},
+			"persona_id": map[string]any{
+				"type":        "string",
+				"description": "ID of a registered persona in this project. Must match an available persona exactly.",
+			},
+			"role": map[string]any{
+				"type":        "string",
+				"description": "Optional role description for the sub-agent, visible in status snapshots.",
+			},
+			"nickname": map[string]any{
+				"type":        "string",
+				"description": "Optional display name for the sub-agent shown in the UI.",
+			},
+			"context_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"isolated", "fork_recent", "fork_thread", "fork_selected", "shared_workspace_only"},
+				"description": "How much parent context the sub-agent inherits. Use 'isolated' for independent tasks.",
+			},
 			"inherit": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -109,11 +122,50 @@ var LlmSpec = llm.ToolSpec{
 				},
 				"additionalProperties": false,
 			},
-			"input": map[string]any{"type": "string"},
+			"input": map[string]any{
+				"type":        "string",
+				"description": "The task or message to send to the sub-agent.",
+			},
 		},
 		"required":             []string{"persona_id", "context_mode", "input"},
 		"additionalProperties": false,
 	},
+}
+
+// LlmSpecWithPersonas returns a copy of LlmSpec with persona_id description
+// enriched to list the available persona IDs.
+func LlmSpecWithPersonas(personaKeys []string) llm.ToolSpec {
+	spec := LlmSpec
+	schema := copyJSONSchema(spec.JSONSchema)
+	if props, ok := schema["properties"].(map[string]any); ok {
+		if pid, ok := props["persona_id"].(map[string]any); ok {
+			enriched := make(map[string]any, len(pid)+1)
+			for k, v := range pid {
+				enriched[k] = v
+			}
+			if len(personaKeys) > 0 {
+				enriched["description"] = fmt.Sprintf(
+					"ID of a registered persona. Available: %s",
+					strings.Join(personaKeys, ", "),
+				)
+			}
+			props["persona_id"] = enriched
+		}
+	}
+	spec.JSONSchema = schema
+	return spec
+}
+
+func copyJSONSchema(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		if m, ok := v.(map[string]any); ok {
+			dst[k] = copyJSONSchema(m)
+		} else {
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 var SendInputLlmSpec = llm.ToolSpec{
