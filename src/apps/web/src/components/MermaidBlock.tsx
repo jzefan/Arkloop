@@ -3,8 +3,8 @@ import { Maximize2, Minimize2 } from 'lucide-react'
 import mermaid from 'mermaid'
 
 const DEBOUNCE_MS = 200
-const DEFAULT_HEIGHT = 400
-const EXPANDED_HEIGHT = 640
+const MIN_HEIGHT = 200
+const COLLAPSED_MAX_HEIGHT = 400
 
 let mermaidInitialized = false
 function ensureMermaidInit() {
@@ -65,8 +65,6 @@ export function MermaidBlock({ content }: Props) {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, [content, renderMermaid])
-
-  const height = expanded ? EXPANDED_HEIGHT : DEFAULT_HEIGHT
 
   return (
     <div
@@ -129,7 +127,7 @@ export function MermaidBlock({ content }: Props) {
             fontFamily: "'JetBrains Mono', monospace",
             whiteSpace: 'pre-wrap',
             overflow: 'auto',
-            maxHeight: `${height}px`,
+            maxHeight: expanded ? undefined : `${COLLAPSED_MAX_HEIGHT}px`,
           }}
         >
           {error}
@@ -139,12 +137,13 @@ export function MermaidBlock({ content }: Props) {
           ref={containerRef}
           style={{
             width: '100%',
-            height: `${height}px`,
+            minHeight: `${MIN_HEIGHT}px`,
+            maxHeight: expanded ? undefined : `${COLLAPSED_MAX_HEIGHT}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             overflow: 'auto',
-            transition: 'height 0.2s ease',
+            transition: 'max-height 0.2s ease',
           }}
         />
       )}
