@@ -19,6 +19,7 @@ type WorkerRunsConfig struct {
 	APIBaseURL string
 	Token      string
 	DBDSN      string
+	PersonaID  string
 
 	RunCount  int
 	Timeout   time.Duration
@@ -34,6 +35,7 @@ func DefaultWorkerRunsConfig(apiBaseURL, token string) WorkerRunsConfig {
 	return WorkerRunsConfig{
 		APIBaseURL: apiBaseURL,
 		Token:      token,
+		PersonaID:  "normal",
 		RunCount:   50,
 		Timeout:    60 * time.Second,
 		Threshold: WorkerRunsThresholds{
@@ -54,6 +56,7 @@ func RunWorkerRuns(ctx context.Context, cfg WorkerRunsConfig) report.ScenarioRes
 
 	result.Config["run_count"] = cfg.RunCount
 	result.Config["timeout_s"] = cfg.Timeout.Seconds()
+	result.Config["persona_id"] = cfg.PersonaID
 	result.Thresholds["max_failed_rate"] = cfg.Threshold.MaxFailedRate
 	result.Thresholds["timeout_rate_zero"] = cfg.Threshold.TimeoutRateZero
 
@@ -63,6 +66,10 @@ func RunWorkerRuns(ctx context.Context, cfg WorkerRunsConfig) report.ScenarioRes
 	}
 	if cfg.RunCount <= 0 {
 		result.Errors = append(result.Errors, "config.invalid")
+		return result
+	}
+	if strings.TrimSpace(cfg.PersonaID) == "" {
+		result.Errors = append(result.Errors, "config.invalid_persona")
 		return result
 	}
 
@@ -109,7 +116,7 @@ func RunWorkerRuns(ctx context.Context, cfg WorkerRunsConfig) report.ScenarioRes
 		go func(threadID string) {
 			defer createWG.Done()
 			start := time.Now()
-			runID, errCode := createRun(ctx, client, cfg.APIBaseURL, threadID, headers, "lite")
+			runID, errCode := createRun(ctx, client, cfg.APIBaseURL, threadID, headers, cfg.PersonaID)
 			durMs := float64(time.Since(start).Nanoseconds()) / 1e6
 			if errCode != "" {
 				atomic.AddInt64(&createFail, 1)

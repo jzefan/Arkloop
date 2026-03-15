@@ -20,6 +20,7 @@ docker compose -f compose.bench.yaml -p arkloop-bench up -d
   - Gateway：`http://127.0.0.1:8005`
   - API：`http://127.0.0.1:8006`
   - Postgres：`127.0.0.1:5437`（用于 bench 自动注册/bootstrapping）
+- bench compose 内置独立的 `redis_gateway`（禁用持久化），仅供 Gateway 限流/鉴权链路使用，避免和主 Redis 的持久化抖动互相干扰
 - baseline suite 只跑核心链路（Gateway / API / Worker + stub LLM），不包含 Sandbox / OpenViking 等外部能力压测
 - OpenViking 使用独立子命令压测，避免 baseline 被外部依赖拖垮
 
@@ -36,8 +37,6 @@ export DATABASE_URL="postgresql://arkloop:<你的 ARKLOOP_POSTGRES_PASSWORD>@127
 ## Recommended Env
 
 `compose.bench.yaml` 已内置基线推荐值（通常不需要你再额外设置）：
-
-- bench compose 默认启用 `redis_gateway`（禁用持久化），并将 `ARKLOOP_GATEWAY_REDIS_URL` 指向它，避免 Redis 持久化抖动影响 Gateway p99
 
 ```bash
 # Gateway：避免 429 干扰吞吐与延迟
@@ -78,6 +77,14 @@ DATABASE_URL="postgresql://arkloop:<你的 ARKLOOP_POSTGRES_PASSWORD>@127.0.0.1:
 go run ./tests/bench/cmd/bench baseline -out /tmp/arkloop-baseline.json
 ```
 
+Worker 场景默认使用当前仓库内存在的 `normal` persona；如果你要指定其他 persona，可显式传：
+
+```bash
+go run ./tests/bench/cmd/bench baseline \
+  -worker-persona normal \
+  -out /tmp/arkloop-baseline.json
+```
+
 可选开启 OpenViking：
 
 ```bash
@@ -112,3 +119,4 @@ OpenViking 的压测默认不在 baseline suite 中执行，避免触发外部 e
 - `gateway_ratelimit` 返回 404：确认 Gateway 已启用 `/benchz`（bench compose 默认设置 `ARKLOOP_GATEWAY_ENABLE_BENCHZ=true`），并可直接 `curl http://127.0.0.1:8005/benchz` 验证
 - `auth.register.code.auth.invite_code_required`：注册模式为 invite_only（需要配置 `registration.open=true` 或提供邀请码/显式 token）
 - `worker_runs.runs_create_failed` 很高：通常是 `limit.concurrent_runs` 太低或 Worker 未消费队列
+- `worker_runs` 出现 `persona.not_found`：确认 bench 使用的 persona 仍存在；默认是 `normal`，也可显式传 `-worker-persona <persona_id>`
