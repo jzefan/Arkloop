@@ -4,6 +4,7 @@ export {
   isApiError,
   apiFetch,
   refreshAccessToken,
+  restoreAccessSession,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
 } from '@arkloop/shared/api'

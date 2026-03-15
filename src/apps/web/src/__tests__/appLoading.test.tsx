@@ -7,19 +7,19 @@ import App from '../App'
 import { LocaleProvider } from '../contexts/LocaleContext'
 
 const {
-  refreshAccessToken,
+  restoreAccessSession,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
   setClientApp,
 } = vi.hoisted(() => ({
-  refreshAccessToken: vi.fn(),
+  restoreAccessSession: vi.fn(),
   setUnauthenticatedHandler: vi.fn(),
   setAccessTokenHandler: vi.fn(),
   setClientApp: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
-  refreshAccessToken,
+  restoreAccessSession,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
 }))
@@ -34,11 +34,11 @@ describe('App loading state', () => {
 
   beforeEach(() => {
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
-    refreshAccessToken.mockReset()
+    restoreAccessSession.mockReset()
     setUnauthenticatedHandler.mockReset()
     setAccessTokenHandler.mockReset()
     setClientApp.mockReset()
-    refreshAccessToken.mockReturnValue(new Promise(() => {}))
+    restoreAccessSession.mockReturnValue(new Promise(() => {}))
   })
 
   afterEach(() => {
@@ -65,7 +65,7 @@ describe('App loading state', () => {
       )
     })
 
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(restoreAccessSession).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('Arkloop')
     expect(container.textContent).toContain('加载中...')
 

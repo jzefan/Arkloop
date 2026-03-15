@@ -36,9 +36,16 @@ export function isApiError(error: unknown): error is ApiError {
 }
 
 let refreshPromise: Promise<string> | null = null
+let refreshRequestPromise: Promise<LoginResponse> | null = null
 let unauthenticatedHandler: (() => void) | null = null
 let accessTokenHandler: ((token: string) => void) | null = null
 let clientApp: string | null = null
+
+export type RestoreAccessSessionOptions = {
+  signal?: AbortSignal
+  retries?: number
+  retryDelayMs?: number
+}
 
 export function setUnauthenticatedHandler(fn: () => void): void {
   unauthenticatedHandler = fn
@@ -64,12 +71,113 @@ export function buildUrl(path: string): string {
   return `${base}${path}`
 }
 
-export async function refreshAccessToken(signal?: AbortSignal): Promise<LoginResponse> {
-  return await apiFetch<LoginResponse>('/v1/auth/refresh', {
+function makeAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError')
+  }
+  const error = new Error('The operation was aborted.')
+  error.name = 'AbortError'
+  return error
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(makeAbortError())
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort)
+      reject(makeAbortError())
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    promise
+      .then((value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      })
+      .catch((error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      })
+  })
+}
+
+function isAbortError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'name' in error && error.name === 'AbortError'
+}
+
+function shouldRetryRestore(error: unknown): boolean {
+  if (isAbortError(error)) return false
+  if (error instanceof TypeError) return true
+  if (error instanceof ApiError) {
+    return error.status === 429 || error.status >= 500
+  }
+  return false
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return withAbort(Promise.resolve(), signal)
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(makeAbortError())
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        globalThis.clearTimeout(timer)
+        reject(makeAbortError())
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  })
+}
+
+function requestRefreshAccessToken(): Promise<LoginResponse> {
+  return apiFetch<LoginResponse>('/v1/auth/refresh', {
     method: 'POST',
     _isRetry: true,
-    signal,
   })
+}
+
+export async function refreshAccessToken(signal?: AbortSignal): Promise<LoginResponse> {
+  if (signal?.aborted) {
+    throw makeAbortError()
+  }
+  if (!refreshRequestPromise) {
+    refreshRequestPromise = requestRefreshAccessToken().finally(() => {
+      refreshRequestPromise = null
+    })
+  }
+  return await withAbort(refreshRequestPromise, signal)
+}
+
+export async function restoreAccessSession(options: RestoreAccessSessionOptions = {}): Promise<LoginResponse> {
+  const retries = Math.max(0, options.retries ?? 0)
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 1000)
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await refreshAccessToken(options.signal)
+    } catch (error) {
+      if (!shouldRetryRestore(error) || attempt >= retries) {
+        throw error
+      }
+      await delay(retryDelayMs, options.signal)
+    }
+  }
 }
 
 async function silentRefresh(): Promise<string> {
