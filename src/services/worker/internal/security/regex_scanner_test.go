@@ -116,6 +116,16 @@ func TestScanDefaultPatterns(t *testing.T) {
 			input:     "Can you explain how Python decorators work?",
 			wantMatch: false,
 		},
+		{
+			name:      "benign escaped unicode from serialized output",
+			input:     `{"stderr":"\u003cstring\u003e:81 warning kaleido\u003e=1.0.0"}`,
+			wantMatch: false,
+		},
+		{
+			name:      "benign cjk text with full width ascii typography",
+			input:     "这是正常说明文本，版本ＡＢＣ１２３，仅用于展示。",
+			wantMatch: false,
+		},
 	}
 
 	for _, tt := range tests {

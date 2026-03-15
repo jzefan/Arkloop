@@ -73,7 +73,6 @@ func DefaultPatterns() []PatternDef {
 			Category: "encoding_bypass",
 			Rules: []PatternRule{
 				{Severity: "critical", Pattern: "[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad]"},
-				{Severity: "high", Pattern: "[\uff01-\uff5e]"},
 				{Severity: "high", Pattern: `(?i)\bbase64\b.{0,60}(decode|encoded|instruction|payload|command)`},
 				{Severity: "high", Pattern: `[A-Za-z0-9+/]{60,}={0,2}(\s|$)`},
 				{Severity: "high", Pattern: `(?i)(rot-?13|caesar\s+cipher|hex\s+decode|url\s+decode|base\s*64)\s+.{0,60}(ignore|instruction|prompt|bypass)`},
@@ -81,7 +80,6 @@ func DefaultPatterns() []PatternDef {
 				{Severity: "high", Pattern: `(?i)(0x[0-9a-f]{2}\s*){8,}`},
 				{Severity: "medium", Pattern: `&#[xX]?[0-9a-fA-F]+;`},
 				{Severity: "medium", Pattern: `%[0-9a-fA-F]{2}(%[0-9a-fA-F]{2}){3,}`},
-				{Severity: "medium", Pattern: `\\u[0-9a-fA-F]{4}`},
 			},
 		},
 		{
