@@ -230,6 +230,8 @@ services:
       ARKLOOP_STORAGE_ROOT: "${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}"
       ARKLOOP_S3_ENDPOINT: "${ARKLOOP_S3_ENDPOINT_DOCKER:-}"
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: "${ARKLOOP_OUTBOUND_TRUST_FAKE_IP:-true}"
+      ARKLOOP_PROMPT_GUARD_MODEL_DIR: "/var/lib/arkloop/models/prompt-guard"
+      ARKLOOP_ONNX_RUNTIME_LIB: "/usr/lib/libonnxruntime.so"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -239,6 +241,7 @@ services:
         condition: service_healthy
     volumes:
       - arkloop_storage:${ARKLOOP_STORAGE_ROOT:-/var/lib/arkloop/storage}
+      - arkloop_models:/var/lib/arkloop/models
 
   # --- Sandbox: Firecracker 模式 ---
   # 启用条件：ARKLOOP_SANDBOX_PROVIDER=firecracker（默认）
@@ -503,15 +506,17 @@ services:
     profiles:
       - bridge
     environment:
-      ARKLOOP_BRIDGE_ADDR: "127.0.0.1:19003"
+      ARKLOOP_BRIDGE_ADDR: "0.0.0.0:19003"
+      ARKLOOP_BRIDGE_CONTAINERIZED: "true"
       ARKLOOP_BRIDGE_PROJECT_DIR: /project
       ARKLOOP_BRIDGE_MODULES_FILE: /etc/arkloop/modules.yaml
       ARKLOOP_LOAD_DOTENV: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/project:ro
-    network_mode: host
-    ports: []
+      - arkloop_models:/var/lib/arkloop/models
+    ports:
+      - "${ARKLOOP_BRIDGE_PORT:-19003}:19003"
 
 volumes:
   postgres_data:
@@ -521,6 +526,7 @@ volumes:
   firecrawl_pgdata:
   sandbox_sockets:
   arkloop_storage:
+  arkloop_models:
   searxng_data:
 
 networks:

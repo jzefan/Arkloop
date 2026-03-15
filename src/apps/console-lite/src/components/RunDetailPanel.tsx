@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
-import type { AdminRunDetail, GlobalRun } from '../api/runs'
+import type { AdminRunDetail, GlobalRun, RunEventRaw } from '../api/runs'
 import { fetchRunEventsOnce, getRunDetail } from '../api/runs'
 import { TurnView } from './TurnView'
 import { buildTurns, type LlmTurn } from '../run-turns'
@@ -48,6 +48,19 @@ function formatAbsoluteTime(value: string | undefined, locale: 'zh' | 'en', fall
   return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en')
 }
 
+function formatEventJSON(event: RunEventRaw): string {
+  return JSON.stringify({
+    event_id: event.event_id,
+    run_id: event.run_id,
+    seq: event.seq,
+    ts: event.ts,
+    type: event.type,
+    tool_name: event.tool_name,
+    error_class: event.error_class,
+    data: event.data,
+  }, null, 2)
+}
+
 function formatCount(value: number | undefined, fallback: string): string {
   return value == null ? fallback : value.toLocaleString()
 }
@@ -81,7 +94,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
   const { locale, t } = useLocale()
   const { addToast } = useToast()
   const [detail, setDetail] = useState<AdminRunDetail | null>(null)
-  const [turns, setTurns] = useState<LlmTurn[]>([])
+  const [events, setEvents] = useState<RunEventRaw[] | null>(null)
   const [loading, setLoading] = useState(false)
   const mountedRef = useRef(false)
   const requestRunIdRef = useRef<string | null>(null)
@@ -98,7 +111,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
     requestRunIdRef.current = run.run_id
     setLoading(true)
     setDetail(null)
-    setTurns([])
+    setEvents(null)
 
     const [detailResult, eventsResult] = await Promise.allSettled([
       getRunDetail(run.run_id, accessToken),
@@ -111,7 +124,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
       setDetail(detailResult.value)
     }
     if (eventsResult.status === 'fulfilled') {
-      setTurns(buildTurns(eventsResult.value))
+      setEvents(eventsResult.value)
     }
 
     if (detailResult.status === 'rejected' || eventsResult.status === 'rejected') {
@@ -149,6 +162,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
 
   const fallback = t.runs.emptyValue
   const status = detail?.status ?? run?.status ?? 'unknown'
+  const turns: LlmTurn[] = useMemo(() => buildTurns(events ?? []), [events])
   const overview = useMemo(() => {
     if (!run) return null
     return {
@@ -227,6 +241,57 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
               <div className="space-y-2.5">
                 {turns.map((turn, index) => (
                   <TurnView key={turn.llmCallId || index} turn={turn} index={index} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--c-text-muted)]">
+              {t.runs.sectionEvents}
+            </h4>
+            {loading ? (
+              <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
+                {t.runs.loading}
+              </div>
+            ) : !events || events.length === 0 ? (
+              <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
+                {t.runs.noEvents}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {events.map((event) => (
+                  <details
+                    key={event.event_id}
+                    className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)]"
+                  >
+                    <summary className="cursor-pointer list-none px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">
+                          #{event.seq}
+                        </span>
+                        <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
+                        {event.tool_name && (
+                          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
+                            {event.tool_name}
+                          </span>
+                        )}
+                        {event.error_class && (
+                          <span className="rounded bg-[var(--c-status-danger-bg)] px-1.5 py-0.5 text-[10px] text-[var(--c-status-danger-text)]">
+                            {event.error_class}
+                          </span>
+                        )}
+                        <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">
+                          {formatAbsoluteTime(event.ts, locale, fallback)}
+                        </span>
+                      </div>
+                    </summary>
+                    <div className="border-t border-[var(--c-border)] px-3 py-2">
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--c-bg-deep2)] p-2 text-[11px] text-[var(--c-text-secondary)]">
+                        {formatEventJSON(event)}
+                      </pre>
+                    </div>
+                  </details>
                 ))}
               </div>
             )}

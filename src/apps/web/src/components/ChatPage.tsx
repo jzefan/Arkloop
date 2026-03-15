@@ -21,6 +21,7 @@ import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
+import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
@@ -230,6 +231,8 @@ export function ChatPage() {
   const [sending, setSending] = useState(false)
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
+  const [injectionBlocked, setInjectionBlocked] = useState<string | null>(null)
+  const injectionBlockedRunIdRef = useRef<string | null>(null)
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
@@ -409,6 +412,23 @@ export function ChatPage() {
     searchStepsRef.current = []
     setSearchSteps([])
   }, [])
+  const clearLiveRunSecurityArtifacts = useCallback(() => {
+    setAssistantDraft('')
+    setThinkingDraft('')
+    setTopLevelCodeExecutions([])
+    setTopLevelBrowserActions([])
+    setSegments([])
+    setLiveTimelineExiting(false)
+    activeSegmentIdRef.current = null
+    currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
+    currentRunBrowserActionsRef.current = []
+    resetSearchSteps()
+    setAwaitingInput(false)
+    setPendingUserInput(null)
+    setCheckInDraft('')
+  }, [resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -573,6 +593,8 @@ export function ChatPage() {
     if (!threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     try {
       const message = await createMessage(accessToken, threadId, { content: text })
       invalidateMessageSync()
@@ -604,6 +626,8 @@ export function ChatPage() {
 
     setMessagesLoading(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
 
     void (async () => {
@@ -740,6 +764,8 @@ export function ChatPage() {
   useEffect(() => {
     setActiveRunId(null)
     setAssistantDraft('')
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
@@ -786,6 +812,7 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    injectionBlockedRunIdRef.current = null
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     sse.reset()
@@ -851,6 +878,14 @@ export function ChatPage() {
     processedEventCountRef.current = nextProcessedCount
 
     for (const event of fresh) {
+      if (shouldSuppressLiveRunEventAfterInjectionBlock({
+        activeRunId,
+        blockedRunId: injectionBlockedRunIdRef.current,
+        event,
+      })) {
+        continue
+      }
+
       if (event.type === 'run.segment.start') {
         const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
         const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
@@ -1121,8 +1156,24 @@ export function ChatPage() {
         continue
       }
 
+      if (event.type === 'security.injection.blocked') {
+        injectionBlockedRunIdRef.current = event.run_id
+        sseTerminalFallbackArmedRef.current = false
+        sseTerminalFallbackRunIdRef.current = null
+        sse.disconnect()
+        setActiveRunId(null)
+        setCancelSubmitting(false)
+        setQueuedDraft(null)
+        setError(null)
+        clearLiveRunSecurityArtifacts()
+        setInjectionBlocked(getInjectionBlockMessage(event))
+        if (threadId) onRunEnded(threadId)
+        continue
+      }
+
       if (event.type === 'run.completed') {
         const completedRunId = event.run_id
+        injectionBlockedRunIdRef.current = null
         const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
@@ -1219,6 +1270,8 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.cancelled') {
+        const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
@@ -1235,13 +1288,16 @@ export function ChatPage() {
         setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
-        const data = event.data as { trace_id?: unknown }
-        const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
-        setError({ message: '已停止生成', traceId })
+        if (!blockedByInjection) {
+          const data = event.data as { trace_id?: unknown }
+          const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
+          setError({ message: '已停止生成', traceId })
+        }
         continue
       }
 
       if (event.type === 'run.failed') {
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
@@ -1259,19 +1315,25 @@ export function ChatPage() {
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
+        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined
-        setError({
-          message: typeof obj?.message === 'string' ? obj.message : '运行失败',
-          code: typeof obj?.code === 'string' ? obj.code
-            : typeof obj?.error_class === 'string' ? obj.error_class
-            : undefined,
-          details,
-        })
+
+        if (errorClass === 'security.injection_blocked') {
+          // 注入拦截：渲染在对话流中，不用底部 error card
+          setAssistantDraft('')
+          setInjectionBlocked(typeof obj?.message === 'string' ? obj.message : 'blocked')
+        } else {
+          setError({
+            message: typeof obj?.message === 'string' ? obj.message : '运行失败',
+            code: typeof obj?.code === 'string' ? obj.code : errorClass,
+            details,
+          })
+        }
       }
     }
-  }, [activeRunId, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -1494,6 +1556,8 @@ export function ChatPage() {
 
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
 
     try {
       const uploadAttachments = async (targetThreadId: string) => {
@@ -1534,6 +1598,7 @@ export function ChatPage() {
       setDraft('')
       setAttachments([])
       setAssistantDraft('')
+      injectionBlockedRunIdRef.current = null
 
       const run = await createRun(accessToken, threadId, personaKey)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
@@ -1555,6 +1620,8 @@ export function ChatPage() {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await editMessage(accessToken, threadId, messageId, newContent)
@@ -1585,6 +1652,8 @@ export function ChatPage() {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await retryThread(accessToken, threadId)
@@ -1620,6 +1689,7 @@ export function ChatPage() {
   const handleFork = useCallback(async (messageId: string) => {
     if (!threadId || isStreaming || sending) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       const forked = await forkThread(accessToken, threadId, messageId)
       if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
@@ -1641,6 +1711,7 @@ export function ChatPage() {
 
     setCheckInSubmitting(true)
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, text)
       setCheckInDraft('')
@@ -1660,6 +1731,7 @@ export function ChatPage() {
   const handleUserInputSubmit = useCallback(async (response: UserInputResponse) => {
     if (!activeRunId) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, JSON.stringify(response.answers))
       setPendingUserInput(null)
@@ -1677,6 +1749,7 @@ export function ChatPage() {
     const req = pendingUserInput
     if (!req) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, JSON.stringify({}))
       setPendingUserInput(null)
@@ -1701,6 +1774,7 @@ export function ChatPage() {
     setCheckInDraft('')
     setCancelSubmitting(true)
     setError(null)
+    setInjectionBlocked(null)
     pendingMessageRef.current = null
     setQueuedDraft(null)
     if (threadId) onRunEnded(threadId)
@@ -2259,6 +2333,12 @@ export function ChatPage() {
                   browserActions={topLevelBrowserActions.length > 0 ? topLevelBrowserActions : undefined}
                   accessToken={accessToken}
                 />
+              )}
+
+              {injectionBlocked && (
+                <div className="max-w-[720px] rounded-xl border-[0.5px] border-[var(--c-error-border)] bg-[var(--c-error-bg)] px-4 py-3 text-sm text-[var(--c-error-text)]">
+                  {injectionBlocked}
+                </div>
               )}
 
               {awaitingInput && (

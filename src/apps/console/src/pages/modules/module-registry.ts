@@ -3,7 +3,7 @@ import type { ModuleInfo, ModuleCategory } from '../../api/bridge'
 export type ModuleCategoryTab = 'all' | ModuleCategory
 
 export const CATEGORY_TABS: ModuleCategoryTab[] = [
-  'all', 'memory', 'sandbox', 'search', 'browser', 'console',
+  'all', 'memory', 'sandbox', 'search', 'browser', 'console', 'security',
 ]
 
 const mod = (
@@ -54,6 +54,9 @@ export const STATIC_MODULES: ModuleInfo[] = [
     depends_on: ['sandbox-docker'],
     capabilities: { installable: true, configurable: true, healthcheck: true, bootstrap_supported: false, external_admin_supported: false, privileged_required: false },
   }),
+  mod('prompt-guard', 'Prompt Guard', 'Local semantic prompt-injection model', 'security', {
+    capabilities: { installable: true, configurable: false, healthcheck: false, bootstrap_supported: false, external_admin_supported: false, privileged_required: false },
+  }),
   mod('console', 'Full Console', 'Full management console with ~35 pages', 'console', {
     port: 19081,
     mutually_exclusive: ['console-lite'],
@@ -67,6 +70,7 @@ export const INSTALL_COMMANDS: Record<string, string> = {
   'searxng': './setup.sh install --web-tools self-hosted',
   'firecrawl': './setup.sh install --web-tools self-hosted',
   'browser': './setup.sh install --browser on',
+  'prompt-guard': './setup.sh install --guard local',
   'console': './setup.sh install --console full',
 }
 
@@ -76,5 +80,6 @@ export const AGENT_PROMPTS: Record<string, string> = {
   'searxng': 'Install SearXNG self-hosted search for Arkloop. Run: ./setup.sh install --web-tools self-hosted',
   'firecrawl': 'Install Firecrawl web scraper for Arkloop. Run: ./setup.sh install --web-tools self-hosted',
   'browser': 'Install browser automation module for Arkloop. Run: ./setup.sh install --browser on',
+  'prompt-guard': 'Install local Prompt Guard model for Arkloop. Run: ./setup.sh install --guard local',
   'console': 'Upgrade to full Arkloop console. Run: ./setup.sh install --console full',
 }

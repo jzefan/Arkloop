@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 
 	sharedconfig "arkloop/services/shared/config"
 	sharedent "arkloop/services/shared/entitlement"
+	"arkloop/services/shared/plugin"
 	"arkloop/services/shared/runlimit"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -22,6 +24,7 @@ import (
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
 	workerruntime "arkloop/services/worker/internal/runtime"
+	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
@@ -161,6 +164,28 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		cfgResolver = fallback
 	}
 
+	var injectionScanner *security.RegexScanner
+	if scanner, err := security.NewRegexScanner(security.DefaultPatterns()); err == nil {
+		injectionScanner = scanner
+	} else {
+		slog.Error("failed to initialize injection scanner", "error", err)
+	}
+
+	semanticScanner := security.NewRuntimeSemanticScanner(
+		cfgResolver,
+		os.Getenv("ARKLOOP_PROMPT_GUARD_MODEL_DIR"),
+		os.Getenv("ARKLOOP_ONNX_RUNTIME_LIB"),
+	)
+
+	compositeScanner := security.NewCompositeScanner(injectionScanner, semanticScanner)
+
+	var injectionAuditor *security.SecurityAuditor
+	if dbSink, err := plugin.NewDBSink(deps.DBPool); err == nil {
+		injectionAuditor = security.NewSecurityAuditor(dbSink)
+	} else {
+		slog.Error("failed to initialize security auditor", "error", err)
+	}
+
 	middlewares := []pipeline.RunMiddleware{
 		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub),
 		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, deps.MessageAttachmentStore),
@@ -178,6 +203,8 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
 		pipeline.NewSkillContextMiddleware(deps.DBPool, nil),
 		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
+		pipeline.NewTrustSourceMiddleware(cfgResolver),
+		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),

@@ -25,7 +25,7 @@
 | invite.max_codes_per_user | int | both | 1 | false | Maximum invitation codes a single user can create |
 | limit.agent_reasoning_iterations | int | both | 0 | false | Maximum reasoning-turn limit for Agent Loop; 0 means unlimited |
 | limit.tool_continuation_budget | int | both | 32 | false | Maximum continuation budget for long-running tools |
-| limit.concurrent_runs | int | both | 10 | false | Maximum concurrent run limit |
+| limit.concurrent_runs | int | both | 100 | false | Maximum concurrent run limit |
 | limit.max_input_content_bytes | int | both | 32768 | false | Maximum byte size for Run input content submission |
 | limit.max_parallel_tasks | int | platform | 32 | false | Maximum limit for Lua parallel tasks/parallel tool calls |
 | limit.team_members | int | both | 50 | false | Maximum team member limit |

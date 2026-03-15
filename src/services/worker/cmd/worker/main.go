@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -20,6 +21,7 @@ import (
 	"arkloop/services/worker/internal/webhook"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -164,7 +166,26 @@ func run() error {
 	}
 
 	logger.Info("worker_go entering consume mode", app.LogFields{}, nil)
+
+	metricsPort := strings.TrimSpace(os.Getenv("ARKLOOP_WORKER_METRICS_PORT"))
+	if metricsPort == "" {
+		metricsPort = "9090"
+	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsSrv := &http.Server{Addr: ":" + metricsPort, Handler: metricsMux}
+	go func() {
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server failed", app.LogFields{}, map[string]any{"error": err.Error()})
+		}
+	}()
+	logger.Info("metrics server started", app.LogFields{}, map[string]any{"port": metricsPort})
+
 	runErr := loop.Run(runCtx)
+
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutCancel()
+	_ = metricsSrv.Shutdown(shutCtx)
 
 	if reg != nil {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

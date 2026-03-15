@@ -231,7 +231,7 @@ Extend the Track A Config Registry to include existing hardcoded limits:
 | `limit.agent_reasoning_iterations` | mw_persona_resolution.go | 0 | org |
 | `limit.tool_continuation_budget` | mw_persona_resolution.go | 32 | org |
 | `limit.max_parallel_tasks` | lua.go | 32 | platform |
-| `limit.concurrent_runs` | entitlement resolve.go | 10 | org |
+| `limit.concurrent_runs` | entitlement resolve.go | 100 | org |
 | `limit.team_members` | entitlement resolve.go | 50 | org |
 | `quota.runs_per_month` | entitlement resolve.go | 999999 | org |
 | `quota.tokens_per_month` | entitlement resolve.go | 1000000 | org |

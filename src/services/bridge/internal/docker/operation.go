@@ -75,6 +75,11 @@ func (o *Operation) SetPID(pid int) {
 	o.pid = pid
 }
 
+// SetCancelFunc assigns the context cancel function for this operation.
+func (o *Operation) SetCancelFunc(cancel context.CancelFunc) {
+	o.cancelFunc = cancel
+}
+
 // AppendLog adds a log line to the operation.
 func (o *Operation) AppendLog(line string) {
 	o.mu.Lock()

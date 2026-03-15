@@ -12,6 +12,7 @@ import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { useOperations } from '../../contexts/OperationContext'
 import type { LocaleStrings } from '../../locales'
+import { listPlatformSettings, type PlatformSetting } from '../../api/platform-settings'
 import {
   checkBridgeAvailable,
   bridgeClient,
@@ -27,6 +28,56 @@ import {
 } from './module-registry'
 
 type ModulesLocale = LocaleStrings['pages']['modules']
+type PromptGuardMode = 'unknown' | 'disabled' | 'local' | 'api'
+
+const MODULES_CATEGORY_STORAGE_KEY = 'arkloop:console:modules:selected-category'
+const PROMPT_GUARD_MODULE_ID = 'prompt-guard'
+const SEMANTIC_ENABLED_KEY = 'security.injection_scan.semantic_enabled'
+const SEMANTIC_PROVIDER_KEY = 'security.semantic_scanner.provider'
+
+function readStoredModuleCategory(): ModuleCategory | null {
+  try {
+    const raw = window.localStorage.getItem(MODULES_CATEGORY_STORAGE_KEY)
+    if (
+      raw === 'memory' ||
+      raw === 'sandbox' ||
+      raw === 'search' ||
+      raw === 'browser' ||
+      raw === 'console' ||
+      raw === 'security' ||
+      raw === 'infrastructure'
+    ) {
+      return raw
+    }
+  } catch {}
+  return null
+}
+
+function rememberModuleCategory(category: ModuleCategory) {
+  try {
+    window.localStorage.setItem(MODULES_CATEGORY_STORAGE_KEY, category)
+  } catch {}
+}
+
+function resolvePromptGuardMode(settings: PlatformSetting[]): PromptGuardMode {
+  const map = new Map(settings.map((item) => [item.key, item.value]))
+  const semanticEnabled = map.get(SEMANTIC_ENABLED_KEY) === 'true'
+  const provider = (map.get(SEMANTIC_PROVIDER_KEY) ?? '').trim().toLowerCase()
+
+  if (!semanticEnabled || provider === '') return 'disabled'
+  if (provider === 'api') return 'api'
+  if (provider === 'local') return 'local'
+  return 'unknown'
+}
+
+function applyPromptGuardModuleView(modules: ModuleInfo[], mode: PromptGuardMode): ModuleInfo[] {
+  return modules.map((mod) => {
+    if (mod.id !== PROMPT_GUARD_MODULE_ID) return mod
+    if (mode === 'local' || mode === 'unknown') return mod
+    if (mod.status !== 'running') return mod
+    return { ...mod, status: 'stopped' }
+  })
+}
 
 function statusBadgeVariant(status: ModuleStatus): BadgeVariant {
   switch (status) {
@@ -70,13 +121,20 @@ function categoryLabel(cat: ModuleCategory, t: ModulesLocale): string {
     search: t.tabSearch,
     browser: t.tabBrowser,
     console: t.tabConsole,
+    security: t.tabSecurity,
     infrastructure: 'Infra',
   }
   return map[cat]
 }
 
-function availableActions(mod: ModuleInfo, bridgeOnline: boolean): ModuleAction[] {
+function availableActions(mod: ModuleInfo, bridgeOnline: boolean, promptGuardMode: PromptGuardMode): ModuleAction[] {
   if (!bridgeOnline) return []
+  if (mod.id === PROMPT_GUARD_MODULE_ID) {
+    if (promptGuardMode === 'local' && mod.status === 'not_installed' && mod.capabilities.installable) {
+      return ['install']
+    }
+    return []
+  }
   switch (mod.status) {
     case 'not_installed':
       return mod.capabilities.installable ? ['install'] : []
@@ -136,14 +194,16 @@ function ModuleRow({
   busy,
   t,
   onAction,
+  promptGuardMode,
 }: {
   mod: ModuleInfo
   bridgeOnline: boolean
   busy: boolean
   t: ModulesLocale
   onAction: (moduleId: string, action: ModuleAction) => void
+  promptGuardMode: PromptGuardMode
 }) {
-  const actions = availableActions(mod, bridgeOnline)
+  const actions = availableActions(mod, bridgeOnline, promptGuardMode)
   const command = INSTALL_COMMANDS[mod.id]
   const agentPrompt = AGENT_PROMPTS[mod.id]
 
@@ -199,7 +259,7 @@ function ModuleRow({
 }
 
 export function ModulesPage() {
-  const { accessToken: _ } = useOutletContext<ConsoleOutletContext>()
+  const { accessToken } = useOutletContext<ConsoleOutletContext>()
   const { addToast } = useToast()
   const { t } = useLocale()
   const tm = t.pages.modules
@@ -207,7 +267,8 @@ export function ModulesPage() {
 
   const [bridgeOnline, setBridgeOnline] = useState(false)
   const [modules, setModules] = useState<ModuleInfo[]>(STATIC_MODULES)
-  const [selectedCategory, setSelectedCategory] = useState<ModuleCategory>('memory')
+  const [selectedCategory, setSelectedCategory] = useState<ModuleCategory>(() => readStoredModuleCategory() ?? 'memory')
+  const [promptGuardMode, setPromptGuardMode] = useState<PromptGuardMode>('unknown')
   const [loading, setLoading] = useState(false)
   const mountedRef = useRef(true)
   const prevActiveRef = useRef(0)
@@ -232,28 +293,45 @@ export function ModulesPage() {
     return result
   }, [modules])
 
+  useEffect(() => {
+    if (categoryList.length === 0) return
+    if (categoryList.includes(selectedCategory)) return
+    const stored = readStoredModuleCategory()
+    setSelectedCategory(stored && categoryList.includes(stored) ? stored : categoryList[0])
+  }, [categoryList, selectedCategory])
+
+  useEffect(() => {
+    rememberModuleCategory(selectedCategory)
+  }, [selectedCategory])
+
   const loadModules = useCallback(async () => {
     setLoading(true)
     try {
-      const online = await checkBridgeAvailable()
+      const [online, settings] = await Promise.all([
+        checkBridgeAvailable(),
+        listPlatformSettings(accessToken).catch(() => [] as PlatformSetting[]),
+      ])
       if (!mountedRef.current) return
       setBridgeOnline(online)
+      const nextPromptGuardMode = resolvePromptGuardMode(settings)
+      setPromptGuardMode(nextPromptGuardMode)
 
       if (online) {
         const data = await bridgeClient.listModules()
         if (!mountedRef.current) return
-        setModules(data)
+        setModules(applyPromptGuardModuleView(data, nextPromptGuardMode))
       } else {
-        setModules(STATIC_MODULES)
+        setModules(applyPromptGuardModuleView(STATIC_MODULES, nextPromptGuardMode))
       }
     } catch {
       if (!mountedRef.current) return
       setBridgeOnline(false)
+      setPromptGuardMode('unknown')
       setModules(STATIC_MODULES)
     } finally {
       if (mountedRef.current) setLoading(false)
     }
-  }, [])
+  }, [accessToken])
 
   useEffect(() => { void loadModules() }, [loadModules])
 
@@ -320,7 +398,10 @@ export function ModulesPage() {
                 return (
                   <button
                     key={cat}
-                    onClick={() => setSelectedCategory(cat)}
+                    onClick={() => {
+                      rememberModuleCategory(cat)
+                      setSelectedCategory(cat)
+                    }}
                     className={[
                       'flex h-[30px] items-center rounded-[5px] px-3 text-sm font-medium transition-colors',
                       active
@@ -348,6 +429,7 @@ export function ModulesPage() {
                       busy={isModuleBusy(mod.id)}
                       t={tm}
                       onAction={handleAction}
+                      promptGuardMode={promptGuardMode}
                     />
                   ))}
                   {filteredModules.length === 0 && (
