@@ -84,13 +84,43 @@ func (h *Handler) platformDetect(w http.ResponseWriter, _ *http.Request) {
 // --- Modules -----------------------------------------------------------
 
 const dockerQueryTimeout = 3 * time.Second
+const dockerBatchQueryTimeout = 10 * time.Second
 
 func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 	defs := h.registry.OptionalModules()
 	infos := make([]module.ModuleInfo, 0, len(defs))
+	serviceNames := make([]string, 0, len(defs))
 
 	for i := range defs {
-		status := h.moduleStatus(r.Context(), &defs[i])
+		if defs[i].ComposeService != "" {
+			serviceNames = append(serviceNames, defs[i].ComposeService)
+		}
+	}
+
+	var statuses map[string]string
+	if len(serviceNames) > 0 {
+		queryCtx, cancel := context.WithTimeout(r.Context(), dockerBatchQueryTimeout)
+		defer cancel()
+
+		var err error
+		statuses, err = h.compose.ContainerStatuses(queryCtx, serviceNames)
+		if err != nil {
+			h.appLogger.Error("batch container status query failed", map[string]any{
+				"error": err.Error(),
+			})
+			statuses = nil
+		}
+	}
+
+	for i := range defs {
+		var status module.ModuleStatus
+		if defs[i].ComposeService == "" {
+			status = h.virtualModuleStatus(&defs[i])
+		} else if statuses != nil {
+			status = mapRawStatus(statuses[defs[i].ComposeService])
+		} else {
+			status = h.moduleStatus(r.Context(), &defs[i])
+		}
 		infos = append(infos, defs[i].ToModuleInfo(status))
 	}
 

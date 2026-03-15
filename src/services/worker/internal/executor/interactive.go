@@ -97,7 +97,7 @@ func (e *InteractiveExecutor) Execute(
 
 	runCtx := agent.RunContext{
 		RunID:                  rc.Run.ID,
-		AccountID:                  &rc.Run.AccountID,
+		AccountID:              &rc.Run.AccountID,
 		UserID:                 rc.UserID,
 		AgentID:                agentIDFromPersona(rc),
 		ThreadID:               &rc.Run.ThreadID,
@@ -125,6 +125,7 @@ func (e *InteractiveExecutor) Execute(
 		LlmRetryMaxAttempts:    rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:    rc.LlmRetryBaseDelayMs,
 		WaitForInput:           rc.WaitForInput,
+		UserPromptScanFunc:     rc.UserPromptScanFunc,
 		ToolOutputScanFunc:     rc.ToolOutputScanFunc,
 		CancelSignal: func() bool {
 			return ctx.Err() != nil

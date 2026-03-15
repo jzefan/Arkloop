@@ -27,7 +27,7 @@
 | invite.default_max_uses | int | both | 1 | false | 邀请码默认可用次数 |
 | invite.max_codes_per_user | int | both | 1 | false | 单用户可创建的邀请码数量上限 |
 | limit.agent_reasoning_iterations | int | both | 0 | false | Agent Loop 主推理回合上限，0 表示不限 |
-| limit.concurrent_runs | int | both | 10 | false | 并发 run 上限 |
+| limit.concurrent_runs | int | both | 100 | false | 并发 run 上限 |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
 | limit.subagent_max_active_per_root_run | int | both | 20 | false | 单 root run 下最大活跃 sub-agent 数量 |
@@ -74,9 +74,16 @@
 | sandbox.warm_browser | int | platform | 1 | false | browser tier 预热实例数 |
 | sandbox.warm_lite | int | platform | 3 | false | lite tier 预热实例数 |
 | sandbox.warm_pro | int | platform | 2 | false | pro tier 预热实例数 |
+| security.injection_scan.blocking_enabled | bool | platform | false | false | 检测到注入时直接拦截请求 |
 | security.injection_scan.regex_enabled | bool | platform | true | false | Regex Scanner 开关 |
 | security.injection_scan.semantic_enabled | bool | platform | true | false | Prompt Guard 语义扫描开关 |
+| security.injection_scan.tool_output_scan_enabled | bool | platform | true | false | 扫描工具输出中的间接注入 |
 | security.injection_scan.trust_source_enabled | bool | platform | true | false | Trust Source 标记开关 |
+| security.semantic_scanner.api_endpoint | string | platform |  | false | 远端语义扫描服务地址（OpenAI 兼容 /chat/completions） |
+| security.semantic_scanner.api_key | string | platform |  | true | 远端语义扫描服务 API Key |
+| security.semantic_scanner.api_model | string | platform | openai/gpt-oss-safeguard-20b | false | 远端语义扫描模型标识 |
+| security.semantic_scanner.api_timeout_ms | int | platform | 4000 | false | 远端语义扫描超时（毫秒） |
+| security.semantic_scanner.provider | string | platform | local | false | 语义扫描提供方（local 或 api） |
 | skills.market.skillsmp_api_key | string | platform |  | true | SkillsMP 官方市场 API Key |
 | skills.market.skillsmp_base_url | string | platform | https://skillsmp.com | false | SkillsMP 官方市场基础地址 |
 | skills.registry.api_base_url | string | platform |  | false | 官方技能 Registry API 基础地址，留空则沿用 Base URL |

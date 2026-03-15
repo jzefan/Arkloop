@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '../useToast'
 import type { PromptInjectionTexts } from './types'
@@ -13,6 +13,10 @@ export interface SemanticSetupPanelProps {
   bridgeInstall: (variant: string) => Promise<{ operation_id: string }>
   formatError: (err: unknown) => string
   onInstallStarted?: (operationId: string) => void
+  defaultMode?: 'local' | 'api'
+  initialApiEndpoint?: string
+  initialApiModel?: string
+  initialApiTimeoutMs?: string
 }
 
 export function SemanticSetupPanel({
@@ -24,25 +28,40 @@ export function SemanticSetupPanel({
   bridgeInstall,
   formatError,
   onInstallStarted,
+  defaultMode = 'api',
+  initialApiEndpoint = 'https://openrouter.ai/api/v1',
+  initialApiModel = 'openai/gpt-oss-safeguard-20b',
+  initialApiTimeoutMs = '4000',
 }: SemanticSetupPanelProps) {
   const { addToast } = useToast()
 
-  const [mode, setMode] = useState<'local' | 'api'>('local')
+  const [mode, setMode] = useState<'local' | 'api'>(defaultMode)
   const [variant, setVariant] = useState<'22m' | '86m'>('22m')
-  const [endpoint, setEndpoint] = useState('')
+  const [endpoint, setEndpoint] = useState(initialApiEndpoint)
   const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState(initialApiModel)
+  const [timeoutMs, setTimeoutMs] = useState(initialApiTimeoutMs)
   const [saving, setSaving] = useState(false)
   const [installError, setInstallError] = useState('')
 
+  useEffect(() => {
+    setMode(defaultMode)
+    setEndpoint(initialApiEndpoint)
+    setModel(initialApiModel)
+    setTimeoutMs(initialApiTimeoutMs)
+    setApiKey('')
+    setInstallError('')
+  }, [defaultMode, initialApiEndpoint, initialApiModel, initialApiTimeoutMs])
+
   const handleSaveApi = async () => {
-    if (!endpoint.trim()) return
+    if (!endpoint.trim() || !apiKey.trim() || !model.trim() || !timeoutMs.trim()) return
     setSaving(true)
     try {
       await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'api', accessToken)
       await setSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, endpoint.trim(), accessToken)
-      if (apiKey.trim()) {
-        await setSetting(SETTING_KEYS.SEMANTIC_API_KEY, apiKey.trim(), accessToken)
-      }
+      await setSetting(SETTING_KEYS.SEMANTIC_API_KEY, apiKey.trim(), accessToken)
+      await setSetting(SETTING_KEYS.SEMANTIC_API_MODEL, model.trim(), accessToken)
+      await setSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, timeoutMs.trim(), accessToken)
       addToast(texts.toastUpdated, 'success')
       onSaved()
     } catch (err) {
@@ -137,6 +156,9 @@ export function SemanticSetupPanel({
       {mode === 'api' && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-[var(--c-text-muted)]">{texts.semanticApiDesc}</p>
+          <p className="text-xs text-[var(--c-text-secondary)]">{texts.semanticApiPresetHint}</p>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiEndpointLabel}</span>
           <input
             type="url"
             value={endpoint}
@@ -144,6 +166,31 @@ export function SemanticSetupPanel({
             placeholder={texts.semanticApiEndpointHint}
             className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
           />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiModelLabel}</span>
+            <input
+              type="text"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              placeholder={texts.semanticApiModelHint}
+              className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiTimeoutLabel}</span>
+            <input
+              type="number"
+              min="500"
+              step="100"
+              value={timeoutMs}
+              onChange={e => setTimeoutMs(e.target.value)}
+              placeholder={texts.semanticApiTimeoutHint}
+              className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiKeyLabel}</span>
           <input
             type="password"
             value={apiKey}
@@ -151,12 +198,13 @@ export function SemanticSetupPanel({
             placeholder={texts.semanticApiKeyHint}
             className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
           />
+          </div>
           <button
-            disabled={saving || !endpoint.trim()}
+            disabled={saving || !endpoint.trim() || !apiKey.trim() || !model.trim() || !timeoutMs.trim()}
             onClick={() => void handleSaveApi()}
             className={[
               'w-fit rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-              endpoint.trim()
+              endpoint.trim() && apiKey.trim() && model.trim() && timeoutMs.trim()
                 ? 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]'
                 : 'border-[var(--c-border-console)] text-[var(--c-text-muted)] opacity-50 cursor-not-allowed',
             ].join(' ')}

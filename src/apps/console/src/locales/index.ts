@@ -1247,6 +1247,7 @@ export interface LocaleStrings {
       tabSearch: string
       tabBrowser: string
       tabConsole: string
+      tabSecurity: string
       statusUnknown: string
       statusNotInstalled: string
       statusDisconnected: string

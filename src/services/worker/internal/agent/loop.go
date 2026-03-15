@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/stablejson"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
@@ -29,7 +31,7 @@ const (
 
 type RunContext struct {
 	RunID                  uuid.UUID
-	AccountID                  *uuid.UUID
+	AccountID              *uuid.UUID
 	UserID                 *uuid.UUID
 	AgentID                string
 	ThreadID               *uuid.UUID
@@ -73,6 +75,9 @@ type RunContext struct {
 	// WaitForInput 阻塞等待用户输入，供 ask_user 工具使用。
 	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
 	WaitForInput func(ctx context.Context) (string, bool)
+
+	// UserPromptScanFunc 对运行中追加的人类输入执行 prompt injection 检测。
+	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
 
 	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
 	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
@@ -313,6 +318,14 @@ func (l *Loop) Run(
 			if runCtx.WaitForInput != nil {
 				text, ok := runCtx.WaitForInput(ctx)
 				if ok && text != "" {
+					if runCtx.UserPromptScanFunc != nil {
+						if err := runCtx.UserPromptScanFunc(ctx, text, "ask_user"); err != nil {
+							if errors.Is(err, security.ErrInputBlocked) {
+								return nil
+							}
+							return err
+						}
+					}
 					var parsed map[string]any
 					if err := json.Unmarshal([]byte(text), &parsed); err == nil {
 						answerResult = llm.StreamToolResult{
@@ -372,6 +385,14 @@ func (l *Loop) Run(
 				return hookErr
 			}
 			if inject && injected != "" {
+				if runCtx.UserPromptScanFunc != nil {
+					if err := runCtx.UserPromptScanFunc(ctx, injected, "interactive_checkin"); err != nil {
+						if errors.Is(err, security.ErrInputBlocked) {
+							return nil
+						}
+						return err
+					}
+				}
 				messages = append(messages, llm.Message{
 					Role:    "user",
 					Content: []llm.TextPart{{Text: injected}},
@@ -457,7 +478,7 @@ func (l *Loop) executeToolCall(
 	execCtx := tools.ExecutionContext{
 		RunID:               runCtx.RunID,
 		TraceID:             runCtx.TraceID,
-		AccountID:               runCtx.AccountID,
+		AccountID:           runCtx.AccountID,
 		ThreadID:            runCtx.ThreadID,
 		ProjectID:           runCtx.ProjectID,
 		UserID:              runCtx.UserID,

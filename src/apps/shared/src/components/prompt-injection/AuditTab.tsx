@@ -97,9 +97,16 @@ export function AuditTab({ accessToken, texts, listAuditLogs }: AuditTabProps) {
           {logs.map(log => {
             const expanded = expandedIds.has(log.id)
             const meta = log.metadata
-            const count = (meta?.detection_count as number) ?? 0
+            const semantic = (meta?.semantic && typeof meta.semantic === 'object' && !Array.isArray(meta.semantic))
+              ? meta.semantic as Record<string, unknown>
+              : null
+            const semanticLabel = typeof semantic?.label === 'string' ? semantic.label : ''
+            const count = (meta?.detection_count as number) ?? (semanticLabel ? 1 : 0)
             const patterns = (meta?.patterns as Array<Record<string, string>>) ?? []
-            const hasDetail = patterns.length > 0
+            const hasDetail = patterns.length > 0 || !!semanticLabel
+            const preview = patterns.length > 0
+              ? `${patterns.slice(0, 3).map(p => p.pattern_id ?? p.category).join(', ')}${patterns.length > 3 ? ` +${patterns.length - 3}` : ''}`
+              : (semanticLabel ? `semantic:${semanticLabel.toLowerCase()}` : '--')
 
             return (
               <Fragment key={log.id}>
@@ -125,8 +132,7 @@ export function AuditTab({ accessToken, texts, listAuditLogs }: AuditTabProps) {
                     {count}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-[var(--c-text-secondary)]">
-                    {patterns.slice(0, 3).map(p => p.pattern_id ?? p.category).join(', ')}
-                    {patterns.length > 3 && ` +${patterns.length - 3}`}
+                    {preview}
                   </td>
                 </tr>
                 {expanded && (

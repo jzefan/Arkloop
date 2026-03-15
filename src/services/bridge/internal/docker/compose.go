@@ -46,6 +46,29 @@ type psEntry struct {
 	Health  string `json:"Health"`
 }
 
+func parsePSEntries(out []byte) []psEntry {
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return nil
+	}
+
+	// docker compose ps --format json may emit one JSON object per line.
+	entries := make([]psEntry, 0, strings.Count(trimmed, "\n")+1)
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry psEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
 // ContainerStatus returns the module status for a Docker Compose service.
 // Possible return values: "running", "error", "stopped", "not_installed".
 func (c *Compose) ContainerStatus(ctx context.Context, serviceName string, profile string) (string, error) {
@@ -68,30 +91,50 @@ func (c *Compose) ContainerStatus(ctx context.Context, serviceName string, profi
 		return "not_installed", nil
 	}
 
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return "not_installed", nil
-	}
-
-	// docker compose ps --format json may emit one JSON object per line.
-	var entries []psEntry
-	for _, line := range strings.Split(trimmed, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var entry psEntry
-		if jsonErr := json.Unmarshal([]byte(line), &entry); jsonErr != nil {
-			continue
-		}
-		entries = append(entries, entry)
-	}
-
+	entries := parsePSEntries(out)
 	if len(entries) == 0 {
 		return "not_installed", nil
 	}
 
 	return mapStatus(entries[0]), nil
+}
+
+// ContainerStatuses returns the module status for multiple Docker Compose
+// services in a single CLI call. Missing services are reported as
+// "not_installed".
+func (c *Compose) ContainerStatuses(ctx context.Context, serviceNames []string) (map[string]string, error) {
+	if err := c.validateProjectDir(); err != nil {
+		return nil, err
+	}
+
+	statuses := make(map[string]string, len(serviceNames))
+	if len(serviceNames) == 0 {
+		return statuses, nil
+	}
+	for _, serviceName := range serviceNames {
+		statuses[serviceName] = "not_installed"
+	}
+
+	args := c.baseArgs()
+	args = append(args, "ps", "--all", "--format", "json")
+	args = append(args, serviceNames...)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = c.projectDir
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range parsePSEntries(out) {
+		if entry.Service == "" {
+			continue
+		}
+		statuses[entry.Service] = mapStatus(entry)
+	}
+
+	return statuses, nil
 }
 
 // Install pulls/builds and starts a service. If profile is non-empty it is

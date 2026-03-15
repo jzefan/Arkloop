@@ -20,6 +20,7 @@ import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
 import { useSSE } from '../hooks/useSSE'
 import { SSEApiError } from '../sse'
+import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
@@ -224,6 +225,7 @@ export function ChatPage() {
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
   const [injectionBlocked, setInjectionBlocked] = useState<string | null>(null)
+  const injectionBlockedRunIdRef = useRef<string | null>(null)
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
@@ -399,6 +401,23 @@ export function ChatPage() {
     searchStepsRef.current = []
     setSearchSteps([])
   }, [])
+  const clearLiveRunSecurityArtifacts = useCallback(() => {
+    setAssistantDraft('')
+    setThinkingDraft('')
+    setTopLevelCodeExecutions([])
+    setTopLevelBrowserActions([])
+    setSegments([])
+    setLiveTimelineExiting(false)
+    activeSegmentIdRef.current = null
+    currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
+    currentRunBrowserActionsRef.current = []
+    resetSearchSteps()
+    setAwaitingInput(false)
+    setPendingUserInput(null)
+    setCheckInDraft('')
+  }, [resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -564,6 +583,7 @@ export function ChatPage() {
     setSending(true)
     setError(null)
     setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     try {
       const message = await createMessage(accessToken, threadId, { content: text })
       invalidateMessageSync()
@@ -596,6 +616,7 @@ export function ChatPage() {
     setMessagesLoading(true)
     setError(null)
     setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
 
     void (async () => {
@@ -720,6 +741,8 @@ export function ChatPage() {
   useEffect(() => {
     setActiveRunId(null)
     setAssistantDraft('')
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
@@ -764,6 +787,7 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    injectionBlockedRunIdRef.current = null
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     sse.reset()
@@ -827,6 +851,14 @@ export function ChatPage() {
     processedEventCountRef.current = nextProcessedCount
 
     for (const event of fresh) {
+      if (shouldSuppressLiveRunEventAfterInjectionBlock({
+        activeRunId,
+        blockedRunId: injectionBlockedRunIdRef.current,
+        event,
+      })) {
+        continue
+      }
+
       if (event.type === 'run.segment.start') {
         const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
         const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
@@ -1081,8 +1113,24 @@ export function ChatPage() {
         continue
       }
 
+      if (event.type === 'security.injection.blocked') {
+        injectionBlockedRunIdRef.current = event.run_id
+        sseTerminalFallbackArmedRef.current = false
+        sseTerminalFallbackRunIdRef.current = null
+        sse.disconnect()
+        setActiveRunId(null)
+        setCancelSubmitting(false)
+        setQueuedDraft(null)
+        setError(null)
+        clearLiveRunSecurityArtifacts()
+        setInjectionBlocked(getInjectionBlockMessage(event))
+        if (threadId) onRunEnded(threadId)
+        continue
+      }
+
       if (event.type === 'run.completed') {
         const completedRunId = event.run_id
+        injectionBlockedRunIdRef.current = null
         const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
@@ -1172,6 +1220,8 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.cancelled') {
+        const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
@@ -1186,13 +1236,16 @@ export function ChatPage() {
         setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
-        const data = event.data as { trace_id?: unknown }
-        const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
-        setError({ message: '已停止生成', traceId })
+        if (!blockedByInjection) {
+          const data = event.data as { trace_id?: unknown }
+          const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
+          setError({ message: '已停止生成', traceId })
+        }
         continue
       }
 
       if (event.type === 'run.failed') {
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
@@ -1226,7 +1279,7 @@ export function ChatPage() {
         }
       }
     }
-  }, [activeRunId, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -1443,6 +1496,7 @@ export function ChatPage() {
     setSending(true)
     setError(null)
     setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
 
     try {
       const uploadAttachments = async (targetThreadId: string) => {
@@ -1483,6 +1537,7 @@ export function ChatPage() {
       setDraft('')
       setAttachments([])
       setAssistantDraft('')
+      injectionBlockedRunIdRef.current = null
 
       const run = await createRun(accessToken, threadId, personaKey)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
@@ -1505,6 +1560,7 @@ export function ChatPage() {
     setSending(true)
     setError(null)
     setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await editMessage(accessToken, threadId, messageId, newContent)
@@ -1536,6 +1592,7 @@ export function ChatPage() {
     setSending(true)
     setError(null)
     setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await retryThread(accessToken, threadId)

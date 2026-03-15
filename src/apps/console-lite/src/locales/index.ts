@@ -203,6 +203,7 @@ export interface LocaleStrings {
     detailTitle: string
     sectionOverview: string
     sectionConversation: string
+    sectionEvents: string
     labelRunId: string
     labelAgent: string
     labelModel: string
@@ -218,6 +219,7 @@ export interface LocaleStrings {
     labelThread: string
     loading: string
     noConversation: string
+    noEvents: string
     statusRunning: string
     statusCompleted: string
     statusFailed: string

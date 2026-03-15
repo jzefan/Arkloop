@@ -31,7 +31,7 @@ export function SecurityPage() {
   const [values, setValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<string | null>(null)
-  const [semanticProvider, setSemanticProvider] = useState('')
+  const [semanticProvider, setSemanticProvider] = useState<string>('')
   const [bridgeAvailable, setBridgeAvailable] = useState(false)
   const [localModelInstalled, setLocalModelInstalled] = useState(false)
   const [semanticSetupOpen, setSemanticSetupOpen] = useState(false)
@@ -87,9 +87,19 @@ export function SecurityPage() {
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch(() => {})
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch(() => {})
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_KEY, accessToken).catch(() => {})
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch(() => {})
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, accessToken).catch(() => {})
       await updatePlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, 'false', accessToken)
       setSemanticProvider('')
-      setValues(prev => ({ ...prev, [SETTING_KEYS.SEMANTIC_ENABLED]: 'false', [SETTING_KEYS.SEMANTIC_PROVIDER]: '' }))
+      setValues(prev => ({
+        ...prev,
+        [SETTING_KEYS.SEMANTIC_ENABLED]: 'false',
+        [SETTING_KEYS.SEMANTIC_PROVIDER]: '',
+        [SETTING_KEYS.SEMANTIC_API_ENDPOINT]: '',
+        [SETTING_KEYS.SEMANTIC_API_KEY]: '',
+        [SETTING_KEYS.SEMANTIC_API_MODEL]: '',
+        [SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS]: '',
+      }))
       setSemanticSetupOpen(true)
     } catch (err) {
       if (isApiError(err)) addToast(ts.toastFailed, 'error')
@@ -101,6 +111,8 @@ export function SecurityPage() {
 
   const semanticConfigured = semanticProvider !== ''
   const semanticEndpoint = values[SETTING_KEYS.SEMANTIC_API_ENDPOINT] ?? ''
+  const semanticModel = values[SETTING_KEYS.SEMANTIC_API_MODEL] ?? 'openai/gpt-oss-safeguard-20b'
+  const semanticTimeoutMs = values[SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS] ?? '4000'
   const semanticCanEnable = semanticProvider === 'api'
     ? semanticEndpoint !== ''
     : semanticProvider === 'local'
@@ -162,6 +174,10 @@ export function SecurityPage() {
                           setSetting={updatePlatformSetting}
                           bridgeInstall={v => bridgeClient.performAction('prompt-guard', 'install', { variant: v })}
                           formatError={err => err instanceof Error ? err.message : ts.toastFailed}
+                          defaultMode="api"
+                          initialApiEndpoint={semanticEndpoint}
+                          initialApiModel={semanticModel}
+                          initialApiTimeoutMs={semanticTimeoutMs}
                           onInstallStarted={opId => {
                             startOperation('prompt-guard', 'Prompt Guard', 'install', opId)
                             setHistoryOpen(true)

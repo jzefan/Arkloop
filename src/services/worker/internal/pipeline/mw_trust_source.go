@@ -71,3 +71,14 @@ func resolveEnabled(resolver sharedconfig.Resolver, key string, fallback bool) b
 	}
 	return val == "true"
 }
+
+func resolveString(resolver sharedconfig.Resolver, key, fallback string) string {
+	if resolver == nil {
+		return fallback
+	}
+	val, err := resolver.Resolve(context.Background(), key, sharedconfig.Scope{})
+	if err != nil || strings.TrimSpace(val) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(val)
+}
