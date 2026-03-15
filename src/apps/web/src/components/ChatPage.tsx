@@ -20,6 +20,7 @@ import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
 import { useSSE } from '../hooks/useSSE'
+import { useTypewriter } from '../hooks/useTypewriter'
 import { SSEApiError } from '../sse'
 import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import {
@@ -1913,6 +1914,8 @@ export function ChatPage() {
       ? `${copStepCount} steps completed`
       : 'Completed'
 
+  const copHeaderDisplayed = useTypewriter(isStreaming ? copHeaderLabel : '')
+
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
       {/* 顶部 header */}
@@ -2167,11 +2170,8 @@ export function ChatPage() {
                       fontWeight: 500,
                     }}
                   >
-                    {!assistantDraft && (
-                      <Loader2 size={13} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-text-secondary)' }} />
-                    )}
-                    {copHeaderLabel && (
-                      <span className={!assistantDraft ? 'thinking-shimmer' : undefined}>{copHeaderLabel}</span>
+                    {copHeaderDisplayed && (
+                      <span className={!assistantDraft ? 'thinking-shimmer' : undefined}>{copHeaderDisplayed}</span>
                     )}
                   </div>
                   {!assistantDraft && segments.length > 0 && (
@@ -2217,9 +2217,9 @@ export function ChatPage() {
                             }}
                           >
                             {/* bottom connector: dot bottom → container bottom */}
-                            {multiItems && !isLast && (
+                            {(multiItems && !isLast) || (isLast && topLevelSubAgents.length > 0) ? (
                               <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                            )}
+                            ) : null}
                             {/* top connector: container top → dot top */}
                             {multiItems && !isFirst && (
                               <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />

@@ -194,13 +194,6 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
           fontWeight: 500,
         }}
       >
-        {!isComplete ? (
-          <Loader2
-            size={13}
-            className="animate-spin"
-            style={{ flexShrink: 0, color: 'var(--c-text-secondary)' }}
-          />
-        ) : null}
         <span className={shimmer ? 'thinking-shimmer' : undefined}>{headerLabel}</span>
         {isComplete && (
           <motion.div
@@ -280,8 +273,8 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                     {multiSteps && !isLast && (
                       <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                     )}
-                    {/* Last step extends line down when code executions follow (streaming) */}
-                    {isLast && !steps.some((s) => s.kind === 'finished') && codeExecCount > 0 && (
+                    {/* Last step extends line down when code executions or sub agents follow */}
+                    {isLast && !steps.some((s) => s.kind === 'finished') && (codeExecCount > 0 || subAgentCount > 0) && (
                       <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                     )}
                     {multiSteps && !isFirst && (
@@ -386,9 +379,9 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                         }}
                       >
                         {/* bottom connector: dot bottom → container bottom */}
-                        {multiItems && !isLast && (
+                        {(multiItems && !isLast) || (isLast && subAgentCount > 0) ? (
                           <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                        )}
+                        ) : null}
                         {/* top connector: container top → dot top */}
                         {multiItems && !isFirst && (
                           <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
