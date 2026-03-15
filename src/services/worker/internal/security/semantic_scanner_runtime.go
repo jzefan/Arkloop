@@ -63,7 +63,7 @@ func (s *RuntimeSemanticScanner) Close() {
 }
 
 func (s *RuntimeSemanticScanner) ensureScannerLocked() (SemanticClassifier, error) {
-	provider := strings.ToLower(runtimeResolveString(s.resolver, "security.semantic_scanner.provider", "local"))
+	provider := strings.ToLower(runtimeResolveString(s.resolver, "security.semantic_scanner.provider", ""))
 
 	switch provider {
 	case "local":
@@ -110,6 +110,9 @@ func (s *RuntimeSemanticScanner) ensureScannerLocked() (SemanticClassifier, erro
 		return s.current, nil
 
 	default:
+		if strings.TrimSpace(provider) == "" {
+			return nil, fmt.Errorf("semantic scanner provider not configured")
+		}
 		return nil, fmt.Errorf("semantic scanner provider unsupported: %s", provider)
 	}
 }

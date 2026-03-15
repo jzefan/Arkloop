@@ -250,7 +250,7 @@ func RegisterTrackA(r *Registry) error {
 		{
 			Key:         "security.injection_scan.semantic_enabled",
 			Type:        TypeBool,
-			Default:     "true",
+			Default:     "false",
 			Description: "Prompt Guard 语义扫描开关",
 			Sensitive:   false,
 			Scope:       ScopePlatform,
@@ -258,8 +258,8 @@ func RegisterTrackA(r *Registry) error {
 		{
 			Key:         "security.semantic_scanner.provider",
 			Type:        TypeString,
-			Default:     "local",
-			Description: "语义扫描提供方（local 或 api）",
+			Default:     "",
+			Description: "语义扫描提供方（留空 / local / api）",
 			Sensitive:   false,
 			Scope:       ScopePlatform,
 		},

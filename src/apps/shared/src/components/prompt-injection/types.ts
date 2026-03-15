@@ -39,7 +39,7 @@ export interface Layer {
 export const LAYERS: Layer[] = [
   { id: 'regex', nameKey: 'layerRegex', descKey: 'layerRegexDesc', settingsKey: SETTING_KEYS.REGEX_ENABLED },
   { id: 'trust-source', nameKey: 'layerTrustSource', descKey: 'layerTrustSourceDesc', settingsKey: SETTING_KEYS.TRUST_SOURCE_ENABLED },
-  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: SETTING_KEYS.SEMANTIC_ENABLED },
+  { id: 'semantic', nameKey: 'layerSemantic', descKey: 'layerSemanticDesc', settingsKey: SETTING_KEYS.SEMANTIC_ENABLED, defaultEnabled: false },
   { id: 'blocking', nameKey: 'layerBlocking', descKey: 'layerBlockingDesc', settingsKey: SETTING_KEYS.BLOCKING_ENABLED, defaultEnabled: false },
   { id: 'tool-scan', nameKey: 'layerToolScan', descKey: 'layerToolScanDesc', settingsKey: SETTING_KEYS.TOOL_SCAN_ENABLED },
 ]
