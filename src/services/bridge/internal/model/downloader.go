@@ -14,15 +14,17 @@ import (
 	"arkloop/services/bridge/internal/docker"
 )
 
+const installedVariantFilename = ".installed_variant"
+
 // Variant describes a downloadable model variant.
 type Variant struct {
-	ID              string // "22m" or "86m"
-	Name            string
-	Image           string // OCI image containing model files
-	ModelScopeRepo  string // ModelScope repo for fallback download
-	HFRepo          string // HuggingFace repo for wget-based download
-	HFFiles         [][2]string // [remote_path, local_name] pairs
-	Size            string // human-readable size hint
+	ID             string // "22m" or "86m"
+	Name           string
+	Image          string      // OCI image containing model files
+	ModelScopeRepo string      // ModelScope repo for fallback download
+	HFRepo         string      // HuggingFace repo for wget-based download
+	HFFiles        [][2]string // [remote_path, local_name] pairs
+	Size           string      // human-readable size hint
 }
 
 // Variants is the registry of known prompt-guard model variants.
@@ -44,12 +46,7 @@ var Variants = map[string]Variant{
 		Name:           "Prompt Guard (86M)",
 		Image:          "ghcr.io/arkloop/prompt-guard-86m-onnx:latest",
 		ModelScopeRepo: "LLM-Research/Llama-Prompt-Guard-2-86M",
-		HFRepo:         "protectai/deberta-v3-base-prompt-injection-v2",
-		HFFiles: [][2]string{
-			{"onnx/model.onnx", "model.onnx"},
-			{"onnx/tokenizer.json", "tokenizer.json"},
-		},
-		Size: "~690 MB",
+		Size:           "~690 MB",
 	},
 }
 
@@ -114,20 +111,21 @@ func (d *Downloader) Install(ctx context.Context, variantID string) (*docker.Ope
 			d.busy = false
 			d.mu.Unlock()
 		}()
+		installedVariant := d.InstalledVariant()
 		// 进入 goroutine 后再次检查，避免并发 Install 之间的竞态
-		if d.ModelFilesExist() {
-			op.AppendLog("model files already present, skipping download")
+		if d.ModelFilesExist() && installedVariant == v.ID {
+			op.AppendLog(fmt.Sprintf("model variant %s already installed, skipping download", v.ID))
 			op.Complete(nil)
 			return
 		}
-		err := d.download(cancelCtx, op, v)
+		err := d.download(cancelCtx, op, v, installedVariant)
 		op.Complete(err)
 	}()
 
 	return op, nil
 }
 
-func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Variant) error {
+func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Variant, installedVariant string) error {
 	op.AppendLog(fmt.Sprintf("variant: %s (%s)", v.Name, v.Size))
 
 	if err := os.MkdirAll(d.modelDir, 0755); err != nil {
@@ -135,13 +133,19 @@ func (d *Downloader) download(ctx context.Context, op *docker.Operation, v Varia
 	}
 	op.AppendLog("model directory: " + d.modelDir)
 
-	// Skip download if model files already exist.
 	if d.ModelFilesExist() {
-		op.AppendLog("model files already present, skipping download")
-		d.logger.Info("prompt-guard model already installed", map[string]any{
-			"variant": v.ID, "model_dir": d.modelDir,
-		})
-		return nil
+		switch {
+		case installedVariant == "":
+			op.AppendLog("existing model files found without variant metadata; reinstalling requested variant")
+		case installedVariant != v.ID:
+			op.AppendLog(fmt.Sprintf("replacing installed variant %s with requested variant %s", installedVariant, v.ID))
+		default:
+			op.AppendLog(fmt.Sprintf("model files for variant %s already present, skipping download", v.ID))
+			d.logger.Info("prompt-guard model already installed", map[string]any{
+				"variant": v.ID, "model_dir": d.modelDir,
+			})
+			return nil
+		}
 	}
 
 	// Strategy 1: Docker image pull + extract.
@@ -190,12 +194,29 @@ func (d *Downloader) ModelFilesExist() bool {
 	return true
 }
 
+// InstalledVariant reports the persisted Prompt Guard variant ID, or "" when
+// the current files predate variant metadata or the metadata is unreadable.
+func (d *Downloader) InstalledVariant() string {
+	raw, err := os.ReadFile(filepath.Join(d.modelDir, installedVariantFilename))
+	if err != nil {
+		return ""
+	}
+	variantID := strings.TrimSpace(string(raw))
+	if _, ok := Variants[variantID]; !ok {
+		return ""
+	}
+	return variantID
+}
+
 func (d *Downloader) verifyFiles(op *docker.Operation, v Variant) error {
 	for _, f := range []string{"model.onnx", "tokenizer.json"} {
 		p := filepath.Join(d.modelDir, f)
 		if _, err := os.Stat(p); err != nil {
 			return fmt.Errorf("expected file missing: %s", p)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(d.modelDir, installedVariantFilename), []byte(v.ID+"\n"), 0644); err != nil {
+		return fmt.Errorf("write installed variant: %w", err)
 	}
 	op.AppendLog("model installed to " + d.modelDir)
 	d.logger.Info("prompt-guard model installed", map[string]any{

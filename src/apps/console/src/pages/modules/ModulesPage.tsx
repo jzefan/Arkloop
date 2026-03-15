@@ -61,12 +61,12 @@ function rememberModuleCategory(category: ModuleCategory) {
 
 function resolvePromptGuardMode(settings: PlatformSetting[]): PromptGuardMode {
   const map = new Map(settings.map((item) => [item.key, item.value]))
-  const semanticEnabled = map.get(SEMANTIC_ENABLED_KEY) !== 'false'
-  const provider = (map.get(SEMANTIC_PROVIDER_KEY) ?? 'local').trim().toLowerCase()
+  const semanticEnabled = map.get(SEMANTIC_ENABLED_KEY) === 'true'
+  const provider = (map.get(SEMANTIC_PROVIDER_KEY) ?? '').trim().toLowerCase()
 
-  if (!semanticEnabled) return 'disabled'
+  if (!semanticEnabled || provider === '') return 'disabled'
   if (provider === 'api') return 'api'
-  if (provider === 'local' || provider === '') return 'local'
+  if (provider === 'local') return 'local'
   return 'unknown'
 }
 

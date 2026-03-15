@@ -37,10 +37,10 @@ func NewInjectionScanMiddleware(
 		}
 
 		regexEnabled := resolveEnabled(configResolver, "security.injection_scan.regex_enabled", true)
-		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", true)
+		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", false)
 		blockingEnabled := resolveEnabled(configResolver, "security.injection_scan.blocking_enabled", false)
 		toolScanEnabled := resolveEnabled(configResolver, "security.injection_scan.tool_output_scan_enabled", true)
-		semanticProvider := resolveString(configResolver, "security.semantic_scanner.provider", "local")
+		semanticProvider := resolveString(configResolver, "security.semantic_scanner.provider", "")
 		userPromptSemanticMode := resolveUserPromptSemanticMode(semanticEnabled, semanticProvider)
 		userPromptSemanticHotPath := userPromptSemanticMode == userPromptSemanticModeSync
 		toolOutputSemanticEnabled := semanticEnabled && !strings.EqualFold(semanticProvider, "api")
@@ -570,9 +570,9 @@ func buildUserPromptScanFunc(
 		}
 
 		regexEnabled := resolveEnabled(configResolver, "security.injection_scan.regex_enabled", true)
-		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", true)
+		semanticEnabled := resolveEnabled(configResolver, "security.injection_scan.semantic_enabled", false)
 		blockingEnabled := resolveEnabled(configResolver, "security.injection_scan.blocking_enabled", false)
-		semanticProvider := resolveString(configResolver, "security.semantic_scanner.provider", "local")
+		semanticProvider := resolveString(configResolver, "security.semantic_scanner.provider", "")
 		userPromptSemanticMode := resolveUserPromptSemanticMode(semanticEnabled, semanticProvider)
 
 		emitRunEvent(ctx, rc, eventsRepo, "security.scan.started", map[string]any{

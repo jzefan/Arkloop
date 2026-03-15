@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '../useToast'
 import type { PromptInjectionTexts } from './types'
@@ -11,6 +11,7 @@ export interface SemanticSetupPanelProps {
   texts: PromptInjectionTexts
   setSetting: (key: string, value: string, token: string) => Promise<unknown>
   bridgeInstall: (variant: string) => Promise<{ operation_id: string }>
+  waitForInstallCompletion?: (operationId: string) => Promise<void>
   formatError: (err: unknown) => string
   onInstallStarted?: (operationId: string) => void
   defaultMode?: 'local' | 'api'
@@ -26,6 +27,7 @@ export function SemanticSetupPanel({
   texts,
   setSetting,
   bridgeInstall,
+  waitForInstallCompletion,
   formatError,
   onInstallStarted,
   defaultMode = 'api',
@@ -42,7 +44,18 @@ export function SemanticSetupPanel({
   const [model, setModel] = useState(initialApiModel)
   const [timeoutMs, setTimeoutMs] = useState(initialApiTimeoutMs)
   const [saving, setSaving] = useState(false)
+  const [waitingForInstall, setWaitingForInstall] = useState(false)
   const [installError, setInstallError] = useState('')
+  const mountedRef = useRef(true)
+  const localActivationGenerationRef = useRef(0)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      localActivationGenerationRef.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     setMode(defaultMode)
@@ -55,13 +68,15 @@ export function SemanticSetupPanel({
 
   const handleSaveApi = async () => {
     if (!endpoint.trim() || !apiKey.trim() || !model.trim() || !timeoutMs.trim()) return
+    localActivationGenerationRef.current += 1
+    setWaitingForInstall(false)
     setSaving(true)
     try {
-      await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'api', accessToken)
       await setSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, endpoint.trim(), accessToken)
       await setSetting(SETTING_KEYS.SEMANTIC_API_KEY, apiKey.trim(), accessToken)
       await setSetting(SETTING_KEYS.SEMANTIC_API_MODEL, model.trim(), accessToken)
       await setSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, timeoutMs.trim(), accessToken)
+      await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'api', accessToken)
       addToast(texts.toastUpdated, 'success')
       onSaved()
     } catch (err) {
@@ -75,11 +90,45 @@ export function SemanticSetupPanel({
     setSaving(true)
     setInstallError('')
     try {
-      await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'local', accessToken)
       const { operation_id } = await bridgeInstall(variant)
+      const generation = localActivationGenerationRef.current + 1
+      localActivationGenerationRef.current = generation
       onInstallStarted?.(operation_id)
       addToast(`${texts.semanticInstallStarted} (${operation_id.slice(0, 8)})`, 'success')
-      onSaved()
+      if (!waitForInstallCompletion) {
+        await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'local', accessToken)
+        addToast(texts.toastUpdated, 'success')
+        onSaved()
+        return
+      }
+
+      setWaitingForInstall(true)
+      void waitForInstallCompletion(operation_id)
+        .then(async () => {
+          if (!mountedRef.current || localActivationGenerationRef.current !== generation) {
+            return
+          }
+          await setSetting(SETTING_KEYS.SEMANTIC_PROVIDER, 'local', accessToken)
+          if (!mountedRef.current || localActivationGenerationRef.current !== generation) {
+            return
+          }
+          addToast(texts.toastUpdated, 'success')
+          onSaved()
+        })
+        .catch((err) => {
+          if (!mountedRef.current || localActivationGenerationRef.current !== generation) {
+            return
+          }
+          const msg = formatError(err)
+          setInstallError(msg)
+          addToast(msg, 'error')
+        })
+        .finally(() => {
+          if (!mountedRef.current || localActivationGenerationRef.current !== generation) {
+            return
+          }
+          setWaitingForInstall(false)
+        })
     } catch (err) {
       const msg = formatError(err)
       setInstallError(msg)
@@ -91,12 +140,19 @@ export function SemanticSetupPanel({
 
   const modeBtn = (value: 'local' | 'api', label: string) => (
     <button
-      onClick={() => { setMode(value); setInstallError('') }}
+      onClick={() => {
+        localActivationGenerationRef.current += 1
+        setWaitingForInstall(false)
+        setMode(value)
+        setInstallError('')
+      }}
+      disabled={saving || waitingForInstall}
       className={[
         'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
         mode === value
           ? 'bg-[var(--c-text-primary)] text-[var(--c-bg-card)]'
           : 'border border-[var(--c-border-mid)] bg-[var(--c-bg-card)] text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
+        (saving || waitingForInstall) ? 'cursor-not-allowed opacity-60' : '',
       ].join(' ')}
     >
       {label}
@@ -139,16 +195,16 @@ export function SemanticSetupPanel({
             <p className="text-xs text-[var(--c-status-error-text,red)]">{installError}</p>
           )}
           <button
-            disabled={!bridgeAvailable || saving}
+            disabled={!bridgeAvailable || saving || waitingForInstall}
             onClick={() => void handleInstallLocal()}
             className={[
               'w-fit rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-              bridgeAvailable
+              bridgeAvailable && !waitingForInstall
                 ? 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]'
                 : 'border-[var(--c-border-console)] text-[var(--c-text-muted)] opacity-50 cursor-not-allowed',
             ].join(' ')}
           >
-            {saving ? <Loader2 size={12} className="inline animate-spin" /> : texts.actionInstallModel}
+            {(saving || waitingForInstall) ? <Loader2 size={12} className="inline animate-spin" /> : texts.actionInstallModel}
           </button>
         </div>
       )}
@@ -159,13 +215,13 @@ export function SemanticSetupPanel({
           <p className="text-xs text-[var(--c-text-secondary)]">{texts.semanticApiPresetHint}</p>
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiEndpointLabel}</span>
-          <input
-            type="url"
-            value={endpoint}
-            onChange={e => setEndpoint(e.target.value)}
-            placeholder={texts.semanticApiEndpointHint}
-            className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
-          />
+            <input
+              type="url"
+              value={endpoint}
+              onChange={e => setEndpoint(e.target.value)}
+              placeholder={texts.semanticApiEndpointHint}
+              className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiModelLabel}</span>
@@ -191,25 +247,25 @@ export function SemanticSetupPanel({
           </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-[var(--c-text-secondary)]">{texts.semanticApiKeyLabel}</span>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder={texts.semanticApiKeyHint}
-            className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
-          />
+            <input
+              type="password"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder={texts.semanticApiKeyHint}
+              className="rounded-md border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-3 py-2 text-xs text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--c-text-muted)]"
+            />
           </div>
           <button
-            disabled={saving || !endpoint.trim() || !apiKey.trim() || !model.trim() || !timeoutMs.trim()}
+            disabled={saving || waitingForInstall || !endpoint.trim() || !apiKey.trim() || !model.trim() || !timeoutMs.trim()}
             onClick={() => void handleSaveApi()}
             className={[
               'w-fit rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-              endpoint.trim() && apiKey.trim() && model.trim() && timeoutMs.trim()
+              !waitingForInstall && endpoint.trim() && apiKey.trim() && model.trim() && timeoutMs.trim()
                 ? 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]'
                 : 'border-[var(--c-border-console)] text-[var(--c-text-muted)] opacity-50 cursor-not-allowed',
             ].join(' ')}
           >
-            {saving ? <Loader2 size={12} className="inline animate-spin" /> : texts.actionSave}
+            {(saving || waitingForInstall) ? <Loader2 size={12} className="inline animate-spin" /> : texts.actionSave}
           </button>
         </div>
       )}

@@ -39,7 +39,7 @@ export function PromptInjectionPage() {
       const [regexResult, trustResult, semanticResult, providerResult, endpointResult, modelResult, timeoutResult, blockingResult, toolScanResult] = await Promise.all([
         getPlatformSetting(SETTING_KEYS.REGEX_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(SETTING_KEYS.TRUST_SOURCE_ENABLED, accessToken).catch(() => ({ value: 'true' })),
-        getPlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, accessToken).catch(() => ({ value: 'true' })),
+        getPlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, accessToken).catch(() => ({ value: 'false' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch(() => ({ value: '' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch(() => ({ value: '' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch(() => ({ value: 'openai/gpt-oss-safeguard-20b' })),
@@ -168,6 +168,7 @@ export function PromptInjectionPage() {
                           texts={tp}
                           setSetting={setPlatformSetting}
                           bridgeInstall={v => bridgeClient.performAction('prompt-guard', 'install', { variant: v })}
+                          waitForInstallCompletion={opId => bridgeClient.waitForOperation(opId)}
                           formatError={err => isApiError(err) ? err.message : tp.toastFailed}
                           defaultMode="api"
                           initialApiEndpoint={semanticEndpoint}

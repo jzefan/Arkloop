@@ -173,6 +173,7 @@ export function SecurityPage() {
                           texts={ts}
                           setSetting={updatePlatformSetting}
                           bridgeInstall={v => bridgeClient.performAction('prompt-guard', 'install', { variant: v })}
+                          waitForInstallCompletion={opId => bridgeClient.waitForOperation(opId)}
                           formatError={err => err instanceof Error ? err.message : ts.toastFailed}
                           defaultMode="api"
                           initialApiEndpoint={semanticEndpoint}
