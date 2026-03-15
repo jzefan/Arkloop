@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { LoadingPage } from '@arkloop/shared'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
 import { ChatPage } from './components/ChatPage'
 import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
+import { useLocale } from './contexts/LocaleContext'
 import {
   clearActiveThreadIdInStorage,
   writeAccessTokenToStorage,
@@ -15,6 +17,7 @@ import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } 
 import { setClientApp } from '@arkloop/shared/api'
 
 function App() {
+  const { t } = useLocale()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
 
@@ -75,7 +78,7 @@ function App() {
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route path="/s/:token" element={<SharePage />} />
       {!authChecked ? (
-        <Route path="*" element={<div />} />
+        <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (
         <>
           <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />

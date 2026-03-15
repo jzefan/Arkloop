@@ -39,6 +39,7 @@ export { AuthPage } from './components/AuthPage'
 export type { AuthPageTranslations, AuthApi } from './components/AuthPage'
 export { BootstrapPage } from './components/BootstrapPage'
 export type { BootstrapTranslations, ConsoleTarget } from './components/BootstrapPage'
+export { LoadingPage } from './components/LoadingPage'
 
 export {
   verifyBootstrapToken,
