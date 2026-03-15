@@ -64,8 +64,11 @@ var registry = []ToolMeta{
 			"Pre-installed: numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, kaleido. " +
 			"For charts prefer Plotly; use fig.write_image() for PNG, fall back to fig.write_html() only on failure. Do not set pio.renderers. " +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
+			"Two distinct reference formats — use the correct one:\n" +
+			"  • /tmp/output/ files appear in result.artifacts → reference as artifact:<key>  (e.g. ![alt](artifact:abc/run/file.png))\n" +
+			"  • /workspace/ files do NOT appear in result.artifacts → reference as workspace:/relative/path  (strip /workspace prefix, e.g. ![alt](workspace:/data/file.png))\n" +
+			"WRONG: ![alt](workspace:/tmp/output/file.png)  — workspace: is only for /workspace/, never for /tmp/output/\n" +
 			"Only reference artifact keys that actually appear in result.artifacts. " +
-			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
 			"Never output raw /workspace/ or /tmp/output/ paths. Never invent artifact keys.",
 	},
 	{
@@ -76,8 +79,11 @@ var registry = []ToolMeta{
 			"Reuse the session_ref returned by the first call; do not issue a new exec_command to poll a busy session — use write_stdin instead. " +
 			"If the result shows running=true or only control sequences, continue with write_stdin. " +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
+			"Two distinct reference formats — use the correct one:\n" +
+			"  • /tmp/output/ files appear in result.artifacts → reference as artifact:<key>\n" +
+			"  • /workspace/ files do NOT appear in result.artifacts → reference as workspace:/relative/path  (strip /workspace prefix)\n" +
+			"WRONG: [name](workspace:/tmp/output/file.txt)  — workspace: is only for /workspace/, never for /tmp/output/\n" +
 			"Only reference artifact keys that actually appear in result.artifacts. " +
-			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
 			"Never output raw paths. Never invent artifact keys.",
 	},
 	{
