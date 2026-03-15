@@ -124,7 +124,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("addr invalid: %w", err)
 	}
 
-	if !isLoopbackAddr(tcpAddr.IP) {
+	// In containers, port mapping provides the security boundary.
+	if !isLoopbackAddr(tcpAddr.IP) && os.Getenv("ARKLOOP_BRIDGE_CONTAINERIZED") != "true" {
 		return fmt.Errorf("addr must be a loopback address (127.0.0.1, ::1, or localhost) for security, got: %s", c.Addr)
 	}
 

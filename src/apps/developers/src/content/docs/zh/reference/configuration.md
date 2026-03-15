@@ -25,7 +25,7 @@
 | invite.max_codes_per_user | int | both | 1 | false | 单用户可创建的邀请码数量上限 |
 | limit.agent_reasoning_iterations | int | both | 0 | false | Agent Loop 主推理轮次上限，0 表示不限 |
 | limit.tool_continuation_budget | int | both | 32 | false | 长工具 continuation 总预算上限 |
-| limit.concurrent_runs | int | both | 10 | false | 并发 run 上限 |
+| limit.concurrent_runs | int | both | 100 | false | 并发 run 上限 |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
 | limit.team_members | int | both | 50 | false | Team 成员数量上限 |

@@ -56,6 +56,16 @@ export async function updatePlatformSetting(
   })
 }
 
+export async function deletePlatformSetting(
+  key: string,
+  accessToken: string,
+): Promise<void> {
+  await apiFetch<void>(`/v1/admin/platform-settings/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
 export async function listSmtpProviders(accessToken: string): Promise<SmtpProvider[]> {
   return apiFetch<SmtpProvider[]>('/v1/admin/smtp-providers', { accessToken })
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/stablejson"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
@@ -29,7 +31,7 @@ const (
 
 type RunContext struct {
 	RunID                  uuid.UUID
-	AccountID                  *uuid.UUID
+	AccountID              *uuid.UUID
 	UserID                 *uuid.UUID
 	AgentID                string
 	ThreadID               *uuid.UUID
@@ -73,6 +75,13 @@ type RunContext struct {
 	// WaitForInput 阻塞等待用户输入，供 ask_user 工具使用。
 	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
 	WaitForInput func(ctx context.Context) (string, bool)
+
+	// UserPromptScanFunc 对运行中追加的人类输入执行 prompt injection 检测。
+	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
+
+	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
+	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
+	ToolOutputScanFunc func(toolName, text string) (string, bool)
 }
 
 type Loop struct {
@@ -239,6 +248,12 @@ func (l *Loop) Run(
 					webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
 				}
 
+				if runCtx.ToolOutputScanFunc != nil {
+					if err := scanToolOutput(&toolResult, runCtx.ToolOutputScanFunc, emitter, yield); err != nil {
+						return err
+					}
+				}
+
 				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
 				if ok {
 					if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
@@ -303,6 +318,14 @@ func (l *Loop) Run(
 			if runCtx.WaitForInput != nil {
 				text, ok := runCtx.WaitForInput(ctx)
 				if ok && text != "" {
+					if runCtx.UserPromptScanFunc != nil {
+						if err := runCtx.UserPromptScanFunc(ctx, text, "ask_user"); err != nil {
+							if errors.Is(err, security.ErrInputBlocked) {
+								return nil
+							}
+							return err
+						}
+					}
 					var parsed map[string]any
 					if err := json.Unmarshal([]byte(text), &parsed); err == nil {
 						answerResult = llm.StreamToolResult{
@@ -362,6 +385,14 @@ func (l *Loop) Run(
 				return hookErr
 			}
 			if inject && injected != "" {
+				if runCtx.UserPromptScanFunc != nil {
+					if err := runCtx.UserPromptScanFunc(ctx, injected, "interactive_checkin"); err != nil {
+						if errors.Is(err, security.ErrInputBlocked) {
+							return nil
+						}
+						return err
+					}
+				}
 				messages = append(messages, llm.Message{
 					Role:    "user",
 					Content: []llm.TextPart{{Text: injected}},
@@ -447,7 +478,7 @@ func (l *Loop) executeToolCall(
 	execCtx := tools.ExecutionContext{
 		RunID:               runCtx.RunID,
 		TraceID:             runCtx.TraceID,
-		AccountID:               runCtx.AccountID,
+		AccountID:           runCtx.AccountID,
 		ThreadID:            runCtx.ThreadID,
 		ProjectID:           runCtx.ProjectID,
 		UserID:              runCtx.UserID,
@@ -963,8 +994,37 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
+}
+
+// scanToolOutput 扫描 tool output 是否包含间接注入。
+// 检测到注入时用消毒后的内容替换 ResultJSON，并发出事件。
+func scanToolOutput(
+	result *llm.StreamToolResult,
+	scanFunc func(string, string) (string, bool),
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+) error {
+	if result.Error != nil || result.ResultJSON == nil {
+		return nil
+	}
+	raw, err := json.Marshal(result.ResultJSON)
+	if err != nil {
+		return nil
+	}
+	sanitized, detected := scanFunc(result.ToolName, string(raw))
+	if !detected {
+		return nil
+	}
+	result.ResultJSON = map[string]any{
+		"warning":            "indirect injection detected, content sanitized",
+		"sanitized_content":  sanitized,
+		"original_tool_name": result.ToolName,
+	}
+	return yield(emitter.Emit("security.tool_injection.detected", map[string]any{
+		"tool_name": result.ToolName,
+	}, nil, nil))
 }
 
 type toolResultDedupInfo struct {
@@ -1071,7 +1131,7 @@ func toolResultMessageDedup(result llm.StreamToolResult, refToolCallID string) l
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
 }
 

@@ -1,3 +1,4 @@
+import type { PromptInjectionTexts } from '@arkloop/shared/components/prompt-injection'
 import { zhCN } from './zh-CN'
 import { en } from './en'
 
@@ -13,6 +14,7 @@ export interface LocaleStrings {
     modules: string
     settings: string
     installTasks: string
+    security: string
   }
   dashboard: {
     title: string
@@ -201,6 +203,7 @@ export interface LocaleStrings {
     detailTitle: string
     sectionOverview: string
     sectionConversation: string
+    sectionEvents: string
     labelRunId: string
     labelAgent: string
     labelModel: string
@@ -216,6 +219,7 @@ export interface LocaleStrings {
     labelThread: string
     loading: string
     noConversation: string
+    noEvents: string
     statusRunning: string
     statusCompleted: string
     statusFailed: string
@@ -253,6 +257,7 @@ export interface LocaleStrings {
     tabSearch: string
     tabBrowser: string
     tabConsole: string
+    tabSecurity: string
     statusUnknown: string
     statusNotInstalled: string
     statusDisconnected: string
@@ -291,6 +296,11 @@ export interface LocaleStrings {
     upgradeComplete: string
     upgradeFailed: string
     logs: string
+  }
+  security: PromptInjectionTexts & {
+    title: string
+    description: string
+    auditLoading: string
   }
   settingsPage: {
     title: string

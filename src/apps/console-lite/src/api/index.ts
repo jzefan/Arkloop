@@ -19,6 +19,7 @@ export type {
 export {
   listPlatformSettings,
   updatePlatformSetting,
+  deletePlatformSetting,
   listSmtpProviders,
   createSmtpProvider,
   updateSmtpProvider,

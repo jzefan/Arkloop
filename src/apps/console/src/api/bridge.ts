@@ -1,7 +1,6 @@
-// Bridge API client for full console - identical contract to console-lite.
-// Connects to Installer Bridge service on localhost:19003.
+// Bridge API client - proxied through Vite dev server to avoid CORS.
 
-const BRIDGE_BASE_URL = import.meta.env.VITE_BRIDGE_URL ?? 'http://localhost:19003'
+const BRIDGE_BASE_URL = import.meta.env.VITE_BRIDGE_URL ?? '/bridge'
 
 export type ModuleStatus =
   | 'not_installed'
@@ -11,7 +10,7 @@ export type ModuleStatus =
   | 'stopped'
   | 'error'
 
-export type ModuleCategory = 'memory' | 'sandbox' | 'search' | 'browser' | 'console' | 'infrastructure'
+export type ModuleCategory = 'memory' | 'sandbox' | 'search' | 'browser' | 'console' | 'infrastructure' | 'security'
 
 export type ModuleCapabilities = {
   installable: boolean
@@ -126,6 +125,24 @@ class BridgeClient {
       es.close()
     }
     return () => es.close()
+  }
+
+  waitForOperation(operationId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stop = () => {}
+      stop = this.streamOperation(
+        operationId,
+        () => {},
+        (result) => {
+          stop()
+          if (result.status === 'completed') {
+            resolve()
+            return
+          }
+          reject(new Error(result.error || `Operation ${result.status}`))
+        },
+      )
+    })
   }
 }
 
