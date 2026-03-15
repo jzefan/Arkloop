@@ -6,6 +6,7 @@ import {
   isSidecarAvailable,
   checkSidecarVersion,
   getDesktopAccessToken,
+  getBridgeBaseUrl,
   type SidecarRuntime,
 } from './sidecar'
 import { getRootfsStatus, isRootfsAvailable, getRootfsPath, checkRootfsVersion, downloadRootfs, deleteRootfs } from './rootfs'
@@ -26,6 +27,7 @@ export function registerIpcHandlers(
     event.returnValue = {
       ...loadConfig(),
       desktopAccessToken: getDesktopAccessToken(),
+      bridgeBaseUrl: getBridgeBaseUrl(),
     }
   })
 

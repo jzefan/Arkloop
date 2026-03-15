@@ -95,6 +95,7 @@ const config = ipcRenderer.sendSync('arkloop:config:get-sync') as {
   selfHosted: { baseUrl: string }
   local: { port: number; portMode: LocalPortMode }
   desktopAccessToken?: string
+  bridgeBaseUrl?: string
 }
 
 let configSnapshot: AppConfig = config as AppConfig
@@ -103,6 +104,7 @@ let sidecarRuntimeSnapshot: SidecarRuntime = {
   port: config.local.port,
   portMode: config.local.portMode,
 }
+let bridgeBaseUrlSnapshot = config.bridgeBaseUrl ?? 'http://127.0.0.1:19003'
 
 function computeApiBaseUrl(nextConfig: AppConfig, runtime: SidecarRuntime): string {
   if (nextConfig.mode === 'local') {
@@ -124,9 +126,11 @@ function getCurrentApiBaseUrl(): string {
 
 contextBridge.exposeInMainWorld('__ARKLOOP_DESKTOP__', {
   apiBaseUrl: getCurrentApiBaseUrl(),
+  bridgeBaseUrl: bridgeBaseUrlSnapshot,
   accessToken: config.desktopAccessToken ?? 'arkloop-desktop-local-token',
   mode: configSnapshot.mode,
   getApiBaseUrl: () => getCurrentApiBaseUrl(),
+  getBridgeBaseUrl: () => bridgeBaseUrlSnapshot,
   getAccessToken: () => config.desktopAccessToken ?? 'arkloop-desktop-local-token',
   getMode: () => configSnapshot.mode,
 })
@@ -137,6 +141,10 @@ ipcRenderer.on('arkloop:config:changed', (_event: Electron.IpcRendererEvent, nex
 
 ipcRenderer.on('arkloop:sidecar:runtime-changed', (_event: Electron.IpcRendererEvent, runtime: SidecarRuntime) => {
   sidecarRuntimeSnapshot = runtime
+})
+
+ipcRenderer.on('arkloop:bridge:url-changed', (_event: Electron.IpcRendererEvent, bridgeBaseUrl: string) => {
+  bridgeBaseUrlSnapshot = bridgeBaseUrl
 })
 
 const api: ArkloopDesktopApi = {

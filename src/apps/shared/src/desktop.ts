@@ -19,9 +19,11 @@ export type SidecarRuntime = {
 
 type DesktopInfo = {
   apiBaseUrl?: string
+  bridgeBaseUrl?: string
   accessToken?: string
   mode?: ConnectionMode
   getApiBaseUrl?: () => string
+  getBridgeBaseUrl?: () => string
   getAccessToken?: () => string
   getMode?: () => ConnectionMode
 }
@@ -82,6 +84,14 @@ export function getDesktopAccessToken(): string | null {
     return info.getAccessToken() ?? null
   }
   return info?.accessToken ?? null
+}
+
+export function getDesktopBridgeBaseUrl(): string | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getBridgeBaseUrl === 'function') {
+    return info.getBridgeBaseUrl() ?? null
+  }
+  return info?.bridgeBaseUrl ?? null
 }
 
 export function isLocalMode(): boolean {
