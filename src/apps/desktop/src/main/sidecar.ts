@@ -47,6 +47,7 @@ const HEALTH_TIMEOUT_MS = 30_000
 const MAX_RESTARTS = 3
 const MAX_AUTO_PORT_RETRIES = 6
 const AUTO_PORT_SCAN_WINDOW = 20
+const DEFAULT_BRIDGE_PORT = 19003
 const SIDECAR_DIR = path.join(os.homedir(), '.arkloop', 'bin')
 const VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
 const DEFAULT_DOWNLOAD_BASE = 'https://github.com/nicepkg/arkloop/releases/download'
@@ -57,11 +58,13 @@ let restartCount = 0
 let stopping = false
 let statusListener: ((status: SidecarStatus) => void) | null = null
 let runtimeListener: ((runtime: SidecarRuntime) => void) | null = null
+let bridgeUrlListener: ((bridgeBaseUrl: string) => void) | null = null
 let runtime: SidecarRuntime = {
   status: 'stopped',
   port: null,
   portMode: 'auto',
 }
+let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
 
 export function getSidecarStatus(): SidecarStatus {
   return runtime.status
@@ -75,6 +78,10 @@ export function getDesktopAccessToken(): string {
   return desktopAccessToken
 }
 
+export function getBridgeBaseUrl(): string {
+  return bridgeBaseUrl
+}
+
 export function setStatusListener(fn: (status: SidecarStatus) => void): void {
   statusListener = fn
 }
@@ -83,10 +90,19 @@ export function setRuntimeListener(fn: (runtime: SidecarRuntime) => void): void 
   runtimeListener = fn
 }
 
+export function setBridgeUrlListener(fn: (bridgeBaseUrl: string) => void): void {
+  bridgeUrlListener = fn
+}
+
 function setRuntime(patch: Partial<SidecarRuntime>): void {
   runtime = { ...runtime, ...patch }
   statusListener?.(runtime.status)
   runtimeListener?.({ ...runtime })
+}
+
+function setBridgeBaseUrl(nextBridgeBaseUrl: string): void {
+  bridgeBaseUrl = nextBridgeBaseUrl
+  bridgeUrlListener?.(bridgeBaseUrl)
 }
 
 function getSidecarBinaryName(): string {
@@ -270,6 +286,47 @@ function resolveBinaryPath(): string {
   return path.join(process.resourcesPath, 'sidecar', bundledName)
 }
 
+function resolveBundledProjectDir(): string | null {
+  if (!app.isPackaged) return null
+  const candidate = path.join(process.resourcesPath, 'arkloop-project')
+  return fs.existsSync(path.join(candidate, 'compose.yaml')) ? candidate : null
+}
+
+function buildBridgeEnv(bridgePort: number): Record<string, string> {
+  const env: Record<string, string> = {
+    ARKLOOP_BRIDGE_ADDR: `127.0.0.1:${bridgePort}`,
+  }
+
+  const devUrl = process.env.VITE_DEV_URL?.trim()
+  if (devUrl) {
+    try {
+      env.ARKLOOP_BRIDGE_CORS_ORIGINS = new URL(devUrl).origin
+    } catch {
+      // Ignore malformed dev URLs and fall back to the bridge defaults.
+    }
+  }
+
+  const bundledProjectDir = resolveBundledProjectDir()
+  if (!bundledProjectDir) return env
+
+  env.ARKLOOP_BRIDGE_PROJECT_DIR = bundledProjectDir
+  env.ARKLOOP_BRIDGE_MODULES_FILE = path.join(bundledProjectDir, 'install', 'modules.yaml')
+  env.ARKLOOP_POSTGRES_USER = process.env.ARKLOOP_POSTGRES_USER ?? 'arkloop'
+  env.ARKLOOP_POSTGRES_PASSWORD = process.env.ARKLOOP_POSTGRES_PASSWORD ?? 'arkloop_desktop'
+  env.ARKLOOP_POSTGRES_DB = process.env.ARKLOOP_POSTGRES_DB ?? 'arkloop'
+  env.ARKLOOP_REDIS_PASSWORD = process.env.ARKLOOP_REDIS_PASSWORD ?? 'arkloop_redis'
+
+  return env
+}
+
+async function resolveBridgePort(apiPort: number): Promise<number> {
+  let bridgePort = await resolveLaunchPort(DEFAULT_BRIDGE_PORT, 'auto')
+  if (bridgePort === apiPort) {
+    bridgePort = await resolveLaunchPort(DEFAULT_BRIDGE_PORT + 1, 'auto')
+  }
+  return bridgePort
+}
+
 function healthCheck(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/healthz`, (res) => {
@@ -427,6 +484,8 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
   let launchError: Error | null = null
   let recentOutput = ''
   let healthy = false
+  const bridgePort = await resolveBridgePort(port)
+  setBridgeBaseUrl(`http://127.0.0.1:${bridgePort}`)
 
   setRuntime({
     status: 'starting',
@@ -441,6 +500,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ARKLOOP_API_GO_ADDR: `127.0.0.1:${port}`,
       ARKLOOP_DESKTOP_TOKEN: desktopAccessToken,
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
+      ...buildBridgeEnv(bridgePort),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

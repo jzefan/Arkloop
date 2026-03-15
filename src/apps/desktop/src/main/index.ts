@@ -6,7 +6,9 @@ import {
   stopSidecar,
   setStatusListener,
   setRuntimeListener,
+  setBridgeUrlListener,
   getSidecarRuntime,
+  getBridgeBaseUrl,
   type SidecarRuntime,
 } from './sidecar'
 import { createTray, registerGlobalShortcut, destroyTray } from './tray'
@@ -43,6 +45,13 @@ function syncRuntimeToRenderer(runtime: SidecarRuntime): void {
   const win = getWindow()
   if (win) {
     win.webContents.send('arkloop:sidecar:runtime-changed', runtime)
+  }
+}
+
+function syncBridgeBaseUrlToRenderer(bridgeBaseUrl: string): void {
+  const win = getWindow()
+  if (win) {
+    win.webContents.send('arkloop:bridge:url-changed', bridgeBaseUrl)
   }
 }
 
@@ -195,6 +204,9 @@ app.whenReady().then(async () => {
   setRuntimeListener((runtime) => {
     handleRuntimeUpdate(runtime)
   })
+  setBridgeUrlListener((bridgeBaseUrl) => {
+    syncBridgeBaseUrlToRenderer(bridgeBaseUrl)
+  })
 
   registerIpcHandlers(getWindow, {
     applyConfigUpdate,
@@ -215,6 +227,7 @@ app.whenReady().then(async () => {
 
   mainWindow = createWindow()
   loadContent(mainWindow)
+  syncBridgeBaseUrlToRenderer(getBridgeBaseUrl())
 
   createTray(getWindow)
   registerGlobalShortcut(getWindow)

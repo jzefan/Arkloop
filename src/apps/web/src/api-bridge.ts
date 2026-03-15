@@ -1,4 +1,4 @@
-const BRIDGE_BASE_URL = import.meta.env.VITE_BRIDGE_URL ?? 'http://localhost:19003'
+import { getDesktopBridgeBaseUrl } from '@arkloop/shared/desktop'
 
 export type ModuleStatus =
   | 'not_installed'
@@ -46,14 +46,18 @@ export type BridgeHealth = {
 }
 
 class BridgeClient {
-  private readonly baseUrl: string
+  private readonly getBaseUrl: () => string
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl
+  constructor(getBaseUrl: () => string) {
+    this.getBaseUrl = getBaseUrl
+  }
+
+  private baseUrl(): string {
+    return this.getBaseUrl()
   }
 
   async healthz(): Promise<BridgeHealth> {
-    const resp = await fetch(`${this.baseUrl}/healthz`, {
+    const resp = await fetch(`${this.baseUrl()}/healthz`, {
       signal: AbortSignal.timeout(3000),
     })
     if (!resp.ok) throw new Error(`Bridge health check failed: ${resp.status}`)
@@ -61,7 +65,7 @@ class BridgeClient {
   }
 
   async listModules(): Promise<ModuleInfo[]> {
-    const resp = await fetch(`${this.baseUrl}/v1/modules`, {
+    const resp = await fetch(`${this.baseUrl()}/v1/modules`, {
       signal: AbortSignal.timeout(5000),
     })
     if (!resp.ok) throw new Error(`List modules failed: ${resp.status}`)
@@ -74,7 +78,7 @@ class BridgeClient {
     params?: Record<string, string>,
   ): Promise<{ operation_id: string }> {
     const resp = await fetch(
-      `${this.baseUrl}/v1/modules/${encodeURIComponent(moduleId)}/actions`,
+      `${this.baseUrl()}/v1/modules/${encodeURIComponent(moduleId)}/actions`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,7 +96,7 @@ class BridgeClient {
     onDone: (result: { status: string; error?: string }) => void,
   ): () => void {
     const es = new EventSource(
-      `${this.baseUrl}/v1/operations/${encodeURIComponent(operationId)}/stream`,
+      `${this.baseUrl()}/v1/operations/${encodeURIComponent(operationId)}/stream`,
     )
     es.addEventListener('log', (event: MessageEvent) => {
       onLog(event.data as string)
@@ -109,7 +113,13 @@ class BridgeClient {
   }
 }
 
-export const bridgeClient = new BridgeClient(BRIDGE_BASE_URL)
+function resolveBridgeBaseUrl(): string {
+  return getDesktopBridgeBaseUrl()
+    ?? import.meta.env.VITE_BRIDGE_URL
+    ?? 'http://localhost:19003'
+}
+
+export const bridgeClient = new BridgeClient(resolveBridgeBaseUrl)
 
 export async function checkBridgeAvailable(): Promise<boolean> {
   try {
