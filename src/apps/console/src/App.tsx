@@ -43,8 +43,11 @@ import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
+
+const sessionRestoreRetries = 12
+const sessionRestoreDelayMs = 1000
 
 function OperationHistoryModalWrapper() {
   const { historyOpen, setHistoryOpen } = useOperations()
@@ -93,7 +96,11 @@ function App() {
       setAccessToken(token)
     })
 
-    refreshAccessToken(controller.signal)
+    restoreAccessSession({
+      signal: controller.signal,
+      retries: sessionRestoreRetries,
+      retryDelayMs: sessionRestoreDelayMs,
+    })
       .then((resp) => {
         if (controller.signal.aborted) return
         writeAccessTokenToStorage(resp.access_token)

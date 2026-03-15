@@ -13,8 +13,11 @@ import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
+
+const sessionRestoreRetries = 12
+const sessionRestoreDelayMs = 1000
 
 function App() {
   const { t } = useLocale()
@@ -35,25 +38,21 @@ function App() {
       setAccessToken(token)
     })
 
-    const tryRefresh = (retries: number) => {
-      refreshAccessToken(controller.signal)
-        .then((resp) => {
-          if (controller.signal.aborted) return
-          writeAccessTokenToStorage(resp.access_token)
-          setAccessToken(resp.access_token)
-          setAuthChecked(true)
-        })
-        .catch((err) => {
-          if (controller.signal.aborted) return
-          const isNetwork = err instanceof TypeError || (err && typeof err === 'object' && 'code' in err)
-          if (isNetwork && retries > 0) {
-            setTimeout(() => tryRefresh(retries - 1), 2000)
-            return
-          }
-          setAuthChecked(true)
-        })
-    }
-    tryRefresh(3)
+    restoreAccessSession({
+      signal: controller.signal,
+      retries: sessionRestoreRetries,
+      retryDelayMs: sessionRestoreDelayMs,
+    })
+      .then((resp) => {
+        if (controller.signal.aborted) return
+        writeAccessTokenToStorage(resp.access_token)
+        setAccessToken(resp.access_token)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (controller.signal.aborted) return
+        setAuthChecked(true)
+      })
 
     return () => {
       controller.abort()
