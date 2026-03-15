@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Maximize2, Minimize2, RotateCcw } from 'lucide-react'
 
 const DEPLOYGGB_URL = 'https://www.geogebra.org/apps/deployggb.js'
 const DEFAULT_HEIGHT = 500
@@ -56,6 +56,23 @@ export function GeoGebraBlock({ content }: Props) {
   const contentRef = useRef(content)
   contentRef.current = content
 
+  const executeContent = useCallback((api: GGBAppletAPI, code: string) => {
+    const lines = code.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
+    for (const line of lines) {
+      api.evalCommand(line.trim())
+    }
+  }, [])
+
+  const handleReset = useCallback(() => {
+    const api = apiRef.current
+    if (!api) return
+    api.reset()
+    const code = contentRef.current
+    if (code.trim()) {
+      executeContent(api, code)
+    }
+  }, [executeContent])
+
   const initApplet = useCallback(async () => {
     if (!containerRef.current) return
     try {
@@ -68,21 +85,18 @@ export function GeoGebraBlock({ content }: Props) {
         showToolBar: false,
         showAlgebraInput: false,
         showMenuBar: false,
-        showResetIcon: true,
+        showResetIcon: false,
         enableLabelDrags: false,
         enableShiftDragZoom: true,
         enableRightClick: false,
-        showZoomButtons: true,
+        showZoomButtons: false,
         borderColor: 'transparent',
         appletOnLoad: (api: GGBAppletAPI) => {
           apiRef.current = api
           setLoading(false)
           const code = contentRef.current
           if (code.trim()) {
-            const lines = code.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
-            for (const line of lines) {
-              api.evalCommand(line.trim())
-            }
+            executeContent(api, code)
             lastContentRef.current = code
           }
         },
@@ -93,25 +107,19 @@ export function GeoGebraBlock({ content }: Props) {
       setError(e instanceof Error ? e.message : String(e))
       setLoading(false)
     }
-  }, [])
+  }, [executeContent])
 
   useEffect(() => {
     void initApplet()
   }, [initApplet])
 
-  // 增量执行：内容变化时只执行新增部分
   useEffect(() => {
     if (!apiRef.current || content === lastContentRef.current) return
     const api = apiRef.current
-
-    // 简单策略：reset + 全量重执行
     api.reset()
-    const lines = content.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
-    for (const line of lines) {
-      api.evalCommand(line.trim())
-    }
+    executeContent(api, content)
     lastContentRef.current = content
-  }, [content])
+  }, [content, executeContent])
 
   // resize
   useEffect(() => {
@@ -152,25 +160,46 @@ export function GeoGebraBlock({ content }: Props) {
         >
           geogebra
         </span>
-        <button
-          onClick={() => setExpanded(prev => !prev)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '22px',
-            height: '22px',
-            borderRadius: '5px',
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--c-text-icon)',
-            cursor: 'pointer',
-            transition: 'opacity 0.15s',
-          }}
-          className="opacity-60 hover:opacity-100"
-        >
-          {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+          <button
+            onClick={handleReset}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '22px',
+              height: '22px',
+              borderRadius: '5px',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--c-text-icon)',
+              cursor: 'pointer',
+              transition: 'opacity 0.15s',
+            }}
+            className="opacity-60 hover:opacity-100"
+          >
+            <RotateCcw size={11} />
+          </button>
+          <button
+            onClick={() => setExpanded(prev => !prev)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '22px',
+              height: '22px',
+              borderRadius: '5px',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--c-text-icon)',
+              cursor: 'pointer',
+              transition: 'opacity 0.15s',
+            }}
+            className="opacity-60 hover:opacity-100"
+          >
+            {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          </button>
+        </div>
       </div>
       {error ? (
         <div
