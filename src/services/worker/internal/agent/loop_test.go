@@ -1060,417 +1060,471 @@ func assertHasToolResultError(t *testing.T, eventsIn []events.RunEvent, errorCla
 	t.Fatalf("expected tool.result error_class=%s, got %#v", errorClass, eventsIn)
 }
 
-
 // --- ask_user loop interception tests ---
 
 type askUserGateway struct {
-calls int
+	calls int
 }
 
 func (g *askUserGateway) Stream(_ context.Context, _ llm.Request, yield func(llm.StreamEvent) error) error {
-g.calls++
-if g.calls == 1 {
-if err := yield(llm.ToolCall{
-ToolCallID: "call_askuser",
-ToolName:   "ask_user",
-ArgumentsJSON: map[string]any{
-"message": "Pick a database",
-"fields": []any{
-map[string]any{
-"key":      "db",
-"type":     "string",
-"title":    "Database",
-"enum":     []any{"postgres", "mysql"},
-"required": true,
-},
-},
-},
-}); err != nil {
-return err
-}
-return yield(llm.StreamRunCompleted{})
-}
-if err := yield(llm.StreamMessageDelta{ContentDelta: "got it", Role: "assistant"}); err != nil {
-return err
-}
-return yield(llm.StreamRunCompleted{})
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID: "call_askuser",
+			ToolName:   "ask_user",
+			ArgumentsJSON: map[string]any{
+				"message": "Pick a database",
+				"fields": []any{
+					map[string]any{
+						"key":      "db",
+						"type":     "string",
+						"title":    "Database",
+						"enum":     []any{"postgres", "mysql"},
+						"required": true,
+					},
+				},
+			},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "got it", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
 }
 
 func TestAskUserLoopIntercept(t *testing.T) {
-gateway := &askUserGateway{}
-loop := NewLoop(gateway, nil)
-emitter := events.NewEmitter("trace")
+	gateway := &askUserGateway{}
+	loop := NewLoop(gateway, nil)
+	emitter := events.NewEmitter("trace")
 
-userAnswer := `{"db":"postgres"}`
+	userAnswer := `{"db":"postgres"}`
 
-var got []events.RunEvent
-err := loop.Run(
-context.Background(),
-RunContext{
-RunID:               uuid.New(),
-TraceID:             "trace",
-InputJSON:           map[string]any{},
-ReasoningIterations: 5,
-CancelSignal:        func() bool { return false },
-WaitForInput: func(_ context.Context) (string, bool) {
-return userAnswer, true
-},
-},
-llm.Request{Model: "stub"},
-emitter,
-func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-},
-)
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
-}
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 5,
+			CancelSignal:        func() bool { return false },
+			WaitForInput: func(_ context.Context) (string, bool) {
+				return userAnswer, true
+			},
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
 
-var hasInputRequested, hasToolCall, hasToolResult, hasCompleted bool
-for _, ev := range got {
-switch ev.Type {
-case "run.input_requested":
-hasInputRequested = true
-if ev.DataJSON["request_id"] != "call_askuser" {
-t.Fatalf("unexpected request_id: %v", ev.DataJSON["request_id"])
-}
-case "tool.call":
-if ev.DataJSON["tool_name"] == "ask_user" {
-hasToolCall = true
-}
-case "tool.result":
-if ev.ToolName != nil && *ev.ToolName == "ask_user" {
-hasToolResult = true
-}
-case "run.completed":
-hasCompleted = true
-}
-}
+	var hasInputRequested, hasToolCall, hasToolResult, hasCompleted bool
+	for _, ev := range got {
+		switch ev.Type {
+		case "run.input_requested":
+			hasInputRequested = true
+			if ev.DataJSON["request_id"] != "call_askuser" {
+				t.Fatalf("unexpected request_id: %v", ev.DataJSON["request_id"])
+			}
+		case "tool.call":
+			if ev.DataJSON["tool_name"] == "ask_user" {
+				hasToolCall = true
+			}
+		case "tool.result":
+			if ev.ToolName != nil && *ev.ToolName == "ask_user" {
+				hasToolResult = true
+			}
+		case "run.completed":
+			hasCompleted = true
+		}
+	}
 
-if !hasToolCall {
-t.Fatal("expected tool.call for ask_user")
-}
-if !hasInputRequested {
-t.Fatal("expected run.input_requested event")
-}
-if !hasToolResult {
-t.Fatal("expected tool.result for ask_user")
-}
-if !hasCompleted {
-t.Fatal("expected run.completed")
-}
+	if !hasToolCall {
+		t.Fatal("expected tool.call for ask_user")
+	}
+	if !hasInputRequested {
+		t.Fatal("expected run.input_requested event")
+	}
+	if !hasToolResult {
+		t.Fatal("expected tool.result for ask_user")
+	}
+	if !hasCompleted {
+		t.Fatal("expected run.completed")
+	}
 }
 
 func TestAskUserNoWaitForInput(t *testing.T) {
-gateway := &askUserGateway{}
-loop := NewLoop(gateway, nil)
-emitter := events.NewEmitter("trace")
+	gateway := &askUserGateway{}
+	loop := NewLoop(gateway, nil)
+	emitter := events.NewEmitter("trace")
 
-var got []events.RunEvent
-err := loop.Run(
-context.Background(),
-RunContext{
-RunID:               uuid.New(),
-TraceID:             "trace",
-InputJSON:           map[string]any{},
-ReasoningIterations: 5,
-CancelSignal:        func() bool { return false },
-// WaitForInput is nil
-},
-llm.Request{Model: "stub"},
-emitter,
-func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-},
-)
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
-}
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 5,
+			CancelSignal:        func() bool { return false },
+			// WaitForInput is nil
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
 
-var hasToolResultError bool
-for _, ev := range got {
-if ev.Type == "tool.result" && ev.ToolName != nil && *ev.ToolName == "ask_user" {
-if ev.ErrorClass == nil {
-t.Fatal("expected error_class on ask_user tool.result when WaitForInput is nil")
-}
-hasToolResultError = true
-}
-}
-if !hasToolResultError {
-t.Fatal("expected ask_user tool.result with error")
-}
+	var hasToolResultError bool
+	for _, ev := range got {
+		if ev.Type == "tool.result" && ev.ToolName != nil && *ev.ToolName == "ask_user" {
+			if ev.ErrorClass == nil {
+				t.Fatal("expected error_class on ask_user tool.result when WaitForInput is nil")
+			}
+			hasToolResultError = true
+		}
+	}
+	if !hasToolResultError {
+		t.Fatal("expected ask_user tool.result with error")
+	}
 }
 
 type askUserMixedGateway struct {
-calls int
+	calls int
 }
 
 func (g *askUserMixedGateway) Stream(_ context.Context, _ llm.Request, yield func(llm.StreamEvent) error) error {
-g.calls++
-if g.calls == 1 {
-if err := yield(llm.ToolCall{
-ToolCallID:    "call_echo",
-ToolName:      "echo",
-ArgumentsJSON: map[string]any{"text": "hello"},
-}); err != nil {
-return err
-}
-if err := yield(llm.ToolCall{
-ToolCallID: "call_ask",
-ToolName:   "ask_user",
-ArgumentsJSON: map[string]any{
-"message": "Pick one",
-"fields": []any{
-map[string]any{
-"key":   "choice",
-"type":  "string",
-"title": "Choice",
-"enum":  []any{"a", "b"},
-},
-},
-},
-}); err != nil {
-return err
-}
-return yield(llm.StreamRunCompleted{})
-}
-if err := yield(llm.StreamMessageDelta{ContentDelta: "ok", Role: "assistant"}); err != nil {
-return err
-}
-return yield(llm.StreamRunCompleted{})
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_echo",
+			ToolName:      "echo",
+			ArgumentsJSON: map[string]any{"text": "hello"},
+		}); err != nil {
+			return err
+		}
+		if err := yield(llm.ToolCall{
+			ToolCallID: "call_ask",
+			ToolName:   "ask_user",
+			ArgumentsJSON: map[string]any{
+				"message": "Pick one",
+				"fields": []any{
+					map[string]any{
+						"key":   "choice",
+						"type":  "string",
+						"title": "Choice",
+						"enum":  []any{"a", "b"},
+					},
+				},
+			},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "ok", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
 }
 
 func TestAskUserMixedWithRegularTools(t *testing.T) {
-registry := tools.NewRegistry()
-if err := registry.Register(builtin.EchoAgentSpec); err != nil {
-t.Fatalf("register echo failed: %v", err)
-}
-allowlist := tools.AllowlistFromNames([]string{"echo", "ask_user"})
-policy := tools.NewPolicyEnforcer(registry, allowlist)
-executor := tools.NewDispatchingExecutor(registry, policy)
-if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
-t.Fatalf("bind echo failed: %v", err)
-}
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo", "ask_user"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
 
-gateway := &askUserMixedGateway{}
-loop := NewLoop(gateway, executor)
-emitter := events.NewEmitter("trace")
+	gateway := &askUserMixedGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
 
-var got []events.RunEvent
-err := loop.Run(
-context.Background(),
-RunContext{
-RunID:               uuid.New(),
-TraceID:             "trace",
-InputJSON:           map[string]any{},
-ReasoningIterations: 5,
-ToolExecutor:        executor,
-CancelSignal:        func() bool { return false },
-WaitForInput: func(_ context.Context) (string, bool) {
-return `{"choice":"b"}`, true
-},
-},
-llm.Request{Model: "stub"},
-emitter,
-func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-},
-)
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
-}
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 5,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+			WaitForInput: func(_ context.Context) (string, bool) {
+				return `{"choice":"b"}`, true
+			},
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
 
-var echoResultIdx, askUserResultIdx int
-for i, ev := range got {
-if ev.Type == "tool.result" {
-if ev.ToolName != nil && *ev.ToolName == "echo" {
-echoResultIdx = i
-}
-if ev.ToolName != nil && *ev.ToolName == "ask_user" {
-askUserResultIdx = i
-}
-}
-}
+	var echoResultIdx, askUserResultIdx int
+	for i, ev := range got {
+		if ev.Type == "tool.result" {
+			if ev.ToolName != nil && *ev.ToolName == "echo" {
+				echoResultIdx = i
+			}
+			if ev.ToolName != nil && *ev.ToolName == "ask_user" {
+				askUserResultIdx = i
+			}
+		}
+	}
 
-if echoResultIdx == 0 {
-t.Fatal("expected echo tool.result")
-}
-if askUserResultIdx == 0 {
-t.Fatal("expected ask_user tool.result")
-}
-if echoResultIdx >= askUserResultIdx {
-t.Fatal("echo should be processed before ask_user")
-}
+	if echoResultIdx == 0 {
+		t.Fatal("expected echo tool.result")
+	}
+	if askUserResultIdx == 0 {
+		t.Fatal("expected ask_user tool.result")
+	}
+	if echoResultIdx >= askUserResultIdx {
+		t.Fatal("echo should be processed before ask_user")
+	}
 }
 
 func int64Ptr(v int64) *int64 { return &v }
 
 func TestAgentLoopCostBudgetExceeded(t *testing.T) {
-registry := tools.NewRegistry()
-if err := registry.Register(builtin.EchoAgentSpec); err != nil {
-t.Fatalf("register echo failed: %v", err)
-}
-allowlist := tools.AllowlistFromNames([]string{"echo"})
-policy := tools.NewPolicyEnforcer(registry, allowlist)
-executor := tools.NewDispatchingExecutor(registry, policy)
-if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
-t.Fatalf("bind echo failed: %v", err)
-}
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
 
-gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
-{
-llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
-llm.StreamRunCompleted{
-Cost:  &llm.Cost{Currency: "USD", AmountMicros: 6000},
-Usage: &llm.Usage{OutputTokens: intPtr(100)},
-},
-},
-{
-llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
-llm.StreamRunCompleted{},
-},
-}}
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+			llm.StreamRunCompleted{
+				Cost:  &llm.Cost{Currency: "USD", AmountMicros: 6000},
+				Usage: &llm.Usage{OutputTokens: intPtr(100)},
+			},
+		},
+		{
+			llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}}
 
-loop := NewLoop(gateway, executor)
-emitter := events.NewEmitter("trace")
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
 
-var got []events.RunEvent
-err := loop.Run(context.Background(), RunContext{
-RunID:               uuid.New(),
-TraceID:             "trace",
-InputJSON:           map[string]any{},
-ReasoningIterations: 3,
-ToolExecutor:        executor,
-MaxCostMicros:       int64Ptr(5000),
-CancelSignal:        func() bool { return false },
-}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-})
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
-}
+	var got []events.RunEvent
+	err := loop.Run(context.Background(), RunContext{
+		RunID:               uuid.New(),
+		TraceID:             "trace",
+		InputJSON:           map[string]any{},
+		ReasoningIterations: 3,
+		ToolExecutor:        executor,
+		MaxCostMicros:       int64Ptr(5000),
+		CancelSignal:        func() bool { return false },
+	}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
 
-found := false
-for _, ev := range got {
-if ev.Type == "run.failed" && ev.ErrorClass != nil && *ev.ErrorClass == llm.ErrorClassBudgetExceeded {
-found = true
-}
-}
-if !found {
-t.Fatalf("expected run.failed with error_class=%s", llm.ErrorClassBudgetExceeded)
-}
+	found := false
+	for _, ev := range got {
+		if ev.Type == "run.failed" && ev.ErrorClass != nil && *ev.ErrorClass == llm.ErrorClassBudgetExceeded {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.failed with error_class=%s", llm.ErrorClassBudgetExceeded)
+	}
 }
 
 func TestAgentLoopOutputTokenBudgetExceeded(t *testing.T) {
-registry := tools.NewRegistry()
-if err := registry.Register(builtin.EchoAgentSpec); err != nil {
-t.Fatalf("register echo failed: %v", err)
-}
-allowlist := tools.AllowlistFromNames([]string{"echo"})
-policy := tools.NewPolicyEnforcer(registry, allowlist)
-executor := tools.NewDispatchingExecutor(registry, policy)
-if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
-t.Fatalf("bind echo failed: %v", err)
-}
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
 
-gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
-{
-llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
-llm.StreamRunCompleted{
-Usage: &llm.Usage{OutputTokens: intPtr(60)},
-},
-},
-{
-llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
-llm.StreamRunCompleted{},
-},
-}}
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+			llm.StreamRunCompleted{
+				Usage: &llm.Usage{OutputTokens: intPtr(60)},
+			},
+		},
+		{
+			llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}}
 
-loop := NewLoop(gateway, executor)
-emitter := events.NewEmitter("trace")
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
 
-var got []events.RunEvent
-err := loop.Run(context.Background(), RunContext{
-RunID:                uuid.New(),
-TraceID:              "trace",
-InputJSON:            map[string]any{},
-ReasoningIterations:  3,
-ToolExecutor:         executor,
-MaxTotalOutputTokens: int64Ptr(50),
-CancelSignal:         func() bool { return false },
-}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-})
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
-}
+	var got []events.RunEvent
+	err := loop.Run(context.Background(), RunContext{
+		RunID:                uuid.New(),
+		TraceID:              "trace",
+		InputJSON:            map[string]any{},
+		ReasoningIterations:  3,
+		ToolExecutor:         executor,
+		MaxTotalOutputTokens: int64Ptr(50),
+		CancelSignal:         func() bool { return false },
+	}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
 
-found := false
-for _, ev := range got {
-if ev.Type == "run.failed" && ev.ErrorClass != nil && *ev.ErrorClass == llm.ErrorClassBudgetExceeded {
-found = true
-}
-}
-if !found {
-t.Fatalf("expected run.failed with error_class=%s", llm.ErrorClassBudgetExceeded)
-}
+	found := false
+	for _, ev := range got {
+		if ev.Type == "run.failed" && ev.ErrorClass != nil && *ev.ErrorClass == llm.ErrorClassBudgetExceeded {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.failed with error_class=%s", llm.ErrorClassBudgetExceeded)
+	}
 }
 
 func TestAgentLoopCostBudgetNotExceeded(t *testing.T) {
-registry := tools.NewRegistry()
-if err := registry.Register(builtin.EchoAgentSpec); err != nil {
-t.Fatalf("register echo failed: %v", err)
-}
-allowlist := tools.AllowlistFromNames([]string{"echo"})
-policy := tools.NewPolicyEnforcer(registry, allowlist)
-executor := tools.NewDispatchingExecutor(registry, policy)
-if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
-t.Fatalf("bind echo failed: %v", err)
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind("echo", builtin.EchoExecutor{}); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
+
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+			llm.StreamRunCompleted{
+				Cost:  &llm.Cost{Currency: "USD", AmountMicros: 500},
+				Usage: &llm.Usage{OutputTokens: intPtr(10)},
+			},
+		},
+		{
+			llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}}
+
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(context.Background(), RunContext{
+		RunID:               uuid.New(),
+		TraceID:             "trace",
+		InputJSON:           map[string]any{},
+		ReasoningIterations: 3,
+		ToolExecutor:        executor,
+		MaxCostMicros:       int64Ptr(100000),
+		CancelSignal:        func() bool { return false },
+	}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type == "run.failed" {
+			t.Fatalf("unexpected run.failed event")
+		}
+	}
 }
 
-gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
-{
-llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
-llm.StreamRunCompleted{
-Cost:  &llm.Cost{Currency: "USD", AmountMicros: 500},
-Usage: &llm.Usage{OutputTokens: intPtr(10)},
-},
-},
-{
-llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
-llm.StreamRunCompleted{},
-},
-}}
+func TestCollectToolOutputScanTextUsesDecodedLeafStrings(t *testing.T) {
+	text := collectToolOutputScanText(map[string]any{
+		"stdout": "\u001b[?2004h",
+		"output": "\u001b[?2004h",
+		"stderr": "<string>:81: warning kaleido>=1.0.0",
+		"artifacts": []map[string]any{
+			{"filename": "integral_plot.png"},
+		},
+	})
 
-loop := NewLoop(gateway, executor)
-emitter := events.NewEmitter("trace")
-
-var got []events.RunEvent
-err := loop.Run(context.Background(), RunContext{
-RunID:               uuid.New(),
-TraceID:             "trace",
-InputJSON:           map[string]any{},
-ReasoningIterations: 3,
-ToolExecutor:        executor,
-MaxCostMicros:       int64Ptr(100000),
-CancelSignal:        func() bool { return false },
-}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
-got = append(got, ev)
-return nil
-})
-if err != nil {
-t.Fatalf("loop.Run failed: %v", err)
+	if strings.Contains(text, `\u001b`) {
+		t.Fatalf("scan text should not keep JSON unicode escapes: %q", text)
+	}
+	if strings.Contains(text, `\u003c`) || strings.Contains(text, `\u003e`) {
+		t.Fatalf("scan text should decode HTML-safe JSON escapes: %q", text)
+	}
+	if strings.Count(text, "\u001b[?2004h") != 1 {
+		t.Fatalf("expected deduped escape sequence once, got %q", text)
+	}
+	if !strings.Contains(text, "<string>:81: warning kaleido>=1.0.0") {
+		t.Fatalf("expected decoded stderr in scan text, got %q", text)
+	}
+	if !strings.Contains(text, "integral_plot.png") {
+		t.Fatalf("expected nested string values in scan text, got %q", text)
+	}
 }
 
-assertHasEvent(t, got, "run.completed")
-for _, ev := range got {
-if ev.Type == "run.failed" {
-t.Fatalf("unexpected run.failed event")
-}
-}
+func TestScanToolOutputPassesDecodedTextToScanner(t *testing.T) {
+	result := &llm.StreamToolResult{
+		ToolName: "python_execute",
+		ResultJSON: map[string]any{
+			"stderr": "<string>:81: warning kaleido>=1.0.0",
+		},
+	}
+	emitter := events.NewEmitter("trace")
+
+	var scanned string
+	err := scanToolOutput(result, func(_ string, text string) (string, bool) {
+		scanned = text
+		return "", false
+	}, emitter, func(events.RunEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("scanToolOutput failed: %v", err)
+	}
+	if scanned == "" {
+		t.Fatal("expected scanner to receive tool output text")
+	}
+	if strings.Contains(scanned, `\u003c`) || strings.Contains(scanned, `\u003e`) {
+		t.Fatalf("scanner should see decoded text, got %q", scanned)
+	}
+	if !strings.Contains(scanned, "<string>:81: warning kaleido>=1.0.0") {
+		t.Fatalf("expected decoded stderr, got %q", scanned)
+	}
 }

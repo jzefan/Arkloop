@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1009,11 +1010,11 @@ func scanToolOutput(
 	if result.Error != nil || result.ResultJSON == nil {
 		return nil
 	}
-	raw, err := json.Marshal(result.ResultJSON)
-	if err != nil {
+	text := collectToolOutputScanText(result.ResultJSON)
+	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	sanitized, detected := scanFunc(result.ToolName, string(raw))
+	sanitized, detected := scanFunc(result.ToolName, text)
 	if !detected {
 		return nil
 	}
@@ -1025,6 +1026,52 @@ func scanToolOutput(
 	return yield(emitter.Emit("security.tool_injection.detected", map[string]any{
 		"tool_name": result.ToolName,
 	}, nil, nil))
+}
+
+func collectToolOutputScanText(result map[string]any) string {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return ""
+	}
+
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return ""
+	}
+
+	seen := map[string]struct{}{}
+	parts := collectToolOutputStrings(nil, normalized, seen)
+	return strings.Join(parts, "\n\n")
+}
+
+func collectToolOutputStrings(parts []string, value any, seen map[string]struct{}) []string {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return parts
+		}
+		if _, ok := seen[text]; ok {
+			return parts
+		}
+		seen[text] = struct{}{}
+		return append(parts, text)
+	case []any:
+		for _, item := range typed {
+			parts = collectToolOutputStrings(parts, item, seen)
+		}
+		return parts
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = collectToolOutputStrings(parts, typed[key], seen)
+		}
+	}
+	return parts
 }
 
 type toolResultDedupInfo struct {
