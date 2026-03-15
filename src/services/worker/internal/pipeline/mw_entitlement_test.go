@@ -60,9 +60,8 @@ func TestEntitlementNilResolverInChain(t *testing.T) {
 	}
 }
 
-// NewResolver(nil, nil) 返回的 resolver 对 quota.runs_per_month 默认值为 999999，
-// CountMonthlyRuns 返回 0 -> 不触发 runs 限制。
-// tokens_per_month 默认值为 1000000，SumMonthlyTokens 返回 0 -> 不触发 tokens 限制。
+// NewResolver(nil, nil) 返回的 resolver 对 quota.runs_per_month / quota.tokens_per_month 默认值都为 0，
+// 0 表示不限额，因此 CountMonthlyRuns / SumMonthlyTokens 都不会触发配额限制。
 // GetCreditBalance 返回 0 -> 触发 credits_exhausted 路径 -> appendAndCommitSingle(nil pool) -> panic。
 // 该 panic 证明了配额检查的三个分支都被正确执行，最终到达 credits_exhausted 分支。
 
