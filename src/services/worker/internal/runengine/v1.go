@@ -22,8 +22,8 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
-	"arkloop/services/worker/internal/security"
 	workerruntime "arkloop/services/worker/internal/runtime"
+	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
@@ -166,21 +166,11 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		slog.Error("failed to initialize injection scanner", "error", err)
 	}
 
-	var semanticScanner *security.SemanticScanner
-	modelDir := os.Getenv("ARKLOOP_PROMPT_GUARD_MODEL_DIR")
-	if modelDir != "" {
-		ortLib := os.Getenv("ARKLOOP_ONNX_RUNTIME_LIB")
-		ss, err := security.NewSemanticScanner(security.SemanticScannerConfig{
-			ModelDir:   modelDir,
-			OrtLibPath: ortLib,
-		})
-		if err != nil {
-			slog.Warn("semantic scanner unavailable, falling back to regex-only", "error", err)
-		} else {
-			semanticScanner = ss
-			slog.Info("semantic scanner initialized", "model_dir", modelDir)
-		}
-	}
+	semanticScanner := security.NewRuntimeSemanticScanner(
+		cfgResolver,
+		os.Getenv("ARKLOOP_PROMPT_GUARD_MODEL_DIR"),
+		os.Getenv("ARKLOOP_ONNX_RUNTIME_LIB"),
+	)
 
 	compositeScanner := security.NewCompositeScanner(injectionScanner, semanticScanner)
 

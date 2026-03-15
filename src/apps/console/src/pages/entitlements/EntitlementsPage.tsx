@@ -30,7 +30,7 @@ type LimitField = {
 const LIMIT_FIELDS: LimitField[] = [
   { key: 'quota.runs_per_month', label: '每月运行次数', defaultValue: '999999', min: 0, allowZeroUnlimited: true },
   { key: 'quota.tokens_per_month', label: '每月 Token 上限', defaultValue: '1000000', min: 0, allowZeroUnlimited: true },
-  { key: 'limit.concurrent_runs', label: '并发运行上限', defaultValue: '10', min: 1 },
+  { key: 'limit.concurrent_runs', label: '并发运行上限', defaultValue: '100', min: 1 },
   { key: 'limit.team_members', label: '团队成员上限', defaultValue: '50', min: 0, allowZeroUnlimited: true },
   { key: 'invite.default_max_uses', label: '邀请码默认可用次数', defaultValue: '1', min: 1 },
 ]

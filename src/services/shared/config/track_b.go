@@ -106,7 +106,7 @@ func RegisterTrackB(r *Registry) error {
 		{
 			Key:         "limit.concurrent_runs",
 			Type:        TypeInt,
-			Default:     "10",
+			Default:     "100",
 			Description: "并发 run 上限",
 			Sensitive:   false,
 			Scope:       ScopeBoth,

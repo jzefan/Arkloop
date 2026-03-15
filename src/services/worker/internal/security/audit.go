@@ -26,19 +26,41 @@ func (a *SecurityAuditor) EmitInjectionDetected(
 	accountID uuid.UUID,
 	actorUserID *uuid.UUID,
 	results []ScanResult,
+	semantic *SemanticResult,
 ) {
-	if a == nil || a.sink == nil || len(results) == 0 {
+	if a == nil || a.sink == nil {
 		return
 	}
 
-	patterns := make([]map[string]string, 0, len(results))
-	for _, r := range results {
-		patterns = append(patterns, map[string]string{
-			"pattern_id": r.PatternID,
-			"category":   r.Category,
-			"severity":   r.Severity,
-		})
+	detail := map[string]any{}
+	if len(results) > 0 {
+		patterns := make([]map[string]string, 0, len(results))
+		for _, r := range results {
+			patterns = append(patterns, map[string]string{
+				"pattern_id": r.PatternID,
+				"category":   r.Category,
+				"severity":   r.Severity,
+			})
+		}
+		detail["patterns"] = patterns
 	}
+
+	if semantic != nil {
+		detail["semantic"] = map[string]any{
+			"label": semantic.Label,
+			"score": semantic.Score,
+		}
+	}
+
+	if len(detail) == 0 {
+		return
+	}
+
+	detectionCount := len(results)
+	if detectionCount == 0 && semantic != nil && semantic.IsInjection {
+		detectionCount = 1
+	}
+	detail["detection_count"] = detectionCount
 
 	var actor uuid.UUID
 	if actorUserID != nil {
@@ -55,10 +77,7 @@ func (a *SecurityAuditor) EmitInjectionDetected(
 		Action:     "security.injection_detected",
 		Resource:   targetType,
 		ResourceID: targetID,
-		Detail: map[string]any{
-			"detection_count": len(results),
-			"patterns":        patterns,
-		},
+		Detail:     detail,
 	})
 }
 

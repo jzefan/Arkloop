@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   Copy, Check, RefreshCw, Loader2, ExternalLink,
   CircleDot, CircleOff, CircleAlert, CirclePause, CirclePlay, CircleDashed,
@@ -11,6 +11,7 @@ import { useLocale } from '../contexts/LocaleContext'
 import { useOperations } from '../contexts/OperationContext'
 import type { OperationRecord } from '../contexts/OperationContext'
 import type { LocaleStrings } from '../locales'
+import type { LiteOutletContext } from '../layouts/LiteLayout'
 import {
   checkBridgeAvailable,
   bridgeClient,
@@ -24,8 +25,59 @@ import {
   INSTALL_COMMANDS,
   AGENT_PROMPTS,
 } from '../lib/module-registry'
+import { listPlatformSettings, type PlatformSetting } from '../api/settings'
 
 type ModulesLocale = LocaleStrings['modules']
+type PromptGuardMode = 'unknown' | 'disabled' | 'local' | 'api'
+
+const MODULES_CATEGORY_STORAGE_KEY = 'arkloop:console-lite:modules:selected-category'
+const PROMPT_GUARD_MODULE_ID = 'prompt-guard'
+const SEMANTIC_ENABLED_KEY = 'security.injection_scan.semantic_enabled'
+const SEMANTIC_PROVIDER_KEY = 'security.semantic_scanner.provider'
+
+function readStoredModuleCategory(): ModuleCategory | null {
+  try {
+    const raw = window.localStorage.getItem(MODULES_CATEGORY_STORAGE_KEY)
+    if (
+      raw === 'memory' ||
+      raw === 'sandbox' ||
+      raw === 'search' ||
+      raw === 'browser' ||
+      raw === 'console' ||
+      raw === 'security' ||
+      raw === 'infrastructure'
+    ) {
+      return raw
+    }
+  } catch {}
+  return null
+}
+
+function rememberModuleCategory(category: ModuleCategory) {
+  try {
+    window.localStorage.setItem(MODULES_CATEGORY_STORAGE_KEY, category)
+  } catch {}
+}
+
+function resolvePromptGuardMode(settings: PlatformSetting[]): PromptGuardMode {
+  const map = new Map(settings.map((item) => [item.key, item.value]))
+  const semanticEnabled = map.get(SEMANTIC_ENABLED_KEY) !== 'false'
+  const provider = (map.get(SEMANTIC_PROVIDER_KEY) ?? 'local').trim().toLowerCase()
+
+  if (!semanticEnabled) return 'disabled'
+  if (provider === 'api') return 'api'
+  if (provider === 'local' || provider === '') return 'local'
+  return 'unknown'
+}
+
+function applyPromptGuardModuleView(modules: ModuleInfo[], mode: PromptGuardMode): ModuleInfo[] {
+  return modules.map((mod) => {
+    if (mod.id !== PROMPT_GUARD_MODULE_ID) return mod
+    if (mode === 'local' || mode === 'unknown') return mod
+    if (mod.status !== 'running') return mod
+    return { ...mod, status: 'stopped' }
+  })
+}
 
 function statusBadgeVariant(status: ModuleStatus): BadgeVariant {
   switch (status) {
@@ -75,8 +127,14 @@ function categoryLabel(cat: ModuleCategory, t: ModulesLocale): string {
   return map[cat] ?? cat
 }
 
-function availableActions(mod: ModuleInfo, bridgeOnline: boolean): ModuleAction[] {
+function availableActions(mod: ModuleInfo, bridgeOnline: boolean, promptGuardMode: PromptGuardMode): ModuleAction[] {
   if (!bridgeOnline) return []
+  if (mod.id === PROMPT_GUARD_MODULE_ID) {
+    if (promptGuardMode === 'local' && mod.status === 'not_installed' && mod.capabilities.installable) {
+      return ['install']
+    }
+    return []
+  }
   switch (mod.status) {
     case 'not_installed':
       return mod.capabilities.installable ? ['install'] : []
@@ -150,6 +208,7 @@ function ModuleRow({
   busy,
   busyOperation,
   onSpinnerClick,
+  promptGuardMode,
 }: {
   mod: ModuleInfo
   bridgeOnline: boolean
@@ -158,8 +217,9 @@ function ModuleRow({
   busy: boolean
   busyOperation: OperationRecord | undefined
   onSpinnerClick: () => void
+  promptGuardMode: PromptGuardMode
 }) {
-  const actions = availableActions(mod, bridgeOnline)
+  const actions = availableActions(mod, bridgeOnline, promptGuardMode)
   const command = INSTALL_COMMANDS[mod.id]
   const agentPrompt = AGENT_PROMPTS[mod.id]
 
@@ -244,6 +304,7 @@ function ModuleRow({
 }
 
 export function ModulesPage() {
+  const { accessToken } = useOutletContext<LiteOutletContext>()
   const { addToast } = useToast()
   const { t } = useLocale()
   const { operations, startOperation, isModuleBusy, getModuleOperation, setHistoryOpen } = useOperations()
@@ -254,6 +315,7 @@ export function ModulesPage() {
 
   const [bridgeOnline, setBridgeOnline] = useState(false)
   const [modules, setModules] = useState<ModuleInfo[]>(STATIC_MODULES)
+  const [promptGuardMode, setPromptGuardMode] = useState<PromptGuardMode>('unknown')
   const [loading, setLoading] = useState(false)
   const mountedRef = useRef(true)
   const prevOpsRef = useRef(operations)
@@ -278,25 +340,31 @@ export function ModulesPage() {
   const loadModules = useCallback(async () => {
     setLoading(true)
     try {
-      const online = await checkBridgeAvailable()
+      const [online, settings] = await Promise.all([
+        checkBridgeAvailable(),
+        listPlatformSettings(accessToken).catch(() => [] as PlatformSetting[]),
+      ])
       if (!mountedRef.current) return
       setBridgeOnline(online)
+      const nextPromptGuardMode = resolvePromptGuardMode(settings)
+      setPromptGuardMode(nextPromptGuardMode)
 
       if (online) {
         const data = await bridgeClient.listModules()
         if (!mountedRef.current) return
-        setModules(data)
+        setModules(applyPromptGuardModuleView(data, nextPromptGuardMode))
       } else {
-        setModules(STATIC_MODULES)
+        setModules(applyPromptGuardModuleView(STATIC_MODULES, nextPromptGuardMode))
       }
     } catch {
       if (!mountedRef.current) return
       setBridgeOnline(false)
+      setPromptGuardMode('unknown')
       setModules(STATIC_MODULES)
     } finally {
       if (mountedRef.current) setLoading(false)
     }
-  }, [])
+  }, [accessToken])
 
   useEffect(() => { void loadModules() }, [loadModules])
 
@@ -324,9 +392,18 @@ export function ModulesPage() {
     }
   }, [addToast, modules, t.requestFailed, startOperation, setHistoryOpen])
 
-  const selectedCategory: ModuleCategory = (categoryList.includes(catParam as ModuleCategory)
-    ? catParam as ModuleCategory
-    : categoryList[0]) ?? 'memory'
+  const selectedCategory: ModuleCategory = (
+    categoryList.includes(catParam as ModuleCategory)
+      ? catParam as ModuleCategory
+      : (() => {
+          const stored = readStoredModuleCategory()
+          return stored && categoryList.includes(stored) ? stored : categoryList[0]
+        })()
+  ) ?? 'memory'
+
+  useEffect(() => {
+    rememberModuleCategory(selectedCategory)
+  }, [selectedCategory])
 
   const filteredModules = modules.filter((m) => m.category === selectedCategory)
 
@@ -373,6 +450,7 @@ export function ModulesPage() {
                     onClick={() => {
                       const next = new URLSearchParams(searchParams)
                       next.set('cat', cat)
+                      rememberModuleCategory(cat)
                       setSearchParams(next, { replace: true })
                     }}
                     className={[
@@ -404,6 +482,7 @@ export function ModulesPage() {
                       busy={isModuleBusy(mod.id)}
                       busyOperation={getModuleOperation(mod.id)}
                       onSpinnerClick={() => setHistoryOpen(true)}
+                      promptGuardMode={promptGuardMode}
                     />
                   ))}
                   {filteredModules.length === 0 && (

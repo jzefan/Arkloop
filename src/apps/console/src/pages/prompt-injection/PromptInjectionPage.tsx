@@ -25,8 +25,10 @@ export function PromptInjectionPage() {
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState('')
   const [settings, setSettings] = useState<Record<string, boolean>>({})
-  const [semanticProvider, setSemanticProvider] = useState('')
+  const [semanticProvider, setSemanticProvider] = useState<string>('')
   const [semanticEndpoint, setSemanticEndpoint] = useState('')
+  const [semanticModel, setSemanticModel] = useState('openai/gpt-oss-safeguard-20b')
+  const [semanticTimeoutMs, setSemanticTimeoutMs] = useState('4000')
   const [bridgeAvailable, setBridgeAvailable] = useState(false)
   const [localModelInstalled, setLocalModelInstalled] = useState(false)
   const [semanticSetupOpen, setSemanticSetupOpen] = useState(false)
@@ -34,12 +36,14 @@ export function PromptInjectionPage() {
   const loadSettings = useCallback(async () => {
     setLoading(true)
     try {
-      const [regexResult, trustResult, semanticResult, providerResult, endpointResult, blockingResult, toolScanResult] = await Promise.all([
+      const [regexResult, trustResult, semanticResult, providerResult, endpointResult, modelResult, timeoutResult, blockingResult, toolScanResult] = await Promise.all([
         getPlatformSetting(SETTING_KEYS.REGEX_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(SETTING_KEYS.TRUST_SOURCE_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, accessToken).catch(() => ({ value: 'true' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch(() => ({ value: '' })),
         getPlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch(() => ({ value: '' })),
+        getPlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch(() => ({ value: 'openai/gpt-oss-safeguard-20b' })),
+        getPlatformSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, accessToken).catch(() => ({ value: '4000' })),
         getPlatformSetting(SETTING_KEYS.BLOCKING_ENABLED, accessToken).catch(() => ({ value: 'false' })),
         getPlatformSetting(SETTING_KEYS.TOOL_SCAN_ENABLED, accessToken).catch(() => ({ value: 'true' })),
       ])
@@ -52,6 +56,8 @@ export function PromptInjectionPage() {
       })
       setSemanticProvider(providerResult.value)
       setSemanticEndpoint(endpointResult.value)
+      setSemanticModel(modelResult.value || 'openai/gpt-oss-safeguard-20b')
+      setSemanticTimeoutMs(timeoutResult.value || '4000')
 
       const online = await checkBridgeAvailable()
       setBridgeAvailable(online)
@@ -95,8 +101,13 @@ export function PromptInjectionPage() {
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch(() => {})
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch(() => {})
       await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_KEY, accessToken).catch(() => {})
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch(() => {})
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, accessToken).catch(() => {})
       await setPlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, 'false', accessToken)
       setSemanticProvider('')
+      setSemanticEndpoint('')
+      setSemanticModel('openai/gpt-oss-safeguard-20b')
+      setSemanticTimeoutMs('4000')
       setSettings(prev => ({ ...prev, [SETTING_KEYS.SEMANTIC_ENABLED]: false }))
       setSemanticSetupOpen(true)
     } catch (err) {
@@ -158,6 +169,10 @@ export function PromptInjectionPage() {
                           setSetting={setPlatformSetting}
                           bridgeInstall={v => bridgeClient.performAction('prompt-guard', 'install', { variant: v })}
                           formatError={err => isApiError(err) ? err.message : tp.toastFailed}
+                          defaultMode="api"
+                          initialApiEndpoint={semanticEndpoint}
+                          initialApiModel={semanticModel}
+                          initialApiTimeoutMs={semanticTimeoutMs}
                         />
                       ) : undefined
                     }

@@ -150,6 +150,9 @@ type RunContext struct {
 	TitleSummarizer *personas.TitleSummarizerConfig
 
 	// -- InjectionScanMiddleware 写入 --
+	// UserPromptScanFunc 对运行中新增的人类输入执行同样的 prompt injection 检测。
+	// phase 例如 "ask_user" / "interactive_checkin"。
+	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
 	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
 	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
 	ToolOutputScanFunc func(toolName, text string) (string, bool)

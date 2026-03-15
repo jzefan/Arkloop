@@ -3,6 +3,7 @@
 package security
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,11 +60,37 @@ func NewSemanticScanner(cfg SemanticScannerConfig) (*SemanticScanner, error) {
 	inputNames := []string{"input_ids", "attention_mask"}
 	outputNames := []string{"logits"}
 
+	options, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("create session options: %w", err)
+	}
+	defer options.Destroy()
+
+	// Bias towards lower peak memory on small Docker VMs.
+	if err := options.SetExecutionMode(ort.ExecutionModeSequential); err != nil {
+		return nil, fmt.Errorf("set execution mode: %w", err)
+	}
+	if err := options.SetGraphOptimizationLevel(ort.GraphOptimizationLevelDisableAll); err != nil {
+		return nil, fmt.Errorf("set graph optimization level: %w", err)
+	}
+	if err := options.SetIntraOpNumThreads(1); err != nil {
+		return nil, fmt.Errorf("set intra op threads: %w", err)
+	}
+	if err := options.SetInterOpNumThreads(1); err != nil {
+		return nil, fmt.Errorf("set inter op threads: %w", err)
+	}
+	if err := options.SetCpuMemArena(false); err != nil {
+		return nil, fmt.Errorf("disable cpu mem arena: %w", err)
+	}
+	if err := options.SetMemPattern(false); err != nil {
+		return nil, fmt.Errorf("disable mem pattern: %w", err)
+	}
+
 	session, err := ort.NewDynamicAdvancedSession(
 		modelPath,
 		inputNames,
 		outputNames,
-		nil,
+		options,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create onnx session: %w", err)
@@ -82,7 +109,7 @@ func NewSemanticScanner(cfg SemanticScannerConfig) (*SemanticScanner, error) {
 	}, nil
 }
 
-func (s *SemanticScanner) Classify(text string) (SemanticResult, error) {
+func (s *SemanticScanner) Classify(_ context.Context, text string) (SemanticResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

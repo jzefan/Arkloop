@@ -7,6 +7,8 @@ export const SETTING_KEYS = {
   SEMANTIC_PROVIDER: 'security.semantic_scanner.provider',
   SEMANTIC_API_ENDPOINT: 'security.semantic_scanner.api_endpoint',
   SEMANTIC_API_KEY: 'security.semantic_scanner.api_key',
+  SEMANTIC_API_MODEL: 'security.semantic_scanner.api_model',
+  SEMANTIC_API_TIMEOUT_MS: 'security.semantic_scanner.api_timeout_ms',
 } as const
 
 export const AUDIT_ACTION = 'security.injection_detected'
@@ -91,7 +93,14 @@ export interface PromptInjectionTexts {
   semanticModel86m: string
   semanticBridgeRequired: string
   semanticApiDesc: string
+  semanticApiPresetHint: string
+  semanticApiEndpointLabel: string
   semanticApiEndpointHint: string
+  semanticApiModelLabel: string
+  semanticApiModelHint: string
+  semanticApiTimeoutLabel: string
+  semanticApiTimeoutHint: string
+  semanticApiKeyLabel: string
   semanticApiKeyHint: string
   semanticInstallStarted: string
   auditEmpty: string
