@@ -105,13 +105,11 @@ func meInviteCode(
 
 		// 用户没有活跃邀请码时自动生成一个
 		if len(codes) == 0 {
-			maxUses := 1
+			maxUses := 0
 			if entitlementSvc != nil {
 				val, resolveErr := entitlementSvc.Resolve(r.Context(), actor.AccountID, "invite.default_max_uses")
 				if resolveErr == nil {
-					if v := val.Int(); v > 0 {
-						maxUses = int(v)
-					}
+					maxUses = data.NormalizeInviteCodeMaxUses(val.Int())
 				}
 			}
 
@@ -198,13 +196,11 @@ func meInviteCodeReset(
 			}
 		}
 
-		maxUses := 1
+		maxUses := 0
 		if entitlementSvc != nil {
 			val, resolveErr := entitlementSvc.Resolve(r.Context(), actor.AccountID, "invite.default_max_uses")
 			if resolveErr == nil {
-				if v := val.Int(); v > 0 {
-					maxUses = int(v)
-				}
+				maxUses = data.NormalizeInviteCodeMaxUses(val.Int())
 			}
 		}
 
@@ -419,8 +415,8 @@ func patchAdminInviteCode(
 		var result *data.InviteCode
 
 		if body.MaxUses != nil {
-			if *body.MaxUses <= 0 {
-				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "max_uses must be positive", traceID, nil)
+			if *body.MaxUses < 0 {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "max_uses must not be negative", traceID, nil)
 				return
 			}
 			result, err = inviteCodesRepo.UpdateMaxUses(r.Context(), id, *body.MaxUses)

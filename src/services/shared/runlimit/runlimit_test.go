@@ -57,6 +57,26 @@ func TestTryAcquireWithRedisEnforcesLimit(t *testing.T) {
 	}
 }
 
+func TestTryAcquireNonPositiveLimitIsUnlimited(t *testing.T) {
+	setFallbackTestState(t, time.Minute)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ctx := context.Background()
+	key := Key("org-unlimited")
+
+	for i := 0; i < 8; i++ {
+		if !TryAcquire(ctx, rdb, key, 0) {
+			t.Fatalf("acquire %d should succeed when maxRuns=0", i+1)
+		}
+	}
+	if mr.Exists(key) {
+		t.Fatal("unlimited mode should not write counter state")
+	}
+}
+
 func TestTryAcquireFallsBackWhenRedisUnavailable(t *testing.T) {
 	setFallbackTestState(t, time.Minute)
 

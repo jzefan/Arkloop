@@ -89,6 +89,10 @@ return redis.call("DECR", key)
 // TryAcquire atomically acquires a concurrent run slot for an account.
 // Falls back to in-memory counter with relaxed limit when Redis is unavailable.
 func TryAcquire(ctx context.Context, rdb *redis.Client, key string, maxRuns int64) bool {
+	if maxRuns <= 0 {
+		return true
+	}
+
 	degradedMax := maxRuns * degradedMultiplier
 	if rdb == nil {
 		warnDegraded()
