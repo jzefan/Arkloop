@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { PanelLeftOpen } from 'lucide-react'
+import { LoadingPage } from '@arkloop/shared'
 import { Sidebar } from '../components/Sidebar'
 import { SettingsModal } from '../components/SettingsModal'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
 import { NotificationsPanel } from '../components/NotificationsPanel'
 import { EmailVerificationGate } from '../components/EmailVerificationGate'
+import { useLocale } from '../contexts/LocaleContext'
 import type { SettingsTab } from '../components/SettingsModal'
 import {
   getMe,
@@ -26,6 +28,7 @@ type Props = {
 export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useLocale()
 
   const isSearchOpen = location.pathname.endsWith('/search')
 
@@ -207,7 +210,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   // email 验证门控：flag 开启 + 未验证时全屏拦截
   if (!meLoaded) {
-    return <div style={{ position: 'fixed', inset: 0, background: 'var(--c-bg-page)' }} />
+    return <LoadingPage label={t.loading} />
   }
 
   if (me !== null && !me.email_verified && me.email_verification_required && me.email) {
