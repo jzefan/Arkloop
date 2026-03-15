@@ -165,8 +165,8 @@ export function SubAgentBlock({ nickname, personaId, input, output, status, erro
                         {displayOutput!.trimEnd()}
                       </pre>
                     ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '20px' }}>
-                        <Loader2 size={12} className="animate-spin" style={{ color: 'var(--c-text-muted)' }} />
+                      <div style={{ minHeight: '48px', display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                        <span style={{ fontFamily: MONO, fontSize: '10.5px', color: 'var(--c-text-muted)', animation: 'terminal-blink 1.2s step-start infinite' }}>▮</span>
                       </div>
                     )}
                   </div>
