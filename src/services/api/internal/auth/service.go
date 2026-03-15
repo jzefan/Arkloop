@@ -295,7 +295,7 @@ func (s *Service) VerifyAccessTokenForActor(ctx context.Context, token string) (
 		ctx = context.Background()
 	}
 
-	if vat, ok := interceptDesktopActor(); ok {
+	if vat, ok := interceptDesktopActor(token); ok {
 		return vat, nil
 	}
 

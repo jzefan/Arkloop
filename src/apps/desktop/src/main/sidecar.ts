@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'child_process'
+import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
 import * as https from 'https'
@@ -49,6 +50,7 @@ const AUTO_PORT_SCAN_WINDOW = 20
 const SIDECAR_DIR = path.join(os.homedir(), '.arkloop', 'bin')
 const VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
 const DEFAULT_DOWNLOAD_BASE = 'https://github.com/nicepkg/arkloop/releases/download'
+const desktopAccessToken = `arkloop-desktop-${randomBytes(24).toString('hex')}`
 
 let proc: ChildProcess | null = null
 let restartCount = 0
@@ -67,6 +69,10 @@ export function getSidecarStatus(): SidecarStatus {
 
 export function getSidecarRuntime(): SidecarRuntime {
   return { ...runtime }
+}
+
+export function getDesktopAccessToken(): string {
+  return desktopAccessToken
 }
 
 export function setStatusListener(fn: (status: SidecarStatus) => void): void {
@@ -428,6 +434,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
     env: {
       ...process.env,
       ARKLOOP_API_GO_ADDR: `127.0.0.1:${port}`,
+      ARKLOOP_DESKTOP_TOKEN: desktopAccessToken,
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Cloud, HardDrive, Server, CheckCircle, XCircle } from 'lucide-react'
 import { Reveal, inputCls, inputStyle, labelStyle, SpinnerIcon } from '@arkloop/shared/components/auth-ui'
-import { getDesktopApi } from '@arkloop/shared/desktop'
+import { getDesktopApi, getDesktopAccessToken } from '@arkloop/shared/desktop'
 import type { ConnectionMode } from '@arkloop/shared/desktop'
 import { useLocale } from '../contexts/LocaleContext'
 import { createLlmProvider, listAvailableModels, createProviderModel } from '../api'
@@ -23,7 +23,7 @@ type ModelImportStatus = 'idle' | 'loading' | 'ready' | 'importing' | 'done' | '
 
 type Props = { onComplete: () => void }
 
-const LOCAL_ACCESS_TOKEN = 'desktop-local-token'
+const LOCAL_ACCESS_TOKEN = getDesktopAccessToken() ?? 'arkloop-desktop-local-token'
 
 const VENDOR_OPTIONS = [
   { key: 'openai_responses' as const, label: 'OpenAI (Responses)', provider: 'openai', openai_api_mode: 'responses' as string | undefined },

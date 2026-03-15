@@ -1,6 +1,13 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { loadConfig, saveConfig, getConfigPath } from './config'
-import { getSidecarStatus, downloadSidecar, isSidecarAvailable, checkSidecarVersion, type SidecarRuntime } from './sidecar'
+import {
+  getSidecarStatus,
+  downloadSidecar,
+  isSidecarAvailable,
+  checkSidecarVersion,
+  getDesktopAccessToken,
+  type SidecarRuntime,
+} from './sidecar'
 import { getRootfsStatus, isRootfsAvailable, getRootfsPath, checkRootfsVersion, downloadRootfs, deleteRootfs } from './rootfs'
 import type { AppConfig } from './types'
 
@@ -16,7 +23,10 @@ export function registerIpcHandlers(
 ): void {
   // preload 同步获取配置, 确保 __ARKLOOP_DESKTOP__ 在页面脚本之前注入
   ipcMain.on('arkloop:config:get-sync', (event) => {
-    event.returnValue = loadConfig()
+    event.returnValue = {
+      ...loadConfig(),
+      desktopAccessToken: getDesktopAccessToken(),
+    }
   })
 
   ipcMain.handle('arkloop:config:get', () => {

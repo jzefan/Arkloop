@@ -4,6 +4,7 @@ package http
 
 import (
 	nethttp "net/http"
+	"strings"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
@@ -23,12 +24,16 @@ func desktopOwnerActor() *actor {
 func authenticateActor(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
-	_ string,
+	traceID string,
 	_ *auth.Service,
 	_ *data.AccountMembershipRepository,
 ) (*actor, bool) {
-	_, ok := parseBearerToken(w, r, "")
+	token, ok := parseBearerToken(w, r, traceID)
 	if !ok {
+		return nil, false
+	}
+	if strings.TrimSpace(token) != auth.DesktopToken() {
+		WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "invalid token", traceID, nil)
 		return nil, false
 	}
 	return desktopOwnerActor(), true
@@ -37,14 +42,18 @@ func authenticateActor(
 func resolveActor(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
-	_ string,
+	traceID string,
 	_ *auth.Service,
 	_ *data.AccountMembershipRepository,
 	_ *data.APIKeysRepository,
 	_ *audit.Writer,
 ) (*actor, bool) {
-	_, ok := parseBearerToken(w, r, "")
+	token, ok := parseBearerToken(w, r, traceID)
 	if !ok {
+		return nil, false
+	}
+	if strings.TrimSpace(token) != auth.DesktopToken() {
+		WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "invalid token", traceID, nil)
 		return nil, false
 	}
 	return desktopOwnerActor(), true

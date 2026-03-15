@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import * as path from 'path'
 import { loadConfig, normalizeConfig, saveConfig } from './config'
 import {
@@ -121,46 +121,6 @@ async function restartLocalSidecar(): Promise<SidecarRuntime> {
   return getSidecarRuntime()
 }
 
-function isActiveSidecarRequest(urlString: string): boolean {
-  try {
-    const parsed = new URL(urlString)
-    return parsed.protocol === 'http:'
-      && parsed.hostname === '127.0.0.1'
-      && activeSidecarPort != null
-      && parsed.port === String(activeSidecarPort)
-  } catch {
-    return false
-  }
-}
-
-function registerSidecarSessionHooks(): void {
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['http://127.0.0.1:*/*'] },
-    (details, callback) => {
-      if (isActiveSidecarRequest(details.url)) {
-        delete details.requestHeaders.Origin
-      }
-      callback({ requestHeaders: details.requestHeaders })
-    },
-  )
-
-  session.defaultSession.webRequest.onHeadersReceived(
-    { urls: ['http://127.0.0.1:*/*'] },
-    (details, callback) => {
-      if (!isActiveSidecarRequest(details.url)) {
-        callback({})
-        return
-      }
-
-      const headers = details.responseHeaders ?? {}
-      headers['Access-Control-Allow-Origin'] = ['*']
-      headers['Access-Control-Allow-Methods'] = ['GET, POST, PUT, PATCH, DELETE, OPTIONS']
-      headers['Access-Control-Allow-Headers'] = ['Content-Type, Authorization, X-Trace-Id']
-      callback({ responseHeaders: headers })
-    },
-  )
-}
-
 function createWindow(): BrowserWindow {
   const config = loadConfig()
 
@@ -241,7 +201,6 @@ app.whenReady().then(async () => {
     restartLocalSidecar,
     getSidecarRuntime,
   })
-  registerSidecarSessionHooks()
 
   const config = loadConfig()
   if (config.mode === 'local') {

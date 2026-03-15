@@ -12,6 +12,6 @@ func interceptDesktopUser(_ context.Context, _ *data.UserRepository) (*data.User
 	return nil, false
 }
 
-func interceptDesktopActor() (VerifiedAccessToken, bool) {
+func interceptDesktopActor(_ string) (VerifiedAccessToken, bool) {
 	return VerifiedAccessToken{}, false
 }
