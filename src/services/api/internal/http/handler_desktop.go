@@ -6,12 +6,12 @@ import (
 	"context"
 	nethttp "net/http"
 
+	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/http/adminapi"
 	"arkloop/services/api/internal/http/authapi"
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
-	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/http/platformapi"
 
 	"arkloop/services/api/internal/audit"
@@ -194,28 +194,28 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
-		AuthService:           cfg.AuthService,
-		AccountMembershipRepo: cfg.AccountMembershipRepo,
-		ThreadRepo:            cfg.ThreadRepo,
-		ThreadStarRepo:        cfg.ThreadStarRepo,
-		ThreadShareRepo:       cfg.ThreadShareRepo,
-		ThreadReportRepo:      cfg.ThreadReportRepo,
-		MessageRepo:           cfg.MessageRepo,
-		RunEventRepo:          cfg.RunEventRepo,
-		ShellSessionRepo:      cfg.ShellSessionRepo,
-		ProjectRepo:           cfg.ProjectRepo,
-		TeamRepo:              cfg.TeamRepo,
-		AuditWriter:           cfg.AuditWriter,
-		Pool:                  cfg.Pool, // desktop: SQLite via sqlitepgx
-		DirectPool:            nil, // desktop: no LISTEN/NOTIFY
-		APIKeysRepo:           cfg.APIKeysRepo,
-		RunLimiter:            cfg.RunLimiter,
-		EntitlementService:    cfg.EntitlementService,
-		RedisClient:           nil, // desktop: no Redis
-		ConfigResolver:        resolver,
-		SSEConfig:             conversationapi.SSEConfig(sseConfig),
+		AuthService:            cfg.AuthService,
+		AccountMembershipRepo:  cfg.AccountMembershipRepo,
+		ThreadRepo:             cfg.ThreadRepo,
+		ThreadStarRepo:         cfg.ThreadStarRepo,
+		ThreadShareRepo:        cfg.ThreadShareRepo,
+		ThreadReportRepo:       cfg.ThreadReportRepo,
+		MessageRepo:            cfg.MessageRepo,
+		RunEventRepo:           cfg.RunEventRepo,
+		ShellSessionRepo:       cfg.ShellSessionRepo,
+		ProjectRepo:            cfg.ProjectRepo,
+		TeamRepo:               cfg.TeamRepo,
+		AuditWriter:            cfg.AuditWriter,
+		Pool:                   cfg.Pool, // desktop: SQLite via sqlitepgx
+		DirectPool:             nil,      // desktop: no LISTEN/NOTIFY
+		APIKeysRepo:            cfg.APIKeysRepo,
+		RunLimiter:             cfg.RunLimiter,
+		EntitlementService:     cfg.EntitlementService,
+		RedisClient:            nil, // desktop: no Redis
+		ConfigResolver:         resolver,
+		SSEConfig:              conversationapi.SSEConfig(sseConfig),
 		MessageAttachmentStore: cfg.MessageAttachmentStore,
-		ArtifactStore:         cfg.ArtifactStore,
+		ArtifactStore:          cfg.ArtifactStore,
 	})
 
 	catalogapi.RegisterRoutes(mux, catalogapi.Deps{
@@ -248,20 +248,20 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{
-		AuthService:         cfg.AuthService,
+		AuthService:           cfg.AuthService,
 		AccountMembershipRepo: cfg.AccountMembershipRepo,
-		PlansRepo:           cfg.PlansRepo,
-		EntitlementsRepo:    cfg.EntitlementsRepo,
-		APIKeysRepo:         cfg.APIKeysRepo,
-		SubscriptionsRepo:   cfg.SubscriptionsRepo,
-		EntitlementService:  cfg.EntitlementService,
-		UsageRepo:           cfg.UsageRepo,
-		CreditsRepo:         cfg.CreditsRepo,
-		InviteCodesRepo:     cfg.InviteCodesRepo,
-		ReferralsRepo:       cfg.ReferralsRepo,
-		RedemptionCodesRepo: cfg.RedemptionCodesRepo,
-		AuditWriter:         cfg.AuditWriter,
-		Pool:                cfg.Pool,
+		PlansRepo:             cfg.PlansRepo,
+		EntitlementsRepo:      cfg.EntitlementsRepo,
+		APIKeysRepo:           cfg.APIKeysRepo,
+		SubscriptionsRepo:     cfg.SubscriptionsRepo,
+		EntitlementService:    cfg.EntitlementService,
+		UsageRepo:             cfg.UsageRepo,
+		CreditsRepo:           cfg.CreditsRepo,
+		InviteCodesRepo:       cfg.InviteCodesRepo,
+		ReferralsRepo:         cfg.ReferralsRepo,
+		RedemptionCodesRepo:   cfg.RedemptionCodesRepo,
+		AuditWriter:           cfg.AuditWriter,
+		Pool:                  cfg.Pool,
 	})
 
 	accountapi.RegisterRoutes(mux, accountapi.Deps{
@@ -347,6 +347,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	handler := RecoverMiddleware(base, cfg.Logger)
 	handler = InFlightMiddleware(handler, cfg.MaxInFlight)
+	handler = desktopCORSMiddleware(handler)
 	handler = TraceMiddleware(handler, cfg.Logger, cfg.TrustIncomingTraceID, cfg.TrustXForwardedFor)
 	return handler
 }

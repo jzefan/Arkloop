@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"arkloop/services/api/internal/data"
@@ -18,6 +19,9 @@ func interceptDesktopUser(_ context.Context, _ *data.UserRepository) (*data.User
 	}, true
 }
 
-func interceptDesktopActor() (VerifiedAccessToken, bool) {
+func interceptDesktopActor(token string) (VerifiedAccessToken, bool) {
+	if strings.TrimSpace(token) != DesktopToken() {
+		return VerifiedAccessToken{}, false
+	}
 	return DesktopVerifiedAccessToken(), true
 }

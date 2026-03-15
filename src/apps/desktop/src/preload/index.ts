@@ -94,6 +94,7 @@ const config = ipcRenderer.sendSync('arkloop:config:get-sync') as {
   saas: { baseUrl: string }
   selfHosted: { baseUrl: string }
   local: { port: number; portMode: LocalPortMode }
+  desktopAccessToken?: string
 }
 
 let configSnapshot: AppConfig = config as AppConfig
@@ -123,8 +124,10 @@ function getCurrentApiBaseUrl(): string {
 
 contextBridge.exposeInMainWorld('__ARKLOOP_DESKTOP__', {
   apiBaseUrl: getCurrentApiBaseUrl(),
+  accessToken: config.desktopAccessToken ?? 'arkloop-desktop-local-token',
   mode: configSnapshot.mode,
   getApiBaseUrl: () => getCurrentApiBaseUrl(),
+  getAccessToken: () => config.desktopAccessToken ?? 'arkloop-desktop-local-token',
   getMode: () => configSnapshot.mode,
 })
 

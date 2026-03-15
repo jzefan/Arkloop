@@ -14,7 +14,12 @@ import {
 } from './storage'
 import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
 import { setClientApp } from '@arkloop/shared/api'
-import { isLocalMode, isDesktop, getDesktopApi } from '@arkloop/shared/desktop'
+import {
+  isLocalMode,
+  isDesktop,
+  getDesktopApi,
+  getDesktopAccessToken,
+} from '@arkloop/shared/desktop'
 
 function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null)
@@ -51,7 +56,7 @@ function App() {
 
     // Local 模式: Go 后端使用固定 token，跳过刷新流程
     if (isLocalMode()) {
-      const desktopToken = 'desktop-local-token'
+      const desktopToken = getDesktopAccessToken() ?? 'arkloop-desktop-local-token'
       writeAccessTokenToStorage(desktopToken)
       setAccessToken(desktopToken)
       setAuthChecked(true)
