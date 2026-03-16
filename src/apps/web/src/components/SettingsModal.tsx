@@ -22,6 +22,7 @@ import {
   Puzzle,
   Cpu,
   Bot,
+  Radio,
 } from 'lucide-react'
 import {
   type MeResponse,
@@ -44,9 +45,10 @@ import type { Theme } from '@arkloop/shared/contexts/theme'
 import { SkillsSettingsContent } from './SkillsSettingsContent'
 import { ModelConfigContent } from './ModelConfigContent'
 import { AgentSettingsContent } from './AgentSettingsContent'
+import { ChannelsSettingsContent } from './ChannelsSettingsContent'
 
 
-export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents'
+export type SettingsTab = 'account' | 'settings' | 'skills' | 'credits' | 'models' | 'agents' | 'channels'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
@@ -56,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'skills',   icon: Puzzle   },
   { key: 'models',   icon: Cpu      },
   { key: 'agents',   icon: Bot      },
+  { key: 'channels', icon: Radio    },
   { key: 'credits',  icon: Coins    },
 ]
 
@@ -191,6 +194,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             )}
             {activeKey === 'agents' && (
               <AgentSettingsContent accessToken={accessToken} />
+            )}
+            {activeKey === 'channels' && (
+              <ChannelsSettingsContent accessToken={accessToken} />
             )}
           </div>
         </div>

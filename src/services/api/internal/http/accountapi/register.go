@@ -24,8 +24,12 @@ type Deps struct {
 	Pool               *pgxpool.Pool
 	AccountRepo        *data.AccountRepository
 	AccountService     *auth.AccountService
-	WebhookRepo        *data.WebhookEndpointRepository
-	SecretsRepo        *data.SecretsRepository
+	WebhookRepo              *data.WebhookEndpointRepository
+	SecretsRepo              *data.SecretsRepository
+	ChannelsRepo             *data.ChannelsRepository
+	ChannelIdentitiesRepo    *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo     *data.ChannelBindCodesRepository
+	AppBaseURL               string
 	EnvironmentStore   environmentStore
 	RunEventRepo       *data.RunEventRepository
 	GatewayRedisClient *redis.Client
@@ -47,4 +51,9 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/webhook-endpoints/", webhookEndpointEntry(deps.AuthService, deps.AccountMembershipRepo, deps.WebhookRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/account/spawn-profiles", spawnProfilesEntry(deps.AuthService, deps.AccountMembershipRepo, deps.EntitlementsRepo, deps.EntitlementService, deps.APIKeysRepo, deps.ConfigResolver))
 	mux.HandleFunc("/v1/account/spawn-profiles/", spawnProfileEntry(deps.AuthService, deps.AccountMembershipRepo, deps.EntitlementsRepo, deps.EntitlementService, deps.APIKeysRepo, deps.ConfigResolver))
+	mux.HandleFunc("/v1/channels", channelsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.AppBaseURL))
+	mux.HandleFunc("/v1/channels/", channelEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool))
+	mux.HandleFunc("/v1/me/channel-binds", channelBindsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelBindCodesRepo, deps.APIKeysRepo))
+	mux.HandleFunc("/v1/me/channel-identities", channelIdentitiesEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelIdentitiesRepo, deps.APIKeysRepo))
+	mux.HandleFunc("/v1/me/channel-identities/", channelIdentityEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelIdentitiesRepo, deps.APIKeysRepo))
 }

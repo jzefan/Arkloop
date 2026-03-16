@@ -23,6 +23,7 @@ export interface LocaleStrings {
     credits: string
     models: string
     agents: string
+    channels: string
   }
   // settings
   getHelp: string
@@ -416,6 +417,45 @@ export interface LocaleStrings {
     spawnProfileExplore: string
     spawnProfileTask: string
     spawnProfileStrong: string
+  }
+  // channels
+  channels: {
+    title: string
+    subtitle: string
+    platform: string
+    botToken: string
+    botTokenPlaceholder: string
+    persona: string
+    personaDefault: string
+    webhookUrl: string
+    webhookUrlCopy: string
+    webhookUrlCopied: string
+    active: string
+    inactive: string
+    addChannel: string
+    save: string
+    saving: string
+    cancel: string
+    delete: string
+    deleteConfirm: string
+    noChannels: string
+    noChannelsDesc: string
+    saveFailed: string
+    deleteFailed: string
+    loadFailed: string
+    telegram: string
+    discord: string
+    feishu: string
+    bindingsTitle: string
+    bindingsEmpty: string
+    generateCode: string
+    generating: string
+    bindCode: string
+    bindCodeHint: string
+    unbind: string
+    unbinding: string
+    unbindConfirm: string
+    unbindFailed: string
   }
   // model picker (chat input)
   modelPicker: {

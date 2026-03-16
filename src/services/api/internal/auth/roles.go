@@ -20,6 +20,8 @@ var accountAdminPerms = []string{
 	PermDataSecrets,
 	PermDataProjectsRead, PermDataProjectsManage,
 	PermDataSkillsRead, PermDataSkillsManage,
+	PermDataWebhooksManage,
+	PermDataChannelsManage,
 	PermDataSubscriptionsRead,
 	PermDataUsageRead,
 	PermAccountAuditRead,

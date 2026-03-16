@@ -394,6 +394,58 @@ func (r *UserRepository) SoftDelete(ctx context.Context, userID uuid.UUID) error
 	return nil
 }
 
+// CreateShadow 创建 Channel 自动生成的轻量用户（不可登录，无 email/credential）。
+func (r *UserRepository) CreateShadow(ctx context.Context, username string, source string) (User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if username == "" {
+		return User{}, fmt.Errorf("username must not be empty")
+	}
+	if source == "" {
+		source = "channel_shadow"
+	}
+
+	var user User
+	err := r.db.QueryRow(
+		ctx,
+		`INSERT INTO users (username, source)
+		 VALUES ($1, $2)
+		 RETURNING id, username, email, email_verified_at, status, deleted_at,
+		           avatar_url, locale, timezone, last_login_at, tokens_invalid_before, created_at`,
+		username, source,
+	).Scan(
+		&user.ID, &user.Username, &user.Email, &user.EmailVerifiedAt,
+		&user.Status, &user.DeletedAt, &user.AvatarURL, &user.Locale,
+		&user.Timezone, &user.LastLoginAt, &user.TokensInvalidBefore, &user.CreatedAt,
+	)
+	if err != nil {
+		return User{}, fmt.Errorf("users.CreateShadow: %w", err)
+	}
+	return user, nil
+}
+
+// UpdateSource 更新用户的 source 字段（如 shadow -> merged）。
+func (r *UserRepository) UpdateSource(ctx context.Context, userID uuid.UUID, source string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if userID == uuid.Nil {
+		return fmt.Errorf("user_id must not be empty")
+	}
+	tag, err := r.db.Exec(ctx,
+		`UPDATE users SET source = $2 WHERE id = $1`,
+		userID, source,
+	)
+	if err != nil {
+		return fmt.Errorf("users.UpdateSource: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("users.UpdateSource: not found")
+	}
+	return nil
+}
+
 // SetEmailVerified 将 email_verified_at 标记为当前时间，表示邮箱已通过验证。
 func (r *UserRepository) SetEmailVerified(ctx context.Context, userID uuid.UUID) error {
 	if ctx == nil {

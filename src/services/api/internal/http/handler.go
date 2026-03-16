@@ -87,6 +87,9 @@ type HandlerConfig struct {
 	TeamRepo                     *data.TeamRepository
 	ProjectRepo                  *data.ProjectRepository
 	WebhookRepo                  *data.WebhookEndpointRepository
+	ChannelsRepo                 *data.ChannelsRepository
+	ChannelIdentitiesRepo        *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo         *data.ChannelBindCodesRepository
 	PlansRepo                    *data.PlanRepository
 	SubscriptionsRepo            *data.SubscriptionRepository
 	EntitlementsRepo             *data.EntitlementsRepository
@@ -120,7 +123,8 @@ type HandlerConfig struct {
 	EnvironmentStore       environmentStore
 	SkillStore             skillStore
 
-	EmailFrom string
+	EmailFrom  string
+	AppBaseURL string
 
 	TurnstileEnvSecretKey   string
 	TurnstileEnvSiteKey     string
@@ -304,8 +308,12 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		Pool:                  cfg.Pool,
 		AccountRepo:           cfg.AccountRepo,
 		AccountService:        cfg.AccountService,
-		WebhookRepo:           cfg.WebhookRepo,
-		SecretsRepo:           cfg.SecretsRepo,
+		WebhookRepo:              cfg.WebhookRepo,
+		SecretsRepo:              cfg.SecretsRepo,
+		ChannelsRepo:             cfg.ChannelsRepo,
+		ChannelIdentitiesRepo:    cfg.ChannelIdentitiesRepo,
+		ChannelBindCodesRepo:     cfg.ChannelBindCodesRepo,
+		AppBaseURL:               cfg.AppBaseURL,
 		EnvironmentStore:      cfg.EnvironmentStore,
 		RunEventRepo:          cfg.RunEventRepo,
 		GatewayRedisClient:    gatewayRedis,
