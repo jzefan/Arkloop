@@ -33,11 +33,11 @@ func newMockResolver() *mockResolver {
 	return &mockResolver{registry: DefaultRegistry()}
 }
 
-func TestResolveProfile_Fast(t *testing.T) {
+func TestResolveProfile_Explore(t *testing.T) {
 	r := newMockResolver()
-	mapping, err := ResolveProfile(context.Background(), r, "fast")
+	mapping, err := ResolveProfile(context.Background(), r, "explore")
 	if err != nil {
-		t.Fatalf("ResolveProfile(fast) error: %v", err)
+		t.Fatalf("ResolveProfile(explore) error: %v", err)
 	}
 	if mapping.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want %q", mapping.Provider, "anthropic")
@@ -47,11 +47,11 @@ func TestResolveProfile_Fast(t *testing.T) {
 	}
 }
 
-func TestResolveProfile_Balanced(t *testing.T) {
+func TestResolveProfile_Task(t *testing.T) {
 	r := newMockResolver()
-	mapping, err := ResolveProfile(context.Background(), r, "balanced")
+	mapping, err := ResolveProfile(context.Background(), r, "task")
 	if err != nil {
-		t.Fatalf("ResolveProfile(balanced) error: %v", err)
+		t.Fatalf("ResolveProfile(task) error: %v", err)
 	}
 	if mapping.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want %q", mapping.Provider, "anthropic")
@@ -85,9 +85,9 @@ func TestResolveProfile_Unknown(t *testing.T) {
 
 func TestResolveProfile_CaseInsensitive(t *testing.T) {
 	r := newMockResolver()
-	mapping, err := ResolveProfile(context.Background(), r, "FAST")
+	mapping, err := ResolveProfile(context.Background(), r, "EXPLORE")
 	if err != nil {
-		t.Fatalf("ResolveProfile(FAST) error: %v", err)
+		t.Fatalf("ResolveProfile(EXPLORE) error: %v", err)
 	}
 	if mapping.Provider != "anthropic" || mapping.Model != "claude-haiku-3-5" {
 		t.Errorf("got %s^%s, want anthropic^claude-haiku-3-5", mapping.Provider, mapping.Model)

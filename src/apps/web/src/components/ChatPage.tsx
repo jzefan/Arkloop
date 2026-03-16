@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -84,12 +84,12 @@ import {
   writeMessageCodeExecutions,
   readMessageThinking,
   writeMessageThinking,
-  readMessageSearchSteps,
-  writeMessageSearchSteps,
   readMessageBrowserActions,
   writeMessageBrowserActions,
   readMessageMemoryActions,
   writeMessageMemoryActions,
+  readMessageCopBlocks,
+  writeMessageCopBlocks,
   type WebSource,
   type ArtifactRef,
   type CodeExecutionRef,
@@ -98,6 +98,7 @@ import {
   type MessageThinkingRef,
   type MessageSearchStepRef,
   type MemoryActionRef,
+  type MessageCopBlocksRef,
   readMessageSubAgents,
   writeMessageSubAgents,
   migrateMessageMetadata,
@@ -157,7 +158,6 @@ type DocumentPanelState = {
 
 const SHOW_EXPLICIT_THINKING = false
 
-const DEFAULT_SEARCH_PLANNING_LABEL = 'Planning'
 const SEARCH_PLANNING_LABEL_MAX_LEN = 60
 const SEARCH_PLANNING_TOOL_NAME = 'timeline_title'
 
@@ -170,42 +170,14 @@ function compactSingleLine(raw: string | undefined, maxLen = SEARCH_PLANNING_LAB
   return text.slice(0, maxLen - 3).trimEnd() + '...'
 }
 
-function patchLegacySearchSteps(
-  steps: MessageSearchStepRef[],
-): { steps: MessageSearchStepRef[]; changed: boolean } {
-  const idx = steps.findIndex((s) => s.kind === 'planning')
-  if (idx < 0) return { steps, changed: false }
-  const planning = steps[idx]
-  // 旧版本的 planning 步骤 id 形如 `plan-${callId}`，且 label 是前端占位符。
-  // 这里不做内容匹配，只按结构做一次性迁移。
-  if (!planning.id.startsWith('plan-')) return { steps, changed: false }
-
-  const firstSearchingQuery =
-    steps.find((s) => s.kind === 'searching' && Array.isArray(s.queries) && s.queries.length > 0)?.queries?.[0]
-
-  const nextLabel = compactSingleLine(firstSearchingQuery) || DEFAULT_SEARCH_PLANNING_LABEL
-  if (planning.label === nextLabel) return { steps, changed: false }
-  const patched = steps.map((s, i) => (i === idx ? { ...s, label: nextLabel } : s))
-  return { steps: patched, changed: true }
+type CopBlock = {
+  id: string
+  title: string
+  steps: SearchStep[]
+  sources: WebSource[]
 }
 
-function buildHistoricalSearchSteps(userQuery?: string): SearchStep[] {
-  const query = compactSingleLine(userQuery)
-  return [
-    { id: 'history-plan', kind: 'planning', label: DEFAULT_SEARCH_PLANNING_LABEL, status: 'done' },
-    {
-      id: 'history-search',
-      kind: 'searching',
-      label: 'Searching',
-      status: 'done',
-      queries: query ? [query] : undefined,
-    },
-    { id: 'history-reviewing', kind: 'reviewing', label: 'Reviewing', status: 'done' },
-    { id: 'history-finished', kind: 'finished', label: 'Finished', status: 'done' },
-  ]
-}
-
-function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
+function finalizeBlockSteps(steps: SearchStep[]): MessageSearchStepRef[] {
   if (steps.length === 0) return []
   const normalized: MessageSearchStepRef[] = steps.map((step) => ({
     id: step.id,
@@ -222,6 +194,39 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
     normalized.push({ id: 'finished', kind: 'finished', label: 'Finished', status: 'done' })
   }
   return normalized
+}
+
+function finalizeCopBlocks(blocks: CopBlock[], bridgeTexts: string[]): MessageCopBlocksRef {
+  return {
+    blocks: blocks.map((block) => ({
+      id: block.id,
+      title: block.title,
+      steps: finalizeBlockSteps(block.steps),
+      sources: [...block.sources],
+    })),
+    bridgeTexts: [...bridgeTexts],
+  }
+}
+
+function ensureCopBlock(blocks: CopBlock[]): CopBlock[] {
+  if (blocks.length > 0) return blocks
+  return [{ id: crypto.randomUUID(), title: '', steps: [], sources: [] }]
+}
+
+function addStepToLastBlock(blocks: CopBlock[], step: SearchStep): CopBlock[] {
+  const withBlock = ensureCopBlock(blocks)
+  return withBlock.map((b, i) =>
+    i === withBlock.length - 1
+      ? { ...b, steps: [...b.steps, step] }
+      : b,
+  )
+}
+
+function updateStepInBlocks(blocks: CopBlock[], stepId: string, updater: (s: SearchStep) => SearchStep): CopBlock[] {
+  return blocks.map((b) => ({
+    ...b,
+    steps: b.steps.map((s) => s.id === stepId ? updater(s) : s),
+  }))
 }
 
 export function ChatPage() {
@@ -287,6 +292,8 @@ export function ChatPage() {
   const [messageMemoryActionsMap, setMessageMemoryActionsMap] = useState<Map<string, MemoryActionRef[]>>(new Map())
   const [memoryActions, setMemoryActions] = useState<MemoryActionRef[]>([])
   const memoryActionsRef = useRef<MemoryActionRef[]>([])
+  // COP blocks 缓存：messageId -> cop blocks data
+  const [messageCopBlocksMap, setMessageCopBlocksMap] = useState<Map<string, MessageCopBlocksRef>>(new Map())
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 代码执行侧边面板
@@ -308,9 +315,12 @@ export function ChatPage() {
   const thinkingDraftRef = useRef('')
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
-  // Search 模式时间轴步骤（run 结束后保持，下次 run 开始时清除）
-  const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
-  const searchStepsRef = useRef<SearchStep[]>([])
+  // COP blocks: 多段工作流（run 结束后保持，下次 run 开始时清除）
+  const [copBlocks, setCopBlocks] = useState<CopBlock[]>([])
+  const copBlocksRef = useRef<CopBlock[]>([])
+  const [bridgeTexts, setBridgeTexts] = useState<string[]>([])
+  const bridgeTextsRef = useRef<string[]>([])
+  const pendingTextRef = useRef('')
   const [liveTimelineExiting, setLiveTimelineExiting] = useState(false)
   const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -436,16 +446,26 @@ export function ChatPage() {
     setShareModalOpen(true)
   }, [])
 
-  const applySearchSteps = useCallback((updater: (prev: SearchStep[]) => SearchStep[]) => {
-    setSearchSteps((prev) => {
+  const applyCopBlocks = useCallback((updater: (prev: CopBlock[]) => CopBlock[]) => {
+    setCopBlocks((prev) => {
       const next = updater(prev)
-      searchStepsRef.current = next
+      copBlocksRef.current = next
       return next
     })
   }, [])
-  const resetSearchSteps = useCallback(() => {
-    searchStepsRef.current = []
-    setSearchSteps([])
+  const applyBridgeTexts = useCallback((updater: (prev: string[]) => string[]) => {
+    setBridgeTexts((prev) => {
+      const next = updater(prev)
+      bridgeTextsRef.current = next
+      return next
+    })
+  }, [])
+  const resetCopState = useCallback(() => {
+    copBlocksRef.current = []
+    setCopBlocks([])
+    bridgeTextsRef.current = []
+    setBridgeTexts([])
+    pendingTextRef.current = ''
   }, [])
   const clearLiveRunSecurityArtifacts = useCallback(() => {
     setAssistantDraft('')
@@ -462,10 +482,11 @@ export function ChatPage() {
     memoryActionsRef.current = []
     setMemoryActions([])
     resetSearchSteps()
+    resetCopState()
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
-  }, [resetSearchSteps])
+  }, [resetCopState, resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -693,6 +714,7 @@ export function ChatPage() {
         const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
         const memoryActionsMap = new Map<string, MemoryActionRef[]>()
         const runEventsMap = new Map<string, MsgRunEvent[]>()
+        const copBlocksMap = new Map<string, MessageCopBlocksRef>()
         for (const msg of items) {
           if (msg.role !== 'assistant') continue
 
@@ -718,6 +740,8 @@ export function ChatPage() {
           if (cachedMemoryActions) memoryActionsMap.set(msg.id, cachedMemoryActions)
           const cachedRunEvents = readMsgRunEvents(msg.id)
           if (cachedRunEvents) runEventsMap.set(msg.id, cachedRunEvents)
+          const cachedCopBlocks = readMessageCopBlocks(msg.id)
+          if (cachedCopBlocks) copBlocksMap.set(msg.id, cachedCopBlocks)
         }
 
         // 服务端回放：补齐最新一轮的 thinking / 代码执行缓存
@@ -771,6 +795,7 @@ export function ChatPage() {
         setMessageSearchStepsMap(searchStepsMap)
         setMessageMemoryActionsMap(memoryActionsMap)
         setMsgRunEventsMap(runEventsMap)
+        setMessageCopBlocksMap(copBlocksMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
@@ -816,7 +841,7 @@ export function ChatPage() {
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
     setTopLevelBrowserActions([])
-    resetSearchSteps()
+    resetCopState()
     setLiveTimelineExiting(false)
     clearTimeout(liveTimelineExitTimerRef.current)
     setCancelSubmitting(false)
@@ -840,6 +865,7 @@ export function ChatPage() {
     setMessageThinkingMap(new Map())
     setMessageSearchStepsMap(new Map())
     setMessageMemoryActionsMap(new Map())
+    setMessageCopBlocksMap(new Map())
     setSourcePanelMessageId(null)
     disconnectSSE()
     sse.clearEvents()
@@ -878,7 +904,7 @@ export function ChatPage() {
     setTopLevelCodeExecutions([])
     setTopLevelBrowserActions([])
     setTopLevelSubAgents([])
-    resetSearchSteps()
+    resetCopState()
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -944,22 +970,26 @@ export function ChatPage() {
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
 
-        // search_* kind 路由到 searchSteps（所有模式均支持）
+        // search_* kind 路由到 copBlocks
         if (kind.startsWith('search_')) {
-          const searchKind = kind === 'search_planning' ? 'planning'
-            : kind === 'search_queries' ? 'searching'
-            : kind === 'search_reviewing' ? 'reviewing'
-            : 'planning'
-          const queries = Array.isArray(display.queries)
-            ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
-            : undefined
-          applySearchSteps((prev) => [...prev, {
-            id: segmentId,
-            kind: searchKind as SearchStep['kind'],
-            label,
-            status: 'active',
-            queries,
-          }])
+          if (kind === 'search_planning') {
+            // planning 段: 确保存在 COP block（不新增 step，标题由 timeline_title 设置）
+            applyCopBlocks((prev) => ensureCopBlock(prev))
+          } else {
+            const searchKind = kind === 'search_queries' ? 'searching'
+              : kind === 'search_reviewing' ? 'reviewing'
+              : 'searching'
+            const queries = Array.isArray(display.queries)
+              ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
+              : undefined
+            applyCopBlocks((prev) => addStepToLastBlock(prev, {
+              id: segmentId,
+              kind: searchKind as SearchStep['kind'],
+              label,
+              status: 'active',
+              queries,
+            }))
+          }
         } else {
           setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true, codeExecutions: [] }])
         }
@@ -975,9 +1005,7 @@ export function ChatPage() {
         setSegments((prev) =>
           prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
         )
-        applySearchSteps((prev) =>
-          prev.map((s) => (s.id === segmentId ? { ...s, status: 'done' as const } : s)),
-        )
+        applyCopBlocks((prev) => updateStepInBlocks(prev, segmentId, (s) => ({ ...s, status: 'done' as const })))
         continue
       }
 
@@ -990,7 +1018,7 @@ export function ChatPage() {
         const activeSeg = activeSegmentIdRef.current
         if (activeSeg) {
           if (!isThinking && !SHOW_EXPLICIT_THINKING) {
-            // segment 未渲染时，主内容直接送入 draft 以保证流式可见
+            pendingTextRef.current += delta
             setAssistantDraft((prev) => prev + delta)
           } else {
             setSegments((prev) =>
@@ -1004,6 +1032,7 @@ export function ChatPage() {
         } else if (isThinking) {
           setThinkingDraft((prev) => prev + delta)
         } else {
+          pendingTextRef.current += delta
           setAssistantDraft((prev) => prev + delta)
         }
         continue
@@ -1018,8 +1047,7 @@ export function ChatPage() {
           const entry: CodeExecution = codeExecutionCall.appended
           currentRunCodeExecutionsRef.current = codeExecutionCall.nextExecutions
           const activeSeg = activeSegmentIdRef.current
-          // 搜索段内的代码执行路由到 topLevel，由 SearchTimeline 统一渲染
-          const isSearchSeg = activeSeg && searchStepsRef.current.some((s) => s.id === activeSeg)
+          const isSearchSeg = activeSeg && copBlocksRef.current.some((b) => b.steps.some((s) => s.id === activeSeg))
           if (SHOW_EXPLICIT_THINKING && activeSeg && !isSearchSeg) {
             setSegments((prev) =>
               prev.map((s) =>
@@ -1044,20 +1072,23 @@ export function ChatPage() {
           currentRunSubAgentsRef.current = subAgentCall.nextAgents
           setTopLevelSubAgents((prev) => [...prev, subAgentCall.appended!])
         }
-        // 搜索模式：模型输出的 planning 小标题
+        // timeline_title: COP 块分割线
         if (toolName === SEARCH_PLANNING_TOOL_NAME) {
           const args = obj.arguments as Record<string, unknown> | undefined
           const rawLabel = typeof args?.label === 'string' ? args.label : undefined
-          const label = compactSingleLine(rawLabel) || DEFAULT_SEARCH_PLANNING_LABEL
-          applySearchSteps((prev) => {
-            const idx = prev.findIndex((s) => s.kind === 'planning')
-            if (idx >= 0) {
+          const label = compactSingleLine(rawLabel) || ''
+          // 如果有累积的 pending text，存为上一个块的 bridge text
+          if (pendingTextRef.current.trim() && copBlocksRef.current.length > 0) {
+            const bridgeIdx = copBlocksRef.current.length - 1
+            applyBridgeTexts((prev) => {
               const next = [...prev]
-              next[idx] = { ...next[idx], label, status: 'done' }
+              next[bridgeIdx] = pendingTextRef.current.trim()
               return next
-            }
-            return [{ id: 'planning', kind: 'planning', label, status: 'done' }, ...prev]
-          })
+            })
+            pendingTextRef.current = ''
+            setAssistantDraft('')
+          }
+          applyCopBlocks((prev) => [...prev, { id: crypto.randomUUID(), title: label, steps: [], sources: [] }])
           continue
         }
         // memory_* tool.call 驱动 MemoryActionBlock
@@ -1078,7 +1109,7 @@ export function ChatPage() {
           memoryActionsRef.current = [...memoryActionsRef.current, newAction]
           setMemoryActions([...memoryActionsRef.current])
         }
-        // web_search tool.call 驱动 SearchTimeline（所有模式均支持）
+        // web_search tool.call → 添加到当前 COP 块
         if (toolName === 'web_search' || llmName === 'web_search') {
           const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
           const args = obj.arguments as Record<string, unknown> | undefined
@@ -1091,16 +1122,13 @@ export function ChatPage() {
             : query
               ? [query]
               : undefined
-          // 不插入兜底 planning，直接添加 searching 步骤
-          applySearchSteps((prev) => {
-            return [...prev, {
-              id: callId,
-              kind: 'searching' as const,
-              label: 'Searching',
-              status: 'active' as const,
-              queries: displayQueries,
-            }]
-          })
+          applyCopBlocks((prev) => addStepToLastBlock(prev, {
+            id: callId,
+            kind: 'searching' as const,
+            label: 'Searching',
+            status: 'active' as const,
+            queries: displayQueries,
+          }))
         }
         continue
       }
@@ -1136,15 +1164,29 @@ export function ChatPage() {
               }))
               .filter((s) => !!s.url)
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
+            // 实时追加到当前块的 sources
+            applyCopBlocks((prev) => {
+              if (prev.length === 0) return prev
+              return prev.map((b, i) =>
+                i === prev.length - 1 ? { ...b, sources: [...b.sources, ...newSources] } : b,
+              )
+            })
           }
-          // 标记 searching 步骤完成
+          // 标记 searching 步骤完成（在当前 COP 块内）
           const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
           if (callId) {
-            applySearchSteps((prev) => {
-              const next = prev.map((s) => s.id === callId ? { ...s, status: 'done' as const } : s)
-              const allSearchDone = next.filter((s) => s.kind === 'searching').every((s) => s.status === 'done')
-              if (allSearchDone && !next.some((s) => s.kind === 'reviewing')) {
-                return [...next, { id: 'auto-reviewing', kind: 'reviewing' as const, label: 'Reviewing sources', status: 'active' as const }]
+            applyCopBlocks((prev) => {
+              let next = updateStepInBlocks(prev, callId, (s) => ({ ...s, status: 'done' as const }))
+              const lastBlock = next[next.length - 1]
+              if (lastBlock) {
+                const allSearchDone = lastBlock.steps.filter((s) => s.kind === 'searching').every((s) => s.status === 'done')
+                if (allSearchDone && !lastBlock.steps.some((s) => s.kind === 'reviewing')) {
+                  next = next.map((b, i) =>
+                    i === next.length - 1
+                      ? { ...b, steps: [...b.steps, { id: 'auto-reviewing', kind: 'reviewing' as const, label: 'Reviewing sources', status: 'active' as const }] }
+                      : b,
+                  )
+                }
               }
               return next
             })
@@ -1271,15 +1313,20 @@ export function ChatPage() {
         setMemoryActions([])
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
+        const runCopData = finalizeCopBlocks(copBlocksRef.current, bridgeTextsRef.current)
+        if (runCopData.blocks.length > 0) {
+          applyCopBlocks(() => runCopData.blocks.map((b) => ({ id: b.id, title: b.title, steps: b.steps, sources: b.sources })))
+        }
         // 让 live SearchTimeline 平滑收起而非瞬间消失
-        if (searchStepsRef.current.length > 0) {
+        if (copBlocksRef.current.length > 0) {
           setLiveTimelineExiting(true)
           clearTimeout(liveTimelineExitTimerRef.current)
           liveTimelineExitTimerRef.current = setTimeout(() => {
             setLiveTimelineExiting(false)
-            resetSearchSteps()
+            resetCopState()
           }, 500)
         }
+        pendingTextRef.current = ''
         setQueuedDraft(null)
         setAwaitingInput(false)
         setPendingUserInput(null)
@@ -1287,8 +1334,6 @@ export function ChatPage() {
         if (threadId) onRunEnded(threadId)
         refreshCredits()
         const runSources = [...currentRunSourcesRef.current]
-        // 不清除 currentRunSourcesRef —— SearchTimeline 完成后仍需读取
-        // 下次 run 开始时 SSE connect effect 自动清除
         const runArtifacts = [...currentRunArtifactsRef.current]
         currentRunArtifactsRef.current = []
         const runCodeExecs = [...currentRunCodeExecutionsRef.current]
@@ -1298,8 +1343,6 @@ export function ChatPage() {
         const runSubAgents = [...currentRunSubAgentsRef.current]
         currentRunSubAgentsRef.current = []
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
-          // setMessages 已在 refreshMessages 内完成，同一微任务中清除 draft
-          // React 18+ 自动批处理保证二者在同一帧渲染，无闪烁
           const completedAssistant = findAssistantMessageForRun(items, completedRunId)
           if (completedAssistant) {
             setAssistantDraft('')
@@ -1307,9 +1350,9 @@ export function ChatPage() {
               writeMessageSources(completedAssistant.id, runSources)
               setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
             }
-            if (runSearchSteps.length > 0) {
-              writeMessageSearchSteps(completedAssistant.id, runSearchSteps)
-              setMessageSearchStepsMap((prev) => new Map(prev).set(completedAssistant.id, runSearchSteps))
+            if (runCopData.blocks.length > 0) {
+              writeMessageCopBlocks(completedAssistant.id, runCopData)
+              setMessageCopBlocksMap((prev) => new Map(prev).set(completedAssistant.id, runCopData))
             }
             if (runArtifacts.length > 0) {
               writeMessageArtifacts(completedAssistant.id, runArtifacts)
@@ -1375,7 +1418,7 @@ export function ChatPage() {
         setTopLevelBrowserActions([])
         setTopLevelSubAgents([])
         setSegments([])
-        resetSearchSteps()
+        resetCopState()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
@@ -1401,7 +1444,7 @@ export function ChatPage() {
         setTopLevelBrowserActions([])
         setTopLevelSubAgents([])
         setSegments([])
-        resetSearchSteps()
+        resetCopState()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
@@ -1472,8 +1515,11 @@ export function ChatPage() {
     setTopLevelSubAgents([])
     setSegments([])
     activeSegmentIdRef.current = null
-    const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
-    if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
+    const runCopData = finalizeCopBlocks(copBlocksRef.current, bridgeTextsRef.current)
+    if (runCopData.blocks.length > 0) {
+      applyCopBlocks(() => runCopData.blocks.map((b) => ({ id: b.id, title: b.title, steps: b.steps, sources: b.sources })))
+    }
+    pendingTextRef.current = ''
     setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -1488,9 +1534,9 @@ export function ChatPage() {
           writeMessageSources(completedAssistant.id, runSources)
           setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
         }
-        if (runSearchSteps.length > 0) {
-          writeMessageSearchSteps(completedAssistant.id, runSearchSteps)
-          setMessageSearchStepsMap((prev) => new Map(prev).set(completedAssistant.id, runSearchSteps))
+        if (runCopData.blocks.length > 0) {
+          writeMessageCopBlocks(completedAssistant.id, runCopData)
+          setMessageCopBlocksMap((prev) => new Map(prev).set(completedAssistant.id, runCopData))
         }
         if (runArtifacts.length > 0) {
           writeMessageArtifacts(completedAssistant.id, runArtifacts)
@@ -1896,35 +1942,18 @@ export function ChatPage() {
     return resolveMessageSourcesForRender(messages, messageSourcesMap)
   }, [messages, messageSourcesMap])
 
-  const historicalTimelineMap = useMemo(() => {
-    const timelineMap = new Map<string, { steps: MessageSearchStepRef[]; sources: WebSource[] }>()
-
-    messages.forEach((msg, idx) => {
+  const historicalCopMap = useMemo(() => {
+    const copMap = new Map<string, { copData: MessageCopBlocksRef; sources: WebSource[] }>()
+    messages.forEach((msg) => {
       if (msg.role !== 'assistant') return
       const sources = resolvedMessageSources.get(msg.id) ?? []
-      const cachedSteps = messageSearchStepsMap.get(msg.id)
-      if (cachedSteps && cachedSteps.length > 0) {
-        timelineMap.set(msg.id, { steps: cachedSteps, sources })
-        return
+      const cachedCop = messageCopBlocksMap.get(msg.id)
+      if (cachedCop && cachedCop.blocks.length > 0) {
+        copMap.set(msg.id, { copData: cachedCop, sources })
       }
-
-      // 无缓存步骤时：需有 sources 才有兜底意义
-      if (sources.length === 0) return
-      // 仅 Search 模式线程用通用兜底，其他模式需有缓存步骤才渲染
-      if (!isSearchThread) return
-
-      let userQuery: string | undefined
-      for (let j = idx - 1; j >= 0; j--) {
-        if (messages[j].role === 'user') {
-          userQuery = messages[j].content
-          break
-        }
-      }
-      timelineMap.set(msg.id, { steps: buildHistoricalSearchSteps(userQuery), sources })
     })
-
-    return timelineMap
-  }, [isSearchThread, messages, resolvedMessageSources, messageSearchStepsMap])
+    return copMap
+  }, [messages, resolvedMessageSources, messageCopBlocksMap])
 
   const sourcePanelSources = sourcePanelMessageId ? resolvedMessageSources.get(sourcePanelMessageId) : undefined
   const sourcePanelUserQuery = useMemo(() => {
@@ -1992,8 +2021,8 @@ export function ChatPage() {
   }, [topLevelCodeExecutions])
 
   const copStepCount = useMemo(() => {
-    const timelineSteps = searchSteps.filter(s => s.kind !== 'finished').length
-    const segmentSteps = searchSteps.length === 0
+    const timelineSteps = copBlocks.flatMap((b) => b.steps).filter((s) => s.kind !== 'finished').length
+    const segmentSteps = copBlocks.length === 0
       ? segments.filter(s => s.mode !== 'hidden').length
       : 0
     const codeExecSteps = timelineSteps === 0 && segmentSteps === 0
@@ -2001,10 +2030,11 @@ export function ChatPage() {
       : 0
     const agentSteps = topLevelSubAgents.length
     return timelineSteps + segmentSteps + codeExecSteps + agentSteps
-  }, [searchSteps, segments, dedupedTopLevelCodeExecutions, topLevelSubAgents])
+  }, [copBlocks, segments, dedupedTopLevelCodeExecutions, topLevelSubAgents])
 
+  const lastCopBlock = copBlocks[copBlocks.length - 1]
   const copHeaderLabel = !assistantDraft
-    ? 'Thinking'
+    ? (lastCopBlock?.title || 'Thinking')
     : copStepCount > 0
       ? `${copStepCount} steps completed`
       : 'Completed'
@@ -2161,15 +2191,16 @@ export function ChatPage() {
               {messages.map((msg, idx) => {
                 const resolvedSources = msg.role === 'assistant' ? resolvedMessageSources.get(msg.id) : undefined
                 const canShowSources = !!(resolvedSources && resolvedSources.length > 0)
-                const timeline = msg.role === 'assistant'
-                  ? historicalTimelineMap.get(msg.id)
-                  : undefined
-                const timelineSteps = timeline?.steps ?? []
-                const timelineSources = timeline?.sources ?? (resolvedSources ?? [])
+                const historicalCop = msg.role === 'assistant' ? historicalCopMap.get(msg.id) : undefined
+                const historicalBlocks = historicalCop?.copData.blocks ?? []
+                const historicalBridgeTexts = historicalCop?.copData.bridgeTexts ?? []
+
                 const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
                 const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
                 const messageSubAgents = msg.role === 'assistant' ? messageSubAgentsMap.get(msg.id) : undefined
                 const messageMemoryActions = msg.role === 'assistant' ? messageMemoryActionsMap.get(msg.id) : undefined
+                const messageSearchSteps = msg.role === 'assistant' ? messageSearchStepsMap.get(msg.id) : undefined
+                const timelineSteps = messageSearchSteps ?? []
 
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
@@ -2177,17 +2208,50 @@ export function ChatPage() {
                   {messageMemoryActions && messageMemoryActions.length > 0 && (
                     <MemoryActionBlock actions={messageMemoryActions} />
                   )}
-                  {(timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0)) && (
+                  {/* 完成后的 COP 时间轴 */}
+                  {(historicalBlocks.length > 0 || timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0)) && (
                     <div style={{ marginBottom: '12px' }}>
-                      <SearchTimeline
-                        steps={timelineSteps}
-                        sources={timelineSources}
-                        isComplete
-                        codeExecutions={messageCodeExecutions}
-                        onOpenCodeExecution={openCodePanel}
-                        activeCodeExecutionId={codePanelExecution?.id}
-                        subAgents={messageSubAgents}
-                      />
+                      {historicalBlocks.map((block, bi) => (
+                        <Fragment key={block.id}>
+                          <SearchTimeline
+                            steps={block.steps}
+                            sources={block.sources}
+                            isComplete
+                            codeExecutions={bi === historicalBlocks.length - 1 ? messageCodeExecutions : undefined}
+                            onOpenCodeExecution={openCodePanel}
+                            activeCodeExecutionId={codePanelExecution?.id}
+                            subAgents={bi === historicalBlocks.length - 1 ? messageSubAgents : undefined}
+                            headerOverride={block.title || undefined}
+                          />
+                          {historicalBridgeTexts[bi] && (
+                            <div style={{ padding: '6px 0 8px', fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px' }}>
+                              {historicalBridgeTexts[bi]}
+                            </div>
+                          )}
+                        </Fragment>
+                      ))}
+                      {historicalBlocks.length === 0 && timelineSteps.length > 0 && (
+                        <SearchTimeline
+                          steps={timelineSteps}
+                          sources={resolvedSources ?? []}
+                          isComplete
+                          codeExecutions={messageCodeExecutions}
+                          onOpenCodeExecution={openCodePanel}
+                          activeCodeExecutionId={codePanelExecution?.id}
+                          subAgents={messageSubAgents}
+                        />
+                      )}
+                      {historicalBlocks.length === 0 && timelineSteps.length === 0 && (hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0)) && (
+                        <SearchTimeline
+                          steps={[]}
+                          sources={[]}
+                          isComplete
+                          codeExecutions={messageCodeExecutions}
+                          onOpenCodeExecution={openCodePanel}
+                          activeCodeExecutionId={codePanelExecution?.id}
+                          subAgents={messageSubAgents}
+                        />
+                      )}
                     </div>
                   )}
                   <MessageBubble
@@ -2267,8 +2331,8 @@ export function ChatPage() {
                 )
               })}
 
-              {/* 流式 COP 状态指示：Thinking / XX steps completed */}
-              {isStreaming && searchSteps.length === 0 && (segments.length > 0 || dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || !assistantDraft) && (
+              {/* 流式 COP 状态指示（无 copBlocks 时）：Thinking / XX steps completed */}
+              {isStreaming && copBlocks.length === 0 && (segments.length > 0 || dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || !assistantDraft) && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -2431,19 +2495,50 @@ export function ChatPage() {
               )}
 
               {/* 流式期间的 live 时间轴 */}
-              {(isStreaming || liveTimelineExiting) && searchSteps.length > 0 && (
-                <SearchTimeline
-                  steps={searchSteps}
-                  sources={currentRunSourcesRef.current}
-                  isComplete={liveTimelineExiting && !isStreaming}
-                  codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
-                  onOpenCodeExecution={openCodePanel}
-                  activeCodeExecutionId={codePanelExecution?.id}
-                  subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
-                  headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
-                  shimmer={!liveTimelineExiting && !assistantDraft}
-                  live={!liveTimelineExiting}
-                />
+              {/* 流式期间的 live COP / Search 时间轴 */}
+              {(isStreaming || liveTimelineExiting) && (copBlocks.length > 0 || searchSteps.length > 0) && (
+                copBlocks.length > 0 ? (
+                  <div>
+                    {copBlocks.map((block, bi) => {
+                      const isLastBlock = bi === copBlocks.length - 1
+                      const blockComplete = !isLastBlock || (liveTimelineExiting && !isStreaming)
+                      return (
+                        <Fragment key={block.id}>
+                          <SearchTimeline
+                            steps={block.steps}
+                            sources={block.sources}
+                            isComplete={blockComplete}
+                            codeExecutions={isLastBlock && dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
+                            onOpenCodeExecution={openCodePanel}
+                            activeCodeExecutionId={codePanelExecution?.id}
+                            subAgents={isLastBlock && topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
+                            headerOverride={block.title || (!liveTimelineExiting ? copHeaderLabel : undefined)}
+                            shimmer={!liveTimelineExiting && isLastBlock && !assistantDraft}
+                            live={!liveTimelineExiting && isLastBlock}
+                          />
+                          {bridgeTexts[bi] && (
+                            <div style={{ padding: '4px 0', fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px' }}>
+                              {bridgeTexts[bi]}
+                            </div>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <SearchTimeline
+                    steps={searchSteps}
+                    sources={currentRunSourcesRef.current}
+                    isComplete={liveTimelineExiting && !isStreaming}
+                    codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
+                    onOpenCodeExecution={openCodePanel}
+                    activeCodeExecutionId={codePanelExecution?.id}
+                    subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
+                    headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
+                    shimmer={!liveTimelineExiting && !assistantDraft}
+                    live={!liveTimelineExiting}
+                  />
+                )
               )}
 
               {/* 非搜索模式：常规 segment 渲染 */}

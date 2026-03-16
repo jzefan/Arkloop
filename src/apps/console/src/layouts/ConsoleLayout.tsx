@@ -10,7 +10,7 @@ import {
   Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail, AlignLeft,
   PanelLeftClose, PanelLeftOpen, ChevronDown,
   Settings, ScrollText, Blocks, Loader2,
-  Wrench, SlidersHorizontal, Puzzle, ShieldAlert,
+  Wrench, SlidersHorizontal, Puzzle, ShieldAlert, ShieldCheck,
 } from 'lucide-react'
 import { getMe, logout, isApiError, type MeResponse } from '../api'
 import { ConsoleSettingsModal } from '../components/SettingsModal'

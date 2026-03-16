@@ -9,6 +9,8 @@ const (
 	GroupMemory        = "memory"
 	GroupDocument      = "document"
 	GroupOrchestration = "orchestration"
+	GroupDiscovery     = "discovery"
+	GroupFilesystem    = "filesystem"
 
 	WebSearchDefaultMaxResults = 5
 	WebSearchMaxResultsLimit   = 20
@@ -20,7 +22,8 @@ type ToolMeta struct {
 	Name           string
 	Group          string
 	Label          string
-	LLMDescription string
+	ShortDesc      string // ~20 tokens, always injected into context for search_tools catalog
+	LLMDescription string // full description, loaded on demand via search_tools
 }
 
 type ToolGroup struct {
@@ -29,20 +32,34 @@ type ToolGroup struct {
 }
 
 var groupOrder = []string{
+	GroupDiscovery,
 	GroupWebSearch,
 	GroupWebFetch,
 	GroupSandbox,
+	GroupFilesystem,
 	GroupMemory,
 	GroupDocument,
 	GroupOrchestration,
 }
 
 var registry = []ToolMeta{
+	// ── discovery ──
+	{
+		Name:      "search_tools",
+		Group:     GroupDiscovery,
+		Label:     "Search tools",
+		ShortDesc: "search available tools by name or keyword and load their full schema",
+		LLMDescription: "search available tools by name or keyword and return their full parameter schema. " +
+			"Use when you need a tool that is not in your current tool set. " +
+			"Pass multiple queries in one call to batch-load several tools at once. " +
+			"After this call succeeds, the matched tools become callable in subsequent turns.",
+	},
 	// ── web ──
 	{
-		Name:  "web_search",
-		Group: GroupWebSearch,
-		Label: "Web search",
+		Name:      "web_search",
+		Group:     GroupWebSearch,
+		Label:     "Web search",
+		ShortDesc: "search the web and return results",
 		LLMDescription: fmt.Sprintf(
 			"search the web and return title, URL, and snippet for each result. "+
 				"Use the queries array (up to %d) to run independent searches in one call; use the scalar query field for a single question. "+
@@ -53,13 +70,15 @@ var registry = []ToolMeta{
 		Name:           "web_fetch",
 		Group:          GroupWebFetch,
 		Label:          "Web fetch",
+		ShortDesc:      "fetch a web page and return its content as text",
 		LLMDescription: "fetch a web page and return its title and body as plain text. Use when search snippets are insufficient and a specific page likely contains deeper information. Prefer official or authoritative sources. Batch-callable; do not re-fetch the same URL.",
 	},
 	// ── sandbox ──
 	{
-		Name:  "python_execute",
-		Group: GroupSandbox,
-		Label: "Python execution",
+		Name:      "python_execute",
+		Group:     GroupSandbox,
+		Label:     "Python execution",
+		ShortDesc: "execute Python code in an isolated sandbox",
 		LLMDescription: "execute Python code in an isolated sandbox. Use for calculations, data processing, or visualization instead of computing manually. " +
 			"Pre-installed: numpy, pandas, matplotlib, plotly, scipy, sympy, pillow, scikit-learn, kaleido. " +
 			"For charts prefer Plotly; use fig.write_image() for PNG, fall back to fig.write_html() only on failure. Do not set pio.renderers. " +
@@ -72,9 +91,10 @@ var registry = []ToolMeta{
 			"Never output raw /workspace/ or /tmp/output/ paths. Never invent artifact keys.",
 	},
 	{
-		Name:  "exec_command",
-		Group: GroupSandbox,
-		Label: "Command execution",
+		Name:      "exec_command",
+		Group:     GroupSandbox,
+		Label:     "Command execution",
+		ShortDesc: "run a shell command in a persistent sandbox session",
 		LLMDescription: "run a shell command in a persistent sandbox session. Use session_mode=auto by default. " +
 			"Reuse the session_ref returned by the first call; do not issue a new exec_command to poll a busy session — use write_stdin instead. " +
 			"If the result shows running=true or only control sequences, continue with write_stdin. " +
@@ -87,9 +107,10 @@ var registry = []ToolMeta{
 			"Never output raw paths. Never invent artifact keys.",
 	},
 	{
-		Name:  "write_stdin",
-		Group: GroupSandbox,
-		Label: "Shell stdin",
+		Name:      "write_stdin",
+		Group:     GroupSandbox,
+		Label:     "Shell stdin",
+		ShortDesc: "send stdin or poll output from a running shell session",
 		LLMDescription: "send stdin to, or poll output from, a running shell session. " +
 			"Pass the session_ref from exec_command. Use only when exec_command returned running=true or the process awaits stdin. " +
 			"Set chars to a non-empty string to write, or omit/empty to poll new output. " +
@@ -98,9 +119,10 @@ var registry = []ToolMeta{
 			"Never invent artifact keys.",
 	},
 	{
-		Name:  "browser",
-		Group: GroupSandbox,
-		Label: "Browser automation",
+		Name:      "browser",
+		Group:     GroupSandbox,
+		Label:     "Browser automation",
+		ShortDesc: "run browser automation commands in the sandbox",
 		LLMDescription: "run browser automation commands in the sandbox. Use only when web_search/web_fetch cannot complete the task (JS rendering, DOM interaction, login flows, multi-tab navigation). " +
 			"Pass the raw subcommand: navigate <url>, snapshot, screenshot, click <ref>, type <ref> <text>, fill <ref> <text>, press <key>, tab list, tab select <index>, console, network. " +
 			"Session reuse, waiting, retry, and recovery are handled by the backend; do not pass session_mode/share_scope. " +
@@ -109,11 +131,62 @@ var registry = []ToolMeta{
 			"Set yield_time_ms high enough for pages to settle; avoid tiny values such as 50ms, prefer 1500-5000ms. " +
 			"Only reference artifact keys that actually appear in result.artifacts; never invent artifact keys.",
 	},
+	// ── filesystem ──
+	{
+		Name:      "read_file",
+		Group:     GroupFilesystem,
+		Label:     "Read file",
+		ShortDesc: "read file content with line numbers and optional range",
+		LLMDescription: "read the contents of a file and return them with line numbers. " +
+			"Use offset and limit to page through large files. Default limit is 2000 lines. " +
+			"Files larger than 256 KB are rejected; use offset/limit to read in sections. " +
+			"Always read a file before editing it.",
+	},
+	{
+		Name:      "write_file",
+		Group:     GroupFilesystem,
+		Label:     "Write file",
+		ShortDesc: "create or overwrite a file",
+		LLMDescription: "create a new file or overwrite an existing file with the provided content. " +
+			"Parent directories are created automatically. " +
+			"Prefer edit over write_file when making targeted changes to existing files.",
+	},
+	{
+		Name:      "edit",
+		Group:     GroupFilesystem,
+		Label:     "Edit file",
+		ShortDesc: "replace a unique string in a file (str_replace semantics)",
+		LLMDescription: "replace one occurrence of old_string with new_string in the specified file. " +
+			"old_string must match exactly once — include enough surrounding context (3-5 lines before and after) to ensure uniqueness. " +
+			"To create a new file: set old_string to empty. To delete content: set new_string to empty. " +
+			"Always read_file first to verify exact text before editing.",
+	},
+	{
+		Name:      "glob",
+		Group:     GroupFilesystem,
+		Label:     "Glob files",
+		ShortDesc: "find files by glob pattern",
+		LLMDescription: "find files matching a glob pattern and return their paths. " +
+			"Uses ripgrep when available for speed; falls back to Go filepath walk. " +
+			"Results are sorted by path length (shortest first). Maximum 1000 results. " +
+			"Patterns like **/*.go, src/**/*.ts, *.md are supported.",
+	},
+	{
+		Name:      "grep",
+		Group:     GroupFilesystem,
+		Label:     "Grep files",
+		ShortDesc: "search file contents by regex pattern",
+		LLMDescription: "search file contents for a regex pattern and return matching lines with file:line:content format. " +
+			"Uses ripgrep when available; falls back to Go regex walk. " +
+			"Use include to restrict to specific file types (e.g. *.go). Maximum 200 matches. " +
+			"Results are sorted by file modification time (newest first) in fallback mode.",
+	},
 	// ── memory ──
 	{
-		Name:  "memory_search",
-		Group: GroupMemory,
-		Label: "Memory search",
+		Name:      "memory_search",
+		Group:     GroupMemory,
+		Label:     "Memory search",
+		ShortDesc: "search long-term memory for user preferences and context",
 		LLMDescription: "search long-term memory for user preferences, past experiences, constraints, or prior interactions. " +
 			"Use for recommendations, comparisons, preference-driven questions, or open-ended problems where user context improves quality. " +
 			"Call at most once per query. Results may inform subsequent tool choices but rarely suffice alone. " +
@@ -123,51 +196,58 @@ var registry = []ToolMeta{
 		Name:           "memory_read",
 		Group:          GroupMemory,
 		Label:          "Memory read",
+		ShortDesc:      "read the full content of a memory entry by URI",
 		LLMDescription: "read the full content of a memory entry by URI. Internal fields (uri, _ref, paths) must never be shown to the user.",
 	},
 	{
 		Name:           "memory_write",
 		Group:          GroupMemory,
 		Label:          "Memory write",
+		ShortDesc:      "store knowledge in long-term memory",
 		LLMDescription: "store knowledge in long-term memory for future reference.",
 	},
 	{
 		Name:           "memory_forget",
 		Group:          GroupMemory,
 		Label:          "Memory forget",
+		ShortDesc:      "remove a specific memory entry by URI",
 		LLMDescription: "remove a specific memory entry by URI.",
 	},
 	{
-		Name:  "conversation_search",
-		Group: GroupMemory,
-		Label: "Conversation search",
+		Name:      "conversation_search",
+		Group:     GroupMemory,
+		Label:     "Conversation search",
+		ShortDesc: "keyword-search visible conversation history",
 		LLMDescription: "keyword-search the current user's visible conversation history across all threads. " +
 			"Use to recall previously discussed facts not stored in long-term memory. Returns matching messages with thread_id, role, snippet, and timestamp. " +
 			"This is keyword search, not semantic search, and costs no model tokens.",
 	},
 	// ── document ──
 	{
-		Name:  "document_write",
-		Group: GroupDocument,
-		Label: "Document write",
+		Name:      "document_write",
+		Group:     GroupDocument,
+		Label:     "Document write",
+		ShortDesc: "write a Markdown document as a downloadable artifact",
 		LLMDescription: "write a Markdown document and save it as a downloadable artifact. " +
 			"Use when the user requests a report, summary, plan, article, or any long-form document. " +
 			"Reference the result as [label](artifact:<key>).",
 	},
 	// ── orchestration ──
 	{
-		Name:  "acp_agent",
-		Group: GroupOrchestration,
-		Label: "ACP agent",
+		Name:      "acp_agent",
+		Group:     GroupOrchestration,
+		Label:     "ACP agent",
+		ShortDesc: "delegate a task to an external ACP coding agent",
 		LLMDescription: "delegate a task to an external ACP-compatible coding agent running inside the sandbox (e.g. opencode). " +
 			"The agent operates autonomously with its own LLM, tools, and workspace. " +
 			"Use for code-heavy tasks: implementation, debugging, refactoring, test execution. " +
 			"This tool connects to an external agent process in the sandbox — it does NOT create an Arkloop sub-agent.",
 	},
 	{
-		Name:  "spawn_agent",
-		Group: GroupOrchestration,
-		Label: "Spawn agent",
+		Name:      "spawn_agent",
+		Group:     GroupOrchestration,
+		Label:     "Spawn agent",
+		ShortDesc: "create a sub-agent with its own persona and tools",
 		LLMDescription: "create an Arkloop sub-agent that runs as an independent child run with its own persona, tools, and context. " +
 			"Use to delegate a self-contained subtask to a specific internal persona (e.g. research, specialized analysis). " +
 			"Returns a handle (sub_agent_id) immediately; use wait_agent to retrieve the result. " +
@@ -178,42 +258,49 @@ var registry = []ToolMeta{
 		Name:           "send_input",
 		Group:          GroupOrchestration,
 		Label:          "Send input",
+		ShortDesc:      "send a follow-up message to a sub-agent",
 		LLMDescription: "send a follow-up message to an existing sub-agent. Call before resume_agent to continue a collaboration thread.",
 	},
 	{
 		Name:           "wait_agent",
 		Group:          GroupOrchestration,
 		Label:          "Wait agent",
+		ShortDesc:      "block until a sub-agent completes and return its result",
 		LLMDescription: "block until a sub-agent reaches a terminal state and return its status snapshot, including output when available.",
 	},
 	{
 		Name:           "resume_agent",
 		Group:          GroupOrchestration,
 		Label:          "Resume agent",
+		ShortDesc:      "resume a paused sub-agent after sending input",
 		LLMDescription: "resume a paused sub-agent after new input has been sent via send_input.",
 	},
 	{
 		Name:           "close_agent",
 		Group:          GroupOrchestration,
 		Label:          "Close agent",
+		ShortDesc:      "close a sub-agent handle",
 		LLMDescription: "close a sub-agent handle. Call when no further interaction is needed.",
 	},
 	{
 		Name:           "interrupt_agent",
 		Group:          GroupOrchestration,
 		Label:          "Interrupt agent",
+		ShortDesc:      "cancel the active run of a sub-agent",
 		LLMDescription: "cancel the active run of a sub-agent immediately.",
 	},
 	{
 		Name:           "summarize_thread",
 		Group:          GroupOrchestration,
 		Label:          "Summarize thread",
+		ShortDesc:      "update the current thread title with a summary",
 		LLMDescription: "update the current thread title with a concise summary.",
 	},
 	{
-		Name:  "timeline_title",
-		Group: GroupOrchestration,
-		Label: "Timeline title",
+		Name:      "timeline_title",
+		Group:     GroupOrchestration,
+		Label:     "Timeline title",
+		ShortDesc: "set a label for the user-facing thinking timeline",
 		LLMDescription: "set a short label for the user-facing thinking timeline. " +
 			"Call in parallel with your first tool call each round, and whenever you are thinking without other tools. " +
 			"Label: single-line plain text, same language as user input. " +
@@ -224,6 +311,7 @@ var registry = []ToolMeta{
 		Name:           "ask_user",
 		Group:          GroupOrchestration,
 		Label:          "Ask user",
+		ShortDesc:      "present multiple-choice questions to the user",
 		LLMDescription: "present structured multiple-choice questions to the user. Use when a clear choice between specific options is needed.",
 	},
 }
