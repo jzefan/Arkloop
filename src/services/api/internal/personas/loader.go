@@ -43,6 +43,7 @@ type RepoPersona struct {
 	SelectorOrder       *int           `yaml:"selector_order"`
 	ToolAllowlist       []string       `yaml:"tool_allowlist"`
 	ToolDenylist        []string       `yaml:"tool_denylist"`
+	CoreTools           []string       `yaml:"core_tools"`
 	Budgets             map[string]any `yaml:"budgets"`
 	TitleSummarize      map[string]any `yaml:"title_summarize"`
 	PreferredCredential string         `yaml:"preferred_credential"`

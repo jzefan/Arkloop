@@ -483,7 +483,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, _ *uuid.UUID) ([]Defini
 
 	query := `SELECT persona_key, version, display_name, description,
 		        soul_md, user_selectable, selector_name, selector_order,
-		        prompt_md, tool_allowlist, COALESCE(tool_denylist, '{}'), budgets_json, COALESCE(roles_json, '{}'::jsonb), title_summarize_json,
+		        prompt_md, tool_allowlist, COALESCE(tool_denylist, '{}'), COALESCE(core_tools, '{}'), budgets_json, COALESCE(roles_json, '{}'::jsonb), title_summarize_json,
 		        executor_type, executor_config_json,
 		        preferred_credential, model, reasoning_mode, prompt_cache_control,
 		        updated_at
@@ -509,9 +509,10 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, _ *uuid.UUID) ([]Defini
 			selectorName        *string
 			selectorOrder       *int
 			promptMD            string
-			toolAllowlist       []string
-			toolDenylist        []string
-			budgetsRaw          []byte
+		toolAllowlist       []string
+		toolDenylist        []string
+		coreTools           []string
+		budgetsRaw          []byte
 			rolesRaw            []byte
 			titleSummarizeRaw   []byte
 			executorType        string
@@ -524,7 +525,7 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, _ *uuid.UUID) ([]Defini
 		)
 		if err := rows.Scan(&personaKey, &version, &displayName, &description,
 			&soulMD, &userSelectable, &selectorName, &selectorOrder,
-			&promptMD, &toolAllowlist, &toolDenylist, &budgetsRaw, &rolesRaw, &titleSummarizeRaw,
+			&promptMD, &toolAllowlist, &toolDenylist, &coreTools, &budgetsRaw, &rolesRaw, &titleSummarizeRaw,
 			&executorType, &executorConfigRaw, &preferredCredential, &model, &reasoningMode, &promptCacheControl, &updatedAt); err != nil {
 			return nil, err
 		}
@@ -561,9 +562,10 @@ func LoadFromDB(ctx context.Context, pool *pgxpool.Pool, _ *uuid.UUID) ([]Defini
 			UserSelectable:      userSelectable,
 			SelectorName:        strPtrOrNilPtr(selectorName),
 			SelectorOrder:       selectorOrder,
-			ToolAllowlist:       toolAllowlist,
-			ToolDenylist:        toolDenylist,
-			Budgets:             budgets,
+		ToolAllowlist:       toolAllowlist,
+		ToolDenylist:        toolDenylist,
+		CoreTools:           coreTools,
+		Budgets:             budgets,
 			SoulMD:              strings.TrimSpace(soulMD),
 			PromptMD:            promptMD,
 			ExecutorType:        executorType,

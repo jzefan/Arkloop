@@ -22,7 +22,7 @@ const (
 
 const personaSelectColumns = `id, account_id, project_id, persona_key, version, display_name, description,
 	    soul_md, user_selectable, selector_name, selector_order,
-	    prompt_md, tool_allowlist, tool_denylist, budgets_json, roles_json, title_summarize_json,
+	    prompt_md, tool_allowlist, tool_denylist, COALESCE(core_tools, '{}'), budgets_json, roles_json, title_summarize_json,
 	    is_active, created_at, updated_at,
 	    preferred_credential, model, reasoning_mode, prompt_cache_control,
 	    executor_type, executor_config_json,
@@ -56,6 +56,7 @@ type Persona struct {
 	PromptMD            string
 	ToolAllowlist       []string
 	ToolDenylist        []string
+	CoreTools           []string
 	BudgetsJSON         json.RawMessage
 	RolesJSON           json.RawMessage
 	TitleSummarizeJSON  json.RawMessage
@@ -79,6 +80,7 @@ type PersonaPatch struct {
 	PromptMD            *string
 	ToolAllowlist       []string
 	ToolDenylist        []string
+	CoreTools           []string
 	BudgetsJSON         json.RawMessage
 	RolesJSON           json.RawMessage
 	IsActive            *bool
@@ -152,7 +154,7 @@ func scanPersona(scanner personaScanner, persona *Persona) error {
 		&persona.ID, &persona.AccountID, &persona.ProjectID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description,
 		&persona.SoulMD, &persona.UserSelectable, &persona.SelectorName, &persona.SelectorOrder,
-		&persona.PromptMD, &persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.RolesJSON, &persona.TitleSummarizeJSON,
+		&persona.PromptMD, &persona.ToolAllowlist, &persona.ToolDenylist, &persona.CoreTools, &persona.BudgetsJSON, &persona.RolesJSON, &persona.TitleSummarizeJSON,
 		&persona.IsActive, &persona.CreatedAt, &persona.UpdatedAt,
 		&persona.PreferredCredential, &persona.Model, &persona.ReasoningMode, &persona.PromptCacheControl,
 		&persona.ExecutorType, &persona.ExecutorConfigJSON,
@@ -511,6 +513,11 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, projectID, id uui
 	if patch.ToolDenylist != nil {
 		setClauses = append(setClauses, fmt.Sprintf("tool_denylist = $%d", argIdx))
 		args = append(args, patch.ToolDenylist)
+		argIdx++
+	}
+	if patch.CoreTools != nil {
+		setClauses = append(setClauses, fmt.Sprintf("core_tools = $%d", argIdx))
+		args = append(args, patch.CoreTools)
 		argIdx++
 	}
 	if len(patch.BudgetsJSON) > 0 {
