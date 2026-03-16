@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { isDesktop } from '@arkloop/shared/desktop'
+import { LoadingPage } from '@arkloop/shared'
 import { Sidebar } from '../components/Sidebar'
 import { DesktopTitleBar } from '../components/DesktopTitleBar'
 import { SettingsModal } from '../components/SettingsModal'
@@ -9,6 +10,7 @@ import type { DesktopSettingsKey } from '../components/DesktopSettings'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
 import { NotificationsPanel } from '../components/NotificationsPanel'
 import { EmailVerificationGate } from '../components/EmailVerificationGate'
+import { useLocale } from '../contexts/LocaleContext'
 import type { SettingsTab } from '../components/SettingsModal'
 import {
   getMe,
@@ -30,6 +32,7 @@ type Props = {
 export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useLocale()
 
   const isSearchOpen = location.pathname.endsWith('/search')
 
@@ -227,7 +230,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
 
   // email 验证门控：flag 开启 + 未验证时全屏拦截
   if (!meLoaded) {
-    return <div style={{ position: 'fixed', inset: 0, background: 'var(--c-bg-page)' }} />
+    return <LoadingPage label={t.loading} />
   }
 
   if (me !== null && !me.email_verified && me.email_verification_required && me.email) {
@@ -343,7 +346,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           />
         ) : (
           <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen, threads, onThreadDeleted: handleThreadDeleted, pendingSkillPrompt, onConsumeSkillPrompt: () => setPendingSkillPrompt(null), appMode, availableAppModes, onSetAppMode: handleSetAppMode }} />
+            <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen, threads, onThreadDeleted: handleThreadDeleted, pendingSkillPrompt, onConsumeSkillPrompt: () => setPendingSkillPrompt(null), onOpenSettings: (tab: SettingsTab = 'account') => { setSettingsInitialTab(tab); setSettingsOpen(true) }, appMode, availableAppModes, onSetAppMode: handleSetAppMode }} />
             {notificationsOpen && (
               <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={handleNotificationMarkedRead} />
             )}

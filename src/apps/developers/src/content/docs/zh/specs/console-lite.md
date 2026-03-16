@@ -553,12 +553,12 @@ Lite 界面不暴露任何积分配置。部署脚本负责初始化以下 Platf
 ```json
 {
   "credit.deduction_policy": "{\"tiers\":[{\"multiplier\":0}]}",
-  "quota.runs_per_month": 999999,
-  "quota.tokens_per_month": 999999999
+  "quota.runs_per_month": 0,
+  "quota.tokens_per_month": 0
 }
 ```
 
-这让所有 run 零积分消耗，配额近乎无限。后端 entitlement middleware 的检查逻辑不变，但因为 multiplier=0 + 超高配额，实质上不会阻断任何操作。用户无需感知积分系统的存在。
+这让所有 run 零积分消耗，配额默认不限。后端 entitlement middleware 的检查逻辑不变，但因为 multiplier=0 + 0 表示不限额，实质上不会阻断任何操作。用户无需感知积分系统的存在。
 
 ---
 

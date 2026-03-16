@@ -1,17 +1,17 @@
 package main
 
 import (
-"net/url"
-"os"
-"fmt"
-"strings"
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
 )
 
 func main() {
-if err := run(); err != nil {
-_, _ = os.Stderr.WriteString(err.Error() + "\n")
-os.Exit(1)
-}
+	if err := run(); err != nil {
+		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(1)
+	}
 }
 
 func lookupDatabaseDSN() string {

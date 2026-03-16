@@ -13,9 +13,11 @@ const LOCALE_KEY = 'arkloop:web:locale'
 const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
+const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
 
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
+export const LEARNING_PERSONA_KEY = 'stem-tutor'
 
 export type Theme = 'system' | 'light' | 'dark'
 export type AppMode = 'chat' | 'claw'
@@ -166,6 +168,29 @@ export function writeSelectedPersonaKeyToStorage(personaKey: string): void {
   if (!trimmed) return
   try {
     localStorage.setItem(SELECTED_PERSONA_KEY, trimmed)
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export function readSelectedModelFromStorage(): string | null {
+  if (!canUseLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(SELECTED_MODEL_KEY)
+    return raw?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+export function writeSelectedModelToStorage(model: string | null): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (model) {
+      localStorage.setItem(SELECTED_MODEL_KEY, model)
+    } else {
+      localStorage.removeItem(SELECTED_MODEL_KEY)
+    }
   } catch {
     // 忽略存储失败
   }
@@ -422,6 +447,68 @@ export function writeMessageSearchSteps(messageId: string, steps: MessageSearchS
   if (!canUseLocalStorage() || !messageId || steps.length === 0) return
   try {
     localStorage.setItem(messageSearchStepsKey(messageId), JSON.stringify(steps))
+  } catch { /* ignore */ }
+}
+
+// -- Sub-Agent --
+
+export type SubAgentStatus = 'spawning' | 'active' | 'completed' | 'failed' | 'closed'
+
+export type SubAgentRef = {
+  id: string
+  subAgentId?: string
+  nickname?: string
+  role?: string
+  personaId?: string
+  contextMode?: string
+  input?: string
+  output?: string
+  status: SubAgentStatus
+  error?: string
+  depth?: number
+}
+
+function isSubAgentStatus(v: unknown): v is SubAgentStatus {
+  return v === 'spawning' || v === 'active' || v === 'completed' || v === 'failed' || v === 'closed'
+}
+
+function isSubAgentRef(v: unknown): v is SubAgentRef {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  if (typeof o.id !== 'string' || !o.id) return false
+  if (!isSubAgentStatus(o.status)) return false
+  return true
+}
+
+function messageSubAgentsKey(messageId: string): string {
+  return `arkloop:web:msg_sub_agents:${messageId}`
+}
+
+export function readMessageSubAgents(messageId: string): SubAgentRef[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageSubAgentsKey(messageId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(messageSubAgentsKey(messageId))
+      return null
+    }
+    if (!parsed.every((item) => isSubAgentRef(item))) {
+      localStorage.removeItem(messageSubAgentsKey(messageId))
+      return null
+    }
+    return parsed
+  } catch {
+    try { localStorage.removeItem(messageSubAgentsKey(messageId)) } catch { /* ignore */ }
+    return null
+  }
+}
+
+export function writeMessageSubAgents(messageId: string, agents: SubAgentRef[]): void {
+  if (!canUseLocalStorage() || !messageId || agents.length === 0) return
+  try {
+    localStorage.setItem(messageSubAgentsKey(messageId), JSON.stringify(agents))
   } catch { /* ignore */ }
 }
 

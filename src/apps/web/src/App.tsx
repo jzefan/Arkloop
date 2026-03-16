@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { LoadingPage } from '@arkloop/shared'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
@@ -7,12 +8,13 @@ import { ChatPage } from './components/ChatPage'
 import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
 import { OnboardingWizard } from './components/OnboardingWizard'
+import { useLocale } from './contexts/LocaleContext'
 import {
   clearActiveThreadIdInStorage,
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
 import {
   isLocalMode,
@@ -21,7 +23,11 @@ import {
   getDesktopAccessToken,
 } from '@arkloop/shared/desktop'
 
+const sessionRestoreRetries = 12
+const sessionRestoreDelayMs = 1000
+
 function App() {
+  const { t } = useLocale()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
@@ -63,25 +69,21 @@ function App() {
       return
     }
 
-    const tryRefresh = (retries: number) => {
-      refreshAccessToken(controller.signal)
-        .then((resp) => {
-          if (controller.signal.aborted) return
-          writeAccessTokenToStorage(resp.access_token)
-          setAccessToken(resp.access_token)
-          setAuthChecked(true)
-        })
-        .catch((err) => {
-          if (controller.signal.aborted) return
-          const isNetwork = err instanceof TypeError || (err && typeof err === 'object' && 'code' in err)
-          if (isNetwork && retries > 0) {
-            setTimeout(() => tryRefresh(retries - 1), 2000)
-            return
-          }
-          setAuthChecked(true)
-        })
-    }
-    tryRefresh(3)
+    restoreAccessSession({
+      signal: controller.signal,
+      retries: sessionRestoreRetries,
+      retryDelayMs: sessionRestoreDelayMs,
+    })
+      .then((resp) => {
+        if (controller.signal.aborted) return
+        writeAccessTokenToStorage(resp.access_token)
+        setAccessToken(resp.access_token)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (controller.signal.aborted) return
+        setAuthChecked(true)
+      })
 
     return () => {
       controller.abort()
@@ -114,7 +116,7 @@ function App() {
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route path="/s/:token" element={<SharePage />} />
       {!authChecked ? (
-        <Route path="*" element={<div />} />
+        <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (
         <>
           <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />

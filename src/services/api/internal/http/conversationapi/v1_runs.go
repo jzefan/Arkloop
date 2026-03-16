@@ -58,6 +58,7 @@ type createRunRequest struct {
 	PersonaID      *string `json:"persona_id"`
 	OutputRouteID  *string `json:"output_route_id"`
 	OutputModelKey *string `json:"output_model_key"`
+	Model          *string `json:"model"`
 }
 
 type createRunResponse struct {
@@ -193,6 +194,12 @@ func createThreadRun(
 				return
 			}
 			startedData["output_model_key"] = outputModelKey
+		}
+		if body != nil && body.Model != nil {
+			model := strings.TrimSpace(*body.Model)
+			if model != "" {
+				startedData["model"] = model
+			}
 		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)

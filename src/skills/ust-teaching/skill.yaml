@@ -1,0 +1,5 @@
+skill_key: ust-teaching
+version: "1"
+display_name: U-S-T Teaching Method
+description: Three-stage teaching methodology (Understand, Solve, Teach) for rigorous STEM tutoring with optional sub-agent verification.
+instruction_path: SKILL.md

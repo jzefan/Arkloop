@@ -17,8 +17,8 @@ func TestResolverNilPoolFallbackToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if val != "999999" {
-		t.Fatalf("expected registry default 999999, got %q", val)
+	if val != "0" {
+		t.Fatalf("expected registry default 0, got %q", val)
 	}
 }
 
@@ -60,16 +60,16 @@ func TestResolverResolveIntParsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveInt runs: %v", err)
 	}
-	if runs != 999999 {
-		t.Fatalf("ResolveInt runs = %d, want 999999", runs)
+	if runs != 0 {
+		t.Fatalf("ResolveInt runs = %d, want 0", runs)
 	}
 
 	tokens, err := r.ResolveInt(context.Background(), accountID, "quota.tokens_per_month")
 	if err != nil {
 		t.Fatalf("ResolveInt tokens: %v", err)
 	}
-	if tokens != 1000000 {
-		t.Fatalf("ResolveInt tokens = %d, want 1000000", tokens)
+	if tokens != 0 {
+		t.Fatalf("ResolveInt tokens = %d, want 0", tokens)
 	}
 }
 
@@ -206,16 +206,12 @@ func TestResolveDeductionPolicy_NilPool(t *testing.T) {
 	}
 }
 
-func TestResolveInt_NonNumericReturnsZero(t *testing.T) {
+func TestResolveInt_NonNumericReturnsError(t *testing.T) {
 	r := NewResolver(nil, nil)
 	accountID := uuid.New()
 
-	val, err := r.ResolveInt(context.Background(), accountID, "credit.deduction_policy")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != 0 {
-		t.Fatalf("ResolveInt on JSON string = %d, want 0", val)
+	if _, err := r.ResolveInt(context.Background(), accountID, "credit.deduction_policy"); err == nil {
+		t.Fatal("ResolveInt on JSON string 应返回错误")
 	}
 }
 

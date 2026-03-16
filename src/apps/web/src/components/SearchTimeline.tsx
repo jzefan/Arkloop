@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
+import { useTypewriter } from '../hooks/useTypewriter'
 import type { WebSource } from '../storage'
+import type { SubAgentRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
+import { SubAgentBlock } from './SubAgentBlock'
 
 export type SearchStep = {
   id: string
@@ -21,8 +24,15 @@ type Props = {
   codeExecutions?: CodeExecution[]
   onOpenCodeExecution?: (ce: CodeExecution) => void
   activeCodeExecutionId?: string
+  subAgents?: SubAgentRef[]
   headerOverride?: string
   shimmer?: boolean
+  live?: boolean
+}
+
+function TypewriterText({ text, className, active }: { text: string; className?: string; active: boolean }) {
+  const displayed = useTypewriter(active ? text : '')
+  return <span className={className}>{active ? displayed : text}</span>
 }
 
 function getDomain(url: string): string {
@@ -141,7 +151,7 @@ const SHELL_DOT_TOP = 8
 // CodeExecutionCard: border(0.5) + padding(6) + icon-center(14) = 20.5 → dot top ≈ 16
 const PYTHON_DOT_TOP = 16
 
-export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, headerOverride, shimmer }: Props) {
+export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, headerOverride, shimmer, live }: Props) {
   const [collapsed, setCollapsed] = useState(() => isComplete)
   const prevIsCompleteRef = useRef(isComplete)
   useEffect(() => {
@@ -154,10 +164,11 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
   }, [isComplete])
 
   const codeExecCount = codeExecutions?.length ?? 0
-  if (steps.length === 0 && codeExecCount === 0) return null
+  const subAgentCount = subAgents?.length ?? 0
+  if (steps.length === 0 && codeExecCount === 0 && subAgentCount === 0) return null
 
   const stepsExcludingFinished = steps.filter(s => s.kind !== 'finished').length
-  const effectiveStepCount = stepsExcludingFinished || codeExecCount
+  const effectiveStepCount = stepsExcludingFinished || (codeExecCount + subAgentCount)
 
   const autoLabel = isComplete
     ? sources.length > 0
@@ -190,14 +201,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
           fontWeight: 500,
         }}
       >
-        {!isComplete ? (
-          <Loader2
-            size={13}
-            className="animate-spin"
-            style={{ flexShrink: 0, color: 'var(--c-text-secondary)' }}
-          />
-        ) : null}
-        <span className={shimmer ? 'thinking-shimmer' : undefined}>{headerLabel}</span>
+        <TypewriterText text={headerLabel} className={shimmer ? 'thinking-shimmer' : undefined} active={!!live} />
         {isComplete && (
           <motion.div
             animate={{ rotate: collapsed ? 0 : 90 }}
@@ -218,7 +222,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
 
               <AnimatePresence initial={false}>
               {steps.map((step, idx) => {
@@ -276,8 +280,8 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                     {multiSteps && !isLast && (
                       <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                     )}
-                    {/* Last step extends line down when code executions follow (streaming) */}
-                    {isLast && !steps.some((s) => s.kind === 'finished') && codeExecCount > 0 && (
+                    {/* Last step extends line down when code executions or sub agents follow */}
+                    {isLast && (codeExecCount > 0 || subAgentCount > 0) && (
                       <div style={{ position: 'absolute', left: '-16px', top: `${DOT_TOP + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                     )}
                     {multiSteps && !isFirst && (
@@ -317,9 +321,11 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                           style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }}
                         />
                       )}
-                      <span className={step.kind === 'reviewing' && step.status === 'active' ? 'thinking-shimmer-dim' : undefined}>
-                        {step.kind === 'reviewing' ? 'Reviewing sources' : step.label}
-                      </span>
+                      <TypewriterText
+                        text={step.kind === 'reviewing' ? 'Reviewing sources' : step.label}
+                        className={step.kind === 'reviewing' && step.status === 'active' ? 'thinking-shimmer-dim' : undefined}
+                        active={!!live}
+                      />
                     </div>
 
                     {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
@@ -382,9 +388,9 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                         }}
                       >
                         {/* bottom connector: dot bottom → container bottom */}
-                        {multiItems && !isLast && (
+                        {(multiItems && !isLast) || (isLast && subAgentCount > 0) ? (
                           <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                        )}
+                        ) : null}
                         {/* top connector: container top → dot top */}
                         {multiItems && !isFirst && (
                           <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
@@ -420,6 +426,53 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                               isActive={activeCodeExecutionId === ce.id}
                             />
                         }
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {subAgents && subAgents.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', paddingTop: steps.length > 0 || codeExecCount > 0 ? '8px' : '0' }}>
+                  {subAgents.map((agent, idx) => {
+                    const isFirst = idx === 0
+                    const isLast = idx === subAgents.length - 1
+                    const dotTop = SHELL_DOT_TOP
+                    const hasPrevItems = steps.length > 0 || codeExecCount > 0
+                    const multiItems = subAgents.length >= 2
+                    return (
+                      <div key={agent.id} style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}>
+                        {multiItems && !isLast && (
+                          <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        {multiItems && !isFirst && (
+                          <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        {isFirst && hasPrevItems && (
+                          <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '-19px',
+                            top: `${dotTop}px`,
+                            width: `${DOT_SIZE}px`,
+                            height: `${DOT_SIZE}px`,
+                            borderRadius: '50%',
+                            background: agent.status === 'completed' ? 'var(--c-text-muted)' : agent.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)',
+                            border: '2px solid var(--c-bg-page)',
+                            zIndex: 1,
+                          }}
+                        />
+                        <SubAgentBlock
+                          nickname={agent.nickname}
+                          personaId={agent.personaId}
+                          input={agent.input}
+                          output={agent.output}
+                          status={agent.status}
+                          error={agent.error}
+                          live={live}
+                        />
                       </div>
                     )
                   })}

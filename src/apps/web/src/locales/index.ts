@@ -44,6 +44,7 @@ export interface LocaleStrings {
     title: string;
     subtitle: string;
     searchPlaceholder: string;
+    searchPlaceholderMarketplace: string;
     registryTab: string;
     localTab: string;
     officialOnly: string;
@@ -71,6 +72,8 @@ export interface LocaleStrings {
     sourceOfficial: string;
     sourceCustom: string;
     sourceGitHub: string;
+    sourcePlatform: string;
+    sourceBuiltin: string;
     installed: string;
     notInstalled: string;
     enabledByDefault: string;
@@ -143,6 +146,11 @@ export interface LocaleStrings {
     detailUpdatedAt: string;
     detailDescription: string;
     noDescription: string;
+    builtinTab: string;
+    builtinTitle: string;
+    builtinEmpty: string;
+    restore: string;
+    backToSkills: string;
   };
   // invite code
   inviteCode: string;
@@ -237,6 +245,7 @@ export interface LocaleStrings {
   // chat input menu
   addFromLocal: string;
   addFromGitHub: string;
+  learningMode: string;
   dragToAttach: string;
   // chats search modal
   searchChatsPlaceholder: string;
@@ -340,6 +349,15 @@ export interface LocaleStrings {
   shellFailed: string;
   shellCompleted: string;
   shellNoOutput: string;
+  agentSubAgent: string;
+  agentSpawning: string;
+  agentRunning: string;
+  agentCompleted: string;
+  agentFailed: string;
+  agentClosed: string;
+  agentInput: string;
+  agentOutput: string;
+  agentNoOutput: string;
   // pasted content
   pastedContent: string;
   pastedLines: (n: number) => string;
@@ -398,15 +416,14 @@ export interface LocaleStrings {
     applyingToAll: string;
     applyDone: string;
     deleteAll: string;
+    searchPlaceholder: string;
+    showInPicker: string;
+    hideFromPicker: string;
   };
-  // agent settings
   agentSettings: {
     title: string;
     subtitle: string;
-    model: string;
     reasoningMode: string;
-    credential: string;
-    credentialDefault: string;
     temperature: string;
     maxOutputTokens: string;
     noPersonas: string;
@@ -418,6 +435,38 @@ export interface LocaleStrings {
       enabled: string;
       disabled: string;
     };
+  };
+  modelPicker: {
+    defaultLabel: string;
+    addApiKey: string;
+    byokSection: string;
+    noByok: string;
+    searchPlaceholder: string;
+  };
+  claw: {
+    progress: string;
+    progressEmpty: string;
+    workingFolder: string;
+    workingFolderEmpty: string;
+    workingFolderLoading: string;
+    workingFolderError: string;
+    workingFolderEmptyDir: string;
+    workingFolderSelectFile: string;
+    context: string;
+    contextDesc: string;
+    contextEmpty: string;
+    stepComplete: string;
+    stepInProgress: string;
+    stepPending: string;
+    toolsCalled: string;
+    filesReferenced: string;
+    agents: string;
+    agentsEmpty: string;
+    agentSpawning: string;
+    agentRunning: string;
+    agentCompleted: string;
+    agentFailed: string;
+    agentClosed: string;
   };
   // chat page
   checkInPlaceholder: string;

@@ -14,6 +14,7 @@ import (
 
 	"arkloop/services/bridge/internal/audit"
 	"arkloop/services/bridge/internal/docker"
+	"arkloop/services/bridge/internal/model"
 	"arkloop/services/bridge/internal/module"
 	"arkloop/services/bridge/internal/openviking"
 	"arkloop/services/bridge/internal/platform"
@@ -35,6 +36,7 @@ type Handler struct {
 	operations *docker.OperationStore
 	auditLog   *audit.Logger
 	appLogger  AppLogger
+	modelDL    *model.Downloader
 	version    string
 	upgradeMu  sync.Mutex
 	upgrading  bool
@@ -47,6 +49,7 @@ func NewHandler(
 	operations *docker.OperationStore,
 	auditLog *audit.Logger,
 	logger AppLogger,
+	modelDL *model.Downloader,
 	version string,
 ) *Handler {
 	return &Handler{
@@ -55,6 +58,7 @@ func NewHandler(
 		operations: operations,
 		auditLog:   auditLog,
 		appLogger:  logger,
+		modelDL:    modelDL,
 		version:    version,
 	}
 }
@@ -80,13 +84,43 @@ func (h *Handler) platformDetect(w http.ResponseWriter, _ *http.Request) {
 // --- Modules -----------------------------------------------------------
 
 const dockerQueryTimeout = 3 * time.Second
+const dockerBatchQueryTimeout = 10 * time.Second
 
 func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 	defs := h.registry.OptionalModules()
 	infos := make([]module.ModuleInfo, 0, len(defs))
+	serviceNames := make([]string, 0, len(defs))
 
 	for i := range defs {
-		status := h.moduleStatus(r.Context(), &defs[i])
+		if defs[i].ComposeService != "" {
+			serviceNames = append(serviceNames, defs[i].ComposeService)
+		}
+	}
+
+	var statuses map[string]string
+	if len(serviceNames) > 0 {
+		queryCtx, cancel := context.WithTimeout(r.Context(), dockerBatchQueryTimeout)
+		defer cancel()
+
+		var err error
+		statuses, err = h.compose.ContainerStatuses(queryCtx, serviceNames)
+		if err != nil {
+			h.appLogger.Error("batch container status query failed", map[string]any{
+				"error": err.Error(),
+			})
+			statuses = nil
+		}
+	}
+
+	for i := range defs {
+		var status module.ModuleStatus
+		if defs[i].ComposeService == "" {
+			status = h.virtualModuleStatus(&defs[i])
+		} else if statuses != nil {
+			status = mapRawStatus(statuses[defs[i].ComposeService])
+		} else {
+			status = h.moduleStatus(r.Context(), &defs[i])
+		}
 		infos = append(infos, defs[i].ToModuleInfo(status))
 	}
 
@@ -106,9 +140,10 @@ func (h *Handler) getModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // moduleStatus queries Docker for the live status of a module's compose service.
+// For virtual modules (no compose service), it delegates to custom status checks.
 func (h *Handler) moduleStatus(ctx context.Context, def *module.ModuleDefinition) module.ModuleStatus {
 	if def.ComposeService == "" {
-		return module.StatusNotInstalled
+		return h.virtualModuleStatus(def)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
@@ -124,6 +159,14 @@ func (h *Handler) moduleStatus(ctx context.Context, def *module.ModuleDefinition
 	}
 
 	return mapRawStatus(raw)
+}
+
+// virtualModuleStatus checks file-based status for virtual modules.
+func (h *Handler) virtualModuleStatus(def *module.ModuleDefinition) module.ModuleStatus {
+	if def.ID == "prompt-guard" && h.modelDL != nil && h.modelDL.ModelFilesExist() {
+		return module.StatusRunning
+	}
+	return module.StatusNotInstalled
 }
 
 // mapRawStatus converts the raw string from Compose.ContainerStatus to a
@@ -195,20 +238,38 @@ func (h *Handler) moduleAction(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case module.ActionInstall:
-		op, err = h.compose.Install(opCtx, def.ComposeService, def.ComposeProfile)
-	case module.ActionStart:
-		op, err = h.compose.Start(opCtx, def.ComposeService)
-	case module.ActionStop:
-		op, err = h.compose.Stop(opCtx, def.ComposeService)
-	case module.ActionRestart:
-		op, err = h.compose.Restart(opCtx, def.ComposeService)
-	case module.ActionConfigure:
-		op, err = h.handleConfigure(opCtx, id, def.ComposeService, req.Params)
-	case module.ActionConfigureConnection, module.ActionBootstrapDefaults:
-		// Placeholder: return a synthetic operation ID for future implementation.
-		placeholderID := uuid.New().String()
-		writeJSON(w, http.StatusAccepted, actionResponse{OperationID: placeholderID})
-		return
+		if def.ComposeService == "" && def.Virtual {
+			op, err = h.handleVirtualInstall(opCtx, id, req.Params)
+		} else if def.ComposeService == "" {
+			writeError(w, http.StatusBadRequest, "module.no_service",
+				fmt.Sprintf("module %q has no compose service", id))
+			return
+		} else {
+			op, err = h.compose.Install(opCtx, def.ComposeService, def.ComposeProfile)
+		}
+	case module.ActionStart, module.ActionStop, module.ActionRestart:
+		if def.ComposeService == "" {
+			writeError(w, http.StatusBadRequest, "module.virtual",
+				fmt.Sprintf("module %q is virtual and has no compose service", id))
+			return
+		}
+	}
+
+	if op == nil && err == nil {
+		switch action {
+		case module.ActionStart:
+			op, err = h.compose.Start(opCtx, def.ComposeService)
+		case module.ActionStop:
+			op, err = h.compose.Stop(opCtx, def.ComposeService)
+		case module.ActionRestart:
+			op, err = h.compose.Restart(opCtx, def.ComposeService)
+		case module.ActionConfigure:
+			op, err = h.handleConfigure(opCtx, id, def.ComposeService, req.Params)
+		case module.ActionConfigureConnection, module.ActionBootstrapDefaults:
+			placeholderID := uuid.New().String()
+			writeJSON(w, http.StatusAccepted, actionResponse{OperationID: placeholderID})
+			return
+		}
 	}
 
 	if err != nil {
@@ -222,6 +283,13 @@ func (h *Handler) moduleAction(w http.ResponseWriter, r *http.Request) {
 			"error":  err.Error(),
 		})
 		writeError(w, http.StatusInternalServerError, "action.failed", err.Error())
+		return
+	}
+
+	// 未匹配的 action 类型会导致 op 保持 nil
+	if op == nil {
+		writeError(w, http.StatusBadRequest, "action.unimplemented",
+			fmt.Sprintf("action %q is not implemented for module %q", req.Action, id))
 		return
 	}
 
@@ -686,4 +754,24 @@ func toStringMap(m map[string]any) map[string]string {
 		out[k] = fmt.Sprintf("%v", v)
 	}
 	return out
+}
+
+// handleVirtualInstall routes install actions for virtual modules (no compose
+// service) to the appropriate installer. Currently supports prompt-guard.
+func (h *Handler) handleVirtualInstall(ctx context.Context, moduleID string, params map[string]any) (*docker.Operation, error) {
+	switch moduleID {
+	case "prompt-guard":
+		if h.modelDL == nil {
+			return nil, fmt.Errorf("model downloader not configured")
+		}
+		variant := "22m"
+		if v, ok := params["variant"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				variant = s
+			}
+		}
+		return h.modelDL.Install(ctx, variant)
+	default:
+		return nil, fmt.Errorf("module %q is virtual but has no custom installer", moduleID)
+	}
 }

@@ -9,20 +9,26 @@ import { ToolsPage } from './pages/ToolsPage'
 import { RunsPage } from './pages/RunsPage'
 import { ModulesPage } from './pages/ModulesPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SecurityPage } from './pages/SecurityPage'
 import { BootstrapPage } from './pages/BootstrapPage'
 import { OperationProvider } from './contexts/OperationContext'
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
+
+const sessionRestoreRetries = 12
+const sessionRestoreDelayMs = 1000
 
 function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     // bootstrap token handoff from another console
     const params = new URLSearchParams(window.location.search)
     const handoffToken = params.get('_t')
@@ -46,15 +52,25 @@ function App() {
       setAccessToken(token)
     })
 
-    refreshAccessToken()
+    restoreAccessSession({
+      signal: controller.signal,
+      retries: sessionRestoreRetries,
+      retryDelayMs: sessionRestoreDelayMs,
+    })
       .then((resp) => {
+        if (controller.signal.aborted) return
         writeAccessTokenToStorage(resp.access_token)
         setAccessToken(resp.access_token)
       })
       .catch(() => {})
       .finally(() => {
+        if (controller.signal.aborted) return
         setAuthChecked(true)
       })
+
+    return () => {
+      controller.abort()
+    }
   }, [])
 
   const handleLoggedIn = useCallback((token: string) => {
@@ -91,6 +107,7 @@ function App() {
           <Route path="memory" element={<Navigate to="/tools" replace />} />
           <Route path="runs" element={<RunsPage />} />
           <Route path="modules" element={<ModulesPage />} />
+          <Route path="security" element={<SecurityPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>

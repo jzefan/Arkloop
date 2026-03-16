@@ -151,6 +151,13 @@ type RunContext struct {
 	// -- PersonaResolutionMiddleware 写入，TitleSummarizerMiddleware 读取 --
 	TitleSummarizer *personas.TitleSummarizerConfig
 
+	// -- InjectionScanMiddleware 写入 --
+	// UserPromptScanFunc 对运行中新增的人类输入执行同样的 prompt injection 检测。
+	// phase 例如 "ask_user" / "interactive_checkin"。
+	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
+	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
+	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
+	ToolOutputScanFunc func(toolName, text string) (string, bool)
 	// -- EngineV1.Execute 注入：并发槽释放（idempotent，多次调用安全）--
 	// 通过 sync.Once 保证底层 runlimit.Release 只执行一次。
 	// nil 时表示未启用（测试上下文或 sub-agent）。

@@ -21,14 +21,14 @@
 | gateway.ratelimit_rate_per_minute | number | platform | 300 | false | Gateway Rate Limit Per Minute |
 | gateway.risk_reject_threshold | int | platform | 0 | false | Gateway 风险拒绝阈值（0-100） |
 | gateway.trusted_cidrs | string | platform |  | false | Gateway 可信代理 CIDR 列表 |
-| invite.default_max_uses | int | both | 1 | false | 邀请码默认可用次数 |
+| invite.default_max_uses | int | both | 0 | false | 邀请码默认可用次数，0 表示不限 |
 | invite.max_codes_per_user | int | both | 1 | false | 单用户可创建的邀请码数量上限 |
 | limit.agent_reasoning_iterations | int | both | 0 | false | Agent Loop 主推理轮次上限，0 表示不限 |
 | limit.tool_continuation_budget | int | both | 32 | false | 长工具 continuation 总预算上限 |
-| limit.concurrent_runs | int | both | 10 | false | 并发 run 上限 |
+| limit.concurrent_runs | int | both | 0 | false | 并发 run 上限，0 表示不限 |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
-| limit.team_members | int | both | 50 | false | Team 成员数量上限 |
+| limit.team_members | int | both | 0 | false | Team 成员数量上限，0 表示不限 |
 | limit.thread_message_history | int | both | 200 | false | 线程历史消息加载上限（条） |
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
@@ -36,8 +36,8 @@
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |
-| quota.runs_per_month | int | both | 999999 | false | 每月 run 数量配额 |
-| quota.tokens_per_month | int | both | 1000000 | false | 每月 token 配额 |
+| quota.runs_per_month | int | both | 0 | false | 每月 run 数量配额，0 表示不限 |
+| quota.tokens_per_month | int | both | 0 | false | 每月 token 配额，0 表示不限 |
 | sandbox.agent_port | int | platform | 8080 | false | Sandbox Agent 监听端口 |
 | sandbox.base_url | string | platform |  | false | Sandbox Service 地址，Worker 通过此 URL 调用 Sandbox；为空则不注册 sandbox 工具 |
 | sandbox.boot_timeout_s | int | platform | 30 | false | VM/容器启动超时（秒） |

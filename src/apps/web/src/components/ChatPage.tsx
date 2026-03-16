@@ -9,6 +9,7 @@ import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
+import { SubAgentBlock } from './SubAgentBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
 import UserInputCard from './UserInputCard'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
@@ -22,7 +23,9 @@ import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
 import { ClawRightPanel } from './ClawRightPanel'
 import { useSSE } from '../hooks/useSSE'
+import { useTypewriter } from '../hooks/useTypewriter'
 import { SSEApiError } from '../sse'
+import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
@@ -36,6 +39,9 @@ import {
   applyBrowserToolCall,
   applyBrowserToolResult,
   buildMessageBrowserActionsFromRunEvents,
+  applySubAgentToolCall,
+  applySubAgentToolResult,
+  buildMessageSubAgentsFromRunEvents,
 } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
 import { apiBaseUrl } from '@arkloop/shared/api'
@@ -84,8 +90,11 @@ import {
   type ArtifactRef,
   type CodeExecutionRef,
   type BrowserActionRef,
+  type SubAgentRef,
   type MessageThinkingRef,
   type MessageSearchStepRef,
+  readMessageSubAgents,
+  writeMessageSubAgents,
   migrateMessageMetadata,
 } from '../storage'
 
@@ -126,6 +135,7 @@ type OutletContext = {
   appMode: import('../storage').AppMode
   availableAppModes: import('../storage').AppMode[]
   onSetAppMode: (mode: import('../storage').AppMode) => void
+  onOpenSettings?: (tab: string) => void
 }
 
 type LocationState = { initialRunId?: string; isSearch?: boolean; isIncognitoFork?: boolean; forkBaseCount?: number } | null
@@ -206,7 +216,7 @@ function finalizeSearchSteps(steps: SearchStep[]): MessageSearchStepRef[] {
 }
 
 export function ChatPage() {
-  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange, threads, onThreadDeleted, appMode, availableAppModes, onSetAppMode } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onRunStarted, onRunEnded, onThreadCreated, onThreadTitleUpdated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, onTogglePrivateMode, privateThreadIds, onSetPendingIncognito, onRightPanelChange, threads, onThreadDeleted, appMode, availableAppModes, onSetAppMode, onOpenSettings } = useOutletContext<OutletContext>()
   const { threadId } = useParams<{ threadId: string }>()
   const location = useLocation()
   const locationState = location.state as LocationState
@@ -230,6 +240,8 @@ export function ChatPage() {
   const [sending, setSending] = useState(false)
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
+  const [injectionBlocked, setInjectionBlocked] = useState<string | null>(null)
+  const injectionBlockedRunIdRef = useRef<string | null>(null)
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [checkInDraft, setCheckInDraft] = useState('')
@@ -255,6 +267,10 @@ export function ChatPage() {
   const [messageBrowserActionsMap, setMessageBrowserActionsMap] = useState<Map<string, BrowserActionRef[]>>(new Map())
   const currentRunBrowserActionsRef = useRef<BrowserActionRef[]>([])
   const [topLevelBrowserActions, setTopLevelBrowserActions] = useState<BrowserActionRef[]>([])
+  // sub-agent 记录
+  const [messageSubAgentsMap, setMessageSubAgentsMap] = useState<Map<string, SubAgentRef[]>>(new Map())
+  const currentRunSubAgentsRef = useRef<SubAgentRef[]>([])
+  const [topLevelSubAgents, setTopLevelSubAgents] = useState<SubAgentRef[]>([])
   const [, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
   // Search 时间轴缓存：messageId -> steps
   const [messageSearchStepsMap, setMessageSearchStepsMap] = useState<Map<string, MessageSearchStepRef[]>>(new Map())
@@ -405,6 +421,23 @@ export function ChatPage() {
     searchStepsRef.current = []
     setSearchSteps([])
   }, [])
+  const clearLiveRunSecurityArtifacts = useCallback(() => {
+    setAssistantDraft('')
+    setThinkingDraft('')
+    setTopLevelCodeExecutions([])
+    setTopLevelBrowserActions([])
+    setSegments([])
+    setLiveTimelineExiting(false)
+    activeSegmentIdRef.current = null
+    currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
+    currentRunBrowserActionsRef.current = []
+    resetSearchSteps()
+    setAwaitingInput(false)
+    setPendingUserInput(null)
+    setCheckInDraft('')
+  }, [resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -569,6 +602,8 @@ export function ChatPage() {
     if (!threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     try {
       const message = await createMessage(accessToken, threadId, { content: text })
       invalidateMessageSync()
@@ -600,6 +635,8 @@ export function ChatPage() {
 
     setMessagesLoading(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
 
     void (async () => {
@@ -623,6 +660,7 @@ export function ChatPage() {
         const artifactsMap = new Map<string, ArtifactRef[]>()
         const codeExecMap = new Map<string, CodeExecutionRef[]>()
         const browserActionsMap = new Map<string, BrowserActionRef[]>()
+        const subAgentsMap = new Map<string, SubAgentRef[]>()
         const thinkingMap = new Map<string, MessageThinkingRef>()
         const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
         for (const msg of items) {
@@ -636,6 +674,8 @@ export function ChatPage() {
           if (cachedExec) codeExecMap.set(msg.id, cachedExec)
           const cachedBrowserActions = readMessageBrowserActions(msg.id)
           if (cachedBrowserActions) browserActionsMap.set(msg.id, cachedBrowserActions)
+          const cachedSubAgents = readMessageSubAgents(msg.id)
+          if (cachedSubAgents) subAgentsMap.set(msg.id, cachedSubAgents)
           const cachedThinking = readMessageThinking(msg.id)
           if (cachedThinking) thinkingMap.set(msg.id, cachedThinking)
           const cachedSearchSteps = readMessageSearchSteps(msg.id)
@@ -653,7 +693,8 @@ export function ChatPage() {
         const replayThinkingNeeded = !!(lastAssistant && !thinkingMap.has(lastAssistant.id))
         const replayCodeExecNeeded = !!(lastAssistant && shouldReplayMessageCodeExecutions(codeExecMap.get(lastAssistant.id)))
         const replayBrowserActionsNeeded = !!(lastAssistant && !browserActionsMap.has(lastAssistant.id))
-        if (latest && latest.status !== 'running' && lastAssistant && (replayThinkingNeeded || replayCodeExecNeeded || replayBrowserActionsNeeded)) {
+        const replaySubAgentsNeeded = !!(lastAssistant && !subAgentsMap.has(lastAssistant.id))
+        if (latest && latest.status !== 'running' && lastAssistant && (replayThinkingNeeded || replayCodeExecNeeded || replayBrowserActionsNeeded || replaySubAgentsNeeded)) {
           try {
             const replayEvents = await listRunEvents(accessToken, latest.run_id, { follow: false })
             if (replayThinkingNeeded) {
@@ -675,6 +716,13 @@ export function ChatPage() {
                 writeMessageBrowserActions(lastAssistant.id, replayActions)
               }
             }
+            if (replaySubAgentsNeeded) {
+              const replayAgents = buildMessageSubAgentsFromRunEvents(replayEvents)
+              if (replayAgents.length > 0) {
+                subAgentsMap.set(lastAssistant.id, replayAgents)
+                writeMessageSubAgents(lastAssistant.id, replayAgents)
+              }
+            }
           } catch {
             // 回放失败不影响主流程
           }
@@ -684,6 +732,7 @@ export function ChatPage() {
         setMessageArtifactsMap(artifactsMap)
         setMessageCodeExecutionsMap(codeExecMap)
         setMessageBrowserActionsMap(browserActionsMap)
+        setMessageSubAgentsMap(subAgentsMap)
         setMessageThinkingMap(thinkingMap)
         setMessageSearchStepsMap(searchStepsMap)
 
@@ -724,6 +773,8 @@ export function ChatPage() {
   useEffect(() => {
     setActiveRunId(null)
     setAssistantDraft('')
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
@@ -742,10 +793,12 @@ export function ChatPage() {
     currentRunArtifactsRef.current = []
     currentRunCodeExecutionsRef.current = []
     currentRunBrowserActionsRef.current = []
+    currentRunSubAgentsRef.current = []
     setMessageSourcesMap(new Map())
     setMessageArtifactsMap(new Map())
     setMessageCodeExecutionsMap(new Map())
     setMessageBrowserActionsMap(new Map())
+    setMessageSubAgentsMap(new Map())
     setMessageThinkingMap(new Map())
     setMessageSearchStepsMap(new Map())
     setSourcePanelMessageId(null)
@@ -768,6 +821,7 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    injectionBlockedRunIdRef.current = null
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     sse.reset()
@@ -777,12 +831,14 @@ export function ChatPage() {
     currentRunArtifactsRef.current = []
     currentRunCodeExecutionsRef.current = []
     currentRunBrowserActionsRef.current = []
+    currentRunSubAgentsRef.current = []
     setAssistantDraft('')
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
     setTopLevelBrowserActions([])
+    setTopLevelSubAgents([])
     resetSearchSteps()
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
@@ -831,6 +887,14 @@ export function ChatPage() {
     processedEventCountRef.current = nextProcessedCount
 
     for (const event of fresh) {
+      if (shouldSuppressLiveRunEventAfterInjectionBlock({
+        activeRunId,
+        blockedRunId: injectionBlockedRunIdRef.current,
+        event,
+      })) {
+        continue
+      }
+
       if (event.type === 'run.segment.start') {
         const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
         const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
@@ -934,6 +998,12 @@ export function ChatPage() {
         if (browserCall.appended) {
           currentRunBrowserActionsRef.current = browserCall.nextActions
           setTopLevelBrowserActions((prev) => [...prev, browserCall.appended!])
+        }
+        // spawn_agent tool.call
+        const subAgentCall = applySubAgentToolCall(currentRunSubAgentsRef.current, event)
+        if (subAgentCall.appended) {
+          currentRunSubAgentsRef.current = subAgentCall.nextAgents
+          setTopLevelSubAgents((prev) => [...prev, subAgentCall.appended!])
         }
         // 搜索模式：模型输出的 planning 小标题
         if (toolName === SEARCH_PLANNING_TOOL_NAME) {
@@ -1053,6 +1123,16 @@ export function ChatPage() {
             })
           }
         }
+        // sub-agent tool.result
+        const subAgentResult = applySubAgentToolResult(currentRunSubAgentsRef.current, event)
+        if (subAgentResult.updated) {
+          currentRunSubAgentsRef.current = subAgentResult.nextAgents
+          setTopLevelSubAgents((prev) => {
+            const idx = prev.findIndex((a) => a.id === subAgentResult.updated!.id)
+            if (idx >= 0) return prev.map((a, i) => i === idx ? subAgentResult.updated! : a)
+            return [...prev, subAgentResult.updated!]
+          })
+        }
         continue
       }
 
@@ -1085,8 +1165,24 @@ export function ChatPage() {
         continue
       }
 
+      if (event.type === 'security.injection.blocked') {
+        injectionBlockedRunIdRef.current = event.run_id
+        sseTerminalFallbackArmedRef.current = false
+        sseTerminalFallbackRunIdRef.current = null
+        sse.disconnect()
+        setActiveRunId(null)
+        setCancelSubmitting(false)
+        setQueuedDraft(null)
+        setError(null)
+        clearLiveRunSecurityArtifacts()
+        setInjectionBlocked(getInjectionBlockMessage(event))
+        if (threadId) onRunEnded(threadId)
+        continue
+      }
+
       if (event.type === 'run.completed') {
         const completedRunId = event.run_id
+        injectionBlockedRunIdRef.current = null
         const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
@@ -1094,6 +1190,7 @@ export function ChatPage() {
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
         setTopLevelBrowserActions([])
+        setTopLevelSubAgents([])
         setSegments([])
         activeSegmentIdRef.current = null
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
@@ -1122,6 +1219,8 @@ export function ChatPage() {
         currentRunCodeExecutionsRef.current = []
         const runBrowserActions = [...currentRunBrowserActionsRef.current]
         currentRunBrowserActionsRef.current = []
+        const runSubAgents = [...currentRunSubAgentsRef.current]
+        currentRunSubAgentsRef.current = []
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           // setMessages 已在 refreshMessages 内完成，同一微任务中清除 draft
           // React 18+ 自动批处理保证二者在同一帧渲染，无闪烁
@@ -1145,6 +1244,10 @@ export function ChatPage() {
             if (runBrowserActions.length > 0) {
               writeMessageBrowserActions(completedAssistant.id, runBrowserActions)
               setMessageBrowserActionsMap((prev) => new Map(prev).set(completedAssistant.id, runBrowserActions))
+            }
+            if (runSubAgents.length > 0) {
+              writeMessageSubAgents(completedAssistant.id, runSubAgents)
+              setMessageSubAgentsMap((prev) => new Map(prev).set(completedAssistant.id, runSubAgents))
             }
             if (runThinking) {
               writeMessageThinking(completedAssistant.id, runThinking)
@@ -1176,55 +1279,70 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.cancelled') {
+        const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
         setTopLevelBrowserActions([])
+        setTopLevelSubAgents([])
         setSegments([])
         resetSearchSteps()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
+        currentRunSubAgentsRef.current = []
         setAwaitingInput(false)
         setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
-        const data = event.data as { trace_id?: unknown }
-        const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
-        setError({ message: '已停止生成', traceId })
+        if (!blockedByInjection) {
+          const data = event.data as { trace_id?: unknown }
+          const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
+          setError({ message: '已停止生成', traceId })
+        }
         continue
       }
 
       if (event.type === 'run.failed') {
+        injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
         setTopLevelBrowserActions([])
+        setTopLevelSubAgents([])
         setSegments([])
         resetSearchSteps()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
+        currentRunSubAgentsRef.current = []
         setAwaitingInput(false)
         setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
+        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined
-        setError({
-          message: typeof obj?.message === 'string' ? obj.message : '运行失败',
-          code: typeof obj?.code === 'string' ? obj.code
-            : typeof obj?.error_class === 'string' ? obj.error_class
-            : undefined,
-          details,
-        })
+
+        if (errorClass === 'security.injection_blocked') {
+          // 注入拦截：渲染在对话流中，不用底部 error card
+          setAssistantDraft('')
+          setInjectionBlocked(typeof obj?.message === 'string' ? obj.message : 'blocked')
+        } else {
+          setError({
+            message: typeof obj?.message === 'string' ? obj.message : '运行失败',
+            code: typeof obj?.code === 'string' ? obj.code : errorClass,
+            details,
+          })
+        }
       }
     }
-  }, [activeRunId, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -1256,12 +1374,15 @@ export function ChatPage() {
     currentRunArtifactsRef.current = []
     currentRunCodeExecutionsRef.current = []
     currentRunBrowserActionsRef.current = []
+    const runSubAgents = [...currentRunSubAgentsRef.current]
+    currentRunSubAgentsRef.current = []
 
     setActiveRunId(null)
     setAssistantDraft('')
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
     setTopLevelBrowserActions([])
+    setTopLevelSubAgents([])
     setSegments([])
     activeSegmentIdRef.current = null
     const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
@@ -1293,6 +1414,10 @@ export function ChatPage() {
         if (runBrowserActions.length > 0) {
           writeMessageBrowserActions(completedAssistant.id, runBrowserActions)
           setMessageBrowserActionsMap((prev) => new Map(prev).set(completedAssistant.id, runBrowserActions))
+        }
+        if (runSubAgents.length > 0) {
+          writeMessageSubAgents(completedAssistant.id, runSubAgents)
+          setMessageSubAgentsMap((prev) => new Map(prev).set(completedAssistant.id, runSubAgents))
         }
         if (runThinking) {
           writeMessageThinking(completedAssistant.id, runThinking)
@@ -1420,7 +1545,7 @@ export function ChatPage() {
     })
   }, [revokeDraftAttachment])
 
-  const handleSend = async (e: React.FormEvent<HTMLFormElement>, personaKey: string) => {
+  const handleSend = async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     if (sending || !threadId) return
 
@@ -1440,6 +1565,8 @@ export function ChatPage() {
 
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
 
     try {
       const uploadAttachments = async (targetThreadId: string) => {
@@ -1459,7 +1586,7 @@ export function ChatPage() {
         onThreadCreated(forked)
         const uploaded = await uploadAttachments(forked.id)
         await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
-        const run = await createRun(accessToken, forked.id, personaKey)
+        const run = await createRun(accessToken, forked.id, personaKey, modelOverride)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         setDraft('')
@@ -1480,8 +1607,9 @@ export function ChatPage() {
       setDraft('')
       setAttachments([])
       setAssistantDraft('')
+      injectionBlockedRunIdRef.current = null
 
-      const run = await createRun(accessToken, threadId, personaKey)
+      const run = await createRun(accessToken, threadId, personaKey, modelOverride)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
@@ -1501,6 +1629,8 @@ export function ChatPage() {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await editMessage(accessToken, threadId, messageId, newContent)
@@ -1531,6 +1661,8 @@ export function ChatPage() {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
       const run = await retryThread(accessToken, threadId)
@@ -1566,6 +1698,7 @@ export function ChatPage() {
   const handleFork = useCallback(async (messageId: string) => {
     if (!threadId || isStreaming || sending) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       const forked = await forkThread(accessToken, threadId, messageId)
       if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
@@ -1587,6 +1720,7 @@ export function ChatPage() {
 
     setCheckInSubmitting(true)
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, text)
       setCheckInDraft('')
@@ -1606,6 +1740,7 @@ export function ChatPage() {
   const handleUserInputSubmit = useCallback(async (response: UserInputResponse) => {
     if (!activeRunId) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, JSON.stringify(response.answers))
       setPendingUserInput(null)
@@ -1623,6 +1758,7 @@ export function ChatPage() {
     const req = pendingUserInput
     if (!req) return
     setError(null)
+    setInjectionBlocked(null)
     try {
       await provideInput(accessToken, activeRunId, JSON.stringify({}))
       setPendingUserInput(null)
@@ -1647,6 +1783,7 @@ export function ChatPage() {
     setCheckInDraft('')
     setCancelSubmitting(true)
     setError(null)
+    setInjectionBlocked(null)
     pendingMessageRef.current = null
     setQueuedDraft(null)
     if (threadId) onRunEnded(threadId)
@@ -1775,14 +1912,17 @@ export function ChatPage() {
     const codeExecSteps = timelineSteps === 0 && segmentSteps === 0
       ? dedupedTopLevelCodeExecutions.length
       : 0
-    return timelineSteps + segmentSteps + codeExecSteps
-  }, [searchSteps, segments, dedupedTopLevelCodeExecutions])
+    const agentSteps = topLevelSubAgents.length
+    return timelineSteps + segmentSteps + codeExecSteps + agentSteps
+  }, [searchSteps, segments, dedupedTopLevelCodeExecutions, topLevelSubAgents])
 
   const copHeaderLabel = !assistantDraft
     ? 'Thinking'
     : copStepCount > 0
       ? `${copStepCount} steps completed`
       : 'Completed'
+
+  const copHeaderDisplayed = useTypewriter(isStreaming ? copHeaderLabel : '')
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -1941,11 +2081,12 @@ export function ChatPage() {
                 const timelineSources = timeline?.sources ?? (resolvedSources ?? [])
                 const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
                 const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
+                const messageSubAgents = msg.role === 'assistant' ? messageSubAgentsMap.get(msg.id) : undefined
 
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
                   {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
-                  {(timelineSteps.length > 0 || hasMessageCodeExecutions) && (
+                  {(timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0)) && (
                     <div style={{ marginBottom: '12px' }}>
                       <SearchTimeline
                         steps={timelineSteps}
@@ -1954,6 +2095,7 @@ export function ChatPage() {
                         codeExecutions={messageCodeExecutions}
                         onOpenCodeExecution={openCodePanel}
                         activeCodeExecutionId={codePanelExecution?.id}
+                        subAgents={messageSubAgents}
                       />
                     </div>
                   )}
@@ -2030,7 +2172,7 @@ export function ChatPage() {
               })}
 
               {/* 流式 COP 状态指示：Thinking / XX steps completed */}
-              {isStreaming && searchSteps.length === 0 && (segments.length > 0 || dedupedTopLevelCodeExecutions.length > 0 || !assistantDraft) && (
+              {isStreaming && searchSteps.length === 0 && (segments.length > 0 || dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || !assistantDraft) && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -2048,11 +2190,8 @@ export function ChatPage() {
                       fontWeight: 500,
                     }}
                   >
-                    {!assistantDraft && (
-                      <Loader2 size={13} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-text-secondary)' }} />
-                    )}
-                    {copHeaderLabel && (
-                      <span className={!assistantDraft ? 'thinking-shimmer' : undefined}>{copHeaderLabel}</span>
+                    {copHeaderDisplayed && (
+                      <span className={!assistantDraft ? 'thinking-shimmer' : undefined}>{copHeaderDisplayed}</span>
                     )}
                   </div>
                   {!assistantDraft && segments.length > 0 && (
@@ -2098,9 +2237,9 @@ export function ChatPage() {
                             }}
                           >
                             {/* bottom connector: dot bottom → container bottom */}
-                            {multiItems && !isLast && (
+                            {(multiItems && !isLast) || (isLast && topLevelSubAgents.length > 0) ? (
                               <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                            )}
+                            ) : null}
                             {/* top connector: container top → dot top */}
                             {multiItems && !isFirst && (
                               <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
@@ -2129,6 +2268,64 @@ export function ChatPage() {
                       })}
                     </div>
                   )}
+                  {topLevelSubAgents.length > 0 && (
+                    <div style={{ paddingLeft: '24px', paddingTop: '6px', display: 'flex', flexDirection: 'column' }}>
+                      {topLevelSubAgents.map((agent, idx) => {
+                        const isFirst = idx === 0
+                        const isLast = idx === topLevelSubAgents.length - 1
+                        const dotTop = 8
+                        const multiItems = topLevelSubAgents.length >= 2
+                        const hasCodeExecutionsBefore = dedupedTopLevelCodeExecutions.length > 0
+                        const dotColor = agent.status === 'completed'
+                          ? 'var(--c-text-muted)'
+                          : agent.status === 'failed'
+                            ? 'var(--c-status-error-text, #ef4444)'
+                            : 'var(--c-text-secondary)'
+
+                        return (
+                          <motion.div
+                            key={agent.id}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.25, ease: 'easeOut' }}
+                            style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}
+                          >
+                            {multiItems && !isLast && (
+                              <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                            )}
+                            {multiItems && !isFirst && (
+                              <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                            )}
+                            {isFirst && hasCodeExecutionsBefore && (
+                              <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                            )}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: '-19px',
+                                top: `${dotTop}px`,
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '50%',
+                                background: dotColor,
+                                border: '2px solid var(--c-bg-page)',
+                                zIndex: 1,
+                              }}
+                            />
+                            <SubAgentBlock
+                              nickname={agent.nickname}
+                              personaId={agent.personaId}
+                              input={agent.input}
+                              output={agent.output}
+                              status={agent.status}
+                              error={agent.error}
+                              live={isStreaming}
+                            />
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -2141,8 +2338,10 @@ export function ChatPage() {
                   codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
                   onOpenCodeExecution={openCodePanel}
                   activeCodeExecutionId={codePanelExecution?.id}
+                  subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
                   headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
                   shimmer={!liveTimelineExiting && !assistantDraft}
+                  live={!liveTimelineExiting}
                 />
               )}
 
@@ -2171,13 +2370,17 @@ export function ChatPage() {
               )}
 
               {/* 无 COP 时，顶层代码执行卡片独立渲染（仅流式结束后、run.completed 前的短暂窗口） */}
-              {!isStreaming && dedupedTopLevelCodeExecutions.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {dedupedTopLevelCodeExecutions.map((ce) =>
-                    ce.language === 'shell'
-                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
-                      : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => openCodePanel(ce)} isActive={codePanelExecution?.id === ce.id} />
-                  )}
+              {!isStreaming && (dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0) && (
+                <div style={{ maxWidth: '663px' }}>
+                  <SearchTimeline
+                    steps={[]}
+                    sources={[]}
+                    isComplete
+                    codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
+                    onOpenCodeExecution={openCodePanel}
+                    activeCodeExecutionId={codePanelExecution?.id}
+                    subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
+                  />
                 </div>
               )}
 
@@ -2188,6 +2391,12 @@ export function ChatPage() {
                   browserActions={topLevelBrowserActions.length > 0 ? topLevelBrowserActions : undefined}
                   accessToken={accessToken}
                 />
+              )}
+
+              {injectionBlocked && (
+                <div className="max-w-[720px] rounded-xl border-[0.5px] border-[var(--c-error-border)] bg-[var(--c-error-bg)] px-4 py-3 text-sm text-[var(--c-error-text)]">
+                  {injectionBlocked}
+                </div>
               )}
 
               {awaitingInput && (
@@ -2333,6 +2542,7 @@ export function ChatPage() {
             onAsrError={handleAsrError}
             searchMode={isSearchThread}
             onPersonaChange={(personaKey) => setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)}
+            onOpenSettings={onOpenSettings}
           />
         )}
         <p style={{ color: 'var(--c-text-muted)', fontSize: '13px', letterSpacing: '-0.52px', textAlign: 'center' }}>

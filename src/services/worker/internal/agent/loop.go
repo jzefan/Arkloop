@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/stablejson"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
@@ -29,7 +32,7 @@ const (
 
 type RunContext struct {
 	RunID                  uuid.UUID
-	AccountID                  *uuid.UUID
+	AccountID              *uuid.UUID
 	UserID                 *uuid.UUID
 	AgentID                string
 	ThreadID               *uuid.UUID
@@ -73,6 +76,13 @@ type RunContext struct {
 	// WaitForInput 阻塞等待用户输入，供 ask_user 工具使用。
 	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
 	WaitForInput func(ctx context.Context) (string, bool)
+
+	// UserPromptScanFunc 对运行中追加的人类输入执行 prompt injection 检测。
+	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
+
+	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
+	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
+	ToolOutputScanFunc func(toolName, text string) (string, bool)
 }
 
 type Loop struct {
@@ -129,11 +139,13 @@ func (l *Loop) Run(
 
 		hasToolCalls := len(turn.ToolCalls) > 0
 		for _, event := range turn.Events {
-			// 当 turn 同时产生了 tool calls 时，跳过非 thinking 的 message.delta，
-			// 避免 LLM echo 出的工具参数 JSON 被累积到最终消息内容中
+			// 当 turn 同时产生了 tool calls 时，只丢弃看起来是 JSON 的非 thinking delta，
+			// 保留模型在调用工具前输出的简短说明文本
 			if hasToolCalls && event.Type == "message.delta" {
 				if ch, _ := event.DataJSON["channel"].(string); ch == "" {
-					continue
+					if text, _ := event.DataJSON["content_delta"].(string); looksLikeJSON(text) {
+						continue
+					}
 				}
 			}
 			if err := yield(event); err != nil {
@@ -239,6 +251,12 @@ func (l *Loop) Run(
 					webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
 				}
 
+				if runCtx.ToolOutputScanFunc != nil {
+					if err := scanToolOutput(&toolResult, runCtx.ToolOutputScanFunc, emitter, yield); err != nil {
+						return err
+					}
+				}
+
 				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
 				if ok {
 					if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
@@ -303,6 +321,14 @@ func (l *Loop) Run(
 			if runCtx.WaitForInput != nil {
 				text, ok := runCtx.WaitForInput(ctx)
 				if ok && text != "" {
+					if runCtx.UserPromptScanFunc != nil {
+						if err := runCtx.UserPromptScanFunc(ctx, text, "ask_user"); err != nil {
+							if errors.Is(err, security.ErrInputBlocked) {
+								return nil
+							}
+							return err
+						}
+					}
 					var parsed map[string]any
 					if err := json.Unmarshal([]byte(text), &parsed); err == nil {
 						answerResult = llm.StreamToolResult{
@@ -362,6 +388,14 @@ func (l *Loop) Run(
 				return hookErr
 			}
 			if inject && injected != "" {
+				if runCtx.UserPromptScanFunc != nil {
+					if err := runCtx.UserPromptScanFunc(ctx, injected, "interactive_checkin"); err != nil {
+						if errors.Is(err, security.ErrInputBlocked) {
+							return nil
+						}
+						return err
+					}
+				}
 				messages = append(messages, llm.Message{
 					Role:    "user",
 					Content: []llm.TextPart{{Text: injected}},
@@ -447,7 +481,7 @@ func (l *Loop) executeToolCall(
 	execCtx := tools.ExecutionContext{
 		RunID:               runCtx.RunID,
 		TraceID:             runCtx.TraceID,
-		AccountID:               runCtx.AccountID,
+		AccountID:           runCtx.AccountID,
 		ThreadID:            runCtx.ThreadID,
 		ProjectID:           runCtx.ProjectID,
 		UserID:              runCtx.UserID,
@@ -963,8 +997,83 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
+}
+
+// scanToolOutput 扫描 tool output 是否包含间接注入。
+// 检测到注入时用消毒后的内容替换 ResultJSON，并发出事件。
+func scanToolOutput(
+	result *llm.StreamToolResult,
+	scanFunc func(string, string) (string, bool),
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+) error {
+	if result.Error != nil || result.ResultJSON == nil {
+		return nil
+	}
+	text := collectToolOutputScanText(result.ResultJSON)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	sanitized, detected := scanFunc(result.ToolName, text)
+	if !detected {
+		return nil
+	}
+	result.ResultJSON = map[string]any{
+		"warning":            "indirect injection detected, content sanitized",
+		"sanitized_content":  sanitized,
+		"original_tool_name": result.ToolName,
+	}
+	return yield(emitter.Emit("security.tool_injection.detected", map[string]any{
+		"tool_name": result.ToolName,
+	}, nil, nil))
+}
+
+func collectToolOutputScanText(result map[string]any) string {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return ""
+	}
+
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return ""
+	}
+
+	seen := map[string]struct{}{}
+	parts := collectToolOutputStrings(nil, normalized, seen)
+	return strings.Join(parts, "\n\n")
+}
+
+func collectToolOutputStrings(parts []string, value any, seen map[string]struct{}) []string {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return parts
+		}
+		if _, ok := seen[text]; ok {
+			return parts
+		}
+		seen[text] = struct{}{}
+		return append(parts, text)
+	case []any:
+		for _, item := range typed {
+			parts = collectToolOutputStrings(parts, item, seen)
+		}
+		return parts
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = collectToolOutputStrings(parts, typed[key], seen)
+		}
+	}
+	return parts
 }
 
 type toolResultDedupInfo struct {
@@ -1071,7 +1180,7 @@ func toolResultMessageDedup(result llm.StreamToolResult, refToolCallID string) l
 	}
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text}},
+		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
 }
 
@@ -1214,4 +1323,11 @@ func injectWebSourceIDs(resultJSON map[string]any, currentCount int) int {
 		entry["id"] = fmt.Sprintf("web:%d", currentCount)
 	}
 	return currentCount
+}
+
+// looksLikeJSON 判断文本是否疑似工具参数 echo（JSON 片段），
+// 用于在 preamble 过滤中区分正常说明文字和 JSON 内容
+func looksLikeJSON(text string) bool {
+	t := strings.TrimSpace(text)
+	return len(t) > 0 && (t[0] == '{' || t[0] == '[')
 }

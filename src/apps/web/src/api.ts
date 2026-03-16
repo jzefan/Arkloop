@@ -6,6 +6,7 @@ export {
   setUnauthenticatedHandler,
   setAccessTokenHandler,
   refreshAccessToken,
+  restoreAccessSession,
 } from '@arkloop/shared/api'
 
 export type { LoginRequest, LoginResponse } from '@arkloop/shared/api/types'
@@ -107,7 +108,9 @@ export type SkillPackageResponse = {
 export type InstalledSkill = SkillPackageResponse & {
   profile_ref?: string
   workspace_ref?: string
-  source?: 'official' | 'custom' | 'github'
+  source?: 'official' | 'custom' | 'github' | 'platform'
+  is_platform?: boolean
+  platform_status?: 'auto' | 'manual' | 'removed'
   created_at?: string
   updated_at?: string
 }
@@ -318,6 +321,35 @@ export async function deleteSkill(accessToken: string, skill: SkillReference): P
   await apiFetch<void>(`/v1/profiles/me/skills/${encodeURIComponent(skill.skill_key)}/${encodeURIComponent(skill.version)}`, {
     method: 'DELETE',
     accessToken,
+  })
+}
+
+export type PlatformSkillItem = {
+  skill_key: string
+  version: string
+  display_name: string
+  description?: string
+  platform_status: 'auto' | 'manual' | 'removed'
+  is_platform: true
+}
+
+export async function listPlatformSkills(accessToken: string): Promise<PlatformSkillItem[]> {
+  const response = await apiFetch<{ items: PlatformSkillItem[] }>('/v1/profiles/me/platform-skills', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  return response.items ?? []
+}
+
+export async function setPlatformSkillOverride(
+  accessToken: string,
+  skillKey: string,
+  version: string,
+  status: 'auto' | 'manual' | 'removed',
+): Promise<void> {
+  await apiFetch(`/v1/profiles/me/platform-skills/${encodeURIComponent(skillKey)}/${encodeURIComponent(version)}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
   })
 }
 
@@ -748,11 +780,18 @@ export async function createRun(
   accessToken: string,
   threadId: string,
   personaId?: string,
+  modelOverride?: string,
 ): Promise<CreateRunResponse> {
+  const hasBody = personaId || modelOverride
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
-    body: personaId ? JSON.stringify({ persona_id: personaId }) : undefined,
+    body: hasBody
+      ? JSON.stringify({
+          ...(personaId ? { persona_id: personaId } : {}),
+          ...(modelOverride ? { model: modelOverride } : {}),
+        })
+      : undefined,
   })
 }
 
@@ -1179,6 +1218,7 @@ export type LlmProviderModel = {
   model: string
   priority: number
   is_default: boolean
+  show_in_picker: boolean
   tags: string[]
   when: Record<string, unknown>
   advanced_json?: Record<string, unknown> | null
@@ -1226,6 +1266,7 @@ export type CreateModelRequest = {
   model: string
   priority?: number
   is_default?: boolean
+  show_in_picker?: boolean
   tags?: string[]
 }
 
@@ -1307,6 +1348,22 @@ export async function deleteProviderModel(
     {
       method: 'DELETE',
       accessToken,
+    },
+  )
+}
+
+export async function patchProviderModel(
+  accessToken: string,
+  providerId: string,
+  modelId: string,
+  data: { show_in_picker?: boolean },
+): Promise<LlmProviderModel> {
+  return await apiFetch<LlmProviderModel>(
+    withScope(`/v1/llm-providers/${providerId}/models/${modelId}`, BYOK_SCOPE),
+    {
+      method: 'PATCH',
+      accessToken,
+      body: JSON.stringify({ ...data, scope: BYOK_SCOPE }),
     },
   )
 }

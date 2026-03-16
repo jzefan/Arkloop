@@ -1,4 +1,4 @@
-export { TRACE_ID_HEADER, ApiError, isApiError, apiFetch, refreshAccessToken, setUnauthenticatedHandler, setAccessTokenHandler } from './client'
+export { TRACE_ID_HEADER, ApiError, isApiError, apiFetch, refreshAccessToken, restoreAccessSession, setUnauthenticatedHandler, setAccessTokenHandler } from './client'
 export { login, getMe, logout, getCaptchaConfig, verifyBootstrapToken, setupBootstrapAdmin, sendEmailOTP, verifyEmailOTP } from './auth'
 export type { LoginRequest, LoginResponse, MeResponse, LogoutResponse, CaptchaConfigResponse, BootstrapVerifyResponse, BootstrapSetupRequest, BootstrapSetupResponse } from './auth'
 export {
@@ -19,6 +19,7 @@ export type {
 export {
   listPlatformSettings,
   updatePlatformSetting,
+  deletePlatformSetting,
   listSmtpProviders,
   createSmtpProvider,
   updateSmtpProvider,
