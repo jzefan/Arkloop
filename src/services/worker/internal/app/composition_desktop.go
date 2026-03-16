@@ -201,6 +201,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopInputLoader(e.db, eventsRepo),
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
+		desktopMemoryInjection(e.db),
 		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewToolBuildMiddleware(),
 	}
@@ -211,6 +212,33 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 }
 
 // --------------- desktop middleware ---------------
+
+// desktopMemoryInjection reads the saved memory_block from user_memory_snapshots
+// and appends it to the run's system prompt. This is the desktop equivalent of
+// NewMemoryMiddleware — lightweight and synchronous, no vector search required.
+// All desktop memories are stored under agent_id="default" (user-level, persona-agnostic).
+func desktopMemoryInjection(db data.DesktopDB) pipeline.RunMiddleware {
+	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		if rc.UserID == nil {
+			return next(ctx, rc)
+		}
+		var block string
+		err := db.QueryRow(ctx,
+			`SELECT memory_block FROM user_memory_snapshots
+			 WHERE account_id = $1 AND user_id = $2 AND agent_id = 'default'`,
+			rc.Run.AccountID.String(), rc.UserID.String(),
+		).Scan(&block)
+		if err == nil && strings.TrimSpace(block) != "" {
+			if strings.TrimSpace(rc.SystemPrompt) != "" {
+				rc.SystemPrompt = rc.SystemPrompt + "\n\n" + strings.TrimSpace(block)
+			} else {
+				rc.SystemPrompt = strings.TrimSpace(block)
+			}
+		}
+		// Ignore ErrNoRows / any DB errors — no memory is a valid state.
+		return next(ctx, rc)
+	}
+}
 
 // desktopCancelGuard provides a cancellable context without LISTEN/NOTIFY.
 func desktopCancelGuard() pipeline.RunMiddleware {

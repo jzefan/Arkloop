@@ -176,10 +176,13 @@ func buildIdentity(execCtx tools.ExecutionContext) (memory.MemoryIdentity, error
 	if execCtx.AccountID != nil {
 		accountID = *execCtx.AccountID
 	}
+	// Desktop local memory is user-level: all personas share a single bucket.
+	// Using a fixed agent_id ensures memories written by any persona are visible
+	// to all other personas and to the settings UI.
 	return memory.MemoryIdentity{
 		AccountID: accountID,
 		UserID:    *execCtx.UserID,
-		AgentID:   execCtx.AgentID,
+		AgentID:   "default",
 	}, nil
 }
 

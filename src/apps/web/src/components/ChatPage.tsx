@@ -11,6 +11,7 @@ import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './Thinking
 import { ShellExecutionBlock } from './ShellExecutionBlock'
 import { SubAgentBlock } from './SubAgentBlock'
 import { SearchTimeline, type SearchStep } from './SearchTimeline'
+import { MemoryActionBlock } from './MemoryActionBlock'
 import UserInputCard from './UserInputCard'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { ErrorCallout, type AppError } from './ErrorCallout'
@@ -86,6 +87,8 @@ import {
   writeMessageSearchSteps,
   readMessageBrowserActions,
   writeMessageBrowserActions,
+  readMessageMemoryActions,
+  writeMessageMemoryActions,
   type WebSource,
   type ArtifactRef,
   type CodeExecutionRef,
@@ -93,6 +96,7 @@ import {
   type SubAgentRef,
   type MessageThinkingRef,
   type MessageSearchStepRef,
+  type MemoryActionRef,
   readMessageSubAgents,
   writeMessageSubAgents,
   migrateMessageMetadata,
@@ -274,6 +278,10 @@ export function ChatPage() {
   const [, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
   // Search 时间轴缓存：messageId -> steps
   const [messageSearchStepsMap, setMessageSearchStepsMap] = useState<Map<string, MessageSearchStepRef[]>>(new Map())
+  // 记忆操作缓存：messageId -> actions
+  const [messageMemoryActionsMap, setMessageMemoryActionsMap] = useState<Map<string, MemoryActionRef[]>>(new Map())
+  const [memoryActions, setMemoryActions] = useState<MemoryActionRef[]>([])
+  const memoryActionsRef = useRef<MemoryActionRef[]>([])
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 代码执行侧边面板
@@ -433,6 +441,8 @@ export function ChatPage() {
     currentRunArtifactsRef.current = []
     currentRunCodeExecutionsRef.current = []
     currentRunBrowserActionsRef.current = []
+    memoryActionsRef.current = []
+    setMemoryActions([])
     resetSearchSteps()
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -663,6 +673,7 @@ export function ChatPage() {
         const subAgentsMap = new Map<string, SubAgentRef[]>()
         const thinkingMap = new Map<string, MessageThinkingRef>()
         const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
+        const memoryActionsMap = new Map<string, MemoryActionRef[]>()
         for (const msg of items) {
           if (msg.role !== 'assistant') continue
 
@@ -684,6 +695,8 @@ export function ChatPage() {
             if (patched.changed) writeMessageSearchSteps(msg.id, patched.steps)
             searchStepsMap.set(msg.id, patched.steps)
           }
+          const cachedMemoryActions = readMessageMemoryActions(msg.id)
+          if (cachedMemoryActions) memoryActionsMap.set(msg.id, cachedMemoryActions)
         }
 
         // 服务端回放：补齐最新一轮的 thinking / 代码执行缓存
@@ -735,6 +748,7 @@ export function ChatPage() {
         setMessageSubAgentsMap(subAgentsMap)
         setMessageThinkingMap(thinkingMap)
         setMessageSearchStepsMap(searchStepsMap)
+        setMessageMemoryActionsMap(memoryActionsMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
@@ -794,6 +808,8 @@ export function ChatPage() {
     currentRunCodeExecutionsRef.current = []
     currentRunBrowserActionsRef.current = []
     currentRunSubAgentsRef.current = []
+    memoryActionsRef.current = []
+    setMemoryActions([])
     setMessageSourcesMap(new Map())
     setMessageArtifactsMap(new Map())
     setMessageCodeExecutionsMap(new Map())
@@ -801,6 +817,7 @@ export function ChatPage() {
     setMessageSubAgentsMap(new Map())
     setMessageThinkingMap(new Map())
     setMessageSearchStepsMap(new Map())
+    setMessageMemoryActionsMap(new Map())
     setSourcePanelMessageId(null)
     disconnectSSE()
     sse.clearEvents()
@@ -1021,6 +1038,24 @@ export function ChatPage() {
           })
           continue
         }
+        // memory_* tool.call 驱动 MemoryActionBlock
+        if (toolName === 'memory_write' || toolName === 'memory_search' || toolName === 'memory_read' || toolName === 'memory_forget') {
+          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : `${toolName}-${Date.now()}`
+          const args = obj.arguments as Record<string, unknown> | undefined
+          const newAction: MemoryActionRef = {
+            id: callId,
+            toolName: toolName as MemoryActionRef['toolName'],
+            args: {
+              category: typeof args?.category === 'string' ? args.category : undefined,
+              key: typeof args?.key === 'string' ? args.key : undefined,
+              query: typeof args?.query === 'string' ? args.query : undefined,
+              uri: typeof args?.uri === 'string' ? args.uri : undefined,
+            },
+            status: 'active',
+          }
+          memoryActionsRef.current = [...memoryActionsRef.current, newAction]
+          setMemoryActions([...memoryActionsRef.current])
+        }
         // web_search tool.call 驱动 SearchTimeline（所有模式均支持）
         if (toolName === 'web_search' || llmName === 'web_search') {
           const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
@@ -1049,8 +1084,24 @@ export function ChatPage() {
       }
 
       if (event.type === 'tool.result') {
-        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
+        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown; error?: unknown }
         const resultToolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+        // memory_* tool.result — 更新 MemoryActionBlock
+        if (resultToolName === 'memory_write' || resultToolName === 'memory_search' || resultToolName === 'memory_read' || resultToolName === 'memory_forget') {
+          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const result = obj.result as Record<string, unknown> | undefined
+          const isError = obj.error != null || (result != null && 'error' in result)
+          let summary: string | undefined
+          if (resultToolName === 'memory_search' && Array.isArray(result?.hits)) {
+            summary = `${result.hits.length} 条结果`
+          }
+          if (callId) {
+            memoryActionsRef.current = memoryActionsRef.current.map((a) =>
+              a.id === callId ? { ...a, status: isError ? 'error' : 'done', resultSummary: summary } : a,
+            )
+            setMemoryActions([...memoryActionsRef.current])
+          }
+        }
         if (resultToolName === 'web_search' || resultToolName.startsWith('web_search.')) {
           const result = obj.result as { results?: unknown[] } | undefined
           if (Array.isArray(result?.results)) {
@@ -1193,6 +1244,9 @@ export function ChatPage() {
         setTopLevelSubAgents([])
         setSegments([])
         activeSegmentIdRef.current = null
+        const runMemoryActions = [...memoryActionsRef.current]
+        memoryActionsRef.current = []
+        setMemoryActions([])
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
         // 让 live SearchTimeline 平滑收起而非瞬间消失
@@ -1252,6 +1306,10 @@ export function ChatPage() {
             if (runThinking) {
               writeMessageThinking(completedAssistant.id, runThinking)
               setMessageThinkingMap((prev) => new Map(prev).set(completedAssistant.id, runThinking))
+            }
+            if (runMemoryActions.length > 0) {
+              writeMessageMemoryActions(completedAssistant.id, runMemoryActions)
+              setMessageMemoryActionsMap((prev) => new Map(prev).set(completedAssistant.id, runMemoryActions))
             }
           }
           const pending = pendingMessageRef.current
@@ -2082,10 +2140,14 @@ export function ChatPage() {
                 const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
                 const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
                 const messageSubAgents = msg.role === 'assistant' ? messageSubAgentsMap.get(msg.id) : undefined
+                const messageMemoryActions = msg.role === 'assistant' ? messageMemoryActionsMap.get(msg.id) : undefined
 
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
-                  {/* 完成后的搜索时间轴：最后一条 assistant 消息上方 */}
+                  {/* 完成后：记忆操作 + 搜索时间轴（最后一条 assistant 消息上方） */}
+                  {messageMemoryActions && messageMemoryActions.length > 0 && (
+                    <MemoryActionBlock actions={messageMemoryActions} />
+                  )}
                   {(timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0)) && (
                     <div style={{ marginBottom: '12px' }}>
                       <SearchTimeline
@@ -2327,6 +2389,11 @@ export function ChatPage() {
                     </div>
                   )}
                 </motion.div>
+              )}
+
+              {/* 流式期间：live 记忆操作 */}
+              {isStreaming && memoryActions.length > 0 && (
+                <MemoryActionBlock actions={memoryActions} live />
               )}
 
               {/* 流式期间的 live 时间轴 */}
