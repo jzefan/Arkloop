@@ -4,15 +4,19 @@ package app
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"arkloop/services/shared/database"
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/data"
@@ -37,7 +41,7 @@ import (
 type DesktopEngine struct {
 	db               data.DesktopDB
 	bus              eventbus.EventBus
-	router           *routing.ProviderRouter
+	stubRouter       *routing.ProviderRouter
 	stubGateway      llm.Gateway
 	emitDebugEvents  bool
 	toolRegistry     *tools.Registry
@@ -51,11 +55,9 @@ type DesktopEngine struct {
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
 // execRegistry is the agent executor builder (e.g., executor.DefaultExecutorRegistry()).
 func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.EventBus, execRegistry pipeline.AgentExecutorBuilder) (*DesktopEngine, error) {
-	routingCfg, err := routing.LoadRoutingConfigFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("routing config: %w", err)
-	}
-	router := routing.NewProviderRouter(routingCfg)
+	// Router is loaded dynamically per-run in desktopRouting middleware
+	// so that credentials configured after startup are picked up immediately.
+	stubRouter := routing.NewProviderRouter(routing.DefaultRoutingConfig())
 
 	stubCfg, err := llm.StubGatewayConfigFromEnv()
 	if err != nil {
@@ -124,7 +126,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	return &DesktopEngine{
 		db:               db,
 		bus:              bus,
-		router:           router,
+		stubRouter:       stubRouter,
 		stubGateway:      stubGateway,
 		emitDebugEvents:  stubCfg.EmitDebugEvents,
 		toolRegistry:     toolRegistry,
@@ -157,11 +159,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	eventsRepo := data.DesktopRunEventsRepository{}
 
 	rc := &pipeline.RunContext{
-		Run:     run,
-		Pool:    nil,
-		TraceID: traceID,
-		Emitter: emitter,
-		Router:  e.router,
+		Run:      run,
+		Pool:     nil,
+		EventBus: e.bus,
+		TraceID:  traceID,
+		Emitter:  emitter,
+		Router:   e.stubRouter,
 
 		ExecutorBuilder:     e.executorRegistry,
 		ToolBudget:          map[string]any{},
@@ -198,7 +201,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopInputLoader(e.db, eventsRepo),
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
-		desktopRouting(e.router, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
+		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewToolBuildMiddleware(),
 	}
 	terminal := desktopAgentLoop(e.db, runsRepo, eventsRepo)
@@ -237,10 +240,10 @@ func desktopInputLoader(
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback(ctx)
 
 		_, dataJSON, err := eventsRepo.FirstEventData(ctx, tx, rc.Run.ID)
 		if err != nil {
+			tx.Rollback(ctx)
 			return err
 		}
 
@@ -259,8 +262,13 @@ func desktopInputLoader(
 		messagesRepo := data.MessagesRepository{}
 		messages, err := messagesRepo.ListByThread(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, messageLimit)
 		if err != nil {
+			tx.Rollback(ctx)
 			return err
 		}
+
+		// Release the read-only tx before calling next. With MaxOpenConns(1)
+		// the single SQLite connection must be free for downstream middleware.
+		tx.Rollback(ctx)
 
 		rc.InputJSON = inputJSON
 		llmMessages := make([]llm.Message, 0, len(messages))
@@ -313,19 +321,15 @@ func desktopPersonaResolution(
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 		registry := personas.NewRegistry()
 
-		// 优先从 SQLite 加载
-		if realDB, ok := db.(database.DB); ok {
-			dbDefs, err := personas.LoadFromDesktopDB(ctx, realDB)
-			if err != nil {
-				slog.WarnContext(ctx, "desktop: persona db load failed, trying filesystem", "err", err)
-			} else {
-				for _, def := range dbDefs {
-					registry.Set(def)
-				}
+		dbDefs, err := personas.LoadPersonasFromDesktopDB(ctx, db)
+		if err != nil {
+			slog.WarnContext(ctx, "desktop: persona db load failed, trying filesystem", "err", err)
+		} else {
+			for _, def := range dbDefs {
+				registry.Set(def)
 			}
 		}
 
-		// 文件系统兜底
 		if len(registry.ListIDs()) == 0 && getBaseRegistry != nil {
 			if base := getBaseRegistry(); base != nil {
 				registry = base
@@ -442,7 +446,7 @@ func toDesktopPersonaProfile(def *personas.Definition) *sharedexec.PersonaProfil
 
 // desktopRouting selects the LLM provider route from env config.
 func desktopRouting(
-	router *routing.ProviderRouter,
+	fallbackRouter *routing.ProviderRouter,
 	stubGateway llm.Gateway,
 	emitDebugEvents bool,
 	db data.DesktopDB,
@@ -450,6 +454,10 @@ func desktopRouting(
 	eventsRepo data.DesktopRunEventsRepository,
 ) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		router := fallbackRouter
+		if dbCfg, err := loadDesktopRoutingConfig(ctx, db); err == nil {
+			router = routing.NewProviderRouter(dbCfg)
+		}
 		cfg := router.Config()
 
 		var decision routing.ProviderRouteDecision
@@ -906,4 +914,190 @@ func mergeJSON(a, b map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// loadDesktopRoutingConfig builds a ProviderRoutingConfig from the SQLite
+// llm_credentials, llm_routes, and secrets tables.
+// All queries run inside a single read-only transaction to avoid deadlocking
+// the single SQLite connection (MaxOpenConns=1).
+func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.ProviderRoutingConfig, error) {
+	keyRing, err := loadDesktopKeyRing()
+	if err != nil {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("load encryption key: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	type credRaw struct {
+		id, provider, name, advancedStr, ownerKind string
+		secretID, baseURL, openAIMode              *string
+	}
+	credRows, err := tx.Query(ctx,
+		`SELECT id, provider, name, secret_id, base_url, openai_api_mode, advanced_json, owner_kind
+		 FROM llm_credentials WHERE revoked_at IS NULL`)
+	if err != nil {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("query llm_credentials: %w", err)
+	}
+	var rawCreds []credRaw
+	for credRows.Next() {
+		var c credRaw
+		if err := credRows.Scan(&c.id, &c.provider, &c.name, &c.secretID, &c.baseURL, &c.openAIMode, &c.advancedStr, &c.ownerKind); err != nil {
+			credRows.Close()
+			return routing.ProviderRoutingConfig{}, fmt.Errorf("scan llm_credentials: %w", err)
+		}
+		rawCreds = append(rawCreds, c)
+	}
+	credRows.Close()
+
+	var creds []routing.ProviderCredential
+	credMap := map[string]struct{}{}
+	for _, c := range rawCreds {
+		var apiKey *string
+		if c.secretID != nil && *c.secretID != "" {
+			var encVal string
+			var keyVer int
+			if err := tx.QueryRow(ctx, `SELECT encrypted_value, key_version FROM secrets WHERE id = $1`, *c.secretID).Scan(&encVal, &keyVer); err != nil {
+				slog.WarnContext(ctx, "desktop: skip credential, secret not found", "cred_id", c.id, "err", err)
+				continue
+			}
+			plain, err := decryptAESGCM(keyRing, encVal, keyVer)
+			if err != nil {
+				slog.WarnContext(ctx, "desktop: skip credential, decrypt failed", "cred_id", c.id, "err", err)
+				continue
+			}
+			apiKey = &plain
+		}
+
+		var advanced map[string]any
+		if c.advancedStr != "" && c.advancedStr != "{}" {
+			_ = json.Unmarshal([]byte(c.advancedStr), &advanced)
+		}
+		scope := routing.CredentialScopePlatform
+		creds = append(creds, routing.ProviderCredential{
+			ID: c.id, Name: c.name, OwnerKind: scope,
+			ProviderKind: routing.ProviderKind(c.provider),
+			APIKeyValue: apiKey, BaseURL: c.baseURL, OpenAIMode: c.openAIMode, AdvancedJSON: advanced,
+		})
+		credMap[c.id] = struct{}{}
+	}
+	if len(creds) == 0 {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("no active credentials found in database")
+	}
+
+	routeRows, err := tx.Query(ctx,
+		`SELECT id, credential_id, model, priority, is_default, when_json, advanced_json,
+		        multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read
+		 FROM llm_routes ORDER BY priority DESC`)
+	if err != nil {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("query llm_routes: %w", err)
+	}
+	var routes []routing.ProviderRouteRule
+	defaultRouteID := ""
+	for routeRows.Next() {
+		var (
+			id, credentialID, model, whenStr, advancedStr string
+			priority, isDefault                           int
+			multiplier                                    float64
+			costIn, costOut, costCW, costCR               *float64
+		)
+		if err := routeRows.Scan(&id, &credentialID, &model, &priority, &isDefault,
+			&whenStr, &advancedStr, &multiplier, &costIn, &costOut, &costCW, &costCR); err != nil {
+			routeRows.Close()
+			return routing.ProviderRoutingConfig{}, fmt.Errorf("scan llm_routes: %w", err)
+		}
+		if _, ok := credMap[credentialID]; !ok {
+			continue
+		}
+		var when, adv map[string]any
+		if whenStr != "" && whenStr != "{}" {
+			_ = json.Unmarshal([]byte(whenStr), &when)
+		}
+		if advancedStr != "" && advancedStr != "{}" {
+			_ = json.Unmarshal([]byte(advancedStr), &adv)
+		}
+		if multiplier <= 0 {
+			multiplier = 1.0
+		}
+		routes = append(routes, routing.ProviderRouteRule{
+			ID: id, Model: model, CredentialID: credentialID,
+			When: when, AdvancedJSON: adv, Multiplier: multiplier,
+			CostPer1kInput: costIn, CostPer1kOutput: costOut,
+			CostPer1kCacheWrite: costCW, CostPer1kCacheRead: costCR,
+			Priority: priority,
+		})
+		if isDefault != 0 && defaultRouteID == "" {
+			defaultRouteID = id
+		}
+	}
+	routeRows.Close()
+	tx.Rollback(ctx)
+
+	if len(routes) == 0 {
+		return routing.ProviderRoutingConfig{}, fmt.Errorf("no routes found in database")
+	}
+	if defaultRouteID == "" {
+		defaultRouteID = routes[0].ID
+	}
+
+	slog.Info("desktop: loaded routing config from DB", "credentials", len(creds), "routes", len(routes), "default_route", defaultRouteID)
+	return routing.ProviderRoutingConfig{
+		DefaultRouteID: defaultRouteID,
+		Credentials:    creds,
+		Routes:         routes,
+	}, nil
+}
+
+func decryptAESGCM(key [32]byte, encoded string, keyVersion int) (string, error) {
+	if keyVersion != 1 {
+		return "", fmt.Errorf("unsupported key version %d", keyVersion)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) < 12 {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	plain, err := gcm.Open(nil, raw[:12], raw[12:], nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+func loadDesktopKeyRing() ([32]byte, error) {
+	dataDir := os.Getenv("ARKLOOP_DATA_DIR")
+	if dataDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return [32]byte{}, err
+		}
+		dataDir = filepath.Join(home, ".arkloop")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dataDir, "encryption.key"))
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("read encryption.key: %w", err)
+	}
+
+	decoded, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil || len(decoded) != 32 {
+		return [32]byte{}, fmt.Errorf("invalid encryption.key (expected 64 hex chars)")
+	}
+
+	var key [32]byte
+	copy(key[:], decoded)
+	return key, nil
 }

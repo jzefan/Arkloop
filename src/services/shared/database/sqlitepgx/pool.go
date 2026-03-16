@@ -54,6 +54,7 @@ func Open(dsn string) (*Pool, error) {
 
 func (p *Pool) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 	query = rewriteSQL(query)
+	query, args = expandAnyArgs(query, args)
 	r, err := p.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return pgconn.NewCommandTag(""), translateError(err)
@@ -64,6 +65,7 @@ func (p *Pool) Exec(ctx context.Context, query string, args ...any) (pgconn.Comm
 
 func (p *Pool) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
 	query = rewriteSQL(query)
+	query, args = expandAnyArgs(query, args)
 	r, err := p.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return &shimRows{err: translateError(err)}, nil
@@ -73,6 +75,7 @@ func (p *Pool) Query(ctx context.Context, query string, args ...any) (pgx.Rows, 
 
 func (p *Pool) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
 	query = rewriteSQL(query)
+	query, args = expandAnyArgs(query, args)
 	return &shimRow{row: p.db.QueryRowContext(ctx, query, args...)}
 }
 

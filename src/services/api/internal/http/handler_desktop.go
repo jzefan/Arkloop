@@ -23,6 +23,8 @@ import (
 	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/desktop"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
 )
 
@@ -34,7 +36,7 @@ type SSEConfig struct {
 
 func defaultSSEConfig() SSEConfig {
 	return SSEConfig{
-		HeartbeatSeconds: 15.0,
+		HeartbeatSeconds: 1.0,
 		BatchLimit:       500,
 	}
 }
@@ -194,6 +196,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ConfigResolver:        resolver,
 	})
 
+	var bus eventbus.EventBus
+	if b, ok := desktop.GetEventBus().(eventbus.EventBus); ok {
+		bus = b
+	}
+
 	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
 		AuthService:            cfg.AuthService,
 		AccountMembershipRepo:  cfg.AccountMembershipRepo,
@@ -215,6 +222,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		RedisClient:            nil, // desktop: no Redis
 		ConfigResolver:         resolver,
 		SSEConfig:              conversationapi.SSEConfig(sseConfig),
+		EventBus:               bus,
 		MessageAttachmentStore: cfg.MessageAttachmentStore,
 		ArtifactStore:          cfg.ArtifactStore,
 	})

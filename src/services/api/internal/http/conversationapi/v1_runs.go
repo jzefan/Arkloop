@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/observability"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/pgnotify"
 	"arkloop/services/shared/runlimit"
 
@@ -827,6 +829,7 @@ func streamRunEvents(
 	sseConfig SSEConfig,
 	apiKeysRepo *data.APIKeysRepository,
 	rdb *redis.Client,
+	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -947,18 +950,59 @@ func streamRunEvents(
 			}()
 		}
 
-		// 合并 pg_notify + Redis Pub/Sub 为单一持久信号 channel，避免循环内重复创建 goroutine。
+		// 进程内 EventBus（Desktop 模式替代 pg_notify + Redis）
+		var busCh <-chan struct{}
+		if follow && bus != nil {
+			channel := fmt.Sprintf("run_events:%s", runID.String())
+			sub, err := bus.Subscribe(r.Context(), channel)
+			if err == nil {
+				ch := make(chan struct{}, 1)
+				busCh = ch
+				go func() {
+					defer sub.Close()
+					msgCh := sub.Channel()
+					for {
+						select {
+						case <-r.Context().Done():
+							return
+						case _, ok := <-msgCh:
+							if !ok {
+								return
+							}
+							select {
+							case ch <- struct{}{}:
+							default:
+							}
+						}
+					}
+				}()
+			}
+		}
+
+		// 合并所有通知信号为单一 channel。
+		sources := []<-chan struct{}{notifyCh, redisCh, busCh}
+		var activeSources []<-chan struct{}
+		for _, s := range sources {
+			if s != nil {
+				activeSources = append(activeSources, s)
+			}
+		}
 		var sigCh <-chan struct{}
-		if notifyCh != nil && redisCh != nil {
+		if len(activeSources) == 1 {
+			sigCh = activeSources[0]
+		} else if len(activeSources) > 1 {
 			merged := make(chan struct{}, 1)
 			sigCh = merged
 			go func() {
+				cases := make([]reflect.SelectCase, len(activeSources)+1)
+				cases[0] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(r.Context().Done())}
+				for i, s := range activeSources {
+					cases[i+1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(s)}
+				}
 				for {
-					select {
-					case <-r.Context().Done():
+					chosen, _, _ := reflect.Select(cases)
+					if chosen == 0 {
 						return
-					case <-notifyCh:
-					case <-redisCh:
 					}
 					select {
 					case merged <- struct{}{}:
@@ -966,10 +1010,6 @@ func streamRunEvents(
 					}
 				}
 			}()
-		} else if notifyCh != nil {
-			sigCh = notifyCh
-		} else if redisCh != nil {
-			sigCh = redisCh
 		}
 
 		cursor := afterSeq
@@ -1123,11 +1163,12 @@ func runEntry(
 	apiKeysRepo *data.APIKeysRepository,
 	resolver sharedconfig.Resolver,
 	rdb *redis.Client,
+	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
 	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
 	submitInput := submitRunInput(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo, resolver)
-	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, rdb)
+	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, rdb, bus)
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
