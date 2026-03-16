@@ -120,6 +120,9 @@ export function SettingsPage() {
 
   // General
   const [titleModel, setTitleModel] = useState('')
+  const [spawnExplore, setSpawnExplore] = useState('')
+  const [spawnTask, setSpawnTask] = useState('')
+  const [spawnStrong, setSpawnStrong] = useState('')
 
   // Sandbox
   const [sandboxProvider, setSandboxProvider] = useState('')
@@ -186,6 +189,9 @@ export function SettingsPage() {
       setSandboxProviders(sandboxGroup?.providers ?? [])
 
       setTitleModel(map['title_summarizer.model'] ?? '')
+      setSpawnExplore(map['spawn.profile.explore'] ?? '')
+      setSpawnTask(map['spawn.profile.task'] ?? '')
+      setSpawnStrong(map['spawn.profile.strong'] ?? '')
       setSandboxProvider(sandboxProviderValue(activeSandbox))
       setSandboxBaseUrl(activeSandbox?.base_url ?? '')
       setSandboxDockerImage(map['sandbox.docker_image'] ?? '')
@@ -228,14 +234,19 @@ export function SettingsPage() {
   const saveGeneral = useCallback(async () => {
     setSavingGeneral(true)
     try {
-      await saveSetting('title_summarizer.model', titleModel, accessToken)
+      await Promise.all([
+        saveSetting('title_summarizer.model', titleModel, accessToken),
+        saveSetting('spawn.profile.explore', spawnExplore, accessToken),
+        saveSetting('spawn.profile.task', spawnTask, accessToken),
+        saveSetting('spawn.profile.strong', spawnStrong, accessToken),
+      ])
       addToast(tc.toastSaved, 'success')
     } catch {
       addToast(tc.toastFailed, 'error')
     } finally {
       setSavingGeneral(false)
     }
-  }, [titleModel, accessToken, addToast, tc])
+  }, [titleModel, spawnExplore, spawnTask, spawnStrong, accessToken, addToast, tc])
 
   const handleSaveSandbox = useCallback(async () => {
     setSavingSandbox(true)
@@ -499,6 +510,12 @@ export function SettingsPage() {
                   <GeneralSection
                     titleModel={titleModel}
                     setTitleModel={setTitleModel}
+                    spawnExplore={spawnExplore}
+                    setSpawnExplore={setSpawnExplore}
+                    spawnTask={spawnTask}
+                    setSpawnTask={setSpawnTask}
+                    spawnStrong={spawnStrong}
+                    setSpawnStrong={setSpawnStrong}
                     allModels={allModels}
                     saving={savingGeneral}
                     onSave={saveGeneral}
@@ -768,6 +785,12 @@ function SmtpDetailPanel({
 function GeneralSection({
   titleModel,
   setTitleModel,
+  spawnExplore,
+  setSpawnExplore,
+  spawnTask,
+  setSpawnTask,
+  spawnStrong,
+  setSpawnStrong,
   allModels,
   saving,
   onSave,
@@ -776,12 +799,32 @@ function GeneralSection({
 }: {
   titleModel: string
   setTitleModel: (v: string) => void
+  spawnExplore: string
+  setSpawnExplore: (v: string) => void
+  spawnTask: string
+  setSpawnTask: (v: string) => void
+  spawnStrong: string
+  setSpawnStrong: (v: string) => void
   allModels: { id: string; label: string }[]
   saving: boolean
   onSave: () => void
   tc: SettingsLocale
   tCommon: CommonLocale
 }) {
+  const profileSelect = (value: string, onChange: (v: string) => void, label: string) => (
+    <FormField label={label}>
+      <div className="relative">
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={selectCls}>
+          <option value="">--</option>
+          {allModels.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+        <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
+      </div>
+    </FormField>
+  )
+
   return (
     <>
       <FormField label={tc.titleSummarizer}>
@@ -798,6 +841,14 @@ function GeneralSection({
         </div>
         <p className="text-xs text-[var(--c-text-muted)]">{tc.titleSummarizerHint}</p>
       </FormField>
+      <div className="mt-4">
+        <p className="mb-3 text-sm font-medium text-[var(--c-text-primary)]">{tc.spawnProfileLabel}</p>
+        <div className="space-y-3">
+          {profileSelect(spawnExplore, setSpawnExplore, tc.spawnProfileExplore)}
+          {profileSelect(spawnTask, setSpawnTask, tc.spawnProfileTask)}
+          {profileSelect(spawnStrong, setSpawnStrong, tc.spawnProfileStrong)}
+        </div>
+      </div>
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving} className={btnPrimaryCls}>
           {saving ? '...' : tCommon.save}

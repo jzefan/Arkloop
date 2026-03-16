@@ -405,6 +405,11 @@ export const en: LocaleStrings = {
       enabled: 'Enabled',
       disabled: 'Disabled',
     },
+    spawnProfileTitle: 'Sub-agent Models',
+    spawnProfilePlatformDefault: 'Platform Default',
+    spawnProfileExplore: 'explore',
+    spawnProfileTask: 'task',
+    spawnProfileStrong: 'strong',
   },
   // model picker
   modelPicker: {

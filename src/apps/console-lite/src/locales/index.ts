@@ -311,6 +311,10 @@ export interface LocaleStrings {
     sectionCredits: string
     titleSummarizer: string
     titleSummarizerHint: string
+    spawnProfileLabel: string
+    spawnProfileExplore: string
+    spawnProfileTask: string
+    spawnProfileStrong: string
     smtpProviders: string
     addSmtp: string
     smtpName: string

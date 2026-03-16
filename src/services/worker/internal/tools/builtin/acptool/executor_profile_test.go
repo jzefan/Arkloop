@@ -35,7 +35,7 @@ func TestExecutor_ProfileWithoutResolver(t *testing.T) {
 
 	result := e.Execute(context.Background(), "acp_agent", map[string]any{
 		"task":    "test task",
-		"profile": "balanced",
+		"profile": "task",
 	}, makeExecCtxWithAccount(snap), "call-1")
 
 	// Should fail at bridge level (can't connect to sandbox), NOT at profile resolution
@@ -86,7 +86,7 @@ func TestExecutor_ProfileLocalModeSkipsProxy(t *testing.T) {
 
 	result := e.Execute(context.Background(), "acp_agent", map[string]any{
 		"task":    "test task",
-		"profile": "balanced",
+		"profile": "task",
 	}, makeExecCtxWithAccount(snap), "call-3")
 
 	// Should fail at bridge level (can't connect), NOT at profile resolution

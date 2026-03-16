@@ -25,6 +25,11 @@ func NewSubAgentContextMiddleware(storage *subagentctl.SnapshotStorage) RunMiddl
 				rc.InputJSON["route_id"] = routeID
 			}
 		}
+		if model := strings.TrimSpace(snapshot.Runtime.Model); model != "" {
+			if _, ok := rc.InputJSON["model"]; !ok {
+				rc.InputJSON["model"] = model
+			}
+		}
 		if len(snapshot.Runtime.ToolAllowlist) > 0 {
 			rc.AllowlistSet = intersectAllowlist(rc.AllowlistSet, snapshot.Runtime.ToolAllowlist, rc.ToolRegistry)
 		}

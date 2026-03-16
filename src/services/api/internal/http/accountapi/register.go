@@ -7,6 +7,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
+	sharedconfig "arkloop/services/shared/config"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -28,6 +29,8 @@ type Deps struct {
 	EnvironmentStore   environmentStore
 	RunEventRepo       *data.RunEventRepository
 	GatewayRedisClient *redis.Client
+	EntitlementsRepo   *data.EntitlementsRepository
+	ConfigResolver     sharedconfig.Resolver
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
@@ -42,4 +45,6 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/workspace-files", workspaceFilesEntry(deps.AuthService, deps.AccountMembershipRepo, deps.APIKeysRepo, deps.RunEventRepo, deps.AuditWriter, deps.Pool, deps.EnvironmentStore))
 	mux.HandleFunc("/v1/webhook-endpoints", webhookEndpointsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.WebhookRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/webhook-endpoints/", webhookEndpointEntry(deps.AuthService, deps.AccountMembershipRepo, deps.WebhookRepo, deps.APIKeysRepo))
+	mux.HandleFunc("/v1/account/spawn-profiles", spawnProfilesEntry(deps.AuthService, deps.AccountMembershipRepo, deps.EntitlementsRepo, deps.EntitlementService, deps.APIKeysRepo, deps.ConfigResolver))
+	mux.HandleFunc("/v1/account/spawn-profiles/", spawnProfileEntry(deps.AuthService, deps.AccountMembershipRepo, deps.EntitlementsRepo, deps.EntitlementService, deps.APIKeysRepo, deps.ConfigResolver))
 }

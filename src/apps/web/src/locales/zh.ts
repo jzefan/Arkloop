@@ -405,6 +405,11 @@ export const zh: LocaleStrings = {
       enabled: '启用',
       disabled: '禁用',
     },
+    spawnProfileTitle: 'Sub-agent 模型',
+    spawnProfilePlatformDefault: '平台默认',
+    spawnProfileExplore: 'explore',
+    spawnProfileTask: 'task',
+    spawnProfileStrong: 'strong',
   },
   // model picker
   modelPicker: {
