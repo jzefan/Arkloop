@@ -385,6 +385,9 @@ export const en: LocaleStrings = {
     applyingToAll: 'Applying...',
     applyDone: 'Applied to {count} agents',
     deleteAll: 'Delete all',
+    searchPlaceholder: 'Search models...',
+    showInPicker: 'Show in picker',
+    hideFromPicker: 'Hide from picker',
   },
   // agent settings
   agentSettings: {
@@ -408,7 +411,8 @@ export const en: LocaleStrings = {
     defaultLabel: 'Default',
     addApiKey: 'Add API Key',
     byokSection: 'Your API Keys',
-    noByok: 'No custom models',
+    noByok: 'No matching models',
+    searchPlaceholder: 'Search...',
   },
   claw: {
     progress: 'Progress',

@@ -1142,6 +1142,7 @@ export type LlmProviderModel = {
   model: string
   priority: number
   is_default: boolean
+  show_in_picker: boolean
   tags: string[]
   when: Record<string, unknown>
   advanced_json?: Record<string, unknown> | null
@@ -1270,6 +1271,22 @@ export async function deleteProviderModel(
     {
       method: 'DELETE',
       accessToken,
+    },
+  )
+}
+
+export async function patchProviderModel(
+  accessToken: string,
+  providerId: string,
+  modelId: string,
+  data: { show_in_picker?: boolean },
+): Promise<LlmProviderModel> {
+  return await apiFetch<LlmProviderModel>(
+    withScope(`/v1/llm-providers/${providerId}/models/${modelId}`, BYOK_SCOPE),
+    {
+      method: 'PATCH',
+      accessToken,
+      body: JSON.stringify({ ...data, scope: BYOK_SCOPE }),
     },
   )
 }

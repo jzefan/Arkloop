@@ -52,6 +52,7 @@ type CreateModelInput struct {
 	Model               string
 	Priority            int
 	IsDefault           bool
+	ShowInPicker        bool
 	Tags                []string
 	WhenJSON            json.RawMessage
 	AdvancedJSON        map[string]any
@@ -69,6 +70,8 @@ type UpdateModelInput struct {
 	Priority               *int
 	IsDefaultSet           bool
 	IsDefault              *bool
+	ShowInPickerSet        bool
+	ShowInPicker           *bool
 	TagsSet                bool
 	Tags                   []string
 	WhenJSONSet            bool
@@ -365,6 +368,7 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 		Model:               input.Model,
 		Priority:            input.Priority,
 		IsDefault:           insertDefault,
+		ShowInPicker:        input.ShowInPicker,
 		Tags:                input.Tags,
 		WhenJSON:            input.WhenJSON,
 		AdvancedJSON:        input.AdvancedJSON,
@@ -431,6 +435,10 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 	if input.IsDefaultSet {
 		isDefault = *input.IsDefault
 	}
+	showInPicker := current.ShowInPicker
+	if input.ShowInPickerSet {
+		showInPicker = *input.ShowInPicker
+	}
 	tags := current.Tags
 	if input.TagsSet {
 		tags = input.Tags
@@ -486,6 +494,7 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 		Model:               model,
 		Priority:            priority,
 		IsDefault:           isDefault,
+		ShowInPicker:        showInPicker,
 		Tags:                tags,
 		WhenJSON:            whenJSON,
 		AdvancedJSON:        advancedJSON,

@@ -385,6 +385,9 @@ export const zh: LocaleStrings = {
     applyingToAll: '应用中...',
     applyDone: '已应用到 {count} 个智能体',
     deleteAll: '全部删除',
+    searchPlaceholder: '搜索模型...',
+    showInPicker: '在选择器中显示',
+    hideFromPicker: '从选择器中隐藏',
   },
   // agent settings
   agentSettings: {
@@ -408,7 +411,8 @@ export const zh: LocaleStrings = {
     defaultLabel: '默认',
     addApiKey: '添加 API Key',
     byokSection: '你的 API Key',
-    noByok: '暂无自定义模型',
+    noByok: '无匹配模型',
+    searchPlaceholder: '搜索...',
   },
   claw: {
     progress: '进度',

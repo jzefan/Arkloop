@@ -9,6 +9,7 @@ import {
   deleteLlmProvider,
   createProviderModel,
   deleteProviderModel,
+  patchProviderModel,
   listAvailableModels,
   listPersonas,
   patchPersona,
@@ -396,6 +397,7 @@ function ModelsSection({
   const [err, setErr] = useState('')
   const [applyMsg, setApplyMsg] = useState('')
   const [applyingModel, setApplyingModel] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const loadAvailable = useCallback(async () => {
     try {
@@ -487,7 +489,19 @@ function ModelsSection({
     }
   }
 
+  const handleTogglePicker = async (modelId: string, current: boolean) => {
+    try {
+      await patchProviderModel(accessToken, provider.id, modelId, { show_in_picker: !current })
+      onChanged()
+    } catch (e) {
+      setErr(isApiError(e) ? e.message : m.saveFailed)
+    }
+  }
+
   const unconfiguredCount = available?.filter((am) => !am.configured).length ?? 0
+  const filteredModels = search.trim()
+    ? provider.models.filter((pm) => pm.model.toLowerCase().includes(search.trim().toLowerCase()))
+    : provider.models
 
   return (
     <div>
@@ -541,17 +555,61 @@ function ModelsSection({
       {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
       {applyMsg && <p className="mt-2 text-xs text-green-500">{applyMsg}</p>}
 
-      <div className="mt-3 space-y-2">
+      {provider.models.length > 0 && (
+        <div className="mt-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={m.searchPlaceholder}
+            className={inputCls + ' w-full'}
+          />
+        </div>
+      )}
+
+      <div className="mt-2 space-y-1 overflow-y-auto" style={{ maxHeight: '320px' }}>
         {provider.models.length === 0 && !addingModel ? (
           <p className="py-8 text-center text-sm text-[var(--c-text-muted)]">--</p>
+        ) : filteredModels.length === 0 ? (
+          <p className="py-4 text-center text-sm text-[var(--c-text-muted)]">--</p>
         ) : (
-          provider.models.map((pm) => (
+          filteredModels.map((pm) => (
             <div
               key={pm.id}
-              className="group flex items-center justify-between rounded-lg border border-[var(--c-border-subtle)] px-4 py-3"
+              className="group flex items-center justify-between rounded-lg border border-[var(--c-border-subtle)] px-4 py-2.5"
             >
-              <p className="text-sm font-medium text-[var(--c-text-primary)]">{pm.model}</p>
-              <div className="flex items-center gap-1">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                {/* show_in_picker toggle */}
+                <button
+                  type="button"
+                  onClick={() => handleTogglePicker(pm.id, pm.show_in_picker)}
+                  title={pm.show_in_picker ? m.hideFromPicker : m.showInPicker}
+                  className="flex-shrink-0 rounded transition-opacity hover:opacity-80"
+                  style={{
+                    width: '28px',
+                    height: '16px',
+                    borderRadius: '8px',
+                    background: pm.show_in_picker ? 'var(--c-accent-send)' : 'var(--c-border-subtle)',
+                    position: 'relative',
+                    transition: 'background 120ms ease',
+                  }}
+                >
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      left: pm.show_in_picker ? '14px' : '2px',
+                      width: '12px',
+                      height: '12px',
+                      borderRadius: '50%',
+                      background: 'white',
+                      transition: 'left 120ms ease',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                    }}
+                  />
+                </button>
+                <p className="truncate text-sm font-medium text-[var(--c-text-primary)]">{pm.model}</p>
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   onClick={() => handleApplyToAll(pm.model)}
                   disabled={applyingModel === pm.model}
