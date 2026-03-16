@@ -9,7 +9,25 @@ import {
 import type { Locale } from '../contexts/LocaleContext'
 import type { LoginRequest, LoginResponse } from '../api/types'
 
-type Phase = 'identity' | 'password' | 'otp-email' | 'otp-code'
+type Phase = 'identity' | 'password' | 'otp-email' | 'otp-code' | 'register'
+
+export type ResolveIdentityResponse = {
+  next_step: 'password' | 'register'
+  flow_token?: string
+  masked_email?: string
+  otp_available?: boolean
+  invite_required?: boolean
+  prefill?: { login?: string; email?: string }
+}
+
+export type RegisterRequest = {
+  login: string
+  password: string
+  email: string
+  locale: string
+  cf_turnstile_token?: string
+  invite_code?: string
+}
 
 export type AuthPageTranslations = {
   requestFailed: string
@@ -29,13 +47,27 @@ export type AuthPageTranslations = {
   otpCodePlaceholder: string
   useEmailOtpHint: string
   otpSendingCountdown: (n: number) => string
+  // register phase (optional, only needed by web)
+  registerMode?: string
+  creatingAccountHint?: string
+  enterUsername?: string
+  enterEmail?: string
+  enterInviteCode?: string
+  enterInviteCodeOptional?: string
+  registerPasswordHint?: string
 }
 
 export type AuthApi = {
   login: (req: LoginRequest) => Promise<LoginResponse>
   getCaptchaConfig: () => Promise<{ enabled: boolean; site_key: string }>
-  sendEmailOTP: (email: string, cfTurnstileToken?: string) => Promise<void>
-  verifyEmailOTP: (email: string, code: string) => Promise<LoginResponse>
+  sendEmailOTP?: (email: string, cfTurnstileToken?: string) => Promise<void>
+  verifyEmailOTP?: (email: string, code: string) => Promise<LoginResponse>
+  // resolve-identity flow (web)
+  resolveIdentity?: (req: { identity: string; cf_turnstile_token?: string }) => Promise<ResolveIdentityResponse>
+  getRegistrationMode?: () => Promise<{ mode: 'invite_only' | 'open' }>
+  register?: (req: RegisterRequest) => Promise<LoginResponse>
+  sendResolvedEmailOTP?: (flowToken: string, cfTurnstileToken?: string) => Promise<void>
+  verifyResolvedEmailOTP?: (flowToken: string, code: string) => Promise<LoginResponse>
 }
 
 type Props = {
@@ -48,11 +80,20 @@ type Props = {
 
 const isEmailStr = (v: string) => v.includes('@')
 
+const passwordEncoder = new TextEncoder()
+
+function registerPasswordMeetsPolicy(password: string): boolean {
+  const len = passwordEncoder.encode(password).length
+  return len >= 8 && len <= 72 && /\p{L}/u.test(password) && /\p{N}/u.test(password)
+}
+
 export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
   const [identity, setIdentity] = useState('')
   const [phase, setPhase] = useState<Phase>('identity')
   const [maskedEmail, setMaskedEmail] = useState('')
   const [checking, setChecking] = useState(false)
+  const [flowToken, setFlowToken] = useState('')
+  const [otpAvailable, setOtpAvailable] = useState(false)
 
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -65,6 +106,15 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
   const [otpSubmitting, setOtpSubmitting] = useState(false)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // register state
+  const [regLogin, setRegLogin] = useState('')
+  const [regEmail, setRegEmail] = useState('')
+  const [regPassword, setRegPassword] = useState('')
+  const [regInviteCode, setRegInviteCode] = useState('')
+  const [regSubmitting, setRegSubmitting] = useState(false)
+  const [registerEmailLocked, setRegisterEmailLocked] = useState(false)
+  const [registrationMode, setRegistrationMode] = useState<'invite_only' | 'open'>('invite_only')
+
   const [error, setError] = useState<AppError | null>(null)
   const [captchaSiteKey, setCaptchaSiteKey] = useState('')
   const [turnstileToken, setTurnstileToken] = useState('')
@@ -72,11 +122,20 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
   const passwordRef = useRef<HTMLInputElement>(null)
   const otpEmailRef = useRef<HTMLInputElement>(null)
   const otpCodeRef = useRef<HTMLInputElement>(null)
+  const regFirstRef = useRef<HTMLInputElement>(null)
+
+  const hasResolveFlow = !!api.resolveIdentity
+  const inviteRequired = registrationMode === 'invite_only'
 
   useEffect(() => {
-    api.getCaptchaConfig()
-      .then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) })
-      .catch(() => {})
+    void Promise.all([
+      api.getCaptchaConfig()
+        .then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) })
+        .catch(() => {}),
+      api.getRegistrationMode?.()
+        .then((res) => setRegistrationMode(res.mode))
+        .catch(() => {}),
+    ].filter(Boolean))
   }, [api])
 
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current) }, [])
@@ -87,6 +146,7 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
       password: passwordRef,
       'otp-email': otpEmailRef,
       'otp-code': otpCodeRef,
+      register: regFirstRef,
     }
     const ref = refs[phase]
     if (!ref) return
@@ -103,6 +163,9 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
     setOtpCountdown(0)
     if (countdownRef.current) clearInterval(countdownRef.current)
     setMaskedEmail('')
+    setFlowToken('')
+    setOtpAvailable(false)
+    setRegisterEmailLocked(false)
     setError(null)
     setTurnstileToken('')
   }
@@ -122,18 +185,34 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
     }, 1000)
   }
 
-  const switchToOtp = () => {
+  const switchToOtp = async () => {
     setError(null)
-    if (isEmailStr(identity.trim())) {
-      const email = identity.trim()
-      setOtpEmail(email)
-      setPhase('otp-code')
-      startCountdown()
-      api.sendEmailOTP(email).catch(() => {})
-    } else {
-      setOtpEmail('')
-      setOtpCode('')
-      setPhase('otp-email')
+    if (flowToken && api.sendResolvedEmailOTP) {
+      setOtpSending(true)
+      try {
+        await api.sendResolvedEmailOTP(flowToken, captchaSiteKey ? turnstileToken : undefined)
+        setOtpCode('')
+        setPhase('otp-code')
+        startCountdown()
+        setTurnstileToken('')
+      } catch (err) {
+        setTurnstileToken('')
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setOtpSending(false)
+      }
+    } else if (api.sendEmailOTP) {
+      if (isEmailStr(identity.trim())) {
+        const email = identity.trim()
+        setOtpEmail(email)
+        setPhase('otp-code')
+        startCountdown()
+        api.sendEmailOTP(email).catch(() => {})
+      } else {
+        setOtpEmail('')
+        setOtpCode('')
+        setPhase('otp-email')
+      }
     }
   }
 
@@ -146,8 +225,34 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
       if (!id) return
       setChecking(true)
       try {
-        setMaskedEmail('')
-        setPhase('password')
+        if (api.resolveIdentity) {
+          const res = await api.resolveIdentity({
+            identity: id,
+            cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined,
+          })
+          setTurnstileToken('')
+          if (res.next_step === 'password') {
+            setMaskedEmail(res.masked_email ?? '')
+            setFlowToken(res.flow_token ?? '')
+            setOtpAvailable(res.otp_available ?? false)
+            setPhase('password')
+          } else {
+            setRegLogin(res.prefill?.login ?? '')
+            setRegEmail(res.prefill?.email ?? '')
+            setRegPassword('')
+            setRegInviteCode('')
+            setRegisterEmailLocked(Boolean(res.prefill?.email))
+            setFlowToken('')
+            setOtpAvailable(false)
+            setPhase('register')
+          }
+        } else {
+          setMaskedEmail('')
+          setPhase('password')
+        }
+      } catch (err) {
+        setTurnstileToken('')
+        setError(normalizeError(err, t.requestFailed))
       } finally {
         setChecking(false)
       }
@@ -170,7 +275,7 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
       return
     }
 
-    if (phase === 'otp-email') {
+    if (phase === 'otp-email' && api.sendEmailOTP) {
       const email = otpEmail.trim()
       if (!email) return
       setOtpSending(true)
@@ -184,32 +289,69 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
     }
 
     if (phase === 'otp-code') {
-      const email = otpEmail.trim()
       const code = otpCode.trim()
-      if (!email || code.length !== 6) return
+      if (code.length !== 6) return
       setOtpSubmitting(true)
       try {
-        const resp = await api.verifyEmailOTP(email, code)
+        let resp: LoginResponse
+        if (flowToken && api.verifyResolvedEmailOTP) {
+          resp = await api.verifyResolvedEmailOTP(flowToken, code)
+        } else if (api.verifyEmailOTP) {
+          const email = otpEmail.trim()
+          if (!email) return
+          resp = await api.verifyEmailOTP(email, code)
+        } else {
+          return
+        }
         onLoggedIn(resp.access_token)
       } catch (err) {
         setError(normalizeError(err, t.requestFailed))
       } finally {
         setOtpSubmitting(false)
       }
+      return
+    }
+
+    if (phase === 'register' && api.register) {
+      setRegSubmitting(true)
+      try {
+        const resp = await api.register({
+          login: regLogin.trim(),
+          password: regPassword,
+          email: regEmail.trim(),
+          locale,
+          cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined,
+          ...(regInviteCode.trim() ? { invite_code: regInviteCode.trim() } : {}),
+        })
+        onLoggedIn(resp.access_token)
+      } catch (err) {
+        setTurnstileToken('')
+        setError(normalizeError(err, t.requestFailed))
+      } finally {
+        setRegSubmitting(false)
+      }
     }
   }
 
-  const isLoading = checking || submitting || otpSending || otpSubmitting
+  const isLoading = checking || submitting || otpSending || otpSubmitting || regSubmitting
 
   const canSubmit = useMemo(() => {
     if (isLoading) return false
     const captchaOk = !captchaSiteKey || !!turnstileToken
-    if (phase === 'identity') return identity.trim().length > 0
+    if (phase === 'identity') return identity.trim().length > 0 && (hasResolveFlow ? captchaOk : true)
     if (phase === 'password') return password.length > 0 && captchaOk
     if (phase === 'otp-email') return otpEmail.trim().length > 0 && captchaOk
-    if (phase === 'otp-code') return otpEmail.trim().length > 0 && otpCode.length === 6
+    if (phase === 'otp-code') {
+      if (flowToken) return otpCode.length === 6
+      return otpEmail.trim().length > 0 && otpCode.length === 6
+    }
+    if (phase === 'register') {
+      if (!regLogin.trim() || !regEmail.trim() || !registerPasswordMeetsPolicy(regPassword)) return false
+      if (inviteRequired && !regInviteCode.trim()) return false
+      return captchaOk
+    }
     return false
-  }, [phase, identity, password, otpEmail, otpCode, isLoading, captchaSiteKey, turnstileToken])
+  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, regInviteCode, inviteRequired, isLoading, captchaSiteKey, turnstileToken, flowToken, hasResolveFlow])
 
   const btnLabel = useMemo(() => {
     if (phase === 'otp-email') return t.otpSendBtn
@@ -221,7 +363,17 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
     password: t.enterYourPasswordTitle,
     'otp-email': t.otpLoginTab,
     'otp-code': t.otpLoginTab,
+    register: t.registerMode ?? '',
   }
+
+  const showOtpHint = phase === 'password' && (hasResolveFlow ? otpAvailable : true)
+  const showCaptcha = captchaSiteKey && (
+    phase === 'identity' && hasResolveFlow
+    || phase === 'password'
+    || phase === 'otp-email'
+    || phase === 'register'
+    || phase === 'otp-code'
+  )
 
   return (
     <AuthLayout>
@@ -331,7 +483,7 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
             </Reveal>
 
             {/* otp email */}
-            <Reveal active={phase === 'otp-email' || (phase === 'otp-code' && !isEmailStr(identity.trim()))}>
+            <Reveal active={phase === 'otp-email' || (phase === 'otp-code' && !flowToken && !isEmailStr(identity.trim()))}>
               <div style={{ paddingTop: '10px' }}>
                 <label style={labelStyle}>{t.otpEmailPlaceholder}</label>
                 <input
@@ -370,10 +522,81 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   autoComplete="one-time-code"
                 />
+                {maskedEmail && (
+                  <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', marginTop: '6px', paddingLeft: '2px' }}>
+                    {maskedEmail}
+                  </div>
+                )}
               </div>
             </Reveal>
 
-            {captchaSiteKey && (phase === 'password' || phase === 'otp-email') && (
+            {/* register */}
+            <Reveal active={phase === 'register'}>
+              <div style={{ paddingTop: '6px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--c-placeholder)', marginBottom: '10px' }}>{t.creatingAccountHint ?? ''}</div>
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={labelStyle}>{t.enterUsername ?? ''}</label>
+                  <input
+                    ref={registerEmailLocked ? regFirstRef : undefined}
+                    className={inputCls}
+                    style={inputStyle}
+                    type="text"
+                    placeholder={t.enterUsername ?? ''}
+                    value={regLogin}
+                    onChange={(e) => setRegLogin(e.target.value)}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </div>
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={labelStyle}>{t.enterEmail ?? ''}</label>
+                  <input
+                    ref={registerEmailLocked ? undefined : regFirstRef}
+                    className={inputCls}
+                    style={{
+                      ...inputStyle,
+                      color: registerEmailLocked ? 'var(--c-text-secondary)' : 'var(--c-text-primary)',
+                    }}
+                    type="email"
+                    placeholder={t.enterEmail ?? ''}
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    readOnly={registerEmailLocked}
+                  />
+                </div>
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={labelStyle}>{t.fieldPassword}</label>
+                  <PasswordEye
+                    inputRef={null as unknown as React.RefObject<HTMLInputElement>}
+                    placeholder={t.enterPassword}
+                    value={regPassword}
+                    onChange={setRegPassword}
+                    showPassword={showPassword}
+                    onToggleShow={() => setShowPassword((v) => !v)}
+                    autoComplete="new-password"
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', marginTop: '6px', paddingLeft: '2px' }}>{t.registerPasswordHint ?? ''}</div>
+                </div>
+                <div>
+                  <label style={labelStyle}>{inviteRequired ? (t.enterInviteCode ?? '') : (t.enterInviteCodeOptional ?? '')}</label>
+                  <input
+                    className={inputCls}
+                    style={inputStyle}
+                    type="text"
+                    placeholder={inviteRequired ? (t.enterInviteCode ?? '') : (t.enterInviteCodeOptional ?? '')}
+                    value={regInviteCode}
+                    onChange={(e) => setRegInviteCode(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            </Reveal>
+
+            {showCaptcha && (
               <div style={{ marginTop: '12px' }}>
                 <Turnstile
                   siteKey={captchaSiteKey}
@@ -433,11 +656,13 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
           </form>
 
           {/* otp hint under password phase */}
-          <Reveal active={phase === 'password'}>
+          <Reveal active={showOtpHint}>
             <button
               type="button"
               onClick={switchToOtp}
+              disabled={otpSending || (!!captchaSiteKey && !turnstileToken && hasResolveFlow)}
               style={{ marginTop: '6px', fontSize: '12px', color: 'var(--c-placeholder)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'block' }}
+              className="disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {t.useEmailOtpHint}
             </button>
@@ -447,14 +672,28 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
           <Reveal active={phase === 'otp-code'}>
             <button
               type="button"
-              disabled={otpCountdown > 0 || otpSending}
+              disabled={otpCountdown > 0 || otpSending || (flowToken ? (!flowToken || (!!captchaSiteKey && !turnstileToken)) : false)}
               onClick={async () => {
-                const email = otpEmail.trim()
-                if (!email) return
-                setOtpSending(true)
-                try { await api.sendEmailOTP(email) } catch { /* noop */ } finally {
-                  setOtpSending(false)
-                  startCountdown()
+                if (flowToken && api.sendResolvedEmailOTP) {
+                  setOtpSending(true)
+                  try {
+                    await api.sendResolvedEmailOTP(flowToken, captchaSiteKey ? turnstileToken : undefined)
+                    setTurnstileToken('')
+                    startCountdown()
+                  } catch (err) {
+                    setTurnstileToken('')
+                    setError(normalizeError(err, t.requestFailed))
+                  } finally {
+                    setOtpSending(false)
+                  }
+                } else if (api.sendEmailOTP) {
+                  const email = otpEmail.trim()
+                  if (!email) return
+                  setOtpSending(true)
+                  try { await api.sendEmailOTP(email) } catch { /* noop */ } finally {
+                    setOtpSending(false)
+                    startCountdown()
+                  }
                 }
               }}
               style={{ marginTop: '6px', fontSize: '12px', color: 'var(--c-placeholder)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'block' }}

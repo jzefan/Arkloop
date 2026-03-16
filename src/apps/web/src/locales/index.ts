@@ -478,6 +478,7 @@ export interface LocaleStrings {
     byokSection: string
     noByok: string
     searchPlaceholder: string
+    moreModels: string
   }
   // claw right panel
   claw: {
@@ -569,6 +570,20 @@ export interface LocaleStrings {
     connectorsDesc: string;
     extensionsTitle: string;
     extensionsDesc: string;
+    modules: string;
+    modulesTitle: string;
+    modulesDesc: string;
+    modulesOffline: string;
+    sandboxTitle: string;
+    sandboxDesc: string;
+    memoryTitle: string;
+    memoryDesc: string;
+    searchTitle: string;
+    searchDesc: string;
+    crawlerTitle: string;
+    crawlerDesc: string;
+    browserTitle: string;
+    browserDesc: string;
     developerTitle: string;
     developerDesc: string;
     debugMode: string;
@@ -710,6 +725,8 @@ export interface LocaleStrings {
     vendorAnthropic: string;
     advancedConfig: string;
     searchProviders: string;
+    deleteAll?: string;
+    importAll?: string;
   };
   // admin agents settings (ported from console-lite)
   adminAgents: {
@@ -859,6 +876,7 @@ export interface LocaleStrings {
     next: string;
     skip: string;
     stepOf: (current: number, total: number) => string;
+    comingSoon: string;
   };
 }
 

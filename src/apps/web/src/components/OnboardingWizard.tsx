@@ -851,14 +851,14 @@ export function OnboardingWizard({ onComplete }: Props) {
                     title={ob.saasTitle}
                     desc={ob.saasDesc}
                     disabled
-                    comingSoon={ob.comingSoon}
+                    comingSoon={t.comingSoon}
                   />
                   <ModeCard
                     icon={<Server size={18} />}
                     title={ob.selfHostTitle}
                     desc={ob.selfHostDesc}
                     disabled
-                    comingSoon={ob.comingSoon}
+                    comingSoon={t.comingSoon}
                   />
                 </div>
                 <button

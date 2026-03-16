@@ -118,6 +118,7 @@ export type ArkloopDesktopApi = {
   app: {
     getVersion: () => Promise<string>
     quit: () => Promise<void>
+    getOsUsername?: () => Promise<string>
   }
   dialog?: {
     openFolder: () => Promise<string | null>

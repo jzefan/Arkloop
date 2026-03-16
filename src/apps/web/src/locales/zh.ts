@@ -860,5 +860,6 @@ export const zh: LocaleStrings = {
     next: "下一步",
     skip: "跳过",
     stepOf: (current: number, total: number) => `${current} / ${total}`,
+    comingSoon: "暂未开放",
   },
 };

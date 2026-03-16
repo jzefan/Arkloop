@@ -5,7 +5,6 @@ import {
   Search,
   Globe,
   Bot,
-  CheckCircle,
   XCircle,
   type LucideIcon,
 } from "lucide-react";

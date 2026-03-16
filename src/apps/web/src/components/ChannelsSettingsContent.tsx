@@ -205,7 +205,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
               >
                 <option value="">{ct.personaDefault}</option>
                 {personas.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
+                  <option key={p.id} value={p.id}>{p.display_name || p.id}</option>
                 ))}
               </select>
             </div>
