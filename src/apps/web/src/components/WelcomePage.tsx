@@ -43,6 +43,7 @@ type OutletContext = {
   onExitSearchMode: () => void
   pendingSkillPrompt?: string | null
   onConsumeSkillPrompt?: () => void
+  onOpenSettings?: (tab: string) => void
 }
 
 // 按时段、星期、节日生成问候语，全部基于浏览器本地时间。
@@ -114,7 +115,7 @@ function buildGreeting(name: string | null, now: Date): string {
 
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, pendingSkillPrompt, onConsumeSkillPrompt } = useOutletContext<OutletContext>()
+  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, pendingSkillPrompt, onConsumeSkillPrompt, onOpenSettings } = useOutletContext<OutletContext>()
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentsRef = useRef<Attachment[]>([])
@@ -262,7 +263,7 @@ export function WelcomePage() {
     setError(normalizeError(err, t.requestFailed))
   }, [onLoggedOut, t.requestFailed])
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     const text = draft.trim()
     if ((!text && attachments.length === 0) || sending) return
@@ -282,7 +283,7 @@ export function WelcomePage() {
         }),
       )
       await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
-      const run = await createRun(accessToken, thread.id, personaKey)
+      const run = await createRun(accessToken, thread.id, personaKey, modelOverride)
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
       attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -388,6 +389,7 @@ export function WelcomePage() {
               if (personaKey === SEARCH_PERSONA_KEY && !isSearchMode) onEnterSearchMode()
               else if (personaKey !== SEARCH_PERSONA_KEY && isSearchMode) onExitSearchMode()
             }}
+            onOpenSettings={onOpenSettings}
           />
           {/* incognito note: 平滑展开/收起 */}
           <div

@@ -7,7 +7,7 @@
 | budget.max_cost_micros | int | both | 0 | false | 单次 run 最大累计费用 (微美元), 0 表示不限 |
 | budget.max_total_output_tokens | int | both | 0 | false | 单次 run 最大累计输出 token 数, 0 表示不限 |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
-| credit.initial_grant | int | platform | 1000 | false | 新组织初始积分发放数量 |
+| credit.initial_grant | int | platform | 1000 | false | 新账户初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
 | credit.invitee_reward | int | platform | 200 | false | 被邀请者奖励积分数量 |
 | credit.per_usd | int | platform | 1000 | false | 积分汇率：每 1 USD 对应积分数 |
@@ -24,10 +24,10 @@
 | gateway.ratelimit_rate_per_minute | number | platform | 300 | false | Gateway Rate Limit Per Minute |
 | gateway.risk_reject_threshold | int | platform | 0 | false | Gateway 风险拒绝阈值（0-100） |
 | gateway.trusted_cidrs | string | platform |  | false | Gateway 可信代理 CIDR 列表 |
-| invite.default_max_uses | int | both | 1 | false | 邀请码默认可用次数 |
+| invite.default_max_uses | int | both | 0 | false | 邀请码默认可用次数，0 表示不限 |
 | invite.max_codes_per_user | int | both | 1 | false | 单用户可创建的邀请码数量上限 |
-| limit.agent_reasoning_iterations | int | both | 0 | false | Agent Loop 主推理回合上限，0 表示不限 |
-| limit.concurrent_runs | int | both | 10 | false | 并发 run 上限 |
+| limit.agent_reasoning_iterations | int | platform | 0 | false | Agent Loop 主推理回合上限，0 表示不限 |
+| limit.concurrent_runs | int | both | 0 | false | 并发 run 上限，0 表示不限 |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
 | limit.subagent_max_active_per_root_run | int | both | 20 | false | 单 root run 下最大活跃 sub-agent 数量 |
@@ -35,9 +35,9 @@
 | limit.subagent_max_descendants_per_root_run | int | both | 50 | false | 单 root run 下 sub-agent 总数上限 |
 | limit.subagent_max_parallel_children | int | both | 5 | false | 单 run 下最大并行子 agent 数量 |
 | limit.subagent_max_pending_per_root_run | int | both | 20 | false | 单 root run 下待处理输入队列上限 |
-| limit.team_members | int | both | 50 | false | Team 成员数量上限 |
+| limit.team_members | int | both | 0 | false | Team 成员数量上限，0 表示不限 |
 | limit.thread_message_history | int | both | 200 | false | 线程历史消息加载上限（条） |
-| limit.tool_continuation_budget | int | both | 32 | false | 长工具 continuation 总预算上限 |
+| limit.tool_continuation_budget | int | platform | 32 | false | 长工具 continuation 总预算上限 |
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
 | llm.retry.max_attempts | int | platform | 3 | false | LLM 重试最大次数 |
@@ -47,8 +47,8 @@
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |
-| quota.runs_per_month | int | both | 999999 | false | 每月 run 数量配额 |
-| quota.tokens_per_month | int | both | 1000000 | false | 每月 token 配额 |
+| quota.runs_per_month | int | both | 0 | false | 每月 run 数量配额，0 表示不限 |
+| quota.tokens_per_month | int | both | 0 | false | 每月 token 配额，0 表示不限 |
 | sandbox.agent_port | int | platform | 8080 | false | Sandbox Agent 监听端口 |
 | sandbox.allow_egress | bool | platform | true | false | Sandbox backend 是否允许访问外网 |
 | sandbox.base_url | string | platform |  | false | Sandbox Service 地址，Worker 通过此 URL 调用 Sandbox；为空则不注册 sandbox 工具 |
@@ -74,13 +74,25 @@
 | sandbox.warm_browser | int | platform | 1 | false | browser tier 预热实例数 |
 | sandbox.warm_lite | int | platform | 3 | false | lite tier 预热实例数 |
 | sandbox.warm_pro | int | platform | 2 | false | pro tier 预热实例数 |
-| sandbox.warm_ultra | int | platform | 1 | false | ultra tier 预热实例数 |
+| security.injection_scan.blocking_enabled | bool | platform | false | false | 检测到注入时直接拦截请求 |
+| security.injection_scan.regex_enabled | bool | platform | true | false | Regex Scanner 开关 |
+| security.injection_scan.semantic_enabled | bool | platform | false | false | Prompt Guard 语义扫描开关 |
+| security.injection_scan.tool_output_scan_enabled | bool | platform | true | false | 扫描工具输出中的间接注入 |
+| security.injection_scan.trust_source_enabled | bool | platform | true | false | Trust Source 标记开关 |
+| security.semantic_scanner.api_endpoint | string | platform |  | false | 远端语义扫描服务地址（OpenAI 兼容 /chat/completions） |
+| security.semantic_scanner.api_key | string | platform |  | true | 远端语义扫描服务 API Key |
+| security.semantic_scanner.api_model | string | platform | openai/gpt-oss-safeguard-20b | false | 远端语义扫描模型标识 |
+| security.semantic_scanner.api_timeout_ms | int | platform | 4000 | false | 远端语义扫描超时（毫秒） |
+| security.semantic_scanner.provider | string | platform |  | false | 语义扫描提供方（留空 / local / api） |
 | skills.market.skillsmp_api_key | string | platform |  | true | SkillsMP 官方市场 API Key |
 | skills.market.skillsmp_base_url | string | platform | https://skillsmp.com | false | SkillsMP 官方市场基础地址 |
 | skills.registry.api_base_url | string | platform |  | false | 官方技能 Registry API 基础地址，留空则沿用 Base URL |
 | skills.registry.api_key | string | platform |  | true | 官方技能 Registry API Key |
 | skills.registry.base_url | string | platform | https://clawhub.ai | false | 官方技能 Registry 页面基础地址 |
 | skills.registry.provider | string | platform | clawhub | false | 官方技能 Registry Provider |
+| spawn.profile.balanced | string | both | anthropic^claude-sonnet-4-5 | false | ACP agent 'balanced' profile: 平衡性价比模型 |
+| spawn.profile.fast | string | both | anthropic^claude-haiku-3-5 | false | ACP agent 'fast' profile: 低延迟低成本模型 |
+| spawn.profile.strong | string | both | anthropic^claude-sonnet-4-5 | false | ACP agent 'strong' profile: 最强推理能力模型 |
 | turnstile.allowed_host | string | platform |  | false | Turnstile Allowed Host |
 | turnstile.secret_key | string | platform |  | true | Turnstile Secret Key |
 | turnstile.site_key | string | platform |  | false | Turnstile Site Key |

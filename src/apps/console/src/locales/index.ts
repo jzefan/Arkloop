@@ -1,3 +1,4 @@
+import type { PromptInjectionTexts } from '@arkloop/shared/components/prompt-injection'
 import { zh } from './zh'
 import { en } from './en'
 
@@ -53,6 +54,7 @@ export interface LocaleStrings {
     executionGovernance: string
     reports: string
     modules: string
+    promptInjection: string
   }
   // settings
   account: string
@@ -1081,6 +1083,11 @@ export interface LocaleStrings {
       toastSaved: string
       toastSaveFailed: string
     }
+    promptInjection: PromptInjectionTexts & {
+      title: string
+      description: string
+      auditLoading: string
+    }
     email: {
       title: string
       statusTitle: string
@@ -1240,6 +1247,7 @@ export interface LocaleStrings {
       tabSearch: string
       tabBrowser: string
       tabConsole: string
+      tabSecurity: string
       statusUnknown: string
       statusNotInstalled: string
       statusDisconnected: string

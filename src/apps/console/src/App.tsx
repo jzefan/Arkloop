@@ -34,6 +34,7 @@ import { AccessLogPage } from './pages/access-log/AccessLogPage'
 import { EntitlementsPage } from './pages/entitlements/EntitlementsPage'
 import { ModulesPage } from './pages/modules/ModulesPage'
 
+import { PromptInjectionPage } from './pages/prompt-injection/PromptInjectionPage'
 import { BootstrapPage } from './pages/BootstrapPage'
 
 import { OperationProvider, useOperations } from './contexts/OperationContext'
@@ -43,8 +44,11 @@ import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, refreshAccessToken } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
+
+const sessionRestoreRetries = 12
+const sessionRestoreDelayMs = 1000
 
 function OperationHistoryModalWrapper() {
   const { historyOpen, setHistoryOpen } = useOperations()
@@ -93,7 +97,11 @@ function App() {
       setAccessToken(token)
     })
 
-    refreshAccessToken(controller.signal)
+    restoreAccessSession({
+      signal: controller.signal,
+      retries: sessionRestoreRetries,
+      retryDelayMs: sessionRestoreDelayMs,
+    })
       .then((resp) => {
         if (controller.signal.aborted) return
         writeAccessTokenToStorage(resp.access_token)
@@ -156,6 +164,7 @@ function App() {
           <Route path="api-keys" element={<APIKeysPage />} />
           <Route path="webhooks" element={<PlaceholderPage title="Webhooks" />} />
           {/* Security */}
+          <Route path="prompt-injection" element={<PromptInjectionPage />} />
           <Route path="ip-rules" element={<IPRulesPage />} />
           <Route path="captcha" element={<CaptchaPage />} />
           <Route path="gateway-config" element={<GatewayConfigPage />} />

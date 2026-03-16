@@ -51,7 +51,7 @@ func toolCatalogEffectiveEntry(
 			projectID = project.ID
 		}
 
-		catalog, err := buildEffectiveToolCatalog(r.Context(), projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.AccountID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -62,6 +62,7 @@ func toolCatalogEffectiveEntry(
 
 func buildEffectiveToolCatalog(
 	ctx context.Context,
+	accountID uuid.UUID,
 	projectID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
 	pool data.DB,
@@ -78,10 +79,10 @@ func buildEffectiveToolCatalog(
 		} else {
 			slog.WarnContext(ctx, "effective tool catalog: env mcp discovery failed", "err", err.Error())
 		}
-		if accountTools, err := mcpCache.GetAccount(ctx, pool, projectID); err == nil {
+		if accountTools, err := mcpCache.GetAccount(ctx, pool, accountID); err == nil {
 			mcpTools = append(mcpTools, accountTools...)
 		} else {
-			slog.WarnContext(ctx, "effective tool catalog: account mcp discovery failed", "project_id", projectID, "err", err.Error())
+			slog.WarnContext(ctx, "effective tool catalog: account mcp discovery failed", "account_id", accountID, "err", err.Error())
 		}
 	}
 

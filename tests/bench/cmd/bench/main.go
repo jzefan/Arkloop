@@ -20,6 +20,7 @@ const (
 	envAccessToken       = "ARKLOOP_BENCH_ACCESS_TOKEN"
 	envDatabaseURL       = "DATABASE_URL"
 	envOpenVikingRootKey = "ARKLOOP_OPENVIKING_ROOT_API_KEY"
+	envWorkerPersona     = "ARKLOOP_BENCH_WORKER_PERSONA"
 )
 
 func main() {
@@ -114,6 +115,18 @@ func resolveDBDSN(flagValue string) string {
 	return strings.TrimSpace(os.Getenv(envDatabaseURL))
 }
 
+func resolveWorkerPersona(flagValue string) string {
+	cleaned := strings.TrimSpace(flagValue)
+	if cleaned != "" {
+		return cleaned
+	}
+	cleaned = strings.TrimSpace(os.Getenv(envWorkerPersona))
+	if cleaned != "" {
+		return cleaned
+	}
+	return "normal"
+}
+
 func waitHealth(ctx context.Context, url string) error {
 	client := httpx.NewClient(2 * time.Second)
 	deadline := time.Now().Add(60 * time.Second)
@@ -170,6 +183,7 @@ func runBaseline(args []string) {
 	gateway, api, openviking, accessToken, dbDSN, forceOpen, out := commonFlags(fs)
 	includeOpenViking := fs.Bool("include-openviking", false, "include openviking scenario")
 	openvikingRootKey := fs.String("openviking-root-key", "", "openviking root api key")
+	workerPersona := fs.String("worker-persona", "", "worker scenario persona id")
 	fs.Parse(args)
 
 	ctx := context.Background()
@@ -214,6 +228,7 @@ func runBaseline(args []string) {
 			rep.Results = append(rep.Results, scenarios.RunSSEHold(ctx, scenarios.DefaultSSEHoldConfig(targets.APIBaseURL, token)))
 			workerCfg := scenarios.DefaultWorkerRunsConfig(targets.APIBaseURL, token)
 			workerCfg.DBDSN = effectiveDBDSN
+			workerCfg.PersonaID = resolveWorkerPersona(*workerPersona)
 			rep.Results = append(rep.Results, scenarios.RunWorkerRuns(ctx, workerCfg))
 		}
 	}
@@ -372,6 +387,7 @@ func runSSE(args []string) {
 func runWorker(args []string) {
 	fs := flag.NewFlagSet("worker", flag.ExitOnError)
 	_, api, _, accessToken, dbDSN, forceOpen, out := commonFlags(fs)
+	workerPersona := fs.String("worker-persona", "", "worker scenario persona id")
 	fs.Parse(args)
 
 	ctx := context.Background()
@@ -395,6 +411,7 @@ func runWorker(args []string) {
 
 	cfg := scenarios.DefaultWorkerRunsConfig(strings.TrimSpace(*api), token)
 	cfg.DBDSN = effectiveDBDSN
+	cfg.PersonaID = resolveWorkerPersona(*workerPersona)
 	rep.Results = append(rep.Results, scenarios.RunWorkerRuns(ctx, cfg))
 	rep.OverallPass = rep.Results[0].Pass
 	writeReportAndExit(rep, *out)

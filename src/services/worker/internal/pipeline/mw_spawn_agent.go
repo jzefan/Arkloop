@@ -18,9 +18,10 @@ func NewSpawnAgentMiddleware() RunMiddleware {
 			return next(ctx, rc)
 		}
 
+		personaKeys := loadPersonaKeys(ctx, rc)
 		executor := &spawnagent.ToolExecutor{
 			Control:     rc.SubAgentControl,
-			PersonaKeys: loadPersonaKeys(ctx, rc),
+			PersonaKeys: personaKeys,
 		}
 		specs := []tools.AgentToolSpec{
 			spawnagent.AgentSpec,
@@ -31,7 +32,7 @@ func NewSpawnAgentMiddleware() RunMiddleware {
 			spawnagent.InterruptAgentSpec,
 		}
 		llmSpecs := []llm.ToolSpec{
-			spawnagent.LlmSpec,
+			spawnagent.LlmSpecWithPersonas(personaKeys),
 			spawnagent.SendInputLlmSpec,
 			spawnagent.WaitAgentLlmSpec,
 			spawnagent.ResumeAgentLlmSpec,

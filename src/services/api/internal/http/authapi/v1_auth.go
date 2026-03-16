@@ -109,8 +109,6 @@ type bootstrapSetupResponse struct {
 	TokenType   string `json:"token_type"`
 }
 
-
-
 func bootstrapInit(registrationService *auth.RegistrationService) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method != nethttp.MethodPost {
@@ -304,8 +302,8 @@ type meResponse struct {
 	EmailVerificationRequired bool     `json:"email_verification_required"`
 	ClawEnabled               bool     `json:"claw_enabled"`
 	CreatedAt                 string   `json:"created_at"`
-	AccountID                     string   `json:"account_id,omitempty"`
-	AccountName                   string   `json:"account_name,omitempty"`
+	AccountID                 string   `json:"account_id,omitempty"`
+	AccountName               string   `json:"account_name,omitempty"`
 	Role                      string   `json:"role,omitempty"`
 	Permissions               []string `json:"permissions"`
 }
@@ -416,7 +414,11 @@ func refreshToken(authService *auth.Service, auditWriter *audit.Writer) func(net
 		issued, err := authService.ConsumeRefreshToken(r.Context(), token)
 		if err != nil {
 			switch err.(type) {
-			case auth.TokenInvalidError, auth.UserNotFoundError:
+			case auth.TokenInvalidError:
+				// 旧 refresh token 并发重放时，不能反向清掉已经轮换成功的新 cookie。
+				httpkit.WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
+				return
+			case auth.UserNotFoundError:
 				clearAuthCookies(w, r)
 				httpkit.WriteError(w, nethttp.StatusUnauthorized, "auth.invalid_token", "token invalid or expired", traceID, nil)
 				return
@@ -713,7 +715,7 @@ func me(authService *auth.Service, membershipRepo *data.AccountMembershipReposit
 				EmailVerificationRequired: emailVerifyRequired,
 				ClawEnabled:               clawEnabled,
 				CreatedAt:                 user.CreatedAt.UTC().Format(time.RFC3339Nano),
-				AccountID:                     membership.AccountID.String(),
+				AccountID:                 membership.AccountID.String(),
 				Role:                      membership.Role,
 				Permissions:               auth.PermissionsForRole(membership.Role),
 			}

@@ -76,8 +76,8 @@ type RegisterResult struct {
 }
 
 type createdLocalAccount struct {
-	User data.User
-	Account  data.Account
+	User    data.User
+	Account data.Account
 }
 
 type BootstrapAlreadyInitializedError struct{}
@@ -126,7 +126,7 @@ type RegistrationService struct {
 	now              func() time.Time
 }
 
-	// EntitlementResolver 注册时读取 entitlement 默认值。
+// EntitlementResolver 注册时读取 entitlement 默认值。
 type EntitlementResolver interface {
 	Resolve(ctx context.Context, accountID uuid.UUID, key string) (EntitlementValue, error)
 }
@@ -293,13 +293,11 @@ func (s *RegistrationService) Register(
 		return RegisterResult{}, err
 	}
 
-	maxUses := 1
+	maxUses := 0
 	if s.entitlementSvc != nil {
 		val, resolveErr := s.entitlementSvc.Resolve(ctx, account.ID, "invite.default_max_uses")
 		if resolveErr == nil {
-			if v := val.Int(); v > 0 {
-				maxUses = int(v)
-			}
+			maxUses = data.NormalizeInviteCodeMaxUses(val.Int())
 		}
 	}
 
@@ -319,7 +317,7 @@ func (s *RegistrationService) Register(
 			return RegisterResult{}, err
 		}
 
-		codeValid := existingCode != nil && existingCode.IsActive && existingCode.UseCount < existingCode.MaxUses
+		codeValid := existingCode != nil && existingCode.IsActive && data.InviteCodeHasRemainingUses(existingCode.UseCount, existingCode.MaxUses)
 		if codeValid {
 			referralRepo, err := data.NewReferralRepository(tx)
 			if err != nil {
@@ -516,13 +514,11 @@ func (s *RegistrationService) createLocalAccountTx(
 	if err != nil {
 		return createdLocalAccount{}, err
 	}
-	maxUses := 1
+	maxUses := 0
 	if s.entitlementSvc != nil {
 		val, resolveErr := s.entitlementSvc.Resolve(ctx, account.ID, "invite.default_max_uses")
 		if resolveErr == nil {
-			if v := val.Int(); v > 0 {
-				maxUses = int(v)
-			}
+			maxUses = data.NormalizeInviteCodeMaxUses(val.Int())
 		}
 	}
 	code, err := data.GenerateCode()
@@ -535,7 +531,6 @@ func (s *RegistrationService) createLocalAccountTx(
 
 	return createdLocalAccount{User: user, Account: account}, nil
 }
-
 
 func (s *RegistrationService) InitBootstrapToken(ctx context.Context) (BootstrapInitResult, error) {
 	if ctx == nil {

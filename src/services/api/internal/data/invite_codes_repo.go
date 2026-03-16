@@ -37,6 +37,17 @@ type InviteCodeRepository struct {
 	db Querier
 }
 
+func NormalizeInviteCodeMaxUses(maxUses int64) int {
+	if maxUses <= 0 {
+		return 0
+	}
+	return int(maxUses)
+}
+
+func InviteCodeHasRemainingUses(useCount, maxUses int) bool {
+	return maxUses <= 0 || useCount < maxUses
+}
+
 func NewInviteCodeRepository(db Querier) (*InviteCodeRepository, error) {
 	if db == nil {
 		return nil, errors.New("db must not be nil")
@@ -69,8 +80,8 @@ func (r *InviteCodeRepository) Create(ctx context.Context, userID uuid.UUID, cod
 	if code == "" {
 		return nil, fmt.Errorf("invite_codes.Create: code must not be empty")
 	}
-	if maxUses <= 0 {
-		return nil, fmt.Errorf("invite_codes.Create: max_uses must be positive")
+	if maxUses < 0 {
+		return nil, fmt.Errorf("invite_codes.Create: max_uses must not be negative")
 	}
 
 	var ic InviteCode
@@ -207,7 +218,7 @@ func (r *InviteCodeRepository) IncrementUseCount(ctx context.Context, id uuid.UU
 		ctx,
 		`UPDATE invite_codes
 		 SET use_count = use_count + 1
-		 WHERE id = $1 AND is_active = true AND use_count < max_uses`,
+		 WHERE id = $1 AND is_active = true AND (max_uses <= 0 OR use_count < max_uses)`,
 		id,
 	)
 	if err != nil {
@@ -236,8 +247,8 @@ func (r *InviteCodeRepository) UpdateMaxUses(ctx context.Context, id uuid.UUID, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if maxUses <= 0 {
-		return nil, fmt.Errorf("invite_codes.UpdateMaxUses: max_uses must be positive")
+	if maxUses < 0 {
+		return nil, fmt.Errorf("invite_codes.UpdateMaxUses: max_uses must not be negative")
 	}
 	var ic InviteCode
 	err := r.db.QueryRow(

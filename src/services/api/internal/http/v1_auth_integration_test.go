@@ -83,11 +83,11 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	registerBody := map[string]any{"login": "alice", "password": "pwd12345", "email": "alice@test.com"}
@@ -155,6 +155,110 @@ func TestAuthRegisterLoginRefreshLogoutFlow(t *testing.T) {
 		if actions[action] != 1 {
 			t.Fatalf("unexpected audit count: action=%s count=%d actions=%#v", action, actions[action], actions)
 		}
+	}
+}
+
+func TestAuthRefreshReplayDoesNotClearCanonicalCookie(t *testing.T) {
+	db := setupTestDatabase(t, "api_go_auth_refresh_replay")
+
+	ctx := context.Background()
+	pool, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	logger := observability.NewJSONLogger("test", io.Discard)
+
+	passwordHasher, err := auth.NewBcryptPasswordHasher(0)
+	if err != nil {
+		t.Fatalf("new password hasher: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(pool)
+	if err != nil {
+		t.Fatalf("new user repo: %v", err)
+	}
+	credentialRepo, err := data.NewUserCredentialRepository(pool)
+	if err != nil {
+		t.Fatalf("new credential repo: %v", err)
+	}
+	membershipRepo, err := data.NewAccountMembershipRepository(pool)
+	if err != nil {
+		t.Fatalf("new membership repo: %v", err)
+	}
+	refreshTokenRepo, err := data.NewRefreshTokenRepository(pool)
+	if err != nil {
+		t.Fatalf("new refresh token repo: %v", err)
+	}
+	auditRepo, err := data.NewAuditLogRepository(pool)
+	if err != nil {
+		t.Fatalf("new audit repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(pool)
+	if err != nil {
+		t.Fatalf("new job repo: %v", err)
+	}
+
+	authService, err := auth.NewService(userRepo, credentialRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	registrationService, err := auth.NewRegistrationService(pool, passwordHasher, tokenService, refreshTokenRepo, jobRepo)
+	if err != nil {
+		t.Fatalf("new registration service: %v", err)
+	}
+
+	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
+	handler := NewHandler(HandlerConfig{
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
+	})
+
+	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "replay-user",
+		"password": "pwd12345",
+		"email":    "replay@test.com",
+	}, nil)
+	if registerResp.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected register status: %d body=%s", registerResp.Code, registerResp.Body.String())
+	}
+
+	loginResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
+		"login":    "replay-user",
+		"password": "pwd12345",
+	}, nil)
+	if loginResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected login status: %d body=%s", loginResp.Code, loginResp.Body.String())
+	}
+	cookieA := refreshTokenCookieHeader(t, loginResp)
+
+	refreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, map[string]string{
+		"Cookie": cookieA,
+	})
+	if refreshResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected refresh status: %d body=%s", refreshResp.Code, refreshResp.Body.String())
+	}
+	cookieB := refreshTokenCookieHeader(t, refreshResp)
+
+	replayResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, map[string]string{
+		"Cookie": cookieA,
+	})
+	assertErrorEnvelope(t, replayResp, nethttp.StatusUnauthorized, "auth.invalid_token")
+	assertNoCookieMutation(t, replayResp, refreshTokenCookieName)
+
+	secondRefreshResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/refresh", nil, map[string]string{
+		"Cookie": cookieB,
+	})
+	if secondRefreshResp.Code != nethttp.StatusOK {
+		t.Fatalf("rotated cookie should still be usable: %d body=%s", secondRefreshResp.Code, secondRefreshResp.Body.String())
 	}
 }
 
@@ -354,11 +458,11 @@ func TestAuthRegisterRejectsWeakPasswords(t *testing.T) {
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	cases := []struct {
@@ -458,11 +562,11 @@ func TestAuthLoginAllowsLegacyWeakPassword(t *testing.T) {
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	legacyUser, err := userRepo.Create(ctx, "legacy-user", "legacy-user@test.com", "")
@@ -555,11 +659,11 @@ func TestAuthMeRequiresMembership(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	registerResp := doJSON(handler, nethttp.MethodPost, "/v1/auth/register",
@@ -646,11 +750,11 @@ func TestAuthLogoutThenReLoginNewTokenStillValid(t *testing.T) {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	// register
@@ -746,11 +850,11 @@ func TestAuthCookieIsolation(t *testing.T) {
 
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
-		Logger:              logger,
-		AuthService:         authService,
-		RegistrationService: registrationService,
-		AuditWriter:         auditWriter,
-		AccountMembershipRepo:   membershipRepo,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
 	})
 
 	// register two users
@@ -915,6 +1019,15 @@ func assertClearedCookie(t *testing.T, resp *httptest.ResponseRecorder, name str
 	t.Fatalf("missing cleared %s cookie", name)
 }
 
+func assertNoCookieMutation(t *testing.T, resp *httptest.ResponseRecorder, name string) {
+	t.Helper()
+	for _, cookie := range resp.Result().Cookies() {
+		if cookie.Name == name {
+			t.Fatalf("unexpected %s cookie mutation", name)
+		}
+	}
+}
+
 func countAuditActions(ctx context.Context, db data.Querier) (map[string]int, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1024,15 +1137,15 @@ func newAuthResolveTestEnv(t *testing.T, dbName string) authResolveTestEnv {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 
 	handler := NewHandler(HandlerConfig{
-		Logger:               logger,
-		AuthService:          authService,
-		RegistrationService:  registrationService,
-		EmailOTPLoginService: emailOTPLoginService,
-		AuditWriter:          auditWriter,
-		AccountMembershipRepo:    membershipRepo,
-		UsersRepo:            userRepo,
-		UserCredentialRepo:   credentialRepo,
-		FeatureFlagService:   featureFlagSvc,
+		Logger:                logger,
+		AuthService:           authService,
+		RegistrationService:   registrationService,
+		EmailOTPLoginService:  emailOTPLoginService,
+		AuditWriter:           auditWriter,
+		AccountMembershipRepo: membershipRepo,
+		UsersRepo:             userRepo,
+		UserCredentialRepo:    credentialRepo,
+		FeatureFlagService:    featureFlagSvc,
 	})
 
 	return authResolveTestEnv{

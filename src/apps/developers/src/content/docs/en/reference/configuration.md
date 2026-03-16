@@ -21,14 +21,14 @@
 | gateway.ratelimit_rate_per_minute | number | platform | 300 | false | Gateway Rate Limit Per Minute |
 | gateway.risk_reject_threshold | int | platform | 0 | false | Gateway risk rejection threshold (0-100) |
 | gateway.trusted_cidrs | string | platform |  | false | List of Gateway trusted proxy CIDRs |
-| invite.default_max_uses | int | both | 1 | false | Default maximum uses for an invitation code |
+| invite.default_max_uses | int | both | 0 | false | Default maximum uses for an invitation code; 0 means unlimited |
 | invite.max_codes_per_user | int | both | 1 | false | Maximum invitation codes a single user can create |
 | limit.agent_reasoning_iterations | int | both | 0 | false | Maximum reasoning-turn limit for Agent Loop; 0 means unlimited |
 | limit.tool_continuation_budget | int | both | 32 | false | Maximum continuation budget for long-running tools |
-| limit.concurrent_runs | int | both | 10 | false | Maximum concurrent run limit |
+| limit.concurrent_runs | int | both | 0 | false | Maximum concurrent run limit; 0 means unlimited |
 | limit.max_input_content_bytes | int | both | 32768 | false | Maximum byte size for Run input content submission |
 | limit.max_parallel_tasks | int | platform | 32 | false | Maximum limit for Lua parallel tasks/parallel tool calls |
-| limit.team_members | int | both | 50 | false | Maximum team member limit |
+| limit.team_members | int | both | 0 | false | Maximum team member limit; 0 means unlimited |
 | limit.thread_message_history | int | both | 200 | false | Maximum thread message history loading limit (count) |
 | llm.max_response_bytes | int | platform | 16384 | false | Maximum limit for reading LLM Provider HTTP responses (bytes) |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | Base delay for LLM retries (milliseconds) |
@@ -36,8 +36,8 @@
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |
-| quota.runs_per_month | int | both | 999999 | false | Monthly run quota |
-| quota.tokens_per_month | int | both | 1000000 | false | Monthly token quota |
+| quota.runs_per_month | int | both | 0 | false | Monthly run quota; 0 means unlimited |
+| quota.tokens_per_month | int | both | 0 | false | Monthly token quota; 0 means unlimited |
 | sandbox.agent_port | int | platform | 8080 | false | Sandbox Agent listening port |
 | sandbox.base_url | string | platform |  | false | Sandbox Service address; Worker calls Sandbox via this URL; if empty, sandbox tools are not registered |
 | sandbox.boot_timeout_s | int | platform | 30 | false | VM/container boot timeout (seconds) |

@@ -94,6 +94,7 @@ type ContentPart struct {
 	Attachment    *messagecontent.AttachmentRef
 	ExtractedText string
 	Data          []byte
+	TrustSource   string // "system" | "user" | "tool" | "memory" | "file" | "mcp" | ""
 }
 
 type TextPart = ContentPart

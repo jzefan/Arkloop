@@ -35,6 +35,7 @@ type createLlmProviderModelRequest struct {
 	Model               string          `json:"model"`
 	Priority            int             `json:"priority"`
 	IsDefault           bool            `json:"is_default"`
+	ShowInPicker        *bool           `json:"show_in_picker"`
 	Tags                []string        `json:"tags"`
 	WhenJSON            json.RawMessage `json:"when"`
 	AdvancedJSON        map[string]any  `json:"advanced_json"`
@@ -65,6 +66,7 @@ type llmProviderModelResponse struct {
 	Model               string          `json:"model"`
 	Priority            int             `json:"priority"`
 	IsDefault           bool            `json:"is_default"`
+	ShowInPicker        bool            `json:"show_in_picker"`
 	Tags                []string        `json:"tags"`
 	WhenJSON            json.RawMessage `json:"when"`
 	AdvancedJSON        map[string]any  `json:"advanced_json,omitempty"`
@@ -473,10 +475,15 @@ func createLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "when must be valid JSON", traceID, nil)
 		return
 	}
+	showInPicker := true
+	if req.ShowInPicker != nil {
+		showInPicker = *req.ShowInPicker
+	}
 	model, err := service.CreateModel(r.Context(), actor.AccountID, providerID, scope, &actor.UserID, llmproviders.CreateModelInput{
 		Model:               req.Model,
 		Priority:            req.Priority,
 		IsDefault:           req.IsDefault,
+		ShowInPicker:        showInPicker,
 		Tags:                req.Tags,
 		WhenJSON:            whenJSON,
 		AdvancedJSON:        req.AdvancedJSON,
@@ -554,6 +561,11 @@ func patchLlmProviderModel(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "advanced_json must be an object or null", traceID, nil)
 		return
 	}
+	showInPicker, showInPickerSet, err := readOptionalBool(body, "show_in_picker")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "show_in_picker must be a boolean", traceID, nil)
+		return
+	}
 	scopeText, _, err := readOptionalString(body, "scope")
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be a string", traceID, nil)
@@ -622,6 +634,8 @@ func patchLlmProviderModel(
 		Priority:               priority,
 		IsDefaultSet:           isDefaultSet,
 		IsDefault:              isDefault,
+		ShowInPickerSet:        showInPickerSet,
+		ShowInPicker:           showInPicker,
 		TagsSet:                tagsSet,
 		Tags:                   tags,
 		WhenJSONSet:            whenJSONSet,
@@ -913,6 +927,7 @@ func toLlmProviderModelResponse(model data.LlmRoute) llmProviderModelResponse {
 		Model:               model.Model,
 		Priority:            model.Priority,
 		IsDefault:           model.IsDefault,
+		ShowInPicker:        model.ShowInPicker,
 		Tags:                model.Tags,
 		WhenJSON:            whenJSON,
 		AdvancedJSON:        model.AdvancedJSON,

@@ -4,6 +4,7 @@ export {
   isApiError,
   apiFetch,
   refreshAccessToken,
+  restoreAccessSession,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
   setClientApp,
@@ -11,7 +12,7 @@ export {
   buildUrl,
   readJsonSafely,
 } from './api/client'
-export type { ErrorEnvelope } from './api/client'
+export type { ErrorEnvelope, RestoreAccessSessionOptions } from './api/client'
 
 export type { LoginRequest, LoginResponse } from './api/types'
 
@@ -39,6 +40,7 @@ export { AuthPage } from './components/AuthPage'
 export type { AuthPageTranslations, AuthApi } from './components/AuthPage'
 export { BootstrapPage } from './components/BootstrapPage'
 export type { BootstrapTranslations, ConsoleTarget } from './components/BootstrapPage'
+export { LoadingPage } from './components/LoadingPage'
 
 export {
   verifyBootstrapToken,

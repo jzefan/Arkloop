@@ -33,15 +33,12 @@ func (s stubToolDescriptionOverridesRepo) ListByScope(_ context.Context, _ *uuid
 	}
 }
 
-func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
+func TestToolDescriptionOverrideMiddlewareAppliesPlatformOverrides(t *testing.T) {
 	projectID := uuid.New()
 	repo := stubToolDescriptionOverridesRepo{
 		platform: []data.ToolDescriptionOverride{
 			{ToolName: "web_search", Description: "platform search"},
 			{ToolName: "spawn_agent", Description: "platform spawn"},
-		},
-		project: []data.ToolDescriptionOverride{
-			{ToolName: "spawn_agent", Description: "project spawn"},
 		},
 	}
 
@@ -59,7 +56,7 @@ func TestToolDescriptionOverrideMiddlewareAppliesPlatformAndOrg(t *testing.T) {
 		if got := deref(rc.ToolSpecs[0].Description); got != "platform search" {
 			t.Fatalf("unexpected web_search description: %s", got)
 		}
-		if got := deref(rc.ToolSpecs[1].Description); got != "project spawn" {
+		if got := deref(rc.ToolSpecs[1].Description); got != "platform spawn" {
 			t.Fatalf("unexpected spawn_agent description: %s", got)
 		}
 		if got := deref(rc.ToolSpecs[2].Description); got != "external description" {

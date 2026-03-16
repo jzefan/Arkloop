@@ -40,6 +40,7 @@ button:not(:disabled) {
   --c-accent: #FAF9F6;
   --c-pro-bg: rgba(70, 145, 246, 0.12);
   --c-overlay: rgba(0, 0, 0, 0.60);
+  --c-lightbox-overlay: rgba(255, 255, 255, 0.12);
   --c-modal-ring: rgba(255, 255, 255, 0.07);
   --c-bg-github-btn: #3d3d3b;
   --c-github-btn-border: rgba(255, 255, 255, 0.10);
@@ -129,6 +130,7 @@ button:not(:disabled) {
     --c-accent: #1A1A18;
     --c-pro-bg: #EAF2FC;
     --c-overlay: rgba(0, 0, 0, 0.25);
+    --c-lightbox-overlay: rgba(255, 255, 255, 0.55);
     --c-modal-ring: rgba(0, 0, 0, 0.09);
     --c-bg-github-btn: #FFFFFF;
     --c-github-btn-border: rgba(0, 0, 0, 0.08);
@@ -219,6 +221,7 @@ button:not(:disabled) {
   --c-accent: #1A1A18;
   --c-pro-bg: #EAF2FC;
   --c-overlay: rgba(0, 0, 0, 0.25);
+  --c-lightbox-overlay: rgba(255, 255, 255, 0.55);
   --c-modal-ring: rgba(0, 0, 0, 0.09);
   --c-bg-github-btn: #FFFFFF;
   --c-github-btn-border: rgba(0, 0, 0, 0.08);
@@ -624,9 +627,28 @@ button:not(:disabled) {
 .overlay-fade-in {
   animation: overlay-fade-in 0.12s ease-out;
 }
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.slide-in-left {
+  animation: slide-in-left 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @keyframes dropdown-slide-in {
   from { opacity: 0; transform: translateY(-3px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chip-enter {
+  from { opacity: 0; transform: scale(0.82) translateX(-6px); }
+  to   { opacity: 1; transform: scale(1)    translateX(0); }
+}
+
+@keyframes chip-exit {
+  from { opacity: 1; transform: scale(1)    translateX(0); }
+  to   { opacity: 0; transform: scale(0.82) translateX(-6px); }
 }
 
 @keyframes dropdown-slide-up {
@@ -753,4 +775,9 @@ button:not(:disabled) {
   .title-group .title-part:hover {
     background: var(--title-btn-hover);
   }
+}
+
+@keyframes terminal-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
