@@ -488,6 +488,19 @@ function ModelsSection({
     }
   }
 
+  const handleToggleEmbedding = async (modelId: string, currentTags: string[]) => {
+    const hasEmbedding = currentTags.includes('embedding')
+    const nextTags = hasEmbedding
+      ? currentTags.filter((t) => t !== 'embedding')
+      : [...currentTags, 'embedding']
+    try {
+      await patchProviderModel(accessToken, provider.id, modelId, { tags: nextTags })
+      onChanged()
+    } catch (e) {
+      setErr(isApiError(e) ? e.message : m.saveFailed)
+    }
+  }
+
   const unconfiguredCount = available?.filter((am) => !am.configured).length ?? 0
   const filteredModels = search.trim()
     ? provider.models.filter((pm) => pm.model.toLowerCase().includes(search.trim().toLowerCase()))
@@ -572,6 +585,28 @@ function ModelsSection({
             >
               <p className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--c-text-primary)]">{pm.model}</p>
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                <label
+                  className="relative inline-flex shrink-0 cursor-pointer items-center"
+                  title={pm.tags.includes('embedding') ? m.embeddingTagRemove : m.embeddingTagAdd}
+                >
+                  <input
+                    type="checkbox"
+                    checked={pm.tags.includes('embedding')}
+                    onChange={() => void handleToggleEmbedding(pm.id, pm.tags)}
+                    className="peer sr-only"
+                  />
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                    style={{
+                      background: pm.tags.includes('embedding') ? 'var(--c-accent-subtle, color-mix(in srgb, var(--c-accent) 15%, transparent))' : 'var(--c-bg-deep)',
+                      color: pm.tags.includes('embedding') ? 'var(--c-accent)' : 'var(--c-text-muted)',
+                      border: '1px solid',
+                      borderColor: pm.tags.includes('embedding') ? 'var(--c-accent)' : 'var(--c-border-subtle)',
+                    }}
+                  >
+                    emb
+                  </span>
+                </label>
                 <label
                   className="relative inline-flex shrink-0 cursor-pointer items-center"
                   title={pm.show_in_picker ? m.hideFromPicker : m.showInPicker}

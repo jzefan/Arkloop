@@ -9,22 +9,21 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/memory"
-	localmemory "arkloop/services/worker/internal/memory/local"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
 )
 
-// ToolExecutor handles the four memory tools on Desktop using the local
-// SQLite-backed memory provider. No vector store or pending-write buffer is
-// used — all writes are synchronous and text-based.
+// ToolExecutor handles the four memory tools on Desktop using any MemoryProvider.
+// For local mode this is the SQLite-backed provider; for OpenViking mode it is
+// the HTTP client provider. No pending-write buffer is used.
 type ToolExecutor struct {
-	provider *localmemory.Provider
+	provider memory.MemoryProvider
 }
 
 // NewToolExecutor creates a desktop memory tool executor backed by the given
-// local memory provider.
-func NewToolExecutor(provider *localmemory.Provider) *ToolExecutor {
+// memory provider.
+func NewToolExecutor(provider memory.MemoryProvider) *ToolExecutor {
 	return &ToolExecutor{provider: provider}
 }
 

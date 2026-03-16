@@ -12,6 +12,7 @@ import type {
   LocalPortMode,
   MemoryConfig,
   MemoryProvider,
+  OpenVikingDesktopConfig,
   SearchConnectorConfig,
   SearchProvider,
 } from './types'
@@ -83,10 +84,37 @@ function normalizeMemoryProvider(p: unknown): MemoryProvider {
   return p === 'openviking' ? 'openviking' : 'local'
 }
 
+function normalizeStr(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined
+}
+
+function normalizeOpenVikingConfig(raw: unknown): OpenVikingDesktopConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Partial<OpenVikingDesktopConfig>
+  const out: OpenVikingDesktopConfig = {}
+  const s = normalizeStr
+  if (s(r.rootApiKey)) out.rootApiKey = s(r.rootApiKey)
+  if (s(r.embeddingProvider)) out.embeddingProvider = s(r.embeddingProvider)
+  if (s(r.embeddingModel)) out.embeddingModel = s(r.embeddingModel)
+  if (s(r.embeddingApiKey)) out.embeddingApiKey = s(r.embeddingApiKey)
+  if (s(r.embeddingApiBase)) out.embeddingApiBase = s(r.embeddingApiBase)
+  if (typeof r.embeddingDimension === 'number' && r.embeddingDimension > 0) {
+    out.embeddingDimension = r.embeddingDimension
+  }
+  if (s(r.vlmProvider)) out.vlmProvider = s(r.vlmProvider)
+  if (s(r.vlmModel)) out.vlmModel = s(r.vlmModel)
+  if (s(r.vlmApiKey)) out.vlmApiKey = s(r.vlmApiKey)
+  if (s(r.vlmApiBase)) out.vlmApiBase = s(r.vlmApiBase)
+  return out
+}
+
 function normalizeMemory(raw: unknown): MemoryConfig {
   const r = (raw && typeof raw === 'object') ? raw as Partial<MemoryConfig> : {}
   return {
+    // default true to avoid breaking existing installs without the field
+    enabled: r.enabled === false ? false : true,
     provider: normalizeMemoryProvider(r.provider),
+    openviking: normalizeOpenVikingConfig(r.openviking),
   }
 }
 

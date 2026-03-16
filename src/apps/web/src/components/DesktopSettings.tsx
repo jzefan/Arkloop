@@ -144,7 +144,7 @@ export function DesktopSettings({
       case "searchFetch":
         return <SearchFetchSettings />;
       case "memory":
-        return <MemorySettings />;
+        return <MemorySettings accessToken={accessToken} />;
       case "connection":
         return <ConnectionSettings />;
       case "modules":
