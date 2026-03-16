@@ -53,3 +53,50 @@ export type {
 } from './api/bootstrap'
 export { SettingsModal } from './components/SettingsModal'
 export type { SettingsModalTranslations } from './components/SettingsModal'
+
+export { Badge } from './components/Badge'
+export type { BadgeVariant } from './components/Badge'
+
+export { EmptyState } from './components/EmptyState'
+
+export { Modal } from './components/Modal'
+
+export { FormField } from './components/FormField'
+
+export { DataTable } from './components/DataTable'
+export type { Column as DataTableColumn } from './components/DataTable'
+
+export {
+  OperationProvider,
+  useOperations,
+} from './components/OperationContext'
+export type {
+  OperationRecord,
+  ModuleAction,
+  BridgeOperationsClient,
+} from './components/OperationContext'
+
+export { OperationModal } from './components/OperationModal'
+
+export { OperationHistoryModal } from './components/OperationHistoryModal'
+
+export { ConfirmDialog } from './components/ConfirmDialog'
+
+export { PageHeader } from './components/PageHeader'
+
+export { PageLoading } from './components/PageLoading'
+
+export { ModalFooter } from './components/ModalFooter'
+
+export { SidebarNav } from './components/SidebarNav'
+
+export { NavButton } from './components/NavButton'
+
+export { AccessDeniedPage } from './components/AccessDeniedPage'
+
+export { FullScreenLoading } from './components/FullScreenLoading'
+
+export { CollapseBlock, PreText, JsonBlock } from './components/TurnViewBlocks'
+
+export { buildTurns } from './run-turns'
+export type { LlmTurn, RunEventRaw } from './run-turns'
