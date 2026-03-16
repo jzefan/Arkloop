@@ -295,6 +295,10 @@ export function ChatPage() {
   const [, setMessageThinkingMap] = useState<Map<string, MessageThinkingRef>>(new Map())
   // COP blocks 缓存：messageId -> cop blocks data
   const [messageCopBlocksMap, setMessageCopBlocksMap] = useState<Map<string, MessageCopBlocksRef>>(new Map())
+  // 跟踪未响应的用户消息，用于取消后重发时替换
+  const noResponseMsgIdRef = useRef<string | null>(null)
+  const replaceOnCancelRef = useRef<string | null>(null)
+
   // sources 侧边面板：显示哪条消息的来源
   const [sourcePanelMessageId, setSourcePanelMessageId] = useState<string | null>(null)
   // 代码执行侧边面板
@@ -1003,6 +1007,8 @@ export function ChatPage() {
       }
 
       if (event.type === 'message.delta') {
+        // 收到第一条 delta 说明模型已开始响应，清除"未响应"标记
+        noResponseMsgIdRef.current = null
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
         if (typeof obj.content_delta !== 'string' || !obj.content_delta) continue
@@ -1311,6 +1317,8 @@ export function ChatPage() {
       if (event.type === 'run.completed') {
         const completedRunId = event.run_id
         injectionBlockedRunIdRef.current = null
+        noResponseMsgIdRef.current = null
+        replaceOnCancelRef.current = null
         const runThinking = buildLiveThinkingSnapshot()
         sse.disconnect()
         setActiveRunId(null)
@@ -1778,21 +1786,48 @@ export function ChatPage() {
         return
       }
 
-      const uploaded = await uploadAttachments(threadId)
-      const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
-      invalidateMessageSync()
-      setMessages((prev) => [...prev, message])
-      attachments.forEach((attachment) => revokeDraftAttachment(attachment))
-      setDraft('')
-      setAttachments([])
-      setAssistantDraft('')
-      injectionBlockedRunIdRef.current = null
+      const replaceMessageId = replaceOnCancelRef.current
+      replaceOnCancelRef.current = null
 
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride)
-      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
-      setActiveRunId(run.run_id)
-      onRunStarted(threadId)
-      scrollToBottom()
+      if (replaceMessageId && attachments.length === 0) {
+        // 取消后重发：替换上一条未响应的用户消息
+        attachments.forEach((attachment) => revokeDraftAttachment(attachment))
+        setDraft('')
+        setAttachments([])
+        setAssistantDraft('')
+        injectionBlockedRunIdRef.current = null
+        invalidateMessageSync()
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === replaceMessageId)
+          if (idx === -1) return prev
+          return prev.slice(0, idx + 1).map((m, i) =>
+            i === idx ? { ...m, content: text } : m,
+          )
+        })
+        const run = await editMessage(accessToken, threadId, replaceMessageId, text)
+        if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+        noResponseMsgIdRef.current = replaceMessageId
+        setActiveRunId(run.run_id)
+        onRunStarted(threadId)
+        scrollToBottom()
+      } else {
+        const uploaded = await uploadAttachments(threadId)
+        const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
+        invalidateMessageSync()
+        setMessages((prev) => [...prev, message])
+        attachments.forEach((attachment) => revokeDraftAttachment(attachment))
+        setDraft('')
+        setAttachments([])
+        setAssistantDraft('')
+        injectionBlockedRunIdRef.current = null
+        noResponseMsgIdRef.current = message.id
+
+        const run = await createRun(accessToken, threadId, personaKey, modelOverride)
+        if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+        setActiveRunId(run.run_id)
+        onRunStarted(threadId)
+        scrollToBottom()
+      }
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -1953,6 +1988,12 @@ export function ChatPage() {
   const handleCancel = useCallback(() => {
     if (!activeRunId || cancelSubmitting) return
     const runId = activeRunId
+
+    // 若模型还未响应，记录该消息 ID 供下次发送时替换
+    if (noResponseMsgIdRef.current) {
+      replaceOnCancelRef.current = noResponseMsgIdRef.current
+      noResponseMsgIdRef.current = null
+    }
 
     disconnectSSE()
     setActiveRunId(null)
@@ -2270,7 +2311,7 @@ export function ChatPage() {
                         </Fragment>
                         )
                       })}
-                      {historicalBlocks.length === 0 && (hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0)) && (
+                      {historicalBlocks.length === 0 && (hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
                         <SearchTimeline
                           steps={[]}
                           sources={[]}
@@ -2280,6 +2321,7 @@ export function ChatPage() {
                           activeCodeExecutionId={codePanelExecution?.id}
                           subAgents={messageSubAgents}
                           fileOps={messageFileOps}
+                          webFetches={messageWebFetches}
                           accessToken={accessToken}
                           baseUrl={baseUrl}
                         />
@@ -2591,6 +2633,7 @@ export function ChatPage() {
                           activeCodeExecutionId={codePanelExecution?.id}
                           subAgents={isLastBlock && topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
                           fileOps={isLastBlock && topLevelFileOps.length > 0 ? topLevelFileOps : undefined}
+                          webFetches={isLastBlock && topLevelWebFetches.length > 0 ? topLevelWebFetches : undefined}
                           headerOverride={block.title || (!liveTimelineExiting ? copHeaderLabel : undefined)}
                           shimmer={!liveTimelineExiting && isLastBlock && !assistantDraft}
                           live={!liveTimelineExiting && isLastBlock}
@@ -2633,7 +2676,7 @@ export function ChatPage() {
               )}
 
               {/* 无 COP 时，顶层代码执行卡片独立渲染（仅流式结束后、run.completed 前的短暂窗口） */}
-              {!isStreaming && (dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || topLevelFileOps.length > 0) && (
+              {!isStreaming && (dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || topLevelFileOps.length > 0 || topLevelWebFetches.length > 0) && (
                 <div style={{ maxWidth: '663px' }}>
                   <SearchTimeline
                     steps={[]}
@@ -2644,6 +2687,7 @@ export function ChatPage() {
                     activeCodeExecutionId={codePanelExecution?.id}
                     subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
                     fileOps={topLevelFileOps.length > 0 ? topLevelFileOps : undefined}
+                    webFetches={topLevelWebFetches.length > 0 ? topLevelWebFetches : undefined}
                     accessToken={accessToken}
                     baseUrl={baseUrl}
                   />
