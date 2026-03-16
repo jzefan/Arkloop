@@ -42,6 +42,9 @@ mac:
         - x64
   icon: resources/icon.icns
   notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  hardenedRuntime: true
   extraResources:
     - from: sidecar-bin/desktop-darwin-${arch}
       to: sidecar/desktop
