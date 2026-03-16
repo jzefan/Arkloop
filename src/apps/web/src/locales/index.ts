@@ -243,7 +243,7 @@ export interface LocaleStrings {
   freeTrialDesc: string
   // chat input menu
   addFromLocal: string
-  addFromGitHub: string
+  learningMode: string
   dragToAttach: string
   // chats search modal
   searchChatsPlaceholder: string

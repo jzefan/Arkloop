@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
-import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2 } from 'lucide-react'
+import { Plus, ChevronDown, ArrowUp, Square, Paperclip, Mic, X, Check, Loader2, BookOpen } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, transcribeAudio, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -7,6 +7,7 @@ import { PastedContentModal } from './PastedContentModal'
 import {
   DEFAULT_PERSONA_KEY,
   SEARCH_PERSONA_KEY,
+  LEARNING_PERSONA_KEY,
   readSelectedPersonaKeyFromStorage,
   writeSelectedPersonaKeyToStorage,
 } from '../storage'
@@ -482,6 +483,27 @@ export function ChatInput({
     () => personas.find((persona) => persona.persona_key === selectedPersonaKey) ?? null,
     [personas, selectedPersonaKey],
   )
+
+  const [chipExiting, setChipExiting] = useState(false)
+
+  const isLearningMode = selectedPersonaKey === LEARNING_PERSONA_KEY
+
+  const deactivateLearningMode = useCallback(() => {
+    setChipExiting(true)
+    setTimeout(() => {
+      persistSelectedPersona(DEFAULT_PERSONA_KEY)
+      setChipExiting(false)
+    }, 120)
+  }, [persistSelectedPersona])
+
+  const activateLearningMode = useCallback(() => {
+    if (isLearningMode || chipExiting) {
+      deactivateLearningMode()
+    } else {
+      persistSelectedPersona(LEARNING_PERSONA_KEY)
+    }
+    setMenuOpen(false)
+  }, [isLearningMode, chipExiting, persistSelectedPersona, deactivateLearningMode])
 
   const formatRecordingTime = (secs: number) => {
     const m = Math.floor(secs / 60)
@@ -1024,19 +1046,59 @@ export function ChatInput({
                     <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
                     {t.addFromLocal}
                   </button>
+                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+                    onClick={activateLearningMode}
+                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                    style={{
+                      color: isLearningMode ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                      fontWeight: isLearningMode ? 500 : 400,
+                    }}
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }}>
-                      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-                    </svg>
-                    {t.addFromGitHub}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <BookOpen size={14} style={{ flexShrink: 0 }} />
+                      {t.learningMode}
+                    </span>
+                    {(isLearningMode || chipExiting) && (
+                      <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
+                    )}
                   </button>
                 </div>
               </div>
             )}
           </div>
+
+          {(isLearningMode || chipExiting) && (
+            <button
+              type="button"
+              onClick={deactivateLearningMode}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '2px',
+                height: '32px',
+                padding: '0 8px 0 9px',
+                borderRadius: '8px',
+                background: 'var(--c-bg-deep)',
+                border: '0.5px solid var(--c-border-subtle)',
+                flexShrink: 0,
+                marginLeft: '4px',
+                position: 'relative',
+                top: '1px',
+                cursor: 'pointer',
+                animation: chipExiting
+                  ? 'chip-exit 0.12s cubic-bezier(0.4, 0, 1, 1) both'
+                  : 'chip-enter 0.14s cubic-bezier(0.16, 1, 0.3, 1) both',
+              }}
+            >
+              <BookOpen size={12} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+              <span style={{ fontSize: '13px', color: 'var(--c-text-secondary)', fontWeight: 450, whiteSpace: 'nowrap', margin: '0 4px' }}>
+                {t.learningMode}
+              </span>
+              <X size={9} style={{ color: 'var(--c-text-muted)', flexShrink: 0 }} />
+            </button>
+          )}
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
             <button
