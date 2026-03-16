@@ -10,7 +10,7 @@ budgets:
 title_summarize:
     max_tokens: 10
     prompt: Keep it under 5 Chinese characters. Extract the search intent.
-reasoning_mode: disabled
+reasoning_mode: auto
 prompt_cache_control: none
 executor_type: agent.lua
 executor_config:
