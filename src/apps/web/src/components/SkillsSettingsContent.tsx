@@ -17,6 +17,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { Modal } from '@arkloop/shared'
 import {
   type InstalledSkill,
   type MarketSkill,
@@ -898,191 +899,145 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
       )}
 
       {/* 上传对话框 */}
-      {uploadOpen && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget && !uploading) setUploadOpen(false) }}
-        >
-          <div
-            className="modal-enter w-full max-w-md rounded-2xl p-6"
-            style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{skillText.uploadTitle}</h3>
-              <button
-                type="button"
-                onClick={() => { if (!uploading) setUploadOpen(false) }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.uploadFileLabel}</span>
-                <label
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-                  style={{ border: '0.5px dashed var(--c-border-mid)', background: 'var(--c-bg-page)' }}
-                >
-                  <Upload size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
-                  <span className={file ? 'text-[var(--c-text-heading)]' : 'text-[var(--c-text-tertiary)]'}>
-                    {file?.name ?? skillText.uploadFileHint}
-                  </span>
-                  <input
-                    type="file"
-                    accept=".zip,.skill,application/zip,application/octet-stream"
-                    className="hidden"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  />
-                </label>
-              </div>
-              <label className="flex items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-                <input
-                  type="checkbox"
-                  checked={installAfterImport}
-                  onChange={(e) => setInstallAfterImport(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded"
-                  style={{ accentColor: 'var(--c-text-heading)' }}
-                />
-                {skillText.uploadImmediateInstall}
-              </label>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setUploadOpen(false)}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                >
-                  {skillText.cancelAction}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleUploadImport()}
-                  disabled={!file || uploading}
-                  className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
-                  style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
-                >
-                  {uploading && <Loader2 size={14} className="animate-spin" />}
-                  {uploading ? skillText.uploading : skillText.uploadAction}
-                </button>
-              </div>
-            </div>
+      <Modal
+        open={uploadOpen}
+        onClose={() => { if (!uploading) setUploadOpen(false) }}
+        title={skillText.uploadTitle}
+        width="440px"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.uploadFileLabel}</span>
+            <label
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
+              style={{ border: '0.5px dashed var(--c-border-mid)', background: 'var(--c-bg-page)' }}
+            >
+              <Upload size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
+              <span className={file ? 'text-[var(--c-text-heading)]' : 'text-[var(--c-text-tertiary)]'}>
+                {file?.name ?? skillText.uploadFileHint}
+              </span>
+              <input
+                type="file"
+                accept=".zip,.skill,application/zip,application/octet-stream"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-[var(--c-text-secondary)]">
+            <input
+              type="checkbox"
+              checked={installAfterImport}
+              onChange={(e) => setInstallAfterImport(e.target.checked)}
+              className="h-3.5 w-3.5 rounded"
+              style={{ accentColor: 'var(--c-text-heading)' }}
+            />
+            {skillText.uploadImmediateInstall}
+          </label>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setUploadOpen(false)}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            >
+              {skillText.cancelAction}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleUploadImport()}
+              disabled={!file || uploading}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+              style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+            >
+              {uploading && <Loader2 size={14} className="animate-spin" />}
+              {uploading ? skillText.uploading : skillText.uploadAction}
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* GitHub 导入对话框 */}
-      {githubOpen && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget && !importing) setGitHubOpen(false) }}
-        >
-          <div
-            className="modal-enter w-full max-w-md rounded-2xl p-6"
-            style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{skillText.githubTitle}</h3>
-              <button
-                type="button"
-                onClick={() => { if (!importing) setGitHubOpen(false) }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubUrlLabel}</span>
-                <input
-                  value={githubUrl}
-                  onChange={(e) => setGitHubUrl(e.target.value)}
-                  placeholder={skillText.githubUrlPlaceholder}
-                  className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubRefLabel}</span>
-                <input
-                  value={githubRef}
-                  onChange={(e) => setGitHubRef(e.target.value)}
-                  placeholder="main"
-                  className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                />
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setGitHubOpen(false)}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                >
-                  {skillText.cancelAction}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleGitHubImport()}
-                  disabled={!githubUrl.trim() || importing}
-                  className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
-                  style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
-                >
-                  {importing && <Loader2 size={14} className="animate-spin" />}
-                  {importing ? skillText.importing : skillText.githubAction}
-                </button>
-              </div>
-            </div>
+      <Modal
+        open={githubOpen}
+        onClose={() => { if (!importing) setGitHubOpen(false) }}
+        title={skillText.githubTitle}
+        width="440px"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubUrlLabel}</span>
+            <input
+              value={githubUrl}
+              onChange={(e) => setGitHubUrl(e.target.value)}
+              placeholder={skillText.githubUrlPlaceholder}
+              className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubRefLabel}</span>
+            <input
+              value={githubRef}
+              onChange={(e) => setGitHubRef(e.target.value)}
+              placeholder="main"
+              className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            />
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setGitHubOpen(false)}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            >
+              {skillText.cancelAction}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGitHubImport()}
+              disabled={!githubUrl.trim() || importing}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+              style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+            >
+              {importing && <Loader2 size={14} className="animate-spin" />}
+              {importing ? skillText.importing : skillText.githubAction}
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* 候选目录选择对话框 */}
-      {candidateState && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setCandidateState(null) }}
-        >
-          <div
-            className="modal-enter w-full max-w-md rounded-2xl p-6"
-            style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{skillText.candidatesTitle}</h3>
+      <Modal
+        open={!!candidateState}
+        onClose={() => setCandidateState(null)}
+        title={skillText.candidatesTitle}
+        width="440px"
+      >
+        {candidateState && (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-[var(--c-text-tertiary)]">{skillText.chooseCandidate}</p>
+            {candidateState.candidates.map((candidate) => (
               <button
+                key={candidate.path}
                 type="button"
-                onClick={() => setCandidateState(null)}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+                onClick={() => void handleGitHubImport(candidate.path)}
+                className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors duration-100 bg-[var(--c-bg-page)] hover:bg-[var(--c-bg-deep)]"
+                style={{ border: '0.5px solid var(--c-border-subtle)' }}
               >
-                <X size={16} />
+                <div>
+                  <span className="block text-sm font-medium text-[var(--c-text-heading)]">
+                    {candidate.display_name ?? candidate.skill_key ?? candidate.path}
+                  </span>
+                  <span className="block text-xs text-[var(--c-text-tertiary)]">{candidate.path}</span>
+                </div>
+                <ChevronRight size={13} className="shrink-0 text-[var(--c-text-tertiary)]" />
               </button>
-            </div>
-            <div className="flex flex-col gap-3">
-              <p className="text-xs text-[var(--c-text-tertiary)]">{skillText.chooseCandidate}</p>
-              {candidateState.candidates.map((candidate) => (
-                <button
-                  key={candidate.path}
-                  type="button"
-                  onClick={() => void handleGitHubImport(candidate.path)}
-                  className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors duration-100 bg-[var(--c-bg-page)] hover:bg-[var(--c-bg-deep)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
-                >
-                  <div>
-                    <span className="block text-sm font-medium text-[var(--c-text-heading)]">
-                      {candidate.display_name ?? candidate.skill_key ?? candidate.path}
-                    </span>
-                    <span className="block text-xs text-[var(--c-text-tertiary)]">{candidate.path}</span>
-                  </div>
-                  <ChevronRight size={13} className="shrink-0 text-[var(--c-text-tertiary)]" />
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* 技能详情 Modal */}
       {detailSkill && (() => {

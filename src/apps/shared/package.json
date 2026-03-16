@@ -10,7 +10,9 @@
     "./storage": "./src/storage/tokens.ts",
     "./contexts/theme": "./src/contexts/ThemeContext.tsx",
     "./contexts/locale": "./src/contexts/LocaleContext.tsx",
-    "./components/prompt-injection": "./src/components/prompt-injection/index.ts"
+    "./components/auth-ui": "./src/components/auth-ui.tsx",
+    "./components/prompt-injection": "./src/components/prompt-injection/index.ts",
+    "./run-turns": "./src/run-turns.ts"
   },
   "peerDependencies": {
     "lucide-react": ">=0.400.0",
