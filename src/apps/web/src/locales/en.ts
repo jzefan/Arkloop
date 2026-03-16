@@ -432,6 +432,7 @@ export const en: LocaleStrings = {
     byokSection: 'Your API Keys',
     noByok: 'No matching models',
     searchPlaceholder: 'Search...',
+    moreModels: 'More models',
   },
   claw: {
     progress: 'Progress',

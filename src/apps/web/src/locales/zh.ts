@@ -426,6 +426,7 @@ export const zh: LocaleStrings = {
     byokSection: '你的 API Key',
     noByok: '无匹配模型',
     searchPlaceholder: '搜索...',
+    moreModels: '更多模型',
   },
   claw: {
     progress: '进度',

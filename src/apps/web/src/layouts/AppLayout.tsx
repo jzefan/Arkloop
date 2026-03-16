@@ -358,7 +358,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
             }}
           />
         ) : (
-          <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+          <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
             <Outlet context={{ accessToken, onLoggedOut, me, creditsBalance, onThreadCreated: handleThreadCreated, onRunStarted: handleRunStarted, onRunEnded: handleRunEnded, onThreadTitleUpdated: handleThreadTitleUpdated, refreshCredits, onOpenNotifications: openNotifications, notificationVersion, isPrivateMode, onTogglePrivateMode: handleTogglePrivateMode, privateThreadIds, isSearchMode, onEnterSearchMode: () => { window.history.pushState({ searchMode: true }, '', '/'); setIsSearchMode(true) }, onExitSearchMode: () => setIsSearchMode(false), onSetPendingIncognito: handleSetPendingIncognito, onRightPanelChange: setRightPanelOpen, threads, onThreadDeleted: handleThreadDeleted, pendingSkillPrompt, onConsumeSkillPrompt: () => setPendingSkillPrompt(null), onOpenSettings: (tab: SettingsTab = 'account') => { setSettingsInitialTab(tab); setSettingsOpen(true) }, appMode, availableAppModes, onSetAppMode: handleSetAppMode }} />
             {notificationsOpen && (
               <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={handleNotificationMarkedRead} />
