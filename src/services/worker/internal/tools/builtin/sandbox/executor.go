@@ -330,9 +330,70 @@ func (e *ToolExecutor) executeExecCommand(
 		result.ResultJSON["resolved_via"] = resolution.ResolvedVia
 		result.ResultJSON["reused"] = resolution.Reused
 		result.ResultJSON["restored_from_restore_state"] = resp.Restored || resolution.RestoredFromRestoreState
+
+		// When running=true with empty output (typical during session initialization),
+		// auto-poll write_stdin so the model receives actual output instead of an
+		// empty running state that causes reasoning models to produce no response.
+		if resp.Running && strings.TrimSpace(resp.Output) == "" {
+			if polled := e.pollExecUntilOutputOrDone(ctx, execCtx, resolution, result.ResultJSON, reqArgs, started); polled != nil {
+				result = *polled
+			}
+		}
 	}
 	delete(result.ResultJSON, "session_id")
 	return result
+}
+
+// pollExecUntilOutputOrDone polls write_stdin when exec_command yields with running=true
+// and no output yet. This handles the case where session initialization takes longer than
+// yield_time_ms, leaving the model with an empty state it cannot meaningfully respond to.
+// Returns nil if polling should not replace the original result (error or immediate break).
+func (e *ToolExecutor) pollExecUntilOutputOrDone(
+	ctx context.Context,
+	execCtx tools.ExecutionContext,
+	resolution *resolvedSession,
+	prevMeta map[string]any,
+	reqArgs execCommandArgs,
+	started time.Time,
+) *tools.ExecutionResult {
+	const maxPolls = 6
+	pollYieldMs := reqArgs.YieldTimeMs
+	if pollYieldMs <= 0 {
+		pollYieldMs = 10_000
+	}
+
+	var last *tools.ExecutionResult
+	for range maxPolls {
+		pollReq := writeStdinRequest{
+			SessionID:   resolution.SessionRef,
+			AccountID:   resolveAccountID(execCtx),
+			YieldTimeMs: pollYieldMs,
+		}
+		pollResult := e.executeExecSessionRequest(
+			ctx, e.baseURL+"/v1/write_stdin", "write_stdin",
+			pollReq, pollReq.AccountID, execCtx.PerToolSoftLimits, started,
+		)
+		if pollResult.Error != nil {
+			return nil
+		}
+		resp := decodeExecSessionResult(pollResult.ResultJSON)
+		if resp == nil {
+			return nil
+		}
+		// Carry over exec_command identity fields.
+		pollResult.ResultJSON["session_ref"] = prevMeta["session_ref"]
+		pollResult.ResultJSON["share_scope"] = prevMeta["share_scope"]
+		pollResult.ResultJSON["resolved_via"] = prevMeta["resolved_via"]
+		pollResult.ResultJSON["reused"] = prevMeta["reused"]
+		pollResult.ResultJSON["restored_from_restore_state"] = prevMeta["restored_from_restore_state"]
+		delete(pollResult.ResultJSON, "session_id")
+		last = &pollResult
+
+		if !resp.Running || strings.TrimSpace(resp.Output) != "" {
+			break
+		}
+	}
+	return last
 }
 
 func (e *ToolExecutor) executeWriteStdin(
