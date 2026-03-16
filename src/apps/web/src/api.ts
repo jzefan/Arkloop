@@ -1343,3 +1343,97 @@ export async function deleteSpawnProfile(accessToken: string, name: string): Pro
     accessToken,
   })
 }
+
+// --- Channels ---
+
+export type ChannelResponse = {
+  id: string
+  account_id: string
+  channel_type: string
+  persona_id: string | null
+  webhook_url: string | null
+  is_active: boolean
+  config_json: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type CreateChannelRequest = {
+  channel_type: string
+  bot_token: string
+  persona_id?: string
+  config_json?: Record<string, unknown>
+}
+
+export type UpdateChannelRequest = {
+  bot_token?: string
+  persona_id?: string | null
+  is_active?: boolean
+  config_json?: Record<string, unknown>
+}
+
+export async function createChannel(accessToken: string, req: CreateChannelRequest): Promise<ChannelResponse> {
+  return apiFetch<ChannelResponse>('/v1/channels', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(req),
+  })
+}
+
+export async function listChannels(accessToken: string): Promise<ChannelResponse[]> {
+  return apiFetch<ChannelResponse[]>('/v1/channels', { accessToken })
+}
+
+export async function updateChannel(accessToken: string, id: string, req: UpdateChannelRequest): Promise<ChannelResponse> {
+  return apiFetch<ChannelResponse>(`/v1/channels/${id}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify(req),
+  })
+}
+
+export async function deleteChannel(accessToken: string, id: string): Promise<void> {
+  await apiFetch<void>(`/v1/channels/${id}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+// --- Channel Binds ---
+
+export type BindCodeResponse = {
+  id: string
+  token: string
+  channel_type: string | null
+  expires_at: string
+  created_at: string
+}
+
+export type ChannelIdentityResponse = {
+  id: string
+  channel_type: string
+  platform_subject_id: string
+  display_name: string | null
+  avatar_url: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export async function createChannelBindCode(accessToken: string, channelType?: string): Promise<BindCodeResponse> {
+  return apiFetch<BindCodeResponse>('/v1/me/channel-binds', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(channelType ? { channel_type: channelType } : {}),
+  })
+}
+
+export async function listMyChannelIdentities(accessToken: string): Promise<ChannelIdentityResponse[]> {
+  return apiFetch<ChannelIdentityResponse[]>('/v1/me/channel-identities', { accessToken })
+}
+
+export async function unbindChannelIdentity(accessToken: string, id: string): Promise<void> {
+  await apiFetch<void>(`/v1/me/channel-identities/${id}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}

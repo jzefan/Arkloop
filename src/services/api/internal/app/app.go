@@ -247,6 +247,9 @@ func (a *Application) Run(ctx context.Context) error {
 		teamRepo                     *data.TeamRepository
 		projectRepo                  *data.ProjectRepository
 		webhookRepo                  *data.WebhookEndpointRepository
+		channelsRepo                 *data.ChannelsRepository
+		channelIdentitiesRepo        *data.ChannelIdentitiesRepository
+		channelBindCodesRepo         *data.ChannelBindCodesRepository
 		plansRepo                    *data.PlanRepository
 		subscriptionsRepo            *data.SubscriptionRepository
 		entitlementsRepo             *data.EntitlementsRepository
@@ -400,6 +403,18 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		webhookRepo, err = data.NewWebhookEndpointRepository(pool)
+		if err != nil {
+			return err
+		}
+		channelsRepo, err = data.NewChannelsRepository(pool)
+		if err != nil {
+			return err
+		}
+		channelIdentitiesRepo, err = data.NewChannelIdentitiesRepository(pool)
+		if err != nil {
+			return err
+		}
+		channelBindCodesRepo, err = data.NewChannelBindCodesRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -686,6 +701,9 @@ func (a *Application) Run(ctx context.Context) error {
 			TeamRepo:                     teamRepo,
 			ProjectRepo:                  projectRepo,
 			WebhookRepo:                  webhookRepo,
+			ChannelsRepo:                 channelsRepo,
+			ChannelIdentitiesRepo:        channelIdentitiesRepo,
+			ChannelBindCodesRepo:         channelBindCodesRepo,
 			PlansRepo:                    plansRepo,
 			SubscriptionsRepo:            subscriptionsRepo,
 			EntitlementsRepo:             entitlementsRepo,
@@ -716,6 +734,7 @@ func (a *Application) Run(ctx context.Context) error {
 			EnvironmentStore:             environmentStore,
 			SkillStore:                   skillStore,
 			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
+			AppBaseURL:                   a.config.AppBaseURL,
 			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,
 			TurnstileEnvAllowedHost:      a.config.TurnstileAllowedHost,
