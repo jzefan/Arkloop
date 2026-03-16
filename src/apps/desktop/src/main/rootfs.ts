@@ -17,7 +17,7 @@ export type RootfsProgress = {
 
 const ROOTFS_DIR = path.join(os.homedir(), '.arkloop', 'rootfs')
 const ROOTFS_VERSION_FILE = path.join(ROOTFS_DIR, 'rootfs.version.json')
-const DEFAULT_DOWNLOAD_BASE = 'https://github.com/nicepkg/arkloop/releases/download'
+const DEFAULT_DOWNLOAD_BASE = 'https://github.com/qqqqqf-q/arkloop/releases/download'
 
 let status: RootfsStatus = 'not_installed'
 let onStatusChange: ((s: RootfsStatus) => void) | null = null
@@ -85,7 +85,7 @@ export async function checkRootfsVersion(): Promise<{
 
   let latest: string | null = null
   try {
-    const res = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const res = await httpsGet('https://api.github.com/repos/qqqqqf-q/arkloop/releases/latest')
     const body = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = []
       res.on('data', (c: Buffer) => chunks.push(c))
@@ -131,7 +131,7 @@ export async function downloadRootfs(
 
   try {
     // 获取最新版本
-    const releaseRes = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const releaseRes = await httpsGet('https://api.github.com/repos/qqqqqf-q/arkloop/releases/latest')
     const releaseBody = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = []
       releaseRes.on('data', (c: Buffer) => chunks.push(c))

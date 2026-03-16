@@ -18,6 +18,7 @@ import (
 	"time"
 
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -31,6 +32,7 @@ import (
 	"arkloop/services/worker/internal/tools/builtin"
 	"arkloop/services/worker/internal/tools/localfs"
 	"arkloop/services/worker/internal/tools/localshell"
+	"arkloop/services/worker/internal/tools/sandboxshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
 
 	"github.com/google/uuid"
@@ -71,9 +73,20 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 			slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
 		}
 	}
-	for _, spec := range localshell.AgentSpecs() {
-		if err := toolRegistry.Register(spec); err != nil {
-			slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
+	isolationMode := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_ISOLATION"))
+	useVM := isolationMode == "vm" && desktop.GetSandboxAddr() != ""
+
+	if useVM {
+		for _, spec := range sandboxshell.AgentSpecs() {
+			if err := toolRegistry.Register(spec); err != nil {
+				slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
+			}
+		}
+	} else {
+		for _, spec := range localshell.AgentSpecs() {
+			if err := toolRegistry.Register(spec); err != nil {
+				slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
+			}
 		}
 	}
 	for _, spec := range localfs.AgentSpecs() {
@@ -84,9 +97,21 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 
 	executors := builtin.Executors(nil, nil, nil)
 
-	shellExec := localshell.NewExecutor()
-	executors[localshell.ExecCommandAgentSpec.Name] = shellExec
-	executors[localshell.WriteStdinAgentSpec.Name] = shellExec
+	if useVM {
+		sandboxAddr := desktop.GetSandboxAddr()
+		authToken := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
+		vmExec := sandboxshell.NewExecutor("http://"+sandboxAddr, authToken)
+		executors[sandboxshell.ExecCommandAgentSpec.Name] = vmExec
+		executors[sandboxshell.WriteStdinAgentSpec.Name] = vmExec
+		slog.Info("desktop: using VM isolation for shell execution", "sandbox_addr", sandboxAddr)
+	} else {
+		shellExec := localshell.NewExecutor()
+		executors[localshell.ExecCommandAgentSpec.Name] = shellExec
+		executors[localshell.WriteStdinAgentSpec.Name] = shellExec
+		if isolationMode == "vm" {
+			slog.Warn("desktop: VM isolation requested but sandbox not available, falling back to trusted local shell")
+		}
+	}
 
 	fsExec := localfs.NewExecutor()
 	executors[localfs.FileReadAgentSpec.Name] = fsExec
@@ -103,7 +128,13 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 
-	allLlmSpecs := append(builtin.LlmSpecs(), localshell.LlmSpecs()...)
+	var shellLlmSpecs []llm.ToolSpec
+	if useVM {
+		shellLlmSpecs = sandboxshell.LlmSpecs()
+	} else {
+		shellLlmSpecs = localshell.LlmSpecs()
+	}
+	allLlmSpecs := append(builtin.LlmSpecs(), shellLlmSpecs...)
 	allLlmSpecs = append(allLlmSpecs, localfs.LlmSpecs()...)
 	allLlmSpecs = append(allLlmSpecs, memorytool.LlmSpecs()...)
 

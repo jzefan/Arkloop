@@ -12,7 +12,11 @@ import {
   type SidecarRuntime,
 } from './sidecar'
 import { getRootfsStatus, isRootfsAvailable, getRootfsPath, checkRootfsVersion, downloadRootfs, deleteRootfs } from './rootfs'
-import type { AppConfig, ConnectorsConfig, MemoryConfig } from './types'
+import {
+  getVmImageStatus, isVmImageAvailable, getVmDir,
+  checkVmImageVersion, downloadVmImages, deleteVmImages, installLocalVmImages,
+} from './vm-images'
+import type { AppConfig, ConnectorsConfig, IsolationConfig, MemoryConfig } from './types'
 
 type DesktopController = {
   applyConfigUpdate: (config: AppConfig) => Promise<AppConfig>
@@ -137,6 +141,63 @@ export function registerIpcHandlers(
     const config = loadConfig()
     const next: AppConfig = { ...config, memory }
     await controller.applyConfigUpdate(next)
+    return { ok: true }
+  })
+
+  // --- Isolation ---
+
+  ipcMain.handle('arkloop:isolation:get-config', () => {
+    const config = loadConfig()
+    return config.isolation
+  })
+
+  ipcMain.handle('arkloop:isolation:set-config', async (_event, isolation: IsolationConfig) => {
+    const config = loadConfig()
+    const next: AppConfig = { ...config, isolation }
+    await controller.applyConfigUpdate(next)
+    return { ok: true }
+  })
+
+  // --- VM Images ---
+
+  ipcMain.handle('arkloop:vm:status', () => {
+    const cfg = loadConfig()
+    const { vmKernelPath, vmRootfsPath } = cfg.isolation
+    // If custom paths are configured and files exist, report as 'custom' (ready)
+    if ((vmKernelPath || vmRootfsPath) && isVmImageAvailable(vmKernelPath, vmRootfsPath)) {
+      return 'custom'
+    }
+    return getVmImageStatus()
+  })
+
+  ipcMain.handle('arkloop:vm:available', () => {
+    const cfg = loadConfig()
+    return isVmImageAvailable(cfg.isolation.vmKernelPath, cfg.isolation.vmRootfsPath)
+  })
+
+  ipcMain.handle('arkloop:vm:install-local', async (_event, kernelPath: string, rootfsPath: string, initrdPath?: string) => {
+    await installLocalVmImages(kernelPath, rootfsPath, initrdPath)
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:vm:path', () => {
+    return getVmDir()
+  })
+
+  ipcMain.handle('arkloop:vm:check-version', async () => {
+    return checkVmImageVersion()
+  })
+
+  ipcMain.handle('arkloop:vm:download', async () => {
+    await downloadVmImages((progress) => {
+      const win = getWindow()
+      if (win) win.webContents.send('arkloop:vm:download-progress', progress)
+    })
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:vm:delete', async () => {
+    await deleteVmImages()
     return { ok: true }
   })
 

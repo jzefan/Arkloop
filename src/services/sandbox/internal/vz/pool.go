@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -102,6 +101,11 @@ func (p *Pool) Acquire(ctx context.Context, tier string) (*session.Session, *os.
 			return nil, nil, err
 		}
 	}
+
+	p.mu.Lock()
+	p.active[e.session.SocketDir] = e
+	p.mu.Unlock()
+
 	return e.session, nil, nil
 }
 
@@ -514,24 +518,7 @@ func waitForVMState(ctx context.Context, vm *vz.VirtualMachine, desired vz.Virtu
 // File helpers
 // ---------------------------------------------------------------------------
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
-}
+// copyFile is implemented in copyfile_darwin.go (uses clonefileat on macOS).
 
 func generateID() string {
 	b := make([]byte, 8)
