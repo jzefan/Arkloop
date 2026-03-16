@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Plus, Trash2, ChevronLeft, Check, CheckCheck, Minus } from 'lucide-react'
+import { Plus, Trash2, ChevronLeft, Check } from 'lucide-react'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { Badge } from '../../components/Badge'
@@ -42,6 +42,8 @@ type DetailForm = {
   toolSelectionMode: ToolSelectionMode
   tools: string[]
   toolDenylist: string[]
+  coreTools: string[]
+  toolDiscoveryEnabled: boolean
 }
 
 function stripLuaScript(config: Record<string, unknown>): Record<string, unknown> {
@@ -86,6 +88,7 @@ function formatDateTime(value?: string): string {
 function personaToForm(persona: Persona): DetailForm {
   const allowlist = persona.tool_allowlist ?? []
   const denylist = persona.tool_denylist ?? []
+  const coreTools = persona.core_tools ?? []
   const executorConfig = persona.executor_config ?? {}
   return {
     personaKey: persona.persona_key,
@@ -105,6 +108,8 @@ function personaToForm(persona: Persona): DetailForm {
     toolSelectionMode: allowlist.length === 0 ? 'inherit' : 'custom',
     tools: allowlist,
     toolDenylist: denylist,
+    coreTools,
+    toolDiscoveryEnabled: coreTools.length > 0,
   }
 }
 
@@ -126,42 +131,58 @@ function uniqToolNames(names: string[]): string[] {
   return Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)))
 }
 
-function ToolOptionCard({
-  tool, checked, disabled, onToggle,
+function ToolRow({
+  tool, checked, isCore, showCoreStar, onToggle, onToggleCore,
 }: {
   tool: ToolCatalogItem
   checked: boolean
-  disabled: boolean
+  isCore: boolean
+  showCoreStar: boolean
   onToggle: () => void
+  onToggleCore: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      disabled={disabled}
       className={[
-        'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors',
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
         checked
-          ? 'border-[var(--c-accent)] bg-[var(--c-accent)]/8'
-          : 'border-[var(--c-border)] bg-[var(--c-bg-sub)] hover:border-[var(--c-border-focus)]',
-        disabled ? 'cursor-not-allowed opacity-60' : '',
+          ? 'bg-[var(--c-accent)]/6'
+          : 'hover:bg-[var(--c-bg-sub)]',
       ].join(' ')}
+      title={tool.llm_description}
     >
       <span
         className={[
-          'mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border transition-colors',
+          'flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-[4px] border transition-colors',
           checked
-            ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-accent-text)]'
-            : 'border-[var(--c-border)] bg-[var(--c-bg-input)] text-transparent',
+            ? 'border-[var(--c-accent)] bg-[var(--c-accent)]'
+            : 'border-[var(--c-border)] bg-[var(--c-bg-input)]',
         ].join(' ')}
       >
-        <Check size={12} strokeWidth={3} />
+        {checked && <Check size={10} className="text-white" strokeWidth={3} />}
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-[var(--c-text-primary)]">{tool.label}</span>
-        <span className="mt-0.5 block font-mono text-[10px] text-[var(--c-text-muted)]">{tool.name}</span>
-        <span className="mt-1 block line-clamp-2 text-xs text-[var(--c-text-muted)]">{tool.llm_description}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-[var(--c-text-primary)]">
+        {tool.label}
       </span>
+      {showCoreStar && (
+        <span
+          role="button"
+          onClick={(e) => { e.stopPropagation(); onToggleCore() }}
+          className={[
+            'shrink-0 text-sm transition-colors',
+            isCore
+              ? 'text-amber-500'
+              : checked
+                ? 'text-[var(--c-text-muted)] hover:text-amber-400'
+                : 'text-[var(--c-border)]',
+          ].join(' ')}
+          title={isCore ? 'Core' : 'Set as core'}
+        >
+          {isCore ? '\u2605' : '\u2606'}
+        </span>
+      )}
     </button>
   )
 }
@@ -296,6 +317,7 @@ export function PersonasPage() {
         model: form.model.trim() || undefined,
         tool_allowlist: form.toolSelectionMode === 'inherit' ? [] : form.tools,
         tool_denylist: form.toolSelectionMode === 'inherit' ? form.toolDenylist : [],
+        core_tools: form.toolDiscoveryEnabled ? form.coreTools : [],
         budgets: budgets.value,
         is_active: form.isActive,
         preferred_credential: form.preferredCredential.trim() || undefined,
@@ -346,14 +368,6 @@ export function PersonasPage() {
     }
   }, [accessToken, addToast, goBack, load, scope, selected, tc.toastSaveFailed])
 
-  const replaceTools = useCallback((tools: string[]) => {
-    setForm((prev) => (prev ? { ...prev, toolSelectionMode: 'custom', tools: uniqToolNames(tools) } : prev))
-  }, [])
-
-  const replaceDeniedTools = useCallback((tools: string[]) => {
-    setForm((prev) => (prev ? { ...prev, toolDenylist: uniqToolNames(tools) } : prev))
-  }, [])
-
   const toggleTool = useCallback((key: string) => {
     setForm((prev) => (
       !prev
@@ -393,6 +407,30 @@ export function PersonasPage() {
         tools: enabled
           ? uniqToolNames([...prev.tools, ...groupNames])
           : prev.tools.filter((n) => !groupNames.includes(n)),
+      }
+    })
+  }, [])
+
+  const toggleCoreTool = useCallback((key: string) => {
+    setForm((prev) => {
+      if (!prev) return prev
+      const has = prev.coreTools.includes(key)
+      return {
+        ...prev,
+        coreTools: has
+          ? prev.coreTools.filter((t) => t !== key)
+          : uniqToolNames([...prev.coreTools, key]),
+      }
+    })
+  }, [])
+
+  const setToolDiscoveryEnabled = useCallback((enabled: boolean) => {
+    setForm((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        toolDiscoveryEnabled: enabled,
+        coreTools: enabled ? prev.coreTools : [],
       }
     })
   }, [])
@@ -676,21 +714,18 @@ export function PersonasPage() {
               {tab === 'tools' && (
                 catalogGroups.length > 0 ? (
                   <div className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-3 rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-sub)] px-4 py-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">{tc.tabTools}</p>
-                          <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{tc.toolsSelected(selectedToolCount, allCatalogToolNames.length)}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-sub)] px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-medium text-[var(--c-text-muted)]">{tc.toolModeLabel}</span>
+                        <div className="flex gap-1.5">
                           <button
                             type="button"
                             onClick={() => setToolSelectionMode('inherit')}
                             className={[
-                              'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                               form.toolSelectionMode === 'inherit'
-                                ? 'border-[var(--c-accent)] bg-[var(--c-accent)]/10 text-[var(--c-text-primary)]'
-                                : 'border-[var(--c-border)] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-card)]',
+                                ? 'bg-[var(--c-accent)]/12 text-[var(--c-text-primary)]'
+                                : 'text-[var(--c-text-tertiary)] hover:text-[var(--c-text-secondary)]',
                             ].join(' ')}
                           >
                             {tc.toolModeInherit}
@@ -699,93 +734,82 @@ export function PersonasPage() {
                             type="button"
                             onClick={() => setToolSelectionMode('custom')}
                             className={[
-                              'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                               form.toolSelectionMode === 'custom'
-                                ? 'border-[var(--c-accent)] bg-[var(--c-accent)]/10 text-[var(--c-text-primary)]'
-                                : 'border-[var(--c-border)] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-card)]',
+                                ? 'bg-[var(--c-accent)]/12 text-[var(--c-text-primary)]'
+                                : 'text-[var(--c-text-tertiary)] hover:text-[var(--c-text-secondary)]',
                             ].join(' ')}
                           >
                             {tc.toolModeCustom}
                           </button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm text-[var(--c-text-secondary)]">{tc.toolModeLabel}</p>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (form.toolSelectionMode === 'inherit') { replaceDeniedTools([]); return }
-                              replaceTools(allCatalogToolNames)
-                            }}
-                            disabled={form.toolSelectionMode === 'inherit'
-                              ? form.toolDenylist.length === 0
-                              : allCatalogToolNames.length === 0 || form.tools.length === allCatalogToolNames.length}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
-                          >
-                            <CheckCheck size={13} />
-                            {tc.enableAllTools}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (form.toolSelectionMode === 'inherit') { replaceDeniedTools(allCatalogToolNames); return }
-                              replaceTools([])
-                            }}
-                            disabled={form.toolSelectionMode === 'inherit'
-                              ? allCatalogToolNames.length === 0 || form.toolDenylist.length === allCatalogToolNames.length
-                              : form.tools.length === 0}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
-                          >
-                            <Minus size={13} />
-                            {form.toolSelectionMode === 'inherit' ? tc.disableAllTools : tc.clearAllTools}
-                          </button>
-                        </div>
-                      </div>
+                      <span className="text-xs tabular-nums text-[var(--c-text-muted)]">
+                        {tc.toolsSelected(selectedToolCount, allCatalogToolNames.length)}
+                      </span>
                     </div>
+
+                    <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-sub)] px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--c-text-primary)]">{tc.toolDiscovery}</p>
+                        <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{tc.toolDiscoveryDesc}</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={form.toolDiscoveryEnabled}
+                        onChange={(e) => setToolDiscoveryEnabled(e.target.checked)}
+                        className="h-4 w-4 rounded border-[var(--c-border)] accent-[var(--c-accent)]"
+                      />
+                    </label>
+
                     {catalogGroups.map((group) => {
                       const groupNames = group.tools.map((t) => t.name)
                       const groupSelectedCount = form.toolSelectionMode === 'inherit'
                         ? groupNames.filter((n) => !form.toolDenylist.includes(n)).length
                         : groupNames.filter((n) => form.tools.includes(n)).length
                       return (
-                        <div key={group.group} className="flex flex-col gap-3 rounded-xl border border-[var(--c-border)] bg-[var(--c-bg-sub)] p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">{group.group}</p>
-                              <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{tc.toolsSelected(groupSelectedCount, group.tools.length)}</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleToolGroup(group, true)}
-                                disabled={group.tools.length === 0 || groupSelectedCount === group.tools.length}
-                                className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
-                              >
-                                {tc.groupEnableAll}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => toggleToolGroup(group, false)}
-                                disabled={groupSelectedCount === 0}
-                                className="rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-card)] disabled:opacity-50"
-                              >
-                                {form.toolSelectionMode === 'inherit' ? tc.groupDisableAll : tc.groupClearAll}
-                              </button>
-                            </div>
+                        <div key={group.group}>
+                          <div className="mb-1 flex items-center gap-2 px-1">
+                            <span className="text-xs font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+                              {group.group}
+                            </span>
+                            <span className="text-[10px] text-[var(--c-text-muted)]">
+                              {groupSelectedCount}/{group.tools.length}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleToolGroup(group, true)}
+                              disabled={groupSelectedCount === group.tools.length}
+                              className="text-[10px] text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)] disabled:opacity-40"
+                            >
+                              {tc.groupEnableAll}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleToolGroup(group, false)}
+                              disabled={groupSelectedCount === 0}
+                              className="text-[10px] text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)] disabled:opacity-40"
+                            >
+                              {form.toolSelectionMode === 'inherit' ? tc.groupDisableAll : tc.groupClearAll}
+                            </button>
                           </div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            {group.tools.map((tool) => (
-                              <ToolOptionCard
-                                key={tool.name}
-                                tool={tool}
-                                checked={form.toolSelectionMode === 'inherit'
-                                  ? !form.toolDenylist.includes(tool.name)
-                                  : form.tools.includes(tool.name)}
-                                disabled={false}
-                                onToggle={() => toggleTool(tool.name)}
-                              />
-                            ))}
+                          <div className="grid gap-1 md:grid-cols-2">
+                            {group.tools.map((tool) => {
+                              const checked = form.toolSelectionMode === 'inherit'
+                                ? !form.toolDenylist.includes(tool.name)
+                                : form.tools.includes(tool.name)
+                              return (
+                                <ToolRow
+                                  key={tool.name}
+                                  tool={tool}
+                                  checked={checked}
+                                  isCore={form.coreTools.includes(tool.name)}
+                                  showCoreStar={form.toolDiscoveryEnabled}
+                                  onToggle={() => toggleTool(tool.name)}
+                                  onToggleCore={() => toggleCoreTool(tool.name)}
+                                />
+                              )
+                            })}
                           </div>
                         </div>
                       )

@@ -22,7 +22,7 @@ const (
 
 const personaSelectColumns = `id, account_id, project_id, persona_key, version, display_name, description,
 	    soul_md, user_selectable, selector_name, selector_order,
-	    prompt_md, tool_allowlist, tool_denylist, budgets_json, roles_json, title_summarize_json,
+	    prompt_md, tool_allowlist, tool_denylist, COALESCE(core_tools, '{}'), budgets_json, roles_json, title_summarize_json,
 	    is_active, created_at, updated_at,
 	    preferred_credential, model, reasoning_mode, prompt_cache_control,
 	    executor_type, executor_config_json,
@@ -56,6 +56,7 @@ type Persona struct {
 	PromptMD            string
 	ToolAllowlist       []string
 	ToolDenylist        []string
+	CoreTools           []string
 	BudgetsJSON         json.RawMessage
 	RolesJSON           json.RawMessage
 	TitleSummarizeJSON  json.RawMessage
@@ -79,6 +80,7 @@ type PersonaPatch struct {
 	PromptMD            *string
 	ToolAllowlist       []string
 	ToolDenylist        []string
+	CoreTools           []string
 	BudgetsJSON         json.RawMessage
 	RolesJSON           json.RawMessage
 	IsActive            *bool
@@ -102,6 +104,7 @@ type PlatformMirrorUpsertParams struct {
 	PromptMD            string
 	ToolAllowlist       []string
 	ToolDenylist        []string
+	CoreTools           []string
 	BudgetsJSON         json.RawMessage
 	RolesJSON           json.RawMessage
 	TitleSummarizeJSON  json.RawMessage
@@ -152,7 +155,7 @@ func scanPersona(scanner personaScanner, persona *Persona) error {
 		&persona.ID, &persona.AccountID, &persona.ProjectID, &persona.PersonaKey, &persona.Version,
 		&persona.DisplayName, &persona.Description,
 		&persona.SoulMD, &persona.UserSelectable, &persona.SelectorName, &persona.SelectorOrder,
-		&persona.PromptMD, &persona.ToolAllowlist, &persona.ToolDenylist, &persona.BudgetsJSON, &persona.RolesJSON, &persona.TitleSummarizeJSON,
+		&persona.PromptMD, &persona.ToolAllowlist, &persona.ToolDenylist, &persona.CoreTools, &persona.BudgetsJSON, &persona.RolesJSON, &persona.TitleSummarizeJSON,
 		&persona.IsActive, &persona.CreatedAt, &persona.UpdatedAt,
 		&persona.PreferredCredential, &persona.Model, &persona.ReasoningMode, &persona.PromptCacheControl,
 		&persona.ExecutorType, &persona.ExecutorConfigJSON,
@@ -513,6 +516,11 @@ func (r *PersonasRepository) PatchInScope(ctx context.Context, projectID, id uui
 		args = append(args, patch.ToolDenylist)
 		argIdx++
 	}
+	if patch.CoreTools != nil {
+		setClauses = append(setClauses, fmt.Sprintf("core_tools = $%d", argIdx))
+		args = append(args, patch.CoreTools)
+		argIdx++
+	}
 	if len(patch.BudgetsJSON) > 0 {
 		setClauses = append(setClauses, fmt.Sprintf("budgets_json = $%d", argIdx))
 		args = append(args, patch.BudgetsJSON)
@@ -731,17 +739,17 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 		`INSERT INTO personas (
 			account_id, persona_key, version, display_name, description, soul_md,
 			user_selectable, selector_name, selector_order,
-			prompt_md, tool_allowlist, tool_denylist, budgets_json, roles_json, title_summarize_json,
+			prompt_md, tool_allowlist, tool_denylist, core_tools, budgets_json, roles_json, title_summarize_json,
 			preferred_credential, model, reasoning_mode, prompt_cache_control,
 			executor_type, executor_config_json,
 			is_active, sync_mode, mirrored_file_dir, last_synced_at, updated_at
 		) VALUES (
 			NULL, $1, $2, $3, $4, $5,
 			$6, $7, $8,
-			$9, $10, $11, $12, $13, $14,
-			$15, $16, $17, $18,
-			$19, $20,
-			$21, $22, $23, $24, now()
+			$9, $10, $11, $12, $13, $14, $15,
+			$16, $17, $18, $19,
+			$20, $21,
+			$22, $23, $24, $25, now()
 		)
 		ON CONFLICT (persona_key, version) WHERE project_id IS NULL
 		DO UPDATE SET
@@ -754,6 +762,7 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 			prompt_md = EXCLUDED.prompt_md,
 			tool_allowlist = EXCLUDED.tool_allowlist,
 			tool_denylist = EXCLUDED.tool_denylist,
+			core_tools = EXCLUDED.core_tools,
 			budgets_json = EXCLUDED.budgets_json,
 			roles_json = EXCLUDED.roles_json,
 			title_summarize_json = EXCLUDED.title_summarize_json,
@@ -769,7 +778,7 @@ func (r *PersonasRepository) UpsertPlatformMirror(ctx context.Context, params Pl
 		RETURNING `+personaSelectColumns,
 		params.PersonaKey, params.Version, params.DisplayName, params.Description, strings.TrimSpace(params.SoulMD),
 		params.UserSelectable, params.SelectorName, params.SelectorOrder,
-		strings.TrimSpace(params.PromptMD), params.ToolAllowlist, params.ToolDenylist, params.BudgetsJSON, params.RolesJSON, params.TitleSummarizeJSON,
+		strings.TrimSpace(params.PromptMD), params.ToolAllowlist, params.ToolDenylist, params.CoreTools, params.BudgetsJSON, params.RolesJSON, params.TitleSummarizeJSON,
 		params.PreferredCredential, params.Model, params.ReasoningMode, params.PromptCacheControl,
 		params.ExecutorType, params.ExecutorConfigJSON,
 		params.IsActive, PersonaSyncModePlatformFileMirror, params.MirroredFileDir, params.LastSyncedAt,

@@ -61,6 +61,8 @@ export interface LocaleStrings {
     toolModeLabel: string
     toolModeInherit: string
     toolModeCustom: string
+    toolDiscovery: string
+    toolDiscoveryDesc: string
   }
   models: {
     title: string
@@ -311,6 +313,10 @@ export interface LocaleStrings {
     sectionCredits: string
     titleSummarizer: string
     titleSummarizerHint: string
+    spawnProfileLabel: string
+    spawnProfileExplore: string
+    spawnProfileTask: string
+    spawnProfileStrong: string
     smtpProviders: string
     addSmtp: string
     smtpName: string

@@ -30,8 +30,8 @@ var LlmSpec = llm.ToolSpec{
 			},
 			"profile": map[string]any{
 				"type":        "string",
-				"description": "LLM profile for the agent. Controls which model the agent uses. Options: fast (low latency), balanced (default), strong (best reasoning). If not set, the agent uses its own default configuration.",
-				"enum":        []string{"fast", "balanced", "strong"},
+				"description": "LLM profile for the agent. Controls which model the agent uses. Options: explore (fast/cheap), task (balanced, default), strong (best reasoning). If not set, the agent uses its own default configuration.",
+				"enum":        []string{"explore", "task", "strong"},
 			},
 		},
 		"required":             []string{"task"},

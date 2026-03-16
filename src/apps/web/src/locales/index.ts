@@ -268,181 +268,171 @@ export interface LocaleStrings {
   // mode switch
   modeChat: string;
   modeClaw: string;
-  // claw right panel
-  claw: {
-    progress: string;
-    progressEmpty: string;
-    workingFolder: string;
-    workingFolderEmpty: string;
-    workingFolderLoading: string;
-    workingFolderError: string;
-    workingFolderEmptyDir: string;
-    workingFolderSelectFile: string;
-    context: string;
-    contextDesc: string;
-    contextEmpty: string;
-    stepComplete: string;
-    stepInProgress: string;
-    stepPending: string;
-    toolsCalled: string;
-    filesReferenced: string;
-  };
   // thread context menu
-  starThread: string;
-  unstarThread: string;
-  shareThread: string;
-  renameThread: string;
-  deleteThread: string;
-  deleteThreadConfirmTitle: string;
-  deleteThreadConfirmBody: string;
-  deleteThreadConfirm: string;
-  deleteThreadCancel: string;
+  starThread: string
+  unstarThread: string
+  shareThread: string
+  renameThread: string
+  deleteThread: string
+  deleteThreadConfirmTitle: string
+  deleteThreadConfirmBody: string
+  deleteThreadConfirm: string
+  deleteThreadCancel: string
   // share
-  shareTitle: string;
-  sharePublic: string;
-  sharePassword: string;
-  sharePasswordPlaceholder: string;
-  shareCreate: string;
-  shareCreating: string;
-  shareCopyLink: string;
-  shareCopied: string;
-  shareRevoke: string;
-  shareRevoking: string;
-  shareRevokeConfirm: string;
-  shareCurrentLink: string;
-  shareNoLink: string;
-  shareLiveUpdate: string;
-  shareFrozen: string;
-  shareTurnCount: (n: number) => string;
-  shareCreateNew: string;
-  shareListEmpty: string;
-  shareLinkCopied: string;
+  shareTitle: string
+  sharePublic: string
+  sharePassword: string
+  sharePasswordPlaceholder: string
+  shareCreate: string
+  shareCreating: string
+  shareCopyLink: string
+  shareCopied: string
+  shareRevoke: string
+  shareRevoking: string
+  shareRevokeConfirm: string
+  shareCurrentLink: string
+  shareNoLink: string
+  shareLiveUpdate: string
+  shareFrozen: string
+  shareTurnCount: (n: number) => string
+  shareCreateNew: string
+  shareListEmpty: string
+  shareLinkCopied: string
   // share page
-  sharePageLogin: string;
-  sharePageRegister: string;
-  sharePagePasswordTitle: string;
-  sharePagePasswordPlaceholder: string;
-  sharePagePasswordSubmit: string;
-  sharePagePasswordWrong: string;
-  sharePageNotFound: string;
-  sharePagePoweredBy: string;
+  sharePageLogin: string
+  sharePageRegister: string
+  sharePagePasswordTitle: string
+  sharePagePasswordPlaceholder: string
+  sharePagePasswordSubmit: string
+  sharePagePasswordWrong: string
+  sharePageNotFound: string
+  sharePagePoweredBy: string
   // report
-  reportButton: string;
-  reportTitle: string;
-  reportSubtitle: string;
-  reportInaccurate: string;
-  reportOutOfDate: string;
-  reportTooShort: string;
-  reportTooLong: string;
-  reportHarmful: string;
-  reportWrongSources: string;
-  reportFeedbackPlaceholder: string;
-  reportFeedbackLabel: string;
-  reportSubmit: string;
-  reportSubmitting: string;
-  reportCancel: string;
-  reportSuccess: string;
+  reportButton: string
+  reportTitle: string
+  reportSubtitle: string
+  reportInaccurate: string
+  reportOutOfDate: string
+  reportTooShort: string
+  reportTooLong: string
+  reportHarmful: string
+  reportWrongSources: string
+  reportFeedbackPlaceholder: string
+  reportFeedbackLabel: string
+  reportSubmit: string
+  reportSubmitting: string
+  reportCancel: string
+  reportSuccess: string
   // shell execution
-  shellRan: string;
-  shellRanCommand: string;
-  shellSuccess: string;
-  shellFailed: string;
-  shellCompleted: string;
-  shellNoOutput: string;
-  agentSubAgent: string;
-  agentSpawning: string;
-  agentRunning: string;
-  agentCompleted: string;
-  agentFailed: string;
-  agentClosed: string;
-  agentInput: string;
-  agentOutput: string;
-  agentNoOutput: string;
+  shellRan: string
+  shellRanCommand: string
+  shellSuccess: string
+  shellFailed: string
+  shellCompleted: string
+  shellNoOutput: string
+  // sub-agent
+  agentSubAgent: string
+  agentSpawning: string
+  agentRunning: string
+  agentCompleted: string
+  agentFailed: string
+  agentClosed: string
+  agentInput: string
+  agentOutput: string
+  agentNoOutput: string
   // pasted content
-  pastedContent: string;
-  pastedLines: (n: number) => string;
+  pastedContent: string
+  pastedLines: (n: number) => string
   // user input card
   userInput: {
-    dismiss: string;
-    submit: string;
-    submitting: string;
-    next: string;
-    back: string;
-  };
+    dismiss: string
+    submit: string
+    submitting: string
+    next: string
+    back: string
+  }
   // document panel
   documentPanel: {
-    preview: string;
-    source: string;
-    download: string;
-    previewUnsupported: string;
-    downloadFile: string;
-    loadFailed: (detail: string) => string;
-  };
+    preview: string
+    source: string
+    download: string
+    previewUnsupported: string
+    downloadFile: string
+    loadFailed: (detail: string) => string
+  }
   // message actions
-  copyAction: string;
-  editAction: string;
+  copyAction: string
+  editAction: string
   // model config
   models: {
-    addProvider: string;
-    editProvider: string;
-    deleteProvider: string;
-    deleteProviderConfirm: string;
-    providerName: string;
-    providerVendor: string;
-    apiKey: string;
-    apiKeyPlaceholder: string;
-    baseUrl: string;
-    baseUrlPlaceholder: string;
-    save: string;
-    saving: string;
-    cancel: string;
-    noProviders: string;
-    noProvidersDesc: string;
-    modelsSection: string;
-    importAll: string;
-    importing: string;
-    noModels: string;
-    deleteModel: string;
-    addModel: string;
-    modelName: string;
-    modelNamePlaceholder: string;
-    loadFailed: string;
-    saveFailed: string;
-    deleteFailed: string;
-    vendorOpenaiResponses: string;
-    vendorOpenaiChatCompletions: string;
-    vendorAnthropicMessage: string;
-    applyToAll: string;
-    applyingToAll: string;
-    applyDone: string;
-    deleteAll: string;
-    searchPlaceholder: string;
-    showInPicker: string;
-    hideFromPicker: string;
-  };
+    addProvider: string
+    editProvider: string
+    deleteProvider: string
+    deleteProviderConfirm: string
+    providerName: string
+    providerVendor: string
+    apiKey: string
+    apiKeyPlaceholder: string
+    baseUrl: string
+    baseUrlPlaceholder: string
+    save: string
+    saving: string
+    cancel: string
+    noProviders: string
+    noProvidersDesc: string
+    modelsSection: string
+    importAll: string
+    importing: string
+    noModels: string
+    deleteModel: string
+    addModel: string
+    modelName: string
+    modelNamePlaceholder: string
+    loadFailed: string
+    saveFailed: string
+    deleteFailed: string
+    vendorOpenaiResponses: string
+    vendorOpenaiChatCompletions: string
+    vendorAnthropicMessage: string
+    applyToAll: string
+    applyingToAll: string
+    applyDone: string
+    deleteAll: string
+    searchPlaceholder: string
+    showInPicker: string
+    hideFromPicker: string
+  }
+  // agent settings
   agentSettings: {
-    title: string;
-    subtitle: string;
-    reasoningMode: string;
-    temperature: string;
-    maxOutputTokens: string;
-    noPersonas: string;
-    saveFailed: string;
-    resetAll: string;
-    resetDone: string;
+    title: string
+    subtitle: string
+    reasoningMode: string
+    temperature: string
+    maxOutputTokens: string
+    noPersonas: string
+    saveFailed: string
+    resetAll: string
+    resetDone: string
     reasoningModes: {
-      default: string;
-      enabled: string;
-      disabled: string;
-    };
-  };
+      default: string
+      enabled: string
+      disabled: string
+    }
+    spawnProfileTitle: string
+    spawnProfilePlatformDefault: string
+    spawnProfileExplore: string
+    spawnProfileTask: string
+    spawnProfileStrong: string
+  }
+  // model picker (chat input)
   modelPicker: {
-    defaultLabel: string;
-    addApiKey: string;
-    byokSection: string;
-    noByok: string;
-    searchPlaceholder: string;
-  };
+    defaultLabel: string
+    addApiKey: string
+    byokSection: string
+    noByok: string
+    searchPlaceholder: string
+  }
+  // claw right panel
   claw: {
     progress: string;
     progressEmpty: string;

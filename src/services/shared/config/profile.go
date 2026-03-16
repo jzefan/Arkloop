@@ -12,7 +12,7 @@ type ProfileMapping struct {
 	Model    string // e.g., "claude-sonnet-4-5"
 }
 
-// ResolveProfile resolves a profile name (e.g., "fast", "balanced", "strong")
+// ResolveProfile resolves a profile name (e.g., "explore", "task", "strong")
 // to a provider^model pair using the config resolver.
 // The config key format is: spawn.profile.{name}
 // The value format is: provider^model (e.g., "anthropic^claude-sonnet-4-5")

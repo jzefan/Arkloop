@@ -24,6 +24,7 @@ export type Persona = {
   prompt_md: string
   tool_allowlist: string[]
   tool_denylist: string[]
+  core_tools: string[]
   budgets: Record<string, unknown>
   is_active: boolean
   created_at: string
@@ -47,6 +48,7 @@ export type CreatePersonaRequest = {
   prompt_md: string
   tool_allowlist?: string[]
   tool_denylist?: string[]
+  core_tools?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
   preferred_credential?: string
@@ -64,6 +66,7 @@ export type PatchPersonaRequest = {
   prompt_md?: string
   tool_allowlist?: string[]
   tool_denylist?: string[]
+  core_tools?: string[]
   budgets?: Record<string, unknown>
   is_active?: boolean
   preferred_credential?: string
