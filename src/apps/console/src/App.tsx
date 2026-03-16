@@ -39,6 +39,7 @@ import { BootstrapPage } from './pages/BootstrapPage'
 
 import { OperationProvider, useOperations } from './contexts/OperationContext'
 import { OperationHistoryModal } from './components/OperationHistoryModal'
+import { bridgeClient } from './api/bridge'
 
 import {
   writeAccessTokenToStorage,
@@ -139,7 +140,7 @@ function App() {
       ) : (
         <Route
           element={
-            <OperationProvider>
+            <OperationProvider client={bridgeClient}>
               <OperationHistoryModalWrapper />
               <ConsoleLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
             </OperationProvider>

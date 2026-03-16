@@ -12,6 +12,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { BootstrapPage } from './pages/BootstrapPage'
 import { OperationProvider } from './contexts/OperationContext'
+import { bridgeClient } from './api/bridge'
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
@@ -94,7 +95,7 @@ function App() {
       ) : (
         <Route
           element={
-            <OperationProvider>
+            <OperationProvider client={bridgeClient}>
               <LiteLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />
             </OperationProvider>
           }

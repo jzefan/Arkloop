@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Plus,
   Trash2,
-  X,
   Bot,
   Check,
   Search,
@@ -10,6 +9,7 @@ import {
   CheckCheck,
   Minus,
 } from 'lucide-react'
+import { Modal, ConfirmDialog } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isApiError } from '../../api'
 import { listLlmProviders, type LlmProvider } from '../../api'
@@ -184,31 +184,6 @@ function ToolCard({
   )
 }
 
-function Overlay({
-  open,
-  onClose,
-  children,
-}: {
-  open: boolean
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  if (!open) return null
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{
-        background: 'rgba(0,0,0,0.12)',
-        backdropFilter: 'blur(2px)',
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      {children}
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -900,34 +875,14 @@ export function PersonasSettings({ accessToken }: Props) {
         </div>
 
         {/* Delete confirmation */}
-        <Overlay open={deleteOpen} onClose={() => setDeleteOpen(false)}>
-          <div
-            className="w-full max-w-sm rounded-2xl p-6"
-            style={{
-              background: 'var(--c-bg-page)',
-              border: '0.5px solid var(--c-border-subtle)',
-            }}
-          >
-            <p className="text-sm text-[var(--c-text-primary)]">
-              {a.deleteAgentConfirm}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteOpen(false)}
-                className="rounded-md border border-[var(--c-border-subtle)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-menu)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="rounded-md bg-red-500 px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-50"
-              >
-                {deleting ? '…' : a.deleteAgent}
-              </button>
-            </div>
-          </div>
-        </Overlay>
+        <ConfirmDialog
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onConfirm={handleDelete}
+          message={a.deleteAgentConfirm}
+          confirmLabel={deleting ? '…' : a.deleteAgent}
+          loading={deleting}
+        />
       </div>
     )
   }
@@ -1027,78 +982,56 @@ export function PersonasSettings({ accessToken }: Props) {
       )}
 
       {/* Create modal */}
-      <Overlay open={createOpen} onClose={() => setCreateOpen(false)}>
-        <div
-          className="w-full max-w-md rounded-2xl p-6"
-          style={{
-            background: 'var(--c-bg-page)',
-            border: '0.5px solid var(--c-border-subtle)',
-          }}
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <h4 className="text-base font-semibold text-[var(--c-text-heading)]">
-              {a.addAgent}
-            </h4>
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={a.addAgent} width="420px">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-[var(--c-text-muted)]">
+              {a.displayName} *
+            </label>
+            <input
+              className={INPUT_CLS}
+              placeholder={a.displayNamePlaceholder}
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-[var(--c-text-muted)]">
+              {a.model} *
+            </label>
+            <select
+              className={SELECT_CLS}
+              value={createModel}
+              onChange={(e) => setCreateModel(e.target.value)}
+            >
+              <option value="">{a.modelPlaceholder}</option>
+              {createModelOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={() => setCreateOpen(false)}
-              className="text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]"
+              className="rounded-md border border-[var(--c-border-subtle)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-menu)]"
             >
-              <X size={16} />
+              Cancel
+            </button>
+            <button
+              onClick={handleCreate}
+              disabled={creating || !createName.trim() || !createModel.trim()}
+              className="rounded-md bg-[var(--c-accent)] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+            >
+              {creating ? '…' : a.addAgent}
             </button>
           </div>
-
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-[var(--c-text-muted)]">
-                {a.displayName} *
-              </label>
-              <input
-                className={INPUT_CLS}
-                placeholder={a.displayNamePlaceholder}
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                autoFocus
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-[var(--c-text-muted)]">
-                {a.model} *
-              </label>
-              <select
-                className={SELECT_CLS}
-                value={createModel}
-                onChange={(e) => setCreateModel(e.target.value)}
-              >
-                <option value="">{a.modelPlaceholder}</option>
-                {createModelOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setCreateOpen(false)}
-                className="rounded-md border border-[var(--c-border-subtle)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-menu)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={
-                  creating || !createName.trim() || !createModel.trim()
-                }
-                className="rounded-md bg-[var(--c-accent)] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
-              >
-                {creating ? '…' : a.addAgent}
-              </button>
-            </div>
-          </div>
         </div>
-      </Overlay>
+      </Modal>
     </div>
   )
 }
