@@ -349,6 +349,8 @@ export const zh: LocaleStrings = {
       toolModeLabel: '工具范围',
       toolModeInherit: '继承全部',
       toolModeCustom: '自定义子集',
+      toolDiscovery: '工具发现',
+      toolDiscoveryDesc: '仅核心工具直接暴露给模型，其余按需加载',
       fieldBudgetsJSON: '预算（JSON）',
       fieldIsActive: '启用此智能体',
       fieldExecutorType: '执行器类型',

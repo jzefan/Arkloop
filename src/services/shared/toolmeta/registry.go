@@ -10,6 +10,7 @@ const (
 	GroupDocument      = "document"
 	GroupOrchestration = "orchestration"
 	GroupDiscovery     = "discovery"
+	GroupFilesystem    = "filesystem"
 
 	WebSearchDefaultMaxResults = 5
 	WebSearchMaxResultsLimit   = 20
@@ -35,6 +36,7 @@ var groupOrder = []string{
 	GroupWebSearch,
 	GroupWebFetch,
 	GroupSandbox,
+	GroupFilesystem,
 	GroupMemory,
 	GroupDocument,
 	GroupOrchestration,
@@ -128,6 +130,56 @@ var registry = []ToolMeta{
 			"Snapshot results are compact by default: URL, title, clickable refs, form controls, and visible-text summary. Use screenshot only when you need a visual image. " +
 			"Set yield_time_ms high enough for pages to settle; avoid tiny values such as 50ms, prefer 1500-5000ms. " +
 			"Only reference artifact keys that actually appear in result.artifacts; never invent artifact keys.",
+	},
+	// ── filesystem ──
+	{
+		Name:      "read_file",
+		Group:     GroupFilesystem,
+		Label:     "Read file",
+		ShortDesc: "read file content with line numbers and optional range",
+		LLMDescription: "read the contents of a file and return them with line numbers. " +
+			"Use offset and limit to page through large files. Default limit is 2000 lines. " +
+			"Files larger than 256 KB are rejected; use offset/limit to read in sections. " +
+			"Always read a file before editing it.",
+	},
+	{
+		Name:      "write_file",
+		Group:     GroupFilesystem,
+		Label:     "Write file",
+		ShortDesc: "create or overwrite a file",
+		LLMDescription: "create a new file or overwrite an existing file with the provided content. " +
+			"Parent directories are created automatically. " +
+			"Prefer edit over write_file when making targeted changes to existing files.",
+	},
+	{
+		Name:      "edit",
+		Group:     GroupFilesystem,
+		Label:     "Edit file",
+		ShortDesc: "replace a unique string in a file (str_replace semantics)",
+		LLMDescription: "replace one occurrence of old_string with new_string in the specified file. " +
+			"old_string must match exactly once — include enough surrounding context (3-5 lines before and after) to ensure uniqueness. " +
+			"To create a new file: set old_string to empty. To delete content: set new_string to empty. " +
+			"Always read_file first to verify exact text before editing.",
+	},
+	{
+		Name:      "glob",
+		Group:     GroupFilesystem,
+		Label:     "Glob files",
+		ShortDesc: "find files by glob pattern",
+		LLMDescription: "find files matching a glob pattern and return their paths. " +
+			"Uses ripgrep when available for speed; falls back to Go filepath walk. " +
+			"Results are sorted by path length (shortest first). Maximum 1000 results. " +
+			"Patterns like **/*.go, src/**/*.ts, *.md are supported.",
+	},
+	{
+		Name:      "grep",
+		Group:     GroupFilesystem,
+		Label:     "Grep files",
+		ShortDesc: "search file contents by regex pattern",
+		LLMDescription: "search file contents for a regex pattern and return matching lines with file:line:content format. " +
+			"Uses ripgrep when available; falls back to Go regex walk. " +
+			"Use include to restrict to specific file types (e.g. *.go). Maximum 200 matches. " +
+			"Results are sorted by file modification time (newest first) in fallback mode.",
 	},
 	// ── memory ──
 	{
