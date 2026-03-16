@@ -16,9 +16,11 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
   const mp = t.modelPicker
   const [open, setOpen] = useState(false)
   const [providers, setProviders] = useState<LlmProvider[]>([])
+  const [search, setSearch] = useState('')
   const [hovered, setHovered] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (!accessToken) return
@@ -30,9 +32,14 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     }
   }, [accessToken])
 
+  // 每次打开时刷新，避免新添加的模型不显示
   useEffect(() => {
-    void load()
-  }, [load])
+    if (open) {
+      void load()
+      setSearch('')
+      setTimeout(() => searchRef.current?.focus(), 30)
+    }
+  }, [open, load])
 
   useEffect(() => {
     if (!open) return
@@ -59,7 +66,15 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     setOpen(false)
   }
 
-  const hasModels = providers.some((p) => p.models.length > 0)
+  const q = search.trim().toLowerCase()
+  const visibleProviders = providers
+    .map((p) => ({
+      ...p,
+      models: p.models.filter((m) => m.show_in_picker && (!q || m.model.toLowerCase().includes(q))),
+    }))
+    .filter((p) => p.models.length > 0)
+
+  const hasModels = visibleProviders.length > 0
 
   return (
     <div className="relative" style={{ flexShrink: 0 }}>
@@ -107,6 +122,23 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            {/* 搜索框 */}
+            <div style={{ padding: '4px 4px 2px' }}>
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={mp.searchPlaceholder}
+                className="w-full rounded-md px-3 py-1.5 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-deep)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </div>
+
             {/* Default 选项 */}
             <button
               type="button"
@@ -123,59 +155,62 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
               )}
             </button>
 
+            {/* 可滚动模型列表 */}
             {hasModels && (
               <>
                 <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
                 <div
-                  className="px-3 py-1 text-xs"
-                  style={{ color: 'var(--c-text-muted)', fontWeight: 500, letterSpacing: '0.02em' }}
+                  style={{ overflowY: 'auto', maxHeight: '240px', display: 'flex', flexDirection: 'column', gap: '2px' }}
                 >
-                  {mp.byokSection}
+                  {visibleProviders.map((provider) =>
+                    provider.models.map((m) => {
+                      const combo = `${provider.name}^${m.model}`
+                      const isSelected = value === combo
+                      return (
+                        <button
+                          key={combo}
+                          type="button"
+                          onClick={() => handleSelect(combo)}
+                          className="flex w-full items-center rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                          style={{
+                            color: isSelected ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                            fontWeight: isSelected ? 600 : 400,
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: 1,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              textAlign: 'left',
+                            }}
+                          >
+                            {m.model}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              color: 'var(--c-text-muted)',
+                              flexShrink: 0,
+                              marginLeft: '8px',
+                            }}
+                          >
+                            {provider.name}
+                          </span>
+                          {isSelected && (
+                            <span style={{ marginLeft: '6px', fontSize: '12px', color: 'var(--c-text-muted)', flexShrink: 0 }}>✓</span>
+                          )}
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
-                {providers.map((provider) =>
-                  provider.models.map((m) => {
-                    const combo = `${provider.name}^${m.model}`
-                    const isSelected = value === combo
-                    return (
-                      <button
-                        key={combo}
-                        type="button"
-                        onClick={() => handleSelect(combo)}
-                        className="flex w-full items-center rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
-                        style={{
-                          color: isSelected ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
-                          fontWeight: isSelected ? 600 : 400,
-                        }}
-                      >
-                        <span
-                          style={{
-                            flex: 1,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            textAlign: 'left',
-                          }}
-                        >
-                          {m.model}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            color: 'var(--c-text-muted)',
-                            flexShrink: 0,
-                            marginLeft: '8px',
-                          }}
-                        >
-                          {provider.name}
-                        </span>
-                        {isSelected && (
-                          <span style={{ marginLeft: '6px', fontSize: '12px', color: 'var(--c-text-muted)', flexShrink: 0 }}>✓</span>
-                        )}
-                      </button>
-                    )
-                  })
-                )}
               </>
+            )}
+
+            {!hasModels && search && (
+              <p className="px-3 py-2 text-xs" style={{ color: 'var(--c-text-muted)' }}>{mp.noByok}</p>
             )}
 
             <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />

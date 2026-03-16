@@ -393,6 +393,9 @@ export interface LocaleStrings {
     applyingToAll: string
     applyDone: string
     deleteAll: string
+    searchPlaceholder: string
+    showInPicker: string
+    hideFromPicker: string
   }
   // agent settings
   agentSettings: {
@@ -417,6 +420,7 @@ export interface LocaleStrings {
     addApiKey: string
     byokSection: string
     noByok: string
+    searchPlaceholder: string
   }
   // claw right panel
   claw: {
