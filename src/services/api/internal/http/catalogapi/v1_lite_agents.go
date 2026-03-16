@@ -31,6 +31,7 @@ type liteAgentResponse struct {
 	ToolPolicy      string          `json:"tool_policy"`
 	ToolAllowlist   []string        `json:"tool_allowlist"`
 	ToolDenylist    []string        `json:"tool_denylist"`
+	CoreTools       []string        `json:"core_tools"`
 	IsActive        bool            `json:"is_active"`
 	ExecutorType    string          `json:"executor_type"`
 	BudgetsJSON     json.RawMessage `json:"budgets"`
@@ -61,6 +62,7 @@ type patchLiteAgentRequest struct {
 	ReasoningMode   *string   `json:"reasoning_mode"`
 	ToolAllowlist   *[]string `json:"tool_allowlist"`
 	ToolDenylist    *[]string `json:"tool_denylist"`
+	CoreTools       *[]string `json:"core_tools"`
 	IsActive        *bool     `json:"is_active"`
 }
 
@@ -308,6 +310,9 @@ func patchLiteAgent(
 	if req.ToolDenylist != nil {
 		patch.ToolDenylist = *req.ToolDenylist
 	}
+	if req.CoreTools != nil {
+		patch.CoreTools = *req.CoreTools
+	}
 
 	updated, err := personasRepo.PatchInScope(r.Context(), scopeID, personaID, scope, patch)
 	if err != nil {
@@ -404,6 +409,7 @@ func toLiteAgentFromDB(p data.Persona) liteAgentResponse {
 		ToolPolicy:      toolPolicy,
 		ToolAllowlist:   allowlist,
 		ToolDenylist:    denylist,
+		CoreTools:       orEmptyStringSlice(p.CoreTools),
 		IsActive:        p.IsActive,
 		ExecutorType:    executorType,
 		BudgetsJSON:     budgets,
@@ -484,6 +490,7 @@ func toLiteAgentFromRepo(rp personas.RepoPersona, scope string) liteAgentRespons
 		ToolPolicy:      toolPolicy,
 		ToolAllowlist:   allowlist,
 		ToolDenylist:    denylist,
+		CoreTools:       orEmptyStringSlice(rp.CoreTools),
 		IsActive:        true,
 		ExecutorType:    executorType,
 		BudgetsJSON:     budgets,

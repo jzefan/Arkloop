@@ -30,6 +30,7 @@ type createPersonaRequest struct {
 	PromptMD               string          `json:"prompt_md"`
 	ToolAllowlist          []string        `json:"tool_allowlist"`
 	ToolDenylist           []string        `json:"tool_denylist"`
+	CoreTools              []string        `json:"core_tools"`
 	BudgetsJSON            json.RawMessage `json:"budgets"`
 	RolesJSON              json.RawMessage `json:"roles"`
 	PreferredCredential    *string         `json:"preferred_credential"`
@@ -47,6 +48,7 @@ type patchPersonaRequest struct {
 	PromptMD            *string         `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
 	ToolDenylist        []string        `json:"tool_denylist"`
+	CoreTools           []string        `json:"core_tools"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	RolesJSON           json.RawMessage `json:"roles"`
 	IsActive            *bool           `json:"is_active"`
@@ -72,6 +74,7 @@ type personaResponse struct {
 	PromptMD            string          `json:"prompt_md"`
 	ToolAllowlist       []string        `json:"tool_allowlist"`
 	ToolDenylist        []string        `json:"tool_denylist"`
+	CoreTools           []string        `json:"core_tools"`
 	BudgetsJSON         json.RawMessage `json:"budgets"`
 	RolesJSON           json.RawMessage `json:"roles"`
 	IsActive            bool            `json:"is_active"`
@@ -520,6 +523,7 @@ func patchPersona(
 		PromptMD:            req.PromptMD,
 		ToolAllowlist:       req.ToolAllowlist,
 		ToolDenylist:        req.ToolDenylist,
+		CoreTools:           req.CoreTools,
 		BudgetsJSON:         req.BudgetsJSON,
 		RolesJSON:           req.RolesJSON,
 		IsActive:            req.IsActive,
@@ -675,6 +679,7 @@ func toPersonaResponse(s data.Persona) personaResponse {
 		PromptMD:            s.PromptMD,
 		ToolAllowlist:       allowlist,
 		ToolDenylist:        denylist,
+		CoreTools:           orEmptyStringSlice(s.CoreTools),
 		BudgetsJSON:         budgets,
 		RolesJSON:           roles,
 		IsActive:            s.IsActive,
@@ -750,6 +755,7 @@ func toBuiltinPersonaResponse(s repopersonas.RepoPersona, scope string) personaR
 		PromptMD:            s.PromptMD,
 		ToolAllowlist:       allowlist,
 		ToolDenylist:        denylist,
+		CoreTools:           orEmptyStringSlice(s.CoreTools),
 		BudgetsJSON:         budgets,
 		RolesJSON:           roles,
 		IsActive:            true,
@@ -911,4 +917,11 @@ func isSystemPersonaKey(repoPersonas []repopersonas.RepoPersona, key string) boo
 		}
 	}
 	return false
+}
+
+func orEmptyStringSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
