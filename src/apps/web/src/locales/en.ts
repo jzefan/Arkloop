@@ -875,5 +875,6 @@ export const en: LocaleStrings = {
     next: "Next",
     skip: "Skip",
     stepOf: (current: number, total: number) => `${current} / ${total}`,
+    comingSoon: "Coming soon",
   },
 };

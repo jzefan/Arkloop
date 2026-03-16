@@ -475,34 +475,6 @@ export function ProvidersPage() {
     }
   }, [accessToken, addToast, availableModels, importSelected, importing, load, scope, selectedProvider, tc])
 
-  const handleImportAll = useCallback(async () => {
-    if (!selectedProvider) return
-    setImporting(true)
-    try {
-      const data = await listAvailableModels(selectedProvider.id, scope, accessToken)
-      const unconfigured = data.models.filter((am) => !am.configured)
-      const embeddingIds = new Set(
-        unconfigured.filter((am) => am.type === 'embedding').map((am) => am.id.toLowerCase()),
-      )
-      for (const am of unconfigured) {
-        const isEmb = am.type === 'embedding'
-        await createProviderModel(selectedProvider.id, {
-          scope,
-          model: am.id,
-          priority: 1,
-          is_default: false,
-          show_in_picker: false,
-          tags: isEmb ? ['embedding'] : undefined,
-        }, accessToken)
-      }
-      await load(selectedProvider.id)
-      addToast(tc.toastRouteCreated, 'success')
-    } catch (err) {
-      addToast(isApiError(err) ? err.message : tc.importModelsError, 'error')
-    } finally {
-      setImporting(false)
-    }
-  }, [accessToken, addToast, load, scope, selectedProvider, tc])
 
   const handleTogglePicker = useCallback(async (model: LlmProviderModel) => {
     if (!selectedProvider) return
@@ -677,7 +649,7 @@ export function ProvidersPage() {
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <h3 className="text-sm font-medium text-[var(--c-text-primary)]">{tc.fieldRoutes}</h3>
                   <div className="flex shrink-0 items-center gap-2">
-                    <button onClick={() => void handleImportAll()} disabled={importing} className={BUTTON_PRIMARY_CLS}>
+                    <button onClick={() => void openImport()} disabled={importing} className={BUTTON_PRIMARY_CLS}>
                       {importing ? <Loader2 size={14} className="animate-spin" /> : tc.importModels}
                     </button>
                     <button onClick={openCreateModel} className={BUTTON_PRIMARY_CLS}>

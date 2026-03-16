@@ -4,7 +4,7 @@ import type { MeResponse } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { useTheme } from '../../contexts/ThemeContext'
 import type { Locale } from '../../locales'
-import type { Theme } from '../../storage'
+import type { Theme } from '@arkloop/shared/contexts/theme'
 import { isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
 
 type Props = {
@@ -23,7 +23,7 @@ export function GeneralSettings({ me, accessToken: _accessToken, onLogout, onMeU
   const [osUsername, setOsUsername] = useState<string | null>(null)
   useEffect(() => {
     if (!localMode) return
-    getDesktopApi()?.app.getOsUsername().then(setOsUsername).catch(() => {})
+    getDesktopApi()?.app.getOsUsername?.().then(setOsUsername).catch(() => {})
   }, [localMode])
 
   const displayName = localMode ? (osUsername ?? me?.username ?? '?') : (me?.username ?? '?')
