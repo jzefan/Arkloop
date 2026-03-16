@@ -1,6 +1,6 @@
 import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
-import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef } from './storage'
+import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageCopBlocksRef, MessageSearchStepRef, MessageThinkingRef, SubAgentRef, WebFetchRef } from './storage'
 
 const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command'])
 const CODE_EXECUTION_RESULT_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'write_stdin'])
@@ -967,4 +967,59 @@ export function buildMessageWebFetchesFromRunEvents(events: RunEvent[]): WebFetc
     }
   }
   return fetches
+}
+
+export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageCopBlocksRef | null {
+  type Block = { id: string; title: string; steps: MessageSearchStepRef[]; sources: [] }
+  const blocks: Block[] = []
+
+  const ensureBlock = () => {
+    if (blocks.length === 0) {
+      blocks.push({ id: crypto.randomUUID(), title: '', steps: [], sources: [] })
+    }
+  }
+
+  for (const event of events) {
+    if (event.type === 'tool.call' && pickToolName(event.data) === 'timeline_title') {
+      const args = event.data && typeof event.data === 'object'
+        ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
+        : {}
+      const label = typeof args.label === 'string' ? args.label.trim() : ''
+      if (blocks.length > 0) {
+        const last = blocks[blocks.length - 1]
+        if (last.title === '' || last.steps.length === 0) {
+          last.title = label
+          continue
+        }
+      }
+      blocks.push({ id: crypto.randomUUID(), title: label, steps: [], sources: [] })
+      continue
+    }
+
+    if (event.type === 'run.segment.start') {
+      const obj = event.data as { segment_id?: unknown; kind?: unknown; label?: unknown; display?: unknown }
+      const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+      const kind = typeof obj.kind === 'string' ? obj.kind : ''
+      if (!segmentId || !kind.startsWith('search_')) continue
+      if (kind === 'search_planning') {
+        ensureBlock()
+        continue
+      }
+      const stepKind: MessageSearchStepRef['kind'] = kind === 'search_queries' ? 'searching'
+        : kind === 'search_reviewing' ? 'reviewing'
+        : 'searching'
+      const display = obj.display && typeof obj.display === 'object'
+        ? obj.display as Record<string, unknown>
+        : {}
+      const label = typeof display.label === 'string' ? display.label : ''
+      const queries = Array.isArray(display.queries)
+        ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
+        : undefined
+      ensureBlock()
+      blocks[blocks.length - 1].steps.push({ id: segmentId, kind: stepKind, label, status: 'done', queries })
+    }
+  }
+
+  if (blocks.length === 0) return null
+  return { blocks, bridgeTexts: [] }
 }
