@@ -113,6 +113,7 @@ func run() error {
 func startEmbeddedSandbox(ctx context.Context) {
 	kernelPath := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_KERNEL_IMAGE"))
 	rootfsPath := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_ROOTFS"))
+	initrdPath := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_INITRD"))
 	socketDir := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_SOCKET_DIR"))
 
 	if kernelPath == "" || rootfsPath == "" {
@@ -128,6 +129,12 @@ func startEmbeddedSandbox(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "sandbox: rootfs not found (%s), falling back to trusted mode\n", rootfsPath)
 		return
 	}
+	if initrdPath != "" {
+		if _, err := os.Stat(initrdPath); err != nil {
+			fmt.Fprintf(os.Stderr, "sandbox: initrd not found (%s), proceeding without initrd\n", initrdPath)
+			initrdPath = ""
+		}
+	}
 
 	if socketDir == "" {
 		home, _ := os.UserHomeDir()
@@ -137,9 +144,10 @@ func startEmbeddedSandbox(ctx context.Context) {
 	cfg := desktopsandbox.Config{
 		ListenAddr:     "127.0.0.1:0",
 		KernelImage:    kernelPath,
+		InitrdPath:     initrdPath,
 		RootfsPath:     rootfsPath,
 		SocketBaseDir:  socketDir,
-		BootTimeout:    30,
+		BootTimeout:    60,
 		GuestAgentPort: 8080,
 		AuthToken:      strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN")),
 	}
