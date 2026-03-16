@@ -519,6 +519,7 @@ export interface LocaleStrings {
     connectors: string;
     searchFetch: string;
     connection: string;
+    isolation: string;
     extensions: string;
     developer: string;
     // general settings
@@ -599,6 +600,37 @@ export interface LocaleStrings {
     memoryClearAllConfirm: string;
     memoryDeleteConfirm: string;
     memorySnapshotTitle: string;
+  };
+
+  isolation: {
+    title: string;
+    description: string;
+    unsupported: string;
+    trustedTitle: string;
+    trustedDesc: string;
+    vmTitle: string;
+    vmDesc: string;
+    vmImagesRequired: string;
+    vmImagesTitle: string;
+    vmKernelRootfs: string;
+    vmInstalled: string;
+    vmCustomInstalled: string;
+    vmNotInstalled: string;
+    vmDownloading: string;
+    vmDownloadError: string;
+    vmDownload: string;
+    vmDelete: string;
+    vmConnecting: string;
+    vmExtracting: string;
+    devLocalPathsTitle: string;
+    devLocalPathsDesc: string;
+    devKernelPath: string;
+    devRootfsPath: string;
+    devInitrdPath: string;
+    devOptional: string;
+    devApply: string;
+    devClear: string;
+    note: string;
   };
 
   // admin providers/models settings (ported from console-lite)

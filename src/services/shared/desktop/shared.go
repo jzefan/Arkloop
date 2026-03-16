@@ -30,6 +30,7 @@ var (
 	mu          sync.Mutex
 	jobEnqueuer JobEnqueuer
 	eventBus    any
+	sandboxAddr string
 	ready       chan struct{}
 	apiReady    chan struct{}
 )
@@ -44,6 +45,9 @@ func GetJobEnqueuer() JobEnqueuer  { mu.Lock(); defer mu.Unlock(); return jobEnq
 
 func SetEventBus(b any) { mu.Lock(); eventBus = b; mu.Unlock() }
 func GetEventBus() any  { mu.Lock(); defer mu.Unlock(); return eventBus }
+
+func SetSandboxAddr(addr string) { mu.Lock(); sandboxAddr = addr; mu.Unlock() }
+func GetSandboxAddr() string     { mu.Lock(); defer mu.Unlock(); return sandboxAddr }
 
 // MarkReady 由 Worker 在共享资源初始化完成后调用，通知等待方可以继续。
 func MarkReady() {

@@ -7,7 +7,8 @@ import * as net from 'net'
 import * as os from 'os'
 import * as path from 'path'
 import { app } from 'electron'
-import type { ConnectorsConfig, LocalPortMode } from './types'
+import type { ConnectorsConfig, IsolationConfig, LocalPortMode } from './types'
+import { getEffectiveKernelPath, getEffectiveRootfsPath, getEffectiveInitrdPath, isVmImageAvailable } from './vm-images'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -66,6 +67,7 @@ let runtime: SidecarRuntime = {
 }
 let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
 let connectorsConfig: ConnectorsConfig | null = null
+let isolationConfig: IsolationConfig | null = null
 let browserSearchCallbackAddr: string | null = null
 
 export function getSidecarStatus(): SidecarStatus {
@@ -74,6 +76,10 @@ export function getSidecarStatus(): SidecarStatus {
 
 export function setConnectorsConfig(config: ConnectorsConfig): void {
   connectorsConfig = config
+}
+
+export function setIsolationConfig(config: IsolationConfig): void {
+  isolationConfig = config
 }
 
 export function setBrowserSearchCallbackAddr(addr: string): void {
@@ -184,7 +190,7 @@ export async function checkSidecarVersion(): Promise<{
 
   let latest: string | null = null
   try {
-    const res = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const res = await httpsGet('https://api.github.com/repos/qqqqqf-q/arkloop/releases/latest')
     const body = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = []
       res.on('data', (c: Buffer) => chunks.push(c))
@@ -357,6 +363,33 @@ function buildBridgeEnv(bridgePort: number): Record<string, string> {
   env.ARKLOOP_POSTGRES_PASSWORD = process.env.ARKLOOP_POSTGRES_PASSWORD ?? 'arkloop_desktop'
   env.ARKLOOP_POSTGRES_DB = process.env.ARKLOOP_POSTGRES_DB ?? 'arkloop'
   env.ARKLOOP_REDIS_PASSWORD = process.env.ARKLOOP_REDIS_PASSWORD ?? 'arkloop_redis'
+
+  return env
+}
+
+function buildIsolationEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  if (!isolationConfig || isolationConfig.mode !== 'vm') return env
+  if (process.platform !== 'darwin') return env
+
+  const kernelPath = getEffectiveKernelPath(isolationConfig.vmKernelPath)
+  const rootfsPath = getEffectiveRootfsPath(isolationConfig.vmRootfsPath)
+
+  // Use the config-provided paths for the availability check
+  if (!isVmImageAvailable(isolationConfig.vmKernelPath, isolationConfig.vmRootfsPath)) return env
+
+  env.ARKLOOP_DESKTOP_ISOLATION = 'vm'
+  env.ARKLOOP_SANDBOX_KERNEL_IMAGE = kernelPath
+  env.ARKLOOP_SANDBOX_ROOTFS = rootfsPath
+
+  // Initrd is optional but improves boot on some kernels
+  const initrdPath = getEffectiveInitrdPath(isolationConfig.vmInitrdPath)
+  if (initrdPath) {
+    env.ARKLOOP_SANDBOX_INITRD = initrdPath
+  }
+
+  const vmDir = path.join(os.homedir(), '.arkloop', 'vm', 'sessions')
+  env.ARKLOOP_SANDBOX_SOCKET_DIR = vmDir
 
   return env
 }
@@ -574,6 +607,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
       ...buildBridgeEnv(bridgePort),
       ...buildConnectorsEnv(),
+      ...buildIsolationEnv(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

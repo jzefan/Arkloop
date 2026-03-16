@@ -43,7 +43,17 @@ function buildTarget({ platform, arch }) {
   const outFile = resolve(outDir, binaryName(platform, arch))
   mkdirSync(outDir, { recursive: true })
 
-  console.log(`[build-sidecar] ${platform}/${arch} → GOOS=${goos} GOARCH=${goarch}`)
+  // Darwin builds require CGO=1 because the VZ (Virtualization.framework)
+  // sandbox backend uses Objective-C via CGO.  Cross-compilation to darwin
+  // from a non-darwin host is not supported for this reason.
+  const isDarwin = platform === 'darwin'
+  const isCrossCompile = isDarwin && process.platform !== 'darwin'
+  if (isCrossCompile) {
+    console.warn(`[build-sidecar] WARNING: cross-compiling darwin target from ${process.platform} — CGO required but unavailable; VZ sandbox will be stubbed out`)
+  }
+  const cgoEnabled = isDarwin ? '1' : '0'
+
+  console.log(`[build-sidecar] ${platform}/${arch} → GOOS=${goos} GOARCH=${goarch} CGO_ENABLED=${cgoEnabled}`)
   console.log(`[build-sidecar] output: ${outFile}`)
 
   execFileSync('go', [
@@ -58,7 +68,7 @@ function buildTarget({ platform, arch }) {
       ...process.env,
       GOOS: goos,
       GOARCH: goarch,
-      CGO_ENABLED: '0',
+      CGO_ENABLED: cgoEnabled,
     },
   })
 

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	api "arkloop/services/api"
 	bridge "arkloop/services/bridge"
+	desktopsandbox "arkloop/services/sandbox/desktopserver"
 	"arkloop/services/shared/desktop"
 	worker "arkloop/services/worker"
 )
@@ -60,13 +62,19 @@ func run() error {
 		return fmt.Errorf("api failed during init: %w", err)
 	}
 
-	// 4. Worker 启动：打开同一个 SQLite（migration 已完成），开始消费。
+	// 4. Embedded sandbox (VZ isolation) - started before Worker so sandbox
+	//    address is available when ComposeDesktopEngine runs.
+	if strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_ISOLATION")) == "vm" {
+		startEmbeddedSandbox(ctx)
+	}
+
+	// 5. Worker 启动：打开同一个 SQLite（migration 已完成），开始消费。
 	workerErr := make(chan error, 1)
 	go func() {
 		workerErr <- worker.StartDesktop(ctx)
 	}()
 
-	// 5. Bridge service (best-effort, does not block API/Worker).
+	// 6. Bridge service (best-effort, does not block API/Worker).
 	go func() {
 		if err := bridge.StartDesktop(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "bridge: %v\n", err)
@@ -97,4 +105,57 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+// startEmbeddedSandbox creates and starts a lightweight VZ sandbox HTTP
+// server inside the sidecar process. On failure it logs a warning and
+// falls back to trusted local mode.
+func startEmbeddedSandbox(ctx context.Context) {
+	kernelPath := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_KERNEL_IMAGE"))
+	rootfsPath := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_ROOTFS"))
+	socketDir := strings.TrimSpace(os.Getenv("ARKLOOP_SANDBOX_SOCKET_DIR"))
+
+	if kernelPath == "" || rootfsPath == "" {
+		fmt.Fprintf(os.Stderr, "sandbox: kernel/rootfs paths not configured, falling back to trusted mode\n")
+		return
+	}
+
+	if _, err := os.Stat(kernelPath); err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox: kernel not found (%s), falling back to trusted mode\n", kernelPath)
+		return
+	}
+	if _, err := os.Stat(rootfsPath); err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox: rootfs not found (%s), falling back to trusted mode\n", rootfsPath)
+		return
+	}
+
+	if socketDir == "" {
+		home, _ := os.UserHomeDir()
+		socketDir = home + "/.arkloop/vm/sessions"
+	}
+
+	cfg := desktopsandbox.Config{
+		ListenAddr:     "127.0.0.1:0",
+		KernelImage:    kernelPath,
+		RootfsPath:     rootfsPath,
+		SocketBaseDir:  socketDir,
+		BootTimeout:    30,
+		GuestAgentPort: 8080,
+		AuthToken:      strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN")),
+	}
+
+	srv, err := desktopsandbox.New(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox: init failed, falling back to trusted mode: %v\n", err)
+		return
+	}
+
+	addr, err := srv.Start(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox: start failed, falling back to trusted mode: %v\n", err)
+		return
+	}
+
+	desktop.SetSandboxAddr(addr)
+	fmt.Fprintf(os.Stderr, "sandbox: embedded VZ sandbox listening on %s\n", addr)
 }
