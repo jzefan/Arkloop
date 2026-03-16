@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, Glasses } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { ModeSwitch } from './ModeSwitch'
 import { useLocale } from '../contexts/LocaleContext'
@@ -12,9 +12,11 @@ type Props = {
   appMode: AppMode
   onSetAppMode: (mode: AppMode) => void
   availableModes: AppMode[]
+  isPrivateMode?: boolean
+  onTogglePrivateMode?: () => void
 }
 
-export function DesktopTitleBar({ sidebarCollapsed, onToggleSidebar, appMode, onSetAppMode, availableModes }: Props) {
+export function DesktopTitleBar({ sidebarCollapsed, onToggleSidebar, appMode, onSetAppMode, availableModes, isPrivateMode, onTogglePrivateMode }: Props) {
   const { t } = useLocale()
 
   if (!isDesktop()) return null
@@ -32,16 +34,16 @@ export function DesktopTitleBar({ sidebarCollapsed, onToggleSidebar, appMode, on
       className="relative flex shrink-0 items-center"
       style={{
         height: DESKTOP_TITLEBAR_HEIGHT,
-        paddingLeft: isMac ? '70px' : '12px',
+        paddingLeft: isMac ? '76px' : '16px',
         paddingRight: '12px',
         background: 'var(--c-bg-sidebar)',
         borderBottom: '0.5px solid var(--c-border-subtle)',
         WebkitAppRegion: 'drag',
       } as React.CSSProperties}
     >
-      {/* sidebar toggle + back/forward */}
+      {/* sidebar toggle + back/forward — nudged 1px down to align with macOS traffic lights */}
       <div
-        className="flex items-center gap-1"
+        className="flex items-center gap-1 translate-y-px"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <button onClick={onToggleSidebar} className={btnCls}>
@@ -67,6 +69,27 @@ export function DesktopTitleBar({ sidebarCollapsed, onToggleSidebar, appMode, on
           availableModes={availableModes}
         />
       </div>
+
+      {/* Right side: private mode toggle (hidden in claw mode) */}
+      {appMode !== 'claw' && onTogglePrivateMode && (
+        <div
+          className="ml-auto flex items-center"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <button
+            onClick={onTogglePrivateMode}
+            title={t.toggleIncognito}
+            className={[
+              'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+              isPrivateMode
+                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)]',
+            ].join(' ')}
+          >
+            <Glasses size={15} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

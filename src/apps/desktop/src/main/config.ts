@@ -2,7 +2,17 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { DEFAULT_CONFIG } from './types'
-import type { AppConfig, ConnectionMode, LocalConfig, LocalPortMode } from './types'
+import type {
+  AppConfig,
+  ConnectionMode,
+  ConnectorsConfig,
+  FetchConnectorConfig,
+  FetchProvider,
+  LocalConfig,
+  LocalPortMode,
+  SearchConnectorConfig,
+  SearchProvider,
+} from './types'
 
 const CONFIG_DIR = path.join(os.homedir(), '.arkloop')
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json')
@@ -32,6 +42,41 @@ function normalizeLocalConfig(local: unknown): LocalConfig {
   }
 }
 
+function normalizeFetchProvider(p: unknown): FetchProvider {
+  return p === 'basic' || p === 'firecrawl' ? p : 'jina'
+}
+
+function normalizeSearchProvider(p: unknown): SearchProvider {
+  return p === 'tavily' || p === 'searxng' ? p : 'browser'
+}
+
+function normalizeFetchConnector(raw: unknown): FetchConnectorConfig {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<FetchConnectorConfig> : {}
+  return {
+    provider: normalizeFetchProvider(r.provider),
+    ...(typeof r.jinaApiKey === 'string' && r.jinaApiKey ? { jinaApiKey: r.jinaApiKey } : {}),
+    ...(typeof r.firecrawlApiKey === 'string' && r.firecrawlApiKey ? { firecrawlApiKey: r.firecrawlApiKey } : {}),
+    ...(typeof r.firecrawlBaseUrl === 'string' && r.firecrawlBaseUrl ? { firecrawlBaseUrl: r.firecrawlBaseUrl } : {}),
+  }
+}
+
+function normalizeSearchConnector(raw: unknown): SearchConnectorConfig {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<SearchConnectorConfig> : {}
+  return {
+    provider: normalizeSearchProvider(r.provider),
+    ...(typeof r.tavilyApiKey === 'string' && r.tavilyApiKey ? { tavilyApiKey: r.tavilyApiKey } : {}),
+    ...(typeof r.searxngBaseUrl === 'string' && r.searxngBaseUrl ? { searxngBaseUrl: r.searxngBaseUrl } : {}),
+  }
+}
+
+function normalizeConnectors(raw: unknown): ConnectorsConfig {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<ConnectorsConfig> : {}
+  return {
+    fetch: normalizeFetchConnector(r.fetch),
+    search: normalizeSearchConnector(r.search),
+  }
+}
+
 export function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
   const parsed = config ?? {}
   return {
@@ -52,6 +97,7 @@ export function normalizeConfig(config: Partial<AppConfig> | null | undefined): 
     onboarding_completed: typeof parsed.onboarding_completed === 'boolean'
       ? parsed.onboarding_completed
       : DEFAULT_CONFIG.onboarding_completed,
+    connectors: normalizeConnectors(parsed.connectors),
   }
 }
 

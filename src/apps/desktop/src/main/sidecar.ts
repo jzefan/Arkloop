@@ -7,7 +7,7 @@ import * as net from 'net'
 import * as os from 'os'
 import * as path from 'path'
 import { app } from 'electron'
-import type { LocalPortMode } from './types'
+import type { ConnectorsConfig, LocalPortMode } from './types'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -65,9 +65,19 @@ let runtime: SidecarRuntime = {
   portMode: 'auto',
 }
 let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
+let connectorsConfig: ConnectorsConfig | null = null
+let browserSearchCallbackAddr: string | null = null
 
 export function getSidecarStatus(): SidecarStatus {
   return runtime.status
+}
+
+export function setConnectorsConfig(config: ConnectorsConfig): void {
+  connectorsConfig = config
+}
+
+export function setBrowserSearchCallbackAddr(addr: string): void {
+  browserSearchCallbackAddr = addr
 }
 
 export function getSidecarRuntime(): SidecarRuntime {
@@ -292,6 +302,38 @@ function resolveBundledProjectDir(): string | null {
   return fs.existsSync(path.join(candidate, 'compose.yaml')) ? candidate : null
 }
 
+function buildConnectorsEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  const cfg = connectorsConfig
+  if (!cfg) return env
+
+  // Fetch connector
+  env.ARKLOOP_WEB_FETCH_PROVIDER = cfg.fetch.provider
+  if (cfg.fetch.provider === 'jina' && cfg.fetch.jinaApiKey) {
+    env.ARKLOOP_WEB_FETCH_JINA_API_KEY = cfg.fetch.jinaApiKey
+  }
+  if (cfg.fetch.provider === 'firecrawl') {
+    if (cfg.fetch.firecrawlApiKey) env.ARKLOOP_WEB_FETCH_FIRECRAWL_API_KEY = cfg.fetch.firecrawlApiKey
+    if (cfg.fetch.firecrawlBaseUrl) env.ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL = cfg.fetch.firecrawlBaseUrl
+  }
+
+  // Search connector
+  env.ARKLOOP_WEB_SEARCH_PROVIDER = cfg.search.provider
+  if (cfg.search.provider === 'tavily' && cfg.search.tavilyApiKey) {
+    env.ARKLOOP_WEB_SEARCH_TAVILY_API_KEY = cfg.search.tavilyApiKey
+  }
+  if (cfg.search.provider === 'searxng' && cfg.search.searxngBaseUrl) {
+    env.ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL = cfg.search.searxngBaseUrl
+  }
+
+  // Browser search callback address (for the browser provider)
+  if (cfg.search.provider === 'browser' && browserSearchCallbackAddr) {
+    env.ARKLOOP_WEB_SEARCH_DESKTOP_CALLBACK_ADDR = browserSearchCallbackAddr
+  }
+
+  return env
+}
+
 function buildBridgeEnv(bridgePort: number): Record<string, string> {
   const env: Record<string, string> = {
     ARKLOOP_BRIDGE_ADDR: `127.0.0.1:${bridgePort}`,
@@ -320,11 +362,11 @@ function buildBridgeEnv(bridgePort: number): Record<string, string> {
 }
 
 async function resolveBridgePort(apiPort: number): Promise<number> {
-  let bridgePort = await resolveLaunchPort(DEFAULT_BRIDGE_PORT, 'auto')
-  if (bridgePort === apiPort) {
-    bridgePort = await resolveLaunchPort(DEFAULT_BRIDGE_PORT + 1, 'auto')
-  }
-  return bridgePort
+  // Keep bridge and API ports disjoint even when the allocator falls back to
+  // ephemeral ports under heavy local port contention.
+  return await resolveLaunchPort(DEFAULT_BRIDGE_PORT, 'auto', {
+    excludePorts: [apiPort],
+  })
 }
 
 function healthCheck(port: number): Promise<boolean> {
@@ -401,30 +443,59 @@ async function isTcpPortAvailable(port: number): Promise<boolean> {
   })
 }
 
-async function reserveEphemeralPort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close(() => reject(new Error('failed to allocate local port')))
-        return
-      }
-      const port = address.port
-      server.close((error) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve(port)
-      })
-    })
-  })
+function normalizeExcludedPorts(excludePorts?: Iterable<number>): Set<number> {
+  const excluded = new Set<number>()
+  if (!excludePorts) return excluded
+  for (const port of excludePorts) {
+    if (Number.isInteger(port) && port > 0 && port <= 65535) {
+      excluded.add(port)
+    }
+  }
+  return excluded
 }
 
-async function resolveLaunchPort(preferredPort: number, portMode: LocalPortMode): Promise<number> {
+async function reserveEphemeralPort(excludePorts?: Iterable<number>): Promise<number> {
+  const excluded = normalizeExcludedPorts(excludePorts)
+  const maxAttempts = Math.max(8, excluded.size + 2)
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = await new Promise<number>((resolve, reject) => {
+      const server = net.createServer()
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address()
+        if (!address || typeof address === 'string') {
+          server.close(() => reject(new Error('failed to allocate local port')))
+          return
+        }
+        const nextPort = address.port
+        server.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve(nextPort)
+        })
+      })
+    })
+
+    if (!excluded.has(port)) {
+      return port
+    }
+  }
+
+  throw new Error('failed to allocate local port')
+}
+
+async function resolveLaunchPort(
+  preferredPort: number,
+  portMode: LocalPortMode,
+  options?: { excludePorts?: Iterable<number> },
+): Promise<number> {
+  const excluded = normalizeExcludedPorts(options?.excludePorts)
+
   if (portMode === 'manual') {
+    if (excluded.has(preferredPort)) throw setPortConflictError(preferredPort)
     const available = await isTcpPortAvailable(preferredPort)
     if (!available) throw setPortConflictError(preferredPort)
     return preferredPort
@@ -434,10 +505,11 @@ async function resolveLaunchPort(preferredPort: number, portMode: LocalPortMode)
   for (let offset = 0; offset < AUTO_PORT_SCAN_WINDOW; offset++) {
     const candidate = start + offset
     if (candidate > 65535) break
+    if (excluded.has(candidate)) continue
     if (await isTcpPortAvailable(candidate)) return candidate
   }
 
-  return await reserveEphemeralPort()
+  return await reserveEphemeralPort(excluded)
 }
 
 async function terminateChildProcess(child: ChildProcess): Promise<void> {
@@ -501,6 +573,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ARKLOOP_DESKTOP_TOKEN: desktopAccessToken,
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
       ...buildBridgeEnv(bridgePort),
+      ...buildConnectorsEnv(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

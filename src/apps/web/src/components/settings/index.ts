@@ -8,6 +8,7 @@ export { PersonasSettings } from "./PersonasSettings";
 export { SkillsSettings } from "./SkillsSettings";
 export { MCPSettings } from "./MCPSettings";
 export { ConnectorsSettings } from "./ConnectorsSettings";
+export { SearchFetchSettings } from "./SearchFetchSettings";
 export { ConnectionSettings } from "./ConnectionSettings";
 export { ExtensionsSettings } from "./ExtensionsSettings";
 export { ModulesSettings } from "./ModulesSettings";

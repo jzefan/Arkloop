@@ -7,10 +7,13 @@ import {
   setStatusListener,
   setRuntimeListener,
   setBridgeUrlListener,
+  setConnectorsConfig,
+  setBrowserSearchCallbackAddr,
   getSidecarRuntime,
   getBridgeBaseUrl,
   type SidecarRuntime,
 } from './sidecar'
+import { startBrowserSearchServer, stopBrowserSearchServer } from './browser-search'
 import { createTray, registerGlobalShortcut, destroyTray } from './tray'
 import { registerIpcHandlers } from './ipc'
 import type { AppConfig } from './types'
@@ -78,6 +81,8 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
     return config
   }
 
+  setConnectorsConfig(config.connectors)
+
   const runtime = await startSidecar(config.local.port, config.local.portMode)
   const next = mergeConfigWithRuntime(config, runtime)
   syncActiveSidecarPort(next, runtime)
@@ -87,12 +92,17 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
   return next
 }
 
+function connectorsChanged(a: AppConfig, b: AppConfig): boolean {
+  return JSON.stringify(a.connectors) !== JSON.stringify(b.connectors)
+}
+
 async function applyConfigUpdate(config: AppConfig): Promise<AppConfig> {
   const previous = loadConfig()
   const candidate = normalizeConfig(config)
   const needsRestart = previous.mode !== candidate.mode
     || previous.local.port !== candidate.local.port
     || previous.local.portMode !== candidate.local.portMode
+    || connectorsChanged(previous, candidate)
 
   if (!needsRestart) {
     saveConfig(candidate)
@@ -214,6 +224,15 @@ app.whenReady().then(async () => {
     getSidecarRuntime,
   })
 
+  // Start the browser search callback server so the sidecar can perform
+  // browser-based searches via the Electron Chromium session.
+  try {
+    const callbackAddr = await startBrowserSearchServer()
+    setBrowserSearchCallbackAddr(callbackAddr)
+  } catch (error) {
+    console.error('[desktop] failed to start browser search server:', error)
+  }
+
   const config = loadConfig()
   if (config.mode === 'local') {
     try {
@@ -249,5 +268,6 @@ app.on('activate', () => {
 
 app.on('will-quit', async () => {
   destroyTray()
+  stopBrowserSearchServer()
   await stopSidecar()
 })

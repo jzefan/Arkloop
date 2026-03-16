@@ -1,6 +1,27 @@
 export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
+export type FetchProvider = 'jina' | 'basic' | 'firecrawl'
+export type SearchProvider = 'browser' | 'tavily' | 'searxng'
+
+export type FetchConnectorConfig = {
+  provider: FetchProvider
+  jinaApiKey?: string
+  firecrawlApiKey?: string
+  firecrawlBaseUrl?: string
+}
+
+export type SearchConnectorConfig = {
+  provider: SearchProvider
+  tavilyApiKey?: string
+  searxngBaseUrl?: string
+}
+
+export type ConnectorsConfig = {
+  fetch: FetchConnectorConfig
+  search: SearchConnectorConfig
+}
+
 export type DesktopConfig = {
   mode: ConnectionMode
   saas: { baseUrl: string }
@@ -8,6 +29,7 @@ export type DesktopConfig = {
   local: { port: number; portMode: LocalPortMode }
   window: { width: number; height: number }
   onboarding_completed: boolean
+  connectors: ConnectorsConfig
 }
 
 export type SidecarRuntime = {
@@ -35,6 +57,10 @@ export type ArkloopDesktopApi = {
     set: (config: DesktopConfig) => Promise<{ ok: boolean }>
     getPath: () => Promise<string>
     onChanged: (callback: (config: DesktopConfig) => void) => () => void
+  }
+  connectors?: {
+    get: () => Promise<ConnectorsConfig>
+    set: (config: ConnectorsConfig) => Promise<{ ok: boolean }>
   }
   sidecar: {
     getStatus: () => Promise<'stopped' | 'starting' | 'running' | 'crashed'>

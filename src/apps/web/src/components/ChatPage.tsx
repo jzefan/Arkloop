@@ -1873,10 +1873,12 @@ export function ChatPage() {
               availableModes={availableAppModes}
             />
           )}
-          {threadId && privateThreadIds.has(threadId) && (
+          {!isDesktop() && threadId && privateThreadIds.has(threadId) && (
             <span className="text-xs font-medium text-[var(--c-text-muted)]">{t.incognitoLabel}</span>
           )}
-          <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+          {!isDesktop() && (
+            <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+          )}
           {threadId && !privateThreadIds.has(threadId) && (
             <button
               onClick={() => setShareModalOpen(true)}
@@ -1886,27 +1888,29 @@ export function ChatPage() {
               <Share2 size={18} />
             </button>
           )}
-          <button
-            onClick={
-              threadId && privateThreadIds.has(threadId)
-                ? undefined
-                : pendingIncognito
-                  ? () => setPendingIncognito(false)
-                  : messages.length > 0
-                    ? () => setPendingIncognito(true)
-                    : onTogglePrivateMode
-            }
-            title={threadId && privateThreadIds.has(threadId) ? t.thisThreadIsIncognito : t.toggleIncognito}
-            className={[
-              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
-              threadId && privateThreadIds.has(threadId) || pendingIncognito
-                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
-                : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
-              threadId && privateThreadIds.has(threadId) ? 'cursor-default' : 'cursor-pointer',
-            ].join(' ')}
-          >
-            <Glasses size={18} />
-          </button>
+          {!isDesktop() && (
+            <button
+              onClick={
+                threadId && privateThreadIds.has(threadId)
+                  ? undefined
+                  : pendingIncognito
+                    ? () => setPendingIncognito(false)
+                    : messages.length > 0
+                      ? () => setPendingIncognito(true)
+                      : onTogglePrivateMode
+              }
+              title={threadId && privateThreadIds.has(threadId) ? t.thisThreadIsIncognito : t.toggleIncognito}
+              className={[
+                'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+                threadId && privateThreadIds.has(threadId) || pendingIncognito
+                  ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                  : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+                threadId && privateThreadIds.has(threadId) ? 'cursor-default' : 'cursor-pointer',
+              ].join(' ')}
+            >
+              <Glasses size={18} />
+            </button>
+          )}
         </div>
       </div>
 

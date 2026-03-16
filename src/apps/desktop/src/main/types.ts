@@ -1,6 +1,27 @@
 export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
+export type FetchProvider = 'jina' | 'basic' | 'firecrawl'
+export type SearchProvider = 'browser' | 'tavily' | 'searxng'
+
+export type FetchConnectorConfig = {
+  provider: FetchProvider
+  jinaApiKey?: string
+  firecrawlApiKey?: string
+  firecrawlBaseUrl?: string
+}
+
+export type SearchConnectorConfig = {
+  provider: SearchProvider
+  tavilyApiKey?: string
+  searxngBaseUrl?: string
+}
+
+export type ConnectorsConfig = {
+  fetch: FetchConnectorConfig
+  search: SearchConnectorConfig
+}
+
 export type LocalConfig = {
   port: number
   portMode: LocalPortMode
@@ -13,6 +34,7 @@ export type AppConfig = {
   local: LocalConfig
   window: { width: number; height: number }
   onboarding_completed: boolean
+  connectors: ConnectorsConfig
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -22,4 +44,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   local: { port: 19001, portMode: 'auto' },
   window: { width: 1280, height: 800 },
   onboarding_completed: false,
+  connectors: {
+    fetch: { provider: 'jina' },
+    search: { provider: 'browser' },
+  },
 }

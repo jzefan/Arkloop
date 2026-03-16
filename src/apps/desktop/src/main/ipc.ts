@@ -10,7 +10,7 @@ import {
   type SidecarRuntime,
 } from './sidecar'
 import { getRootfsStatus, isRootfsAvailable, getRootfsPath, checkRootfsVersion, downloadRootfs, deleteRootfs } from './rootfs'
-import type { AppConfig } from './types'
+import type { AppConfig, ConnectorsConfig } from './types'
 
 type DesktopController = {
   applyConfigUpdate: (config: AppConfig) => Promise<AppConfig>
@@ -111,6 +111,18 @@ export function registerIpcHandlers(
     const config = loadConfig()
     config.onboarding_completed = true
     saveConfig(config)
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:connectors:get', () => {
+    const config = loadConfig()
+    return config.connectors
+  })
+
+  ipcMain.handle('arkloop:connectors:set', async (_event, connectors: ConnectorsConfig) => {
+    const config = loadConfig()
+    const next: AppConfig = { ...config, connectors }
+    await controller.applyConfigUpdate(next)
     return { ok: true }
   })
 

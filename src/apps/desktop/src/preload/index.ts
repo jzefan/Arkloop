@@ -3,6 +3,23 @@ import { contextBridge, ipcRenderer } from 'electron'
 export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
+export type FetchProvider = 'jina' | 'basic' | 'firecrawl'
+export type SearchProvider = 'browser' | 'tavily' | 'searxng'
+
+export type ConnectorsConfig = {
+  fetch: {
+    provider: FetchProvider
+    jinaApiKey?: string
+    firecrawlApiKey?: string
+    firecrawlBaseUrl?: string
+  }
+  search: {
+    provider: SearchProvider
+    tavilyApiKey?: string
+    searxngBaseUrl?: string
+  }
+}
+
 export type AppConfig = {
   mode: ConnectionMode
   saas: { baseUrl: string }
@@ -10,6 +27,7 @@ export type AppConfig = {
   local: { port: number; portMode: LocalPortMode }
   window: { width: number; height: number }
   onboarding_completed: boolean
+  connectors: ConnectorsConfig
 }
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
@@ -81,6 +99,10 @@ export type ArkloopDesktopApi = {
   onboarding: {
     getStatus: () => Promise<{ completed: boolean }>
     complete: () => Promise<{ ok: boolean }>
+  }
+  connectors: {
+    get: () => Promise<ConnectorsConfig>
+    set: (config: ConnectorsConfig) => Promise<{ ok: boolean }>
   }
   app: {
     getVersion: () => Promise<string>
@@ -202,6 +224,11 @@ const api: ArkloopDesktopApi = {
   onboarding: {
     getStatus: () => ipcRenderer.invoke('arkloop:onboarding:status'),
     complete: () => ipcRenderer.invoke('arkloop:onboarding:complete'),
+  },
+
+  connectors: {
+    get: () => ipcRenderer.invoke('arkloop:connectors:get'),
+    set: (config: ConnectorsConfig) => ipcRenderer.invoke('arkloop:connectors:set', config),
   },
 
   app: {
