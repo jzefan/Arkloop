@@ -12,6 +12,7 @@ const ACTIVE_THREAD_ID_KEY = 'arkloop:web:active_thread_id'
 const LOCALE_KEY = 'arkloop:web:locale'
 const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
+const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
 
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
@@ -145,6 +146,29 @@ export function writeSelectedPersonaKeyToStorage(personaKey: string): void {
   if (!trimmed) return
   try {
     localStorage.setItem(SELECTED_PERSONA_KEY, trimmed)
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export function readSelectedModelFromStorage(): string | null {
+  if (!canUseLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(SELECTED_MODEL_KEY)
+    return raw?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+export function writeSelectedModelToStorage(model: string | null): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (model) {
+      localStorage.setItem(SELECTED_MODEL_KEY, model)
+    } else {
+      localStorage.removeItem(SELECTED_MODEL_KEY)
+    }
   } catch {
     // 忽略存储失败
   }

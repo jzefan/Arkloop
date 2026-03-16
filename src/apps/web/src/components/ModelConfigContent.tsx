@@ -417,10 +417,18 @@ function ModelsSection({
     setErr('')
     try {
       const unconfigured = available.filter((am) => !am.configured)
-      for (const am of unconfigured) {
-        // default show_in_picker=false so users can selectively enable
-        await createProviderModel(accessToken, provider.id, { model: am.id, show_in_picker: false })
-      }
+      const created = await Promise.all(
+        unconfigured.map((am) =>
+          createProviderModel(accessToken, provider.id, { model: am.id, show_in_picker: false })
+        )
+      )
+      // auto-enable common models as a useful default (gpt-4o-mini)
+      const toEnable = created.filter((pm) => pm.model.toLowerCase().includes('gpt-4o-mini'))
+      await Promise.all(
+        toEnable.map((pm) =>
+          patchProviderModel(accessToken, provider.id, pm.id, { show_in_picker: true })
+        )
+      )
       onChanged()
       void loadAvailable()
     } catch (e) {
@@ -455,7 +463,6 @@ function ModelsSection({
   const handleDeleteAll = async () => {
     setDeletingAll(true)
     setErr('')
-    // snapshot the list before any deletions
     const toDelete = [...provider.models]
     let anyFailed = false
     for (const pm of toDelete) {
@@ -468,6 +475,7 @@ function ModelsSection({
     }
     setDeletingAll(false)
     onChanged()
+    void loadAvailable()
     if (anyFailed) setErr(m.deleteFailed)
   }
 
@@ -563,37 +571,26 @@ function ModelsSection({
               className="group flex items-center justify-between rounded-lg border border-[var(--c-border-subtle)] px-4 py-2.5"
             >
               <p className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--c-text-primary)]">{pm.model}</p>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {/* show_in_picker toggle */}
-                <button
-                  type="button"
-                  onClick={() => void handleTogglePicker(pm.id, pm.show_in_picker)}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <label
+                  className="relative inline-flex shrink-0 cursor-pointer items-center"
                   title={pm.show_in_picker ? m.hideFromPicker : m.showInPicker}
-                  className="flex-shrink-0 focus:outline-none"
-                  style={{
-                    width: '28px',
-                    height: '16px',
-                    borderRadius: '8px',
-                    background: pm.show_in_picker ? 'var(--c-accent-send)' : 'var(--c-border-mid, var(--c-border-subtle))',
-                    position: 'relative',
-                    transition: 'background 120ms ease',
-                    flexShrink: 0,
-                  }}
                 >
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: '2px',
-                      left: pm.show_in_picker ? '14px' : '2px',
-                      width: '12px',
-                      height: '12px',
-                      borderRadius: '50%',
-                      background: 'var(--c-bg-page)',
-                      transition: 'left 120ms ease',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
-                    }}
+                  <input
+                    type="checkbox"
+                    checked={pm.show_in_picker}
+                    onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)}
+                    className="peer sr-only"
                   />
-                </button>
+                  <span
+                    className="h-5 w-9 rounded-full transition-colors"
+                    style={{ background: pm.show_in_picker ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }}
+                  />
+                  <span
+                    className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
+                    style={{ background: pm.show_in_picker ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
+                  />
+                </label>
                 <button
                   onClick={() => void handleDeleteModel(pm.id)}
                   className="rounded p-1.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-red-500"

@@ -12,6 +12,8 @@ import {
   LEARNING_PERSONA_KEY,
   readSelectedPersonaKeyFromStorage,
   writeSelectedPersonaKeyToStorage,
+  readSelectedModelFromStorage,
+  writeSelectedModelToStorage,
 } from '../storage'
 
 export type Attachment = {
@@ -484,7 +486,12 @@ export function ChatInput({
   )
 
   const [chipExiting, setChipExiting] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
+
+  const handleModelChange = useCallback((model: string | null) => {
+    setSelectedModel(model)
+    writeSelectedModelToStorage(model)
+  }, [])
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY
 
@@ -1109,7 +1116,7 @@ export function ChatInput({
             <ModelPicker
               accessToken={accessToken}
               value={selectedModel}
-              onChange={setSelectedModel}
+              onChange={handleModelChange}
               onAddApiKey={() => onOpenSettings?.('models')}
               variant={variant}
             /></div>

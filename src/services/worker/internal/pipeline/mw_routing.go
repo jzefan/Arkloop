@@ -111,14 +111,22 @@ func NewRoutingMiddleware(
 		decision = activeRouter.Decide(rc.InputJSON, byokEnabled, false)
 	} else {
 		selector := ""
+		userModelOverride := false
 		// model override from input_json (user-specified) takes priority over persona default
 		if modelOverride, ok := rc.InputJSON["model"].(string); ok && strings.TrimSpace(modelOverride) != "" {
 			selector = strings.TrimSpace(modelOverride)
+			userModelOverride = true
 		} else if rc.AgentConfig != nil && rc.AgentConfig.Model != nil {
 			selector = strings.TrimSpace(*rc.AgentConfig.Model)
 		}
 			if selector != "" {
-				selected, err := resolveSelectedRouteBySelector(platformSelectorConfig, selector, rc.InputJSON, byokEnabled)
+				// user-specified overrides must be able to resolve BYOK (user-scope) routes;
+				// persona-configured selectors only resolve against platform routes.
+				cfgForSelector := platformSelectorConfig
+				if userModelOverride {
+					cfgForSelector = selectorConfig
+				}
+				selected, err := resolveSelectedRouteBySelector(cfgForSelector, selector, rc.InputJSON, byokEnabled)
 				if err != nil {
 					var notFound *RouteNotFoundError
 					if errors.As(err, &notFound) {
