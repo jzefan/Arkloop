@@ -8,6 +8,7 @@ import {
   setRuntimeListener,
   setBridgeUrlListener,
   setConnectorsConfig,
+  setMemoryConfig,
   setBrowserSearchCallbackAddr,
   getSidecarRuntime,
   getBridgeBaseUrl,
@@ -82,6 +83,7 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
   }
 
   setConnectorsConfig(config.connectors)
+  setMemoryConfig(config.memory)
 
   const runtime = await startSidecar(config.local.port, config.local.portMode)
   const next = mergeConfigWithRuntime(config, runtime)
@@ -96,6 +98,12 @@ function connectorsChanged(a: AppConfig, b: AppConfig): boolean {
   return JSON.stringify(a.connectors) !== JSON.stringify(b.connectors)
 }
 
+function memoryChanged(a: AppConfig, b: AppConfig): boolean {
+  return a.memory.enabled !== b.memory.enabled
+    || a.memory.provider !== b.memory.provider
+    || JSON.stringify(a.memory.openviking) !== JSON.stringify(b.memory.openviking)
+}
+
 async function applyConfigUpdate(config: AppConfig): Promise<AppConfig> {
   const previous = loadConfig()
   const candidate = normalizeConfig(config)
@@ -103,6 +111,7 @@ async function applyConfigUpdate(config: AppConfig): Promise<AppConfig> {
     || previous.local.port !== candidate.local.port
     || previous.local.portMode !== candidate.local.portMode
     || connectorsChanged(previous, candidate)
+    || memoryChanged(previous, candidate)
 
   if (!needsRestart) {
     saveConfig(candidate)

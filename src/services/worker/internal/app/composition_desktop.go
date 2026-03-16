@@ -25,6 +25,7 @@ import (
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
 	localmemory "arkloop/services/worker/internal/memory/local"
+	"arkloop/services/worker/internal/memory/openviking"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/routing"
@@ -52,6 +53,8 @@ type DesktopEngine struct {
 	baseAllowlist    map[string]struct{}
 	executorRegistry pipeline.AgentExecutorBuilder
 	personaRegistry  func() *personas.Registry
+	memProvider      memory.MemoryProvider
+	useOV            bool
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -117,14 +120,32 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	executors[localfs.FileReadAgentSpec.Name] = fsExec
 	executors[localfs.FileWriteAgentSpec.Name] = fsExec
 
-	memProvider := localmemory.NewProvider(db)
-	memExec := memorytool.NewToolExecutor(memProvider)
-	for _, spec := range memorytool.AgentSpecs() {
-		executors[spec.Name] = memExec
+	memEnabled := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_ENABLED")) != "false"
+	ovURL := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"))
+	ovKey := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"))
+
+	var memProvider memory.MemoryProvider
+	useOV := false
+	if memEnabled && ovURL != "" && ovKey != "" {
+		memProvider = openviking.NewProvider(openviking.Config{BaseURL: ovURL, RootAPIKey: ovKey})
+		useOV = true
+		slog.Info("desktop: using OpenViking memory provider", "url", ovURL)
+	} else if memEnabled {
+		memProvider = localmemory.NewProvider(db)
+		slog.Info("desktop: using local SQLite memory provider")
+	} else {
+		slog.Info("desktop: memory disabled")
 	}
-	for _, spec := range memorytool.AgentSpecs() {
-		if err := toolRegistry.Register(spec); err != nil {
-			slog.WarnContext(ctx, "desktop: skip memory tool registration", "name", spec.Name, "err", err)
+
+	if memProvider != nil {
+		memExec := memorytool.NewToolExecutor(memProvider)
+		for _, spec := range memorytool.AgentSpecs() {
+			executors[spec.Name] = memExec
+		}
+		for _, spec := range memorytool.AgentSpecs() {
+			if err := toolRegistry.Register(spec); err != nil {
+				slog.WarnContext(ctx, "desktop: skip memory tool registration", "name", spec.Name, "err", err)
+			}
 		}
 	}
 
@@ -136,7 +157,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 	allLlmSpecs := append(builtin.LlmSpecs(), shellLlmSpecs...)
 	allLlmSpecs = append(allLlmSpecs, localfs.LlmSpecs()...)
-	allLlmSpecs = append(allLlmSpecs, memorytool.LlmSpecs()...)
+	if memProvider != nil {
+		allLlmSpecs = append(allLlmSpecs, memorytool.LlmSpecs()...)
+	}
 
 	baseAllowlist := make(map[string]struct{})
 	for _, name := range toolRegistry.ListNames() {
@@ -166,6 +189,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		baseAllowlist:    filtered,
 		executorRegistry: execRegistry,
 		personaRegistry:  personaGetter,
+		memProvider:      memProvider,
+		useOV:            useOV,
 	}, nil
 }
 
@@ -227,12 +252,21 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	rc.ReasoningIterations = limits.AgentReasoningIterations
 	rc.ToolContinuationBudget = limits.ToolContinuationBudget
 
+	var memMiddleware pipeline.RunMiddleware
+	if e.useOV {
+		// OpenViking: full semantic memory middleware (nil pool = no snapshot cache, nil configResolver = no billing)
+		memMiddleware = pipeline.NewMemoryMiddleware(e.memProvider, nil, nil)
+	} else {
+		// Local SQLite: lightweight snapshot injection
+		memMiddleware = desktopMemoryInjection(e.db)
+	}
+
 	middlewares := []pipeline.RunMiddleware{
 		desktopCancelGuard(),
 		desktopInputLoader(e.db, eventsRepo),
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
-		desktopMemoryInjection(e.db),
+		memMiddleware,
 		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewToolBuildMiddleware(),
 	}

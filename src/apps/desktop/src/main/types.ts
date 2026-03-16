@@ -24,8 +24,23 @@ export type ConnectorsConfig = {
 
 export type MemoryProvider = 'local' | 'openviking'
 
+export type OpenVikingDesktopConfig = {
+  rootApiKey?: string
+  embeddingProvider?: string
+  embeddingModel?: string
+  embeddingApiKey?: string
+  embeddingApiBase?: string
+  embeddingDimension?: number
+  vlmProvider?: string
+  vlmModel?: string
+  vlmApiKey?: string
+  vlmApiBase?: string
+}
+
 export type MemoryConfig = {
+  enabled: boolean
   provider: MemoryProvider
+  openviking?: OpenVikingDesktopConfig
 }
 
 export type LocalConfig = {
@@ -55,5 +70,5 @@ export const DEFAULT_CONFIG: AppConfig = {
     fetch: { provider: 'jina' },
     search: { provider: 'browser' },
   },
-  memory: { provider: 'local' },
+  memory: { enabled: true, provider: 'local' },
 }

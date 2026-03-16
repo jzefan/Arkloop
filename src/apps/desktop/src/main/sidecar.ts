@@ -7,7 +7,7 @@ import * as net from 'net'
 import * as os from 'os'
 import * as path from 'path'
 import { app } from 'electron'
-import type { ConnectorsConfig, LocalPortMode } from './types'
+import type { ConnectorsConfig, LocalPortMode, MemoryConfig } from './types'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -66,6 +66,7 @@ let runtime: SidecarRuntime = {
 }
 let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
 let connectorsConfig: ConnectorsConfig | null = null
+let memoryConfig: MemoryConfig | null = null
 let browserSearchCallbackAddr: string | null = null
 
 export function getSidecarStatus(): SidecarStatus {
@@ -74,6 +75,10 @@ export function getSidecarStatus(): SidecarStatus {
 
 export function setConnectorsConfig(config: ConnectorsConfig): void {
   connectorsConfig = config
+}
+
+export function setMemoryConfig(config: MemoryConfig): void {
+  memoryConfig = config
 }
 
 export function setBrowserSearchCallbackAddr(addr: string): void {
@@ -334,6 +339,21 @@ function buildConnectorsEnv(): Record<string, string> {
   return env
 }
 
+function buildMemoryEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  const cfg = memoryConfig
+  if (!cfg) return env
+
+  env.ARKLOOP_MEMORY_ENABLED = cfg.enabled ? 'true' : 'false'
+  if (cfg.enabled && cfg.provider === 'openviking' && cfg.openviking) {
+    env.ARKLOOP_OPENVIKING_BASE_URL = 'http://localhost:19010'
+    if (cfg.openviking.rootApiKey) {
+      env.ARKLOOP_OPENVIKING_ROOT_API_KEY = cfg.openviking.rootApiKey
+    }
+  }
+  return env
+}
+
 function buildBridgeEnv(bridgePort: number): Record<string, string> {
   const env: Record<string, string> = {
     ARKLOOP_BRIDGE_ADDR: `127.0.0.1:${bridgePort}`,
@@ -575,6 +595,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
       ...buildBridgeEnv(bridgePort),
       ...buildConnectorsEnv(),
+      ...buildMemoryEnv(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

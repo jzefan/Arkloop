@@ -24,8 +24,23 @@ export type ConnectorsConfig = {
 
 export type MemoryProvider = 'local' | 'openviking'
 
+export type OpenVikingDesktopConfig = {
+  rootApiKey?: string
+  embeddingProvider?: string
+  embeddingModel?: string
+  embeddingApiKey?: string
+  embeddingApiBase?: string
+  embeddingDimension?: number
+  vlmProvider?: string
+  vlmModel?: string
+  vlmApiKey?: string
+  vlmApiBase?: string
+}
+
 export type MemoryConfig = {
+  enabled: boolean
   provider: MemoryProvider
+  openviking?: OpenVikingDesktopConfig
 }
 
 export type MemoryEntry = {
