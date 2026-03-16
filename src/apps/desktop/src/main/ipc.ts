@@ -139,20 +139,22 @@ export function registerIpcHandlers(
     return { ok: true }
   })
 
-  ipcMain.handle('arkloop:memory:list', async (_event, agentId?: string) => {
+  ipcMain.handle('arkloop:memory:list', async (_event) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { entries: [] }
     const token = getDesktopAccessToken()
-    const url = `${apiBaseUrl}/v1/desktop/memory/entries?agent_id=${encodeURIComponent(agentId ?? 'default')}`
+    // No agent_id filter — return all memories across all agents for the settings UI.
+    const url = `${apiBaseUrl}/v1/desktop/memory/entries`
     const resp = await makeApiRequest(url, 'GET', token)
     return resp
   })
 
-  ipcMain.handle('arkloop:memory:delete', async (_event, id: string, agentId?: string) => {
+  ipcMain.handle('arkloop:memory:delete', async (_event, id: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { status: 'error', message: 'sidecar not running' }
     const token = getDesktopAccessToken()
-    const url = `${apiBaseUrl}/v1/desktop/memory/entries/${encodeURIComponent(id)}?agent_id=${encodeURIComponent(agentId ?? 'default')}`
+    // agent_id is resolved server-side from the entry record itself.
+    const url = `${apiBaseUrl}/v1/desktop/memory/entries/${encodeURIComponent(id)}`
     const resp = await makeApiRequest(url, 'DELETE', token)
     return resp
   })

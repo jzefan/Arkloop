@@ -108,11 +108,27 @@ func (h *handler) listEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *handler) deleteEntry(w nethttp.ResponseWriter, r *nethttp.Request, id string) {
-	agentID := agentIDFromQuery(r)
+	accountID := auth.DesktopAccountID.String()
+	userID := auth.DesktopUserID.String()
+
+	// First fetch the entry's agent_id so the snapshot rebuild uses the right scope.
+	var agentID string
+	err := h.pool.QueryRow(r.Context(),
+		`SELECT agent_id FROM desktop_memory_entries WHERE id = $1 AND account_id = $2 AND user_id = $3`,
+		id, accountID, userID,
+	).Scan(&agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", fmt.Sprintf("memory entry %s not found", id), "", nil)
+		return
+	}
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
 	tag, err := h.pool.Exec(r.Context(),
-		`DELETE FROM desktop_memory_entries
-		 WHERE id = $1 AND account_id = $2 AND user_id = $3 AND agent_id = $4`,
-		id, auth.DesktopAccountID.String(), auth.DesktopUserID.String(), agentID,
+		`DELETE FROM desktop_memory_entries WHERE id = $1 AND account_id = $2 AND user_id = $3`,
+		id, accountID, userID,
 	)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
@@ -122,23 +138,24 @@ func (h *handler) deleteEntry(w nethttp.ResponseWriter, r *nethttp.Request, id s
 		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", fmt.Sprintf("memory entry %s not found", id), "", nil)
 		return
 	}
-	// Rebuild memory_block snapshot after deletion.
-	if err := rebuildMemoryBlock(r.Context(), h.pool, auth.DesktopAccountID.String(), auth.DesktopUserID.String(), agentID); err != nil {
-		// Non-fatal: log but still return success since the entry was deleted.
-		_ = err
+	// Rebuild the memory_block snapshot for the affected agent.
+	if err := rebuildMemoryBlock(r.Context(), h.pool, accountID, userID, agentID); err != nil {
+		_ = err // Non-fatal; entry is already deleted.
 	}
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 
 // ---------- queries ----------
 
-func listMemoryEntries(ctx context.Context, pool data.DB, accountID, userID, agentID string) ([]MemoryEntry, error) {
+// listMemoryEntries returns all memory entries for a user across all agents.
+// The settings UI shows a unified view regardless of which persona wrote each entry.
+func listMemoryEntries(ctx context.Context, pool data.DB, accountID, userID, _ string) ([]MemoryEntry, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id, scope, category, entry_key, content, created_at
 		 FROM desktop_memory_entries
-		 WHERE account_id = $1 AND user_id = $2 AND agent_id = $3
+		 WHERE account_id = $1 AND user_id = $2
 		 ORDER BY created_at DESC`,
-		accountID, userID, agentID,
+		accountID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list memory entries: %w", err)

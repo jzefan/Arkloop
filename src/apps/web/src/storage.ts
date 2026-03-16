@@ -450,6 +450,54 @@ export function writeMessageSearchSteps(messageId: string, steps: MessageSearchS
   } catch { /* ignore */ }
 }
 
+// -- Memory Actions --
+
+export type MemoryActionRef = {
+  id: string
+  toolName: 'memory_write' | 'memory_search' | 'memory_read' | 'memory_forget'
+  args: { category?: string; key?: string; query?: string; uri?: string }
+  status: 'active' | 'done' | 'error'
+  resultSummary?: string
+}
+
+function messageMemoryActionsKey(messageId: string): string {
+  return `arkloop:web:msg_memory_actions:${messageId}`
+}
+
+export function readMessageMemoryActions(messageId: string): MemoryActionRef[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageMemoryActionsKey(messageId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    const actions = parsed
+      .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
+      .map((item): MemoryActionRef | null => {
+        const id = typeof item.id === 'string' ? item.id : ''
+        const toolName = item.toolName
+        const args = (item.args ?? {}) as MemoryActionRef['args']
+        const status = item.status
+        const resultSummary = typeof item.resultSummary === 'string' ? item.resultSummary : undefined
+        if (!id) return null
+        if (toolName !== 'memory_write' && toolName !== 'memory_search' && toolName !== 'memory_read' && toolName !== 'memory_forget') return null
+        if (status !== 'active' && status !== 'done' && status !== 'error') return null
+        return { id, toolName, args, status, resultSummary }
+      })
+      .filter((a): a is MemoryActionRef => a != null)
+    return actions.length > 0 ? actions : null
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageMemoryActions(messageId: string, actions: MemoryActionRef[]): void {
+  if (!canUseLocalStorage() || !messageId || actions.length === 0) return
+  try {
+    localStorage.setItem(messageMemoryActionsKey(messageId), JSON.stringify(actions))
+  } catch { /* ignore */ }
+}
+
 // -- Sub-Agent --
 
 export type SubAgentStatus = 'spawning' | 'active' | 'completed' | 'failed' | 'closed'

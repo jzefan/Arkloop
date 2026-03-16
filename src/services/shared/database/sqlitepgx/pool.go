@@ -34,8 +34,13 @@ func Open(dsn string) (*Pool, error) {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// Allow multiple concurrent connections so that tool executors (e.g. memory
+	// writes) can acquire a connection while desktopEventWriter holds one open
+	// in a transaction.  SQLite WAL mode supports one writer at a time; the
+	// busy_timeout=5000 below makes contending writers retry for up to 5 s
+	// instead of failing immediately.
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
 
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
