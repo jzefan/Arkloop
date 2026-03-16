@@ -305,10 +305,12 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		AccountRepo:           cfg.AccountRepo,
 		AccountService:        cfg.AccountService,
 		WebhookRepo:           cfg.WebhookRepo,
-		SecretsRepo:        cfg.SecretsRepo,
-		EnvironmentStore:   cfg.EnvironmentStore,
-		RunEventRepo:       cfg.RunEventRepo,
-		GatewayRedisClient: gatewayRedis,
+		SecretsRepo:           cfg.SecretsRepo,
+		EnvironmentStore:      cfg.EnvironmentStore,
+		RunEventRepo:          cfg.RunEventRepo,
+		GatewayRedisClient:    gatewayRedis,
+		EntitlementsRepo:      cfg.EntitlementsRepo,
+		ConfigResolver:        resolver,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{

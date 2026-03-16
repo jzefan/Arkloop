@@ -413,6 +413,11 @@ export interface LocaleStrings {
       enabled: string
       disabled: string
     }
+    spawnProfileTitle: string
+    spawnProfilePlatformDefault: string
+    spawnProfileExplore: string
+    spawnProfileTask: string
+    spawnProfileStrong: string
   }
   // model picker (chat input)
   modelPicker: {

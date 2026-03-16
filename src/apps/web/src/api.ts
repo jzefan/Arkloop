@@ -1325,3 +1325,28 @@ export async function patchPersona(
     body: JSON.stringify(req),
   })
 }
+
+export type SpawnProfile = {
+  profile: string
+  resolved_model: string
+  has_override: boolean
+}
+
+export async function listSpawnProfiles(accessToken: string): Promise<SpawnProfile[]> {
+  return apiFetch<SpawnProfile[]>('/v1/account/spawn-profiles', { accessToken })
+}
+
+export async function setSpawnProfile(accessToken: string, name: string, model: string): Promise<void> {
+  await apiFetch<void>(`/v1/account/spawn-profiles/${name}`, {
+    method: 'PUT',
+    accessToken,
+    body: JSON.stringify({ model }),
+  })
+}
+
+export async function deleteSpawnProfile(accessToken: string, name: string): Promise<void> {
+  await apiFetch<void>(`/v1/account/spawn-profiles/${name}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}

@@ -184,6 +184,8 @@ func shouldInvalidateEntitlementCache(key string) bool {
 		return true
 	case strings.HasPrefix(key, "credit."):
 		return true
+	case strings.HasPrefix(key, "spawn.profile."):
+		return true
 	default:
 		return false
 	}

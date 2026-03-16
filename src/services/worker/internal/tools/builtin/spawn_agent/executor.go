@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
+	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/skillstore"
 	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
@@ -126,6 +128,11 @@ var LlmSpec = llm.ToolSpec{
 				"type":        "string",
 				"description": "The task or message to send to the sub-agent.",
 			},
+			"profile": map[string]any{
+				"type":        "string",
+				"enum":        []string{"explore", "task", "strong"},
+				"description": "Model capability tier for the sub-agent. explore=fast/cheap, task=balanced, strong=best reasoning.",
+			},
 		},
 		"required":             []string{"persona_id", "context_mode", "input"},
 		"additionalProperties": false,
@@ -238,8 +245,10 @@ var InterruptAgentLlmSpec = llm.ToolSpec{
 }
 
 type ToolExecutor struct {
-	Control     subagentctl.Control
-	PersonaKeys []string // 可用 persona ID 列表，spawn 前快速校验
+	Control             subagentctl.Control
+	PersonaKeys         []string // 可用 persona ID 列表，spawn 前快速校验
+	EntitlementResolver *sharedent.Resolver
+	AccountID           uuid.UUID
 }
 
 func (e *ToolExecutor) Execute(
@@ -266,6 +275,7 @@ func (e *ToolExecutor) Execute(
 			err = e.validatePersonaID(req.PersonaID)
 		}
 		if err == nil {
+			e.resolveProfile(ctx, &req)
 			snapshot, err = e.Control.Spawn(ctx, req)
 		}
 	case SendInputSpec.Name:
@@ -336,10 +346,25 @@ func (e *ToolExecutor) validatePersonaID(id string) error {
 	}
 }
 
+// resolveProfile resolves profile to provider^model and writes it into req.ParentContext.Model.
+func (e *ToolExecutor) resolveProfile(ctx context.Context, req *subagentctl.SpawnRequest) {
+	if req.Profile == "" || e.EntitlementResolver == nil {
+		return
+	}
+	key := "spawn.profile." + req.Profile
+	val, err := e.EntitlementResolver.Resolve(ctx, e.AccountID, key)
+	if err != nil || strings.TrimSpace(val) == "" {
+		return
+	}
+	if mapping, err := sharedconfig.ParseProfileValue(val); err == nil {
+		req.ParentContext.Model = mapping.Provider + "^" + mapping.Model
+	}
+}
+
 func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subagentctl.SpawnRequest, error) {
 	for key := range args {
 		switch key {
-		case "persona_id", "role", "nickname", "context_mode", "inherit", "input":
+		case "persona_id", "role", "nickname", "context_mode", "inherit", "input", "profile":
 		default:
 			return subagentctl.SpawnRequest{}, argsError("unknown parameter: " + key)
 		}
@@ -397,6 +422,21 @@ func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subage
 			return subagentctl.SpawnRequest{}, err
 		}
 		req.Inherit = parsed
+	}
+	if raw, ok := args["profile"]; ok {
+		value, ok := raw.(string)
+		if !ok {
+			return subagentctl.SpawnRequest{}, argsError("profile must be a string")
+		}
+		cleaned := strings.TrimSpace(strings.ToLower(value))
+		if cleaned != "" {
+			switch cleaned {
+			case "explore", "task", "strong":
+				req.Profile = cleaned
+			default:
+				return subagentctl.SpawnRequest{}, argsError("profile must be one of: explore, task, strong")
+			}
+		}
 	}
 	return req, nil
 }

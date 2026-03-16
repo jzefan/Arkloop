@@ -2,9 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import { RotateCcw } from 'lucide-react'
 import {
   type Persona,
+  type SpawnProfile,
+  type LlmProvider,
   listPersonas,
   patchPersona,
   isApiError,
+  listSpawnProfiles,
+  setSpawnProfile,
+  deleteSpawnProfile,
+  listLlmProviders,
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 
@@ -21,11 +27,19 @@ export function AgentSettingsContent({ accessToken }: Props) {
   const [loading, setLoading] = useState(true)
   const [resetting, setResetting] = useState(false)
   const [resetMsg, setResetMsg] = useState('')
+  const [spawnProfiles, setSpawnProfiles] = useState<SpawnProfile[]>([])
+  const [providers, setProviders] = useState<LlmProvider[]>([])
 
   const load = useCallback(async () => {
     try {
-      const p = await listPersonas(accessToken)
+      const [p, sp, prov] = await Promise.all([
+        listPersonas(accessToken),
+        listSpawnProfiles(accessToken).catch(() => [] as SpawnProfile[]),
+        listLlmProviders(accessToken).catch(() => [] as LlmProvider[]),
+      ])
       setPersonas(p)
+      setSpawnProfiles(sp)
+      setProviders(prov)
     } catch {
       // load error handled per-row
     } finally {
@@ -50,7 +64,23 @@ export function AgentSettingsContent({ accessToken }: Props) {
     void load()
   }
 
+  const handleSpawnProfileChange = async (name: string, model: string) => {
+    if (model === '') {
+      await deleteSpawnProfile(accessToken, name)
+    } else {
+      await setSpawnProfile(accessToken, name, model)
+    }
+    const sp = await listSpawnProfiles(accessToken).catch(() => [] as SpawnProfile[])
+    setSpawnProfiles(sp)
+  }
+
   if (loading) return <div className="text-sm text-[var(--c-text-tertiary)]">{t.loading}</div>
+
+  const modelOptions = providers.flatMap((p) =>
+    p.models
+      .filter((m) => m.show_in_picker)
+      .map((m) => ({ value: `${p.name}^${m.model}`, label: `${p.name} · ${m.model}` })),
+  )
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,6 +115,12 @@ export function AgentSettingsContent({ accessToken }: Props) {
           ))}
         </div>
       )}
+
+      <SpawnProfileSection
+        profiles={spawnProfiles}
+        modelOptions={modelOptions}
+        onChange={handleSpawnProfileChange}
+      />
     </div>
   )
 }
@@ -178,6 +214,70 @@ function PersonaRow({
       </div>
 
       {err && <p className="text-xs text-red-400">{err}</p>}
+    </div>
+  )
+}
+
+const PROFILE_NAMES = ['explore', 'task', 'strong'] as const
+
+function SpawnProfileSection({
+  profiles,
+  modelOptions,
+  onChange,
+}: {
+  profiles: SpawnProfile[]
+  modelOptions: { value: string; label: string }[]
+  onChange: (name: string, model: string) => void
+}) {
+  const { t } = useLocale()
+  const a = t.agentSettings
+  const profileLabels: Record<string, string> = {
+    explore: a.spawnProfileExplore,
+    task: a.spawnProfileTask,
+    strong: a.spawnProfileStrong,
+  }
+  const [saving, setSaving] = useState<string | null>(null)
+
+  const handleChange = async (name: string, model: string) => {
+    setSaving(name)
+    try {
+      await onChange(name, model)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-3 rounded-lg p-3"
+      style={{ border: '0.5px solid var(--c-border-subtle)' }}
+    >
+      <span className="text-sm font-medium text-[var(--c-text-heading)]">{a.spawnProfileTitle}</span>
+      <div className="flex flex-col gap-2">
+        {PROFILE_NAMES.map((name) => {
+          const profile = profiles.find((p) => p.profile === name)
+          const currentValue = profile?.has_override ? profile.resolved_model : ''
+          return (
+            <div key={name} className="flex items-center gap-3">
+              <span className="w-16 shrink-0 text-xs text-[var(--c-text-tertiary)]">
+                {profileLabels[name]}
+              </span>
+              <select
+                value={currentValue}
+                onChange={(e) => handleChange(name, e.target.value)}
+                disabled={saving === name}
+                className="h-7 flex-1 rounded-md px-2 text-xs outline-none"
+                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-heading)' }}
+              >
+                <option value="">{a.spawnProfilePlatformDefault}</option>
+                {modelOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
