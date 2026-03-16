@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Search } from 'lucide-react'
 import { useTypewriter } from '../hooks/useTypewriter'
 import type { WebSource } from '../storage'
-import type { SubAgentRef, FileOpRef } from '../storage'
+import type { SubAgentRef, FileOpRef, WebFetchRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ShellExecutionBlock } from './ShellExecutionBlock'
@@ -27,6 +27,7 @@ type Props = {
   activeCodeExecutionId?: string
   subAgents?: SubAgentRef[]
   fileOps?: FileOpRef[]
+  webFetches?: WebFetchRef[]
   headerOverride?: string
   shimmer?: boolean
   live?: boolean
@@ -148,13 +149,80 @@ function SourceItem({ source }: { source: WebSource }) {
   )
 }
 
+function getShortName(url: string): string {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '')
+    const parts = hostname.split('.')
+    return parts.length >= 2 ? parts[parts.length - 2] : hostname
+  } catch {
+    return url
+  }
+}
+
+function WebFetchItem({ fetch: f }: { fetch: WebFetchRef }) {
+  const domain = getDomain(f.url)
+  const shortName = getShortName(f.url)
+  const isFetching = f.status === 'fetching'
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '7px',
+        padding: '3px 0',
+      }}
+    >
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '5px',
+          padding: '2px 7px',
+          borderRadius: '6px',
+          border: '0.5px solid var(--c-border-subtle)',
+          background: 'var(--c-bg-menu)',
+          flexShrink: 0,
+        }}
+      >
+        {isFetching ? (
+          <Loader2 size={11} className="animate-spin" style={{ color: 'var(--c-text-muted)', flexShrink: 0 }} />
+        ) : (
+          <img
+            src={`https://www.google.com/s2/favicons?sz=16&domain=${domain}`}
+            alt=""
+            width={12}
+            height={12}
+            style={{ flexShrink: 0, borderRadius: '2px' }}
+          />
+        )}
+      </div>
+      <span
+        style={{
+          fontSize: '12px',
+          color: 'var(--c-text-secondary)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
+        {f.title || domain}
+      </span>
+      <span style={{ fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
+        {shortName}
+      </span>
+    </div>
+  )
+}
+
 const DOT_TOP = 5
 const DOT_SIZE = 8
 const SHELL_DOT_TOP = 9
 // CodeExecutionCard: border(0.5) + padding(6) + icon-center(14) = 20.5 → dot top ≈ 16
 const PYTHON_DOT_TOP = 16
 
-export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, headerOverride, shimmer, live, accessToken, baseUrl }: Props) {
+export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl }: Props) {
   const [collapsed, setCollapsed] = useState(() => isComplete)
   const prevIsCompleteRef = useRef(isComplete)
   useEffect(() => {
@@ -169,10 +237,11 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
   const codeExecCount = codeExecutions?.length ?? 0
   const subAgentCount = subAgents?.length ?? 0
   const fileOpCount = fileOps?.length ?? 0
-  if (steps.length === 0 && codeExecCount === 0 && subAgentCount === 0 && fileOpCount === 0 && !headerOverride) return null
+  const webFetchCount = webFetches?.length ?? 0
+  if (steps.length === 0 && codeExecCount === 0 && subAgentCount === 0 && fileOpCount === 0 && webFetchCount === 0 && !headerOverride) return null
 
   const stepsExcludingFinished = steps.filter(s => s.kind !== 'finished').length
-  const effectiveStepCount = stepsExcludingFinished || (codeExecCount + subAgentCount + fileOpCount)
+  const effectiveStepCount = stepsExcludingFinished || (codeExecCount + subAgentCount + fileOpCount + webFetchCount)
 
   const autoLabel = isComplete
     ? sources.length > 0
@@ -240,7 +309,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
 
               <AnimatePresence initial={false}>
               {steps.map((step, idx) => {
@@ -538,6 +607,50 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
                           status={op.status}
                           errorMessage={op.errorMessage}
                         />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {webFetches && webFetches.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', paddingTop: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 || fileOpCount > 0 ? '8px' : '0' }}>
+                  {webFetches.map((f, idx) => {
+                    const isFirst = idx === 0
+                    const isLast = idx === webFetches.length - 1
+                    const dotTop = SHELL_DOT_TOP
+                    const hasPrevItems = steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 || fileOpCount > 0
+                    const multiItems = webFetches.length >= 2
+                    const dotColor = f.status === 'failed'
+                      ? 'var(--c-status-error-text, #ef4444)'
+                      : f.status === 'fetching'
+                        ? 'var(--c-text-secondary)'
+                        : 'var(--c-text-muted)'
+                    return (
+                      <div key={f.id} style={{ position: 'relative', paddingBottom: isLast ? 0 : '4px' }}>
+                        {multiItems && !isLast && (
+                          <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        {multiItems && !isFirst && (
+                          <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        {isFirst && hasPrevItems && (
+                          <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                        )}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '-19px',
+                            top: `${dotTop}px`,
+                            width: `${DOT_SIZE}px`,
+                            height: `${DOT_SIZE}px`,
+                            borderRadius: '50%',
+                            background: dotColor,
+                            border: '2px solid var(--c-bg-page)',
+                            zIndex: 1,
+                          }}
+                        />
+                        <WebFetchItem fetch={f} />
                       </div>
                     )
                   })}
