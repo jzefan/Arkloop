@@ -314,6 +314,17 @@ var registry = []ToolMeta{
 		ShortDesc:      "present multiple-choice questions to the user",
 		LLMDescription: "present structured multiple-choice questions to the user. Use when a clear choice between specific options is needed.",
 	},
+	{
+		Name:      "todo_write",
+		Group:     GroupOrchestration,
+		Label:     "Todo write",
+		ShortDesc: "manage a structured todo list for the current run",
+		LLMDescription: "create and update a structured todo list for the current run. " +
+			"Each call fully replaces the list. " +
+			"Use to track multi-step plans: start with all items pending, update status as work progresses. " +
+			"status must be one of: pending, in_progress, completed, cancelled. " +
+			"Only one item should be in_progress at a time.",
+	},
 }
 
 var byName = buildIndex(registry)

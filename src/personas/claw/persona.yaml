@@ -17,6 +17,7 @@ tool_allowlist:
     - spawn_agent
     - summarize_thread
     - timeline_title
+    - todo_write
 budgets:
     max_output_tokens: 12288
     reasoning_iterations: 99999
