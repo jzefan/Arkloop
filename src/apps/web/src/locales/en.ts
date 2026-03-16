@@ -517,6 +517,7 @@ export const en: LocaleStrings = {
     extensions: "Extensions",
     developer: "Developer",
     profileSection: "Profile",
+    localModeLabel: "Local mode",
     appearanceSection: "Appearance",
     mcpTitle: "MCP Servers",
     mcpDesc:

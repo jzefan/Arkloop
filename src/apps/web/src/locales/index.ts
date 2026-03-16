@@ -523,6 +523,7 @@ export interface LocaleStrings {
     developer: string;
     // general settings
     profileSection: string;
+    localModeLabel: string;
     appearanceSection: string;
     // placeholder pages
     mcpTitle: string;

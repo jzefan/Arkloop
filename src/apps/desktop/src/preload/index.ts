@@ -130,6 +130,7 @@ export type ArkloopDesktopApi = {
   app: {
     getVersion: () => Promise<string>
     quit: () => Promise<void>
+    getOsUsername: () => Promise<string>
   }
 }
 
@@ -265,6 +266,7 @@ const api: ArkloopDesktopApi = {
   app: {
     getVersion: () => ipcRenderer.invoke('arkloop:app:version'),
     quit: () => ipcRenderer.invoke('arkloop:app:quit'),
+    getOsUsername: () => ipcRenderer.invoke('arkloop:app:os-username'),
   },
 }
 

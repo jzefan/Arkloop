@@ -98,6 +98,13 @@ function App() {
   }, [])
 
   const handleLoggedOut = useCallback(() => {
+    // Local mode uses a fixed token — logout should be a no-op (button hidden, but guard here too)
+    if (isLocalMode()) {
+      const desktopToken = getDesktopAccessToken() ?? 'arkloop-desktop-local-token'
+      writeAccessTokenToStorage(desktopToken)
+      setAccessToken(desktopToken)
+      return
+    }
     clearAccessTokenFromStorage()
     clearActiveThreadIdInStorage()
     setAccessToken(null)

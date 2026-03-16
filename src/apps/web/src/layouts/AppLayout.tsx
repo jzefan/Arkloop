@@ -157,8 +157,8 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   const handleLogout = useCallback(async () => {
     try {
       await logout(accessToken)
-    } catch (err) {
-      if (isApiError(err) && err.status !== 401) return
+    } catch {
+      // Best-effort server revocation — always proceed with local cleanup
     }
     clearActiveThreadIdInStorage()
     onLoggedOut()
