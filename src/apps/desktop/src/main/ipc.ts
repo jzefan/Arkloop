@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import os from 'os'
 import { loadConfig, saveConfig, getConfigPath } from './config'
 import {
   getSidecarStatus,
@@ -176,6 +177,14 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:app:quit', () => {
     const { app } = require('electron')
     app.quit()
+  })
+
+  ipcMain.handle('arkloop:app:os-username', () => {
+    try {
+      return os.userInfo().username
+    } catch {
+      return os.hostname()
+    }
   })
 }
 
