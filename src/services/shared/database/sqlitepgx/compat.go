@@ -3,7 +3,9 @@
 package sqlitepgx
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -12,6 +14,10 @@ var typeCastRe = regexp.MustCompile(`::(?:jsonb|json|text|integer|bigint|boolean
 
 // intervalRe matches PostgreSQL interval literals like interval '30 days'.
 var intervalRe = regexp.MustCompile(`(?i)interval\s+'(\d+)\s+(day|hour|minute|second)s?'`)
+
+// datetimeNowAddRe matches datetime('now') + 'modifier' produced after interval rewriting,
+// and rewrites it to the correct SQLite form datetime('now', 'modifier').
+var datetimeNowAddRe = regexp.MustCompile(`datetime\('now'\)\s*\+\s*('[^']*')`)
 
 // forUpdateRe strips PostgreSQL row-level locking clauses.
 var forUpdateRe = regexp.MustCompile(`(?i)\s+FOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)(\s+SKIP\s+LOCKED|\s+NOWAIT)?`)
@@ -36,6 +42,10 @@ func rewriteSQL(sql string) string {
 
 	if intervalRe.MatchString(sql) {
 		sql = intervalRe.ReplaceAllStringFunc(sql, rewriteInterval)
+		// datetime('now') + '+N units' is not valid SQLite; rewrite to datetime('now', '+N units').
+		if datetimeNowAddRe.MatchString(sql) {
+			sql = datetimeNowAddRe.ReplaceAllString(sql, "datetime('now', ${1})")
+		}
 	}
 
 	if forUpdateRe.MatchString(sql) {
@@ -53,7 +63,9 @@ func rewriteSQL(sql string) string {
 	return sql
 }
 
-// rewriteInterval converts "interval '30 days'" to "'+30 days'" for SQLite datetime().
+// rewriteInterval converts "interval '30 days'" to "'+30 days'" for use as a
+// SQLite datetime modifier. The caller must also rewrite "datetime('now') + '+30 days'"
+// to "datetime('now', '+30 days')" via datetimeNowAddRe.
 func rewriteInterval(match string) string {
 	parts := intervalRe.FindStringSubmatch(match)
 	if len(parts) != 3 {
@@ -63,7 +75,85 @@ func rewriteInterval(match string) string {
 	if !strings.HasSuffix(unit, "s") {
 		unit += "s"
 	}
-	return "'+'" + parts[1] + " " + unit + "'"
+	return "'+" + parts[1] + " " + unit + "'"
+}
+
+// anyParamRe matches "= ANY($N)" or "= ANY($N::type)" where $N is a parameter.
+var anyParamRe = regexp.MustCompile(`=\s*ANY\(\s*\$(\d+)(?:::[^)]+)?\s*\)`)
+
+// renumberParamRe matches bare "$N" placeholders.
+var renumberParamRe = regexp.MustCompile(`\$(\d+)`)
+
+// expandAnyArgs rewrites PostgreSQL "col = ANY($N)" to "col IN ($N, $N+1, ...)"
+// by expanding []string arguments, adjusting all subsequent $M indices accordingly.
+func expandAnyArgs(sql string, args []any) (string, []any) {
+	if !strings.Contains(sql, "ANY(") {
+		return sql, args
+	}
+	matches := anyParamRe.FindAllStringSubmatchIndex(sql, -1)
+	if len(matches) == 0 {
+		return sql, args
+	}
+
+	for i := len(matches) - 1; i >= 0; i-- {
+		m := matches[i]
+		paramIdx, err := strconv.Atoi(sql[m[2]:m[3]])
+		if err != nil || paramIdx < 1 || paramIdx > len(args) {
+			continue
+		}
+		slice := toStringSlice(args[paramIdx-1])
+		if len(slice) == 0 {
+			continue
+		}
+
+		placeholders := make([]string, len(slice))
+		for j := range placeholders {
+			placeholders[j] = fmt.Sprintf("$%d", paramIdx+j)
+		}
+		inClause := "IN (" + strings.Join(placeholders, ", ") + ")"
+
+		suffix := sql[m[1]:]
+		if len(slice) > 1 {
+			suffix = renumberParamsFrom(suffix, paramIdx+1, len(slice)-1)
+		}
+		sql = sql[:m[0]] + inClause + suffix
+
+		expanded := make([]any, len(slice))
+		for j, s := range slice {
+			expanded[j] = s
+		}
+		newArgs := make([]any, 0, len(args)-1+len(slice))
+		newArgs = append(newArgs, args[:paramIdx-1]...)
+		newArgs = append(newArgs, expanded...)
+		newArgs = append(newArgs, args[paramIdx:]...)
+		args = newArgs
+	}
+	return sql, args
+}
+
+// toStringSlice extracts a []string from v, or returns nil if not applicable.
+func toStringSlice(v any) []string {
+	if s, ok := v.([]string); ok {
+		return s
+	}
+	return nil
+}
+
+// renumberParamsFrom increments all $N with N >= startN in sql by delta.
+// Only the portion of SQL outside string literals is safe to process here;
+// in practice this is called on the tail suffix after an IN clause.
+func renumberParamsFrom(sql string, startN, delta int) string {
+	if delta == 0 {
+		return sql
+	}
+	return renumberParamRe.ReplaceAllStringFunc(sql, func(m string) string {
+		sub := renumberParamRe.FindStringSubmatch(m)
+		n, err := strconv.Atoi(sub[1])
+		if err != nil || n < startN {
+			return m
+		}
+		return fmt.Sprintf("$%d", n+delta)
+	})
 }
 
 // lateralRe detects LEFT JOIN LATERAL or JOIN LATERAL.

@@ -9,30 +9,63 @@ import (
 	"strings"
 
 	"arkloop/services/shared/database"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// LoadFromDesktopDB loads active persona definitions from the SQLite database.
-// Desktop mode has no project scoping; all active personas are returned.
-func LoadFromDesktopDB(ctx context.Context, db database.DB) ([]Definition, error) {
+// pgxQuerier is the minimal pgx-compatible query interface (satisfied by
+// sqlitepgx.Pool and data.DesktopDB).
+type pgxQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+const personaSelectSQL = `SELECT persona_key, version, display_name, description,
+	        soul_md, user_selectable, selector_name, selector_order,
+	        prompt_md, tool_allowlist, tool_denylist, budgets_json,
+	        roles_json, title_summarize_json,
+	        executor_type, executor_config_json,
+	        preferred_credential, model, reasoning_mode, prompt_cache_control
+	 FROM personas
+	 WHERE is_active = 1
+	 ORDER BY created_at ASC`
+
+// LoadPersonasFromDesktopDB loads active persona definitions using a
+// pgx-compatible querier (data.DesktopDB / sqlitepgx.Pool).
+func LoadPersonasFromDesktopDB(ctx context.Context, db pgxQuerier) ([]Definition, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db must not be nil")
 	}
-
-	rows, err := db.Query(ctx,
-		`SELECT persona_key, version, display_name, description,
-		        soul_md, user_selectable, selector_name, selector_order,
-		        prompt_md, tool_allowlist, tool_denylist, budgets_json,
-		        roles_json, title_summarize_json,
-		        executor_type, executor_config_json,
-		        preferred_credential, model, reasoning_mode, prompt_cache_control
-		 FROM personas
-		 WHERE is_active = 1
-		 ORDER BY created_at ASC`)
+	rows, err := db.Query(ctx, personaSelectSQL)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanPersonaRows(rows)
+}
 
+// LoadFromDesktopDB loads active persona definitions from the SQLite database
+// using the shared database.DB interface. Kept for backward compatibility.
+func LoadFromDesktopDB(ctx context.Context, db database.DB) ([]Definition, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	rows, err := db.Query(ctx, personaSelectSQL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPersonaRows(rows)
+}
+
+type personaRowScanner interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+func scanPersonaRows(rows personaRowScanner) ([]Definition, error) {
 	var defs []Definition
 	for rows.Next() {
 		var (
