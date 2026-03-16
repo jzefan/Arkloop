@@ -174,7 +174,7 @@ export function Sidebar({
     <aside
       className={[
         'flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
-        collapsed ? 'w-[48px]' : narrow ? 'w-[240px]' : 'w-[304px]',
+        collapsed ? 'w-[48px]' : narrow ? 'w-[224px]' : desktopMode ? 'w-[284px]' : 'w-[304px]',
       ].join(' ')}
       style={{
         transition: 'width 280ms cubic-bezier(0.16,1,0.3,1)',
@@ -183,7 +183,7 @@ export function Sidebar({
       }}
     >
       {/* Desktop title bar spacer */}
-      {desktopMode && <div className="h-2" />}
+      {desktopMode && <div className="h-3" />}
 
       {/* Non-desktop title bar or spacer */}
       {!desktopMode && (
@@ -210,16 +210,16 @@ export function Sidebar({
             </div>
             <button
               onClick={onToggleCollapse}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
             >
-              <PanelLeftClose size={16} />
+              <PanelLeftClose size={17} />
             </button>
           </div>
         )
       )}
 
       {/* Nav buttons — always rendered, text clips when sidebar narrows */}
-      <nav className="flex flex-col gap-px px-2">
+      <nav className="flex flex-col gap-px px-2 pt-1">
         <button
           onClick={onNewThread}
           className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[16px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
@@ -300,7 +300,7 @@ export function Sidebar({
             }}
           >
             {threads.length === 0 ? (
-              <p className="px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
+              <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
             ) : (() => {
               const starredSet = new Set(starredIds)
               const starredThreads = starredIds
@@ -415,7 +415,14 @@ export function Sidebar({
       </div>
 
       {/* Bottom area */}
-      <div className="mt-auto p-2" style={{ borderTop: collapsed ? 'none' : '0.5px solid var(--c-border-subtle)' }}>
+      <div
+        className="mt-auto px-2 pb-2 pt-1"
+        style={{
+          borderTop: '0.5px solid var(--c-border-subtle)',
+          borderTopColor: collapsed ? 'transparent' : 'var(--c-border-subtle)',
+          transition: 'border-top-color 280ms cubic-bezier(0.16,1,0.3,1)',
+        }}
+      >
         {!collapsed && !isLocalMode() && (
           <button
             onClick={() => onOpenSettings('account')}
@@ -439,12 +446,14 @@ export function Sidebar({
           </button>
         )}
 
-        <div className={collapsed ? 'flex justify-center' : 'mt-1 flex items-center gap-[2px] px-1'}>
+        {/* Settings button: fixed pl-1 so the icon x-position never
+            changes during sidebar collapse/expand — no justifyContent flip. */}
+        <div className="mt-0.5 pl-1">
           <button
             onClick={() => onOpenSettings('settings')}
             className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-icon)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
           >
-            <Bolt size={15} />
+            <Bolt size={16} />
           </button>
         </div>
       </div>

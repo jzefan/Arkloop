@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
 import {
   ChevronLeft,
   Settings,
@@ -11,6 +12,7 @@ import {
   Blocks,
   Bug,
   Package,
+  Globe,
 } from "lucide-react";
 import type { MeResponse } from "../api";
 import { useLocale } from "../contexts/LocaleContext";
@@ -21,6 +23,7 @@ import {
   SkillsSettings,
   MCPSettings,
   ConnectorsSettings,
+  SearchFetchSettings,
   ConnectionSettings,
   ExtensionsSettings,
   ModulesSettings,
@@ -34,6 +37,7 @@ export type DesktopSettingsKey =
   | "skills"
   | "mcp"
   | "connectors"
+  | "searchFetch"
   | "connection"
   | "modules"
   | "extensions"
@@ -51,6 +55,7 @@ const MAIN_NAV: NavItem[] = [
   { key: "skills", icon: Puzzle },
   { key: "mcp", icon: Server },
   { key: "connectors", icon: Plug },
+  { key: "searchFetch", icon: Globe },
 ];
 
 const DESKTOP_NAV: NavItem[] = [
@@ -124,6 +129,8 @@ export function DesktopSettings({
         return <MCPSettings />;
       case "connectors":
         return <ConnectorsSettings accessToken={accessToken} />;
+      case "searchFetch":
+        return <SearchFetchSettings />;
       case "connection":
         return <ConnectionSettings />;
       case "modules":
@@ -138,7 +145,12 @@ export function DesktopSettings({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-1">
+    <motion.div
+      className="flex h-full min-h-0 flex-1"
+      initial={{ opacity: 0, x: 10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+    >
       {/* Left navigation sidebar */}
       <div
         className="flex w-[220px] shrink-0 flex-col overflow-y-auto py-4"
@@ -174,10 +186,17 @@ export function DesktopSettings({
         </div>
       </div>
 
-      {/* Right content area */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">
-        {renderContent()}
+      {/* Right content area with top fade mask */}
+      <div className="relative flex min-w-0 flex-1 overflow-hidden">
+        {/* Fade mask — covers the first 32px so content doesn't visually bleed into the top bar when scrolled */}
+        <div
+          className="pointer-events-none absolute left-0 right-0 top-0 z-10 h-8"
+          style={{ background: 'linear-gradient(to bottom, var(--c-bg-page) 0%, transparent 100%)' }}
+        />
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">
+          {renderContent()}
+        </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

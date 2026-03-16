@@ -19,7 +19,7 @@ import {
   type MeResponse,
   type ThreadResponse,
 } from '../api'
-import { clearActiveThreadIdInStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY, readAppModeFromStorage, writeAppModeToStorage } from '../storage'
+import { clearActiveThreadIdInStorage, writeSelectedPersonaKeyToStorage, SEARCH_PERSONA_KEY, DEFAULT_PERSONA_KEY, readAppModeFromStorage, writeAppModeToStorage } from '../storage'
 import type { AppMode } from '../storage'
 
 type Props = {
@@ -162,10 +162,16 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
   }, [accessToken, onLoggedOut])
 
   const handleNewThread = useCallback(() => {
+    // Leaving search/retrieval mode — reset persona back to default
+    if (isSearchModeRef.current) {
+      writeSelectedPersonaKeyToStorage(DEFAULT_PERSONA_KEY)
+    }
     setIsSearchMode(false)
     closeNotifications()
+    // In desktop mode, close settings so the chat view becomes visible
+    if (desktop) setSettingsOpen(false)
     navigate('/')
-  }, [navigate, closeNotifications])
+  }, [navigate, closeNotifications, desktop])
 
   // 从 WelcomePage 新建的 thread 需要注入到列表
   const handleThreadCreated = useCallback((thread: ThreadResponse) => {
@@ -249,6 +255,8 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           appMode={appMode}
           onSetAppMode={handleSetAppMode}
           availableModes={availableAppModes}
+          isPrivateMode={isPrivateMode || pendingIncognitoMode}
+          onTogglePrivateMode={handleTogglePrivateMode}
         />
       )}
 

@@ -45,7 +45,6 @@ export function ModeSwitch({ mode, onChange, labels, availableModes = OPTIONS }:
                 className="absolute inset-0 rounded-md"
                 style={{
                   background: 'var(--c-mode-switch-pill)',
-                  boxShadow: 'var(--c-mode-switch-pill-shadow)',
                 }}
                 transition={{
                   type: 'spring',

@@ -4,6 +4,7 @@ import { Glasses } from 'lucide-react'
 import { ChatInput, type Attachment } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
+import { isDesktop } from '@arkloop/shared/desktop'
 import { createThread, createMessage, createRun, uploadThreadAttachment, isApiError, type ThreadResponse, type MeResponse } from '../api'
 import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
@@ -136,6 +137,7 @@ export function WelcomePage() {
   const [typedGreeting, setTypedGreeting] = useState('')
   useEffect(() => {
     setTypedGreeting('')
+    if (isPrivateMode) return
     let i = 0
     const id = setInterval(() => {
       i++
@@ -143,7 +145,21 @@ export function WelcomePage() {
       setTypedGreeting(greeting.slice(0, i))
     }, 45)
     return () => clearInterval(id)
-  }, [greeting])
+  }, [greeting, isPrivateMode])
+
+  const [typedIncognito, setTypedIncognito] = useState('')
+  useEffect(() => {
+    setTypedIncognito('')
+    if (!isPrivateMode) return
+    let i = 0
+    const text = t.youAreIncognito
+    const id = setInterval(() => {
+      i++
+      if (i > text.length) { clearInterval(id); return }
+      setTypedIncognito(text.slice(0, i))
+    }, 55)
+    return () => clearInterval(id)
+  }, [isPrivateMode, t.youAreIncognito])
 
   const revokeDraftAttachment = useCallback((attachment: Attachment) => {
     if (attachment.preview_url) URL.revokeObjectURL(attachment.preview_url)
@@ -291,19 +307,23 @@ export function WelcomePage() {
     <div className="flex h-full flex-col">
       {/* 顶部 header */}
       <div className="relative z-10 flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
-        <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
-        <button
-          onClick={onTogglePrivateMode}
-          title={isPrivateMode ? t.disableIncognito : t.enableIncognito}
-          className={[
-            'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
-            isPrivateMode
-              ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
-              : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
-          ].join(' ')}
-        >
-          <Glasses size={18} />
-        </button>
+        {!isDesktop() && (
+          <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+        )}
+        {!isDesktop() && (
+          <button
+            onClick={onTogglePrivateMode}
+            title={isPrivateMode ? t.disableIncognito : t.enableIncognito}
+            className={[
+              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+              isPrivateMode
+                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+            ].join(' ')}
+          >
+            <Glasses size={18} />
+          </button>
+        )}
       </div>
 
       {/* 居中内容 */}
@@ -312,9 +332,11 @@ export function WelcomePage() {
       >
         {/* 标题：两层绝对定位交叉淡出，容器高度由下层撑开 */}
         <div className="mb-[40px]" style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {/* 常规问候 / 无痕文本 */}
+          {/* 常规问候 / 无痕文本
+              外层 h2 用 relative + 透明占位 span 始终保持完整文本高度，
+              避免打字机从空字符开始时造成布局跳动。 */}
           <h2
-            className="text-[40px] font-normal tracking-[-0.5px] text-[var(--c-text-heading)]"
+            className="relative whitespace-nowrap text-[40px] font-normal tracking-[-0.5px] text-[var(--c-text-heading)]"
             style={{
               opacity: isSearchMode ? 0 : 1,
               transform: isSearchMode ? 'translateY(-6px)' : 'translateY(0)',
@@ -322,7 +344,14 @@ export function WelcomePage() {
               pointerEvents: isSearchMode ? 'none' : 'auto',
             }}
           >
-            {isPrivateMode ? t.youAreIncognito : typedGreeting}
+            {/* 透明占位：始终渲染完整文本，撑住高度/宽度，不可见不可选 */}
+            <span className="invisible select-none" aria-hidden="true">
+              {isPrivateMode ? t.youAreIncognito : greeting}
+            </span>
+            {/* 打字机文字：绝对覆盖在占位之上 */}
+            <span className="absolute inset-0">
+              {isPrivateMode ? typedIncognito : typedGreeting}
+            </span>
           </h2>
           {/* Search for everything — 绝对覆盖，不撑开高度 */}
           <h2

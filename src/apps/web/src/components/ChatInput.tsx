@@ -589,10 +589,12 @@ export function ChatInput({
   }, [])
 
 
-  // 进入搜索模式时强制切到搜索人格
+  // 进入/退出搜索模式时同步人格
   useEffect(() => {
     if (searchMode && selectedPersonaKey !== SEARCH_PERSONA_KEY) {
       persistSelectedPersona(SEARCH_PERSONA_KEY)
+    } else if (!searchMode && selectedPersonaKey === SEARCH_PERSONA_KEY) {
+      persistSelectedPersona(DEFAULT_PERSONA_KEY)
     }
   }, [persistSelectedPersona, searchMode, selectedPersonaKey])
 

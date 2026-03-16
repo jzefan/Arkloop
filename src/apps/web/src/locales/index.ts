@@ -468,6 +468,7 @@ export interface LocaleStrings {
     skills: string;
     mcp: string;
     connectors: string;
+    searchFetch: string;
     connection: string;
     extensions: string;
     developer: string;
@@ -494,6 +495,35 @@ export interface LocaleStrings {
     resetOnboardingDesc: string;
     resetOnboardingBtn: string;
     appVersion: string;
+    // desktop connectors section
+    desktopConnectorsTitle: string;
+    desktopConnectorsDesc: string;
+    fetchConnectorTitle: string;
+    fetchConnectorDesc: string;
+    searchConnectorTitle: string;
+    searchConnectorDesc: string;
+    providerLabel: string;
+    apiKeyLabel: string;
+    apiKeyOptionalLabel: string;
+    baseUrlLabel: string;
+    connectorSaveBtn: string;
+    connectorSaving: string;
+    connectorSaved: string;
+    connectorFreeTier: string;
+    connectorConfigured: string;
+    connectorNotConfigured: string;
+    fetchProviderJina: string;
+    fetchProviderBasic: string;
+    fetchProviderFirecrawl: string;
+    searchProviderBrowser: string;
+    searchProviderTavily: string;
+    searchProviderSearxng: string;
+    searchProviderBrowserDesc: string;
+    searchProviderTavilyDesc: string;
+    searchProviderSearxngDesc: string;
+    fetchProviderJinaDesc: string;
+    fetchProviderBasicDesc: string;
+    fetchProviderFirecrawlDesc: string;
   };
 
   // admin providers/models settings (ported from console-lite)
