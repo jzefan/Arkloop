@@ -15,6 +15,7 @@ const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
+export const LEARNING_PERSONA_KEY = 'stem-tutor'
 
 export type Theme = 'system' | 'light' | 'dark'
 
