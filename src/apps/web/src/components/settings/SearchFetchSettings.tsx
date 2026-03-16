@@ -426,11 +426,8 @@ export function SearchFetchSettings() {
   )
 }
 
+import { SettingsSectionHeader } from './_SettingsSectionHeader'
+
 function PageHeader({ ds }: { ds: { desktopConnectorsTitle: string; desktopConnectorsDesc: string } }) {
-  return (
-    <div>
-      <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{ds.desktopConnectorsTitle}</h3>
-      <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{ds.desktopConnectorsDesc}</p>
-    </div>
-  )
+  return <SettingsSectionHeader title={ds.desktopConnectorsTitle} description={ds.desktopConnectorsDesc} />
 }

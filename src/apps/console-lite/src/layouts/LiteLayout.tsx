@@ -8,7 +8,6 @@ import {
   Play,
   Blocks,
   Settings,
-  ShieldCheck,
   ShieldAlert,
   Loader2,
 } from 'lucide-react'
@@ -18,6 +17,7 @@ import { OperationHistoryModal } from '../components/OperationHistoryModal'
 import { useLocale } from '../contexts/LocaleContext'
 import { useOperations } from '../contexts/OperationContext'
 import type { LocaleStrings } from '../locales'
+import { NavButton, AccessDeniedPage, FullScreenLoading } from '@arkloop/shared'
 
 type Props = {
   accessToken: string
@@ -96,26 +96,17 @@ export function LiteLayout({ accessToken, onLoggedOut }: Props) {
   const context: LiteOutletContext = { accessToken, onLoggedOut, me }
 
   if (!meLoaded) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[var(--c-bg-page)]">
-        <span className="text-sm text-[var(--c-text-muted)]">{t.loading}</span>
-      </div>
-    )
+    return <FullScreenLoading label={t.loading} />
   }
 
   if (!me?.permissions?.includes('platform.admin')) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[var(--c-bg-page)]">
-        <ShieldCheck size={32} className="text-[var(--c-text-muted)]" />
-        <p className="text-sm font-medium text-[var(--c-text-secondary)]">{t.accessDenied}</p>
-        <p className="text-xs text-[var(--c-text-muted)]">{t.noAdminAccess}</p>
-        <button
-          onClick={onLoggedOut}
-          className="mt-2 text-xs text-[var(--c-text-muted)] underline hover:opacity-70"
-        >
-          {t.signOut}
-        </button>
-      </div>
+      <AccessDeniedPage
+        title={t.accessDenied}
+        description={t.noAdminAccess}
+        signOutLabel={t.signOut}
+        onSignOut={onLoggedOut}
+      />
     )
   }
 
@@ -137,21 +128,13 @@ export function LiteLayout({ accessToken, onLoggedOut }: Props) {
               const basePath = item.path.split('?')[0]
               const active = location.pathname === basePath || location.pathname.startsWith(basePath + '/')
               return (
-                <button
+                <NavButton
                   key={item.path}
+                  icon={item.icon}
+                  label={item.label}
+                  active={active}
                   onClick={() => navigate(item.path)}
-                  className={[
-                    'flex h-[30px] items-center gap-[11px] rounded-[5px] px-2 py-[7px] text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-[var(--c-bg-sub)] text-[var(--c-text-primary)]'
-                      : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]',
-                  ].join(' ')}
-                >
-                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
-                    {item.icon}
-                  </span>
-                  <span>{item.label}</span>
-                </button>
+                />
               )
             })}
           </div>

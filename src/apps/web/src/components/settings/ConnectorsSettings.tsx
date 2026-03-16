@@ -4,7 +4,6 @@ import {
   Shield,
   Key,
   Trash2,
-  X,
   Check,
   Settings,
   Power,
@@ -15,6 +14,7 @@ import {
   Ban,
   Plug,
 } from 'lucide-react'
+import { Modal, ConfirmDialog } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
   type ToolProviderGroup,
@@ -606,38 +606,24 @@ export function ConnectorsSettings({ accessToken }: Props) {
       </div>
 
       {/* ---- Credential Modal ---- */}
-      {credentialModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div
-            className="w-full max-w-md rounded-xl bg-[var(--c-bg-menu)] p-6 shadow-xl"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">
-                {tt.editCredentials}: {credentialModal.provider.provider_name}
-              </h4>
-              <button onClick={closeCredentialModal} className={btnIcon}>
-                <X size={16} />
-              </button>
-            </div>
-
+      <Modal
+        open={!!credentialModal}
+        onClose={closeCredentialModal}
+        title={credentialModal ? `${tt.editCredentials}: ${credentialModal.provider.provider_name}` : ''}
+        width="440px"
+      >
+        {credentialModal && (
+          <div className="flex flex-col gap-3">
             {credentialModal.provider.requires_api_key && (
-              <div className="mb-3">
+              <div>
                 <label className={labelCls}>{tt.apiKey}</label>
                 <div className="relative">
                   <input
                     type={showApiKey ? 'text' : 'password'}
                     className={inputCls}
-                    placeholder={
-                      credentialModal.provider.key_prefix || tt.apiKeyPlaceholder
-                    }
+                    placeholder={credentialModal.provider.key_prefix || tt.apiKeyPlaceholder}
                     value={credentialForm.apiKey}
-                    onChange={(e) =>
-                      setCredentialForm((f) => ({
-                        ...f,
-                        apiKey: e.target.value,
-                      }))
-                    }
+                    onChange={(e) => setCredentialForm((f) => ({ ...f, apiKey: e.target.value }))}
                   />
                   <button
                     type="button"
@@ -654,27 +640,19 @@ export function ConnectorsSettings({ accessToken }: Props) {
                 )}
               </div>
             )}
-
-            {(credentialModal.provider.requires_base_url ||
-              credentialModal.provider.base_url != null) && (
-              <div className="mb-3">
+            {(credentialModal.provider.requires_base_url || credentialModal.provider.base_url != null) && (
+              <div>
                 <label className={labelCls}>{tt.baseUrl}</label>
                 <input
                   type="text"
                   className={inputCls}
                   placeholder={tt.baseUrlPlaceholder}
                   value={credentialForm.baseUrl}
-                  onChange={(e) =>
-                    setCredentialForm((f) => ({
-                      ...f,
-                      baseUrl: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setCredentialForm((f) => ({ ...f, baseUrl: e.target.value }))}
                 />
               </div>
             )}
-
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="flex justify-end gap-2">
               <button
                 onClick={closeCredentialModal}
                 disabled={credSaving}
@@ -691,70 +669,36 @@ export function ConnectorsSettings({ accessToken }: Props) {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* ---- Clear Credential Confirm ---- */}
-      {clearTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div
-            className="w-full max-w-sm rounded-xl bg-[var(--c-bg-menu)] p-6 shadow-xl"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <p className="text-sm text-[var(--c-text-primary)]">
-              {tt.clearCredentialsConfirm}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setClearTarget(null)}
-                disabled={clearing}
-                className="rounded-md border border-[var(--c-border-subtle)] px-3 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50"
-              >
-                {tt.cancel}
-              </button>
-              <button
-                onClick={handleClearCredential}
-                disabled={clearing}
-                className="rounded-md bg-red-600/20 px-3 py-1.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-600/30 disabled:opacity-50"
-              >
-                {clearing ? (
-                  <Loader2 size={14} className="inline animate-spin" />
-                ) : (
-                  tt.clearCredentials
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={!!clearTarget}
+        onClose={() => setClearTarget(null)}
+        onConfirm={handleClearCredential}
+        message={tt.clearCredentialsConfirm}
+        confirmLabel={clearing ? '…' : tt.clearCredentials}
+        cancelLabel={tt.cancel}
+        loading={clearing}
+      />
 
       {/* ---- Description Edit Modal ---- */}
-      {descEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div
-            className="w-full max-w-lg rounded-xl bg-[var(--c-bg-menu)] p-6 shadow-xl"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">
-                {tt.editDescription}: {descEdit.label}
-              </h4>
-              <button
-                onClick={() => {
-                  if (!descSaving) setDescEdit(null)
-                }}
-                className={btnIcon}
-              >
-                <X size={16} />
-              </button>
-            </div>
+      <Modal
+        open={!!descEdit}
+        onClose={() => { if (!descSaving) setDescEdit(null) }}
+        title={descEdit ? `${tt.editDescription}: ${descEdit.label}` : ''}
+        width="560px"
+      >
+        {descEdit && (
+          <div className="flex flex-col gap-3">
             <textarea
               value={descText}
               onChange={(e) => setDescText(e.target.value)}
               rows={8}
               className={`${inputCls} resize-y`}
             />
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="flex justify-end gap-2">
               <button
                 onClick={() => setDescEdit(null)}
                 disabled={descSaving}
@@ -771,8 +715,8 @@ export function ConnectorsSettings({ accessToken }: Props) {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   )
 }

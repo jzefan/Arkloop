@@ -5,7 +5,6 @@ import {
   Play, ClipboardList, AlertTriangle,
   KeyRound, Bot, Plug, Sparkles,
   Key, Webhook,
-  ShieldCheck,
   Users, UserPlus,
   Package, Receipt, BadgeCheck, BarChart3,
   Flag, Ticket, Gift, Coins, Megaphone, Mic, Mail, AlignLeft,
@@ -18,6 +17,7 @@ import { ConsoleSettingsModal } from '../components/SettingsModal'
 import { useLocale } from '../contexts/LocaleContext'
 import { useOperations } from '../contexts/OperationContext'
 import type { LocaleStrings } from '../locales'
+import { NavButton, AccessDeniedPage, FullScreenLoading } from '@arkloop/shared'
 
 type Props = {
   accessToken: string
@@ -184,26 +184,17 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
   const context: ConsoleOutletContext = { accessToken, onLoggedOut, me }
 
   if (!meLoaded) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[var(--c-bg-page)]">
-        <span className="text-sm text-[var(--c-text-muted)]">{t.loading}</span>
-      </div>
-    )
+    return <FullScreenLoading label={t.loading} />
   }
 
   if (!me?.permissions?.includes('platform.admin')) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[var(--c-bg-page)]">
-        <ShieldCheck size={32} className="text-[var(--c-text-muted)]" />
-        <p className="text-sm font-medium text-[var(--c-text-secondary)]">{t.accessDenied}</p>
-        <p className="text-xs text-[var(--c-text-muted)]">{t.noAdminAccess}</p>
-        <button
-          onClick={onLoggedOut}
-          className="mt-2 text-xs text-[var(--c-text-muted)] underline hover:opacity-70"
-        >
-          {t.signOut}
-        </button>
-      </div>
+      <AccessDeniedPage
+        title={t.accessDenied}
+        description={t.noAdminAccess}
+        signOutLabel={t.signOut}
+        onSignOut={onLoggedOut}
+      />
     )
   }
 
@@ -265,26 +256,15 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
                 </button>
                 <div className={`nav-group-content${collapsed ? ' nav-group-collapsed' : ''}`}>
                   <div className="flex flex-col gap-[3px]" style={{ overflow: 'hidden', minHeight: 0 }}>
-                    {group.items.map((item) => {
-                      const active = location.pathname.startsWith(item.path)
-                      return (
-                        <button
-                          key={item.path}
-                          onClick={() => navigate(item.path)}
-                          className={[
-                            'flex h-[30px] items-center gap-[11px] rounded-[5px] px-2 py-[7px] text-sm font-medium transition-colors',
-                            active
-                              ? 'bg-[var(--c-bg-sub)] text-[var(--c-text-primary)]'
-                              : 'text-[var(--c-text-tertiary)] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]',
-                          ].join(' ')}
-                        >
-                          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
-                            {item.icon}
-                          </span>
-                          <span>{item.label}</span>
-                        </button>
-                      )
-                    })}
+                    {group.items.map((item) => (
+                      <NavButton
+                        key={item.path}
+                        icon={item.icon}
+                        label={item.label}
+                        active={location.pathname.startsWith(item.path)}
+                        onClick={() => navigate(item.path)}
+                      />
+                    ))}
                   </div>
                 </div>
               </div>

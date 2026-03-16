@@ -9,6 +9,7 @@ import {
   FileText,
   RefreshCw,
 } from 'lucide-react'
+import { ConfirmDialog } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
 import type { MemoryEntry, MemoryConfig } from '@arkloop/shared/desktop'
@@ -41,47 +42,6 @@ function categoryColor(category: string): string {
   return map[category] ?? 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]'
 }
 
-// ---------------------------------------------------------------------------
-// Confirmation modal
-// ---------------------------------------------------------------------------
-
-function ConfirmModal({
-  message,
-  onConfirm,
-  onCancel,
-}: {
-  message: string
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div
-        className="mx-4 max-w-sm rounded-xl p-5 shadow-xl"
-        style={{ background: 'var(--c-bg-menu)', border: '1px solid var(--c-border-subtle)' }}
-      >
-        <div className="mb-3 flex items-start gap-3">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-400" />
-          <p className="text-sm text-[var(--c-text-primary)]">{message}</p>
-        </div>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-lg px-3 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-lg bg-red-500/15 px-3 py-1.5 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/25"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Entry card
@@ -360,37 +320,27 @@ export function MemorySettings() {
         </div>
       )}
 
-      {/* Confirm delete modal */}
-      {confirmDeleteId !== null && (
-        <ConfirmModal
-          message={ds.memoryDeleteConfirm}
-          onConfirm={() => void handleDelete(confirmDeleteId)}
-          onCancel={() => setConfirmDeleteId(null)}
-        />
-      )}
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => void handleDelete(confirmDeleteId!)}
+        message={ds.memoryDeleteConfirm}
+        confirmLabel="Delete"
+      />
 
-      {/* Confirm clear all modal */}
-      {confirmClearAll && (
-        <ConfirmModal
-          message={ds.memoryClearAllConfirm}
-          onConfirm={() => void handleClearAll()}
-          onCancel={() => setConfirmClearAll(false)}
-        />
-      )}
+      <ConfirmDialog
+        open={confirmClearAll}
+        onClose={() => setConfirmClearAll(false)}
+        onConfirm={() => void handleClearAll()}
+        message={ds.memoryClearAllConfirm}
+        confirmLabel="Delete"
+      />
     </div>
   )
 }
 
-type PageHeaderDs = {
-  memorySettingsTitle: string
-  memorySettingsDesc: string
-}
+import { SettingsSectionHeader } from './_SettingsSectionHeader'
 
-function PageHeader({ ds }: { ds: PageHeaderDs }) {
-  return (
-    <div>
-      <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{ds.memorySettingsTitle}</h3>
-      <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{ds.memorySettingsDesc}</p>
-    </div>
-  )
+function PageHeader({ ds }: { ds: { memorySettingsTitle: string; memorySettingsDesc: string } }) {
+  return <SettingsSectionHeader title={ds.memorySettingsTitle} description={ds.memorySettingsDesc} />
 }
