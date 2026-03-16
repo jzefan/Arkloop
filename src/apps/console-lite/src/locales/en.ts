@@ -57,6 +57,8 @@ export const en: LocaleStrings = {
     toolModeLabel: 'Tool Scope',
     toolModeInherit: 'Inherit All',
     toolModeCustom: 'Custom Set',
+    toolDiscovery: 'Tool Discovery',
+    toolDiscoveryDesc: 'Only core tools are visible to the model; others loaded on demand',
   },
   models: {
     title: 'Models',

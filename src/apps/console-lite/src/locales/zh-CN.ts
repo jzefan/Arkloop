@@ -57,6 +57,8 @@ export const zhCN: LocaleStrings = {
     toolModeLabel: '工具范围',
     toolModeInherit: '继承全部',
     toolModeCustom: '自定义子集',
+    toolDiscovery: '工具发现',
+    toolDiscoveryDesc: '仅核心工具直接暴露给模型，其余按需加载',
   },
   models: {
     title: '模型管理',

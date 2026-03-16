@@ -376,6 +376,8 @@ export interface LocaleStrings {
       toolModeLabel: string
       toolModeInherit: string
       toolModeCustom: string
+      toolDiscovery: string
+      toolDiscoveryDesc: string
       fieldBudgetsJSON: string
       fieldIsActive: string
       fieldExecutorType: string

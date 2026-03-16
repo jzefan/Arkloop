@@ -61,6 +61,8 @@ export interface LocaleStrings {
     toolModeLabel: string
     toolModeInherit: string
     toolModeCustom: string
+    toolDiscovery: string
+    toolDiscoveryDesc: string
   }
   models: {
     title: string
