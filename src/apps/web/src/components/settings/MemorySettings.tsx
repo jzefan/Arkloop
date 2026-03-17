@@ -350,6 +350,7 @@ function applySelectedOption(
 type OVConfigFormProps = {
   ov: OpenVikingDesktopConfig
   providers: LlmProvider[]
+  loadingProviders: boolean
   onChange: (ov: OpenVikingDesktopConfig) => void
   onSave: () => void
   saving: boolean
@@ -357,7 +358,7 @@ type OVConfigFormProps = {
   ds: ReturnType<typeof useLocale>['t']['desktopSettings']
 }
 
-function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds }: OVConfigFormProps) {
+function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, saving, saveResult, ds }: OVConfigFormProps) {
   const vlmOptions = buildOpenVikingModelOptions(
     providers,
     (provider, model) =>
@@ -394,7 +395,8 @@ function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds 
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryToolModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryToolModelDesc}</p>
         <select
-          value={currentVlm}
+          value={loadingProviders ? '' : currentVlm}
+          disabled={loadingProviders}
           onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
             selector: 'vlmSelector',
             model: 'vlmModel',
@@ -404,10 +406,15 @@ function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds 
           }, vlmOptions))}
           className={inputCls}
         >
-          <option value="">— {vlmOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
-          {vlmOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {loadingProviders
+            ? <option value="">— Loading… —</option>
+            : <>
+                <option value="">— {vlmOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
+                {vlmOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </>
+          }
         </select>
-        {vlmOptions.length === 0 && (
+        {!loadingProviders && vlmOptions.length === 0 && (
           <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoCompatibleModels}</p>
         )}
       </div>
@@ -416,7 +423,8 @@ function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds 
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryEmbeddingModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryEmbeddingModelDesc}</p>
         <select
-          value={currentEmb}
+          value={loadingProviders ? '' : currentEmb}
+          disabled={loadingProviders}
           onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
             selector: 'embeddingSelector',
             model: 'embeddingModel',
@@ -426,10 +434,15 @@ function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds 
           }, embeddingOptions))}
           className={inputCls}
         >
-          <option value="">— {embeddingOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
-          {embeddingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {loadingProviders
+            ? <option value="">— Loading… —</option>
+            : <>
+                <option value="">— {embeddingOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
+                {embeddingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </>
+          }
         </select>
-        {embeddingOptions.length === 0 && (
+        {!loadingProviders && embeddingOptions.length === 0 && (
           <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoEmbeddingModels}</p>
         )}
       </div>
@@ -485,6 +498,7 @@ export function MemorySettings({ accessToken }: Props) {
 
   // Providers for model pickers
   const [providers, setProviders] = useState<LlmProvider[]>([])
+  const [providersLoaded, setProvidersLoaded] = useState(false)
 
   const api = getDesktopApi()
 
@@ -526,8 +540,9 @@ export function MemorySettings({ accessToken }: Props) {
   }, [])
 
   const loadProviders = useCallback(async () => {
-    if (!accessToken) return
+    if (!accessToken) { setProvidersLoaded(true); return }
     try { setProviders(await listLlmProviders(accessToken)) } catch { /* ignore */ }
+    finally { setProvidersLoaded(true) }
   }, [accessToken])
 
   const syncLegacySelectors = useCallback((draft: OpenVikingDesktopConfig): OpenVikingDesktopConfig => {
@@ -670,8 +685,19 @@ export function MemorySettings({ accessToken }: Props) {
       const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
       await new Promise<void>((resolve, reject) => {
         let done = false
+        // configure is a fast operation; if the bridge received the request it almost certainly
+        // succeeded. Guard against the EventSource missing the status event (race: bridge sends
+        // completion before the SSE connection is established) by treating a timeout as success.
+        const timeout = setTimeout(() => {
+          if (done) return
+          done = true
+          resolve()
+        }, 45_000)
         const stop = bridgeClient.streamOperation(operation_id, () => {}, (result) => {
-          if (done) return; done = true; stop()
+          if (done) return
+          done = true
+          clearTimeout(timeout)
+          stop()
           if (result.status === 'completed') resolve()
           else reject(new Error(result.error ?? 'configure failed'))
         })
@@ -812,6 +838,7 @@ export function MemorySettings({ accessToken }: Props) {
                 <OVConfigForm
                   ov={ovDraft}
                   providers={providers}
+                  loadingProviders={!providersLoaded}
                   onChange={setOvDraft}
                   onSave={handleConfigure}
                   saving={configuring}

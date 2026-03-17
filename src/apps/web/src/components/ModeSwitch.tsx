@@ -20,7 +20,6 @@ export function ModeSwitch({ mode, onChange, labels, availableModes = OPTIONS }:
       className="relative flex items-center rounded-lg p-[3px]"
       style={{
         background: 'var(--c-mode-switch-track)',
-        border: '0.5px solid var(--c-mode-switch-border)',
       }}
     >
       {options.map((opt) => {
@@ -45,6 +44,7 @@ export function ModeSwitch({ mode, onChange, labels, availableModes = OPTIONS }:
                 className="absolute inset-0 rounded-md"
                 style={{
                   background: 'var(--c-mode-switch-pill)',
+                  border: '0.5px solid var(--c-input-border-color)',
                 }}
                 transition={{
                   type: 'spring',

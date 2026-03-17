@@ -349,7 +349,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
         )}
 
         {isSearchOpen && (
-          <ChatsSearchModal threads={threads} accessToken={accessToken} onClose={handleCloseSearch} />
+          <ChatsSearchModal threads={threads.filter((t) => readThreadMode(t.id) === appMode)} accessToken={accessToken} onClose={handleCloseSearch} />
         )}
 
         {/* Desktop mode: full-screen settings replaces main content */}

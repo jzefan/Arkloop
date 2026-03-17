@@ -6,9 +6,13 @@ export const BAR_COUNT = 52
 
 export function hasTransferFiles(dataTransfer?: DataTransfer | null): boolean {
   if (!dataTransfer) return false
-  if (Array.from(dataTransfer.types).includes('Files')) return true
-  if (dataTransfer.files.length > 0) return true
-  return Array.from(dataTransfer.items).some((item) => item.kind === 'file')
+  const types = Array.from(dataTransfer.types ?? [])
+  if (types.includes('Files')) return true
+  if ((dataTransfer.files?.length ?? 0) > 0) return true
+  if (Array.from(dataTransfer.items ?? []).some((item) => item.kind === 'file')) return true
+  // Electron: clipboard images from screenshots/apps may only expose image/* types
+  if (types.some((t) => t.startsWith('image/'))) return true
+  return false
 }
 
 export function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): File[] {
@@ -16,23 +20,43 @@ export function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): Fi
   const files: File[] = []
   const seenTypes = new Set<string>()
 
-  const itemFiles = Array.from(dataTransfer.items)
+  const items = Array.from(dataTransfer.items ?? [])
+
+  // Prefer items API (supports clipboard images in Electron)
+  const itemFiles = items
     .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter((f): f is File => f != null)
 
-  const dtFiles = Array.from(dataTransfer.files)
+  const dtFiles = Array.from(dataTransfer.files ?? [])
 
   const allFiles = itemFiles.length > 0 ? itemFiles : dtFiles
 
-  for (const file of allFiles) {
-    const prefix = file.type.split('/')[0]
-    if (prefix === 'image') {
-      if (seenTypes.has('image')) continue
-      seenTypes.add('image')
+  if (allFiles.length > 0) {
+    for (const file of allFiles) {
+      const prefix = file.type.split('/')[0]
+      if (prefix === 'image') {
+        if (seenTypes.has('image')) continue
+        seenTypes.add('image')
+      }
+      files.push(file)
     }
-    files.push(file)
+    return files
   }
+
+  // Electron fallback: clipboard image items may be typed image/* with kind 'file'
+  // but getAsFile() returned null. Try to build a Blob from the DataTransferItem.
+  // This handles cases where the clipboard image kind check passes but file is null.
+  for (const item of items) {
+    if (!item.type.startsWith('image/')) continue
+    if (seenTypes.has('image')) continue
+    const file = item.getAsFile()
+    if (file) {
+      seenTypes.add('image')
+      files.push(file)
+    }
+  }
+
   return files
 }
 

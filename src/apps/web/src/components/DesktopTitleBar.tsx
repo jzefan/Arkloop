@@ -59,7 +59,7 @@ export function DesktopTitleBar({ sidebarCollapsed, onToggleSidebar, appMode, on
 
       {/* ModeSwitch centered */}
       <div
-        className="absolute left-1/2 -translate-x-1/2"
+        className="absolute left-1/2 -translate-x-1/2 translate-y-px"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <ModeSwitch

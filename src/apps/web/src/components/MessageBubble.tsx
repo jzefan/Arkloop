@@ -1,5 +1,5 @@
 import type { MessageResponse } from '../api'
-import type { WebSource, ArtifactRef, BrowserActionRef } from '../storage'
+import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../storage'
 import { useTypewriter } from '../hooks/useTypewriter'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { BrowserScreenshotCard } from './BrowserScreenshotCard'
@@ -16,6 +16,7 @@ type Props = {
   webSources?: WebSource[]
   artifacts?: ArtifactRef[]
   browserActions?: BrowserActionRef[]
+  widgets?: WidgetRef[]
   accessToken?: string
   onShowSources?: () => void
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
@@ -24,7 +25,7 @@ type Props = {
   contentPrefix?: string
 }
 
-export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, accessToken, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix }: Props) {
+export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix }: Props) {
   if (message.role === 'user') {
     return (
       <UserMessage
@@ -46,6 +47,7 @@ export function MessageBubble({ message, onRetry, onEdit, onFork, onShare, share
       webSources={webSources}
       artifacts={artifacts}
       browserActions={browserActions}
+      widgets={widgets}
       accessToken={accessToken}
       onShowSources={onShowSources}
       onOpenDocument={onOpenDocument}

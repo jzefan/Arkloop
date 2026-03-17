@@ -339,7 +339,7 @@ export function SearchTimeline({ steps, sources, isComplete, codeExecutions, onO
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: steps.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 || fileOpCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
 
               <AnimatePresence initial={false}>
               {steps.map((step, idx) => {

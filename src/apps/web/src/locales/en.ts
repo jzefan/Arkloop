@@ -3,6 +3,8 @@ import type { LocaleStrings } from "./index";
 export const en: LocaleStrings = {
   newChat: "New chat",
   chats: "Chats",
+  searchChats: "Search Chats",
+  searchTasks: "Search Tasks",
   projects: "Projects",
   retrieve: "Retrieve",
   legal: "Legal",

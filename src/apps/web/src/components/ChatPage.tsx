@@ -751,6 +751,18 @@ export function ChatPage() {
   const sendMessageRef = useRef(sendMessage)
   useEffect(() => { sendMessageRef.current = sendMessage }, [sendMessage])
 
+  // 监听 widget 发出的 arkloop:send-prompt 自定义事件
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail
+      if (typeof text === 'string' && text.trim()) {
+        void sendMessageRef.current(text.trim())
+      }
+    }
+    window.addEventListener('arkloop:send-prompt', handler)
+    return () => window.removeEventListener('arkloop:send-prompt', handler)
+  }, [])
+
   const handleArtifactAction = useCallback((action: { type: string; text?: string }) => {
     if (action.type === 'prompt' && typeof action.text === 'string' && action.text.trim()) {
       void sendMessageRef.current(action.text.trim())
@@ -1186,7 +1198,7 @@ export function ChatPage() {
           if (obj.tool_name) entry.toolName = obj.tool_name
           entry.argumentsBuffer += obj.arguments_delta
 
-          if (entry.toolName === 'create_artifact' || (!entry.toolName && entry.argumentsBuffer.includes('"content"'))) {
+          if (entry.toolName === 'show_widget' || entry.toolName === 'create_artifact' || (!entry.toolName && (entry.argumentsBuffer.includes('"content"') || entry.argumentsBuffer.includes('"widget_code"')))) {
             const parsed = extractPartialArtifactFields(entry.argumentsBuffer)
             if (parsed.title) entry.title = parsed.title
             if (parsed.filename) entry.filename = parsed.filename
@@ -1297,6 +1309,18 @@ export function ChatPage() {
             status: 'active' as const,
             queries: displayQueries,
           }))
+        }
+        // show_widget tool.call: mark streaming entry as complete
+        if (toolName === 'show_widget') {
+          const args = obj.arguments as Record<string, unknown> | undefined
+          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const entry = streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
+          if (entry) {
+            entry.complete = true
+            if (typeof args?.widget_code === 'string') entry.content = args.widget_code
+            if (typeof args?.title === 'string') entry.title = args.title
+            setStreamingArtifacts([...streamingArtifactsRef.current])
+          }
         }
         // create_artifact tool.call: mark streaming entry as complete
         if (toolName === 'create_artifact') {
@@ -1566,10 +1590,17 @@ export function ChatPage() {
         currentRunFileOpsRef.current = []
         const runWebFetches = [...currentRunWebFetchesRef.current]
         currentRunWebFetchesRef.current = []
+        const runWidgets = streamingArtifactsRef.current
+          .filter((e) => e.toolName === 'show_widget' && e.complete && e.content && e.toolCallId)
+          .map((e) => ({ id: e.toolCallId!, title: e.title ?? 'Widget', html: e.content! }))
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           const completedAssistant = findAssistantMessageForRun(items, completedRunId)
           if (completedAssistant) {
             setAssistantDraft('')
+            if (runWidgets.length > 0) {
+              writeMessageWidgets(completedAssistant.id, runWidgets)
+              setMessageWidgetsMap((prev) => new Map(prev).set(completedAssistant.id, runWidgets))
+            }
             if (runSources.length > 0) {
               writeMessageSources(completedAssistant.id, runSources)
               setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
@@ -2646,6 +2677,7 @@ export function ChatPage() {
                     webSources={resolvedSources}
                     artifacts={msg.role === 'assistant' ? messageArtifactsMap.get(msg.id) : undefined}
                     browserActions={msg.role === 'assistant' ? messageBrowserActionsMap.get(msg.id) : undefined}
+                    widgets={msg.role === 'assistant' ? (messageWidgetsMap.get(msg.id) ?? readMessageWidgets(msg.id) ?? undefined) : undefined}
                     accessToken={accessToken}
                     onShowSources={
                       msg.role === 'assistant' && canShowSources
@@ -2874,6 +2906,15 @@ export function ChatPage() {
                   />
                 </div>
               )}
+
+              {streamingArtifacts.filter((e) => e.toolName === 'show_widget' && e.content).map((entry) => (
+                <WidgetBlock
+                  key={`streaming-widget-${entry.toolCallIndex}`}
+                  html={entry.content!}
+                  title={entry.title ?? 'Widget'}
+                  complete={entry.complete}
+                />
+              ))}
 
               {streamingArtifacts.filter((e) => e.toolName === 'create_artifact' && e.content && e.display !== 'panel').map((entry) => (
                 <ArtifactStreamBlock

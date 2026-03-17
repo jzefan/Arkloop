@@ -38,10 +38,15 @@ export function extractPartialArtifactFields(buffer: string): {
   const displayMatch = buffer.match(/"display"\s*:\s*"([^"]*)"/)
   if (displayMatch) result.display = displayMatch[1]
 
+  // support both "content" (create_artifact) and "widget_code" (show_widget)
   const contentMarker = '"content":"'
+  const widgetCodeMarker = '"widget_code":"'
   const contentIdx = buffer.indexOf(contentMarker)
-  if (contentIdx !== -1) {
-    let raw = buffer.slice(contentIdx + contentMarker.length)
+  const widgetIdx = buffer.indexOf(widgetCodeMarker)
+  const activeMarker = contentIdx !== -1 ? contentMarker : widgetIdx !== -1 ? widgetCodeMarker : null
+  const activeIdx = contentIdx !== -1 ? contentIdx : widgetIdx
+  if (activeMarker && activeIdx !== -1) {
+    let raw = buffer.slice(activeIdx + activeMarker.length)
     if (raw.endsWith('"}')) raw = raw.slice(0, -2)
     else if (raw.endsWith('"')) raw = raw.slice(0, -1)
     result.content = unescapeJsonString(raw)

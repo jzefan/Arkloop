@@ -306,8 +306,6 @@ export function PersonaModelBar({
             border: '0.5px solid var(--c-border-subtle)',
             flexShrink: 0,
             marginLeft: '4px',
-            position: 'relative',
-            top: '1px',
             cursor: 'pointer',
             animation: chipExiting
               ? 'chip-exit 0.12s cubic-bezier(0.4, 0, 1, 1) both'

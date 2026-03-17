@@ -224,7 +224,7 @@ export function Sidebar({
           className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[16px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
         >
           <SquarePen size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span>{isClawMode ? t.newTask : t.newChat}</span>
+          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isClawMode ? t.newTask : t.newChat}</span>
         </button>
 
         <button
@@ -236,7 +236,7 @@ export function Sidebar({
           className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[16px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
         >
           <Search size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span>{isClawMode ? t.tasks : t.chats}</span>
+          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isClawMode ? t.searchTasks : t.searchChats}</span>
         </button>
 
       </nav>
@@ -251,7 +251,7 @@ export function Sidebar({
       >
         <div className="mb-[12px] flex shrink-0 items-center gap-2 px-2">
           <h3 className="text-[14px] font-medium tracking-[0.3px] text-[var(--c-text-muted)]">
-            {isClawMode ? t.tasks : t.recents}
+            {t.recents}
           </h3>
         </div>
         <div className="flex flex-col gap-[2px]">
@@ -291,7 +291,7 @@ export function Sidebar({
             }}
           >
             {threads.length === 0 ? (
-              <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{isClawMode ? t.tasksEmpty : t.recentsEmpty}</p>
+              <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
             ) : (() => {
               const starredSet = new Set(starredIds)
               const starredThreads = starredIds
