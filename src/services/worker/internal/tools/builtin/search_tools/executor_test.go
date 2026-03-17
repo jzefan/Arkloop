@@ -24,6 +24,11 @@ func (m *mockActivator) DrainActivated() []llm.ToolSpec {
 
 func makeSearchable() map[string]llm.ToolSpec {
 	return map[string]llm.ToolSpec{
+		"artifact_guidelines": {
+			Name:        "artifact_guidelines",
+			Description: strPtr("load artifact design rules"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
 		"web_search": {
 			Name:        "web_search",
 			Description: strPtr("search the web"),
@@ -37,6 +42,11 @@ func makeSearchable() map[string]llm.ToolSpec {
 		"exec_command": {
 			Name:        "exec_command",
 			Description: strPtr("run a shell command"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+		"show_widget": {
+			Name:        "show_widget",
+			Description: strPtr("render a widget"),
 			JSONSchema:  map[string]any{"type": "object"},
 		},
 	}
@@ -106,6 +116,43 @@ func TestBatchQuery(t *testing.T) {
 	}
 	if len(activator.activated) != 2 {
 		t.Fatalf("expected 2 activated, got %d", len(activator.activated))
+	}
+}
+
+func TestDependencyToolAutoActivated(t *testing.T) {
+	activator := &mockActivator{}
+	pool := makeSearchable()
+	exec := NewExecutor(activator, func() map[string]llm.ToolSpec { return pool }, nil)
+
+	result := exec.Execute(
+		context.Background(),
+		"search_tools",
+		map[string]any{"queries": []any{"show_widget"}},
+		tools.ExecutionContext{},
+		"call_dep",
+	)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if got := result.ResultJSON["count"]; got != 2 {
+		t.Fatalf("expected count=2, got %v", got)
+	}
+	if len(activator.activated) != 2 {
+		t.Fatalf("expected 2 activated, got %d", len(activator.activated))
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	foundDependency := false
+	for _, entry := range entries {
+		if entry["name"] != "artifact_guidelines" {
+			continue
+		}
+		foundDependency = true
+		if entry["auto_activated_by"] == nil {
+			t.Fatalf("expected auto_activated_by metadata, got %#v", entry)
+		}
+	}
+	if !foundDependency {
+		t.Fatalf("expected artifact_guidelines dependency in matched entries, got %#v", entries)
 	}
 }
 
@@ -256,11 +303,11 @@ func TestWildcardAll(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %s", result.Error.Message)
 	}
-	if count := result.ResultJSON["count"].(int); count != 3 {
-		t.Fatalf("expected 3 matches (all searchable), got %d", count)
+	if count := result.ResultJSON["count"].(int); count != 5 {
+		t.Fatalf("expected 5 matches (all searchable), got %d", count)
 	}
-	if len(activator.activated) != 3 {
-		t.Fatalf("expected 3 activated, got %d", len(activator.activated))
+	if len(activator.activated) != 5 {
+		t.Fatalf("expected 5 activated, got %d", len(activator.activated))
 	}
 	if got := result.ResultJSON["already_active_count"]; got != 0 {
 		t.Fatalf("expected already_active_count=0, got %v", got)

@@ -22,6 +22,11 @@ const (
 	stateAlreadyActive = "already_active"
 )
 
+var toolDependencies = map[string][]string{
+	"show_widget":     {"artifact_guidelines"},
+	"create_artifact": {"artifact_guidelines"},
+}
+
 // Executor resolves tool queries against the searchable pool and activates matches.
 type Executor struct {
 	activator        tools.ToolActivator
@@ -87,7 +92,7 @@ func (e *Executor) Execute(
 		pool[k] = v
 	}
 
-	matched := matchTools(queries, searchable, pool)
+	matched := expandToolDependencies(matchTools(queries, searchable, pool), pool)
 
 	if len(matched) == 0 {
 		return tools.ExecutionResult{
@@ -111,6 +116,9 @@ func (e *Executor) Execute(
 	alreadyActiveCount := 0
 	for _, spec := range matched {
 		entry := specToJSON(spec)
+		if deps := reverseToolDependencies(spec.Name, matched); len(deps) > 0 {
+			entry["auto_activated_by"] = deps
+		}
 		_, isSearchable := searchable[spec.Name]
 		if isSearchable {
 			if _, done := e.alreadyActivated[spec.Name]; !done {
@@ -208,6 +216,45 @@ func specToJSON(spec llm.ToolSpec) map[string]any {
 		out["description"] = *spec.Description
 	}
 	return out
+}
+
+func expandToolDependencies(matched []llm.ToolSpec, pool map[string]llm.ToolSpec) []llm.ToolSpec {
+	if len(matched) == 0 {
+		return nil
+	}
+	out := make([]llm.ToolSpec, 0, len(matched))
+	seen := make(map[string]struct{}, len(matched))
+	for _, spec := range matched {
+		if _, ok := seen[spec.Name]; ok {
+			continue
+		}
+		seen[spec.Name] = struct{}{}
+		out = append(out, spec)
+		for _, dep := range toolDependencies[spec.Name] {
+			depSpec, ok := pool[dep]
+			if !ok {
+				continue
+			}
+			if _, dup := seen[depSpec.Name]; dup {
+				continue
+			}
+			seen[depSpec.Name] = struct{}{}
+			out = append(out, depSpec)
+		}
+	}
+	return out
+}
+
+func reverseToolDependencies(toolName string, matched []llm.ToolSpec) []string {
+	owners := make([]string, 0, 1)
+	for _, spec := range matched {
+		for _, dep := range toolDependencies[spec.Name] {
+			if dep == toolName && spec.Name != toolName {
+				owners = append(owners, spec.Name)
+			}
+		}
+	}
+	return owners
 }
 
 func errorResult(started time.Time, class, message string) tools.ExecutionResult {
