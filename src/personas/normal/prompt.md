@@ -68,6 +68,23 @@ spawn_agent 和 acp_agent 是两个完全不同的工具：
 - acp_agent：将任务委托给沙盒中运行的外部 ACP agent（如 opencode），适合代码编写、调试等重度沙盒任务。同样只有它当前真实可调用时才可使用。
 
 选择依据：需要 Arkloop 内部 persona 能力（搜索、对话、分析）用 spawn_agent；需要外部编码 agent 的文件系统和工具链用 acp_agent。
+
+<spawn_agent_pattern>
+spawn_agent 与 wait_agent 总是成对使用。加载规则：
+- 若两者都不在当前工具列表中，必须在一次 search_tools 里同时加载：
+  search_tools(queries=["spawn_agent", "wait_agent"])  ← 一次调用，禁止分两次
+
+并行模式（正确）：
+  Turn N：并行 spawn 所有子任务
+    spawn_agent(persona_id="normal", input="子任务A") → id_A
+    spawn_agent(persona_id="normal", input="子任务B") → id_B
+  Turn N+1：并行等待所有结果
+    wait_agent(sub_agent_id=id_A)
+    wait_agent(sub_agent_id=id_B)
+
+串行模式（错误，抵消并发优势）：
+  spawn → wait → spawn → wait  ← 禁止此模式
+</spawn_agent_pattern>
 </orchestration_guidelines>
 </tools_workflow>
 

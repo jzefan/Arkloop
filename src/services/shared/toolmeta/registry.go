@@ -51,7 +51,8 @@ var registry = []ToolMeta{
 		ShortDesc: "search available tools by name or keyword and load their full schema",
 		LLMDescription: "search available tools by name or keyword and return their full parameter schema. " +
 			"Use when you need a tool that is not in your current tool set. " +
-			"Pass multiple queries in one call to batch-load several tools at once. " +
+			"Pass multiple queries in one call to batch-load several tools at once — never call this tool twice in a row for related tools. " +
+			"Think ahead: if you know you will need a group of tools together (e.g. spawn_agent + wait_agent, read_file + edit), load all of them in a single call. " +
 			"After this call succeeds, the matched tools become callable in subsequent turns.",
 	},
 	// ── web ──
@@ -274,6 +275,8 @@ var registry = []ToolMeta{
 		LLMDescription: "create an Arkloop sub-agent that runs as an independent child run with its own persona, tools, and context. " +
 			"Use to delegate a self-contained subtask to a specific internal persona (e.g. research, specialized analysis). " +
 			"Returns a handle (sub_agent_id) immediately; use wait_agent to retrieve the result. " +
+			"IMPORTANT: spawn_agent and wait_agent are always used together — if either is missing from your tool list, load BOTH in one search_tools call: queries=[\"spawn_agent\", \"wait_agent\"]. " +
+			"To run tasks in parallel: call spawn_agent N times in the same turn (one per subtask), then call wait_agent N times in the next turn to collect all results simultaneously. " +
 			"persona_id must be one of the registered personas in this project — an invalid ID will fail. " +
 			"Do NOT confuse with acp_agent, which delegates to an external sandbox agent.",
 	},
