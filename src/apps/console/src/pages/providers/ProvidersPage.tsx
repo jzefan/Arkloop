@@ -34,7 +34,7 @@ const BUTTON_PRIMARY_CLS =
 const BUTTON_DANGER_CLS =
   'rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-sm text-red-500 transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50'
 
-type ApiFormat = 'openai_chat_completions' | 'openai_responses' | 'anthropic'
+type ApiFormat = 'openai_chat_completions' | 'openai_responses' | 'anthropic' | 'gemini'
 
 type ProviderFormState = {
   name: string
@@ -49,11 +49,13 @@ function splitApiFormat(fmt: ApiFormat): { provider: string; openai_api_mode: st
     case 'openai_chat_completions': return { provider: 'openai', openai_api_mode: 'chat_completions' }
     case 'openai_responses': return { provider: 'openai', openai_api_mode: 'responses' }
     case 'anthropic': return { provider: 'anthropic', openai_api_mode: null }
+    case 'gemini': return { provider: 'gemini', openai_api_mode: null }
   }
 }
 
 function toApiFormat(provider: string, mode: string | null | undefined): ApiFormat {
   if (provider === 'anthropic') return 'anthropic'
+  if (provider === 'gemini') return 'gemini'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
@@ -62,6 +64,7 @@ const API_FORMAT_LABELS: Record<ApiFormat, string> = {
   openai_chat_completions: 'OpenAI Chat Completions',
   openai_responses: 'OpenAI Responses',
   anthropic: 'Anthropic',
+  gemini: 'Google Gemini',
 }
 
 type ModelFormState = {

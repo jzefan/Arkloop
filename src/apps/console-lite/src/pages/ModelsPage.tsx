@@ -29,12 +29,14 @@ const PROVIDER_PRESETS = [
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
+  { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 
 function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
+  if (provider === 'gemini') return 'gemini'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
@@ -677,6 +679,7 @@ function presetLabel(key: string, tc: ReturnType<typeof useLocale>['t']['models'
     openai_responses: tc.clientTypeOpenaiResponse ?? 'OpenAI Responses',
     openai_chat_completions: tc.clientTypeOpenaiChat ?? 'OpenAI Chat Completions',
     anthropic_message: tc.clientTypeAnthropic ?? 'Anthropic Messages',
+    gemini: tc.clientTypeGemini ?? 'Google Gemini',
   }
   return map[key] ?? key
 }

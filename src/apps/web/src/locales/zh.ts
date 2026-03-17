@@ -721,6 +721,7 @@ export const zh: LocaleStrings = {
     vendorOpenai: "OpenAI (Responses)",
     vendorOpenaiChat: "OpenAI (Chat Completions)",
     vendorAnthropic: "Anthropic",
+    vendorGemini: "Google Gemini",
     advancedConfig: "高级配置",
     searchProviders: "搜索供应商...",
   },
