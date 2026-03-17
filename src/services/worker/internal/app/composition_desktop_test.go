@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
@@ -304,6 +305,100 @@ func TestDesktopSubAgentContextRestoresRoutingFromSnapshotFallback(t *testing.T)
 		return nil
 	}); err != nil {
 		t.Fatalf("middleware failed: %v", err)
+	}
+}
+
+func TestDesktopEventWriterTouchesRunActivityOnNonTerminalCommit(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-activity-test-" + accountID.String(), "Desktop Activity Test"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Activity Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	oldActivity := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC).Format("2006-01-02 15:04:05")
+	if _, err := db.Exec(ctx, `UPDATE runs SET status_updated_at = $2 WHERE id = $1`, runID, oldActivity); err != nil {
+		t.Fatalf("set old activity: %v", err)
+	}
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "desktop-activity-trace",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+	}
+
+	ev := events.RunEvent{
+		Type: "llm.turn.completed",
+		DataJSON: map[string]any{
+			"usage": map[string]any{
+				"input_tokens":  5,
+				"output_tokens": 4,
+			},
+		},
+	}
+	if err := writer.append(ctx, runID, ev, "normal"); err != nil {
+		t.Fatalf("append non-terminal event: %v", err)
+	}
+	if err := writer.flush(ctx); err != nil {
+		t.Fatalf("flush writer: %v", err)
+	}
+
+	var (
+		status  string
+		touched int
+	)
+	if err := db.QueryRow(
+		ctx,
+		`SELECT status,
+		        CASE WHEN status_updated_at > $2 THEN 1 ELSE 0 END
+		   FROM runs
+		  WHERE id = $1`,
+		runID,
+		oldActivity,
+	).Scan(&status, &touched); err != nil {
+		t.Fatalf("query run activity: %v", err)
+	}
+	if status != "running" {
+		t.Fatalf("expected run to stay running, got %q", status)
+	}
+	if touched != 1 {
+		t.Fatal("expected status_updated_at to refresh on non-terminal commit")
 	}
 }
 

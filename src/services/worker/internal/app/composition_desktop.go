@@ -1034,6 +1034,11 @@ func (w *desktopEventWriter) commit(ctx context.Context) error {
 	if w.tx == nil {
 		return nil
 	}
+	if w.pendingEventsSinceCommit > 0 && !w.hasTerminal {
+		if err := w.runsRepo.TouchRunActivity(ctx, w.tx, w.run.ID); err != nil {
+			return err
+		}
+	}
 	if err := w.tx.Commit(ctx); err != nil {
 		return err
 	}

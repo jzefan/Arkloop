@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"testing"
+	"time"
 
 	"arkloop/services/worker/internal/testutil"
 	"github.com/google/uuid"
@@ -179,6 +180,54 @@ func TestRunsRepository_GetLineage(t *testing.T) {
 	}
 	if grandLineage.RootRunID != rootRunID || grandLineage.RootThreadID != rootThreadID || grandLineage.Depth != 2 {
 		t.Fatalf("unexpected grand lineage: %#v", grandLineage)
+	}
+}
+
+func TestRunsRepository_TouchRunActivity(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_runs_touch_activity")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedThread(t, pool, accountID, threadID, uuid.New(), nil)
+	seedRun(t, pool, accountID, threadID, runID, nil)
+
+	oldActivity := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `UPDATE runs SET status_updated_at = $2 WHERE id = $1`, runID, oldActivity); err != nil {
+		t.Fatalf("set old activity: %v", err)
+	}
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	if err := (RunsRepository{}).TouchRunActivity(context.Background(), tx, runID); err != nil {
+		t.Fatalf("touch run activity: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit tx: %v", err)
+	}
+
+	var touched bool
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT status_updated_at > $2
+		   FROM runs
+		  WHERE id = $1`,
+		runID,
+		oldActivity,
+	).Scan(&touched); err != nil {
+		t.Fatalf("query activity: %v", err)
+	}
+	if !touched {
+		t.Fatal("expected status_updated_at to be refreshed")
 	}
 }
 
