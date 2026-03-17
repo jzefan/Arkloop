@@ -827,7 +827,7 @@ function fileOpLabel(toolName: string, args: Record<string, unknown>): string {
   }
 }
 
-function fileOpOutputFromResult(toolName: string, result: unknown): string | undefined {
+export function fileOpOutputFromResult(toolName: string, result: unknown): string | undefined {
   if (!result || typeof result !== 'object') return undefined
   const r = result as Record<string, unknown>
 
@@ -858,9 +858,11 @@ function fileOpOutputFromResult(toolName: string, result: unknown): string | und
       return filePath ? `edited: ${filePath}` : 'edited'
     }
     case 'search_tools': {
-      const count = typeof r.count === 'number' ? r.count : 0
-      if (count === 0) return '(no matches)'
       const matched = Array.isArray(r.matched) ? r.matched as unknown[] : []
+      const count = typeof r.count === 'number' ? r.count : matched.length
+      if (count === 0 && matched.length === 0) return '(no matches)'
+      const statusSummary = summarizeSearchToolsResult(r)
+      if (statusSummary) return statusSummary
       const names = matched.slice(0, 5).map((m) => {
         if (typeof m === 'string') return m
         if (m && typeof m === 'object') return String((m as Record<string, unknown>).name ?? '')
@@ -888,6 +890,76 @@ function fileOpOutputFromResult(toolName: string, result: unknown): string | und
     default:
       return undefined
   }
+}
+
+function summarizeSearchToolsResult(result: Record<string, unknown>): string | undefined {
+  const matched = Array.isArray(result.matched) ? result.matched as unknown[] : []
+  if (matched.length === 0) return undefined
+
+  const hasStateInfo = matched.some((entry) =>
+    !!(entry && typeof entry === 'object' && (
+      typeof entry.state === 'string'
+      || entry.already_active === true
+      || entry.already_loaded === true
+    )),
+  )
+  if (!hasStateInfo) return undefined
+
+  const counts = new Map<string, { count: number; names: string[] }>()
+
+  for (const entry of matched) {
+    let name: string | undefined
+    let rawState: string | undefined
+
+    if (typeof entry === 'string') {
+      name = entry
+    } else if (entry && typeof entry === 'object') {
+      if (typeof entry.name === 'string') {
+        name = entry.name
+      }
+      if (typeof entry.state === 'string') {
+        rawState = entry.state
+      }
+      if (!rawState && entry.already_active === true) {
+        rawState = 'already_active'
+      } else if (!rawState && entry.already_loaded === true) {
+        rawState = 'already_loaded'
+      }
+    }
+
+    const state = rawState === 'activated' ? 'loaded' : rawState || 'loaded'
+    const bucket = counts.get(state) ?? { count: 0, names: [] }
+    bucket.count += 1
+    if (name && bucket.names.length < 2) {
+      bucket.names.push(name)
+    }
+    counts.set(state, bucket)
+  }
+
+  if (counts.size === 0) return undefined
+
+  const stateOrder = ['loaded', 'already_loaded', 'already_active', 'available']
+  const stateLabels: Record<string, string> = {
+    loaded: 'loaded',
+    already_loaded: 'already loaded',
+    already_active: 'already active',
+    available: 'available',
+  }
+
+  const orderedStates = [
+    ...stateOrder.filter((state) => counts.has(state)),
+    ...[...counts.keys()].filter((state) => !stateOrder.includes(state)),
+  ]
+
+  const parts = orderedStates.map((state) => {
+    const bucket = counts.get(state)
+    if (!bucket) return undefined
+    const sample = bucket.names.length > 0 ? ` (${bucket.names.join(', ')}${bucket.names.length < bucket.count ? ', …' : ''})` : ''
+    const label = stateLabels[state] ?? state
+    return `${label} ${bucket.count}${sample}`
+  }).filter(Boolean)
+
+  return parts.length > 0 ? parts.join('; ') : undefined
 }
 
 export function applyFileOpToolCall(

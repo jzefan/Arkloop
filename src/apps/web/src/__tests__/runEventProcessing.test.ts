@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildMessageFileOpsFromRunEvents,
   buildMessageCodeExecutionsFromRunEvents,
   buildMessageSubAgentsFromRunEvents,
   buildMessageThinkingFromRunEvents,
@@ -8,6 +9,7 @@ import {
   selectFreshRunEvents,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
+  fileOpOutputFromResult,
 } from '../runEventProcessing'
 import type { MessageResponse } from '../api'
 import type { RunEvent } from '../sse'
@@ -412,6 +414,67 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
   })
 })
 
+describe('buildMessageFileOpsFromRunEvents', () => {
+  it('应将 search_tools 的 already_active 状态单独汇总', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'search_tools', tool_call_id: 'call_search', arguments: { queries: ['web_search'] } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'search_tools',
+          tool_call_id: 'call_search',
+          result: {
+            matched: [
+              { name: 'show_widget' },
+              { name: 'web_search', already_active: true },
+            ],
+          },
+        },
+      }),
+    ]
+
+    const ops = buildMessageFileOpsFromRunEvents(events)
+    expect(ops).toHaveLength(1)
+    expect(ops[0]?.output).toBe('loaded 1 (show_widget); already active 1 (web_search)')
+  })
+
+  it('应在 search_tools 命中均已激活时显示 already active', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'search_tools', tool_call_id: 'call_search', arguments: { queries: ['web_search'] } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'search_tools',
+          tool_call_id: 'call_search',
+          result: {
+            matched: [
+              { name: 'web_search', already_active: true },
+            ],
+          },
+        },
+      }),
+    ]
+
+    const ops = buildMessageFileOpsFromRunEvents(events)
+    expect(ops).toHaveLength(1)
+    expect(ops[0]?.output).toBe('already active 1 (web_search)')
+  })
+})
+
 describe('buildMessageSubAgentsFromRunEvents', () => {
   it('应在 spawn_agent 调用开始时创建条目，并在 wait_agent 后收敛为 completed', () => {
     const events = [
@@ -753,5 +816,27 @@ describe('buildMessageThinkingFromRunEvents', () => {
 
     const snapshot = buildMessageThinkingFromRunEvents(events)
     expect(snapshot).toBeNull()
+  })
+})
+
+describe('search_tools summary', () => {
+  it('returns state-aware description when statuses exist', () => {
+    const result = fileOpOutputFromResult('search_tools', {
+      count: 3,
+      matched: [
+        { name: 'show_widget', state: 'loaded' },
+        { name: 'create_artifact', already_loaded: true },
+        { name: 'memory_search', already_active: true },
+      ],
+    })
+    expect(result).toBe('loaded 1 (show_widget); already loaded 1 (create_artifact); already active 1 (memory_search)')
+  })
+
+  it('falls back to name list when no state info is present', () => {
+    const result = fileOpOutputFromResult('search_tools', {
+      count: 2,
+      matched: ['web_search', 'web_fetch'],
+    })
+    expect(result).toBe('2 matches: web_search, web_fetch')
   })
 })

@@ -5,13 +5,25 @@ import (
 	"testing"
 )
 
-func TestResolveBuiltinIncludesDocumentWriteOnlyWhenArtifactStoreAvailable(t *testing.T) {
+func TestResolveBuiltinArtifactToolsReflectStorageAvailability(t *testing.T) {
 	resolved := ResolveBuiltin(ResolveInput{})
+	if _, ok := resolved.ToolNameSet()["artifact_guidelines"]; !ok {
+		t.Fatal("artifact_guidelines should be present without artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["show_widget"]; !ok {
+		t.Fatal("show_widget should be present without artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["create_artifact"]; ok {
+		t.Fatal("create_artifact should be absent without artifact store")
+	}
 	if _, ok := resolved.ToolNameSet()["document_write"]; ok {
 		t.Fatal("document_write should be absent without artifact store")
 	}
 
 	resolved = ResolveBuiltin(ResolveInput{ArtifactStoreAvailable: true})
+	if _, ok := resolved.ToolNameSet()["create_artifact"]; !ok {
+		t.Fatal("create_artifact should be present with artifact store")
+	}
 	if _, ok := resolved.ToolNameSet()["document_write"]; !ok {
 		t.Fatal("document_write should be present with artifact store")
 	}
@@ -50,10 +62,12 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 	got := resolved.ToolNames()
 	want := []string{
 		"acp_agent",
+		"artifact_guidelines",
 		"ask_user",
 		"browser",
 		"close_agent",
 		"conversation_search",
+		"create_artifact",
 		"document_write",
 		"edit",
 		"exec_command",
@@ -68,6 +82,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"read_file",
 		"resume_agent",
 		"send_input",
+		"show_widget",
 		"spawn_agent",
 		"summarize_thread",
 		"timeline_title",

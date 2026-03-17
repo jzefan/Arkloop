@@ -58,13 +58,9 @@ func RunDesktop(ctx context.Context) error {
 		return fmt.Errorf("job queue not initialized, call InitDesktopInfra first")
 	}
 
-	dataDir := os.Getenv("ARKLOOP_DATA_DIR")
-	if dataDir == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return fmt.Errorf("resolve home dir: %w", herr)
-		}
-		dataDir = filepath.Join(home, ".arkloop")
+	dataDir, err := desktop.ResolveDataDir("")
+	if err != nil {
+		return fmt.Errorf("resolve data dir: %w", err)
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("ensure data dir: %w", err)

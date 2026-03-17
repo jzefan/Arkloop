@@ -26,9 +26,6 @@ import (
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
-	artifactguidelinestool "arkloop/services/worker/internal/tools/builtin/artifact_guidelines"
-	documentwritetool "arkloop/services/worker/internal/tools/builtin/document_write"
-	showwidgettool "arkloop/services/worker/internal/tools/builtin/show_widget"
 	"arkloop/services/worker/internal/tools/builtin/platform"
 	sandboxtool "arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
@@ -203,35 +200,12 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		allLlmSpecs = append(allLlmSpecs, conversationtool.LlmSpecs()...)
 	}
 
-	if artifactStore != nil {
-		artifactExecutor := documentwritetool.NewToolExecutor(artifactStore)
-
-		if err := toolRegistry.Register(artifactguidelinestool.AgentSpec); err != nil {
-			return nil, err
-		}
-		executors[artifactguidelinestool.AgentSpec.Name] = artifactguidelinestool.ToolExecutor{}
-		allLlmSpecs = append(allLlmSpecs, artifactguidelinestool.LlmSpec)
-
-		if err := toolRegistry.Register(documentwritetool.CreateArtifactAgentSpec); err != nil {
-			return nil, err
-		}
-		executors[documentwritetool.CreateArtifactAgentSpec.Name] = artifactExecutor
-		allLlmSpecs = append(allLlmSpecs, documentwritetool.CreateArtifactLlmSpec)
-
-		if err := toolRegistry.Register(documentwritetool.AgentSpec); err != nil {
-			return nil, err
-		}
-		executors[documentwritetool.AgentSpec.Name] = artifactExecutor
-		allLlmSpecs = append(allLlmSpecs, documentwritetool.LlmSpec)
-
-		showWidgetExec := showwidgettool.NewToolExecutor()
-		if err := toolRegistry.Register(showwidgettool.AgentSpec); err != nil {
-			return nil, err
-		}
-		executors[showwidgettool.AgentSpec.Name] = showWidgetExec
-		allLlmSpecs = append(allLlmSpecs, showwidgettool.LlmSpec)
-
-		slog.InfoContext(ctx, "artifact tools registered: artifact_guidelines, show_widget, create_artifact, document_write")
+	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore)
+	if err != nil {
+		return nil, err
+	}
+	if artifactToolsRegistered {
+		slog.InfoContext(ctx, "stored artifact tools registered", "tools", []string{"create_artifact", "document_write"})
 	}
 
 	var toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository

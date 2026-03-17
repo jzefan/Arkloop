@@ -6,15 +6,16 @@ import (
 	"strings"
 
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
-	searchtools "arkloop/services/worker/internal/tools/builtin/search_tools"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
+	searchtools "arkloop/services/worker/internal/tools/builtin/search_tools"
 )
 
 var runtimeManagedToolNames = map[string]struct{}{
 	"acp_agent":           {},
 	"browser":             {},
 	"conversation_search": {},
+	"create_artifact":     {},
 	"document_write":      {},
 	"exec_command":        {},
 	"memory_forget":       {},

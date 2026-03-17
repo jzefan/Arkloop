@@ -22,7 +22,7 @@ var LlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"queries": map[string]any{
 				"type":        "array",
-				"description": "tool names or keywords to search for; multiple queries are resolved in one call. Use [\"*\"] to load all available tools at once.",
+				"description": "tool names or keywords to search for; multiple queries are resolved in one call. Use [\"*\"] to load all searchable tools at once.",
 				"minItems":    1,
 				"maxItems":    10,
 				"items":       map[string]any{"type": "string"},
