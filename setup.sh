@@ -1051,6 +1051,8 @@ run_install() {
   gateway_port="$(python_env_get ARKLOOP_GATEWAY_PORT)"
   [ -n "$gateway_port" ] || gateway_port="19000"
 
+  install_rtk_host
+
   if [ "$RESOLVED_GATEWAY" = "on" ]; then
     wait_for_http "http://127.0.0.1:${gateway_port}/healthz" 60 || fail "$(t gateway_health_failed)"
     wait_for_http "http://127.0.0.1:${gateway_port}/" 60 || fail "$(t console_not_ready)"
@@ -1063,6 +1065,32 @@ run_install() {
   else
     log "$(t install_done_no_gateway)"
   fi
+}
+
+# install_rtk_host installs the rtk binary to ~/.arkloop/bin/rtk.
+# Best-effort: failures are logged but do not abort the install.
+install_rtk_host() {
+  local rtk_dest="$HOME/.arkloop/bin/rtk"
+  if [ -x "$rtk_dest" ]; then
+    return 0
+  fi
+  mkdir -p "$HOME/.arkloop/bin"
+  # Prefer copying from an existing PATH installation.
+  local existing
+  existing="$(command -v rtk 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ -x "$existing" ]; then
+    cp "$existing" "$rtk_dest" && chmod 755 "$rtk_dest" && return 0
+  fi
+  # Download via the official install script, then move to our bin dir.
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh >/dev/null 2>&1; then
+      local installed="$HOME/.local/bin/rtk"
+      if [ -f "$installed" ]; then
+        mv "$installed" "$rtk_dest" && chmod 755 "$rtk_dest"
+      fi
+    fi
+  fi
+  return 0
 }
 
 run_doctor() {
