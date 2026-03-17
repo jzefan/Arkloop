@@ -513,6 +513,12 @@ export function ChatInput({
               type="submit"
               disabled={disabled || isStreaming || (!value.trim() && attachments.length === 0)}
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] transition-[background-color,opacity] duration-[60ms] hover:bg-[var(--c-accent-send-hover)] active:opacity-[0.75] active:scale-[0.93] disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                transform: (value.trim() || attachments.length > 0) ? 'scale(1)' : 'scale(0)',
+                opacity: (value.trim() || attachments.length > 0) ? 1 : 0,
+                transition: 'transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 120ms ease, background-color 60ms ease',
+                pointerEvents: (value.trim() || attachments.length > 0) ? 'auto' : 'none',
+              }}
             >
               <ArrowUp size={16} />
             </button>

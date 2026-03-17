@@ -7,6 +7,8 @@ export interface LocaleStrings {
   // sidebar
   newChat: string;
   chats: string;
+  searchChats: string;
+  searchTasks: string;
   projects: string;
   retrieve: string;
   legal: string;

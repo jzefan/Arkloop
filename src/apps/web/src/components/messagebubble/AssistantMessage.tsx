@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Copy, Check, RefreshCw, Share2, Split, Terminal } from 'lucide-react'
 import type { MessageResponse } from '../../api'
-import type { WebSource, ArtifactRef, BrowserActionRef } from '../../storage'
+import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../storage'
+import { WidgetBlock } from '../WidgetBlock'
 import { MarkdownRenderer } from '../MarkdownRenderer'
 import { DocumentCard } from '../DocumentCard'
 import { BrowserScreenshotCard } from '../BrowserScreenshotCard'
 import { useLocale } from '../../contexts/LocaleContext'
+import { isDesktop } from '@arkloop/shared/desktop'
 import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
 
 type Props = {
@@ -17,6 +19,7 @@ type Props = {
   webSources?: WebSource[]
   artifacts?: ArtifactRef[]
   browserActions?: BrowserActionRef[]
+  widgets?: WidgetRef[]
   accessToken?: string
   onShowSources?: () => void
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
@@ -54,6 +57,7 @@ export function AssistantMessage({
   webSources,
   artifacts,
   browserActions,
+  widgets,
   accessToken,
   onShowSources,
   onOpenDocument,
@@ -91,6 +95,13 @@ export function AssistantMessage({
           )
         })()}
         {renderBrowserScreenshots(browserActions, accessToken)}
+        {widgets && widgets.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
+            {widgets.map((w) => (
+              <WidgetBlock key={w.id} html={w.html} title={w.title} complete={true} />
+            ))}
+          </div>
+        )}
         <MarkdownRenderer content={contentPrefix && message.content.startsWith(contentPrefix) ? message.content.slice(contentPrefix.length).trimStart() : message.content} webSources={webSources} artifacts={artifacts} accessToken={accessToken} runId={message.run_id} onOpenDocument={onOpenDocument} />
         <div style={{ marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -134,6 +145,7 @@ export function AssistantMessage({
             >
               <RefreshCw size={15} />
             </button>
+            {!isDesktop() && (
             <div style={{ position: 'relative', display: 'inline-flex' }}>
               <button
                 onClick={onShare}
@@ -159,6 +171,7 @@ export function AssistantMessage({
                 {t.shareLinkCopied}
               </span>
             </div>
+            )}
             <button
               onClick={onFork}
               disabled={!onFork}

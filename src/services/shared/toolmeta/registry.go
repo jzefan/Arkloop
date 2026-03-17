@@ -226,6 +226,20 @@ var registry = []ToolMeta{
 	},
 	// ── artifact ──
 	{
+		Name:      "show_widget",
+		Group:     GroupDocument,
+		Label:     "Show widget",
+		ShortDesc: "render an interactive HTML widget inline in the conversation",
+		LLMDescription: "render an interactive HTML/SVG widget directly in the chat. " +
+			"Use for charts, diagrams, dashboards, calculators, and visual interactive content. " +
+			"Call artifact_guidelines first with relevant module names. " +
+			"widget_code is a raw HTML fragment (no DOCTYPE/html/head/body tags). " +
+			"Structure: <style> first, HTML elements next, <script> last. " +
+			"CSS variables (--c-bg-page, --c-text-primary, --c-border etc.) are automatically available. " +
+			"To send a follow-up message from a widget: window.dispatchEvent(new CustomEvent('arkloop:send-prompt',{detail:text})). " +
+			"NEVER use python_execute + exec_command open for HTML visualizations.",
+	},
+	{
 		Name:      "artifact_guidelines",
 		Group:     GroupDocument,
 		Label:     "Artifact guidelines",

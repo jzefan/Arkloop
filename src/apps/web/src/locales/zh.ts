@@ -3,6 +3,8 @@ import type { LocaleStrings } from "./index";
 export const zh: LocaleStrings = {
   newChat: "新建会话",
   chats: "会话",
+  searchChats: "搜索会话",
+  searchTasks: "搜索任务",
   projects: "项目",
   retrieve: "检索",
   legal: "法律",
