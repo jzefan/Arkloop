@@ -20,6 +20,7 @@ const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
 const THEME_PRESET_KEY = 'arkloop:web:theme-preset'
 const CUSTOM_THEME_ID_KEY = 'arkloop:web:custom-theme-id'
 const CUSTOM_THEMES_KEY = 'arkloop:web:custom-themes'
+const CUSTOM_BODY_FONT_KEY = 'arkloop:web:custom-body-font'
 
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
@@ -948,7 +949,7 @@ export function readFontSettingsFromStorage(): FontSettings {
     if (!raw) return { fontFamily: 'inter', codeFontFamily: 'jetbrains-mono', fontSize: 'normal' }
     const parsed = JSON.parse(raw) as Partial<FontSettings>
     return {
-      fontFamily: (['inter', 'system', 'serif', 'noto-sans', 'source-sans'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : 'inter',
+      fontFamily: (['inter', 'system', 'serif', 'noto-sans', 'source-sans', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : 'inter',
       codeFontFamily: (['jetbrains-mono', 'fira-code', 'cascadia-code', 'source-code-pro'] as CodeFontFamily[]).includes(parsed.codeFontFamily as CodeFontFamily) ? parsed.codeFontFamily as CodeFontFamily : 'jetbrains-mono',
       fontSize: (['compact', 'normal', 'relaxed'] as FontSize[]).includes(parsed.fontSize as FontSize) ? parsed.fontSize as FontSize : 'normal',
     }
@@ -1017,5 +1018,23 @@ export function writeCustomThemesToStorage(themes: Record<string, ThemeDefinitio
   if (!canUseLocalStorage()) return
   try {
     localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes))
+  } catch { /* ignore */ }
+}
+
+export function readCustomBodyFontFromStorage(): string | null {
+  if (!canUseLocalStorage()) return null
+  try {
+    return localStorage.getItem(CUSTOM_BODY_FONT_KEY) || null
+  } catch { return null }
+}
+
+export function writeCustomBodyFontToStorage(font: string | null): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (font) {
+      localStorage.setItem(CUSTOM_BODY_FONT_KEY, font)
+    } else {
+      localStorage.removeItem(CUSTOM_BODY_FONT_KEY)
+    }
   } catch { /* ignore */ }
 }
