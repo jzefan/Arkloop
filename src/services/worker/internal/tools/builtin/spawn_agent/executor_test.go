@@ -121,3 +121,22 @@ func TestToolExecutorWaitReturnsOutput(t *testing.T) {
 		t.Fatalf("unexpected status: %#v", got)
 	}
 }
+
+func TestApplyResolvedProfileClearsInheritedRoute(t *testing.T) {
+	req := &subagentctl.SpawnRequest{
+		ParentContext: subagentctl.SpawnParentContext{
+			RouteID: "route-parent",
+			Model:   "openai^gpt-5",
+		},
+	}
+
+	if ok := applyResolvedProfile(req, "anthropic^claude-sonnet-4-5"); !ok {
+		t.Fatal("expected profile value to be applied")
+	}
+	if req.ParentContext.RouteID != "" {
+		t.Fatalf("expected route cleared, got %#v", req.ParentContext)
+	}
+	if req.ParentContext.Model != "anthropic^claude-sonnet-4-5" {
+		t.Fatalf("unexpected model: %#v", req.ParentContext)
+	}
+}

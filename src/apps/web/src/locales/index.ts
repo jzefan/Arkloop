@@ -457,6 +457,7 @@ export interface LocaleStrings {
       disabled: string
     }
     spawnProfileTitle: string
+    spawnProfileFollowCurrentChat: string
     spawnProfilePlatformDefault: string
     spawnProfileExplore: string
     spawnProfileTask: string

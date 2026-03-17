@@ -142,3 +142,41 @@ func TestIsSpawnToolName(t *testing.T) {
 		}
 	}
 }
+
+func TestContextSnapshotEffectiveRoutingFallsBackToRouting(t *testing.T) {
+	snapshot := ContextSnapshot{
+		Routing: &ContextSnapshotRouting{
+			RouteID: "route-parent",
+			Model:   "anthropic^claude-sonnet-4-5",
+		},
+	}
+
+	routing := snapshot.EffectiveRouting()
+	if routing.RouteID != "route-parent" {
+		t.Fatalf("unexpected route_id: %#v", routing)
+	}
+	if routing.Model != "anthropic^claude-sonnet-4-5" {
+		t.Fatalf("unexpected model: %#v", routing)
+	}
+}
+
+func TestContextSnapshotEffectiveRoutingPrefersRuntime(t *testing.T) {
+	snapshot := ContextSnapshot{
+		Routing: &ContextSnapshotRouting{
+			RouteID: "route-parent",
+			Model:   "anthropic^claude-sonnet-4-5",
+		},
+		Runtime: ContextSnapshotRuntime{
+			RouteID: "route-override",
+			Model:   "openai^gpt-5",
+		},
+	}
+
+	routing := snapshot.EffectiveRouting()
+	if routing.RouteID != "route-override" {
+		t.Fatalf("unexpected route_id: %#v", routing)
+	}
+	if routing.Model != "openai^gpt-5" {
+		t.Fatalf("unexpected model: %#v", routing)
+	}
+}

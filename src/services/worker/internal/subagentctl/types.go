@@ -2,6 +2,7 @@ package subagentctl
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"arkloop/services/shared/skillstore"
@@ -122,6 +123,7 @@ type ContextSnapshot struct {
 	Messages    []ContextSnapshotMessage   `json:"messages,omitempty"`
 	Environment ContextSnapshotEnvironment `json:"environment"`
 	Skills      []skillstore.ResolvedSkill `json:"skills,omitempty"`
+	Routing     *ContextSnapshotRouting    `json:"routing,omitempty"`
 	Runtime     ContextSnapshotRuntime     `json:"runtime"`
 	Memory      ContextSnapshotMemory      `json:"memory"`
 }
@@ -139,6 +141,11 @@ type ContextSnapshotEnvironment struct {
 	WorkspaceRef string `json:"workspace_ref,omitempty"`
 }
 
+type ContextSnapshotRouting struct {
+	RouteID string `json:"route_id,omitempty"`
+	Model   string `json:"model,omitempty"`
+}
+
 type ContextSnapshotRuntime struct {
 	ToolAllowlist  []string `json:"tool_allowlist,omitempty"`
 	ToolDenylist   []string `json:"tool_denylist,omitempty"`
@@ -150,4 +157,21 @@ type ContextSnapshotRuntime struct {
 
 type ContextSnapshotMemory struct {
 	Scope string `json:"scope"`
+}
+
+func (s ContextSnapshot) EffectiveRouting() ContextSnapshotRouting {
+	routeID := strings.TrimSpace(s.Runtime.RouteID)
+	model := strings.TrimSpace(s.Runtime.Model)
+	if s.Routing != nil {
+		if routeID == "" {
+			routeID = strings.TrimSpace(s.Routing.RouteID)
+		}
+		if model == "" {
+			model = strings.TrimSpace(s.Routing.Model)
+		}
+	}
+	return ContextSnapshotRouting{
+		RouteID: routeID,
+		Model:   model,
+	}
 }

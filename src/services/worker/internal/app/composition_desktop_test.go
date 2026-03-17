@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -19,6 +20,7 @@ import (
 	"arkloop/services/worker/internal/tools/builtin"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestDesktopSubAgentSchemaAvailable(t *testing.T) {
@@ -128,6 +130,180 @@ func TestDesktopNormalPersonaSearchableIncludesSpawnAgent(t *testing.T) {
 	searchable := rc.ToolExecutor.SearchableSpecs()
 	if _, ok := searchable["spawn_agent"]; !ok {
 		t.Fatalf("spawn_agent missing from searchable specs: %v", mapKeys(searchable))
+	}
+}
+
+func TestDesktopEventWriterCommitsNonStreamingEventsBeforeToolExecution(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-writer-test-" + accountID.String(), "Desktop Writer Test"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Writer Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "test-trace",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+	}
+
+	completedTurn := events.RunEvent{
+		Type: "llm.turn.completed",
+		DataJSON: map[string]any{
+			"usage": map[string]any{
+				"input_tokens":  12,
+				"output_tokens": 7,
+			},
+		},
+	}
+	if err := writer.append(ctx, runID, completedTurn, "normal"); err != nil {
+		t.Fatalf("append non-streaming event: %v", err)
+	}
+	if writer.tx != nil {
+		t.Fatal("expected non-streaming event to commit writer transaction")
+	}
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin sub-agent tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if _, err := (data.SubAgentRepository{}).Create(ctx, tx, data.SubAgentCreateParams{
+		AccountID:      accountID,
+		ParentRunID:    runID,
+		ParentThreadID: threadID,
+		RootRunID:      runID,
+		RootThreadID:   threadID,
+		Depth:          1,
+		SourceType:     data.SubAgentSourceTypeThreadSpawn,
+		ContextMode:    data.SubAgentContextModeIsolated,
+	}); err != nil {
+		t.Fatalf("create sub_agent after non-streaming commit: %v", err)
+	}
+}
+
+func TestDesktopSubAgentContextRestoresRoutingFromSnapshotFallback(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	parentThreadID := uuid.New()
+	childThreadID := uuid.New()
+	parentRunID := uuid.New()
+	childRunID := uuid.New()
+	subAgentID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-subagent-routing-" + accountID.String(), "Desktop SubAgent Routing"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Routing Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE), ($4, $2, $3, TRUE)`,
+			args: []any{parentThreadID, accountID, projectID, childThreadID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`,
+			args: []any{parentRunID, accountID, parentThreadID, childRunID, childThreadID},
+		},
+		{
+			sql: `INSERT INTO sub_agents
+				(id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id)
+				VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`,
+			args: []any{subAgentID, accountID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusQueued, childRunID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin snapshot tx: %v", err)
+	}
+	storage := subagentctl.NewSnapshotStorage()
+	if err := storage.Save(ctx, tx, subAgentID, subagentctl.ContextSnapshot{
+		ContextMode: data.SubAgentContextModeIsolated,
+		Routing: &subagentctl.ContextSnapshotRouting{
+			RouteID: "route-parent",
+			Model:   "anthropic^claude-sonnet-4-5",
+		},
+	}); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit snapshot: %v", err)
+	}
+
+	rc := &pipeline.RunContext{
+		Run:       data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID},
+		InputJSON: map[string]any{},
+	}
+
+	mw := desktopSubAgentContext(db, storage)
+	if err := mw(ctx, rc, func(_ context.Context, rc *pipeline.RunContext) error {
+		if got := rc.InputJSON["route_id"]; got != "route-parent" {
+			t.Fatalf("unexpected route_id: %#v", got)
+		}
+		if got := rc.InputJSON["model"]; got != "anthropic^claude-sonnet-4-5" {
+			t.Fatalf("unexpected model: %#v", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("middleware failed: %v", err)
 	}
 }
 

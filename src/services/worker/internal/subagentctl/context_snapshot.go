@@ -103,6 +103,7 @@ func (b *SnapshotBuilder) Build(ctx context.Context, tx pgx.Tx, parentRun data.R
 		ContextMode: req.ContextMode,
 		Inherit:     req.Inherit,
 		Environment: ContextSnapshotEnvironment{},
+		Routing:     snapshotRouting(req.ParentContext),
 		Runtime:     ContextSnapshotRuntime{},
 		Memory:      ContextSnapshotMemory{Scope: req.Inherit.MemoryScope},
 	}
@@ -165,6 +166,18 @@ func (b *SnapshotBuilder) loadMessages(ctx context.Context, tx pgx.Tx, parentRun
 		})
 	}
 	return repairSpawnClosures(result), nil
+}
+
+func snapshotRouting(parent SpawnParentContext) *ContextSnapshotRouting {
+	routeID := strings.TrimSpace(parent.RouteID)
+	model := strings.TrimSpace(parent.Model)
+	if routeID == "" && model == "" {
+		return nil
+	}
+	return &ContextSnapshotRouting{
+		RouteID: routeID,
+		Model:   model,
+	}
 }
 
 func cloneResolvedSkills(items []skillstore.ResolvedSkill) []skillstore.ResolvedSkill {
