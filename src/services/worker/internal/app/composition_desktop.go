@@ -20,6 +20,7 @@ import (
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -224,7 +225,7 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 }
 
 // Execute runs the agent pipeline for a single run.
-func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID string) error {
+func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID string, jobPayload map[string]any) error {
 	traceID = strings.TrimSpace(traceID)
 	emitter := events.NewEmitter(traceID)
 
@@ -264,6 +265,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		UserID:       run.CreatedByUserID,
 		ProfileRef:   derefStr(run.ProfileRef),
 		WorkspaceRef: derefStr(run.WorkspaceRef),
+		JobPayload:   cloneDesktopMap(jobPayload),
 	}
 
 	if e.jobQueue != nil && subAgentsEnabled {
@@ -295,10 +297,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		pipeline.NewSpawnAgentMiddleware(),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
+		desktopChannelContext(e.db),
 		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
 		memMiddleware,
 		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewToolBuildMiddleware(),
+		desktopChannelDelivery(e.db),
 	}
 	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo)
 	handler := pipeline.Build(middlewares, terminal)
@@ -435,6 +439,164 @@ func desktopToolInit(
 		rc.ToolRegistry = registry
 		return next(ctx, rc)
 	}
+}
+
+type desktopChannelIdentityRecord struct {
+	UserID *uuid.UUID
+}
+
+type desktopDeliveryChannelRecord struct {
+	Token string
+}
+
+func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
+	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		if rc == nil || len(rc.JobPayload) == 0 {
+			return next(ctx, rc)
+		}
+		rawDelivery, ok := rc.JobPayload["channel_delivery"].(map[string]any)
+		if !ok || len(rawDelivery) == 0 {
+			return next(ctx, rc)
+		}
+		channelCtx, err := pipeline.ParseChannelContextPayload(rawDelivery)
+		if err != nil {
+			return err
+		}
+		if db != nil && channelCtx.SenderChannelIdentityID != uuid.Nil {
+			identity, err := loadDesktopChannelIdentity(ctx, db, channelCtx.SenderChannelIdentityID)
+			if err != nil {
+				return err
+			}
+			if identity != nil {
+				channelCtx.SenderUserID = identity.UserID
+			}
+		}
+		rc.ChannelContext = channelCtx
+		if channelCtx.SenderUserID != nil {
+			rc.UserID = channelCtx.SenderUserID
+		}
+		return next(ctx, rc)
+	}
+}
+
+func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
+	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+
+	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		err := next(ctx, rc)
+		if err != nil || rc == nil || rc.ChannelContext == nil {
+			return err
+		}
+		output := strings.TrimSpace(rc.FinalAssistantOutput)
+		if output == "" || db == nil || rc.ChannelContext.ChannelType != "telegram" {
+			return err
+		}
+
+		channel, lookupErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+		if lookupErr != nil {
+			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, lookupErr)
+			slog.WarnContext(ctx, "desktop channel delivery lookup failed", "run_id", rc.Run.ID, "err", lookupErr.Error())
+			return err
+		}
+		if channel == nil {
+			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
+			return err
+		}
+
+		segments := pipeline.SplitTelegramMessage(pipeline.EscapeTelegramMarkdownV2(output), 4096)
+		for idx, segment := range segments {
+			if sendErr := client.SendMessage(ctx, channel.Token, telegrambot.SendMessageRequest{
+				ChatID:    rc.ChannelContext.PlatformChatID,
+				Text:      segment,
+				ParseMode: "MarkdownV2",
+			}); sendErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
+				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+				return err
+			}
+			if idx < len(segments)-1 {
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		return err
+	}
+}
+
+func loadDesktopChannelIdentity(ctx context.Context, db data.DesktopDB, identityID uuid.UUID) (*desktopChannelIdentityRecord, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	var item desktopChannelIdentityRecord
+	err := db.QueryRow(
+		ctx,
+		`SELECT user_id
+		   FROM channel_identities
+		  WHERE id = $1`,
+		identityID,
+	).Scan(&item.UserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("desktop channel identity lookup: %w", err)
+	}
+	return &item, nil
+}
+
+func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelID uuid.UUID) (*desktopDeliveryChannelRecord, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	var (
+		encryptedValue *string
+		keyVersion     *int
+	)
+	err := db.QueryRow(
+		ctx,
+		`SELECT s.encrypted_value, s.key_version
+		   FROM channels c
+		   LEFT JOIN secrets s ON s.id = c.credentials_id
+		  WHERE c.id = $1
+		    AND c.is_active = 1`,
+		channelID,
+	).Scan(&encryptedValue, &keyVersion)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("desktop channel lookup: %w", err)
+	}
+	if encryptedValue == nil || strings.TrimSpace(*encryptedValue) == "" || keyVersion == nil {
+		return nil, fmt.Errorf("desktop channel lookup: missing telegram token")
+	}
+	keyRing, err := loadDesktopKeyRing()
+	if err != nil {
+		return nil, fmt.Errorf("desktop channel lookup: load encryption key: %w", err)
+	}
+	token, err := decryptAESGCM(keyRing, *encryptedValue, *keyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("desktop channel lookup: decrypt token: %w", err)
+	}
+	return &desktopDeliveryChannelRecord{Token: token}, nil
+}
+
+func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err error) {
+	if db == nil || runID == uuid.Nil || err == nil {
+		return
+	}
+	tx, txErr := db.BeginTx(context.Background(), pgx.TxOptions{})
+	if txErr != nil {
+		return
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+
+	repo := data.DesktopRunEventsRepository{}
+	if _, appendErr := repo.AppendEvent(context.Background(), tx, runID, "run.channel_delivery_failed", map[string]any{
+		"error": err.Error(),
+	}, nil, nil); appendErr != nil {
+		return
+	}
+	_ = tx.Commit(context.Background())
 }
 
 func desktopSubAgentContext(db data.DesktopDB, storage *subagentctl.SnapshotStorage) pipeline.RunMiddleware {
@@ -1208,6 +1370,17 @@ func mergeJSON(a, b map[string]any) map[string]any {
 	}
 	for k, v := range b {
 		out[k] = v
+	}
+	return out
+}
+
+func cloneDesktopMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
 	}
 	return out
 }

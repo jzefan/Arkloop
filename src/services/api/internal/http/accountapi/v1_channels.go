@@ -61,11 +61,12 @@ func channelsEntry(
 	pool data.DB,
 	appBaseURL string,
 	telegramClient *telegrambot.Client,
+	telegramMode string,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createChannel(w, r, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, appBaseURL, telegramClient)
+			createChannel(w, r, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, appBaseURL, telegramClient, telegramMode)
 		case nethttp.MethodGet:
 			listChannels(w, r, authService, membershipRepo, channelsRepo, apiKeysRepo)
 		default:
@@ -83,6 +84,7 @@ func channelEntry(
 	secretsRepo *data.SecretsRepository,
 	pool data.DB,
 	telegramClient *telegrambot.Client,
+	telegramMode string,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -104,9 +106,9 @@ func channelEntry(
 		case nethttp.MethodGet:
 			getChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo)
 		case nethttp.MethodPatch:
-			updateChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, telegramClient)
+			updateChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, telegramClient, telegramMode)
 		case nethttp.MethodDelete:
-			deleteChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, pool, telegramClient)
+			deleteChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, pool, telegramClient, telegramMode)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -125,6 +127,7 @@ func createChannel(
 	pool data.DB,
 	appBaseURL string,
 	telegramClient *telegrambot.Client,
+	telegramMode string,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
 	if authService == nil {
@@ -238,7 +241,7 @@ func createChannel(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 			return
 		}
-		if err := configureTelegramRemote(r.Context(), telegramClient, req.BotToken, ch); err != nil {
+		if err := configureTelegramActivationRemote(r.Context(), telegramClient, req.BotToken, ch, telegramMode); err != nil {
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", err.Error(), traceID, nil)
 			return
 		}
@@ -344,6 +347,7 @@ func updateChannel(
 	secretsRepo *data.SecretsRepository,
 	pool data.DB,
 	telegramClient *telegrambot.Client,
+	telegramMode string,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -474,7 +478,7 @@ func updateChannel(
 			return
 		}
 		if !ch.IsActive || (req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "") {
-			if err := configureTelegramRemote(r.Context(), telegramClient, nextToken, desiredChannel); err != nil {
+			if err := configureTelegramActivationRemote(r.Context(), telegramClient, nextToken, desiredChannel, telegramMode); err != nil {
 				httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", err.Error(), traceID, nil)
 				return
 			}
@@ -486,7 +490,7 @@ func updateChannel(
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", "telegram token unavailable", traceID, nil)
 			return
 		}
-		if err := disableTelegramRemote(r.Context(), telegramClient, nextToken); err != nil {
+		if err := disableTelegramActivationRemote(r.Context(), telegramClient, nextToken, telegramMode); err != nil {
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", err.Error(), traceID, nil)
 			return
 		}
@@ -521,6 +525,7 @@ func deleteChannel(
 	secretsRepo *data.SecretsRepository,
 	pool data.DB,
 	telegramClient *telegrambot.Client,
+	telegramMode string,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -573,7 +578,7 @@ func deleteChannel(
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", "telegram token unavailable", traceID, nil)
 			return
 		}
-		if err := disableTelegramRemote(r.Context(), telegramClient, token); err != nil {
+		if err := disableTelegramActivationRemote(r.Context(), telegramClient, token, telegramMode); err != nil {
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", err.Error(), traceID, nil)
 			return
 		}

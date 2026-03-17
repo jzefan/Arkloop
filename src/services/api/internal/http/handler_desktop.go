@@ -80,6 +80,7 @@ type HandlerConfig struct {
 	EmailVerifyService    *auth.EmailVerifyService
 	EmailOTPLoginService  *auth.EmailOTPLoginService
 	AccountService        *auth.AccountService
+	AppBaseURL            string
 	AccountMembershipRepo *data.AccountMembershipRepository
 	ThreadRepo            *data.ThreadRepository
 	ThreadStarRepo        *data.ThreadStarRepository
@@ -316,7 +317,8 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:           cfg.CreditsRepo,
 		PersonasRepo:          cfg.PersonasRepo,
 		TelegramBotClient:     telegramClient,
-		AppBaseURL:            "",
+		TelegramMode:          "polling",
+		AppBaseURL:            cfg.AppBaseURL,
 		EnvironmentStore:      cfg.EnvironmentStore,
 		RunEventRepo:          cfg.RunEventRepo,
 		GatewayRedisClient:    nil,

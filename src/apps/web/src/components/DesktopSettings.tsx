@@ -5,6 +5,7 @@ import {
   Settings,
   Cpu,
   Bot,
+  Radio,
   Puzzle,
   Server,
   Wifi,
@@ -24,6 +25,7 @@ import {
   ProvidersSettings,
   RoutingSettings,
   PersonasSettings,
+  DesktopChannelsSettings,
   SkillsSettings,
   MCPSettings,
   SearchFetchSettings,
@@ -40,6 +42,7 @@ export type DesktopSettingsKey =
   | "providers"
   | "routing"
   | "personas"
+  | "channels"
   | "skills"
   | "mcp"
   | "searchFetch"
@@ -60,6 +63,7 @@ const MAIN_NAV: NavItem[] = [
   { key: "providers",  icon: Cpu },
   { key: "routing",    icon: Route },
   { key: "personas",   icon: Bot },
+  { key: "channels",   icon: Radio },
   { key: "skills",     icon: Puzzle },
   { key: "mcp",        icon: Server },
   { key: "searchFetch",icon: Globe },
@@ -141,6 +145,8 @@ export function DesktopSettings({
         return <RoutingSettings accessToken={accessToken} />;
       case "personas":
         return <PersonasSettings accessToken={accessToken} />;
+      case "channels":
+        return <DesktopChannelsSettings accessToken={accessToken} />;
       case "skills":
         return (
           <SkillsSettings accessToken={accessToken} onTrySkill={onTrySkill} />

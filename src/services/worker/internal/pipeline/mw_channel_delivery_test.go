@@ -46,6 +46,17 @@ func TestSplitTelegramMessageFallsBackToHardLimit(t *testing.T) {
 	}
 }
 
+func TestSplitTelegramMessagePreservesUTF8Boundaries(t *testing.T) {
+	input := "你好世界今天"
+	segments := splitTelegramMessage(input, 3)
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(segments))
+	}
+	if strings.Join(segments, "") != input {
+		t.Fatalf("expected segments to reconstruct original text, got %#v", segments)
+	}
+}
+
 func TestRecordChannelDeliveryFailureAppendsRunEvent(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery")
 	pool, err := pgxpool.New(context.Background(), db.DSN)

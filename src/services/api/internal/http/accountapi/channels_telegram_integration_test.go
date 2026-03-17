@@ -480,6 +480,7 @@ func TestTelegramWebhookRejectsUserOutsideAllowlistWithoutCreatingConversation(t
 	}
 
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_identities`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_receipts`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 0)

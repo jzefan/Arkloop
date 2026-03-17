@@ -7,6 +7,7 @@ export { DesktopAppearanceSettings } from "./DesktopAppearanceSettings";
 export { ProvidersSettings } from "./ProvidersSettings";
 export { RoutingSettings } from "./RoutingSettings";
 export { PersonasSettings } from "./PersonasSettings";
+export { DesktopChannelsSettings } from "./DesktopChannelsSettings";
 export { SkillsSettings } from "./SkillsSettings";
 export { MCPSettings } from "./MCPSettings";
 export { ConnectorsSettings } from "./ConnectorsSettings";

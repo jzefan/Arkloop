@@ -440,6 +440,166 @@ func TestDesktopEventWriterTouchesRunActivityOnNonTerminalCommit(t *testing.T) {
 	}
 }
 
+func TestDesktopChannelContextOverridesUserIDFromPayload(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	if _, err := db.Exec(
+		ctx,
+		`CREATE TABLE channel_identities (
+			id TEXT PRIMARY KEY,
+			channel_type TEXT NOT NULL,
+			platform_subject_id TEXT NOT NULL,
+			user_id TEXT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+	); err != nil {
+		t.Fatalf("create channel_identities table: %v", err)
+	}
+
+	identityID := uuid.New()
+	senderUserID := uuid.New()
+	if _, err := db.Exec(
+		ctx,
+		`INSERT INTO channel_identities (id, channel_type, platform_subject_id, user_id, metadata_json)
+		 VALUES ($1, 'telegram', '10001', $2, '{}')`,
+		identityID,
+		senderUserID,
+	); err != nil {
+		t.Fatalf("insert channel identity: %v", err)
+	}
+
+	originalUserID := uuid.New()
+	channelID := uuid.New()
+	rc := &pipeline.RunContext{
+		UserID: &originalUserID,
+		JobPayload: map[string]any{
+			"channel_delivery": map[string]any{
+				"channel_id":                 channelID.String(),
+				"channel_type":               "telegram",
+				"platform_chat_id":           "10001",
+				"sender_channel_identity_id": identityID.String(),
+			},
+		},
+	}
+
+	mw := desktopChannelContext(db)
+	if err := mw(ctx, rc, func(_ context.Context, rc *pipeline.RunContext) error {
+		if rc.ChannelContext == nil {
+			t.Fatal("expected channel context to be populated")
+		}
+		if rc.UserID == nil || *rc.UserID != senderUserID {
+			t.Fatalf("expected user override to sender user, got %#v", rc.UserID)
+		}
+		if rc.ChannelContext.SenderUserID == nil || *rc.ChannelContext.SenderUserID != senderUserID {
+			t.Fatalf("unexpected sender user id: %#v", rc.ChannelContext.SenderUserID)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("desktop channel context failed: %v", err)
+	}
+}
+
+func TestDesktopChannelDeliveryRecordsFailureWhenChannelMissing(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS channels (
+			id TEXT PRIMARY KEY,
+			channel_type TEXT NOT NULL,
+			credentials_id TEXT NULL,
+			is_active INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS secrets (
+			id TEXT PRIMARY KEY,
+			encrypted_value TEXT NULL,
+			key_version INTEGER NULL
+		)`,
+	} {
+		if _, err := db.Exec(ctx, stmt); err != nil {
+			t.Fatalf("create channel tables: %v", err)
+		}
+	}
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-channel-test-" + accountID.String(), "Desktop Channel Test"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Channel Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	rc := &pipeline.RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "你好，来自 desktop。",
+		ChannelContext: &pipeline.ChannelContext{
+			ChannelID:      uuid.New(),
+			ChannelType:    "telegram",
+			PlatformChatID: "10001",
+		},
+	}
+
+	mw := desktopChannelDelivery(db)
+	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
+		t.Fatalf("desktop channel delivery middleware failed: %v", err)
+	}
+
+	var errorMessage string
+	if err := db.QueryRow(
+		ctx,
+		`SELECT json_extract(data_json, '$.error')
+		   FROM run_events
+		  WHERE run_id = $1
+		    AND type = 'run.channel_delivery_failed'
+		  ORDER BY seq DESC
+		  LIMIT 1`,
+		runID,
+	).Scan(&errorMessage); err != nil {
+		t.Fatalf("load delivery failure event: %v", err)
+	}
+	if errorMessage != "channel not found or inactive" {
+		t.Fatalf("unexpected delivery failure error: %q", errorMessage)
+	}
+}
+
 func dataRunForDesktopTest() data.Run {
 	return data.Run{
 		ID:        uuid.New(),

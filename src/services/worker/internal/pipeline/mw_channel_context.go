@@ -30,7 +30,7 @@ func NewChannelContextMiddleware(pool *pgxpool.Pool) RunMiddleware {
 		if !ok || len(rawDelivery) == 0 {
 			return next(ctx, rc)
 		}
-		channelCtx, err := parseChannelContext(rawDelivery)
+		channelCtx, err := ParseChannelContextPayload(rawDelivery)
 		if err != nil {
 			return err
 		}
@@ -49,6 +49,10 @@ func NewChannelContextMiddleware(pool *pgxpool.Pool) RunMiddleware {
 		}
 		return next(ctx, rc)
 	}
+}
+
+func ParseChannelContextPayload(payload map[string]any) (*ChannelContext, error) {
+	return parseChannelContext(payload)
 }
 
 func parseChannelContext(payload map[string]any) (*ChannelContext, error) {

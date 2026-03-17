@@ -337,6 +337,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:           cfg.CreditsRepo,
 		PersonasRepo:          cfg.PersonasRepo,
 		TelegramBotClient:     telegramClient,
+		TelegramMode:          "webhook",
 		AppBaseURL:            cfg.AppBaseURL,
 		EnvironmentStore:      cfg.EnvironmentStore,
 		RunEventRepo:          cfg.RunEventRepo,

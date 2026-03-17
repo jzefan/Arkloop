@@ -52,6 +52,13 @@ type SendMessageRequest struct {
 	ParseMode string `json:"parse_mode,omitempty"`
 }
 
+type GetUpdatesRequest struct {
+	Offset         *int64   `json:"offset,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	TimeoutSeconds int      `json:"timeout,omitempty"`
+	Updates        []string `json:"allowed_updates,omitempty"`
+}
+
 type apiEnvelope struct {
 	OK          bool            `json:"ok"`
 	Description string          `json:"description"`
@@ -72,6 +79,10 @@ func (c *Client) SetMyCommands(ctx context.Context, token string, commands []Bot
 
 func (c *Client) SendMessage(ctx context.Context, token string, req SendMessageRequest) error {
 	return c.callJSON(ctx, token, "sendMessage", req, nil)
+}
+
+func (c *Client) GetUpdates(ctx context.Context, token string, req GetUpdatesRequest, out any) error {
+	return c.callJSON(ctx, token, "getUpdates", req, out)
 }
 
 func (c *Client) callJSON(ctx context.Context, token string, method string, body any, out any) error {

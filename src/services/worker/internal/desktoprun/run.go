@@ -128,6 +128,7 @@ func (h *desktopHandler) Handle(ctx context.Context, lease queue.JobLease) error
 	jobType, _ := lease.PayloadJSON["type"].(string)
 	traceID, _ := lease.PayloadJSON["trace_id"].(string)
 	runIDStr, _ := lease.PayloadJSON["run_id"].(string)
+	jobPayload := leasePayloadMap(lease.PayloadJSON)
 
 	runID, err := uuid.Parse(runIDStr)
 	if err != nil {
@@ -195,7 +196,7 @@ func (h *desktopHandler) Handle(ctx context.Context, lease queue.JobLease) error
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	if err := h.engine.Execute(ctx, *run, traceID); err != nil {
+	if err := h.engine.Execute(ctx, *run, traceID, jobPayload); err != nil {
 		slog.ErrorContext(ctx, "desktop engine execute failed", "run_id", runIDStr, "err", err)
 		return err
 	}
@@ -221,4 +222,19 @@ func (h *desktopHandler) publishEvent(ctx context.Context, topic string, payload
 func strPtr(v string) *string {
 	s := v
 	return &s
+}
+
+func leasePayloadMap(payloadJSON map[string]any) map[string]any {
+	if len(payloadJSON) == 0 {
+		return nil
+	}
+	rawPayload, ok := payloadJSON["payload"].(map[string]any)
+	if !ok || len(rawPayload) == 0 {
+		return nil
+	}
+	cloned := make(map[string]any, len(rawPayload))
+	for key, value := range rawPayload {
+		cloned[key] = value
+	}
+	return cloned
 }
