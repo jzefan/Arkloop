@@ -23,8 +23,8 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/personas"
-	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/acptoken"
+	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/objectstore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,20 +55,20 @@ type HandlerConfig struct {
 	TrustXForwardedFor       bool
 	MaxInFlight              int
 
-	AuthService          *auth.Service
-	RegistrationService  *auth.RegistrationService
-	EmailVerifyService   *auth.EmailVerifyService
-	EmailOTPLoginService *auth.EmailOTPLoginService
-	AccountService       *auth.AccountService
+	AuthService           *auth.Service
+	RegistrationService   *auth.RegistrationService
+	EmailVerifyService    *auth.EmailVerifyService
+	EmailOTPLoginService  *auth.EmailOTPLoginService
+	AccountService        *auth.AccountService
 	AccountMembershipRepo *data.AccountMembershipRepository
-	ThreadRepo           *data.ThreadRepository
-	ThreadStarRepo       *data.ThreadStarRepository
-	ThreadShareRepo      *data.ThreadShareRepository
-	ThreadReportRepo     *data.ThreadReportRepository
-	MessageRepo          *data.MessageRepository
-	RunEventRepo         *data.RunEventRepository
-	ShellSessionRepo     *data.ShellSessionRepository
-	AuditWriter          *audit.Writer
+	ThreadRepo            *data.ThreadRepository
+	ThreadStarRepo        *data.ThreadStarRepository
+	ThreadShareRepo       *data.ThreadShareRepository
+	ThreadReportRepo      *data.ThreadReportRepository
+	MessageRepo           *data.MessageRepository
+	RunEventRepo          *data.RunEventRepository
+	ShellSessionRepo      *data.ShellSessionRepository
+	AuditWriter           *audit.Writer
 
 	LlmCredentialsRepo           *data.LlmCredentialsRepository
 	LlmRoutesRepo                *data.LlmRoutesRepository
@@ -113,7 +113,7 @@ type HandlerConfig struct {
 	PlatformSettingsRepo *data.PlatformSettingsRepository
 	SmtpProviderRepo     *data.SmtpProviderRepository
 
-	UsersRepo *data.UserRepository
+	UsersRepo   *data.UserRepository
 	AccountRepo *data.AccountRepository
 
 	UserCredentialRepo *data.UserCredentialRepository
@@ -213,22 +213,22 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	}
 
 	authapi.RegisterRoutes(mux, authapi.Deps{
-		AuthService:          cfg.AuthService,
-		RegistrationService:  cfg.RegistrationService,
-		EmailVerifyService:   cfg.EmailVerifyService,
-		EmailOTPLoginService: cfg.EmailOTPLoginService,
-		FeatureFlagService:   cfg.FeatureFlagService,
-		AuditWriter:          cfg.AuditWriter,
-		AccountMembershipRepo:    cfg.AccountMembershipRepo,
-		AccountRepo:              cfg.AccountRepo,
-		UserCredentialRepo:   cfg.UserCredentialRepo,
-		UsersRepo:            cfg.UsersRepo,
-		ConfigResolver:       resolver,
+		AuthService:           cfg.AuthService,
+		RegistrationService:   cfg.RegistrationService,
+		EmailVerifyService:    cfg.EmailVerifyService,
+		EmailOTPLoginService:  cfg.EmailOTPLoginService,
+		FeatureFlagService:    cfg.FeatureFlagService,
+		AuditWriter:           cfg.AuditWriter,
+		AccountMembershipRepo: cfg.AccountMembershipRepo,
+		AccountRepo:           cfg.AccountRepo,
+		UserCredentialRepo:    cfg.UserCredentialRepo,
+		UsersRepo:             cfg.UsersRepo,
+		ConfigResolver:        resolver,
 	})
 
 	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
 		AuthService:              cfg.AuthService,
-		AccountMembershipRepo:        cfg.AccountMembershipRepo,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
 		ThreadRepo:               cfg.ThreadRepo,
 		ThreadStarRepo:           cfg.ThreadStarRepo,
 		ThreadShareRepo:          cfg.ThreadShareRepo,
@@ -254,7 +254,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	catalogapi.RegisterRoutes(mux, catalogapi.Deps{
 		AuthService:                  cfg.AuthService,
-		AccountMembershipRepo:            cfg.AccountMembershipRepo,
+		AccountMembershipRepo:        cfg.AccountMembershipRepo,
 		LlmCredentialsRepo:           cfg.LlmCredentialsRepo,
 		LlmRoutesRepo:                cfg.LlmRoutesRepo,
 		SecretsRepo:                  cfg.SecretsRepo,
@@ -283,20 +283,20 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{
-		AuthService:         cfg.AuthService,
-		AccountMembershipRepo:   cfg.AccountMembershipRepo,
-		PlansRepo:           cfg.PlansRepo,
-		EntitlementsRepo:    cfg.EntitlementsRepo,
-		APIKeysRepo:         cfg.APIKeysRepo,
-		SubscriptionsRepo:   cfg.SubscriptionsRepo,
-		EntitlementService:  cfg.EntitlementService,
-		UsageRepo:           cfg.UsageRepo,
-		CreditsRepo:         cfg.CreditsRepo,
-		InviteCodesRepo:     cfg.InviteCodesRepo,
-		ReferralsRepo:       cfg.ReferralsRepo,
-		RedemptionCodesRepo: cfg.RedemptionCodesRepo,
-		AuditWriter:         cfg.AuditWriter,
-		Pool:                cfg.Pool,
+		AuthService:           cfg.AuthService,
+		AccountMembershipRepo: cfg.AccountMembershipRepo,
+		PlansRepo:             cfg.PlansRepo,
+		EntitlementsRepo:      cfg.EntitlementsRepo,
+		APIKeysRepo:           cfg.APIKeysRepo,
+		SubscriptionsRepo:     cfg.SubscriptionsRepo,
+		EntitlementService:    cfg.EntitlementService,
+		UsageRepo:             cfg.UsageRepo,
+		CreditsRepo:           cfg.CreditsRepo,
+		InviteCodesRepo:       cfg.InviteCodesRepo,
+		ReferralsRepo:         cfg.ReferralsRepo,
+		RedemptionCodesRepo:   cfg.RedemptionCodesRepo,
+		AuditWriter:           cfg.AuditWriter,
+		Pool:                  cfg.Pool,
 	})
 
 	accountapi.RegisterRoutes(mux, accountapi.Deps{
@@ -310,12 +310,14 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		Pool:                  cfg.Pool,
 		AccountRepo:           cfg.AccountRepo,
 		AccountService:        cfg.AccountService,
-		WebhookRepo:              cfg.WebhookRepo,
-		SecretsRepo:              cfg.SecretsRepo,
-		ChannelsRepo:             cfg.ChannelsRepo,
-		ChannelIdentitiesRepo:    cfg.ChannelIdentitiesRepo,
-		ChannelBindCodesRepo:     cfg.ChannelBindCodesRepo,
-		AppBaseURL:               cfg.AppBaseURL,
+		WebhookRepo:           cfg.WebhookRepo,
+		SecretsRepo:           cfg.SecretsRepo,
+		LlmCredentialsRepo:    cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:         cfg.LlmRoutesRepo,
+		ChannelsRepo:          cfg.ChannelsRepo,
+		ChannelIdentitiesRepo: cfg.ChannelIdentitiesRepo,
+		ChannelBindCodesRepo:  cfg.ChannelBindCodesRepo,
+		AppBaseURL:            cfg.AppBaseURL,
 		EnvironmentStore:      cfg.EnvironmentStore,
 		RunEventRepo:          cfg.RunEventRepo,
 		GatewayRedisClient:    gatewayRedis,
@@ -324,62 +326,62 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{
-		AuthService:          cfg.AuthService,
-		AccountMembershipRepo:    cfg.AccountMembershipRepo,
-		FeatureFlagsRepo:     cfg.FeatureFlagsRepo,
-		FeatureFlagService:   cfg.FeatureFlagService,
-		APIKeysRepo:          cfg.APIKeysRepo,
-		AuditWriter:          cfg.AuditWriter,
-		IPRulesRepo:          cfg.IPRulesRepo,
-		GatewayRedisClient:   gatewayRedis,
-		NotificationsRepo:    cfg.NotificationsRepo,
-		AuditLogRepo:         cfg.AuditLogRepo,
-		PlatformSettingsRepo: cfg.PlatformSettingsRepo,
-		RedisClient:          cfg.RedisClient,
-		ConfigInvalidator:    invalidator,
-		ConfigRegistry:       registry,
+		AuthService:           cfg.AuthService,
+		AccountMembershipRepo: cfg.AccountMembershipRepo,
+		FeatureFlagsRepo:      cfg.FeatureFlagsRepo,
+		FeatureFlagService:    cfg.FeatureFlagService,
+		APIKeysRepo:           cfg.APIKeysRepo,
+		AuditWriter:           cfg.AuditWriter,
+		IPRulesRepo:           cfg.IPRulesRepo,
+		GatewayRedisClient:    gatewayRedis,
+		NotificationsRepo:     cfg.NotificationsRepo,
+		AuditLogRepo:          cfg.AuditLogRepo,
+		PlatformSettingsRepo:  cfg.PlatformSettingsRepo,
+		RedisClient:           cfg.RedisClient,
+		ConfigInvalidator:     invalidator,
+		ConfigRegistry:        registry,
 	})
 
 	adminapi.RegisterRoutes(mux, adminapi.Deps{
-		AuthService:          cfg.AuthService,
-		AccountMembershipRepo:    cfg.AccountMembershipRepo,
-		UsersRepo:            cfg.UsersRepo,
-		RunEventRepo:         cfg.RunEventRepo,
-		UsageRepo:            cfg.UsageRepo,
-		AccountRepo:              cfg.AccountRepo,
-		APIKeysRepo:          cfg.APIKeysRepo,
-		MessageRepo:          cfg.MessageRepo,
-		LlmCredentialsRepo:   cfg.LlmCredentialsRepo,
-		ThreadRepo:           cfg.ThreadRepo,
-		ThreadReportRepo:     cfg.ThreadReportRepo,
-		AuditWriter:          cfg.AuditWriter,
-		InviteCodesRepo:      cfg.InviteCodesRepo,
-		ReferralsRepo:        cfg.ReferralsRepo,
-		CreditsRepo:          cfg.CreditsRepo,
-		RedemptionCodesRepo:  cfg.RedemptionCodesRepo,
-		NotificationsRepo:    cfg.NotificationsRepo,
-		Pool:                 cfg.Pool,
-		Logger:               cfg.Logger,
-		GatewayRedisClient:   gatewayRedis,
-		PlatformSettingsRepo: cfg.PlatformSettingsRepo,
-		ConfigResolver:       resolver,
-		ConfigInvalidator:    invalidator,
-		ConfigRegistry:       registry,
-		PersonasRepo:         cfg.PersonasRepo,
-		RepoPersonas:         cfg.RepoPersonas,
-		JobRepo:              cfg.JobRepo,
-		SmtpProviderRepo:     cfg.SmtpProviderRepo,
-		UserCredentialRepo:   cfg.UserCredentialRepo,
+		AuthService:           cfg.AuthService,
+		AccountMembershipRepo: cfg.AccountMembershipRepo,
+		UsersRepo:             cfg.UsersRepo,
+		RunEventRepo:          cfg.RunEventRepo,
+		UsageRepo:             cfg.UsageRepo,
+		AccountRepo:           cfg.AccountRepo,
+		APIKeysRepo:           cfg.APIKeysRepo,
+		MessageRepo:           cfg.MessageRepo,
+		LlmCredentialsRepo:    cfg.LlmCredentialsRepo,
+		ThreadRepo:            cfg.ThreadRepo,
+		ThreadReportRepo:      cfg.ThreadReportRepo,
+		AuditWriter:           cfg.AuditWriter,
+		InviteCodesRepo:       cfg.InviteCodesRepo,
+		ReferralsRepo:         cfg.ReferralsRepo,
+		CreditsRepo:           cfg.CreditsRepo,
+		RedemptionCodesRepo:   cfg.RedemptionCodesRepo,
+		NotificationsRepo:     cfg.NotificationsRepo,
+		Pool:                  cfg.Pool,
+		Logger:                cfg.Logger,
+		GatewayRedisClient:    gatewayRedis,
+		PlatformSettingsRepo:  cfg.PlatformSettingsRepo,
+		ConfigResolver:        resolver,
+		ConfigInvalidator:     invalidator,
+		ConfigRegistry:        registry,
+		PersonasRepo:          cfg.PersonasRepo,
+		RepoPersonas:          cfg.RepoPersonas,
+		JobRepo:               cfg.JobRepo,
+		SmtpProviderRepo:      cfg.SmtpProviderRepo,
+		UserCredentialRepo:    cfg.UserCredentialRepo,
 	})
 
 	llmproxyapi.RegisterRoutes(mux, llmproxyapi.Deps{
 		TokenValidator: cfg.ACPTokenValidator,
-		LlmCredRepo:   cfg.LlmCredentialsRepo,
-		LlmRoutesRepo: cfg.LlmRoutesRepo,
-		SecretsRepo:   cfg.SecretsRepo,
-		Pool:          cfg.Pool,
-		RedisClient:   cfg.RedisClient,
-		RunEventRepo:  cfg.RunEventRepo,
+		LlmCredRepo:    cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:  cfg.LlmRoutesRepo,
+		SecretsRepo:    cfg.SecretsRepo,
+		Pool:           cfg.Pool,
+		RedisClient:    cfg.RedisClient,
+		RunEventRepo:   cfg.RunEventRepo,
 	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

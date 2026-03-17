@@ -133,7 +133,7 @@ export function RoutingSettings({ accessToken }: Props) {
 
   const modelOptions: Option[] = providers
     .flatMap(p => p.models.filter(m => m.show_in_picker).map(m => ({
-      value: `${p.provider}^${m.model}`,
+      value: `${p.name}^${m.model}`,
       label: `${p.name} / ${m.model}`,
     })))
 

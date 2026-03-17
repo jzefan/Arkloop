@@ -21,7 +21,13 @@ import {
   type ModuleStatus,
   type ModuleAction,
 } from '../../api-bridge'
-import { listLlmProviders, type LlmProvider } from '../../api'
+import {
+  isApiError,
+  listLlmProviders,
+  resolveOpenVikingConfig,
+  setSpawnProfile,
+  type LlmProvider,
+} from '../../api'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 
 // ---------------------------------------------------------------------------
@@ -262,7 +268,84 @@ function OVModuleCard({ bridgeOnline, module, actionInProgress, onAction }: OVMo
 // OpenViking configure form
 // ---------------------------------------------------------------------------
 
-const EMBEDDING_PROVIDERS = ['openai', 'volcengine', 'jina', 'ollama'] as const
+const OPENVIKING_COMPATIBLE_PROVIDER = 'openai'
+
+type ProviderModelOption = {
+  value: string
+  label: string
+  model: string
+  providerKind: string
+  apiBase?: string
+}
+
+type OVSelectionField = {
+  selector: keyof Pick<OpenVikingDesktopConfig, 'vlmSelector' | 'embeddingSelector'>
+  model: keyof Pick<OpenVikingDesktopConfig, 'vlmModel' | 'embeddingModel'>
+  provider: keyof Pick<OpenVikingDesktopConfig, 'vlmProvider' | 'embeddingProvider'>
+  apiKey: keyof Pick<OpenVikingDesktopConfig, 'vlmApiKey' | 'embeddingApiKey'>
+  apiBase: keyof Pick<OpenVikingDesktopConfig, 'vlmApiBase' | 'embeddingApiBase'>
+}
+
+function buildOpenVikingModelOptions(
+  providers: LlmProvider[],
+  filter: (provider: LlmProvider, model: LlmProvider['models'][number]) => boolean,
+): ProviderModelOption[] {
+  return providers.flatMap((provider) =>
+    provider.models
+      .filter((model) => filter(provider, model))
+      .map((model) => ({
+        value: `${provider.name}^${model.model}`,
+        label: `${provider.name} · ${model.model}`,
+        model: model.model,
+        providerKind: provider.provider,
+        apiBase: provider.base_url ?? undefined,
+      })),
+  )
+}
+
+function resolveCurrentSelector(
+  selector: string | undefined,
+  model: string | undefined,
+  options: ProviderModelOption[],
+): string {
+  const exact = selector?.trim()
+  if (exact && options.some((option) => option.value === exact)) {
+    return exact
+  }
+  const modelName = model?.trim()
+  if (!modelName) {
+    return ''
+  }
+  const matches = options.filter((option) => option.model === modelName)
+  return matches.length === 1 ? matches[0].value : ''
+}
+
+function applySelectedOption(
+  ov: OpenVikingDesktopConfig,
+  value: string,
+  field: OVSelectionField,
+  options: ProviderModelOption[],
+): OpenVikingDesktopConfig {
+  if (!value) {
+    return {
+      ...ov,
+      [field.selector]: undefined,
+      [field.model]: undefined,
+      [field.provider]: undefined,
+      [field.apiKey]: undefined,
+      [field.apiBase]: undefined,
+    }
+  }
+  const option = options.find((item) => item.value === value)
+  return {
+    ...ov,
+    [field.selector]: value,
+    [field.model]: option?.model ?? value.split('^').slice(1).join('^'),
+    [field.provider]: option?.providerKind ?? OPENVIKING_COMPATIBLE_PROVIDER,
+    [field.apiKey]: undefined,
+    [field.apiBase]: option?.apiBase ?? undefined,
+  }
+}
 
 type OVConfigFormProps = {
   ov: OpenVikingDesktopConfig
@@ -275,53 +358,26 @@ type OVConfigFormProps = {
 }
 
 function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds }: OVConfigFormProps) {
-  // VLM: show_in_picker models (chat models the user has already enabled)
-  const vlmOptions = providers.flatMap((p) =>
-    p.models
-      .filter((m) => m.show_in_picker)
-      .map((m) => ({ value: `${p.name}^${m.model}`, label: `${p.name} · ${m.model}` })),
+  const vlmOptions = buildOpenVikingModelOptions(
+    providers,
+    (provider, model) =>
+      provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+      && model.show_in_picker
+      && !model.tags.includes('embedding'),
   )
 
-  // Embedding: only models tagged 'embedding', but NOT restricted to show_in_picker.
-  // This lets embedding-specific models (e.g. text-embedding-3-small) appear without
-  // the user needing to manually toggle show_in_picker for them.
-  const embeddingOptions = providers.flatMap((p) =>
-    p.models
-      .filter((m) => m.tags.includes('embedding'))
-      .map((m) => ({ value: `${p.name}^${m.model}`, label: `${p.name} · ${m.model}` })),
+  const embeddingOptions = buildOpenVikingModelOptions(
+    providers,
+    (provider, model) =>
+      provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+      && model.tags.includes('embedding'),
   )
 
-  const handleModelSelect = (
-    value: string,
-    field: { model: keyof OpenVikingDesktopConfig; provider: keyof OpenVikingDesktopConfig; apiBase: keyof OpenVikingDesktopConfig },
-  ) => {
-    if (!value) {
-      onChange({ ...ov, [field.model]: undefined, [field.provider]: undefined })
-      return
-    }
-    const parts = value.split('^')
-    const modelName = parts.slice(1).join('^')
-    const providerName = parts[0]
-    const p = providers.find((pr) => pr.name === providerName)
-    onChange({
-      ...ov,
-      [field.model]: modelName,
-      [field.provider]: p?.provider ?? 'openai',
-      [field.apiBase]: p?.base_url ?? (ov[field.apiBase] as string | undefined),
-    })
-  }
-
-  const currentVlm = ov.vlmModel
-    ? vlmOptions.find((o) => o.value.endsWith(`^${ov.vlmModel}`))?.value ?? ''
-    : ''
-
-  const currentEmb = ov.embeddingModel
-    ? embeddingOptions.find((o) => o.value.endsWith(`^${ov.embeddingModel}`))?.value ?? ''
-    : ''
+  const currentVlm = resolveCurrentSelector(ov.vlmSelector, ov.vlmModel, vlmOptions)
+  const currentEmb = resolveCurrentSelector(ov.embeddingSelector, ov.embeddingModel, embeddingOptions)
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Root API Key */}
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryOpenvikingRootApiKey}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryOpenvikingRootApiKeyDesc}</p>
@@ -334,57 +390,50 @@ function OVConfigForm({ ov, providers, onChange, onSave, saving, saveResult, ds 
         />
       </div>
 
-      {/* VLM model */}
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryToolModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryToolModelDesc}</p>
         <select
           value={currentVlm}
-          onChange={(e) => handleModelSelect(e.target.value, { model: 'vlmModel', provider: 'vlmProvider', apiBase: 'vlmApiBase' })}
+          onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
+            selector: 'vlmSelector',
+            model: 'vlmModel',
+            provider: 'vlmProvider',
+            apiKey: 'vlmApiKey',
+            apiBase: 'vlmApiBase',
+          }, vlmOptions))}
           className={inputCls}
         >
-          <option value="">— {vlmOptions.length === 0 ? 'No models configured' : 'Select a model'} —</option>
+          <option value="">— {vlmOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
           {vlmOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        {ov.vlmModel && (
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <input type="password" value={ov.vlmApiKey ?? ''} onChange={(e) => onChange({ ...ov, vlmApiKey: e.target.value || undefined })} className={inputCls} placeholder="API Key" />
-            <input type="text" value={ov.vlmApiBase ?? ''} onChange={(e) => onChange({ ...ov, vlmApiBase: e.target.value || undefined })} className={inputCls} placeholder="API Base URL" />
-          </div>
+        {vlmOptions.length === 0 && (
+          <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoCompatibleModels}</p>
         )}
       </div>
 
-      {/* Embedding model */}
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryEmbeddingModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryEmbeddingModelDesc}</p>
         <select
           value={currentEmb}
-          onChange={(e) => handleModelSelect(e.target.value, { model: 'embeddingModel', provider: 'embeddingProvider', apiBase: 'embeddingApiBase' })}
+          onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
+            selector: 'embeddingSelector',
+            model: 'embeddingModel',
+            provider: 'embeddingProvider',
+            apiKey: 'embeddingApiKey',
+            apiBase: 'embeddingApiBase',
+          }, embeddingOptions))}
           className={inputCls}
         >
-          <option value="">— {embeddingOptions.length === 0 ? 'No models configured' : 'Select a model'} —</option>
+          <option value="">— {embeddingOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
           {embeddingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        {ov.embeddingModel && (
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-[10px] text-[var(--c-text-muted)]">{ds.memoryEmbeddingProvider}</label>
-              <select value={ov.embeddingProvider ?? 'openai'} onChange={(e) => onChange({ ...ov, embeddingProvider: e.target.value })} className={inputCls}>
-                {EMBEDDING_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-[10px] text-[var(--c-text-muted)]">{ds.memoryEmbeddingDimension}</label>
-              <input type="number" value={ov.embeddingDimension ?? 1024} onChange={(e) => onChange({ ...ov, embeddingDimension: Number(e.target.value) || 1024 })} className={inputCls} min={1} />
-            </div>
-            <input type="password" value={ov.embeddingApiKey ?? ''} onChange={(e) => onChange({ ...ov, embeddingApiKey: e.target.value || undefined })} className={inputCls} placeholder={ds.memoryEmbeddingApiKey} />
-            <input type="text" value={ov.embeddingApiBase ?? ''} onChange={(e) => onChange({ ...ov, embeddingApiBase: e.target.value || undefined })} className={inputCls} placeholder={ds.memoryEmbeddingApiBase} />
-          </div>
+        {embeddingOptions.length === 0 && (
+          <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoEmbeddingModels}</p>
         )}
       </div>
 
-      {/* Save */}
       <div className="flex items-center gap-3">
         <button
           onClick={onSave}
@@ -481,11 +530,60 @@ export function MemorySettings({ accessToken }: Props) {
     try { setProviders(await listLlmProviders(accessToken)) } catch { /* ignore */ }
   }, [accessToken])
 
+  const syncLegacySelectors = useCallback((draft: OpenVikingDesktopConfig): OpenVikingDesktopConfig => {
+    const vlmOptions = buildOpenVikingModelOptions(
+      providers,
+      (provider, model) =>
+        provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+        && model.show_in_picker
+        && !model.tags.includes('embedding'),
+    )
+    const embeddingOptions = buildOpenVikingModelOptions(
+      providers,
+      (provider, model) =>
+        provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+        && model.tags.includes('embedding'),
+    )
+
+    let next = draft
+    const currentVlm = resolveCurrentSelector(draft.vlmSelector, draft.vlmModel, vlmOptions)
+    if (currentVlm && currentVlm !== draft.vlmSelector) {
+      next = applySelectedOption(next, currentVlm, {
+        selector: 'vlmSelector',
+        model: 'vlmModel',
+        provider: 'vlmProvider',
+        apiKey: 'vlmApiKey',
+        apiBase: 'vlmApiBase',
+      }, vlmOptions)
+    }
+    const currentEmbedding = resolveCurrentSelector(draft.embeddingSelector, draft.embeddingModel, embeddingOptions)
+    if (currentEmbedding && currentEmbedding !== draft.embeddingSelector) {
+      next = applySelectedOption(next, currentEmbedding, {
+        selector: 'embeddingSelector',
+        model: 'embeddingModel',
+        provider: 'embeddingProvider',
+        apiKey: 'embeddingApiKey',
+        apiBase: 'embeddingApiBase',
+      }, embeddingOptions)
+    }
+    return next
+  }, [providers])
+
   useEffect(() => {
     void loadData()
     void loadBridge()
     void loadProviders()
   }, [loadData, loadBridge, loadProviders])
+
+  useEffect(() => {
+    if (providers.length === 0) {
+      return
+    }
+    setOvDraft((prev) => {
+      const next = syncLegacySelectors(prev)
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next
+    })
+  }, [providers, syncLegacySelectors])
 
   useEffect(() => {
     const onVisible = () => {
@@ -523,18 +621,50 @@ export function MemorySettings({ accessToken }: Props) {
   }, [loadBridge])
 
   const handleConfigure = useCallback(async () => {
-    setConfiguring(true); setConfigureResult(null)
+    setConfiguring(true); setConfigureResult(null); setBridgeError(null)
     try {
+      if (!accessToken) {
+        throw new Error(ds.memoryConfigureError)
+      }
+
+      const vlmOptions = buildOpenVikingModelOptions(
+        providers,
+        (provider, model) =>
+          provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+          && model.show_in_picker
+          && !model.tags.includes('embedding'),
+      )
+      const embeddingOptions = buildOpenVikingModelOptions(
+        providers,
+        (provider, model) =>
+          provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+          && model.tags.includes('embedding'),
+      )
+      const vlmSelector = resolveCurrentSelector(ovDraft.vlmSelector, ovDraft.vlmModel, vlmOptions)
+      const embeddingSelector = resolveCurrentSelector(ovDraft.embeddingSelector, ovDraft.embeddingModel, embeddingOptions)
+      if (!vlmSelector || !embeddingSelector) {
+        throw new Error(ds.memoryConfigureMissingModels)
+      }
+
+      const resolved = await resolveOpenVikingConfig(accessToken, {
+        vlm_selector: vlmSelector,
+        embedding_selector: embeddingSelector,
+        embedding_dimension_hint: ovDraft.embeddingDimension,
+      })
+      if (!resolved.vlm || !resolved.embedding) {
+        throw new Error(ds.memoryConfigureError)
+      }
+
       const params: Record<string, string> = {}
-      if (ovDraft.embeddingProvider)   params['embedding.provider']  = ovDraft.embeddingProvider
-      if (ovDraft.embeddingModel)      params['embedding.model']     = ovDraft.embeddingModel
-      if (ovDraft.embeddingApiKey)     params['embedding.api_key']   = ovDraft.embeddingApiKey
-      if (ovDraft.embeddingApiBase)    params['embedding.api_base']  = ovDraft.embeddingApiBase
-      if (ovDraft.embeddingDimension)  params['embedding.dimension'] = String(ovDraft.embeddingDimension)
-      if (ovDraft.vlmProvider)  params['vlm.provider'] = ovDraft.vlmProvider
-      if (ovDraft.vlmModel)     params['vlm.model']    = ovDraft.vlmModel
-      if (ovDraft.vlmApiKey)    params['vlm.api_key']  = ovDraft.vlmApiKey
-      if (ovDraft.vlmApiBase)   params['vlm.api_base'] = ovDraft.vlmApiBase
+      params['embedding.provider'] = resolved.embedding.provider
+      params['embedding.model'] = resolved.embedding.model
+      params['embedding.api_key'] = resolved.embedding.api_key
+      params['embedding.api_base'] = resolved.embedding.api_base
+      params['embedding.dimension'] = String(resolved.embedding.dimension)
+      params['vlm.provider'] = resolved.vlm.provider
+      params['vlm.model'] = resolved.vlm.model
+      params['vlm.api_key'] = resolved.vlm.api_key
+      params['vlm.api_base'] = resolved.vlm.api_base
       if (ovDraft.rootApiKey)   params['root_api_key'] = ovDraft.rootApiKey
 
       const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
@@ -547,14 +677,33 @@ export function MemorySettings({ accessToken }: Props) {
         })
       })
       setConfigureResult('ok')
-      if (memConfig) await saveConfig({ ...memConfig, provider: 'openviking', openviking: ovDraft })
+      const nextOvDraft: OpenVikingDesktopConfig = {
+        ...ovDraft,
+        vlmSelector: resolved.vlm.selector,
+        vlmProvider: resolved.vlm.provider,
+        vlmModel: resolved.vlm.model,
+        vlmApiBase: resolved.vlm.api_base,
+        vlmApiKey: undefined,
+        embeddingSelector: resolved.embedding.selector,
+        embeddingProvider: resolved.embedding.provider,
+        embeddingModel: resolved.embedding.model,
+        embeddingApiBase: resolved.embedding.api_base,
+        embeddingApiKey: undefined,
+        embeddingDimension: resolved.embedding.dimension,
+      }
+      setOvDraft(nextOvDraft)
+      if (memConfig) {
+        await saveConfig({ ...memConfig, provider: 'openviking', openviking: nextOvDraft })
+      }
+      await setSpawnProfile(accessToken, 'tool', resolved.vlm.selector)
       await loadBridge()
-    } catch {
+    } catch (error) {
+      setBridgeError(isApiError(error) ? error.message : error instanceof Error ? error.message : ds.memoryConfigureError)
       setConfigureResult('error')
     } finally {
       setConfiguring(false)
     }
-  }, [ovDraft, memConfig, saveConfig, loadBridge])
+  }, [accessToken, ds.memoryConfigureError, ds.memoryConfigureMissingModels, loadBridge, memConfig, ovDraft, providers, saveConfig])
 
   const handleDelete = useCallback(async (id: string) => {
     if (!api?.memory) return

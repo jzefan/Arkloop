@@ -4,6 +4,7 @@ import type { MeResponse } from '../../api'
 import {
   listLlmProviders,
   listSpawnProfiles,
+  resolveOpenVikingConfig,
   setSpawnProfile,
   deleteSpawnProfile,
 } from '../../api'
@@ -11,6 +12,7 @@ import type { LlmProvider, SpawnProfile } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
 import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
+import { bridgeClient, checkBridgeAvailable } from '../../api-bridge'
 
 type Props = {
   me: MeResponse | null
@@ -20,6 +22,8 @@ type Props = {
 }
 
 type ModelOption = { value: string; label: string }
+
+const OPENVIKING_COMPATIBLE_PROVIDER = 'openai'
 
 function ModelDropdown({
   value,
@@ -38,7 +42,7 @@ function ModelDropdown({
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
-  const currentLabel = options.find(o => o.value === value)?.label ?? placeholder
+  const currentLabel = options.find(o => o.value === value)?.label ?? (value || placeholder)
 
   useEffect(() => {
     if (!open) return
@@ -139,7 +143,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
 
   const modelOptions: ModelOption[] = providers
     .flatMap((p) => p.models.filter((m) => m.show_in_picker).map((m) => ({
-      value: `${p.provider}^${m.model}`,
+      value: `${p.name}^${m.model}`,
       label: `${p.name} / ${m.model}`,
     })))
 
@@ -155,8 +159,113 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       }
       const ps = await listSpawnProfiles(accessToken)
       setToolProfileState(ps.find((p) => p.profile === 'tool') ?? null)
+      void syncToolModelToOpenViking(value)
     } finally {
       setSavingTool(false)
+    }
+  }
+
+  const syncToolModelToOpenViking = async (value: string) => {
+    const desktopApi = getDesktopApi()
+    if (!desktopApi?.config) {
+      return
+    }
+
+    const currentConfig = await desktopApi.config.get()
+    if (currentConfig.memory.provider !== 'openviking') {
+      return
+    }
+
+    const currentOV = currentConfig.memory.openviking ?? {}
+    const providerName = value.split('^', 1)[0] ?? ''
+    const modelName = value.includes('^') ? value.split('^').slice(1).join('^') : ''
+    const matchedProvider = providers.find((provider) => provider.name === providerName)
+
+    let nextOV = {
+      ...currentOV,
+      vlmSelector: value || undefined,
+      vlmModel: modelName || undefined,
+      vlmProvider: matchedProvider?.provider ?? currentOV.vlmProvider,
+      vlmApiKey: undefined,
+      vlmApiBase: matchedProvider?.base_url ?? currentOV.vlmApiBase,
+    }
+    await desktopApi.config.set({
+      ...currentConfig,
+      memory: {
+        ...currentConfig.memory,
+        openviking: nextOV,
+      },
+    })
+
+    if (
+      value === ''
+      || !currentOV.embeddingSelector
+      || matchedProvider?.provider !== OPENVIKING_COMPATIBLE_PROVIDER
+      || !(await checkBridgeAvailable().catch(() => false))
+    ) {
+      return
+    }
+
+    try {
+      const resolved = await resolveOpenVikingConfig(accessToken, {
+        vlm_selector: value,
+        embedding_selector: currentOV.embeddingSelector,
+        embedding_dimension_hint: currentOV.embeddingDimension,
+      })
+      if (!resolved.vlm || !resolved.embedding) {
+        return
+      }
+
+      const params: Record<string, string> = {
+        'embedding.provider': resolved.embedding.provider,
+        'embedding.model': resolved.embedding.model,
+        'embedding.api_key': resolved.embedding.api_key,
+        'embedding.api_base': resolved.embedding.api_base,
+        'embedding.dimension': String(resolved.embedding.dimension),
+        'vlm.provider': resolved.vlm.provider,
+        'vlm.model': resolved.vlm.model,
+        'vlm.api_key': resolved.vlm.api_key,
+        'vlm.api_base': resolved.vlm.api_base,
+      }
+      if (currentOV.rootApiKey) {
+        params.root_api_key = currentOV.rootApiKey
+      }
+
+      const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
+      await new Promise<void>((resolve, reject) => {
+        let done = false
+        const stop = bridgeClient.streamOperation(operation_id, () => {}, (result) => {
+          if (done) return
+          done = true
+          stop()
+          if (result.status === 'completed') resolve()
+          else reject(new Error(result.error ?? 'configure failed'))
+        })
+      })
+
+      nextOV = {
+        ...nextOV,
+        vlmSelector: resolved.vlm.selector,
+        vlmProvider: resolved.vlm.provider,
+        vlmModel: resolved.vlm.model,
+        vlmApiKey: undefined,
+        vlmApiBase: resolved.vlm.api_base,
+        embeddingSelector: resolved.embedding.selector,
+        embeddingProvider: resolved.embedding.provider,
+        embeddingModel: resolved.embedding.model,
+        embeddingApiKey: undefined,
+        embeddingApiBase: resolved.embedding.api_base,
+        embeddingDimension: resolved.embedding.dimension,
+      }
+      await desktopApi.config.set({
+        ...currentConfig,
+        memory: {
+          ...currentConfig.memory,
+          openviking: nextOV,
+        },
+      })
+    } catch {
+      // 工具模型保存不应被 OpenViking 同步失败阻断。
     }
   }
 

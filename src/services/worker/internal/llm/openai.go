@@ -745,14 +745,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				if streamedUsage != nil {
 					details["usage"] = streamedUsage.ToJSON()
 				}
-				// 模型有 reasoning/thinking 输出但无可见内容：属于 provider/model 异常行为，可重试。
-				// 纯空响应（无任何输出）：仍为 internal.error。
-				errClass := ErrorClassInternalError
-				errMsg := "OpenAI stream completed without content"
-				if emittedAnyOutput {
-					errClass = ErrorClassProviderRetryable
-					errMsg = "LLM generated only internal reasoning without visible output"
-				}
+				errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
 				return yield(StreamRunFailed{
 					LlmCallID: llmCallID,
 					Error: GatewayError{
@@ -922,17 +915,10 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				if streamedUsage != nil {
 					details["usage"] = streamedUsage.ToJSON()
 				}
-				// 模型有 reasoning/thinking 输出但无可见内容：属于 provider/model 异常行为，可重试。
-				// 纯空响应（无任何输出）：仍为 internal.error。
-				errClass := ErrorClassInternalError
-				errMsg := "OpenAI stream ended without content"
-				if emittedAnyOutput {
-					errClass = ErrorClassProviderRetryable
-					errMsg = "LLM generated only internal reasoning without visible output"
-				}
-				return yield(StreamRunFailed{
-					LlmCallID: llmCallID,
-					Error: GatewayError{
+					errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
+					return yield(StreamRunFailed{
+						LlmCallID: llmCallID,
+						Error: GatewayError{
 						ErrorClass: errClass,
 						Message:    errMsg,
 						Details:    details,
@@ -999,17 +985,10 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		if streamedUsage != nil {
 			details["usage"] = streamedUsage.ToJSON()
 		}
-		// 模型有 reasoning/thinking 输出但无可见内容：属于 provider/model 异常行为，可重试。
-		// 纯空响应（无任何输出）：仍为 internal.error。
-		errClass := ErrorClassInternalError
-		errMsg := "OpenAI stream completed without content"
-		if emittedAnyOutput {
-			errClass = ErrorClassProviderRetryable
-			errMsg = "LLM generated only internal reasoning without visible output"
-		}
-		return yield(StreamRunFailed{
-			LlmCallID: llmCallID,
-			Error: GatewayError{
+			errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
+			return yield(StreamRunFailed{
+				LlmCallID: llmCallID,
+				Error: GatewayError{
 				ErrorClass: errClass,
 				Message:    errMsg,
 				Details:    details,
@@ -1017,6 +996,18 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 		})
 	}
 	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+}
+
+func openAIChatEmptyStreamFailure(emittedAnyOutput bool, choiceChunkCount int, sawRoleDelta bool, finishReasonSeen bool) (string, string) {
+	// 模型吐出了 thinking，或者至少开始了 choice/role 流，但最终没有任何可见内容，
+	// 这更像 provider/model 侧的异常输出，应该允许 agent loop 自动重试。
+	if emittedAnyOutput {
+		return ErrorClassProviderRetryable, "LLM generated only internal reasoning without visible output"
+	}
+	if choiceChunkCount > 0 || sawRoleDelta || finishReasonSeen {
+		return ErrorClassProviderRetryable, "OpenAI stream emitted metadata without visible output"
+	}
+	return ErrorClassInternalError, "OpenAI stream completed without content"
 }
 
 func (g *OpenAIGateway) streamResponsesSSE(
