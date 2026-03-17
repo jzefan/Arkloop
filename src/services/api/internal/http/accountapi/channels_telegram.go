@@ -30,7 +30,8 @@ type telegramChannelConfig struct {
 }
 
 type telegramUpdate struct {
-	Message *telegramMessage `json:"message"`
+	UpdateID int64            `json:"update_id"`
+	Message  *telegramMessage `json:"message"`
 }
 
 type telegramMessage struct {
@@ -163,6 +164,10 @@ func buildPersonaRef(persona data.Persona) string {
 	return fmt.Sprintf("%s@%s", strings.TrimSpace(persona.PersonaKey), strings.TrimSpace(persona.Version))
 }
 
+func telegramModeUsesWebhook(mode string) bool {
+	return strings.TrimSpace(strings.ToLower(mode)) != "polling"
+}
+
 func configureTelegramRemote(
 	ctx context.Context,
 	client *telegrambot.Client,
@@ -200,6 +205,236 @@ func disableTelegramRemote(ctx context.Context, client *telegrambot.Client, toke
 	return client.DeleteWebhook(ctx, token)
 }
 
+func configureTelegramPollingRemote(
+	ctx context.Context,
+	client *telegrambot.Client,
+	token string,
+) error {
+	if client == nil {
+		return fmt.Errorf("telegram client not configured")
+	}
+	if err := client.DeleteWebhook(ctx, token); err != nil {
+		return err
+	}
+	return client.SetMyCommands(ctx, token, []telegrambot.BotCommand{
+		{Command: "start", Description: "开始使用"},
+		{Command: "help", Description: "查看帮助"},
+		{Command: "bind", Description: "绑定账号"},
+	})
+}
+
+func configureTelegramActivationRemote(
+	ctx context.Context,
+	client *telegrambot.Client,
+	token string,
+	channel data.Channel,
+	mode string,
+) error {
+	if telegramModeUsesWebhook(mode) {
+		return configureTelegramRemote(ctx, client, token, channel)
+	}
+	return configureTelegramPollingRemote(ctx, client, token)
+}
+
+func disableTelegramActivationRemote(
+	ctx context.Context,
+	client *telegrambot.Client,
+	token string,
+	mode string,
+) error {
+	if telegramModeUsesWebhook(mode) {
+		return disableTelegramRemote(ctx, client, token)
+	}
+	if client == nil {
+		return fmt.Errorf("telegram client not configured")
+	}
+	return client.DeleteWebhook(ctx, token)
+}
+
+type telegramConnector struct {
+	channelIdentitiesRepo *data.ChannelIdentitiesRepository
+	channelBindCodesRepo  *data.ChannelBindCodesRepository
+	channelDMThreadsRepo  *data.ChannelDMThreadsRepository
+	channelReceiptsRepo   *data.ChannelMessageReceiptsRepository
+	personasRepo          *data.PersonasRepository
+	usersRepo             *data.UserRepository
+	accountRepo           *data.AccountRepository
+	membershipRepo        *data.AccountMembershipRepository
+	projectRepo           *data.ProjectRepository
+	threadRepo            *data.ThreadRepository
+	messageRepo           *data.MessageRepository
+	runEventRepo          *data.RunEventRepository
+	jobRepo               *data.JobRepository
+	creditsRepo           *data.CreditsRepository
+	pool                  data.DB
+	entitlementSvc        *entitlement.Service
+	telegramClient        *telegrambot.Client
+}
+
+func (c telegramConnector) HandleUpdate(
+	ctx context.Context,
+	traceID string,
+	ch data.Channel,
+	token string,
+	update telegramUpdate,
+) error {
+	if update.Message == nil || update.Message.Chat.Type != "private" || update.Message.From == nil {
+		return nil
+	}
+	cfg, err := resolveTelegramConfig(ch.ChannelType, ch.ConfigJSON)
+	if err != nil {
+		return fmt.Errorf("invalid channel config: %w", err)
+	}
+
+	senderUserID := strconv.FormatInt(update.Message.From.ID, 10)
+	if !telegramUserAllowed(cfg.AllowedUserIDs, senderUserID) {
+		if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+			_ = c.telegramClient.SendMessage(ctx, token, telegrambot.SendMessageRequest{
+				ChatID: senderUserID,
+				Text:   "当前账号未被授权使用这个机器人。",
+			})
+		}
+		return nil
+	}
+
+	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	accepted, err := c.channelReceiptsRepo.WithTx(tx).Record(
+		ctx,
+		ch.ID,
+		strconv.FormatInt(update.Message.Chat.ID, 10),
+		strconv.FormatInt(update.Message.MessageID, 10),
+	)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return tx.Commit(ctx)
+	}
+
+	persona, personaRef, _, err := mustValidateTelegramActivation(ctx, ch.AccountID, c.personasRepo, ch.PersonaID, ch.ConfigJSON)
+	if err != nil {
+		return err
+	}
+
+	identity, err := upsertTelegramIdentity(ctx, c.channelIdentitiesRepo.WithTx(tx), update.Message.From)
+	if err != nil {
+		return err
+	}
+
+	trimmedText := strings.TrimSpace(update.Message.Text)
+	if handled, replyText, err := handleTelegramCommand(
+		ctx,
+		tx,
+		&ch,
+		identity,
+		trimmedText,
+		c.channelBindCodesRepo,
+		c.channelIdentitiesRepo,
+		c.channelDMThreadsRepo,
+		c.threadRepo,
+		c.usersRepo,
+	); err != nil {
+		return err
+	} else if handled {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+			_ = c.telegramClient.SendMessage(ctx, token, telegrambot.SendMessageRequest{
+				ChatID: senderUserID,
+				Text:   replyText,
+			})
+		}
+		return nil
+	}
+	if trimmedText == "" {
+		return tx.Commit(ctx)
+	}
+
+	if identity.UserID == nil {
+		shadowUser, bootstrapErr := bootstrapTelegramShadowUser(
+			ctx,
+			tx,
+			c.usersRepo,
+			c.accountRepo,
+			c.membershipRepo,
+			c.projectRepo,
+			c.creditsRepo,
+			c.entitlementSvc,
+			update.Message.From.ID,
+		)
+		if bootstrapErr != nil {
+			return bootstrapErr
+		}
+		if err := c.channelIdentitiesRepo.WithTx(tx).UpdateUserID(ctx, identity.ID, &shadowUser.ID); err != nil {
+			return err
+		}
+		identity.UserID = &shadowUser.ID
+	}
+
+	threadProjectID := derefUUID(persona.ProjectID)
+	threadMap, err := c.channelDMThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, identity.ID, persona.ID)
+	if err != nil {
+		return err
+	}
+	var threadID uuid.UUID
+	if threadMap == nil {
+		thread, err := c.threadRepo.WithTx(tx).Create(ctx, ch.AccountID, identity.UserID, threadProjectID, nil, false)
+		if err != nil {
+			return err
+		}
+		threadID = thread.ID
+		if _, err := c.channelDMThreadsRepo.WithTx(tx).Create(ctx, ch.ID, identity.ID, persona.ID, thread.ID); err != nil {
+			return err
+		}
+	} else {
+		threadID = threadMap.ThreadID
+	}
+
+	content := renderTelegramInboundMessage(identity, trimmedText, update.Message.Date)
+	if _, err := c.messageRepo.WithTx(tx).Create(ctx, ch.AccountID, threadID, "user", content, identity.UserID); err != nil {
+		return err
+	}
+
+	run, _, err := c.runEventRepo.WithTx(tx).CreateRunWithStartedEvent(
+		ctx,
+		ch.AccountID,
+		threadID,
+		identity.UserID,
+		"run.started",
+		map[string]any{"persona_id": personaRef},
+	)
+	if err != nil {
+		return err
+	}
+	if _, err := c.jobRepo.WithTx(tx).EnqueueRun(
+		ctx,
+		ch.AccountID,
+		run.ID,
+		traceID,
+		data.RunExecuteJobType,
+		map[string]any{
+			"source": "telegram",
+			"channel_delivery": map[string]any{
+				"channel_id":                 ch.ID.String(),
+				"channel_type":               "telegram",
+				"platform_chat_id":           strconv.FormatInt(update.Message.Chat.ID, 10),
+				"sender_channel_identity_id": identity.ID.String(),
+			},
+		},
+		nil,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 func telegramWebhookEntry(
 	channelsRepo *data.ChannelsRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
@@ -221,6 +456,26 @@ func telegramWebhookEntry(
 	entitlementSvc *entitlement.Service,
 	telegramClient *telegrambot.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
+	connector := telegramConnector{
+		channelIdentitiesRepo: channelIdentitiesRepo,
+		channelBindCodesRepo:  channelBindCodesRepo,
+		channelDMThreadsRepo:  channelDMThreadsRepo,
+		channelReceiptsRepo:   channelReceiptsRepo,
+		personasRepo:          personasRepo,
+		usersRepo:             usersRepo,
+		accountRepo:           accountRepo,
+		membershipRepo:        membershipRepo,
+		projectRepo:           projectRepo,
+		threadRepo:            threadRepo,
+		messageRepo:           messageRepo,
+		runEventRepo:          runEventRepo,
+		jobRepo:               jobRepo,
+		creditsRepo:           creditsRepo,
+		pool:                  pool,
+		entitlementSvc:        entitlementSvc,
+		telegramClient:        telegramClient,
+	}
+
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		if r.Method != nethttp.MethodPost {
@@ -277,206 +532,169 @@ func telegramWebhookEntry(
 			httpkit.WriteError(w, nethttp.StatusBadRequest, "validation.error", "invalid telegram payload", traceID, nil)
 			return
 		}
-		if update.Message == nil || update.Message.Chat.Type != "private" || update.Message.From == nil {
-			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
-			return
-		}
-
-		cfg, err := resolveTelegramConfig(ch.ChannelType, ch.ConfigJSON)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "invalid channel config", traceID, nil)
-			return
-		}
-
-		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		defer tx.Rollback(r.Context()) //nolint:errcheck
-
-		txReceiptsRepo := channelReceiptsRepo.WithTx(tx)
-		accepted, err := txReceiptsRepo.Record(
-			r.Context(),
-			ch.ID,
-			strconv.FormatInt(update.Message.Chat.ID, 10),
-			strconv.FormatInt(update.Message.MessageID, 10),
-		)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		if !accepted {
-			if err := tx.Commit(r.Context()); err == nil {
-				httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
-				return
-			}
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-
 		token, err := secretsRepo.DecryptByID(r.Context(), derefUUID(ch.CredentialsID))
 		if err != nil || token == nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "telegram token unavailable", traceID, nil)
 			return
 		}
-
-		senderUserID := strconv.FormatInt(update.Message.From.ID, 10)
-		if !telegramUserAllowed(cfg.AllowedUserIDs, senderUserID) {
-			if err := tx.Commit(r.Context()); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
+		if err := connector.HandleUpdate(r.Context(), traceID, *ch, strings.TrimSpace(*token), update); err != nil {
+			status := nethttp.StatusInternalServerError
+			code := "internal.error"
+			message := "internal error"
+			if strings.Contains(err.Error(), "persona") || strings.Contains(err.Error(), "allowed_user_ids") {
+				status = nethttp.StatusUnprocessableEntity
+				code = "validation.error"
+				message = err.Error()
 			}
-			_ = telegramClient.SendMessage(r.Context(), *token, telegrambot.SendMessageRequest{
-				ChatID: senderUserID,
-				Text:   "当前账号未被授权使用这个机器人。",
-			})
-			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
-			return
-		}
-
-		persona, personaRef, _, err := mustValidateTelegramActivation(r.Context(), ch.AccountID, personasRepo, ch.PersonaID, ch.ConfigJSON)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
-			return
-		}
-
-		identity, err := upsertTelegramIdentity(r.Context(), channelIdentitiesRepo.WithTx(tx), update.Message.From)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-
-		trimmedText := strings.TrimSpace(update.Message.Text)
-		if handled, replyText, err := handleTelegramCommand(
-			r.Context(),
-			tx,
-			ch,
-			identity,
-			trimmedText,
-			channelBindCodesRepo,
-			channelIdentitiesRepo,
-			channelDMThreadsRepo,
-			threadRepo,
-			usersRepo,
-		); err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", err.Error(), traceID, nil)
-			return
-		} else if handled {
-			if err := tx.Commit(r.Context()); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			_ = telegramClient.SendMessage(r.Context(), *token, telegrambot.SendMessageRequest{
-				ChatID: senderUserID,
-				Text:   replyText,
-			})
-			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
-			return
-		}
-		if trimmedText == "" {
-			if err := tx.Commit(r.Context()); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
-			return
-		}
-
-		if identity.UserID == nil {
-			shadowUser, bootstrapErr := bootstrapTelegramShadowUser(
-				r.Context(),
-				tx,
-				usersRepo,
-				accountRepo,
-				membershipRepo,
-				projectRepo,
-				creditsRepo,
-				entitlementSvc,
-				update.Message.From.ID,
-			)
-			if bootstrapErr != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			if err := channelIdentitiesRepo.WithTx(tx).UpdateUserID(r.Context(), identity.ID, &shadowUser.ID); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			identity.UserID = &shadowUser.ID
-		}
-
-		threadProjectID := derefUUID(persona.ProjectID)
-		txDMThreadsRepo := channelDMThreadsRepo.WithTx(tx)
-		threadMap, err := txDMThreadsRepo.GetByBinding(r.Context(), ch.ID, identity.ID, persona.ID)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		var threadID uuid.UUID
-		if threadMap == nil {
-			thread, err := threadRepo.WithTx(tx).Create(r.Context(), ch.AccountID, identity.UserID, threadProjectID, nil, false)
-			if err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-			threadID = thread.ID
-			if _, err := txDMThreadsRepo.Create(r.Context(), ch.ID, identity.ID, persona.ID, thread.ID); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
-		} else {
-			threadID = threadMap.ThreadID
-		}
-
-		content := renderTelegramInboundMessage(identity, trimmedText, update.Message.Date)
-		if _, err := messageRepo.WithTx(tx).Create(r.Context(), ch.AccountID, threadID, "user", content, identity.UserID); err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-
-		run, _, err := runEventRepo.WithTx(tx).CreateRunWithStartedEvent(
-			r.Context(),
-			ch.AccountID,
-			threadID,
-			identity.UserID,
-			"run.started",
-			map[string]any{
-				"persona_id": personaRef,
-			},
-		)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		_, err = jobRepo.WithTx(tx).EnqueueRun(
-			r.Context(),
-			ch.AccountID,
-			run.ID,
-			traceID,
-			data.RunExecuteJobType,
-			map[string]any{
-				"source": "telegram",
-				"channel_delivery": map[string]any{
-					"channel_id":                 ch.ID.String(),
-					"channel_type":               "telegram",
-					"platform_chat_id":           strconv.FormatInt(update.Message.Chat.ID, 10),
-					"sender_channel_identity_id": identity.ID.String(),
-				},
-			},
-			nil,
-		)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-
-		if err := tx.Commit(r.Context()); err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			httpkit.WriteError(w, status, code, message, traceID, nil)
 			return
 		}
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+type TelegramDesktopPollerDeps struct {
+	ChannelsRepo          *data.ChannelsRepository
+	ChannelIdentitiesRepo *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo  *data.ChannelBindCodesRepository
+	ChannelDMThreadsRepo  *data.ChannelDMThreadsRepository
+	ChannelReceiptsRepo   *data.ChannelMessageReceiptsRepository
+	SecretsRepo           *data.SecretsRepository
+	PersonasRepo          *data.PersonasRepository
+	UsersRepo             *data.UserRepository
+	AccountRepo           *data.AccountRepository
+	AccountMembershipRepo *data.AccountMembershipRepository
+	ProjectRepo           *data.ProjectRepository
+	ThreadRepo            *data.ThreadRepository
+	MessageRepo           *data.MessageRepository
+	RunEventRepo          *data.RunEventRepository
+	JobRepo               *data.JobRepository
+	CreditsRepo           *data.CreditsRepository
+	Pool                  data.DB
+	EntitlementService    *entitlement.Service
+	TelegramBotClient     *telegrambot.Client
+	PollInterval          time.Duration
+	PollLimit             int
+}
+
+func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerDeps) {
+	if ctx == nil ||
+		deps.ChannelsRepo == nil ||
+		deps.ChannelIdentitiesRepo == nil ||
+		deps.ChannelBindCodesRepo == nil ||
+		deps.ChannelDMThreadsRepo == nil ||
+		deps.ChannelReceiptsRepo == nil ||
+		deps.SecretsRepo == nil ||
+		deps.PersonasRepo == nil ||
+		deps.UsersRepo == nil ||
+		deps.AccountRepo == nil ||
+		deps.AccountMembershipRepo == nil ||
+		deps.ProjectRepo == nil ||
+		deps.ThreadRepo == nil ||
+		deps.MessageRepo == nil ||
+		deps.RunEventRepo == nil ||
+		deps.JobRepo == nil ||
+		deps.CreditsRepo == nil ||
+		deps.Pool == nil {
+		return
+	}
+
+	client := deps.TelegramBotClient
+	if client == nil {
+		client = telegrambot.NewClient("", nil)
+	}
+	interval := deps.PollInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	limit := deps.PollLimit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	connector := telegramConnector{
+		channelIdentitiesRepo: deps.ChannelIdentitiesRepo,
+		channelBindCodesRepo:  deps.ChannelBindCodesRepo,
+		channelDMThreadsRepo:  deps.ChannelDMThreadsRepo,
+		channelReceiptsRepo:   deps.ChannelReceiptsRepo,
+		personasRepo:          deps.PersonasRepo,
+		usersRepo:             deps.UsersRepo,
+		accountRepo:           deps.AccountRepo,
+		membershipRepo:        deps.AccountMembershipRepo,
+		projectRepo:           deps.ProjectRepo,
+		threadRepo:            deps.ThreadRepo,
+		messageRepo:           deps.MessageRepo,
+		runEventRepo:          deps.RunEventRepo,
+		jobRepo:               deps.JobRepo,
+		creditsRepo:           deps.CreditsRepo,
+		pool:                  deps.Pool,
+		entitlementSvc:        deps.EntitlementService,
+		telegramClient:        client,
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		offsets := make(map[uuid.UUID]int64)
+		for {
+			_ = pollTelegramDesktopOnce(ctx, client, connector, deps.ChannelsRepo, deps.SecretsRepo, offsets, limit)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func pollTelegramDesktopOnce(
+	ctx context.Context,
+	client *telegrambot.Client,
+	connector telegramConnector,
+	channelsRepo *data.ChannelsRepository,
+	secretsRepo *data.SecretsRepository,
+	offsets map[uuid.UUID]int64,
+	limit int,
+) error {
+	channels, err := channelsRepo.ListActiveByType(ctx, "telegram")
+	if err != nil {
+		return err
+	}
+	for _, ch := range channels {
+		token, err := secretsRepo.DecryptByID(ctx, derefUUID(ch.CredentialsID))
+		if err != nil || token == nil || strings.TrimSpace(*token) == "" {
+			continue
+		}
+
+		req := telegrambot.GetUpdatesRequest{
+			Limit:   limit,
+			Updates: []string{"message"},
+		}
+		if offset, ok := offsets[ch.ID]; ok && offset > 0 {
+			req.Offset = &offset
+		}
+
+		var updates []telegramUpdate
+		if err := client.GetUpdates(ctx, strings.TrimSpace(*token), req, &updates); err != nil {
+			continue
+		}
+
+		nextOffset := offsets[ch.ID]
+		for _, update := range updates {
+			if err := connector.HandleUpdate(ctx, observability.NewTraceID(), ch, strings.TrimSpace(*token), update); err != nil {
+				break
+			}
+			if candidate := update.UpdateID + 1; candidate > nextOffset {
+				nextOffset = candidate
+			}
+		}
+		if nextOffset > 0 {
+			offsets[ch.ID] = nextOffset
+		}
+	}
+	return nil
 }
 
 func parseTelegramWebhookChannelID(path string) (uuid.UUID, bool) {

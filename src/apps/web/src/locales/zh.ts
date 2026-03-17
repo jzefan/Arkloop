@@ -573,6 +573,7 @@ export const zh: LocaleStrings = {
     providers: "供应商",
     routing: "路由",
     personas: "智能体",
+    channels: "Telegram",
     skills: "技能",
     mcp: "MCP 服务器",
     connectors: "连接器",

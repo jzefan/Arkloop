@@ -312,6 +312,7 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
                 skills: 'skills',
                 models: 'providers',
                 agents: 'personas',
+                channels: 'channels',
                 connection: 'connection',
               }
               setDesktopSettingsSection(keyMap[tab] ?? 'general')

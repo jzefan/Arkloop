@@ -40,6 +40,7 @@ type Deps struct {
 	CreditsRepo           *data.CreditsRepository
 	PersonasRepo          *data.PersonasRepository
 	TelegramBotClient     *telegrambot.Client
+	TelegramMode          string
 	AppBaseURL            string
 	EnvironmentStore      environmentStore
 	RunEventRepo          *data.RunEventRepository
@@ -72,29 +73,31 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 		deps.ProjectRepo,
 		deps.Pool,
 	))
-	mux.HandleFunc("/v1/channels/telegram/", telegramWebhookEntry(
-		deps.ChannelsRepo,
-		deps.ChannelIdentitiesRepo,
-		deps.ChannelBindCodesRepo,
-		deps.ChannelDMThreadsRepo,
-		deps.ChannelReceiptsRepo,
-		deps.SecretsRepo,
-		deps.PersonasRepo,
-		deps.UsersRepo,
-		deps.AccountRepo,
-		deps.AccountMembershipRepo,
-		deps.ProjectRepo,
-		deps.ThreadRepo,
-		deps.MessageRepo,
-		deps.RunEventRepo,
-		deps.JobRepo,
-		deps.CreditsRepo,
-		deps.Pool,
-		deps.EntitlementService,
-		deps.TelegramBotClient,
-	))
-	mux.HandleFunc("/v1/channels", channelsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.PersonasRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.AppBaseURL, deps.TelegramBotClient))
-	mux.HandleFunc("/v1/channels/", channelEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.PersonasRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.TelegramBotClient))
+	if telegramModeUsesWebhook(deps.TelegramMode) {
+		mux.HandleFunc("/v1/channels/telegram/", telegramWebhookEntry(
+			deps.ChannelsRepo,
+			deps.ChannelIdentitiesRepo,
+			deps.ChannelBindCodesRepo,
+			deps.ChannelDMThreadsRepo,
+			deps.ChannelReceiptsRepo,
+			deps.SecretsRepo,
+			deps.PersonasRepo,
+			deps.UsersRepo,
+			deps.AccountRepo,
+			deps.AccountMembershipRepo,
+			deps.ProjectRepo,
+			deps.ThreadRepo,
+			deps.MessageRepo,
+			deps.RunEventRepo,
+			deps.JobRepo,
+			deps.CreditsRepo,
+			deps.Pool,
+			deps.EntitlementService,
+			deps.TelegramBotClient,
+		))
+	}
+	mux.HandleFunc("/v1/channels", channelsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.PersonasRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.AppBaseURL, deps.TelegramBotClient, deps.TelegramMode))
+	mux.HandleFunc("/v1/channels/", channelEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.PersonasRepo, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.TelegramBotClient, deps.TelegramMode))
 	mux.HandleFunc("/v1/me/channel-binds", channelBindsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelBindCodesRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/me/channel-identities", channelIdentitiesEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelIdentitiesRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/me/channel-identities/", channelIdentityEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelIdentitiesRepo, deps.APIKeysRepo))

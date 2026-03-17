@@ -13,6 +13,7 @@ import (
 type DesktopConfig struct {
 	ListenAddr  string
 	DataDir     string
+	AppBaseURL  string
 	MaxInFlight int
 	SSE         SSEConfig
 }
@@ -37,6 +38,9 @@ func LoadDesktopConfig() (DesktopConfig, error) {
 	}
 	if v := strings.TrimSpace(os.Getenv("ARKLOOP_DATA_DIR")); v != "" {
 		cfg.DataDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv(appBaseURLEnv)); v != "" {
+		cfg.AppBaseURL = v
 	}
 	if v := strings.TrimSpace(os.Getenv(apiMaxInFlightEnv)); v != "" {
 		n, err := parsePositiveInt(v)

@@ -130,6 +130,31 @@ func (r *ChannelsRepository) ListByAccount(ctx context.Context, accountID uuid.U
 	return channels, rows.Err()
 }
 
+func (r *ChannelsRepository) ListActiveByType(ctx context.Context, channelType string) ([]Channel, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT `+channelColumns+`
+		   FROM channels
+		  WHERE channel_type = $1
+		    AND is_active = true
+		  ORDER BY created_at ASC`,
+		channelType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("channels.ListActiveByType: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Channel, 0)
+	for rows.Next() {
+		ch, err := scanChannel(rows)
+		if err != nil {
+			return nil, fmt.Errorf("channels.ListActiveByType scan: %w", err)
+		}
+		items = append(items, ch)
+	}
+	return items, rows.Err()
+}
+
 type ChannelUpdate struct {
 	PersonaID     **uuid.UUID
 	CredentialsID **uuid.UUID

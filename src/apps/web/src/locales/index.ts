@@ -591,6 +591,7 @@ export interface LocaleStrings {
     providers: string;
     routing: string;
     personas: string;
+    channels: string;
     skills: string;
     mcp: string;
     connectors: string;

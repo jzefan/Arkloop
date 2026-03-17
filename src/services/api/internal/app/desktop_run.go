@@ -20,6 +20,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	apihttp "arkloop/services/api/internal/http"
+	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 	"arkloop/services/api/internal/personasync"
@@ -226,6 +227,26 @@ func RunDesktop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("init webhook repo: %w", err)
 	}
+	channelsRepo, err := data.NewChannelsRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channels repo: %w", err)
+	}
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel identities repo: %w", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel bind codes repo: %w", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel dm threads repo: %w", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel receipts repo: %w", err)
+	}
 	planRepo, err := data.NewPlanRepository(pgxPool)
 	if err != nil {
 		return fmt.Errorf("init plan repo: %w", err)
@@ -372,6 +393,7 @@ func RunDesktop(ctx context.Context) error {
 		EmailVerifyService:    nil,
 		EmailOTPLoginService:  nil,
 		AccountService:        nil,
+		AppBaseURL:            cfg.AppBaseURL,
 		AccountMembershipRepo: membershipRepo,
 		ThreadRepo:            threadRepo,
 		ThreadStarRepo:        threadStarRepo,
@@ -401,6 +423,11 @@ func RunDesktop(ctx context.Context) error {
 		TeamRepo:                     teamRepo,
 		ProjectRepo:                  projectRepo,
 		WebhookRepo:                  webhookRepo,
+		ChannelsRepo:                 channelsRepo,
+		ChannelIdentitiesRepo:        channelIdentitiesRepo,
+		ChannelBindCodesRepo:         channelBindCodesRepo,
+		ChannelDMThreadsRepo:         channelDMThreadsRepo,
+		ChannelReceiptsRepo:          channelReceiptsRepo,
 		PlansRepo:                    planRepo,
 		SubscriptionsRepo:            subscriptionRepo,
 		EntitlementsRepo:             entitlementsRepo,
@@ -447,6 +474,27 @@ func RunDesktop(ctx context.Context) error {
 
 		RepoPersonas:       repoPersonas,
 		PersonaSyncTrigger: noopSyncTrigger{},
+	})
+
+	accountapi.StartTelegramDesktopPoller(ctx, accountapi.TelegramDesktopPollerDeps{
+		ChannelsRepo:          channelsRepo,
+		ChannelIdentitiesRepo: channelIdentitiesRepo,
+		ChannelBindCodesRepo:  channelBindCodesRepo,
+		ChannelDMThreadsRepo:  channelDMThreadsRepo,
+		ChannelReceiptsRepo:   channelReceiptsRepo,
+		SecretsRepo:           secretsRepo,
+		PersonasRepo:          personasRepo,
+		UsersRepo:             userRepo,
+		AccountRepo:           accountRepo,
+		AccountMembershipRepo: membershipRepo,
+		ProjectRepo:           projectRepo,
+		ThreadRepo:            threadRepo,
+		MessageRepo:           messageRepo,
+		RunEventRepo:          runEventRepo,
+		JobRepo:               jobRepo,
+		CreditsRepo:           creditsRepo,
+		Pool:                  pgxPool,
+		EntitlementService:    entitlementService,
 	})
 
 	// ---- HTTP server ----
