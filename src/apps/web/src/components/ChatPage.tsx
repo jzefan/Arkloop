@@ -76,6 +76,7 @@ import {
   deleteThread,
   listStarredThreadIds,
   isApiError,
+  type MessageContent,
   type MessageResponse,
   type ThreadResponse,
 } from '../api'
@@ -2041,14 +2042,19 @@ export function ChatPage() {
         setAssistantDraft('')
         injectionBlockedRunIdRef.current = null
         invalidateMessageSync()
+        const originalMsg = messages.find((m) => m.id === replaceMessageId)
+        const nonTextParts = originalMsg?.content_json?.parts?.filter((p) => p.type !== 'text') ?? []
+        const replacedContentJson: MessageContent | undefined = originalMsg?.content_json
+          ? { parts: [{ type: 'text', text }, ...nonTextParts] }
+          : undefined
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === replaceMessageId)
           if (idx === -1) return prev
           return prev.slice(0, idx + 1).map((m, i) =>
-            i === idx ? { ...m, content: text } : m,
+            i === idx ? { ...m, content: text, content_json: replacedContentJson ?? m.content_json } : m,
           )
         })
-        const run = await editMessage(accessToken, threadId, replaceMessageId, text)
+        const run = await editMessage(accessToken, threadId, replaceMessageId, text, replacedContentJson)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         noResponseMsgIdRef.current = replaceMessageId
         setActiveRunId(run.run_id)
@@ -2083,7 +2089,7 @@ export function ChatPage() {
     }
   }
 
-  const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
+  const handleEditMessage = useCallback(async (original: MessageResponse, newContent: string) => {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
@@ -2091,14 +2097,18 @@ export function ChatPage() {
     injectionBlockedRunIdRef.current = null
     setAssistantDraft('')
     try {
-      const run = await editMessage(accessToken, threadId, messageId, newContent)
-      // 乐观更新：替换消息内容，移除其后所有消息
+      const nonTextParts = original.content_json?.parts?.filter((p) => p.type !== 'text') ?? []
+      const newContentJson: MessageContent | undefined = original.content_json
+        ? { parts: [{ type: 'text', text: newContent }, ...nonTextParts] }
+        : undefined
+      const run = await editMessage(accessToken, threadId, original.id, newContent, newContentJson)
+      // 乐观更新：同步更新 content 和 content_json，保留附件 parts
       invalidateMessageSync()
       setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === messageId)
+        const idx = prev.findIndex((m) => m.id === original.id)
         if (idx === -1) return prev
         return prev.slice(0, idx + 1).map((m, i) =>
-          i === idx ? { ...m, content: newContent } : m,
+          i === idx ? { ...m, content: newContent, content_json: newContentJson ?? m.content_json } : m,
         )
       })
       setActiveRunId(run.run_id)
@@ -2615,7 +2625,7 @@ export function ChatPage() {
                     }
                     onEdit={
                       msg.role === 'user' && !isStreaming && !sending
-                        ? (newContent) => handleEditMessage(msg.id, newContent)
+                        ? (newContent) => handleEditMessage(msg, newContent)
                         : undefined
                     }
                     onFork={

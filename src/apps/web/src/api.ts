@@ -755,11 +755,12 @@ export async function editMessage(
   threadId: string,
   messageId: string,
   content: string,
+  contentJson?: MessageContent,
 ): Promise<CreateRunResponse> {
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/messages/${messageId}`, {
     method: 'PATCH',
     accessToken,
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, content_json: contentJson }),
   })
 }
 

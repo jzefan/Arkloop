@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Monitor, LogOut, HelpCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Monitor, LogOut, HelpCircle, ChevronDown } from 'lucide-react'
 import type { MeResponse } from '../../api'
 import {
   listLlmProviders,
@@ -9,9 +9,8 @@ import {
 } from '../../api'
 import type { LlmProvider, SpawnProfile } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { useTheme } from '../../contexts/ThemeContext'
 import { isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
-import { LanguageContent, ThemeContent } from './AppearanceSettings'
+import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
 
 type Props = {
   me: MeResponse | null
@@ -20,9 +19,104 @@ type Props = {
   onMeUpdated?: (me: MeResponse) => void
 }
 
+type ModelOption = { value: string; label: string }
+
+function ModelDropdown({
+  value,
+  options,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  value: string
+  options: ModelOption[]
+  placeholder: string
+  disabled: boolean
+  onChange: (v: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const currentLabel = options.find(o => o.value === value)?.label ?? placeholder
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (
+        menuRef.current?.contains(e.target as Node) ||
+        btnRef.current?.contains(e.target as Node)
+      ) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(v => !v)}
+        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
+        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-secondary)' }}
+      >
+        <span className="truncate">{currentLabel}</span>
+        <ChevronDown size={13} className="ml-2 shrink-0" />
+      </button>
+
+      {open && (
+        <div
+          ref={menuRef}
+          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50"
+          style={{
+            border: '0.5px solid var(--c-border-subtle)',
+            borderRadius: '10px',
+            padding: '4px',
+            background: 'var(--c-bg-menu)',
+            width: '100%',
+            boxShadow: 'var(--c-dropdown-shadow)',
+            maxHeight: '220px',
+            overflowY: 'auto',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { onChange(''); setOpen(false) }}
+            className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
+            style={{
+              borderRadius: '8px',
+              fontWeight: !value ? 600 : 400,
+              color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
+            }}
+          >
+            {placeholder}
+          </button>
+          {options.map(({ value: v, label }) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => { onChange(v); setOpen(false) }}
+              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
+              style={{
+                borderRadius: '8px',
+                fontWeight: value === v ? 600 : 400,
+                color: value === v ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeUpdated }: Props) {
   const { t, locale, setLocale } = useLocale()
-  const { theme, setTheme } = useTheme()
   const ds = t.desktopSettings
   const localMode = isLocalMode()
 
@@ -43,7 +137,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       .catch(() => {})
   }, [accessToken])
 
-  const modelOptions = providers
+  const modelOptions: ModelOption[] = providers
     .flatMap((p) => p.models.filter((m) => m.show_in_picker).map((m) => ({
       value: `${p.provider}^${m.model}`,
       label: `${p.name} / ${m.model}`,
@@ -97,14 +191,14 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
         </div>
       </div>
 
-      {/* Language & Theme */}
+      {/* Language & Theme — image-card picker */}
       <section>
-        <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--c-text-muted)]">
+        <p className="mb-3 px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--c-text-muted)]">
           {ds.appearanceSection}
         </p>
         <div className="flex flex-col gap-4">
           <LanguageContent locale={locale} setLocale={setLocale} label={t.language} />
-          <ThemeContent theme={theme} setTheme={setTheme} label={t.appearance} t={t} />
+          <ThemeModePicker />
         </div>
       </section>
 
@@ -113,29 +207,15 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
         <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--c-text-muted)]">
           {ds.toolModel}
         </p>
-        <div
-          className="flex flex-col gap-2 rounded-lg p-3"
-          style={{ border: '0.5px solid var(--c-border-subtle)' }}
-        >
-          <p className="text-xs text-[var(--c-text-tertiary)]">{ds.toolModelDesc}</p>
-          <select
+        <div className="flex flex-col gap-2">
+          <p className="px-1 text-xs text-[var(--c-text-tertiary)]">{ds.toolModelDesc}</p>
+          <ModelDropdown
             value={toolModelValue}
-            onChange={(e) => handleToolModelChange(e.target.value)}
+            options={modelOptions}
+            placeholder={ds.toolModelPlatformDefault}
             disabled={savingTool}
-            className="h-7 w-full rounded-md px-2 text-xs outline-none"
-            style={{
-              border: '0.5px solid var(--c-border-subtle)',
-              background: 'var(--c-bg-page)',
-              color: 'var(--c-text-heading)',
-            }}
-          >
-            <option value="">{ds.toolModelPlatformDefault}</option>
-            {modelOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={handleToolModelChange}
+          />
         </div>
       </section>
 

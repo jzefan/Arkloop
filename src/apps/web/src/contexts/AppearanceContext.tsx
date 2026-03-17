@@ -11,6 +11,8 @@ import {
   writeCustomThemeIdToStorage,
   readCustomThemesFromStorage,
   writeCustomThemesToStorage,
+  readCustomBodyFontFromStorage,
+  writeCustomBodyFontToStorage,
 } from '../storage'
 
 // Font stacks
@@ -20,6 +22,7 @@ const FONT_STACKS: Record<FontFamily, string> = {
   'serif': "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
   'noto-sans': "'Noto Sans', system-ui, sans-serif",
   'source-sans': "'Source Sans 3', system-ui, sans-serif",
+  'custom': '', // resolved at runtime from customBodyFont
 }
 
 const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
@@ -47,9 +50,11 @@ type PreviewVars = { dark: Partial<ThemeColorVars>; light: Partial<ThemeColorVar
 
 type AppearanceContextValue = {
   fontFamily: FontFamily
+  customBodyFont: string | null
   codeFontFamily: CodeFontFamily
   fontSize: FontSize
   setFontFamily: (f: FontFamily) => void
+  setCustomBodyFont: (font: string | null) => void
   setCodeFontFamily: (f: CodeFontFamily) => void
   setFontSize: (s: FontSize) => void
   themePreset: ThemePreset
@@ -69,6 +74,7 @@ const AppearanceContext = createContext<AppearanceContextValue | null>(null)
 
 function buildStyleContent(
   fontFamily: FontFamily,
+  customBodyFont: string | null,
   codeFontFamily: CodeFontFamily,
   fontSize: FontSize,
   preset: ThemePreset,
@@ -76,7 +82,9 @@ function buildStyleContent(
   customThemeId: string | null,
   previewVars: PreviewVars,
 ): string {
-  const fontStack = FONT_STACKS[fontFamily]
+  const fontStack = fontFamily === 'custom' && customBodyFont
+    ? `'${customBodyFont}', system-ui, sans-serif`
+    : FONT_STACKS[fontFamily]
   const codeStack = CODE_FONT_STACKS[codeFontFamily]
   const sizeVal = FONT_SIZE_VALUES[fontSize]
 
@@ -107,14 +115,17 @@ function buildStyleContent(
 
   const hasColors = Object.keys(dark).length > 0 || Object.keys(light).length > 0
 
+  // html font-size scales all rem-based Tailwind utilities
+  const htmlSize = `html { font-size: ${sizeVal}; }`
+
   if (!hasColors) {
-    return `:root {\n${fontVars}\n}`
+    return `${htmlSize}\n:root {\n${fontVars}\n}`
   }
 
   const darkBlock = darkVars ? `${fontVars}\n${darkVars}` : fontVars
   const lightBlock = lightVars ? lightVars : ''
 
-  let css = `:root {\n${darkBlock}\n}`
+  let css = `${htmlSize}\n:root {\n${darkBlock}\n}`
 
   // Explicit dark mode (data-theme="dark")
   if (darkVars) {
@@ -145,6 +156,7 @@ function loadGoogleFont(key: string): void {
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const fontSettings = readFontSettingsFromStorage()
   const [fontFamily, setFontFamilyState] = useState<FontFamily>(fontSettings.fontFamily)
+  const [customBodyFont, setCustomBodyFontState] = useState<string | null>(readCustomBodyFontFromStorage)
   const [codeFontFamily, setCodeFontFamilyState] = useState<CodeFontFamily>(fontSettings.codeFontFamily)
   const [fontSize, setFontSizeState] = useState<FontSize>(fontSettings.fontSize)
   const [themePreset, setThemePresetState] = useState<ThemePreset>(readThemePresetFromStorage)
@@ -166,7 +178,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // Inject font link tags on mount for non-default fonts
   useEffect(() => {
-    if (fontFamily !== 'inter' && fontFamily !== 'system') loadGoogleFont(fontFamily)
+    if (fontFamily !== 'inter' && fontFamily !== 'system' && fontFamily !== 'custom' && fontFamily !== 'serif') loadGoogleFont(fontFamily)
     if (codeFontFamily !== 'jetbrains-mono' && codeFontFamily !== 'cascadia-code') loadGoogleFont(codeFontFamily)
   }, [fontFamily, codeFontFamily])
 
@@ -174,15 +186,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!styleRef.current) return
     styleRef.current.textContent = buildStyleContent(
-      fontFamily, codeFontFamily, fontSize,
+      fontFamily, customBodyFont, codeFontFamily, fontSize,
       themePreset, customThemes, customThemeId,
       previewVars,
     )
-  }, [fontFamily, codeFontFamily, fontSize, themePreset, customThemes, customThemeId, previewVars])
+  }, [fontFamily, customBodyFont, codeFontFamily, fontSize, themePreset, customThemes, customThemeId, previewVars])
 
   const setFontFamily = useCallback((f: FontFamily) => {
     setFontFamilyState(f)
-    if (f !== 'inter' && f !== 'system') loadGoogleFont(f)
+    if (f !== 'inter' && f !== 'system' && f !== 'custom' && f !== 'serif') loadGoogleFont(f)
     writeFontSettingsToStorage({ fontFamily: f, codeFontFamily, fontSize })
   }, [codeFontFamily, fontSize])
 
@@ -232,6 +244,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
   }, [customThemeId])
 
+  const setCustomBodyFont = useCallback((font: string | null) => {
+    setCustomBodyFontState(font)
+    writeCustomBodyFontToStorage(font)
+    if (font) {
+      setFontFamilyState('custom')
+      writeFontSettingsToStorage({ fontFamily: 'custom', codeFontFamily, fontSize })
+    }
+  }, [codeFontFamily, fontSize])
+
   const setPreviewVars = useCallback((vars: PreviewVars) => {
     setPreviewVarsState(vars)
   }, [])
@@ -249,8 +270,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppearanceContext.Provider value={{
-      fontFamily, codeFontFamily, fontSize,
-      setFontFamily, setCodeFontFamily, setFontSize,
+      fontFamily, customBodyFont, codeFontFamily, fontSize,
+      setFontFamily, setCustomBodyFont, setCodeFontFamily, setFontSize,
       themePreset, setThemePreset,
       customThemeId, setActiveCustomTheme,
       customThemes, saveCustomTheme, deleteCustomTheme,
