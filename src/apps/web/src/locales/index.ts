@@ -727,6 +727,9 @@ export interface LocaleStrings {
     memoryConfiguring: string;
     memoryConfigured: string;
     memoryConfigureError: string;
+    memoryConfigureMissingModels: string;
+    memorySelectModel: string;
+    memoryNoCompatibleModels: string;
     memoryProviderActivated: string;
     memoryNoEmbeddingModels: string;
     // tool model

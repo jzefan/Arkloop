@@ -94,6 +94,7 @@ function normalizeOpenVikingConfig(raw: unknown): OpenVikingDesktopConfig | unde
   const out: OpenVikingDesktopConfig = {}
   const s = normalizeStr
   if (s(r.rootApiKey)) out.rootApiKey = s(r.rootApiKey)
+  if (s(r.embeddingSelector)) out.embeddingSelector = s(r.embeddingSelector)
   if (s(r.embeddingProvider)) out.embeddingProvider = s(r.embeddingProvider)
   if (s(r.embeddingModel)) out.embeddingModel = s(r.embeddingModel)
   if (s(r.embeddingApiKey)) out.embeddingApiKey = s(r.embeddingApiKey)
@@ -101,6 +102,7 @@ function normalizeOpenVikingConfig(raw: unknown): OpenVikingDesktopConfig | unde
   if (typeof r.embeddingDimension === 'number' && r.embeddingDimension > 0) {
     out.embeddingDimension = r.embeddingDimension
   }
+  if (s(r.vlmSelector)) out.vlmSelector = s(r.vlmSelector)
   if (s(r.vlmProvider)) out.vlmProvider = s(r.vlmProvider)
   if (s(r.vlmModel)) out.vlmModel = s(r.vlmModel)
   if (s(r.vlmApiKey)) out.vlmApiKey = s(r.vlmApiKey)

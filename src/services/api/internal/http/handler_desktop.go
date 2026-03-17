@@ -107,6 +107,9 @@ type HandlerConfig struct {
 	TeamRepo                     *data.TeamRepository
 	ProjectRepo                  *data.ProjectRepository
 	WebhookRepo                  *data.WebhookEndpointRepository
+	ChannelsRepo                 *data.ChannelsRepository
+	ChannelIdentitiesRepo        *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo         *data.ChannelBindCodesRepository
 	PlansRepo                    *data.PlanRepository
 	SubscriptionsRepo            *data.SubscriptionRepository
 	EntitlementsRepo             *data.EntitlementsRepository
@@ -288,9 +291,17 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		AccountService:        cfg.AccountService,
 		WebhookRepo:           cfg.WebhookRepo,
 		SecretsRepo:           cfg.SecretsRepo,
+		LlmCredentialsRepo:    cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:         cfg.LlmRoutesRepo,
+		ChannelsRepo:          cfg.ChannelsRepo,
+		ChannelIdentitiesRepo: cfg.ChannelIdentitiesRepo,
+		ChannelBindCodesRepo:  cfg.ChannelBindCodesRepo,
+		AppBaseURL:            "",
 		EnvironmentStore:      cfg.EnvironmentStore,
 		RunEventRepo:          cfg.RunEventRepo,
 		GatewayRedisClient:    nil,
+		EntitlementsRepo:      cfg.EntitlementsRepo,
+		ConfigResolver:        resolver,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{

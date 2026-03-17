@@ -26,11 +26,13 @@ export type MemoryProvider = 'local' | 'openviking'
 
 export type OpenVikingDesktopConfig = {
   rootApiKey?: string
+  embeddingSelector?: string
   embeddingProvider?: string
   embeddingModel?: string
   embeddingApiKey?: string
   embeddingApiBase?: string
   embeddingDimension?: number
+  vlmSelector?: string
   vlmProvider?: string
   vlmModel?: string
   vlmApiKey?: string

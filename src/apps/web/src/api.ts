@@ -1469,6 +1469,30 @@ export type SpawnProfile = {
   has_override: boolean
 }
 
+export type ResolveOpenVikingConfigRequest = {
+  vlm_selector?: string
+  embedding_selector?: string
+  embedding_dimension_hint?: number
+}
+
+export type ResolvedOpenVikingModel = {
+  selector: string
+  credential_name: string
+  provider: string
+  model: string
+  api_base: string
+  api_key: string
+}
+
+export type ResolvedOpenVikingEmbedding = ResolvedOpenVikingModel & {
+  dimension: number
+}
+
+export type ResolveOpenVikingConfigResponse = {
+  vlm?: ResolvedOpenVikingModel
+  embedding?: ResolvedOpenVikingEmbedding
+}
+
 export async function listSpawnProfiles(accessToken: string): Promise<SpawnProfile[]> {
   return apiFetch<SpawnProfile[]>('/v1/account/spawn-profiles', { accessToken })
 }
@@ -1485,6 +1509,17 @@ export async function deleteSpawnProfile(accessToken: string, name: string): Pro
   await apiFetch<void>(`/v1/account/spawn-profiles/${name}`, {
     method: 'DELETE',
     accessToken,
+  })
+}
+
+export async function resolveOpenVikingConfig(
+  accessToken: string,
+  req: ResolveOpenVikingConfigRequest,
+): Promise<ResolveOpenVikingConfigResponse> {
+  return apiFetch<ResolveOpenVikingConfigResponse>('/v1/account/openviking/resolve', {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify(req),
   })
 }
 

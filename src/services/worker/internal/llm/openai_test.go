@@ -815,6 +815,51 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_UsageOnlyWithoutContent_Fails(t 
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_RoleOnlyWithoutVisibleContent_Retryable(t *testing.T) {
+	chunk1, _ := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"role": "assistant",
+				},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     12,
+			"completion_tokens": 15,
+		},
+	})
+
+	reader := strings.NewReader(
+		"data: " + string(chunk1) + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), reader, "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if last.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error_class: %#v", last.Error)
+	}
+	if last.Error.Message != "OpenAI stream emitted metadata without visible output" {
+		t.Fatalf("unexpected error message: %#v", last.Error)
+	}
+}
+
 func TestOpenAIGateway_StreamChatCompletionsSSE_RefusalDelta_Completes(t *testing.T) {
 	chunk1, _ := json.Marshal(map[string]any{
 		"choices": []any{
