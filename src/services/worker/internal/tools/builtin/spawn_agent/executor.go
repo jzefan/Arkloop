@@ -356,9 +356,21 @@ func (e *ToolExecutor) resolveProfile(ctx context.Context, req *subagentctl.Spaw
 	if err != nil || strings.TrimSpace(val) == "" {
 		return
 	}
-	if mapping, err := sharedconfig.ParseProfileValue(val); err == nil {
-		req.ParentContext.Model = mapping.Provider + "^" + mapping.Model
+	applyResolvedProfile(req, val)
+}
+
+func applyResolvedProfile(req *subagentctl.SpawnRequest, value string) bool {
+	if req == nil {
+		return false
 	}
+	mapping, err := sharedconfig.ParseProfileValue(value)
+	if err != nil {
+		return false
+	}
+	// 显式 profile override 应按 selector 重新选路，不再绑定父 run 的 route_id。
+	req.ParentContext.RouteID = ""
+	req.ParentContext.Model = mapping.Provider + "^" + mapping.Model
+	return true
 }
 
 func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subagentctl.SpawnRequest, error) {

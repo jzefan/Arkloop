@@ -437,12 +437,13 @@ func desktopSubAgentContext(db data.DesktopDB, storage *subagentctl.SnapshotStor
 		if snapshot == nil {
 			return next(ctx, rc)
 		}
-		if routeID := strings.TrimSpace(snapshot.Runtime.RouteID); routeID != "" {
+		routing := snapshot.EffectiveRouting()
+		if routeID := strings.TrimSpace(routing.RouteID); routeID != "" {
 			if _, ok := rc.InputJSON["route_id"]; !ok {
 				rc.InputJSON["route_id"] = routeID
 			}
 		}
-		if model := strings.TrimSpace(snapshot.Runtime.Model); model != "" {
+		if model := strings.TrimSpace(routing.Model); model != "" {
 			if _, ok := rc.InputJSON["model"]; !ok {
 				rc.InputJSON["model"] = model
 			}
@@ -880,6 +881,14 @@ func desktopAgentLoop(
 
 var errDesktopStopProcessing = errors.New("desktop_stop_processing")
 
+var desktopStreamingEventTypes = map[string]struct{}{
+	"message.delta":      {},
+	"llm.response.chunk": {},
+	"run.segment.start":  {},
+	"run.segment.end":    {},
+	"tool.call.delta":    {},
+}
+
 // desktopEventWriter batches event writes into transactions using DesktopDB.
 type desktopEventWriter struct {
 	db         data.DesktopDB
@@ -1004,6 +1013,10 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		w.hasTerminal = true
 		w.terminalRunStatus = status
 		return nil
+	}
+
+	if _, ok := desktopStreamingEventTypes[ev.Type]; !ok {
+		return w.commit(ctx)
 	}
 
 	const batchSize = 20

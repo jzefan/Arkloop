@@ -445,6 +445,7 @@ export const zh: LocaleStrings = {
     },
     spawnProfileTitle: 'Sub-agent 模型',
     spawnProfilePlatformDefault: '平台默认',
+    spawnProfileFollowCurrentChat: '继承当前对话',
     spawnProfileExplore: 'explore',
     spawnProfileTask: 'task',
     spawnProfileStrong: 'strong',

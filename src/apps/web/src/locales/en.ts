@@ -451,6 +451,7 @@ export const en: LocaleStrings = {
     },
     spawnProfileTitle: 'Sub-agent Models',
     spawnProfilePlatformDefault: 'Platform Default',
+    spawnProfileFollowCurrentChat: 'Follow Current Chat',
     spawnProfileExplore: 'explore',
     spawnProfileTask: 'task',
     spawnProfileStrong: 'strong',

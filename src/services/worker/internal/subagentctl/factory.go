@@ -186,14 +186,15 @@ func (f *SubAgentRunFactory) createChildThread(ctx context.Context, tx pgx.Tx, p
 	if parentRun.ProjectID == nil {
 		return uuid.Nil, fmt.Errorf("parent run project_id must not be nil")
 	}
+	expiresAt := time.Now().UTC().Add(childThreadTTL)
 	var childThreadID uuid.UUID
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO threads (account_id, project_id, is_private, expires_at)
-		 VALUES ($1, $2, TRUE, now() + make_interval(secs => $3))
+		 VALUES ($1, $2, TRUE, $3)
 		 RETURNING id`,
 		parentRun.AccountID,
 		parentRun.ProjectID,
-		int64(childThreadTTL.Seconds()),
+		expiresAt,
 	).Scan(&childThreadID); err != nil {
 		return uuid.Nil, fmt.Errorf("create child thread: %w", err)
 	}

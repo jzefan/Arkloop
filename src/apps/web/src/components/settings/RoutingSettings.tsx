@@ -8,6 +8,7 @@ import {
 } from '../../api'
 import type { SpawnProfile, LlmProvider } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
+import { isLocalMode } from '@arkloop/shared/desktop'
 
 type Props = {
   accessToken: string
@@ -121,6 +122,9 @@ export function RoutingSettings({ accessToken }: Props) {
   const [profiles, setProfiles] = useState<SpawnProfile[]>([])
   const [providers, setProviders] = useState<LlmProvider[]>([])
   const [saving, setSaving] = useState<string | null>(null)
+  const spawnProfilePlaceholder = isLocalMode()
+    ? a.spawnProfileFollowCurrentChat
+    : a.spawnProfilePlatformDefault
 
   useEffect(() => {
     listSpawnProfiles(accessToken).then(setProfiles).catch(() => {})
@@ -175,7 +179,7 @@ export function RoutingSettings({ accessToken }: Props) {
                 <ModelDropdown
                   value={currentValue}
                   options={modelOptions}
-                  placeholder={a.spawnProfilePlatformDefault}
+                  placeholder={spawnProfilePlaceholder}
                   disabled={saving === name}
                   onChange={v => handleChange(name, v)}
                 />
