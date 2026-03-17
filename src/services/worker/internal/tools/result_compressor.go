@@ -88,13 +88,9 @@ func CompressResult(toolName string, result ExecutionResult, limit int) Executio
 		return result
 	}
 	originalBytes := len(raw)
-	rtkUsed := resolvedRTKPath() != ""
 	compressed := compressMap(result.ResultJSON, limit)
 	compressed["_compressed"] = true
 	compressed["_original_bytes"] = originalBytes
-	if rtkUsed {
-		compressed["_rtk_compressed"] = true
-	}
 	return ExecutionResult{
 		ResultJSON: compressed,
 		Error:      result.Error,
@@ -136,14 +132,8 @@ func compressValue(v any, budget int) any {
 	}
 }
 
-// compressString tries RTK first; falls back to head/tail truncation.
+// compressString applies head/tail truncation when the string exceeds budget.
 func compressString(s string, budget int) string {
-	if len(s) <= budget {
-		return s
-	}
-	if compressed, ok := rtkCompressText(s); ok && len(compressed) < len(s) {
-		return compressed
-	}
 	return truncateString(s, budget)
 }
 
