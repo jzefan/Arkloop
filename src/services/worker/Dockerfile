@@ -39,6 +39,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/onnxruntime/lib/libonnxruntime*.so* /usr/lib/
 RUN ldconfig
 
+RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh \
+    && cp /root/.local/bin/rtk /usr/local/bin/rtk \
+    && chmod 755 /usr/local/bin/rtk \
+    && rm -rf /root/.local/bin/rtk
+
 COPY --from=builder /worker /usr/local/bin/worker
 COPY --from=builder /workspace/src/personas /usr/local/share/arkloop/personas
 ENV ARKLOOP_PERSONAS_ROOT=/usr/local/share/arkloop/personas

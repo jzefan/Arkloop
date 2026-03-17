@@ -31,17 +31,23 @@ var (
 )
 
 // resolvedRTKPath returns the path to the rtk binary, or "" if not found.
-// Checked once per process: ~/.arkloop/bin/rtk, then PATH.
+// Priority: /usr/local/bin/rtk (container/server) → ~/.arkloop/bin/rtk (desktop) → PATH.
 func resolvedRTKPath() string {
 	rtkOnce.Do(func() {
-		home, err := os.UserHomeDir()
-		if err == nil {
+		// Container / server installs RTK here.
+		if _, err := os.Stat("/usr/local/bin/rtk"); err == nil {
+			rtkPath = "/usr/local/bin/rtk"
+			return
+		}
+		// Desktop: user installs RTK to ~/.arkloop/bin/rtk.
+		if home, err := os.UserHomeDir(); err == nil {
 			candidate := filepath.Join(home, ".arkloop", "bin", "rtk")
 			if _, err := os.Stat(candidate); err == nil {
 				rtkPath = candidate
 				return
 			}
 		}
+		// Fallback: anywhere on PATH.
 		if p, err := exec.LookPath("rtk"); err == nil {
 			rtkPath = p
 		}
@@ -82,9 +88,13 @@ func CompressResult(toolName string, result ExecutionResult, limit int) Executio
 		return result
 	}
 	originalBytes := len(raw)
+	rtkUsed := resolvedRTKPath() != ""
 	compressed := compressMap(result.ResultJSON, limit)
 	compressed["_compressed"] = true
 	compressed["_original_bytes"] = originalBytes
+	if rtkUsed {
+		compressed["_rtk_compressed"] = true
+	}
 	return ExecutionResult{
 		ResultJSON: compressed,
 		Error:      result.Error,
