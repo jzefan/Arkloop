@@ -71,6 +71,29 @@ func (DesktopRunsRepository) UpdateRunMetadata(
 	return nil
 }
 
+func (DesktopRunsRepository) TouchRunActivity(
+	ctx context.Context,
+	tx pgx.Tx,
+	runID uuid.UUID,
+) error {
+	if runID == uuid.Nil {
+		return fmt.Errorf("run_id must not be empty")
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs
+		 SET status_updated_at = datetime('now')
+		 WHERE id = $1`,
+		runID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run not found: %s", runID)
+	}
+	return nil
+}
+
 // UpdateRunTerminalStatus uses SQLite-compatible time arithmetic.
 func (DesktopRunsRepository) UpdateRunTerminalStatus(
 	ctx context.Context, tx pgx.Tx, runID uuid.UUID, u TerminalStatusUpdate,

@@ -49,7 +49,7 @@ func TestEventWriterAppend_AppendsSubAgentCompletedEvent(t *testing.T) {
 	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
 	seedPipelineSubAgent(t, pool, subAgentID, accountID, threadID, runID)
 
-	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-1", nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-1", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
 	ev := events.NewEmitter("trace-1").Emit("run.completed", map[string]any{}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
 		t.Fatalf("append terminal event: %v", err)
@@ -95,7 +95,7 @@ func TestEventWriterAppend_AppendsSubAgentCancelledEventOnCancelRequest(t *testi
 		t.Fatalf("commit cancel_requested: %v", err)
 	}
 
-	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-2", nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-2", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
 	ev := events.NewEmitter("trace-2").Emit("message.delta", map[string]any{"content_delta": "ignored"}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
 		t.Fatalf("append after cancel request: %v", err)
@@ -144,7 +144,7 @@ func TestEventWriterAppend_AutoQueuesNextRunFromPendingInputs(t *testing.T) {
 	}
 
 	jobQueue := &stubJobQueue{}
-	writer := newEventWriter(pool, data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID}, "trace-3", nil, jobQueue, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
+	writer := newEventWriter(pool, data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID}, "trace-3", nil, nil, jobQueue, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
 	ev := events.NewEmitter("trace-3").Emit("run.completed", map[string]any{}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, childRunID, ev); err != nil {
 		t.Fatalf("append terminal event: %v", err)
@@ -173,6 +173,62 @@ func TestEventWriterAppend_AutoQueuesNextRunFromPendingInputs(t *testing.T) {
 	}
 	if merged != "urgent\n\nphase two" {
 		t.Fatalf("unexpected merged input: %q", merged)
+	}
+}
+
+func TestEventWriterAppend_TouchesRunActivityOnNonTerminalCommit(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_run_activity_touch")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+
+	oldActivity := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := pool.Exec(context.Background(), `UPDATE runs SET status_updated_at = $2 WHERE id = $1`, runID, oldActivity); err != nil {
+		t.Fatalf("set old activity: %v", err)
+	}
+
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-activity", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil)
+	ev := events.NewEmitter("trace-activity").Emit("llm.turn.completed", map[string]any{
+		"usage": map[string]any{
+			"input_tokens":  3,
+			"output_tokens": 2,
+		},
+	}, nil, nil)
+	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
+		t.Fatalf("append non-terminal event: %v", err)
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatalf("flush writer: %v", err)
+	}
+
+	var (
+		status  string
+		touched bool
+	)
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT status, status_updated_at > $2
+		   FROM runs
+		  WHERE id = $1`,
+		runID,
+		oldActivity,
+	).Scan(&status, &touched); err != nil {
+		t.Fatalf("query run activity: %v", err)
+	}
+	if status != "running" {
+		t.Fatalf("expected run to stay running, got %q", status)
+	}
+	if !touched {
+		t.Fatal("expected status_updated_at to refresh on non-terminal commit")
 	}
 }
 

@@ -162,6 +162,7 @@ type eventWriter struct {
 	projector     *subagentctl.SubAgentStateProjector
 	model         string
 	personaID     string
+	runsRepo      data.RunsRepository
 	usageRepo     data.UsageRecordsRepository
 	creditsRepo   data.CreditsRepository
 	releaseSlot   func() // idempotent per-run slot release (from RunContext)
@@ -266,6 +267,7 @@ func (w *eventWriter) Append(
 	runID uuid.UUID,
 	ev events.RunEvent,
 ) error {
+	w.runsRepo = runsRepo
 	if err := w.ensureTx(ctx); err != nil {
 		return err
 	}
@@ -416,6 +418,11 @@ func (w *eventWriter) Append(
 func (w *eventWriter) commit(ctx context.Context) error {
 	if w.tx == nil {
 		return nil
+	}
+	if w.pendingEventsSinceCommit > 0 && !w.hasTerminal {
+		if err := w.runsRepo.TouchRunActivity(ctx, w.tx, w.run.ID); err != nil {
+			return err
+		}
 	}
 	if err := w.tx.Commit(ctx); err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
@@ -149,6 +150,61 @@ func TestDesktopSubAgentRepository_CreateAndEvents(t *testing.T) {
 	}
 	if snapshot == nil || string(snapshot.SnapshotJSON) != `{"messages":[]}` {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+}
+
+func TestDesktopRunsRepository_TouchRunActivity(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	seedDesktopAccount(t, pool, accountID)
+	seedDesktopProject(t, pool, accountID, projectID)
+	seedDesktopThread(t, pool, accountID, projectID, threadID)
+	seedDesktopRun(t, pool, accountID, threadID, runID, nil)
+
+	oldActivity := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC).Format("2006-01-02 15:04:05")
+	if _, err := pool.Exec(ctx, `UPDATE runs SET status_updated_at = $2 WHERE id = $1`, runID, oldActivity); err != nil {
+		t.Fatalf("set old activity: %v", err)
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := (DesktopRunsRepository{}).TouchRunActivity(ctx, tx, runID); err != nil {
+		t.Fatalf("touch run activity: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit tx: %v", err)
+	}
+
+	var touched int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT CASE WHEN status_updated_at > $2 THEN 1 ELSE 0 END
+		   FROM runs
+		  WHERE id = $1`,
+		runID,
+		oldActivity,
+	).Scan(&touched); err != nil {
+		t.Fatalf("query activity: %v", err)
+	}
+	if touched != 1 {
+		t.Fatal("expected status_updated_at to be refreshed")
 	}
 }
 

@@ -167,6 +167,29 @@ func (RunsRepository) UpdateEnvironmentBindings(
 	return nil
 }
 
+func (RunsRepository) TouchRunActivity(
+	ctx context.Context,
+	tx pgx.Tx,
+	runID uuid.UUID,
+) error {
+	if runID == uuid.Nil {
+		return fmt.Errorf("run_id must not be empty")
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs
+		 SET status_updated_at = now()
+		 WHERE id = $1`,
+		runID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run not found: %s", runID)
+	}
+	return nil
+}
+
 func (RunsRepository) LockRunRow(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
 	var ignored int
 	err := tx.QueryRow(
