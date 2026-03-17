@@ -860,6 +860,84 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_RoleOnlyWithoutVisibleContent_Re
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_ReasoningAliasWithoutVisibleContent_Retryable(t *testing.T) {
+	chunk1, _ := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"role":      "assistant",
+					"reasoning": "thinking",
+				},
+			},
+		},
+	})
+
+	reader := strings.NewReader(
+		"data: " + string(chunk1) + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), reader, "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if last.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error_class: %#v", last.Error)
+	}
+	if last.Error.Message != "LLM generated only internal reasoning without visible output" {
+		t.Fatalf("unexpected error message: %#v", last.Error)
+	}
+}
+
+func TestOpenAIGateway_StreamChatCompletionsSSE_StreamErrorChunkFailsWithDetails(t *testing.T) {
+	chunk1, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": "provider disconnected",
+			"type":    "provider_error",
+			"code":    502,
+		},
+	})
+
+	reader := strings.NewReader("data: " + string(chunk1) + "\n\n")
+
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), reader, "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if last.Error.Message != "OpenAI stream returned error" {
+		t.Fatalf("unexpected error message: %#v", last.Error)
+	}
+	if got := last.Error.Details["code"]; got != float64(502) {
+		t.Fatalf("expected code=502, got %#v", got)
+	}
+}
+
 func TestOpenAIGateway_StreamChatCompletionsSSE_RefusalDelta_Completes(t *testing.T) {
 	chunk1, _ := json.Marshal(map[string]any{
 		"choices": []any{

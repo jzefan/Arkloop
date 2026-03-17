@@ -128,7 +128,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	messagesPayload, err := toOpenAIChatMessages(request.Messages)
 	if err != nil {
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI chat messages construction failed",
@@ -156,7 +156,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	for k := range g.cfg.AdvancedJSON {
 		if _, denied := openAIAdvancedJSONDenylist[k]; denied {
 			return yield(StreamRunFailed{
-			LlmCallID: llmCallID,
+				LlmCallID: llmCallID,
 				Error: GatewayError{
 					ErrorClass: ErrorClassInternalError,
 					Message:    fmt.Sprintf("advanced_json must not set critical field: %s", k),
@@ -205,7 +205,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		failed := StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI request serialization failed",
@@ -217,7 +217,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.BaseURL+"/chat/completions", bytes.NewReader(encoded))
 	if err != nil {
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI request construction failed",
@@ -237,7 +237,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 			return yield(failed)
 		}
 		failed := StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
 				Message:    "OpenAI network error",
@@ -254,7 +254,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 
 		errClass := errorClassFromStatus(status)
 		failed := StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: errClass,
 				Message:    message,
@@ -330,7 +330,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	input, err := toOpenAIResponsesInput(request.Messages)
 	if err != nil {
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI responses input construction failed",
@@ -357,7 +357,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	for k := range g.cfg.AdvancedJSON {
 		if _, denied := openAIAdvancedJSONDenylist[k]; denied {
 			return yield(StreamRunFailed{
-			LlmCallID: llmCallID,
+				LlmCallID: llmCallID,
 				Error: GatewayError{
 					ErrorClass: ErrorClassInternalError,
 					Message:    fmt.Sprintf("advanced_json must not set critical field: %s", k),
@@ -415,7 +415,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI request serialization failed",
@@ -426,7 +426,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.BaseURL+"/responses", bytes.NewReader(encoded))
 	if err != nil {
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassInternalError,
 				Message:    "OpenAI request construction failed",
@@ -445,7 +445,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 			return yield(StreamRunFailed{LlmCallID: llmCallID, Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": denied.Error()}}})
 		}
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderRetryable,
 				Message:    "OpenAI network error",
@@ -477,7 +477,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		errClass := errorClassFromStatus(status)
 		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
 		return yield(StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: errClass,
 				Message:    message,
@@ -537,10 +537,19 @@ func errorClassFromStatus(status int) string {
 }
 
 type openAIChatCompletionStreamChunk struct {
+	Error *struct {
+		Message  string         `json:"message"`
+		Type     string         `json:"type"`
+		Code     any            `json:"code"`
+		Metadata map[string]any `json:"metadata"`
+	} `json:"error"`
 	Choices []struct {
 		Delta struct {
 			Content          *string                         `json:"content"`
 			ReasoningContent *string                         `json:"reasoning_content"`
+			Reasoning        *string                         `json:"reasoning"`
+			ReasoningDetails json.RawMessage                 `json:"reasoning_details"`
+			Obfuscation      *string                         `json:"obfuscation"`
 			Refusal          *string                         `json:"refusal"`
 			Role             *string                         `json:"role"`
 			ToolCalls        []openAIChatCompletionToolDelta `json:"tool_calls"`
@@ -674,6 +683,9 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 	lastFinishReason := ""
 	sawRoleDelta := false
 	contentFiltered := false
+	reasoningAliasChunkCount := 0
+	reasoningDetailsChunkCount := 0
+	obfuscationChunkCount := 0
 
 	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
 		defer func() {
@@ -727,21 +739,24 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				terminalEmitted = true
 				if contentFiltered {
 					return yield(StreamRunFailed{
-					LlmCallID: llmCallID,
+						LlmCallID: llmCallID,
 						Error: GatewayError{
 							ErrorClass: ErrorClassPolicyDenied,
 							Message:    "OpenAI content filtered",
 						},
 					})
 				}
-				details := map[string]any{
-					"finish_reason_seen": finishReasonSeen,
-					"done_seen":          doneSeen,
-					"chunk_count":        chunkCount,
-					"choice_chunk_count": choiceChunkCount,
-					"last_finish_reason": lastFinishReason,
-					"saw_role_delta":     sawRoleDelta,
-				}
+				details := openAIChatStreamFailureDetails(
+					finishReasonSeen,
+					doneSeen,
+					chunkCount,
+					choiceChunkCount,
+					lastFinishReason,
+					sawRoleDelta,
+					reasoningAliasChunkCount,
+					reasoningDetailsChunkCount,
+					obfuscationChunkCount,
+				)
 				if streamedUsage != nil {
 					details["usage"] = streamedUsage.ToJSON()
 				}
@@ -787,6 +802,32 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			streamedUsage = parseChatCompletionUsage(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, cached)
 			streamedCost = costFromFloat64(parsed.Usage.Cost)
 		}
+		if parsed.Error != nil {
+			terminalEmitted = true
+			details := map[string]any{}
+			if parsed.Error.Message != "" {
+				details["provider_message"] = parsed.Error.Message
+			}
+			if parsed.Error.Type != "" {
+				details["type"] = parsed.Error.Type
+			}
+			if parsed.Error.Code != nil {
+				details["code"] = parsed.Error.Code
+			}
+			if len(parsed.Error.Metadata) > 0 {
+				details["metadata"] = parsed.Error.Metadata
+			}
+			return yield(StreamRunFailed{
+				LlmCallID: llmCallID,
+				Error: GatewayError{
+					ErrorClass: ErrorClassProviderRetryable,
+					Message:    "OpenAI stream returned error",
+					Details:    details,
+				},
+				Usage: streamedUsage,
+				Cost:  streamedCost,
+			})
+		}
 		if len(parsed.Choices) == 0 {
 			return nil
 		}
@@ -803,6 +844,21 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.ReasoningContent, Role: role, Channel: &thinkingChannel}); err != nil {
 				return err
 			}
+		}
+		if choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
+			reasoningAliasChunkCount++
+			thinkingChannel := "thinking"
+			emittedAnyOutput = true
+			if err := yield(StreamMessageDelta{ContentDelta: *choice.Delta.Reasoning, Role: role, Channel: &thinkingChannel}); err != nil {
+				return err
+			}
+		}
+		if hasOpenAIReasoningDetails(choice.Delta.ReasoningDetails) {
+			reasoningDetailsChunkCount++
+			emittedAnyOutput = true
+		}
+		if choice.Delta.Obfuscation != nil && *choice.Delta.Obfuscation != "" {
+			obfuscationChunkCount++
 		}
 		if choice.Delta.Refusal != nil && *choice.Delta.Refusal != "" {
 			emittedAnyOutput = true
@@ -897,28 +953,31 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				terminalEmitted = true
 				if contentFiltered {
 					return yield(StreamRunFailed{
-					LlmCallID: llmCallID,
+						LlmCallID: llmCallID,
 						Error: GatewayError{
 							ErrorClass: ErrorClassPolicyDenied,
 							Message:    "OpenAI content filtered",
 						},
 					})
 				}
-				details := map[string]any{
-					"finish_reason_seen": finishReasonSeen,
-					"done_seen":          doneSeen,
-					"chunk_count":        chunkCount,
-					"choice_chunk_count": choiceChunkCount,
-					"last_finish_reason": lastFinishReason,
-					"saw_role_delta":     sawRoleDelta,
-				}
+				details := openAIChatStreamFailureDetails(
+					finishReasonSeen,
+					doneSeen,
+					chunkCount,
+					choiceChunkCount,
+					lastFinishReason,
+					sawRoleDelta,
+					reasoningAliasChunkCount,
+					reasoningDetailsChunkCount,
+					obfuscationChunkCount,
+				)
 				if streamedUsage != nil {
 					details["usage"] = streamedUsage.ToJSON()
 				}
-					errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
-					return yield(StreamRunFailed{
-						LlmCallID: llmCallID,
-						Error: GatewayError{
+				errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
+				return yield(StreamRunFailed{
+					LlmCallID: llmCallID,
+					Error: GatewayError{
 						ErrorClass: errClass,
 						Message:    errMsg,
 						Details:    details,
@@ -974,21 +1033,24 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				},
 			})
 		}
-		details := map[string]any{
-			"finish_reason_seen": finishReasonSeen,
-			"done_seen":          doneSeen,
-			"chunk_count":        chunkCount,
-			"choice_chunk_count": choiceChunkCount,
-			"last_finish_reason": lastFinishReason,
-			"saw_role_delta":     sawRoleDelta,
-		}
+		details := openAIChatStreamFailureDetails(
+			finishReasonSeen,
+			doneSeen,
+			chunkCount,
+			choiceChunkCount,
+			lastFinishReason,
+			sawRoleDelta,
+			reasoningAliasChunkCount,
+			reasoningDetailsChunkCount,
+			obfuscationChunkCount,
+		)
 		if streamedUsage != nil {
 			details["usage"] = streamedUsage.ToJSON()
 		}
-			errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
-			return yield(StreamRunFailed{
-				LlmCallID: llmCallID,
-				Error: GatewayError{
+		errClass, errMsg := openAIChatEmptyStreamFailure(emittedAnyOutput, choiceChunkCount, sawRoleDelta, finishReasonSeen)
+		return yield(StreamRunFailed{
+			LlmCallID: llmCallID,
+			Error: GatewayError{
 				ErrorClass: errClass,
 				Message:    errMsg,
 				Details:    details,
@@ -1008,6 +1070,35 @@ func openAIChatEmptyStreamFailure(emittedAnyOutput bool, choiceChunkCount int, s
 		return ErrorClassProviderRetryable, "OpenAI stream emitted metadata without visible output"
 	}
 	return ErrorClassInternalError, "OpenAI stream completed without content"
+}
+
+func openAIChatStreamFailureDetails(
+	finishReasonSeen bool,
+	doneSeen bool,
+	chunkCount int,
+	choiceChunkCount int,
+	lastFinishReason string,
+	sawRoleDelta bool,
+	reasoningAliasChunkCount int,
+	reasoningDetailsChunkCount int,
+	obfuscationChunkCount int,
+) map[string]any {
+	return map[string]any{
+		"finish_reason_seen":            finishReasonSeen,
+		"done_seen":                     doneSeen,
+		"chunk_count":                   chunkCount,
+		"choice_chunk_count":            choiceChunkCount,
+		"last_finish_reason":            lastFinishReason,
+		"saw_role_delta":                sawRoleDelta,
+		"reasoning_alias_chunk_count":   reasoningAliasChunkCount,
+		"reasoning_details_chunk_count": reasoningDetailsChunkCount,
+		"obfuscation_chunk_count":       obfuscationChunkCount,
+	}
+}
+
+func hasOpenAIReasoningDetails(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null" && trimmed != "[]" && trimmed != "{}"
 }
 
 func (g *OpenAIGateway) streamResponsesSSE(
@@ -1871,7 +1962,7 @@ func splitThinkContent(inThink *bool, delta string) (thinkingPart, mainPart stri
 func openAIParseFailure(err error, message string, toolCallMessage string, llmCallID string) StreamRunFailed {
 	if errors.Is(err, errOpenAIToolCallArguments) {
 		return StreamRunFailed{
-		LlmCallID: llmCallID,
+			LlmCallID: llmCallID,
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderNonRetryable,
 				Message:    toolCallMessage,
@@ -1880,7 +1971,7 @@ func openAIParseFailure(err error, message string, toolCallMessage string, llmCa
 		}
 	}
 	return StreamRunFailed{
-	LlmCallID: llmCallID,
+		LlmCallID: llmCallID,
 		Error: GatewayError{
 			ErrorClass: ErrorClassInternalError,
 			Message:    message,
