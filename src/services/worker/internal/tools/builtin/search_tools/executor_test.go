@@ -70,6 +70,19 @@ func TestExactNameMatch(t *testing.T) {
 	if activator.activated[0].Name != "web_search" {
 		t.Fatalf("expected web_search activated, got %s", activator.activated[0].Name)
 	}
+	if got := result.ResultJSON["activated_count"]; got != 1 {
+		t.Fatalf("expected activated_count=1, got %v", got)
+	}
+	if got := result.ResultJSON["already_loaded_count"]; got != 0 {
+		t.Fatalf("expected already_loaded_count=0, got %v", got)
+	}
+	if got := result.ResultJSON["already_active_count"]; got != 0 {
+		t.Fatalf("expected already_active_count=0, got %v", got)
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	if entries[0]["state"] != stateActivated {
+		t.Fatalf("expected state=%s, got %v", stateActivated, entries[0]["state"])
+	}
 }
 
 func TestBatchQuery(t *testing.T) {
@@ -118,6 +131,50 @@ func TestSubstringMatch(t *testing.T) {
 	}
 }
 
+func TestSubstringMatchSkipsAlreadyActiveTools(t *testing.T) {
+	activator := &mockActivator{}
+	searchable := map[string]llm.ToolSpec{
+		"web_fetch": {
+			Name:        "web_fetch",
+			Description: strPtr("fetch a web page"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	active := map[string]llm.ToolSpec{
+		"web_search": {
+			Name:        "web_search",
+			Description: strPtr("search the web"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	exec := NewExecutor(
+		activator,
+		func() map[string]llm.ToolSpec { return searchable },
+		func() map[string]llm.ToolSpec { return active },
+	)
+
+	result := exec.Execute(
+		context.Background(),
+		"search_tools",
+		map[string]any{"queries": []any{"web"}},
+		tools.ExecutionContext{},
+		"call_substring",
+	)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if got := result.ResultJSON["count"]; got != 1 {
+		t.Fatalf("expected only searchable fuzzy matches, got %v", got)
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	if entries[0]["name"] != "web_fetch" {
+		t.Fatalf("expected web_fetch, got %v", entries[0]["name"])
+	}
+	if entries[0]["state"] != stateActivated {
+		t.Fatalf("expected state=%s, got %v", stateActivated, entries[0]["state"])
+	}
+}
+
 func TestNoMatch(t *testing.T) {
 	activator := &mockActivator{}
 	pool := makeSearchable()
@@ -137,6 +194,18 @@ func TestNoMatch(t *testing.T) {
 	matched, _ := result.ResultJSON["matched"].([]any)
 	if len(matched) != 0 {
 		t.Fatalf("expected 0 matches, got %d", len(matched))
+	}
+	if got := result.ResultJSON["count"]; got != 0 {
+		t.Fatalf("expected count=0, got %v", got)
+	}
+	if got := result.ResultJSON["activated_count"]; got != 0 {
+		t.Fatalf("expected activated_count=0, got %v", got)
+	}
+	if got := result.ResultJSON["already_loaded_count"]; got != 0 {
+		t.Fatalf("expected already_loaded_count=0, got %v", got)
+	}
+	if got := result.ResultJSON["already_active_count"]; got != 0 {
+		t.Fatalf("expected already_active_count=0, got %v", got)
 	}
 }
 
@@ -163,7 +232,18 @@ func TestInvalidArgs(t *testing.T) {
 func TestWildcardAll(t *testing.T) {
 	activator := &mockActivator{}
 	pool := makeSearchable()
-	exec := NewExecutor(activator, func() map[string]llm.ToolSpec { return pool }, nil)
+	active := map[string]llm.ToolSpec{
+		"timeline_title": {
+			Name:        "timeline_title",
+			Description: strPtr("set timeline title"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	exec := NewExecutor(
+		activator,
+		func() map[string]llm.ToolSpec { return pool },
+		func() map[string]llm.ToolSpec { return active },
+	)
 
 	result := exec.Execute(
 		context.Background(),
@@ -177,10 +257,67 @@ func TestWildcardAll(t *testing.T) {
 		t.Fatalf("unexpected error: %s", result.Error.Message)
 	}
 	if count := result.ResultJSON["count"].(int); count != 3 {
-		t.Fatalf("expected 3 matches (all), got %d", count)
+		t.Fatalf("expected 3 matches (all searchable), got %d", count)
 	}
 	if len(activator.activated) != 3 {
 		t.Fatalf("expected 3 activated, got %d", len(activator.activated))
+	}
+	if got := result.ResultJSON["already_active_count"]; got != 0 {
+		t.Fatalf("expected already_active_count=0, got %v", got)
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	for _, entry := range entries {
+		if entry["state"] != stateActivated {
+			t.Fatalf("expected wildcard entries to be %s, got %v", stateActivated, entry["state"])
+		}
+	}
+}
+
+func TestActiveToolMatchReturnsAlreadyActive(t *testing.T) {
+	activator := &mockActivator{}
+	active := map[string]llm.ToolSpec{
+		"web_search": {
+			Name:        "web_search",
+			Description: strPtr("search the web"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	exec := NewExecutor(
+		activator,
+		func() map[string]llm.ToolSpec { return map[string]llm.ToolSpec{} },
+		func() map[string]llm.ToolSpec { return active },
+	)
+
+	result := exec.Execute(
+		context.Background(),
+		"search_tools",
+		map[string]any{"queries": []any{"web_search"}},
+		tools.ExecutionContext{},
+		"call_active",
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if len(activator.activated) != 0 {
+		t.Fatalf("expected no new activations, got %d", len(activator.activated))
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 matched entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry["already_active"] != true {
+		t.Fatalf("expected already_active flag, got %v", entry["already_active"])
+	}
+	if entry["state"] != stateAlreadyActive {
+		t.Fatalf("expected state=%s, got %v", stateAlreadyActive, entry["state"])
+	}
+	if got := result.ResultJSON["already_active_count"]; got != 1 {
+		t.Fatalf("expected already_active_count=1, got %v", got)
+	}
+	if got := result.ResultJSON["activated_count"]; got != 0 {
+		t.Fatalf("expected activated_count=0, got %v", got)
 	}
 }
 
@@ -221,6 +358,16 @@ func TestDuplicateSearchDoesNotReactivate(t *testing.T) {
 	if len(activator.activated) != 0 {
 		t.Fatalf("expected 0 new activations, got %d", len(activator.activated))
 	}
+	if got := result.ResultJSON["already_loaded_count"]; got != 1 {
+		t.Fatalf("expected already_loaded_count=1, got %v", got)
+	}
+	entries := matchedEntries(t, result.ResultJSON)
+	if entries[0]["state"] != stateAlreadyLoaded {
+		t.Fatalf("expected state=%s, got %v", stateAlreadyLoaded, entries[0]["state"])
+	}
+	if entries[0]["already_loaded"] != true {
+		t.Fatalf("expected already_loaded=true, got %v", entries[0]["already_loaded"])
+	}
 }
 
 func TestSearchableMapNotMutated(t *testing.T) {
@@ -255,6 +402,89 @@ func TestBuildCatalogPrompt(t *testing.T) {
 	if !contains(catalog, "<available_tools>") {
 		t.Fatalf("catalog missing XML tags: %s", catalog)
 	}
+	if !contains(catalog, "same reasoning loop") {
+		t.Fatalf("catalog should explain same-loop activation timing: %s", catalog)
+	}
+}
+
+func TestStatusBreakdownWithMixedMatches(t *testing.T) {
+	activator := &mockActivator{}
+	searchable := map[string]llm.ToolSpec{
+		"web_fetch": {
+			Name:        "web_fetch",
+			Description: strPtr("fetch a web page"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	active := map[string]llm.ToolSpec{
+		"web_search": {
+			Name:        "web_search",
+			Description: strPtr("search the web"),
+			JSONSchema:  map[string]any{"type": "object"},
+		},
+	}
+	exec := NewExecutor(
+		activator,
+		func() map[string]llm.ToolSpec { return searchable },
+		func() map[string]llm.ToolSpec { return active },
+	)
+
+	result := exec.Execute(
+		context.Background(),
+		"search_tools",
+		map[string]any{"queries": []any{"web_search", "web_fetch"}},
+		tools.ExecutionContext{},
+		"call_mixed",
+	)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if got := result.ResultJSON["count"]; got != 2 {
+		t.Fatalf("expected count=2, got %v", got)
+	}
+	if got := result.ResultJSON["activated_count"]; got != 1 {
+		t.Fatalf("expected activated_count=1, got %v", got)
+	}
+	if got := result.ResultJSON["already_active_count"]; got != 1 {
+		t.Fatalf("expected already_active_count=1, got %v", got)
+	}
+	if got := result.ResultJSON["already_loaded_count"]; got != 0 {
+		t.Fatalf("expected already_loaded_count=0, got %v", got)
+	}
+
+	entries := matchedEntries(t, result.ResultJSON)
+	states := map[string]string{}
+	for _, entry := range entries {
+		name, _ := entry["name"].(string)
+		state, _ := entry["state"].(string)
+		states[name] = state
+	}
+	if states["web_fetch"] != stateActivated {
+		t.Fatalf("expected web_fetch=%s, got %q", stateActivated, states["web_fetch"])
+	}
+	if states["web_search"] != stateAlreadyActive {
+		t.Fatalf("expected web_search=%s, got %q", stateAlreadyActive, states["web_search"])
+	}
+}
+
+func matchedEntries(t *testing.T, payload map[string]any) []map[string]any {
+	t.Helper()
+	if direct, ok := payload["matched"].([]map[string]any); ok {
+		return direct
+	}
+	raw, ok := payload["matched"].([]any)
+	if !ok {
+		t.Fatalf("unexpected matched payload: %#v", payload["matched"])
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected matched entry payload: %#v", item)
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func contains(s, sub string) bool {

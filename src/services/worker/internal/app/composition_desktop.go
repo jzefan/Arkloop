@@ -153,6 +153,11 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 
+	artifactStore, err := openDesktopArtifactStore(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "desktop: artifact store init failed, skipping persisted artifact tools", "err", err.Error())
+	}
+
 	var shellLlmSpecs []llm.ToolSpec
 	if useVM {
 		shellLlmSpecs = sandboxshell.LlmSpecs()
@@ -163,6 +168,13 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	allLlmSpecs = append(allLlmSpecs, conversationtool.LlmSpecs()...)
 	if memProvider != nil {
 		allLlmSpecs = append(allLlmSpecs, memorytool.LlmSpecs()...)
+	}
+	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore)
+	if err != nil {
+		return nil, fmt.Errorf("register desktop artifact tools: %w", err)
+	}
+	if artifactToolsRegistered {
+		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write"})
 	}
 
 	baseAllowlist := make(map[string]struct{})
@@ -1377,15 +1389,10 @@ func decryptAESGCM(key [32]byte, encoded string, keyVersion int) (string, error)
 }
 
 func loadDesktopKeyRing() ([32]byte, error) {
-	dataDir := os.Getenv("ARKLOOP_DATA_DIR")
-	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return [32]byte{}, err
-		}
-		dataDir = filepath.Join(home, ".arkloop")
+	dataDir, err := desktop.ResolveDataDir("")
+	if err != nil {
+		return [32]byte{}, err
 	}
-
 	raw, err := os.ReadFile(filepath.Join(dataDir, "encryption.key"))
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("read encryption.key: %w", err)

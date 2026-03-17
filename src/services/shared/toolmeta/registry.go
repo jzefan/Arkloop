@@ -53,7 +53,8 @@ var registry = []ToolMeta{
 			"Use when you need a tool that is not in your current tool set. " +
 			"Pass multiple queries in one call to batch-load several tools at once — never call this tool twice in a row for related tools. " +
 			"Think ahead: if you know you will need a group of tools together (e.g. spawn_agent + wait_agent, read_file + edit), load all of them in a single call. " +
-			"After this call succeeds, the matched tools become callable in subsequent turns.",
+			"After this call succeeds, matched tools may be injected into the real tool list in later phases of the same reasoning loop. " +
+			"Only call them after they actually appear there.",
 	},
 	// ── web ──
 	{

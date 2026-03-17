@@ -16,6 +16,12 @@ const (
 	errorNoResults   = "tool.no_results"
 )
 
+const (
+	stateActivated     = "activated"
+	stateAlreadyLoaded = "already_loaded"
+	stateAlreadyActive = "already_active"
+)
+
 // Executor resolves tool queries against the searchable pool and activates matches.
 type Executor struct {
 	activator        tools.ToolActivator
@@ -81,13 +87,17 @@ func (e *Executor) Execute(
 		pool[k] = v
 	}
 
-	matched := matchTools(queries, pool)
+	matched := matchTools(queries, searchable, pool)
 
 	if len(matched) == 0 {
 		return tools.ExecutionResult{
 			ResultJSON: map[string]any{
-				"matched": []any{},
-				"message": "no tools matched the given queries",
+				"matched":              []any{},
+				"count":                0,
+				"activated_count":      0,
+				"already_loaded_count": 0,
+				"already_active_count": 0,
+				"message":              "no tools matched the given queries",
 			},
 			DurationMs: durationMs(started),
 		}
@@ -96,6 +106,9 @@ func (e *Executor) Execute(
 	// Activate searchable tools not yet injected; core tools are already active.
 	var newSpecs []llm.ToolSpec
 	results := make([]map[string]any, 0, len(matched))
+	activatedCount := 0
+	alreadyLoadedCount := 0
+	alreadyActiveCount := 0
 	for _, spec := range matched {
 		entry := specToJSON(spec)
 		_, isSearchable := searchable[spec.Name]
@@ -103,9 +116,17 @@ func (e *Executor) Execute(
 			if _, done := e.alreadyActivated[spec.Name]; !done {
 				e.alreadyActivated[spec.Name] = struct{}{}
 				newSpecs = append(newSpecs, spec)
+				entry["state"] = stateActivated
+				activatedCount++
+			} else {
+				entry["state"] = stateAlreadyLoaded
+				entry["already_loaded"] = true
+				alreadyLoadedCount++
 			}
 		} else {
+			entry["state"] = stateAlreadyActive
 			entry["already_active"] = true
+			alreadyActiveCount++
 		}
 		results = append(results, entry)
 	}
@@ -116,23 +137,26 @@ func (e *Executor) Execute(
 
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{
-			"matched": results,
-			"count":   len(results),
+			"matched":              results,
+			"count":                len(results),
+			"activated_count":      activatedCount,
+			"already_loaded_count": alreadyLoadedCount,
+			"already_active_count": alreadyActiveCount,
 		},
 		DurationMs: durationMs(started),
 	}
 }
 
-func matchTools(queries []string, pool map[string]llm.ToolSpec) []llm.ToolSpec {
+func matchTools(queries []string, searchable map[string]llm.ToolSpec, pool map[string]llm.ToolSpec) []llm.ToolSpec {
 	seen := map[string]struct{}{}
 	var result []llm.ToolSpec
 
 	for _, query := range queries {
 		q := strings.ToLower(query)
 
-		// wildcard: return all searchable tools
+		// wildcard is discovery mode: only return searchable tools.
 		if q == "*" || q == "all" {
-			for name, spec := range pool {
+			for name, spec := range searchable {
 				if _, dup := seen[name]; !dup {
 					seen[name] = struct{}{}
 					result = append(result, spec)
@@ -150,8 +174,8 @@ func matchTools(queries []string, pool map[string]llm.ToolSpec) []llm.ToolSpec {
 			continue
 		}
 
-		// priority 2: name contains query, or query contains name
-		for name, spec := range pool {
+		// priority 2: discovery search is limited to searchable tools.
+		for name, spec := range searchable {
 			if _, dup := seen[name]; dup {
 				continue
 			}
@@ -215,7 +239,7 @@ func BuildCatalogPrompt(searchable map[string]llm.ToolSpec) string {
 	sb.WriteString("\n<available_tools>\n")
 	sb.WriteString("These tools are not callable yet.\n")
 	sb.WriteString("Use search_tools to get the full schema before calling any of them.\n")
-	sb.WriteString("A matched tool only becomes callable in a later turn after it has been loaded into the real tool list.\n")
+	sb.WriteString("After search_tools returns, call a matched tool only if it appears in the real tool list in later phases of the same reasoning loop.\n")
 
 	for name := range searchable {
 		shortDesc := name

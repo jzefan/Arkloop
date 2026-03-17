@@ -11,8 +11,10 @@ import (
 
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
+	"arkloop/services/worker/internal/executor"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
@@ -131,6 +133,42 @@ func TestDesktopNormalPersonaSearchableIncludesSpawnAgent(t *testing.T) {
 	searchable := rc.ToolExecutor.SearchableSpecs()
 	if _, ok := searchable["spawn_agent"]; !ok {
 		t.Fatalf("spawn_agent missing from searchable specs: %v", mapKeys(searchable))
+	}
+}
+
+func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	db, err := sqlitepgx.Open(filepath.Join(dataDir, "desktop.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	engine, err := ComposeDesktopEngine(ctx, db, eventbus.NewLocalEventBus(), executor.DefaultExecutorRegistry(), nil)
+	if err != nil {
+		t.Fatalf("compose desktop engine: %v", err)
+	}
+
+	for _, toolName := range []string{"artifact_guidelines", "show_widget", "create_artifact", "document_write"} {
+		if _, ok := engine.toolRegistry.Get(toolName); !ok {
+			t.Fatalf("expected tool %s to be registered", toolName)
+		}
+		if _, ok := engine.baseAllowlist[toolName]; !ok {
+			t.Fatalf("expected tool %s in desktop allowlist", toolName)
+		}
+	}
+
+	specNames := map[string]struct{}{}
+	for _, spec := range engine.allLlmSpecs {
+		specNames[spec.Name] = struct{}{}
+	}
+	for _, toolName := range []string{"artifact_guidelines", "show_widget", "create_artifact", "document_write"} {
+		if _, ok := specNames[toolName]; !ok {
+			t.Fatalf("expected tool spec %s in desktop llm specs", toolName)
+		}
 	}
 }
 

@@ -105,7 +105,7 @@ func TestToolCatalogSupportsPlatformAndOrgOverrides(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		AccountMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
@@ -305,7 +305,7 @@ func TestToolCatalogScopePermissions(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		AccountMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 	})
 
@@ -401,7 +401,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 		InvalidationListenerCtx:      listenerCtx,
 		Logger:                       logger,
 		AuthService:                  authService,
-		AccountMembershipRepo:            membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		ToolProviderConfigsRepo:      toolProvidersRepo,
 		ToolDescriptionOverridesRepo: overridesRepo,
 		ArtifactStore:                newFakeHTTPArtifactStore(),
@@ -445,12 +445,21 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 	}
 }
 
-func TestBuildEffectiveToolCatalogOmitsDocumentWriteWithoutArtifactStore(t *testing.T) {
+func TestBuildEffectiveToolCatalogOmitsStoredArtifactsWithoutArtifactStore(t *testing.T) {
 	t.Setenv("ARKLOOP_S3_ENDPOINT", "http://seaweedfs.internal")
 
 	catalog, err := buildEffectiveToolCatalog(context.Background(), uuid.Nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("build effective tool catalog: %v", err)
+	}
+	if _, ok := findCatalogTool(catalog, "document", "artifact_guidelines"); !ok {
+		t.Fatal("artifact_guidelines should remain available without artifact store")
+	}
+	if _, ok := findCatalogTool(catalog, "document", "show_widget"); !ok {
+		t.Fatal("show_widget should remain available without artifact store")
+	}
+	if _, ok := findCatalogTool(catalog, "document", "create_artifact"); ok {
+		t.Fatal("create_artifact should be absent without artifact store")
 	}
 	if _, ok := findCatalogTool(catalog, "document", "document_write"); ok {
 		t.Fatal("document_write should be absent without artifact store")

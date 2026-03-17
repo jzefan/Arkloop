@@ -323,7 +323,7 @@ func RunDesktop(ctx context.Context) error {
 
 	// ---- object stores ----
 
-	storageRoot := filepath.Join(cfg.DataDir, "storage")
+	storageRoot := desktop.StorageRoot(cfg.DataDir)
 	opener := objectstore.NewFilesystemOpener(storageRoot)
 
 	artifactStore, err := opener.Open(ctx, objectstore.ArtifactBucket)
