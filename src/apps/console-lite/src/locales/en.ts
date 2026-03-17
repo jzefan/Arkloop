@@ -73,6 +73,7 @@ export const en: LocaleStrings = {
     clientTypeOpenaiResponse: 'OpenAI Response',
     clientTypeOpenaiChat: 'OpenAI Chat Completion',
     clientTypeAnthropic: 'Anthropic Message',
+    clientTypeGemini: 'Google Gemini',
     saveChanges: 'Save Changes',
     deleteProvider: 'Delete Provider',
     deleteProviderConfirm: (name: string) => `Delete provider ${name}? All models under it will be removed.`,

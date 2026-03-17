@@ -77,6 +77,7 @@ export interface LocaleStrings {
     clientTypeOpenaiResponse: string
     clientTypeOpenaiChat: string
     clientTypeAnthropic: string
+    clientTypeGemini: string
     saveChanges: string
     deleteProvider: string
     deleteProviderConfirm: (name: string) => string

@@ -95,6 +95,7 @@ type llmProviderAvailableModel struct {
 var validLlmProviders = map[string]bool{
 	"openai":    true,
 	"anthropic": true,
+	"gemini":    true,
 }
 
 var validOpenAIAPIModes = map[string]bool{

@@ -732,6 +732,7 @@ export const en: LocaleStrings = {
     vendorOpenai: "OpenAI (Responses)",
     vendorOpenaiChat: "OpenAI (Chat Completions)",
     vendorAnthropic: "Anthropic",
+    vendorGemini: "Google Gemini",
     advancedConfig: "Advanced config",
     searchProviders: "Search providers...",
   },

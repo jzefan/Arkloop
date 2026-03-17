@@ -73,6 +73,7 @@ export const zhCN: LocaleStrings = {
     clientTypeOpenaiResponse: 'OpenAI Response',
     clientTypeOpenaiChat: 'OpenAI Chat Completion',
     clientTypeAnthropic: 'Anthropic Message',
+    clientTypeGemini: 'Google Gemini',
     saveChanges: '保存修改',
     deleteProvider: '删除服务商',
     deleteProviderConfirm: (name: string) => `确定删除服务商 ${name}？其下所有模型将一并删除。`,

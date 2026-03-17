@@ -738,6 +738,7 @@ export interface LocaleStrings {
     vendorOpenai: string;
     vendorOpenaiChat: string;
     vendorAnthropic: string;
+    vendorGemini: string;
     advancedConfig: string;
     searchProviders: string;
     deleteAll?: string;
