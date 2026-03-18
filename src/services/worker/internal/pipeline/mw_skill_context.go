@@ -7,34 +7,72 @@ import (
 
 	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type SkillResolver interface {
-	ResolveEnabledSkills(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error)
+type SkillResolver func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error)
+
+type SkillPreparer func(ctx context.Context, skills []skillstore.ResolvedSkill, layout skillstore.PathLayout) error
+
+type SkillLayoutResolver func(ctx context.Context, rc *RunContext) (skillstore.PathLayout, error)
+
+type SkillContextConfig struct {
+	Resolve        SkillResolver
+	Prepare        SkillPreparer
+	Layout         skillstore.PathLayout
+	LayoutResolver SkillLayoutResolver
 }
 
-func NewSkillContextMiddleware(pool *pgxpool.Pool, resolver SkillResolver) RunMiddleware {
+func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		if resolver == nil {
-			resolver = defaultSkillResolver()
-		}
-		if pool == nil || resolver == nil || rc.Run.AccountID == uuid.Nil || strings.TrimSpace(rc.ProfileRef) == "" || strings.TrimSpace(rc.WorkspaceRef) == "" {
+		if cfg.Resolve == nil || rc.Run.AccountID == uuid.Nil {
 			return next(ctx, rc)
 		}
-		skills, err := resolver.ResolveEnabledSkills(ctx, pool, rc.Run.AccountID, rc.ProfileRef, rc.WorkspaceRef)
+		skills, err := cfg.Resolve(ctx, rc.Run.AccountID, rc.ProfileRef, rc.WorkspaceRef)
 		if err != nil {
 			return fmt.Errorf("resolve enabled skills: %w", err)
 		}
+		layout, err := resolveSkillLayout(ctx, rc, cfg)
+		if err != nil {
+			return fmt.Errorf("resolve skill layout: %w", err)
+		}
+		skills = applySkillLayout(skills, layout)
+		if cfg.Prepare != nil {
+			if err := cfg.Prepare(ctx, skills, layout); err != nil {
+				return fmt.Errorf("prepare enabled skills: %w", err)
+			}
+		}
 		rc.EnabledSkills = append([]skillstore.ResolvedSkill(nil), skills...)
-		if block := buildSkillPromptBlock(skills); block != "" {
+		if block := buildSkillPromptBlock(skills, layout); block != "" {
 			rc.SystemPrompt += block
 		}
 		return next(ctx, rc)
 	}
 }
 
-func buildSkillPromptBlock(skills []skillstore.ResolvedSkill) string {
+func resolveSkillLayout(ctx context.Context, rc *RunContext, cfg SkillContextConfig) (skillstore.PathLayout, error) {
+	if cfg.LayoutResolver != nil {
+		layout, err := cfg.LayoutResolver(ctx, rc)
+		if err != nil {
+			return skillstore.PathLayout{}, err
+		}
+		return skillstore.NormalizePathLayout(layout), nil
+	}
+	return skillstore.NormalizePathLayout(cfg.Layout), nil
+}
+
+func applySkillLayout(skills []skillstore.ResolvedSkill, layout skillstore.PathLayout) []skillstore.ResolvedSkill {
+	if len(skills) == 0 {
+		return nil
+	}
+	out := make([]skillstore.ResolvedSkill, len(skills))
+	for i, item := range skills {
+		out[i] = item
+		out[i].MountPath = layout.MountPath(item.SkillKey, item.Version)
+	}
+	return out
+}
+
+func buildSkillPromptBlock(skills []skillstore.ResolvedSkill, layout skillstore.PathLayout) string {
 	if len(skills) == 0 {
 		return ""
 	}
@@ -50,9 +88,11 @@ func buildSkillPromptBlock(skills []skillstore.ResolvedSkill) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n<skills>\n")
 	sb.WriteString("- Enabled skill index: ")
-	sb.WriteString(skillstore.IndexPath)
+	sb.WriteString(layout.IndexPath)
 	sb.WriteString("\n")
-	sb.WriteString("- Skill files are mounted read-only under /opt/arkloop/skills. Read the relevant SKILL.md before using a skill.\n")
+	sb.WriteString("- Skill files are available under ")
+	sb.WriteString(layout.MountRoot)
+	sb.WriteString(". Read the relevant SKILL.md before using a skill.\n")
 	for _, item := range autoSkills {
 		sb.WriteString("- ")
 		sb.WriteString(strings.TrimSpace(item.SkillKey))

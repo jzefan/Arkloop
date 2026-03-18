@@ -53,6 +53,7 @@ import {
   applyWebFetchToolResult,
   buildMessageWebFetchesFromRunEvents,
   buildMessageCopBlocksFromRunEvents,
+  prependIntroNarrativeToCopBlocks,
 } from '../runEventProcessing'
 import { useLocale } from '../contexts/LocaleContext'
 import { apiBaseUrl } from '@arkloop/shared/api'
@@ -239,10 +240,22 @@ function collectCompletedWidgets(entries: StreamingArtifactEntry[]): WidgetRef[]
     }))
 }
 
-function finalizeCopBlocks(blocks: CopBlock[], finalContent?: string): MessageCopBlocksRef {
-  const normalizedFinalContent = finalContent && finalContent.trim() ? finalContent : undefined
-  return {
-    blocks: blocks.map((block) => ({
+function finalizeCopBlocks(
+  blocks: CopBlock[],
+  options?: {
+    finalContent?: string
+    preText?: string
+    preTextSeq?: number | null
+  },
+): MessageCopBlocksRef {
+  const normalizedFinalContent = options?.finalContent && options.finalContent.trim()
+    ? options.finalContent
+    : undefined
+  const normalizedPreText = options?.preText && options.preText.trim()
+    ? options.preText
+    : undefined
+  const finalizedBlocks = prependIntroNarrativeToCopBlocks(
+    blocks.map((block) => ({
       id: block.id,
       title: block.title,
       steps: finalizeBlockSteps(block.steps),
@@ -253,6 +266,12 @@ function finalizeCopBlocks(blocks: CopBlock[], finalContent?: string): MessageCo
       fileOps: block.fileOps.length > 0 ? [...block.fileOps] : undefined,
       webFetches: block.webFetches.length > 0 ? [...block.webFetches] : undefined,
     })),
+    normalizedPreText,
+    options?.preTextSeq ?? null,
+  )
+  return {
+    blocks: finalizedBlocks,
+    preText: normalizedPreText,
     finalContent: normalizedFinalContent,
   }
 }
@@ -371,6 +390,8 @@ export function ChatPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [assistantDraft, setAssistantDraft] = useState('')
   const [preCopText, setPreCopText] = useState('')
+  const preCopTextRef = useRef('')
+  const preCopTextSeqRef = useRef<number | null>(null)
   const seenFirstToolCallInRunRef = useRef(false)
   const [activeRunId, setActiveRunId] = useState<string | null>(
     locationState?.initialRunId ?? null,
@@ -600,6 +621,16 @@ export function ChatPage() {
     pendingTextRef.current = ''
     pendingTextSeqRef.current = null
   }, [])
+  const resetPreCopText = useCallback(() => {
+    preCopTextRef.current = ''
+    preCopTextSeqRef.current = null
+    setPreCopText('')
+  }, [])
+  const appendPreCopText = useCallback((delta: string, seq: number) => {
+    if (preCopTextSeqRef.current == null) preCopTextSeqRef.current = seq
+    preCopTextRef.current += delta
+    setPreCopText(preCopTextRef.current)
+  }, [])
   const flushPendingNarrativeToTimeline = useCallback(() => {
     const text = pendingTextRef.current
     const seq = pendingTextSeqRef.current
@@ -625,7 +656,7 @@ export function ChatPage() {
   }, [])
   const clearLiveRunSecurityArtifacts = useCallback(() => {
     setAssistantDraft('')
-    setPreCopText('')
+    resetPreCopText()
     seenFirstToolCallInRunRef.current = false
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
@@ -643,7 +674,7 @@ export function ChatPage() {
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
-  }, [resetCopState, resetSearchSteps])
+  }, [resetCopState, resetPreCopText, resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -1071,7 +1102,7 @@ export function ChatPage() {
   useEffect(() => {
     setActiveRunId(null)
     setAssistantDraft('')
-    setPreCopText('')
+    resetPreCopText()
     seenFirstToolCallInRunRef.current = false
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
@@ -1111,7 +1142,7 @@ export function ChatPage() {
     // activeRunId effect 在新 run 启动时负责归零。
     setPendingIncognito(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId])
+  }, [threadId, resetPreCopText])
 
   // 同步 pendingIncognito 到 AppLayout（用于 Sidebar 无痕 UI）
   useEffect(() => {
@@ -1137,6 +1168,7 @@ export function ChatPage() {
     currentRunFileOpsRef.current = []
     currentRunWebFetchesRef.current = []
     setAssistantDraft('')
+    resetPreCopText()
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
@@ -1151,7 +1183,7 @@ export function ChatPage() {
     setCancelSubmitting(false)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, baseUrl])
+  }, [activeRunId, baseUrl, resetPreCopText])
 
   // 避免上一轮 run 的 closed/error 状态误触发当前 run 的终端兜底。
   useEffect(() => {
@@ -1294,7 +1326,7 @@ export function ChatPage() {
         } else if (isThinking) {
           setThinkingDraft((prev) => prev + delta)
         } else if (!seenFirstToolCallInRunRef.current) {
-          setPreCopText((prev) => prev + delta)
+          appendPreCopText(delta, event.seq)
         } else {
           if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
           pendingTextRef.current += delta
@@ -1707,19 +1739,22 @@ export function ChatPage() {
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
-        const runCopData = finalizeCopBlocks(copBlocksRef.current, runFinalContent)
+        const runCopData = finalizeCopBlocks(copBlocksRef.current, {
+          finalContent: runFinalContent,
+          preText: preCopTextRef.current,
+          preTextSeq: preCopTextSeqRef.current,
+        })
         if (runCopData.blocks.length > 0) {
-          const currentBlocks = copBlocksRef.current
           applyCopBlocks(() => runCopData.blocks.map((b, i) => ({
             id: b.id,
             title: b.title,
             steps: b.steps,
             sources: b.sources,
-            narratives: currentBlocks[i]?.narratives ?? [],
-            codeExecutions: currentBlocks[i]?.codeExecutions ?? [],
-            subAgents: currentBlocks[i]?.subAgents ?? [],
-            fileOps: currentBlocks[i]?.fileOps ?? [],
-            webFetches: currentBlocks[i]?.webFetches ?? [],
+            narratives: b.narratives ?? [],
+            codeExecutions: b.codeExecutions ?? [],
+            subAgents: b.subAgents ?? [],
+            fileOps: b.fileOps ?? [],
+            webFetches: b.webFetches ?? [],
           })))
         }
         // 让 live SearchTimeline 平滑收起而非瞬间消失
@@ -1754,6 +1789,7 @@ export function ChatPage() {
         currentRunWebFetchesRef.current = []
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           const completedAssistant = findAssistantMessageForRun(items, completedRunId)
+          resetPreCopText()
           if (completedAssistant) {
             setAssistantDraft('')
             if (runWidgets.length > 0) {
@@ -1958,19 +1994,22 @@ export function ChatPage() {
     setStreamingArtifacts([])
     setSegments([])
     activeSegmentIdRef.current = null
-    const runCopData = finalizeCopBlocks(copBlocksRef.current, runFinalContent)
+    const runCopData = finalizeCopBlocks(copBlocksRef.current, {
+      finalContent: runFinalContent,
+      preText: preCopTextRef.current,
+      preTextSeq: preCopTextSeqRef.current,
+    })
     if (runCopData.blocks.length > 0) {
-      const currentBlocks = copBlocksRef.current
       applyCopBlocks(() => runCopData.blocks.map((b, i) => ({
         id: b.id,
         title: b.title,
         steps: b.steps,
         sources: b.sources,
-        narratives: currentBlocks[i]?.narratives ?? [],
-        codeExecutions: currentBlocks[i]?.codeExecutions ?? [],
-        subAgents: currentBlocks[i]?.subAgents ?? [],
-        fileOps: currentBlocks[i]?.fileOps ?? [],
-        webFetches: currentBlocks[i]?.webFetches ?? [],
+        narratives: b.narratives ?? [],
+        codeExecutions: b.codeExecutions ?? [],
+        subAgents: b.subAgents ?? [],
+        fileOps: b.fileOps ?? [],
+        webFetches: b.webFetches ?? [],
       })))
     }
     pendingTextRef.current = ''
@@ -1984,6 +2023,7 @@ export function ChatPage() {
 
     void refreshMessages({ requiredCompletedRunId: terminalRunId }).then((items) => {
       const completedAssistant = findAssistantMessageForRun(items, terminalRunId)
+      resetPreCopText()
       if (completedAssistant) {
         if (runWidgets.length > 0) {
           writeMessageWidgets(completedAssistant.id, runWidgets)

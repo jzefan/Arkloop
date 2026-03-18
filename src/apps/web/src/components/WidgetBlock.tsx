@@ -1,70 +1,64 @@
-import { useRef, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArtifactIframe, type ArtifactAction, type ArtifactIframeHandle } from './ArtifactIframe'
 
 type Props = {
   html: string
   title: string
   complete: boolean
+  onAction?: (action: ArtifactAction) => void
 }
 
-export function WidgetBlock({ html, title, complete }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const lastHtmlRef = useRef('')
+export function WidgetBlock({ html, title, complete, onAction }: Props) {
+  const iframeRef = useRef<ArtifactIframeHandle>(null)
+  const lastRenderRef = useRef<{ html: string; complete: boolean } | null>(null)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
 
   useEffect(() => {
-    const el = containerRef.current
-    if (!el || html === lastHtmlRef.current) return
-    lastHtmlRef.current = html
-    el.innerHTML = html
+    if (!html) return
+    const previous = lastRenderRef.current
+    if (previous?.html === html && previous.complete === complete) return
+    lastRenderRef.current = { html, complete }
     if (complete) {
-      executeScripts(el)
+      iframeRef.current?.finalizeContent(html)
+      return
     }
+    iframeRef.current?.setStreamingContent(html)
   }, [html, complete])
 
+  useEffect(() => {
+    setRuntimeError(null)
+  }, [html])
+
+  const handleAction = useCallback((action: ArtifactAction) => {
+    if (action.type === 'error') {
+      setRuntimeError(action.message)
+    }
+    onAction?.(action)
+  }, [onAction])
+
   return (
-    <div style={{ margin: '8px 0', maxWidth: '720px' }}>
-      <div style={{
-        fontSize: '12px',
-        fontWeight: 500,
-        color: 'var(--c-text-secondary)',
-        marginBottom: '6px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-      }}>
-        {title}
-        {!complete && (
-          <span style={{
-            width: '6px',
-            height: '6px',
-            borderRadius: '50%',
-            background: 'var(--c-text-tertiary)',
-            display: 'inline-block',
-            animation: '_fadeIn 0.6s ease infinite alternate',
-          }} />
-        )}
-      </div>
-      <div
-        ref={containerRef}
+    <div style={{ margin: '2px 0 4px', maxWidth: '720px' }}>
+      <ArtifactIframe
+        ref={iframeRef}
+        mode="streaming"
+        frameTitle={title}
+        onAction={handleAction}
         style={{
-          border: '0.5px solid var(--c-border-subtle)',
-          borderRadius: '10px',
-          padding: '16px',
-          background: 'var(--c-bg-deep)',
-          overflow: 'auto',
+          minHeight: '120px',
+          border: 'none',
+          borderRadius: '0',
+          background: 'transparent',
         }}
       />
+      {runtimeError && (
+        <div style={{
+          marginTop: '6px',
+          fontSize: '12px',
+          color: 'var(--c-status-error-text)',
+        }}>
+          {runtimeError}
+        </div>
+      )}
     </div>
   )
-}
-
-function executeScripts(container: HTMLElement): void {
-  container.querySelectorAll('script').forEach((old) => {
-    const s = document.createElement('script')
-    if ((old as HTMLScriptElement).src) {
-      s.src = (old as HTMLScriptElement).src
-    } else {
-      s.textContent = old.textContent
-    }
-    old.replaceWith(s)
-  })
 }

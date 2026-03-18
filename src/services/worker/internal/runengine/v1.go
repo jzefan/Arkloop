@@ -15,6 +15,7 @@ import (
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/plugin"
 	"arkloop/services/shared/runlimit"
+	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -32,6 +33,7 @@ import (
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -205,7 +207,11 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewChannelContextMiddleware(deps.DBPool),
 		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
-		pipeline.NewSkillContextMiddleware(deps.DBPool, nil),
+		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
+			Resolve: func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
+				return data.NewSkillsRepository(deps.DBPool).ResolveEnabledSkills(ctx, accountID, profileRef, workspaceRef)
+			},
+		}),
 		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
 		pipeline.NewTrustSourceMiddleware(cfgResolver),
 		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),

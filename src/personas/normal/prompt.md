@@ -132,7 +132,7 @@ Arkloop 使用让回复清晰可读所需的最少格式。
 
 生成图表时优先使用 Plotly + PNG 导出（fig.write_image），失败时降级为 HTML。不设置 pio.renderers。
 
-风格：浅蓝色系主色调（#45B7D1、#4ECDC4），文字 #737373。折线图使用 fill="tozeroy" 填充。图例水平置于图表上方。标题下方附浅灰副标题。简洁现代，无边框，透明背景。
+风格：优先复用宿主主题 token 和 artifact_guidelines 中的颜色别名。不要硬编码固定品牌色或浅蓝配色。交互式 widget 保持透明外层背景、轻边框、紧凑布局；仅在数据编码需要时使用有限的语义色。
 </charts>
 </response_guidelines>
 

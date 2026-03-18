@@ -1,5 +1,3 @@
-//go:build !desktop
-
 package data
 
 import (
@@ -10,17 +8,26 @@ import (
 	"arkloop/services/shared/skillstore"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type SkillsRepository struct{}
+type skillsQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
 
-func (SkillsRepository) ResolveEnabledSkills(ctx context.Context, pool *pgxpool.Pool, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
+type SkillsRepository struct {
+	queryer skillsQueryer
+}
+
+func NewSkillsRepository(queryer skillsQueryer) SkillsRepository {
+	return SkillsRepository{queryer: queryer}
+}
+
+func (r SkillsRepository) ResolveEnabledSkills(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if pool == nil {
-		return nil, fmt.Errorf("pool must not be nil")
+	if r.queryer == nil {
+		return nil, fmt.Errorf("queryer must not be nil")
 	}
 	if accountID == uuid.Nil {
 		return nil, fmt.Errorf("account_id must not be empty")
@@ -68,9 +75,9 @@ func (SkillsRepository) ResolveEnabledSkills(ctx context.Context, pool *pgxpool.
 	var rows pgx.Rows
 	var err error
 	if profileRef == "" || workspaceRef == "" {
-		rows, err = pool.Query(ctx, platformSkillQuery)
+		rows, err = r.queryer.Query(ctx, platformSkillQuery)
 	} else {
-		rows, err = pool.Query(ctx, fullQuery, accountID, profileRef, workspaceRef)
+		rows, err = r.queryer.Query(ctx, fullQuery, accountID, profileRef, workspaceRef)
 	}
 	if err != nil {
 		return nil, err

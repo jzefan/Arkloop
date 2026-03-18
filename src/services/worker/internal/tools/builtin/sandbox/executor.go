@@ -1429,6 +1429,6 @@ func (e *ToolExecutor) resolveEnabledSkills(ctx context.Context, execCtx tools.E
 	if strings.TrimSpace(execCtx.ProfileRef) == "" || strings.TrimSpace(execCtx.WorkspaceRef) == "" {
 		return nil, nil
 	}
-	repo := data.SkillsRepository{}
-	return repo.ResolveEnabledSkills(ctx, e.orchestrator.pool, *execCtx.AccountID, execCtx.ProfileRef, execCtx.WorkspaceRef)
+	repo := data.NewSkillsRepository(e.orchestrator.pool)
+	return repo.ResolveEnabledSkills(ctx, *execCtx.AccountID, execCtx.ProfileRef, execCtx.WorkspaceRef)
 }

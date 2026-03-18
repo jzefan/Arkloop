@@ -21,6 +21,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/shared/telegrambot"
+	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -58,6 +59,9 @@ type DesktopEngine struct {
 	personaRegistry  func() *personas.Registry
 	memProvider      memory.MemoryProvider
 	useOV            bool
+	useVM            bool
+	skillLayout      pipeline.SkillLayoutResolver
+	runtimeSnapshot  *sharedtoolruntime.RuntimeSnapshot
 	jobQueue         queue.JobQueue
 }
 
@@ -82,6 +86,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 	isolationMode := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_ISOLATION"))
 	useVM := isolationMode == "vm" && desktop.GetSandboxAddr() != ""
+	skillLayout := desktopSkillLayoutResolver(useVM)
 
 	if useVM {
 		for _, spec := range sandboxshell.AgentSpecs() {
@@ -103,6 +108,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 
 	executors := builtin.Executors(nil, nil, nil)
+	var runtimeSnapshot *sharedtoolruntime.RuntimeSnapshot
 
 	if useVM {
 		sandboxAddr := desktop.GetSandboxAddr()
@@ -110,6 +116,10 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		vmExec := sandboxshell.NewExecutor("http://"+sandboxAddr, authToken)
 		executors[sandboxshell.ExecCommandAgentSpec.Name] = vmExec
 		executors[sandboxshell.WriteStdinAgentSpec.Name] = vmExec
+		runtimeSnapshot = &sharedtoolruntime.RuntimeSnapshot{
+			SandboxBaseURL:   "http://" + sandboxAddr,
+			SandboxAuthToken: authToken,
+		}
 		slog.Info("desktop: using VM isolation for shell execution", "sandbox_addr", sandboxAddr)
 	} else {
 		shellExec := localshell.NewExecutor()
@@ -208,16 +218,32 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		personaRegistry:  personaGetter,
 		memProvider:      memProvider,
 		useOV:            useOV,
+		useVM:            useVM,
+		skillLayout:      skillLayout,
+		runtimeSnapshot:  runtimeSnapshot,
 		jobQueue:         jobQueue,
 	}, nil
 }
 
 func loadPersonaRegistryFromFS() func() *personas.Registry {
-	dirs := []string{"personas", "src/personas", "../personas"}
+	dirs := make([]string, 0, 4)
+	if root, err := personas.BuiltinPersonasRoot(); err == nil && strings.TrimSpace(root) != "" {
+		dirs = append(dirs, root)
+	}
+	dirs = append(dirs, "personas", "src/personas", "../personas")
+	seen := make(map[string]struct{}, len(dirs))
 	for _, dir := range dirs {
-		reg, err := personas.LoadRegistry(dir)
+		cleaned := filepath.Clean(strings.TrimSpace(dir))
+		if cleaned == "" {
+			continue
+		}
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		reg, err := personas.LoadRegistry(cleaned)
 		if err == nil && len(reg.ListIDs()) > 0 {
-			slog.Info("desktop: personas loaded from filesystem", "dir", dir, "count", len(reg.ListIDs()))
+			slog.Info("desktop: personas loaded from filesystem", "dir", cleaned, "count", len(reg.ListIDs()))
 			return func() *personas.Registry { return reg }
 		}
 	}
@@ -246,6 +272,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		TraceID:  traceID,
 		Emitter:  emitter,
 		Router:   e.stubRouter,
+		Runtime:  e.runtimeSnapshot,
 
 		ExecutorBuilder:     e.executorRegistry,
 		ToolBudget:          map[string]any{},
@@ -266,6 +293,13 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		ProfileRef:   derefStr(run.ProfileRef),
 		WorkspaceRef: derefStr(run.WorkspaceRef),
 		JobPayload:   cloneDesktopMap(jobPayload),
+	}
+	if !e.useVM {
+		defer func() {
+			if err := cleanupDesktopSkillRuntime(run.ID); err != nil {
+				slog.WarnContext(ctx, "desktop: cleanup skill runtime failed", "run_id", run.ID.String(), "err", err.Error())
+			}
+		}()
 	}
 
 	if e.jobQueue != nil && subAgentsEnabled {
@@ -299,6 +333,11 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
 		desktopChannelContext(e.db),
 		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
+		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
+			Resolve:        desktopSkillResolver(e.db),
+			Prepare:        desktopSkillPreparer(e.useVM),
+			LayoutResolver: e.skillLayout,
+		}),
 		memMiddleware,
 		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewToolBuildMiddleware(),

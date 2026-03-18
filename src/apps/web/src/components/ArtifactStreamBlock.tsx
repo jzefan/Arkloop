@@ -27,41 +27,76 @@ export function extractPartialArtifactFields(buffer: string): {
   display?: string
   content?: string
 } {
-  const result: ReturnType<typeof extractPartialArtifactFields> = {}
-
-  const titleMatch = buffer.match(/"title"\s*:\s*"([^"]*)"/)
-  if (titleMatch) result.title = titleMatch[1]
-
-  const filenameMatch = buffer.match(/"filename"\s*:\s*"([^"]*)"/)
-  if (filenameMatch) result.filename = filenameMatch[1]
-
-  const displayMatch = buffer.match(/"display"\s*:\s*"([^"]*)"/)
-  if (displayMatch) result.display = displayMatch[1]
-
-  // support both "content" (create_artifact) and "widget_code" (show_widget)
-  const contentMarker = '"content":"'
-  const widgetCodeMarker = '"widget_code":"'
-  const contentIdx = buffer.indexOf(contentMarker)
-  const widgetIdx = buffer.indexOf(widgetCodeMarker)
-  const activeMarker = contentIdx !== -1 ? contentMarker : widgetIdx !== -1 ? widgetCodeMarker : null
-  const activeIdx = contentIdx !== -1 ? contentIdx : widgetIdx
-  if (activeMarker && activeIdx !== -1) {
-    let raw = buffer.slice(activeIdx + activeMarker.length)
-    if (raw.endsWith('"}')) raw = raw.slice(0, -2)
-    else if (raw.endsWith('"')) raw = raw.slice(0, -1)
-    result.content = unescapeJsonString(raw)
+  return {
+    title: extractJSONStringField(buffer, 'title'),
+    filename: extractJSONStringField(buffer, 'filename'),
+    display: extractJSONStringField(buffer, 'display'),
+    content: extractJSONStringField(buffer, 'content') ?? extractJSONStringField(buffer, 'widget_code'),
   }
+}
+
+function extractJSONStringField(buffer: string, field: string): string | undefined {
+  const start = buffer.search(new RegExp(`"${field}"\\s*:\\s*"`))
+  if (start < 0) return undefined
+  const keyToken = `"${field}"`
+  const valueStart = buffer.indexOf('"', start + keyToken.length)
+  if (valueStart < 0) return undefined
+  return readJSONString(buffer, valueStart + 1)
+}
+
+function readJSONString(source: string, start: number): string {
+  let result = ''
+  let index = start
+
+  while (index < source.length) {
+    const char = source[index]
+    if (char === '"') return result
+    if (char !== '\\') {
+      result += char
+      index += 1
+      continue
+    }
+
+    const next = source[index + 1]
+    if (next == null) return result
+    if (next === 'u') {
+      const hex = source.slice(index + 2, index + 6)
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        result += String.fromCharCode(Number.parseInt(hex, 16))
+        index += 6
+        continue
+      }
+      return result
+    }
+
+    result += decodeEscapedChar(next)
+    index += 2
+  }
+
   return result
 }
 
-function unescapeJsonString(s: string): string {
-  return s
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, '\\')
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+function decodeEscapedChar(char: string): string {
+  switch (char) {
+    case 'n':
+      return '\n'
+    case 'r':
+      return '\r'
+    case 't':
+      return '\t'
+    case '"':
+      return '"'
+    case '\\':
+      return '\\'
+    case '/':
+      return '/'
+    case 'b':
+      return '\b'
+    case 'f':
+      return '\f'
+    default:
+      return char
+  }
 }
 
 export function ArtifactStreamBlock({ entry, accessToken, onAction }: Props) {
@@ -108,6 +143,7 @@ export function ArtifactStreamBlock({ entry, accessToken, onAction }: Props) {
           artifact={entry.artifactRef}
           accessToken={accessToken}
           onAction={onAction}
+          frameTitle={title}
           style={{ minHeight: '300px' }}
         />
       </div>
@@ -142,6 +178,7 @@ export function ArtifactStreamBlock({ entry, accessToken, onAction }: Props) {
         ref={iframeRef}
         mode="streaming"
         onAction={onAction}
+        frameTitle={title}
         style={{ minHeight: '200px' }}
       />
     </div>

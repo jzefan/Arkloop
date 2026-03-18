@@ -307,6 +307,97 @@ function resolveBundledProjectDir(): string | null {
   return fs.existsSync(path.join(candidate, 'compose.yaml')) ? candidate : null
 }
 
+function readEnvVar(name: string): string | null {
+  const value = process.env[name]
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function pathIsDirectory(target: string): boolean {
+  try {
+    return fs.statSync(target).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function pathIsFile(target: string): boolean {
+  try {
+    return fs.statSync(target).isFile()
+  } catch {
+    return false
+  }
+}
+
+function isProjectDir(candidate: string): boolean {
+  return pathIsFile(path.join(candidate, 'compose.yaml')) && pathIsDirectory(path.join(candidate, 'src'))
+}
+
+function resolveDevProjectDir(): string | null {
+  const candidates = [
+    // dist/main -> repo root
+    path.resolve(__dirname, '..', '..', '..', '..', '..'),
+    // dist/main -> src
+    path.resolve(__dirname, '..', '..', '..', '..'),
+    process.cwd(),
+  ]
+  for (const candidate of candidates) {
+    if (isProjectDir(candidate)) return candidate
+  }
+  return null
+}
+
+function resolveProjectDir(): string | null {
+  const explicit = readEnvVar('ARKLOOP_PROJECT_DIR')
+  if (explicit && isProjectDir(explicit)) {
+    return explicit
+  }
+  const bundled = resolveBundledProjectDir()
+  if (bundled) return bundled
+  return resolveDevProjectDir()
+}
+
+function buildRuntimeResourceEnv(projectDir: string | null): Record<string, string> {
+  const env: Record<string, string> = {}
+  if (!projectDir) return env
+
+  if (!readEnvVar('ARKLOOP_PROJECT_DIR') && isProjectDir(projectDir)) {
+    env.ARKLOOP_PROJECT_DIR = projectDir
+  }
+
+  const personasRoot = path.join(projectDir, 'src', 'personas')
+  if (!readEnvVar('ARKLOOP_PERSONAS_ROOT') && pathIsDirectory(personasRoot)) {
+    env.ARKLOOP_PERSONAS_ROOT = personasRoot
+  }
+
+  const skillsRoot = path.join(projectDir, 'src', 'skills')
+  if (!readEnvVar('ARKLOOP_SKILLS_ROOT') && pathIsDirectory(skillsRoot)) {
+    env.ARKLOOP_SKILLS_ROOT = skillsRoot
+  }
+
+  return env
+}
+
+function defaultWorkspaceRoot(projectDir: string | null): string {
+  if (!app.isPackaged && projectDir && isProjectDir(projectDir)) {
+    return projectDir
+  }
+  return os.homedir()
+}
+
+function buildWorkspaceEnv(projectDir: string | null): Record<string, string> {
+  const env: Record<string, string> = {}
+  const workspaceRoot = defaultWorkspaceRoot(projectDir)
+  if (!readEnvVar('ARKLOOP_LOCAL_SHELL_WORKSPACE')) {
+    env.ARKLOOP_LOCAL_SHELL_WORKSPACE = workspaceRoot
+  }
+  if (!readEnvVar('ARKLOOP_WORKING_DIR')) {
+    env.ARKLOOP_WORKING_DIR = workspaceRoot
+  }
+  return env
+}
+
 function buildConnectorsEnv(): Record<string, string> {
   const env: Record<string, string> = {}
   const cfg = connectorsConfig
@@ -354,7 +445,7 @@ function buildMemoryEnv(): Record<string, string> {
   return env
 }
 
-function buildBridgeEnv(bridgePort: number): Record<string, string> {
+function buildBridgeEnv(bridgePort: number, projectDir: string | null): Record<string, string> {
   const env: Record<string, string> = {
     ARKLOOP_BRIDGE_ADDR: `127.0.0.1:${bridgePort}`,
   }
@@ -368,11 +459,19 @@ function buildBridgeEnv(bridgePort: number): Record<string, string> {
     }
   }
 
-  const bundledProjectDir = resolveBundledProjectDir()
-  if (!bundledProjectDir) return env
+  if (!projectDir) return env
 
-  env.ARKLOOP_BRIDGE_PROJECT_DIR = bundledProjectDir
-  env.ARKLOOP_BRIDGE_MODULES_FILE = path.join(bundledProjectDir, 'install', 'modules.yaml')
+  if (isProjectDir(projectDir)) {
+    env.ARKLOOP_BRIDGE_PROJECT_DIR = projectDir
+  }
+  const modulesFile = path.join(projectDir, 'install', 'modules.yaml')
+  if (pathIsFile(modulesFile)) {
+    env.ARKLOOP_BRIDGE_MODULES_FILE = modulesFile
+  }
+
+  // Keep packaged defaults unchanged to avoid affecting dev-mode local stacks.
+  if (!app.isPackaged) return env
+
   env.ARKLOOP_POSTGRES_USER = process.env.ARKLOOP_POSTGRES_USER ?? 'arkloop'
   env.ARKLOOP_POSTGRES_PASSWORD = process.env.ARKLOOP_POSTGRES_PASSWORD ?? 'arkloop_desktop'
   env.ARKLOOP_POSTGRES_DB = process.env.ARKLOOP_POSTGRES_DB ?? 'arkloop'
@@ -578,6 +677,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
   let recentOutput = ''
   let healthy = false
   const bridgePort = await resolveBridgePort(port)
+  const projectDir = resolveProjectDir()
   setBridgeBaseUrl(`http://127.0.0.1:${bridgePort}`)
 
   setRuntime({
@@ -593,7 +693,9 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ARKLOOP_API_GO_ADDR: `127.0.0.1:${port}`,
       ARKLOOP_DESKTOP_TOKEN: desktopAccessToken,
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
-      ...buildBridgeEnv(bridgePort),
+      ...buildRuntimeResourceEnv(projectDir),
+      ...buildWorkspaceEnv(projectDir),
+      ...buildBridgeEnv(bridgePort, projectDir),
       ...buildConnectorsEnv(),
       ...buildMemoryEnv(),
     },
