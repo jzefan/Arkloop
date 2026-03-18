@@ -1192,7 +1192,7 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
     webFetches: WebFetchRef[]
   }
   const blocks: Block[] = []
-  let preTextChunks: string[] = []
+  const preTextChunks: string[] = []
   let preTextSeq: number | null = null
   let pendingText = ''
   let pendingTextSeq: number | null = null
@@ -1483,7 +1483,7 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
     blocks.map((block) => ({
       id: block.id,
       title: block.title,
-      steps: block.steps.map((step) => ({ ...step, status: 'done' })),
+      steps: block.steps.map((step) => ({ ...step, status: 'done' as const })),
       sources: block.sources,
       narratives: block.narratives.length > 0 ? block.narratives : undefined,
       codeExecutions: block.codeExecutions.length > 0 ? block.codeExecutions : undefined,

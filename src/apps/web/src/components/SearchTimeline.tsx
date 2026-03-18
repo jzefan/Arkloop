@@ -254,6 +254,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
   const subAgentCount = subAgents?.length ?? 0
   const fileOpCount = fileOps?.length ?? 0
   const webFetchCount = webFetches?.length ?? 0
+  const [hovered, setHovered] = useState(false)
   if (visibleSteps.length === 0 && textEntries.length === 0 && codeExecCount === 0 && subAgentCount === 0 && fileOpCount === 0 && webFetchCount === 0 && !headerOverride) return null
 
   type UEntry =
@@ -311,8 +312,6 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
 
   const headerLabel = headerOverride ?? autoLabel
   const dottedStepCount = visibleSteps.length
-
-  const [hovered, setHovered] = useState(false)
 
   return (
     <div style={{ maxWidth: '663px' }}>
@@ -495,6 +494,10 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                             : entry.kind === 'fileop'
                               ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
                               : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
+                    const dotBackground = entry.kind === 'text' ? 'var(--c-bg-page)' : dotColor
+                    const dotBorder = entry.kind === 'text'
+                      ? '1.5px solid var(--c-border-mid)'
+                      : '2px solid var(--c-bg-page)'
                     return (
                       <div key={entry.id} style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}>
                         {!isLast && (
@@ -503,7 +506,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                         {multiItems && !isFirst && (
                           <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                         )}
-                        <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
+                        <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotBackground, border: dotBorder, zIndex: 1 }} />
                         {entry.kind === 'step' && (
                           <div>
                             <div

@@ -153,7 +153,9 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       }
     } else if (ev.type === 'message.delta' && current) {
       const d = ev.data as Record<string, unknown>
-      assistantChunks.push(String(d.content_delta ?? ''))
+      if (d.channel !== 'thinking') {
+        assistantChunks.push(String(d.content_delta ?? ''))
+      }
     } else if (ev.type === 'tool.call' && current) {
       const d = ev.data as Record<string, unknown>
       current.toolCalls.push({
