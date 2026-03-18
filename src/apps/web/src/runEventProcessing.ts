@@ -27,6 +27,40 @@ type CodeExecutionErrorDetails = {
   errorMessage?: string
 }
 
+type CopNarrativeRef = {
+  id: string
+  text: string
+  seq: number
+}
+
+export function prependIntroNarrativeToCopBlocks<T extends { narratives?: CopNarrativeRef[] }>(
+  blocks: readonly T[],
+  introText?: string,
+  introSeq?: number | null,
+): T[] {
+  if (!introText || !introText.trim() || introSeq == null || blocks.length === 0) {
+    return [...blocks]
+  }
+  const first = blocks[0]
+  const exists = first.narratives?.some((n) => n.seq === introSeq && n.text === introText) ?? false
+  if (exists) return [...blocks]
+
+  const introNarrative: CopNarrativeRef = {
+    id: `cop-intro-${introSeq}`,
+    text: introText,
+    seq: introSeq,
+  }
+
+  return blocks.map((block, index) =>
+    index === 0
+      ? {
+          ...block,
+          narratives: [introNarrative, ...(block.narratives ?? [])],
+        } as T
+      : block,
+  )
+}
+
 function pickToolName(data: unknown): string {
   if (!data || typeof data !== 'object') return ''
   const raw = (data as { tool_name?: unknown }).tool_name
@@ -1159,6 +1193,7 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
   }
   const blocks: Block[] = []
   let preTextChunks: string[] = []
+  let preTextSeq: number | null = null
   let pendingText = ''
   let pendingTextSeq: number | null = null
   let seenToolCall = false
@@ -1226,6 +1261,7 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
       const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
       if ((obj.role == null || obj.role === 'assistant') && obj.channel !== 'thinking' && typeof obj.content_delta === 'string') {
         if (!seenToolCall) {
+          if (preTextSeq == null) preTextSeq = event.seq
           preTextChunks.push(obj.content_delta)
         } else {
           if (pendingTextSeq == null) pendingTextSeq = event.seq
@@ -1440,10 +1476,11 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
   }
 
   if (blocks.length === 0) return null
-  const preText = preTextChunks.join('').trim() || undefined
+  const preTextRaw = preTextChunks.join('')
+  const preText = preTextRaw.trim() ? preTextRaw : undefined
   const finalContent = pendingText.trim() ? pendingText : undefined
-  return {
-    blocks: blocks.map((block) => ({
+  const finalizedBlocks = prependIntroNarrativeToCopBlocks(
+    blocks.map((block) => ({
       id: block.id,
       title: block.title,
       steps: block.steps.map((step) => ({ ...step, status: 'done' })),
@@ -1454,6 +1491,11 @@ export function buildMessageCopBlocksFromRunEvents(events: RunEvent[]): MessageC
       fileOps: block.fileOps.length > 0 ? block.fileOps : undefined,
       webFetches: block.webFetches.length > 0 ? block.webFetches : undefined,
     })),
+    preText,
+    preTextSeq,
+  )
+  return {
+    blocks: finalizedBlocks,
     preText,
     finalContent,
   }

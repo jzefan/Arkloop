@@ -774,6 +774,16 @@ button:not(:disabled) {
     scrollbar-color: var(--c-scrollbar) transparent;
   }
 
+  .chat-scroll-hidden {
+    scrollbar-width: none;
+  }
+
+  .chat-scroll-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
   .shell-exec-trigger:hover .shell-exec-label {
     color: var(--c-text-secondary) !important;
   }

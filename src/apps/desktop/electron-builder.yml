@@ -26,6 +26,10 @@ extraResources:
     to: arkloop-project/src/services/sandbox
   - from: ../../../src/services/shared
     to: arkloop-project/src/services/shared
+  - from: ../../../src/personas
+    to: arkloop-project/src/personas
+  - from: ../../../src/skills
+    to: arkloop-project/src/skills
 
 publish:
   provider: github

@@ -3,7 +3,11 @@
 package app
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -12,6 +16,8 @@ import (
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/skillstore"
+	"arkloop/services/shared/workspaceblob"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/executor"
@@ -136,6 +142,28 @@ func TestDesktopNormalPersonaSearchableIncludesSpawnAgent(t *testing.T) {
 	}
 }
 
+func TestLoadPersonaRegistryFromFSUsesEnvRoot(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	personaDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "personas")
+	t.Setenv("ARKLOOP_PERSONAS_ROOT", personaDir)
+	t.Chdir(t.TempDir())
+
+	getter := loadPersonaRegistryFromFS()
+	if getter == nil {
+		t.Fatal("expected persona registry getter")
+	}
+	registry := getter()
+	if registry == nil {
+		t.Fatal("expected persona registry")
+	}
+	if _, ok := registry.Get("normal"); !ok {
+		t.Fatal("expected normal persona loaded from env root")
+	}
+}
+
 func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
@@ -169,6 +197,145 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 		if _, ok := specNames[toolName]; !ok {
 			t.Fatalf("expected tool spec %s in desktop llm specs", toolName)
 		}
+	}
+}
+
+func TestLoadPersonaRegistryFromFSPrefersBuiltinRootEnv(t *testing.T) {
+	personasRoot := t.TempDir()
+	personaDir := filepath.Join(personasRoot, "env-persona")
+	if err := os.MkdirAll(personaDir, 0o755); err != nil {
+		t.Fatalf("mkdir persona dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(personaDir, "persona.yaml"), []byte("id: env-persona\nversion: \"1\"\ntitle: Env Persona\n"), 0o644); err != nil {
+		t.Fatalf("write persona yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(personaDir, "prompt.md"), []byte("# env prompt"), 0o644); err != nil {
+		t.Fatalf("write persona prompt: %v", err)
+	}
+	t.Setenv("ARKLOOP_PERSONAS_ROOT", personasRoot)
+
+	getter := loadPersonaRegistryFromFS()
+	if getter == nil {
+		t.Fatal("expected persona registry getter")
+	}
+	registry := getter()
+	if registry == nil {
+		t.Fatal("expected persona registry")
+	}
+	if _, ok := registry.Get("env-persona"); !ok {
+		t.Fatalf("expected env persona loaded, got ids=%v", registry.ListIDs())
+	}
+}
+
+func TestDesktopSkillLayoutUsesRunScopedPaths(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	runID := uuid.New()
+	layout, err := desktopSkillLayout(false, runID)
+	if err != nil {
+		t.Fatalf("desktop skill layout: %v", err)
+	}
+
+	root := filepath.Join(dataDir, "runtime", "skills", runID.String())
+	if layout.MountRoot != filepath.Join(root, "files") {
+		t.Fatalf("unexpected mount root: %s", layout.MountRoot)
+	}
+	if layout.IndexPath != filepath.Join(root, "enabled-skills.json") {
+		t.Fatalf("unexpected index path: %s", layout.IndexPath)
+	}
+}
+
+func TestCleanupDesktopSkillRuntimeRemovesRunScopedDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	runID := uuid.New()
+	layout, err := desktopSkillLayout(false, runID)
+	if err != nil {
+		t.Fatalf("desktop skill layout: %v", err)
+	}
+	if err := os.MkdirAll(layout.MountRoot, 0o755); err != nil {
+		t.Fatalf("mkdir mount root: %v", err)
+	}
+	if err := os.WriteFile(layout.IndexPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	if err := cleanupDesktopSkillRuntime(runID); err != nil {
+		t.Fatalf("cleanup skill runtime: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Dir(layout.IndexPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected run-scoped skill root removed, got err=%v", err)
+	}
+}
+
+func TestPrepareDesktopHostSkillsMaterializesBundlesAndIndex(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	store, err := openDesktopSkillStore(ctx)
+	if err != nil {
+		t.Fatalf("open desktop skill store: %v", err)
+	}
+	bundleKey := skillstore.DerivedBundleKey("grep-helper", "1")
+	if err := store.Put(ctx, bundleKey, buildDesktopSkillBundle(t, map[string]string{
+		"skill.yaml":     "skill_key: grep-helper\nversion: \"1\"\ndisplay_name: Grep Helper\ninstruction_path: SKILL.md\n",
+		"SKILL.md":       "Use grep carefully.\n",
+		"scripts/run.sh": "#!/bin/sh\necho ok\n",
+	})); err != nil {
+		t.Fatalf("seed desktop skill bundle: %v", err)
+	}
+
+	runID := uuid.New()
+	layout, err := desktopSkillLayout(false, runID)
+	if err != nil {
+		t.Fatalf("desktop skill layout: %v", err)
+	}
+	staleDir := filepath.Join(filepath.Dir(layout.IndexPath), "stale")
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatalf("create stale dir: %v", err)
+	}
+
+	skills := []skillstore.ResolvedSkill{{
+		SkillKey:        "grep-helper",
+		Version:         "1",
+		BundleRef:       bundleKey,
+		MountPath:       layout.MountPath("grep-helper", "1"),
+		InstructionPath: "SKILL.md",
+		AutoInject:      true,
+	}}
+	if err := prepareDesktopHostSkills(ctx, skills, layout); err != nil {
+		t.Fatalf("prepare desktop host skills: %v", err)
+	}
+
+	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
+		t.Fatalf("expected stale dir pruned, got err=%v", err)
+	}
+	skillDocPath := filepath.Join(layout.MountPath("grep-helper", "1"), "SKILL.md")
+	rawDoc, err := os.ReadFile(skillDocPath)
+	if err != nil {
+		t.Fatalf("read skill doc: %v", err)
+	}
+	if string(rawDoc) != "Use grep carefully.\n" {
+		t.Fatalf("unexpected skill doc: %q", string(rawDoc))
+	}
+
+	rawIndex, err := os.ReadFile(layout.IndexPath)
+	if err != nil {
+		t.Fatalf("read skill index: %v", err)
+	}
+	var entries []skillstore.IndexEntry
+	if err := json.Unmarshal(rawIndex, &entries); err != nil {
+		t.Fatalf("decode skill index: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 skill index entry, got %d", len(entries))
+	}
+	if entries[0].MountPath != layout.MountPath("grep-helper", "1") {
+		t.Fatalf("unexpected skill index entry: %#v", entries[0])
 	}
 }
 
@@ -614,4 +781,28 @@ func mapKeys[K comparable, V any](items map[K]V) []K {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func buildDesktopSkillBundle(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+
+	var tarBuffer bytes.Buffer
+	writer := tar.NewWriter(&tarBuffer)
+	for name, content := range files {
+		data := []byte(content)
+		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))}); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatalf("write tar data: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	encoded, err := workspaceblob.Encode(tarBuffer.Bytes())
+	if err != nil {
+		t.Fatalf("encode skill bundle: %v", err)
+	}
+	return encoded
 }
