@@ -416,7 +416,7 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
                     setTokenDraft(e.target.value)
                     setSaved(false)
                   }}
-                  placeholder={ct.botTokenPlaceholder}
+                  placeholder={tokenConfigured && !tokenDraft ? ct.tokenAlreadyConfigured : ct.botTokenPlaceholder}
                   className={inputCls}
                 />
                 <button
