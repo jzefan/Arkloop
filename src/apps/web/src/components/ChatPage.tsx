@@ -1745,7 +1745,7 @@ export function ChatPage() {
           preTextSeq: preCopTextSeqRef.current,
         })
         if (runCopData.blocks.length > 0) {
-          applyCopBlocks(() => runCopData.blocks.map((b, i) => ({
+          applyCopBlocks(() => runCopData.blocks.map((b) => ({
             id: b.id,
             title: b.title,
             steps: b.steps,
@@ -1789,7 +1789,6 @@ export function ChatPage() {
         currentRunWebFetchesRef.current = []
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           const completedAssistant = findAssistantMessageForRun(items, completedRunId)
-          resetPreCopText()
           if (completedAssistant) {
             setAssistantDraft('')
             if (runWidgets.length > 0) {
@@ -1850,6 +1849,8 @@ export function ChatPage() {
             pendingMessageRef.current = null
             void sendMessageRef.current(pending)
           }
+        }).finally(() => {
+          resetPreCopText()
         })
         // 标题生成在后端异步执行，run.completed 后 SSE 已断开，轮询补偿
         if (threadId) {
@@ -2000,7 +2001,7 @@ export function ChatPage() {
       preTextSeq: preCopTextSeqRef.current,
     })
     if (runCopData.blocks.length > 0) {
-      applyCopBlocks(() => runCopData.blocks.map((b, i) => ({
+      applyCopBlocks(() => runCopData.blocks.map((b) => ({
         id: b.id,
         title: b.title,
         steps: b.steps,
@@ -2023,7 +2024,6 @@ export function ChatPage() {
 
     void refreshMessages({ requiredCompletedRunId: terminalRunId }).then((items) => {
       const completedAssistant = findAssistantMessageForRun(items, terminalRunId)
-      resetPreCopText()
       if (completedAssistant) {
         if (runWidgets.length > 0) {
           writeMessageWidgets(completedAssistant.id, runWidgets)
@@ -2064,6 +2064,8 @@ export function ChatPage() {
           setMessageThinkingMap((prev) => new Map(prev).set(completedAssistant.id, runThinking))
         }
       }
+    }).finally(() => {
+      resetPreCopText()
     })
   }, [activeRunId, sse.state, buildLiveThinkingSnapshot]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2590,6 +2592,18 @@ export function ChatPage() {
     ...topLevelFileOps.map(op => ({ kind: 'fileop' as const, id: op.id, seq: op.seq ?? 0, item: op })),
     ...topLevelWebFetches.map(wf => ({ kind: 'fetch' as const, id: wf.id, seq: wf.seq ?? 0, item: wf })),
   ].sort((a, b) => a.seq - b.seq), [dedupedTopLevelCodeExecutions, topLevelSubAgents, topLevelFileOps, topLevelWebFetches])
+  const liveIntroNarratives = useMemo(() => {
+    if (!preCopText.trim() || preCopTextSeqRef.current == null) return undefined
+    return [{
+      id: `cop-intro-${preCopTextSeqRef.current}`,
+      text: preCopText,
+      seq: preCopTextSeqRef.current,
+    }]
+  }, [preCopText])
+  const liveCopBlocks = useMemo(
+    () => prependIntroNarrativeToCopBlocks(copBlocks, preCopText, preCopTextSeqRef.current),
+    [copBlocks, preCopText],
+  )
 
   const copStepCount = useMemo(() => {
     const timelineSteps = copBlocks.flatMap((b) => b.steps).filter((s) => s.kind !== 'finished').length
@@ -2775,6 +2789,10 @@ export function ChatPage() {
                 const historicalBlocks = historicalCop?.copData.blocks ?? []
                 const historicalPreText = historicalCop?.copData.preText
                 const historicalFinalContent = historicalCop?.copData.finalContent
+                const historicalPreTextInTimeline = !!(
+                  historicalPreText
+                  && historicalBlocks[0]?.narratives?.some((entry) => entry.text === historicalPreText)
+                )
 
                 const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
                 const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
@@ -2789,7 +2807,7 @@ export function ChatPage() {
                   {/* 完成后的 COP 时间轴 */}
                   {(historicalBlocks.length > 0 || timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
                     <div style={{ marginBottom: '12px' }}>
-                      {historicalPreText && (
+                      {historicalPreText && !historicalPreTextInTimeline && (
                         <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px', paddingBottom: '8px' }}>
                           {historicalPreText}
                         </div>
@@ -3026,7 +3044,7 @@ export function ChatPage() {
               )}
 
               {/* 流式期间 tool 调用前生成的文字 */}
-              {(isStreaming || liveTimelineExiting) && preCopText && (
+              {(isStreaming || liveTimelineExiting) && preCopText && liveCopBlocks.length === 0 && searchSteps.length === 0 && (
                 <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px', paddingBottom: '8px' }}>
                   {preCopText}
                 </div>
@@ -3034,10 +3052,10 @@ export function ChatPage() {
 
               {/* 流式期间的 live COP 时间轴 */}
               {(isStreaming || liveTimelineExiting) && (copBlocks.length > 0 || searchSteps.length > 0) && (
-                copBlocks.length > 0 ? (
+                liveCopBlocks.length > 0 ? (
                   <div>
-                    {copBlocks.map((block, bi) => {
-                      const isLastBlock = bi === copBlocks.length - 1
+                    {liveCopBlocks.map((block, bi) => {
+                      const isLastBlock = bi === liveCopBlocks.length - 1
                       const blockComplete = !isLastBlock || (liveTimelineExiting && !isStreaming)
                       return (
                         <Fragment key={block.id}>
@@ -3066,6 +3084,7 @@ export function ChatPage() {
                   <SearchTimeline
                     steps={searchSteps}
                     sources={currentRunSourcesRef.current}
+                    narratives={liveIntroNarratives}
                     isComplete={liveTimelineExiting && !isStreaming}
                     codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
                     onOpenCodeExecution={openCodePanel}
