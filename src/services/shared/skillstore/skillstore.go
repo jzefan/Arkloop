@@ -64,6 +64,7 @@ type ResolvedSkill struct {
 	MountPath       string `json:"mount_path"`
 	InstructionPath string `json:"instruction_path,omitempty"`
 	AutoInject      bool   `json:"auto_inject"`
+	ContentHash     string `json:"content_hash,omitempty"`
 }
 
 type IndexEntry struct {
