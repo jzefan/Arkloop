@@ -25,6 +25,8 @@ import (
 
 var telegramUserIDPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
+const telegramRemoteRequestTimeout = 5 * time.Second
+
 type telegramChannelConfig struct {
 	AllowedUserIDs []string `json:"allowed_user_ids"`
 }
@@ -174,6 +176,8 @@ func configureTelegramRemote(
 	token string,
 	channel data.Channel,
 ) error {
+	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+	defer cancel()
 	if client == nil {
 		return fmt.Errorf("telegram client not configured")
 	}
@@ -184,14 +188,14 @@ func configureTelegramRemote(
 	if channel.WebhookSecret != nil {
 		secret = strings.TrimSpace(*channel.WebhookSecret)
 	}
-	if err := client.SetWebhook(ctx, token, telegrambot.SetWebhookRequest{
+	if err := client.SetWebhook(remoteCtx, token, telegrambot.SetWebhookRequest{
 		URL:         strings.TrimSpace(*channel.WebhookURL),
 		SecretToken: secret,
 		Updates:     []string{"message"},
 	}); err != nil {
 		return err
 	}
-	return client.SetMyCommands(ctx, token, []telegrambot.BotCommand{
+	return client.SetMyCommands(remoteCtx, token, []telegrambot.BotCommand{
 		{Command: "start", Description: "开始使用"},
 		{Command: "help", Description: "查看帮助"},
 		{Command: "bind", Description: "绑定账号"},
@@ -199,10 +203,12 @@ func configureTelegramRemote(
 }
 
 func disableTelegramRemote(ctx context.Context, client *telegrambot.Client, token string) error {
+	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+	defer cancel()
 	if client == nil {
 		return fmt.Errorf("telegram client not configured")
 	}
-	return client.DeleteWebhook(ctx, token)
+	return client.DeleteWebhook(remoteCtx, token)
 }
 
 func configureTelegramPollingRemote(
@@ -210,13 +216,15 @@ func configureTelegramPollingRemote(
 	client *telegrambot.Client,
 	token string,
 ) error {
+	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+	defer cancel()
 	if client == nil {
 		return fmt.Errorf("telegram client not configured")
 	}
-	if err := client.DeleteWebhook(ctx, token); err != nil {
+	if err := client.DeleteWebhook(remoteCtx, token); err != nil {
 		return err
 	}
-	return client.SetMyCommands(ctx, token, []telegrambot.BotCommand{
+	return client.SetMyCommands(remoteCtx, token, []telegrambot.BotCommand{
 		{Command: "start", Description: "开始使用"},
 		{Command: "help", Description: "查看帮助"},
 		{Command: "bind", Description: "绑定账号"},
@@ -245,10 +253,12 @@ func disableTelegramActivationRemote(
 	if telegramModeUsesWebhook(mode) {
 		return disableTelegramRemote(ctx, client, token)
 	}
+	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+	defer cancel()
 	if client == nil {
 		return fmt.Errorf("telegram client not configured")
 	}
-	return client.DeleteWebhook(ctx, token)
+	return client.DeleteWebhook(remoteCtx, token)
 }
 
 type telegramConnector struct {

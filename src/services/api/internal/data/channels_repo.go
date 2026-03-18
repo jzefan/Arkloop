@@ -58,7 +58,10 @@ func scanChannel(row interface{ Scan(dest ...any) error }) (Channel, error) {
 	return ch, err
 }
 
-func (r *ChannelsRepository) Create(ctx context.Context, accountID uuid.UUID, channelType string, personaID *uuid.UUID, credentialsID *uuid.UUID, webhookSecret, webhookURL string, configJSON json.RawMessage) (Channel, error) {
+func (r *ChannelsRepository) Create(ctx context.Context, id uuid.UUID, accountID uuid.UUID, channelType string, personaID *uuid.UUID, credentialsID *uuid.UUID, webhookSecret, webhookURL string, configJSON json.RawMessage) (Channel, error) {
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
 	if accountID == uuid.Nil {
 		return Channel{}, fmt.Errorf("channels: account_id must not be empty")
 	}
@@ -71,10 +74,10 @@ func (r *ChannelsRepository) Create(ctx context.Context, accountID uuid.UUID, ch
 	}
 
 	ch, err := scanChannel(r.db.QueryRow(ctx,
-		`INSERT INTO channels (account_id, channel_type, persona_id, credentials_id, webhook_secret, webhook_url, config_json)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO channels (id, account_id, channel_type, persona_id, credentials_id, webhook_secret, webhook_url, config_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+channelColumns,
-		accountID, channelType, personaID, credentialsID, webhookSecret, webhookURL, configJSON,
+		id, accountID, channelType, personaID, credentialsID, webhookSecret, webhookURL, configJSON,
 	))
 	if err != nil {
 		return Channel{}, fmt.Errorf("channels.Create: %w", err)

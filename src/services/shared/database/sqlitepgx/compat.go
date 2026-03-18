@@ -29,6 +29,14 @@ var datetimeNowAddRe = regexp.MustCompile(`datetime\('now'\)\s*\+\s*('[^']*')`)
 // forUpdateRe strips PostgreSQL row-level locking clauses.
 var forUpdateRe = regexp.MustCompile(`(?i)\s+FOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)(\s+SKIP\s+LOCKED|\s+NOWAIT)?`)
 
+// jsonbSetCreateMissingTrueRe rewrites PostgreSQL jsonb_set(target, path, value, true)
+// to SQLite json_set(target, path, value).
+var jsonbSetCreateMissingTrueRe = regexp.MustCompile(`(?i)jsonb_set\((.*?),\s*(.*?),\s*(.*?),\s*true\s*\)`)
+
+// pgJSONPathRe rewrites simple PostgreSQL json path literals like '{foo}'
+// to the SQLite form '$.foo'.
+var pgJSONPathRe = regexp.MustCompile(`'\{([A-Za-z0-9_]+)\}'`)
+
 // rewriteSQL performs lightweight PostgreSQL-to-SQLite SQL preprocessing.
 // Only applies transformations when PG-specific patterns are detected.
 func rewriteSQL(sql string) string {
@@ -45,6 +53,15 @@ func rewriteSQL(sql string) string {
 
 	if strings.Contains(sql, "::") {
 		sql = typeCastRe.ReplaceAllString(sql, "")
+	}
+
+	if strings.Contains(sql, "jsonb_set(") {
+		sql = jsonbSetCreateMissingTrueRe.ReplaceAllString(sql, "json_set($1, $2, $3)")
+		sql = strings.ReplaceAll(sql, "jsonb_set(", "json_set(")
+	}
+
+	if strings.Contains(sql, "json_set(") {
+		sql = pgJSONPathRe.ReplaceAllString(sql, "'$$.$1'")
 	}
 
 	if intervalRe.MatchString(sql) {

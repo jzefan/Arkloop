@@ -99,12 +99,12 @@ func (c *Client) callJSON(ctx context.Context, token string, method string, body
 	endpoint := fmt.Sprintf("%s/bot%s/%s", c.baseURL, url.PathEscape(token), method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("telegrambot: new request %s: %w", method, err)
+		return fmt.Errorf("telegrambot: new request %s: %s", method, redactToken(err.Error(), token))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("telegrambot: call %s: %w", method, err)
+		return fmt.Errorf("telegrambot: call %s: %s", method, redactToken(err.Error(), token))
 	}
 	defer resp.Body.Close()
 
@@ -131,4 +131,12 @@ func (c *Client) callJSON(ctx context.Context, token string, method string, body
 		}
 	}
 	return nil
+}
+
+func redactToken(text, token string) string {
+	cleaned := strings.TrimSpace(text)
+	if cleaned == "" || strings.TrimSpace(token) == "" {
+		return cleaned
+	}
+	return strings.ReplaceAll(cleaned, token, "[REDACTED]")
 }

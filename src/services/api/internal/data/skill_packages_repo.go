@@ -295,6 +295,84 @@ func (r *SkillPackagesRepository) Get(ctx context.Context, accountID uuid.UUID, 
 	return &item, nil
 }
 
+func (r *SkillPackagesRepository) FindActiveByRegistry(ctx context.Context, accountID uuid.UUID, provider, slug, version string) (*SkillPackage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if accountID == uuid.Nil {
+		return nil, fmt.Errorf("account_id must not be empty")
+	}
+	provider = strings.TrimSpace(provider)
+	slug = strings.TrimSpace(slug)
+	version = strings.TrimSpace(version)
+	if provider == "" || slug == "" {
+		return nil, fmt.Errorf("provider and slug must not be empty")
+	}
+
+	query := `SELECT account_id, skill_key, version, display_name, description, instruction_path, manifest_key, bundle_key, files_prefix, platforms,
+		        registry_provider, registry_slug, registry_owner_handle, registry_version, registry_detail_url, registry_download_url,
+		        registry_source_kind, registry_source_url, scan_status, scan_has_warnings, scan_checked_at, scan_engine,
+		        scan_summary, moderation_verdict, scan_snapshot_json, is_active, created_at, updated_at
+		   FROM skill_packages
+		  WHERE account_id = $1
+		    AND is_active = TRUE
+		    AND registry_provider = $2
+		    AND registry_slug = $3`
+	args := []any{accountID, provider, slug}
+	if version != "" {
+		query += ` AND (registry_version = $4 OR version = $4)
+		  ORDER BY updated_at DESC
+		  LIMIT 1`
+		args = append(args, version)
+	} else {
+		query += ` ORDER BY updated_at DESC
+		  LIMIT 1`
+	}
+
+	var item SkillPackage
+	var scanSnapshotRaw []byte
+	err := r.db.QueryRow(ctx, query, args...).Scan(
+		&item.AccountID,
+		&item.SkillKey,
+		&item.Version,
+		&item.DisplayName,
+		&item.Description,
+		&item.InstructionPath,
+		&item.ManifestKey,
+		&item.BundleKey,
+		&item.FilesPrefix,
+		&item.Platforms,
+		&item.RegistryProvider,
+		&item.RegistrySlug,
+		&item.RegistryOwnerHandle,
+		&item.RegistryVersion,
+		&item.RegistryDetailURL,
+		&item.RegistryDownloadURL,
+		&item.RegistrySourceKind,
+		&item.RegistrySourceURL,
+		&item.ScanStatus,
+		&item.ScanHasWarnings,
+		&item.ScanCheckedAt,
+		&item.ScanEngine,
+		&item.ScanSummary,
+		&item.ModerationVerdict,
+		&scanSnapshotRaw,
+		&item.IsActive,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(scanSnapshotRaw) > 0 {
+		_ = json.Unmarshal(scanSnapshotRaw, &item.ScanSnapshotJSON)
+	}
+	return &item, nil
+}
+
 func (r *SkillPackagesRepository) UpsertPlatformSkill(ctx context.Context, manifest skillstore.PackageManifest, contentHash string) (SkillPackage, error) {
 	if ctx == nil {
 		ctx = context.Background()

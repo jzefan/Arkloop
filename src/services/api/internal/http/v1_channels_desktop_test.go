@@ -10,6 +10,7 @@ import (
 	nethttp "net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"arkloop/services/api/internal/auth"
@@ -235,6 +236,161 @@ func TestDesktopCreateChannelRepairsLegacySecretsSchema(t *testing.T) {
 	}
 	if len(channels) != 1 {
 		t.Fatalf("expected 1 channel after create, got %s", listRec.Body.String())
+	}
+}
+
+func TestDesktopCreateChannelRepairsBrokenChannelSecretsReference(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "data.db")
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
+		t.Fatalf("seed desktop user: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`PRAGMA foreign_keys = OFF`,
+		`DROP INDEX IF EXISTS idx_channels_account_id`,
+		`DROP TABLE channels`,
+		`CREATE TABLE channels (
+			id             TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+			account_id     TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			channel_type   TEXT NOT NULL,
+			persona_id     TEXT REFERENCES personas(id) ON DELETE SET NULL,
+			credentials_id TEXT REFERENCES secrets_legacy_compat_00029(id),
+			webhook_secret TEXT,
+			webhook_url    TEXT,
+			is_active      INTEGER NOT NULL DEFAULT 0,
+			config_json    TEXT NOT NULL DEFAULT '{}',
+			created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE (account_id, channel_type)
+		)`,
+		`CREATE INDEX idx_channels_account_id ON channels(account_id)`,
+		`PRAGMA foreign_keys = ON`,
+	} {
+		if _, err := sqlitePool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("corrupt channel reference: %v", err)
+		}
+	}
+
+	if err := sqlitePool.Close(); err != nil {
+		t.Fatalf("close sqlite before reopen: %v", err)
+	}
+
+	repairedSQLitePool, err := sqliteadapter.AutoMigrate(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen auto migrate sqlite: %v", err)
+	}
+	defer repairedSQLitePool.Close()
+
+	repairedPool := sqlitepgx.New(repairedSQLitePool.Unwrap())
+	handler := newDesktopChannelHandler(t, repairedPool)
+
+	body, err := json.Marshal(map[string]any{
+		"channel_type": "telegram",
+		"bot_token":    "desktop-bot-token",
+		"config_json": map[string]any{
+			"allowed_user_ids": []string{"12345"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create channel body: %v", err)
+	}
+
+	req := httptest.NewRequest(nethttp.MethodPost, "/v1/channels", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != nethttp.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDesktopCreateChannelWorksWithoutChannelIDDefault(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
+		t.Fatalf("seed desktop user: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`PRAGMA foreign_keys = OFF`,
+		`DROP INDEX IF EXISTS idx_channels_account_id`,
+		`DROP TABLE channels`,
+		`CREATE TABLE channels (
+			id             TEXT PRIMARY KEY NOT NULL,
+			account_id     TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			channel_type   TEXT NOT NULL,
+			persona_id     TEXT REFERENCES personas(id) ON DELETE SET NULL,
+			credentials_id TEXT REFERENCES secrets(id),
+			webhook_secret TEXT,
+			webhook_url    TEXT,
+			is_active      INTEGER NOT NULL DEFAULT 0,
+			config_json    TEXT NOT NULL DEFAULT '{}',
+			created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE (account_id, channel_type)
+		)`,
+		`CREATE INDEX idx_channels_account_id ON channels(account_id)`,
+		`PRAGMA foreign_keys = ON`,
+	} {
+		if _, err := sqlitePool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("prepare legacy channel schema: %v", err)
+		}
+	}
+
+	handler := newDesktopChannelHandler(t, pool)
+
+	body, err := json.Marshal(map[string]any{
+		"channel_type": "telegram",
+		"bot_token":    "desktop-bot-token",
+		"config_json": map[string]any{
+			"allowed_user_ids": []string{"12345"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal create channel body: %v", err)
+	}
+
+	req := httptest.NewRequest(nethttp.MethodPost, "/v1/channels", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != nethttp.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var created map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	channelID, _ := created["id"].(string)
+	webhookURL, _ := created["webhook_url"].(string)
+	if channelID == "" {
+		t.Fatalf("missing channel id in response: %s", rec.Body.String())
+	}
+	if !strings.Contains(webhookURL, "/"+channelID+"/webhook") {
+		t.Fatalf("webhook_url should reference response id, got %q for %q", webhookURL, channelID)
 	}
 }
 

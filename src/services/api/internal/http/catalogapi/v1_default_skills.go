@@ -57,7 +57,7 @@ func profileDefaultSkillsEntry(
 	enableRepo *data.WorkspaceSkillEnablementsRepository,
 	profileRepo *data.ProfileRegistriesRepository,
 	workspaceRepo *data.WorkspaceRegistriesRepository,
-	pool data.TxStarter,
+	pool data.DB,
 ) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -106,7 +106,8 @@ func profileDefaultSkillsEntry(
 				return
 			}
 			defer tx.Rollback(r.Context())
-			if err := enableRepo.Replace(r.Context(), tx, actor.AccountID, workspaceRef, actor.UserID, items); err != nil {
+			targetWorkspaceRefs, err := replaceDefaultSkillsAcrossBoundWorkspaces(r.Context(), tx, enableRepo, actor.AccountID, actor.UserID, profileRef, workspaceRef, items)
+			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
@@ -114,9 +115,11 @@ func profileDefaultSkillsEntry(
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
-			if err := syncWorkspaceSkillRefs(r.Context(), enableRepo, workspaceRepo, actor.AccountID, workspaceRef); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
+			for _, targetWorkspaceRef := range targetWorkspaceRefs {
+				if err := syncWorkspaceSkillRefs(r.Context(), enableRepo, workspaceRepo, actor.AccountID, targetWorkspaceRef); err != nil {
+					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+					return
+				}
 			}
 			fresh, err := enableRepo.ListByWorkspace(r.Context(), actor.AccountID, workspaceRef)
 			if err != nil {
@@ -128,6 +131,86 @@ func profileDefaultSkillsEntry(
 			writeMethodNotAllowedJSON(w, traceID)
 		}
 	}
+}
+
+func replaceDefaultSkillsAcrossBoundWorkspaces(
+	ctx context.Context,
+	tx pgx.Tx,
+	enableRepo *data.WorkspaceSkillEnablementsRepository,
+	accountID uuid.UUID,
+	userID uuid.UUID,
+	profileRef string,
+	defaultWorkspaceRef string,
+	items []data.WorkspaceSkillEnablement,
+) ([]string, error) {
+	targetWorkspaceRefs, err := loadProfileBoundWorkspaceRefsTx(ctx, tx, accountID, profileRef, defaultWorkspaceRef)
+	if err != nil {
+		return nil, err
+	}
+	for _, targetWorkspaceRef := range targetWorkspaceRefs {
+		if err := enableRepo.Replace(ctx, tx, accountID, targetWorkspaceRef, userID, items); err != nil {
+			return nil, err
+		}
+	}
+	return targetWorkspaceRefs, nil
+}
+
+func loadProfileBoundWorkspaceRefsTx(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, profileRef string, defaultWorkspaceRef string) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tx == nil {
+		return nil, errors.New("tx must not be nil")
+	}
+	if accountID == uuid.Nil {
+		return nil, errors.New("account_id must not be empty")
+	}
+	profileRef = strings.TrimSpace(profileRef)
+	if profileRef == "" {
+		return nil, errors.New("profile_ref must not be empty")
+	}
+
+	refs := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	addRef := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		refs = append(refs, value)
+	}
+
+	addRef(defaultWorkspaceRef)
+
+	rows, err := tx.Query(
+		ctx,
+		`SELECT workspace_ref
+		   FROM default_workspace_bindings
+		  WHERE account_id = $1 AND profile_ref = $2
+		  ORDER BY created_at ASC`,
+		accountID,
+		profileRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var workspaceRef string
+		if err := rows.Scan(&workspaceRef); err != nil {
+			return nil, err
+		}
+		addRef(workspaceRef)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return refs, nil
 }
 
 type skillValidationError struct {

@@ -28,6 +28,14 @@ const personaSelectColumns = `id, account_id, project_id, persona_key, version, 
 	    executor_type, executor_config_json,
 	    sync_mode, mirrored_file_dir, last_synced_at`
 
+const personaSelectColumnsQualified = `p.id, p.account_id, p.project_id, p.persona_key, p.version, p.display_name, p.description,
+	    p.soul_md, p.user_selectable, p.selector_name, p.selector_order,
+	    p.prompt_md, p.tool_allowlist, p.tool_denylist, COALESCE(p.core_tools, '{}'), p.budgets_json, p.roles_json, p.title_summarize_json,
+	    p.is_active, p.created_at, p.updated_at,
+	    p.preferred_credential, p.model, p.reasoning_mode, p.prompt_cache_control,
+	    p.executor_type, p.executor_config_json,
+	    p.sync_mode, p.mirrored_file_dir, p.last_synced_at`
+
 func (r *PersonasRepository) WithTx(tx pgx.Tx) *PersonasRepository {
 	return &PersonasRepository{db: tx}
 }
@@ -396,7 +404,7 @@ func (r *PersonasRepository) GetByIDForAccount(ctx context.Context, accountID, i
 		   AND (
 		     pr.account_id = $2
 		     OR p.project_id IS NULL
-		   )`, personaSelectColumns),
+		   )`, personaSelectColumnsQualified),
 		id,
 		accountID,
 	), &persona)
@@ -436,6 +444,42 @@ func (r *PersonasRepository) GetByIDInScope(ctx context.Context, projectID, id u
 
 func (r *PersonasRepository) ListByProject(ctx context.Context, projectID uuid.UUID) ([]Persona, error) {
 	return r.ListByScope(ctx, projectID, PersonaScopeProject)
+}
+
+func (r *PersonasRepository) GetByKeyVersionInProject(ctx context.Context, projectID uuid.UUID, personaKey, version string) (*Persona, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if projectID == uuid.Nil {
+		return nil, fmt.Errorf("project_id must not be nil")
+	}
+	if strings.TrimSpace(personaKey) == "" {
+		return nil, fmt.Errorf("persona_key must not be empty")
+	}
+	if strings.TrimSpace(version) == "" {
+		return nil, fmt.Errorf("version must not be empty")
+	}
+
+	var persona Persona
+	err := scanPersona(r.db.QueryRow(
+		ctx,
+		`SELECT `+personaSelectColumns+`
+		 FROM personas
+		 WHERE project_id = $1
+		   AND persona_key = $2
+		   AND version = $3
+		 LIMIT 1`,
+		projectID,
+		strings.TrimSpace(personaKey),
+		strings.TrimSpace(version),
+	), &persona)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &persona, nil
 }
 
 func (r *PersonasRepository) ListByScope(ctx context.Context, projectID uuid.UUID, scope string) ([]Persona, error) {
@@ -502,6 +546,106 @@ func (r *PersonasRepository) ListActiveEffective(ctx context.Context, projectID 
 	defer rows.Close()
 
 	return scanPersonas(rows)
+}
+
+func (r *PersonasRepository) CloneToProject(ctx context.Context, projectID uuid.UUID, source Persona) (Persona, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if projectID == uuid.Nil {
+		return Persona{}, fmt.Errorf("project_id must not be nil")
+	}
+	if source.ID == uuid.Nil {
+		return Persona{}, fmt.Errorf("source persona id must not be nil")
+	}
+	if strings.TrimSpace(source.PersonaKey) == "" {
+		return Persona{}, fmt.Errorf("source persona_key must not be empty")
+	}
+	if strings.TrimSpace(source.Version) == "" {
+		return Persona{}, fmt.Errorf("source version must not be empty")
+	}
+	if strings.TrimSpace(source.DisplayName) == "" {
+		return Persona{}, fmt.Errorf("source display_name must not be empty")
+	}
+	if strings.TrimSpace(source.PromptMD) == "" {
+		return Persona{}, fmt.Errorf("source prompt_md must not be empty")
+	}
+
+	toolAllowlist := source.ToolAllowlist
+	if toolAllowlist == nil {
+		toolAllowlist = []string{}
+	}
+	toolDenylist := source.ToolDenylist
+	if toolDenylist == nil {
+		toolDenylist = []string{}
+	}
+	coreTools := source.CoreTools
+	if coreTools == nil {
+		coreTools = []string{}
+	}
+	budgetsJSON := source.BudgetsJSON
+	if len(budgetsJSON) == 0 {
+		budgetsJSON = json.RawMessage("{}")
+	}
+	rolesJSON := source.RolesJSON
+	if len(rolesJSON) == 0 {
+		rolesJSON = json.RawMessage("{}")
+	}
+	executorConfigJSON := source.ExecutorConfigJSON
+	if len(executorConfigJSON) == 0 {
+		executorConfigJSON = json.RawMessage("{}")
+	}
+
+	var titleSummarizeJSON any
+	if len(source.TitleSummarizeJSON) > 0 {
+		titleSummarizeJSON = source.TitleSummarizeJSON
+	}
+
+	var persona Persona
+	err := scanPersona(r.db.QueryRow(
+		ctx,
+		`INSERT INTO personas
+		    (project_id, persona_key, version, display_name, description, soul_md,
+		     user_selectable, selector_name, selector_order,
+		     prompt_md, tool_allowlist, tool_denylist, core_tools, budgets_json, roles_json, title_summarize_json,
+		     is_active, preferred_credential, model, reasoning_mode, prompt_cache_control,
+		     executor_type, executor_config_json,
+		     sync_mode, mirrored_file_dir, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, now())
+		 RETURNING `+personaSelectColumns,
+		projectID,
+		source.PersonaKey,
+		source.Version,
+		source.DisplayName,
+		source.Description,
+		source.SoulMD,
+		source.UserSelectable,
+		source.SelectorName,
+		source.SelectorOrder,
+		source.PromptMD,
+		toolAllowlist,
+		toolDenylist,
+		coreTools,
+		budgetsJSON,
+		rolesJSON,
+		titleSummarizeJSON,
+		source.IsActive,
+		source.PreferredCredential,
+		source.Model,
+		normalizePersonaReasoningMode(source.ReasoningMode),
+		normalizePersonaPromptCacheControl(source.PromptCacheControl),
+		source.ExecutorType,
+		executorConfigJSON,
+		PersonaSyncModeNone,
+		nil,
+	), &persona)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return Persona{}, PersonaConflictError{PersonaKey: source.PersonaKey, Version: source.Version}
+		}
+		return Persona{}, err
+	}
+	return persona, nil
 }
 
 func (r *PersonasRepository) Patch(ctx context.Context, projectID, id uuid.UUID, patch PersonaPatch) (*Persona, error) {

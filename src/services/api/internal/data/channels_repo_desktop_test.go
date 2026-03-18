@@ -12,6 +12,8 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
+
+	"github.com/google/uuid"
 )
 
 func TestChannelRepositoriesWorkInDesktopMode(t *testing.T) {
@@ -55,6 +57,7 @@ func TestChannelRepositoriesWorkInDesktopMode(t *testing.T) {
 
 	channel, err := channelsRepo.Create(
 		ctx,
+		uuid.New(),
 		auth.DesktopAccountID,
 		"telegram",
 		nil,
