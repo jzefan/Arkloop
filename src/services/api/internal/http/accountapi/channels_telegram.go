@@ -300,6 +300,23 @@ func (c telegramConnector) HandleUpdate(
 		return nil
 	}
 
+	// Both mustValidateTelegramActivation and entitlementSvc.Resolve use non-tx
+	// connections. On SQLite (single-connection pool) calling them inside a
+	// transaction deadlocks. Resolve everything before BeginTx.
+	persona, personaRef, _, err := mustValidateTelegramActivation(ctx, ch.AccountID, c.personasRepo, ch.PersonaID, ch.ConfigJSON)
+	if err != nil {
+		return err
+	}
+
+	initialGrant := int64(1000)
+	if c.entitlementSvc != nil {
+		if value, entErr := c.entitlementSvc.Resolve(ctx, ch.AccountID, "credit.initial_grant"); entErr == nil {
+			if v := value.Int(); v > 0 {
+				initialGrant = v
+			}
+		}
+	}
+
 	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
@@ -317,11 +334,6 @@ func (c telegramConnector) HandleUpdate(
 	}
 	if !accepted {
 		return tx.Commit(ctx)
-	}
-
-	persona, personaRef, _, err := mustValidateTelegramActivation(ctx, ch.AccountID, c.personasRepo, ch.PersonaID, ch.ConfigJSON)
-	if err != nil {
-		return err
 	}
 
 	identity, err := upsertTelegramIdentity(ctx, c.channelIdentitiesRepo.WithTx(tx), update.Message.From)
@@ -370,7 +382,7 @@ func (c telegramConnector) HandleUpdate(
 			c.membershipRepo,
 			c.projectRepo,
 			c.creditsRepo,
-			c.entitlementSvc,
+			initialGrant,
 			update.Message.From.ID,
 		)
 		if bootstrapErr != nil {
@@ -783,7 +795,7 @@ func bootstrapTelegramShadowUser(
 	membershipRepo *data.AccountMembershipRepository,
 	projectRepo *data.ProjectRepository,
 	creditsRepo *data.CreditsRepository,
-	entitlementSvc *entitlement.Service,
+	initialGrant int64,
 	telegramUserID int64,
 ) (data.User, error) {
 	user, err := usersRepo.WithTx(tx).CreateShadow(ctx, fmt.Sprintf("tg_shadow_%d", telegramUserID), "channel_shadow")
@@ -804,14 +816,6 @@ func bootstrapTelegramShadowUser(
 	}
 	if _, err := projectRepo.WithTx(tx).CreateDefaultForOwner(ctx, account.ID, user.ID); err != nil {
 		return data.User{}, err
-	}
-	initialGrant := int64(1000)
-	if entitlementSvc != nil {
-		if value, err := entitlementSvc.Resolve(ctx, account.ID, "credit.initial_grant"); err == nil {
-			if v := value.Int(); v > 0 {
-				initialGrant = v
-			}
-		}
 	}
 	if _, err := creditsRepo.WithTx(tx).InitBalance(ctx, account.ID, initialGrant); err != nil {
 		return data.User{}, err
