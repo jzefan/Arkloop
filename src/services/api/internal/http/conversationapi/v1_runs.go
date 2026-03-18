@@ -1047,11 +1047,12 @@ func streamRunEvents(
 					if err := writeSseEvent(w, item); err != nil {
 						return
 					}
+					// 每个事件单独 flush，确保客户端实时收到，避免整批积压
+					if canFlush {
+						flusher.Flush()
+					}
 				}
 				lastSend = time.Now()
-				if canFlush {
-					flusher.Flush()
-				}
 				continue
 			}
 

@@ -1162,6 +1162,7 @@ export function ChatPage() {
     injectionBlockedRunIdRef.current = null
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
+    seenFirstToolCallInRunRef.current = false
     sse.reset()
     sse.connect()
     processedEventCountRef.current = 0
@@ -1332,6 +1333,10 @@ export function ChatPage() {
           setThinkingDraft((prev) => prev + delta)
         } else if (!seenFirstToolCallInRunRef.current) {
           appendPreCopText(delta, event.seq)
+          // 同时写入 assistantDraft，让 StreamingBubble 能以 typewriter+markdown 展示
+          if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
+          pendingTextRef.current += delta
+          setAssistantDraft((prev) => prev + delta)
         } else {
           if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
           pendingTextRef.current += delta
@@ -3051,8 +3056,8 @@ export function ChatPage() {
                 </motion.div>
               )}
 
-              {/* 流式期间 tool 调用前生成的文字 */}
-              {(isStreaming || liveTimelineExiting) && preCopText && liveCopBlocks.length === 0 && searchSteps.length === 0 && (
+              {/* 流式期间 tool 调用前生成的文字（仅在 assistantDraft 为空时显示，否则由 StreamingBubble 负责） */}
+              {(isStreaming || liveTimelineExiting) && preCopText && !assistantDraft && liveCopBlocks.length === 0 && searchSteps.length === 0 && (
                 <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px', paddingBottom: '8px' }}>
                   {preCopText}
                 </div>

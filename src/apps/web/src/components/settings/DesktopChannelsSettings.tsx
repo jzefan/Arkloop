@@ -21,6 +21,7 @@ import {
   listMyChannelIdentities,
   unbindChannelIdentity,
   updateChannel,
+  verifyChannel,
 } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { DEFAULT_PERSONA_KEY } from '../../storage'
@@ -133,6 +134,9 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
   const [tokenDraft, setTokenDraft] = useState('')
   const [showToken, setShowToken] = useState(false)
 
+  const [verifying, setVerifying] = useState(false)
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
+
   const [bindCode, setBindCode] = useState<string | null>(null)
   const [generatingCode, setGeneratingCode] = useState(false)
 
@@ -185,8 +189,8 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
     if (!sameItems(persistedAllowedUserIDs, effectiveAllowedUserIDs)) return true
     return tokenDraft.trim().length > 0
   }, [
-    effectivePersonaID,
     effectiveAllowedUserIDs,
+    effectivePersonaID,
     enabled,
     loading,
     persistedAllowedUserIDs,
@@ -196,7 +200,7 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
   ])
 
   const canSave = dirty && (telegramChannel !== null || tokenDraft.trim().length > 0)
-  const tokenConfigured = telegramChannel !== null
+  const tokenConfigured = telegramChannel?.has_credentials === true
 
   const handleAddAllowedUsers = () => {
     const nextIDs = mergeAllowedUserIDs(allowedUserIDs, allowedUserInput)
@@ -260,6 +264,27 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
       }
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleVerify = async () => {
+    if (!telegramChannel) return
+    setVerifying(true)
+    setVerifyResult(null)
+    try {
+      const res = await verifyChannel(accessToken, telegramChannel.id)
+      if (res.ok) {
+        setVerifyResult({ ok: true, message: res.bot_username ? `@${res.bot_username}` : ds.connectorVerifyOk })
+      } else {
+        setVerifyResult({ ok: false, message: res.error ?? ds.connectorVerifyFail })
+      }
+    } catch (err) {
+      const msg = err instanceof Error && err.name === 'AbortError'
+        ? ds.connectorSaveTimeout
+        : isApiError(err) ? err.message : ds.connectorVerifyFail
+      setVerifyResult({ ok: false, message: msg })
+    } finally {
+      setVerifying(false)
     }
   }
 
@@ -336,6 +361,21 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
                       active={tokenConfigured}
                       label={tokenConfigured ? ds.connectorConfigured : ds.connectorNotConfigured}
                     />
+                    {verifyResult && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                        style={{
+                          background: verifyResult.ok
+                            ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))'
+                            : 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
+                          color: verifyResult.ok
+                            ? 'var(--c-status-success, #22c55e)'
+                            : 'var(--c-status-error, #ef4444)',
+                        }}
+                      >
+                        {verifyResult.message}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -552,6 +592,18 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
           {!saving && saved && <Check size={13} />}
           {saving ? ct.saving : ct.save}
         </button>
+        {tokenConfigured && (
+          <button
+            type="button"
+            onClick={() => void handleVerify()}
+            disabled={verifying || saving}
+            className={secondaryButtonCls}
+            style={{ border: '0.5px solid var(--c-border-subtle)' }}
+          >
+            {verifying && <Loader2 size={13} className="animate-spin" />}
+            {verifying ? ds.connectorVerifying : ds.connectorVerify}
+          </button>
+        )}
         {saved && !dirty && (
           <span
             className="inline-flex items-center gap-1 text-xs"

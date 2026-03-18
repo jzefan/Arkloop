@@ -1620,6 +1620,19 @@ export async function deleteChannel(accessToken: string, id: string): Promise<vo
   })
 }
 
+export type ChannelVerifyResponse = {
+  ok: boolean
+  bot_username?: string
+  error?: string
+}
+
+export async function verifyChannel(accessToken: string, id: string): Promise<ChannelVerifyResponse> {
+  return apiFetch<ChannelVerifyResponse>(`/v1/channels/${id}/verify`, {
+    method: 'POST',
+    accessToken,
+  })
+}
+
 // --- Channel Binds ---
 
 export type BindCodeResponse = {
