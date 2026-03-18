@@ -264,7 +264,7 @@ func createChannel(
 		return
 	}
 
-	if req.ChannelType == "telegram" && ch.IsActive {
+	if req.ChannelType == "telegram" && ch.IsActive && telegramModeUsesWebhook(telegramMode) {
 		if _, _, _, err := mustValidateTelegramActivation(r.Context(), actor.AccountID, personasRepo, ch.PersonaID, ch.ConfigJSON); err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 			return
@@ -276,7 +276,7 @@ func createChannel(
 		return
 	}
 
-	if req.ChannelType == "telegram" && ch.IsActive {
+	if req.ChannelType == "telegram" && ch.IsActive && telegramModeUsesWebhook(telegramMode) {
 		if err := configureTelegramActivationRemote(r.Context(), telegramClient, req.BotToken, ch, telegramMode); err != nil {
 			falseVal := false
 			_, _ = channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{IsActive: &falseVal})
@@ -508,33 +508,35 @@ func updateChannel(
 		upd.CredentialsID = &cp
 	}
 
-	// Validate telegram activation requirements before the transaction.
+	// Webhook mode requires activation/deactivation round-trips to Telegram.
+	// Polling mode just stores is_active; the poller picks it up on the next tick.
 	needsActivate := false
 	needsDeactivate := false
 	var desiredChannel data.Channel
 
-	if ch.ChannelType == "telegram" && desiredIsActive {
-		desiredChannel = *ch
-		desiredChannel.PersonaID = desiredPersonaID
-		desiredChannel.ConfigJSON = desiredConfigJSON
-		desiredChannel.IsActive = true
-		if _, _, _, err := mustValidateTelegramActivation(r.Context(), actor.AccountID, personasRepo, desiredPersonaID, desiredConfigJSON); err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
-			return
+	if ch.ChannelType == "telegram" && telegramModeUsesWebhook(telegramMode) {
+		if desiredIsActive {
+			desiredChannel = *ch
+			desiredChannel.PersonaID = desiredPersonaID
+			desiredChannel.ConfigJSON = desiredConfigJSON
+			desiredChannel.IsActive = true
+			if _, _, _, err := mustValidateTelegramActivation(r.Context(), actor.AccountID, personasRepo, desiredPersonaID, desiredConfigJSON); err != nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+				return
+			}
+			if nextToken == "" {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "telegram channel requires bot_token before activation", traceID, nil)
+				return
+			}
+			needsActivate = !ch.IsActive || (req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "")
 		}
-		if nextToken == "" {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "telegram channel requires bot_token before activation", traceID, nil)
-			return
+		if ch.IsActive && !desiredIsActive {
+			if nextToken == "" {
+				httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", "telegram token unavailable", traceID, nil)
+				return
+			}
+			needsDeactivate = true
 		}
-		needsActivate = !ch.IsActive || (req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "")
-	}
-
-	if ch.ChannelType == "telegram" && ch.IsActive && !desiredIsActive {
-		if nextToken == "" {
-			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", "telegram token unavailable", traceID, nil)
-			return
-		}
-		needsDeactivate = true
 	}
 
 	updated, err := channelsRepo.WithTx(tx).Update(r.Context(), channelID, actor.AccountID, upd)
