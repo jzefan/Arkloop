@@ -99,6 +99,23 @@ func channelEntry(
 			return
 		}
 
+		// Sub-action: {id}/verify
+		if strings.HasSuffix(tail, "/verify") {
+			channelIDStr := strings.TrimSuffix(tail, "/verify")
+			channelIDStr = strings.Trim(channelIDStr, "/")
+			channelID, err := uuid.Parse(channelIDStr)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid channel id", traceID, nil)
+				return
+			}
+			if r.Method != nethttp.MethodPost {
+				httpkit.WriteMethodNotAllowed(w, r)
+				return
+			}
+			verifyChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, telegramClient)
+			return
+		}
+
 		channelID, err := uuid.Parse(tail)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid channel id", traceID, nil)
@@ -737,4 +754,84 @@ func ensureProjectScopedChannelPersona(
 	}
 	id := cloned.ID
 	return &id, nil
+}
+
+type channelVerifyResponse struct {
+	OK          bool   `json:"ok"`
+	BotUsername string `json:"bot_username,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+func verifyChannel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	channelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	channelsRepo *data.ChannelsRepository,
+	apiKeysRepo *data.APIKeysRepository,
+	secretsRepo *data.SecretsRepository,
+	telegramClient *telegrambot.Client,
+) {
+	if authService == nil {
+		httpkit.WriteAuthNotConfigured(w, traceID)
+		return
+	}
+	if channelsRepo == nil || secretsRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := httpkit.ResolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, nil)
+	if !ok {
+		return
+	}
+	if !httpkit.RequirePerm(actor, auth.PermDataChannelsManage, w, traceID) {
+		return
+	}
+
+	ch, err := channelsRepo.GetByID(r.Context(), channelID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if ch == nil || ch.AccountID != actor.AccountID {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "channels.not_found", "channel not found", traceID, nil)
+		return
+	}
+	if ch.ChannelType != "telegram" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "verify only supported for telegram channels", traceID, nil)
+		return
+	}
+	if ch.CredentialsID == nil {
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "bot token not configured"})
+		return
+	}
+
+	token, err := secretsRepo.DecryptByID(r.Context(), *ch.CredentialsID)
+	if err != nil || token == nil || strings.TrimSpace(*token) == "" {
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "bot token unavailable"})
+		return
+	}
+
+	if telegramClient == nil {
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "telegram client not configured"})
+		return
+	}
+
+	verifyCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	info, err := telegramClient.GetMe(verifyCtx, strings.TrimSpace(*token))
+	if err != nil {
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	username := ""
+	if info.Username != nil {
+		username = *info.Username
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: true, BotUsername: username})
 }

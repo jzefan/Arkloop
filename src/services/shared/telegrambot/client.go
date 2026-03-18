@@ -85,6 +85,21 @@ func (c *Client) GetUpdates(ctx context.Context, token string, req GetUpdatesReq
 	return c.callJSON(ctx, token, "getUpdates", req, out)
 }
 
+type BotInfo struct {
+	ID        int64   `json:"id"`
+	IsBot     bool    `json:"is_bot"`
+	FirstName string  `json:"first_name"`
+	Username  *string `json:"username"`
+}
+
+func (c *Client) GetMe(ctx context.Context, token string) (*BotInfo, error) {
+	var info BotInfo
+	if err := c.callJSON(ctx, token, "getMe", map[string]any{}, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 func (c *Client) callJSON(ctx context.Context, token string, method string, body any, out any) error {
 	if strings.TrimSpace(token) == "" {
 		return fmt.Errorf("telegrambot: token must not be empty")
