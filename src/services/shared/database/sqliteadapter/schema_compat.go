@@ -18,6 +18,22 @@ func repairLegacySchemas(ctx context.Context, db *sql.DB) error {
 	if err := repairLegacySecretsSchema(ctx, db); err != nil {
 		return err
 	}
+	needsChannelRepair, err := channelsNeedSecretsReferenceRepair(ctx, db)
+	if err != nil {
+		return err
+	}
+	if !needsChannelRepair {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("sqliteadapter: disable foreign keys for channel repair: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`)
+	}()
+	if err := rebuildChannelTablesForSecretsRepair(ctx, db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -353,6 +369,34 @@ func rebuildChannelTablesForSecretsRepair(ctx context.Context, db *sql.DB) error
 	return nil
 }
 
+func channelsNeedSecretsReferenceRepair(ctx context.Context, db *sql.DB) (bool, error) {
+	exists, err := sqliteTableExists(ctx, db, "channels")
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+
+	tableSQL, err := sqliteTableSQL(ctx, db, "channels")
+	if err != nil {
+		return false, err
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(tableSQL, `"`, ""))
+	switch {
+	case strings.Contains(normalized, "references secrets_legacy_compat_00029("):
+		return true, nil
+	case strings.Contains(normalized, "references secrets_aligned_backup("):
+		return true, nil
+	case strings.Contains(normalized, "credentials_id text references secrets(id)"):
+		return false, nil
+	case strings.Contains(normalized, "credentials_id text"):
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 func sqliteTableExists(ctx context.Context, db *sql.DB, tableName string) (bool, error) {
 	var count int
 	if err := db.QueryRowContext(
@@ -423,6 +467,21 @@ func sqliteTableColumnDefault(ctx context.Context, db *sql.DB, tableName, column
 		return "", false, fmt.Errorf("sqliteadapter: read table_info(%s): %w", tableName, err)
 	}
 	return "", false, nil
+}
+
+func sqliteTableSQL(ctx context.Context, db *sql.DB, tableName string) (string, error) {
+	var ddl sql.NullString
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`,
+		tableName,
+	).Scan(&ddl); err != nil {
+		return "", fmt.Errorf("sqliteadapter: query table sql %s: %w", tableName, err)
+	}
+	if !ddl.Valid {
+		return "", nil
+	}
+	return ddl.String, nil
 }
 
 func sqliteRowExists(ctx context.Context, db *sql.DB, query string, args ...any) (bool, error) {

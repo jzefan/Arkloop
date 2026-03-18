@@ -128,6 +128,14 @@ func TestAutoMigrate(t *testing.T) {
 			t.Fatalf("%s table not found after auto-migrate", tableName)
 		}
 	}
+
+	columns, err := sqliteTableColumns(ctx, pool.Unwrap(), "platform_settings")
+	if err != nil {
+		t.Fatalf("load platform_settings columns: %v", err)
+	}
+	if !hasSQLiteColumns(columns, "key", "value", "updated_at") {
+		t.Fatalf("platform_settings columns = %v, want key/value/updated_at", columns)
+	}
 }
 
 func TestAutoMigrateRepairsLegacySecretsSchema(t *testing.T) {

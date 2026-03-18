@@ -1,9 +1,11 @@
 package accountapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	nethttp "net/http"
 	"strings"
@@ -193,6 +195,14 @@ func createChannel(
 			return
 		}
 	}
+	if req.ChannelType == "telegram" && personaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, personaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		personaID = resolvedPersonaID
+	}
 
 	existing, err := channelsRepo.GetByAccountAndType(r.Context(), actor.AccountID, req.ChannelType)
 	if err != nil {
@@ -230,7 +240,7 @@ func createChannel(
 		credentialsID = &secret.ID
 	}
 
-	ch, err := channelsRepo.WithTx(tx).Create(r.Context(), actor.AccountID, req.ChannelType, personaID, credentialsID, webhookSecret, webhookURL, normalizedConfig)
+	ch, err := channelsRepo.WithTx(tx).Create(r.Context(), channelID, actor.AccountID, req.ChannelType, personaID, credentialsID, webhookSecret, webhookURL, normalizedConfig)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -430,6 +440,17 @@ func updateChannel(
 		}
 		upd.ConfigJSON = &normalizedConfig
 		desiredConfigJSON = normalizedConfig
+	}
+	if ch.ChannelType == "telegram" && desiredPersonaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if resolvedPersonaID != nil && *resolvedPersonaID != derefUUID(desiredPersonaID) {
+			desiredPersonaID = resolvedPersonaID
+			upd.PersonaID = &resolvedPersonaID
+		}
 	}
 
 	var nextToken string
@@ -640,4 +661,62 @@ func generateChannelWebhookSecret() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func ensureProjectScopedChannelPersona(
+	ctx context.Context,
+	personasRepo *data.PersonasRepository,
+	accountID uuid.UUID,
+	userID uuid.UUID,
+	personaID *uuid.UUID,
+) (*uuid.UUID, error) {
+	if personaID == nil || *personaID == uuid.Nil {
+		return nil, nil
+	}
+	if personasRepo == nil {
+		return nil, fmt.Errorf("personas repo not configured")
+	}
+
+	persona, err := personasRepo.GetByIDForAccount(ctx, accountID, *personaID)
+	if err != nil {
+		return nil, err
+	}
+	if persona == nil {
+		return nil, fmt.Errorf("persona not found")
+	}
+	if persona.ProjectID != nil && *persona.ProjectID != uuid.Nil {
+		id := persona.ID
+		return &id, nil
+	}
+
+	projectID, err := personasRepo.GetOrCreateDefaultProjectIDByOwner(ctx, accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := personasRepo.GetByKeyVersionInProject(ctx, projectID, persona.PersonaKey, persona.Version)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		id := existing.ID
+		return &id, nil
+	}
+
+	cloned, err := personasRepo.CloneToProject(ctx, projectID, *persona)
+	if err != nil {
+		var conflict data.PersonaConflictError
+		if errors.As(err, &conflict) {
+			existing, getErr := personasRepo.GetByKeyVersionInProject(ctx, projectID, persona.PersonaKey, persona.Version)
+			if getErr != nil {
+				return nil, getErr
+			}
+			if existing != nil {
+				id := existing.ID
+				return &id, nil
+			}
+		}
+		return nil, err
+	}
+	id := cloned.ID
+	return &id, nil
 }

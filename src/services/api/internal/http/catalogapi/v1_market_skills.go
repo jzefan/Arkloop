@@ -237,11 +237,20 @@ func importSkillFromRegistry(ctx context.Context, provider registryProvider, sto
 	if slug == "" {
 		return data.SkillPackage{}, nil, skillImportError{status: nethttp.StatusBadRequest, code: "skills.invalid_request", msg: "slug is required"}
 	}
+	targetVersion := strings.TrimSpace(version)
+	if packagesRepo != nil {
+		existing, err := packagesRepo.FindActiveByRegistry(ctx, accountID, defaultRegistryProvider, slug, targetVersion)
+		if err != nil {
+			return data.SkillPackage{}, nil, err
+		}
+		if existing != nil {
+			return *existing, nil, nil
+		}
+	}
 	skillInfo, err := provider.GetSkill(ctx, slug)
 	if err != nil {
 		return data.SkillPackage{}, nil, skillImportError{status: nethttp.StatusBadGateway, code: "skills.market_unavailable", msg: "skills market unavailable"}
 	}
-	targetVersion := strings.TrimSpace(version)
 	if targetVersion == "" {
 		targetVersion = strings.TrimSpace(skillInfo.LatestVersion)
 	}

@@ -201,6 +201,7 @@ func updateRegistrySkillRefs(ctx context.Context, db Querier, table string, idCo
 	if err != nil {
 		return err
 	}
+	payloadJSON := string(payload)
 	_, err = db.Exec(
 		ctx,
 		fmt.Sprintf(`UPDATE %s
@@ -208,7 +209,7 @@ func updateRegistrySkillRefs(ctx context.Context, db Querier, table string, idCo
 		        updated_at = now()
 		  WHERE %s = $1`, table, field, idColumn),
 		idValue,
-		payload,
+		payloadJSON,
 	)
 	return err
 }

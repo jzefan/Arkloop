@@ -608,6 +608,7 @@ func createActiveTelegramChannel(t *testing.T, env telegramChannelsTestEnv, botT
 	webhookURL := "https://app.example/v1/channels/telegram/" + channelID.String() + "/webhook"
 	channel, err := env.channelsRepo.Create(
 		context.Background(),
+		channelID,
 		env.accountID,
 		"telegram",
 		&env.personaID,
