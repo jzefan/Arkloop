@@ -116,6 +116,7 @@ func TestAutoMigrate(t *testing.T) {
 		"channel_identity_bind_codes",
 		"channel_dm_threads",
 		"channel_message_receipts",
+		"channel_message_ledger",
 	} {
 		err = pool.QueryRow(ctx,
 			`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`,

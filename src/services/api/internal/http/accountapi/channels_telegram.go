@@ -341,6 +341,7 @@ type telegramConnector struct {
 	channelDMThreadsRepo    *data.ChannelDMThreadsRepository
 	channelGroupThreadsRepo *data.ChannelGroupThreadsRepository
 	channelReceiptsRepo     *data.ChannelMessageReceiptsRepository
+	channelLedgerRepo       *data.ChannelMessageLedgerRepository
 	personasRepo            *data.PersonasRepository
 	usersRepo               *data.UserRepository
 	accountRepo             *data.AccountRepository
@@ -495,6 +496,31 @@ func (c telegramConnector) HandleUpdate(
 	if err != nil {
 		return err
 	}
+	if c.channelLedgerRepo != nil {
+		ledgerMetadata, metaErr := json.Marshal(map[string]any{
+			"source":            "telegram",
+			"conversation_type": incoming.ChatType,
+			"mentions_bot":      incoming.MentionsBot,
+			"is_reply_to_bot":   incoming.IsReplyToBot,
+		})
+		if metaErr != nil {
+			return metaErr
+		}
+		if _, ledgerErr := c.channelLedgerRepo.WithTx(tx).Record(ctx, data.ChannelMessageLedgerRecordInput{
+			ChannelID:               ch.ID,
+			ChannelType:             ch.ChannelType,
+			Direction:               data.ChannelMessageDirectionInbound,
+			ThreadID:                &threadID,
+			PlatformConversationID:  incoming.PlatformChatID,
+			PlatformMessageID:       incoming.PlatformMsgID,
+			PlatformParentMessageID: incoming.ReplyToMsgID,
+			PlatformThreadID:        incoming.MessageThreadID,
+			SenderChannelIdentityID: &identity.ID,
+			MetadataJSON:            ledgerMetadata,
+		}); ledgerErr != nil {
+			return ledgerErr
+		}
+	}
 	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessage(identity, *incoming)
 	if err != nil {
 		return err
@@ -568,12 +594,21 @@ func telegramWebhookEntry(
 	entitlementSvc *entitlement.Service,
 	telegramClient *telegrambot.Client,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
+	var channelLedgerRepo *data.ChannelMessageLedgerRepository
+	if pool != nil {
+		repo, err := data.NewChannelMessageLedgerRepository(pool)
+		if err != nil {
+			panic(err)
+		}
+		channelLedgerRepo = repo
+	}
 	connector := telegramConnector{
 		channelIdentitiesRepo:   channelIdentitiesRepo,
 		channelBindCodesRepo:    channelBindCodesRepo,
 		channelDMThreadsRepo:    channelDMThreadsRepo,
 		channelGroupThreadsRepo: channelGroupThreadsRepo,
 		channelReceiptsRepo:     channelReceiptsRepo,
+		channelLedgerRepo:       channelLedgerRepo,
 		personasRepo:            personasRepo,
 		usersRepo:               usersRepo,
 		accountRepo:             accountRepo,
@@ -673,6 +708,7 @@ type TelegramDesktopPollerDeps struct {
 	ChannelDMThreadsRepo    *data.ChannelDMThreadsRepository
 	ChannelGroupThreadsRepo *data.ChannelGroupThreadsRepository
 	ChannelReceiptsRepo     *data.ChannelMessageReceiptsRepository
+	ChannelLedgerRepo       *data.ChannelMessageLedgerRepository
 	SecretsRepo             *data.SecretsRepository
 	PersonasRepo            *data.PersonasRepository
 	UsersRepo               *data.UserRepository
@@ -726,6 +762,14 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 	if limit <= 0 {
 		limit = 20
 	}
+	channelLedgerRepo := deps.ChannelLedgerRepo
+	if channelLedgerRepo == nil {
+		var err error
+		channelLedgerRepo, err = data.NewChannelMessageLedgerRepository(deps.Pool)
+		if err != nil {
+			return
+		}
+	}
 
 	connector := telegramConnector{
 		channelIdentitiesRepo:   deps.ChannelIdentitiesRepo,
@@ -733,6 +777,7 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 		channelDMThreadsRepo:    deps.ChannelDMThreadsRepo,
 		channelGroupThreadsRepo: deps.ChannelGroupThreadsRepo,
 		channelReceiptsRepo:     deps.ChannelReceiptsRepo,
+		channelLedgerRepo:       channelLedgerRepo,
 		personasRepo:            deps.PersonasRepo,
 		usersRepo:               deps.UsersRepo,
 		accountRepo:             deps.AccountRepo,
@@ -874,8 +919,17 @@ func buildTelegramChannelDeliveryPayload(
 	incoming telegramIncomingMessage,
 ) map[string]any {
 	payload := map[string]any{
-		"channel_id":                 channelID.String(),
-		"channel_type":               "telegram",
+		"channel_id":   channelID.String(),
+		"channel_type": "telegram",
+		"conversation_ref": map[string]any{
+			"target": incoming.PlatformChatID,
+		},
+		"inbound_message_ref": map[string]any{
+			"message_id": incoming.PlatformMsgID,
+		},
+		"trigger_message_ref": map[string]any{
+			"message_id": incoming.PlatformMsgID,
+		},
 		"platform_chat_id":           incoming.PlatformChatID,
 		"platform_message_id":        incoming.PlatformMsgID,
 		"reply_to_message_id":        incoming.PlatformMsgID,
@@ -888,6 +942,7 @@ func buildTelegramChannelDeliveryPayload(
 		payload["inbound_reply_to_message_id"] = strings.TrimSpace(*incoming.ReplyToMsgID)
 	}
 	if incoming.MessageThreadID != nil && strings.TrimSpace(*incoming.MessageThreadID) != "" {
+		payload["conversation_ref"].(map[string]any)["thread_id"] = strings.TrimSpace(*incoming.MessageThreadID)
 		payload["message_thread_id"] = strings.TrimSpace(*incoming.MessageThreadID)
 	}
 	return payload
