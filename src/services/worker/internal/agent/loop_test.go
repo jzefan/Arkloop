@@ -50,7 +50,9 @@ func TestAgentLoopRunsStubGateway(t *testing.T) {
 
 	deltaCount := 0
 	completedCount := 0
+	eventTypes := make([]string, 0, len(got))
 	for _, ev := range got {
+		eventTypes = append(eventTypes, ev.Type)
 		if ev.Type == "message.delta" {
 			deltaCount++
 		}
@@ -63,6 +65,15 @@ func TestAgentLoopRunsStubGateway(t *testing.T) {
 	}
 	if completedCount != 1 {
 		t.Fatalf("expected 1 run.completed, got %d", completedCount)
+	}
+	wantTypes := []string{"llm.request", "message.delta", "message.delta", "llm.turn.completed", "run.completed"}
+	if len(eventTypes) != len(wantTypes) {
+		t.Fatalf("unexpected event count: got %v", eventTypes)
+	}
+	for i := range wantTypes {
+		if eventTypes[i] != wantTypes[i] {
+			t.Fatalf("unexpected event order: got %v want %v", eventTypes, wantTypes)
+		}
 	}
 }
 

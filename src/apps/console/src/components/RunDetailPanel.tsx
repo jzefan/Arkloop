@@ -414,7 +414,12 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
               <p className="py-2 text-xs text-[var(--c-text-muted)]">{rt.noEvents}</p>
             )}
             {events && events.length > 0 && (
-              <RawEventsSectionContent events={events} />
+              <div className="space-y-2">
+                <p className="text-[11px] text-[var(--c-text-muted)]">
+                  Events are shown in sequence order. Recorded time may differ from when the model started emitting output.
+                </p>
+                <RawEventsSectionContent events={events} />
+              </div>
             )}
           </Section>
         </div>
@@ -640,8 +645,8 @@ function RawEventRow({ event }: RawEventRowProps) {
         {event.error_class && (
           <span className="ml-auto text-xs text-red-500">{event.error_class}</span>
         )}
-        <span className="ml-auto text-xs text-[var(--c-text-muted)]" title={event.ts}>
-          {formatEventTime(event.ts)}
+        <span className="ml-auto text-xs text-[var(--c-text-muted)]" title={`recorded ${event.ts}`}>
+          recorded {formatEventTime(event.ts)}
         </span>
       </button>
       {open && hasData && (

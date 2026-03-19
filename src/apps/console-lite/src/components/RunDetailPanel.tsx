@@ -250,6 +250,11 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
             <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--c-text-muted)]">
               {t.runs.sectionEvents}
             </h4>
+            {!loading && events && events.length > 0 && (
+              <p className="mb-2 text-[11px] text-[var(--c-text-muted)]">
+                Events are shown in sequence order. Recorded time may differ from when the model started emitting output.
+              </p>
+            )}
             {loading ? (
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
                 {t.runs.loading}
@@ -282,7 +287,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
                           </span>
                         )}
                         <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">
-                          {formatAbsoluteTime(event.ts, locale, fallback)}
+                          recorded {formatAbsoluteTime(event.ts, locale, fallback)}
                         </span>
                       </div>
                     </summary>

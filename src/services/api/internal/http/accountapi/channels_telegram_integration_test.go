@@ -269,6 +269,9 @@ func TestUpdateTelegramChannelActivationRegistersWebhookAndCommands(t *testing.T
 	if paths[0] != "/botbot-token/setWebhook" || paths[1] != "/botbot-token/setMyCommands" {
 		t.Fatalf("unexpected telegram calls: %#v", paths)
 	}
+	if got := updateResp.Body.String(); !strings.Contains(got, `"command":"new"`) {
+		t.Fatalf("expected /new command to be registered, got %s", got)
+	}
 	updated, err := env.channelsRepo.GetByID(context.Background(), mustUUID(t, channel.ID))
 	if err != nil {
 		t.Fatalf("get channel: %v", err)
@@ -329,7 +332,7 @@ func TestUpdateTelegramChannelActivationFailClosed(t *testing.T) {
 
 func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
-	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"})
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
 
 	payload := map[string]any{
 		"message": map[string]any{
@@ -358,6 +361,7 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	if resp.Code != nethttp.StatusOK {
 		t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
 	}
+
 	resp2 := doJSONAccount(
 		env.handler,
 		nethttp.MethodPost,
@@ -398,11 +402,26 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	if _, ok := jobPayload["channel_delivery"]; !ok {
 		t.Fatalf("expected channel_delivery in payload: %#v", jobPayload)
 	}
+	if _, ok := jobPayload["model"]; ok {
+		t.Fatalf("did not expect model in job payload: %#v", jobPayload)
+	}
+
+	var startedJSON []byte
+	if err := env.pool.QueryRow(context.Background(), `SELECT data_json::text::jsonb FROM run_events WHERE type = 'run.started' LIMIT 1`).Scan(&startedJSON); err != nil {
+		t.Fatalf("query run.started: %v", err)
+	}
+	var started map[string]any
+	if err := json.Unmarshal(startedJSON, &started); err != nil {
+		t.Fatalf("decode run.started: %v", err)
+	}
+	if got := strings.TrimSpace(asString(started["model"])); got != "demo-cred^gpt-5-mini" {
+		t.Fatalf("unexpected run.started model: %q", got)
+	}
 }
 
 func TestTelegramWebhookRejectsInvalidSignature(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
-	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"})
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
 
 	resp := doJSONAccount(
 		env.handler,
@@ -451,7 +470,7 @@ func TestTelegramWebhookRejectsUserOutsideAllowlistWithoutCreatingConversation(t
 	defer server.Close()
 
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient(server.URL, server.Client()))
-	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"})
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
 
 	resp := doJSONAccount(
 		env.handler,
@@ -509,7 +528,7 @@ func TestUpdateTelegramChannelDisableDeletesWebhook(t *testing.T) {
 	defer server.Close()
 
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient(server.URL, server.Client()))
-	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"})
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
 
 	resp := doJSONAccount(
 		env.handler,
@@ -543,7 +562,7 @@ func TestDeleteTelegramChannelDeletesWebhook(t *testing.T) {
 	defer server.Close()
 
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient(server.URL, server.Client()))
-	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"})
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
 
 	req := httptest.NewRequest(nethttp.MethodDelete, "/v1/channels/"+channel.ID.String(), nil)
 	req.Header.Set("Authorization", "Bearer "+env.accessToken)
@@ -562,6 +581,107 @@ func TestDeleteTelegramChannelDeletesWebhook(t *testing.T) {
 	}
 	if deleted != nil {
 		t.Fatal("channel should be deleted")
+	}
+}
+
+func TestTelegramWebhookNewCommandStartsFreshDMThread(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
+
+	firstMessage := map[string]any{
+		"message": map[string]any{
+			"message_id": 1,
+			"date":       1710000000,
+			"text":       "first",
+			"chat": map[string]any{
+				"id":   10001,
+				"type": "private",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	newCommand := map[string]any{
+		"message": map[string]any{
+			"message_id": 2,
+			"date":       1710000001,
+			"text":       "/new",
+			"chat": map[string]any{
+				"id":   10001,
+				"type": "private",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	secondMessage := map[string]any{
+		"message": map[string]any{
+			"message_id": 3,
+			"date":       1710000002,
+			"text":       "second",
+			"chat": map[string]any{
+				"id":   10001,
+				"type": "private",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	for _, payload := range []map[string]any{firstMessage, newCommand, secondMessage} {
+		resp := doJSONAccount(
+			env.handler,
+			nethttp.MethodPost,
+			"/v1/channels/telegram/"+channel.ID.String()+"/webhook",
+			payload,
+			headers,
+		)
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
+		}
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 2)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 2)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 2)
+
+	rows, err := env.pool.Query(context.Background(), `SELECT DISTINCT thread_id FROM messages ORDER BY thread_id ASC`)
+	if err != nil {
+		t.Fatalf("query message threads: %v", err)
+	}
+	defer rows.Close()
+	var threadIDs []uuid.UUID
+	for rows.Next() {
+		var threadID uuid.UUID
+		if err := rows.Scan(&threadID); err != nil {
+			t.Fatalf("scan thread id: %v", err)
+		}
+		threadIDs = append(threadIDs, threadID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate thread ids: %v", err)
+	}
+	if len(threadIDs) != 2 {
+		t.Fatalf("expected 2 message threads after /new, got %d", len(threadIDs))
+	}
+
+	var mappedThreadID uuid.UUID
+	if err := env.pool.QueryRow(context.Background(), `SELECT thread_id FROM channel_dm_threads LIMIT 1`).Scan(&mappedThreadID); err != nil {
+		t.Fatalf("query mapped thread: %v", err)
+	}
+	if mappedThreadID != threadIDs[1] {
+		t.Fatalf("expected latest thread to stay mapped, got %s want %s", mappedThreadID, threadIDs[1])
 	}
 }
 
@@ -592,7 +712,7 @@ func decodeJSONBodyAccount[T any](t *testing.T, raw []byte) T {
 	return dst
 }
 
-func createActiveTelegramChannel(t *testing.T, env telegramChannelsTestEnv, botToken string, allowedUserIDs []string) data.Channel {
+func createActiveTelegramChannel(t *testing.T, env telegramChannelsTestEnv, botToken string, allowedUserIDs []string, defaultModel string) data.Channel {
 	t.Helper()
 
 	channelID := uuid.New()
@@ -600,7 +720,11 @@ func createActiveTelegramChannel(t *testing.T, env telegramChannelsTestEnv, botT
 	if err != nil {
 		t.Fatalf("create secret: %v", err)
 	}
-	configJSON, err := json.Marshal(map[string]any{"allowed_user_ids": allowedUserIDs})
+	config := map[string]any{"allowed_user_ids": allowedUserIDs}
+	if strings.TrimSpace(defaultModel) != "" {
+		config["default_model"] = strings.TrimSpace(defaultModel)
+	}
+	configJSON, err := json.Marshal(config)
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
@@ -650,6 +774,11 @@ func mustUUID(t *testing.T, raw string) uuid.UUID {
 		t.Fatalf("parse uuid: %v", err)
 	}
 	return id
+}
+
+func asString(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func assertCountAccount(t *testing.T, pool *pgxpool.Pool, query string, want int) {

@@ -10,6 +10,11 @@ export type RunEventRaw = {
 }
 
 export type LlmTurn = {
+  requestMessages: Array<{
+    role: string
+    text: string
+    meta?: Record<string, string>
+  }>
   llmCallId: string
   providerKind: string
   apiMode: string
@@ -20,6 +25,7 @@ export type LlmTurn = {
   payloadBytes?: number
   estimatedInputTokens?: number
   userInput?: string
+  inputMeta?: Record<string, string>
   assistantText: string
   toolCalls: Array<{
     toolCallId: string
@@ -35,13 +41,23 @@ export type LlmTurn = {
   messageCount?: number
   temperature?: number
   maxOutputTokens?: number
-  // 上下文分解统计
   systemBytes?: number
   toolsBytes?: number
   messagesBytes?: number
   roleBytes?: Record<string, number>
   toolSchemaBytesMap?: Record<string, number>
   stablePrefixHash?: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function cleanText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 function extractToolName(tool: Record<string, unknown>): string {
@@ -72,6 +88,125 @@ function extractMessageText(msg: Record<string, unknown>): string {
   return JSON.stringify(content)
 }
 
+function parseChannelEnvelope(text: string): { text: string; meta: Record<string, string> } | null {
+  const normalized = text.replace(/\r\n/g, '\n')
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+  if (!match) return null
+
+  const header = match[1]
+  const body = cleanText(match[2]) ?? ''
+  const meta: Record<string, string> = {}
+
+  for (const line of header.split('\n')) {
+    const idx = line.indexOf(':')
+    if (idx <= 0) continue
+    const key = line.slice(0, idx).trim()
+    const rawValue = line.slice(idx + 1).trim()
+    if (!key || !rawValue) continue
+    meta[key] = rawValue.replace(/^"|"$/g, '')
+  }
+
+  if (!body && Object.keys(meta).length === 0) return null
+  return { text: body, meta }
+}
+
+function extractUserInputFromPayload(payload: Record<string, unknown> | undefined): {
+  userInput?: string
+  inputMeta?: Record<string, string>
+  messages: Array<Record<string, unknown>>
+} {
+  const messages = Array.isArray(payload?.messages)
+    ? (payload.messages as Array<Record<string, unknown>>)
+    : []
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === 'user' || msg.role === 'tool') {
+      const text = cleanText(extractMessageText(msg))
+      if (text) {
+        const parsed = parseChannelEnvelope(text)
+        if (parsed) {
+          return { userInput: parsed.text, inputMeta: parsed.meta, messages }
+        }
+        return { userInput: text, messages }
+      }
+    }
+  }
+
+  const fallbackCandidates = [payload?.input, payload?.prompt, payload?.input_text]
+  for (const candidate of fallbackCandidates) {
+    if (typeof candidate !== 'string') continue
+    const text = cleanText(candidate)
+    if (!text) continue
+    const parsed = parseChannelEnvelope(text)
+    if (parsed) {
+      return { userInput: parsed.text, inputMeta: parsed.meta, messages }
+    }
+    return { userInput: text, messages }
+  }
+
+  const inputRecord = asRecord(payload?.input)
+  const inputText = cleanText(
+    typeof inputRecord?.text === 'string'
+      ? inputRecord.text
+      : typeof inputRecord?.content === 'string'
+        ? inputRecord.content
+        : undefined,
+  )
+  if (inputText) {
+    const parsed = parseChannelEnvelope(inputText)
+    if (parsed) {
+      return { userInput: parsed.text, inputMeta: parsed.meta, messages }
+    }
+    return { userInput: inputText, messages }
+  }
+
+  return { messages }
+}
+
+function extractCompletedAssistantText(data: Record<string, unknown>): string | undefined {
+  const candidates = [data.output_text, data.assistant_text, data.final_output_text, data.text]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const text = cleanText(candidate)
+      if (text) return text
+    }
+  }
+  return undefined
+}
+
+function extractRequestMessages(messages: Array<Record<string, unknown>>): Array<{
+  role: string
+  text: string
+  meta?: Record<string, string>
+}> {
+  const result: Array<{
+    role: string
+    text: string
+    meta?: Record<string, string>
+  }> = []
+
+  for (const message of messages) {
+    const role = typeof message.role === 'string' ? message.role : ''
+    if (!role || role === 'system') continue
+
+    const rawText = cleanText(extractMessageText(message))
+    if (!rawText) continue
+
+    if (role === 'user' || role === 'tool') {
+      const parsed = parseChannelEnvelope(rawText)
+      if (parsed) {
+        result.push({ role, text: parsed.text, meta: parsed.meta })
+        continue
+      }
+    }
+
+    result.push({ role, text: rawText })
+  }
+
+  return result
+}
+
 function mergeTurnResults(
   turns: LlmTurn[],
   resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }>,
@@ -88,31 +223,26 @@ function mergeTurnResults(
 }
 
 export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
+  const orderedEvents = [...events].sort((left, right) => left.seq - right.seq)
   const turns: LlmTurn[] = []
   let current: LlmTurn | null = null
   const assistantChunks: string[] = []
   const resultMap: Record<string, { resultJSON?: Record<string, unknown>; errorClass?: string }> = {}
   const turnByCallId = new Map<string, LlmTurn>()
 
-  for (const ev of events) {
+  const finalizeCurrentTurn = (fallbackText?: string) => {
+    if (!current) return
+    const merged = cleanText(assistantChunks.join(''))
+    current.assistantText = merged ?? cleanText(fallbackText) ?? current.assistantText
+    assistantChunks.length = 0
+  }
+
+  for (const ev of orderedEvents) {
     if (ev.type === 'llm.request') {
-      if (current) {
-        current.assistantText = assistantChunks.join('')
-        assistantChunks.length = 0
-      }
+      finalizeCurrentTurn()
       const d = ev.data as Record<string, unknown>
       const payload = d.payload as Record<string, unknown> | undefined
-      const messages = Array.isArray(payload?.messages)
-        ? (payload.messages as Array<Record<string, unknown>>)
-        : []
-      let userInput: string | undefined
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i]
-        if (msg.role === 'user' || msg.role === 'tool') {
-          userInput = extractMessageText(msg)
-          break
-        }
-      }
+      const { userInput, inputMeta, messages } = extractUserInputFromPayload(payload)
 
       const systemMsg = messages.find((m) => m.role === 'system')
       const systemPrompt = systemMsg ? extractMessageText(systemMsg) : undefined
@@ -122,10 +252,12 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       const toolNames = tools.map(extractToolName).filter(Boolean)
 
       current = {
+        requestMessages: extractRequestMessages(messages),
         llmCallId: String(d.llm_call_id ?? ''),
         providerKind: String(d.provider_kind ?? ''),
         apiMode: String(d.api_mode ?? ''),
         userInput,
+        inputMeta,
         assistantText: '',
         toolCalls: [],
         model: payload?.model != null ? String(payload.model) : undefined,
@@ -181,20 +313,19 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
           target.cachedTokens = (usage.cached_tokens ?? usage.cache_read_input_tokens) as number | undefined
           target.cacheCreationTokens = usage.cache_creation_input_tokens as number | undefined
         }
+        if (target === current) {
+          finalizeCurrentTurn(extractCompletedAssistantText(d))
+        } else if (!target.assistantText) {
+          target.assistantText = extractCompletedAssistantText(d) ?? target.assistantText
+        }
       }
-    } else if (ev.type === 'run.completed' || ev.type === 'run.failed') {
-      if (current) {
-        current.assistantText = assistantChunks.join('')
-        assistantChunks.length = 0
-      }
+    } else if (ev.type === 'run.completed' || ev.type === 'run.failed' || ev.type === 'run.cancelled') {
+      finalizeCurrentTurn()
       current = null
     }
   }
 
-  if (current && assistantChunks.length > 0) {
-    current.assistantText = assistantChunks.join('')
-  }
-
+  finalizeCurrentTurn()
   mergeTurnResults(turns, resultMap)
   return turns
 }

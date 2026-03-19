@@ -182,5 +182,5 @@ export async function fetchRunEventsOnce(
     }
   }
 
-  return events
+  return events.sort((left, right) => left.seq - right.seq)
 }
