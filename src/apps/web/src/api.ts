@@ -907,7 +907,7 @@ export async function listRunEvents(
       // ignore malformed item
     }
   }
-  return runEvents
+  return runEvents.sort((left, right) => left.seq - right.seq)
 }
 
 export type CancelRunResponse = {

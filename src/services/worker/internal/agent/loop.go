@@ -924,6 +924,7 @@ func (l *Loop) runSingleTurn(
 	stopErr := fmt.Errorf("stop")
 
 	streamingEventTypes := map[string]struct{}{
+		"llm.request":        {},
 		"message.delta":      {},
 		"llm.response.chunk": {},
 		"run.segment.start":  {},

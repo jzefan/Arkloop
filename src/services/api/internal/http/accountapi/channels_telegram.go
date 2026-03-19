@@ -201,6 +201,7 @@ func configureTelegramRemote(
 		{Command: "start", Description: "开始使用"},
 		{Command: "help", Description: "查看帮助"},
 		{Command: "bind", Description: "绑定账号"},
+		{Command: "new", Description: "新建会话"},
 	})
 }
 
@@ -420,13 +421,17 @@ func (c telegramConnector) HandleUpdate(
 		return err
 	}
 
+	runStartedData := map[string]any{"persona_id": personaRef}
+	if model := strings.TrimSpace(cfg.DefaultModel); model != "" {
+		runStartedData["model"] = model
+	}
 	run, _, err := c.runEventRepo.WithTx(tx).CreateRunWithStartedEvent(
 		ctx,
 		ch.AccountID,
 		threadID,
 		identity.UserID,
 		"run.started",
-		map[string]any{"persona_id": personaRef},
+		runStartedData,
 	)
 	if err != nil {
 		return err
@@ -439,9 +444,6 @@ func (c telegramConnector) HandleUpdate(
 			"platform_chat_id":           strconv.FormatInt(update.Message.Chat.ID, 10),
 			"sender_channel_identity_id": identity.ID.String(),
 		},
-	}
-	if model := strings.TrimSpace(cfg.DefaultModel); model != "" {
-		jobPayload["model"] = model
 	}
 	if _, err := c.jobRepo.WithTx(tx).EnqueueRun(
 		ctx,
@@ -851,19 +853,27 @@ func handleTelegramCommand(
 	command := strings.TrimSpace(parts[0])
 	switch {
 	case command == "/help":
-		return true, "可用命令：/start /help /bind <code>", nil
+		return true, "可用命令：/start /help /bind <code> /new", nil
 	case command == "/start":
 		if len(parts) > 1 && strings.HasPrefix(parts[1], "bind_") {
 			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo, usersRepo)
 			return true, replyText, err
 		}
-		return true, "已连接 Arkloop。使用 /bind <code> 绑定账号。", nil
+		return true, "已连接 Arkloop。使用 /bind <code> 绑定账号，或用 /new 开启新会话。", nil
 	case command == "/bind":
 		if len(parts) < 2 {
 			return true, "用法：/bind <code>", nil
 		}
 		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo, usersRepo)
 		return true, replyText, err
+	case command == "/new":
+		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
+			return true, "当前会话未配置 persona。", nil
+		}
+		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID); err != nil {
+			return true, "", err
+		}
+		return true, "已开启新会话。", nil
 	default:
 		return false, "", nil
 	}

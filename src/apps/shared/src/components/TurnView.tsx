@@ -11,6 +11,14 @@ function preview(text: string): string {
 }
 
 export function TurnView({ turn, index }: TurnViewProps) {
+  const inputMetaChips = [turn.inputMeta?.channel, turn.inputMeta?.['conversation-type'], turn.inputMeta?.['display-name']]
+    .filter((value): value is string => !!value)
+  const requestHistory = turn.requestMessages.slice(0, -1)
+  const showChannelHistory = inputMetaChips.length > 0 && requestHistory.length > 0
+  const requestPreview = requestHistory
+    .map((message) => `${message.role}: ${preview(message.text)}`)
+    .join(' · ')
+
   return (
     <div className="space-y-1.5 rounded-lg border border-[var(--c-border)] p-3">
       <div className="mb-2 flex items-center gap-2 text-xs text-[var(--c-text-muted)]">
@@ -60,6 +68,11 @@ export function TurnView({ turn, index }: TurnViewProps) {
             {(turn.payloadBytes / 1024).toFixed(1)}KB
           </span>
         )}
+        {inputMetaChips.map((value) => (
+          <span key={value} className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[11px] text-[var(--c-text-muted)]">
+            {value}
+          </span>
+        ))}
       </div>
 
       {turn.systemPrompt && (
@@ -133,11 +146,41 @@ export function TurnView({ turn, index }: TurnViewProps) {
         </CollapseBlock>
       )}
 
-      {turn.userInput != null && (
-        <CollapseBlock label="Input" preview={preview(turn.userInput)}>
-          <PreText text={turn.userInput} />
+      {showChannelHistory && (
+        <CollapseBlock
+          label={`History (${requestHistory.length})`}
+          preview={requestPreview}
+        >
+          <div className="space-y-2">
+            {requestHistory.map((message, messageIndex) => {
+              const metaChips = [message.meta?.channel, message.meta?.['conversation-type'], message.meta?.['display-name']]
+                .filter((value): value is string => !!value)
+              return (
+                <div key={`${message.role}-${messageIndex}`} className="rounded border border-[var(--c-border-subtle)] bg-[var(--c-bg-sub)]/40 p-2">
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--c-text-muted)]">
+                    <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-[var(--c-text-secondary)]">
+                      {message.role}
+                    </span>
+                    {metaChips.map((value) => (
+                      <span key={`${message.role}-${messageIndex}-${value}`} className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
+                        {value}
+                      </span>
+                    ))}
+                  </div>
+                  <PreText text={message.text} />
+                </div>
+              )
+            })}
+          </div>
         </CollapseBlock>
       )}
+
+      <CollapseBlock
+        label="Input"
+        preview={turn.userInput ? preview(turn.userInput) : 'Input unavailable'}
+      >
+        <PreText text={turn.userInput ?? 'Input unavailable'} />
+      </CollapseBlock>
 
       {turn.toolCalls.map((tc, i) => {
         const isBrowser = tc.toolName === 'browser'
@@ -185,11 +228,13 @@ export function TurnView({ turn, index }: TurnViewProps) {
         )
       })}
 
-      {turn.assistantText && (
-        <CollapseBlock label="Assistant" preview={preview(turn.assistantText)} defaultOpen>
-          <PreText text={turn.assistantText} />
-        </CollapseBlock>
-      )}
+      <CollapseBlock
+        label="Assistant"
+        preview={turn.assistantText ? preview(turn.assistantText) : 'Assistant output unavailable'}
+        defaultOpen
+      >
+        <PreText text={turn.assistantText || 'Assistant output unavailable'} />
+      </CollapseBlock>
     </div>
   )
 }

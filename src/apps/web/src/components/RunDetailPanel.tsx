@@ -243,7 +243,7 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
               </div>
             ) : turns.length === 0 ? (
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
-                {ds.runDetailNoEvents}
+                No conversation turns.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -264,44 +264,49 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
                 {ds.runDetailNoEvents}
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {events.map((event) => (
-                  <details
-                    key={event.event_id}
-                    className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)]"
-                  >
-                    <summary className="cursor-pointer list-none px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">
-                          #{event.seq}
-                        </span>
-                        <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
-                        {event.tool_name && (
-                          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                            {event.tool_name}
+              <>
+                <p className="mb-2 text-[11px] text-[var(--c-text-muted)]">
+                  Events are shown in sequence order. Recorded time may differ from when the model started emitting output.
+                </p>
+                <div className="space-y-1.5">
+                  {events.map((event) => (
+                    <details
+                      key={event.event_id}
+                      className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)]"
+                    >
+                      <summary className="cursor-pointer list-none px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">
+                            #{event.seq}
                           </span>
-                        )}
-                        {event.error_class && (
-                          <span
-                            className="rounded px-1.5 py-0.5 text-[10px]"
-                            style={{ background: 'var(--c-status-danger-bg)', color: 'var(--c-status-danger-text)' }}
-                          >
-                            {event.error_class}
+                          <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
+                          {event.tool_name && (
+                            <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
+                              {event.tool_name}
+                            </span>
+                          )}
+                          {event.error_class && (
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[10px]"
+                              style={{ background: 'var(--c-status-danger-bg)', color: 'var(--c-status-danger-text)' }}
+                            >
+                              {event.error_class}
+                            </span>
+                          )}
+                          <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">
+                            recorded {formatTime(event.ts)}
                           </span>
-                        )}
-                        <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">
-                          {formatTime(event.ts)}
-                        </span>
+                        </div>
+                      </summary>
+                      <div className="border-t border-[var(--c-border)] px-3 py-2">
+                        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--c-bg-deep2)] p-2 font-mono text-[11px] text-[var(--c-text-secondary)]">
+                          {formatEventJSON(event)}
+                        </pre>
                       </div>
-                    </summary>
-                    <div className="border-t border-[var(--c-border)] px-3 py-2">
-                      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--c-bg-deep2)] p-2 font-mono text-[11px] text-[var(--c-text-secondary)]">
-                        {formatEventJSON(event)}
-                      </pre>
-                    </div>
-                  </details>
-                ))}
-              </div>
+                    </details>
+                  ))}
+                </div>
+              </>
             )
           )}
         </div>
