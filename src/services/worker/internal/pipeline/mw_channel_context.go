@@ -14,11 +14,9 @@ import (
 type ChannelContext struct {
 	ChannelID               uuid.UUID
 	ChannelType             string
-	PlatformChatID          string
-	PlatformMessageID       string
-	ReplyToMessageID        *string
-	InboundReplyToMessageID *string
-	MessageThreadID         *string
+	Conversation            ChannelConversationRef
+	InboundMessage          ChannelMessageRef
+	TriggerMessage          *ChannelMessageRef
 	ConversationType        string
 	MentionsBot             bool
 	IsReplyToBot            bool
@@ -70,33 +68,21 @@ func parseChannelContext(payload map[string]any) (*ChannelContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	platformChatID, err := requiredStringValue(payload, "platform_chat_id")
-	if err != nil {
-		return nil, err
-	}
-	platformMessageID, err := requiredStringValue(payload, "platform_message_id")
-	if err != nil {
-		return nil, err
-	}
 	senderIdentityID, err := requiredUUIDValue(payload, "sender_channel_identity_id")
 	if err != nil {
 		return nil, err
 	}
-
-	var replyToMessageID *string
-	if raw, ok := payload["reply_to_message_id"].(string); ok && strings.TrimSpace(raw) != "" {
-		value := strings.TrimSpace(raw)
-		replyToMessageID = &value
+	conversationRef, err := parseConversationRef(payload)
+	if err != nil {
+		return nil, err
 	}
-	var inboundReplyToMessageID *string
-	if raw, ok := payload["inbound_reply_to_message_id"].(string); ok && strings.TrimSpace(raw) != "" {
-		value := strings.TrimSpace(raw)
-		inboundReplyToMessageID = &value
+	inboundMessageRef, err := parseMessageRef(payload, "inbound_message_ref", "platform_message_id")
+	if err != nil {
+		return nil, err
 	}
-	var messageThreadID *string
-	if raw, ok := payload["message_thread_id"].(string); ok && strings.TrimSpace(raw) != "" {
-		value := strings.TrimSpace(raw)
-		messageThreadID = &value
+	triggerMessageRef, err := parseOptionalMessageRef(payload, "trigger_message_ref", "reply_to_message_id")
+	if err != nil {
+		return nil, err
 	}
 	conversationType, _ := optionalStringValue(payload, "conversation_type")
 	mentionsBot, _ := optionalBoolValue(payload, "mentions_bot")
@@ -105,16 +91,78 @@ func parseChannelContext(payload map[string]any) (*ChannelContext, error) {
 	return &ChannelContext{
 		ChannelID:               channelID,
 		ChannelType:             channelType,
-		PlatformChatID:          platformChatID,
-		PlatformMessageID:       platformMessageID,
-		ReplyToMessageID:        replyToMessageID,
-		InboundReplyToMessageID: inboundReplyToMessageID,
-		MessageThreadID:         messageThreadID,
+		Conversation:            conversationRef,
+		InboundMessage:          inboundMessageRef,
+		TriggerMessage:          triggerMessageRef,
 		ConversationType:        conversationType,
 		MentionsBot:             mentionsBot,
 		IsReplyToBot:            isReplyToBot,
 		SenderChannelIdentityID: senderIdentityID,
 	}, nil
+}
+
+func parseConversationRef(payload map[string]any) (ChannelConversationRef, error) {
+	if raw, ok := payload["conversation_ref"].(map[string]any); ok && len(raw) > 0 {
+		target, err := requiredStringMapValue(raw, "target")
+		if err != nil {
+			return ChannelConversationRef{}, err
+		}
+		threadID, err := optionalStringMapValue(raw, "thread_id")
+		if err != nil {
+			return ChannelConversationRef{}, err
+		}
+		return ChannelConversationRef{Target: target, ThreadID: threadID}, nil
+	}
+	target, err := requiredStringValue(payload, "platform_chat_id")
+	if err != nil {
+		return ChannelConversationRef{}, err
+	}
+	threadID, err := optionalStringMapValue(payload, "message_thread_id")
+	if err != nil {
+		return ChannelConversationRef{}, err
+	}
+	return ChannelConversationRef{Target: target, ThreadID: threadID}, nil
+}
+
+func parseMessageRef(payload map[string]any, structuredKey string, fallbackKey string) (ChannelMessageRef, error) {
+	if raw, ok := payload[structuredKey].(map[string]any); ok && len(raw) > 0 {
+		messageID, err := requiredStringMapValue(raw, "message_id")
+		if err != nil {
+			return ChannelMessageRef{}, err
+		}
+		return ChannelMessageRef{MessageID: messageID}, nil
+	}
+	messageID, err := requiredStringValue(payload, fallbackKey)
+	if err != nil {
+		return ChannelMessageRef{}, err
+	}
+	return ChannelMessageRef{MessageID: messageID}, nil
+}
+
+func parseOptionalMessageRef(payload map[string]any, structuredKey string, fallbackKey string) (*ChannelMessageRef, error) {
+	if raw, ok := payload[structuredKey]; ok && raw != nil {
+		refMap, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an object", structuredKey)
+		}
+		ref, err := parseMessageRef(map[string]any{structuredKey: refMap}, structuredKey, "unused")
+		if err != nil {
+			return nil, err
+		}
+		return &ref, nil
+	}
+	if fallbackValue, ok := payload[fallbackKey]; ok && fallbackValue != nil {
+		text, ok := fallbackValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string", fallbackKey)
+		}
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return nil, nil
+		}
+		return &ChannelMessageRef{MessageID: trimmed}, nil
+	}
+	return nil, nil
 }
 
 func requiredUUIDValue(values map[string]any, key string) (uuid.UUID, error) {

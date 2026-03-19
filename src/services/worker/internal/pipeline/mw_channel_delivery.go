@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
@@ -20,8 +19,7 @@ import (
 
 func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
 	repo := data.ChannelDeliveryRepository{}
-	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
-	segmentDelay := resolveSegmentDelay()
+	ledgerRepo := data.ChannelMessageLedgerRepository{}
 
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		err := next(ctx, rc)
@@ -47,41 +45,43 @@ func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			return err
 		}
 
-		segments := splitTelegramMessage(escapeTelegramMarkdownV2(output), 4096)
-		for _, segment := range segments {
-			req := telegrambot.SendMessageRequest{
-				ChatID:    rc.ChannelContext.PlatformChatID,
-				Text:      segment,
-				ParseMode: "MarkdownV2",
+		sender := NewTelegramChannelSender(channel.Token)
+		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      rc.ChannelContext.TriggerMessage,
+		}, output)
+		if sendErr != nil {
+			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
+			slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+			return err
+		}
+		for _, messageID := range messageIDs {
+			if recordErr := repo.RecordDelivery(
+				ctx,
+				pool,
+				rc.Run.ID,
+				rc.Run.ThreadID,
+				rc.ChannelContext.ChannelID,
+				rc.ChannelContext.Conversation.Target,
+				messageID,
+			); recordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, recordErr)
+				slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
 			}
-			if rc.ChannelContext.ReplyToMessageID != nil {
-				req.ReplyToMessageID = *rc.ChannelContext.ReplyToMessageID
-			}
-			if rc.ChannelContext.MessageThreadID != nil {
-				req.MessageThreadID = *rc.ChannelContext.MessageThreadID
-			}
-			sent, sendErr := client.SendMessage(ctx, channel.Token, req)
-			if sendErr != nil {
-				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
-				slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
-				return err
-			}
-			if sent != nil && sent.MessageID != 0 {
-				if recordErr := repo.RecordDelivery(
-					ctx,
-					pool,
-					rc.Run.ID,
-					rc.Run.ThreadID,
-					rc.ChannelContext.ChannelID,
-					rc.ChannelContext.PlatformChatID,
-					strconv.FormatInt(sent.MessageID, 10),
-				); recordErr != nil {
-					recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, recordErr)
-					slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
-				}
-			}
-			if segmentDelay > 0 {
-				time.Sleep(segmentDelay)
+			if ledgerErr := ledgerRepo.Record(ctx, pool, data.ChannelMessageLedgerRecordInput{
+				ChannelID:               rc.ChannelContext.ChannelID,
+				ChannelType:             rc.ChannelContext.ChannelType,
+				Direction:               data.ChannelMessageDirectionOutbound,
+				ThreadID:                uuidPtr(rc.Run.ThreadID),
+				RunID:                   uuidPtr(rc.Run.ID),
+				PlatformConversationID:  rc.ChannelContext.Conversation.Target,
+				PlatformMessageID:       messageID,
+				PlatformParentMessageID: channelMessageIDPtr(rc.ChannelContext.TriggerMessage),
+				PlatformThreadID:        rc.ChannelContext.Conversation.ThreadID,
+			}); ledgerErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, ledgerErr)
+				slog.WarnContext(ctx, "telegram channel ledger record failed", "run_id", rc.Run.ID, "err", ledgerErr.Error())
 			}
 		}
 		return err
@@ -98,6 +98,21 @@ func resolveSegmentDelay() time.Duration {
 		return 50 * time.Millisecond
 	}
 	return time.Duration(value) * time.Millisecond
+}
+
+func uuidPtr(id uuid.UUID) *uuid.UUID {
+	if id == uuid.Nil {
+		return nil
+	}
+	return &id
+}
+
+func channelMessageIDPtr(ref *ChannelMessageRef) *string {
+	if ref == nil || strings.TrimSpace(ref.MessageID) == "" {
+		return nil
+	}
+	value := strings.TrimSpace(ref.MessageID)
+	return &value
 }
 
 func EscapeTelegramMarkdownV2(text string) string {

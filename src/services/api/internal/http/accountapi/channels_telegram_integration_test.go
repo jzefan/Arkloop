@@ -380,6 +380,7 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_identities`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound'`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
@@ -404,11 +405,20 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 		t.Fatalf("decode job payload: %v", err)
 	}
 	jobPayload, _ := jobEnvelope["payload"].(map[string]any)
-	if _, ok := jobPayload["channel_delivery"]; !ok {
+	delivery, ok := jobPayload["channel_delivery"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected channel_delivery in payload: %#v", jobPayload)
 	}
 	if _, ok := jobPayload["model"]; ok {
 		t.Fatalf("did not expect model in job payload: %#v", jobPayload)
+	}
+	conversationRef, _ := delivery["conversation_ref"].(map[string]any)
+	if got := asString(conversationRef["target"]); got != "10001" {
+		t.Fatalf("unexpected conversation_ref: %#v", delivery)
+	}
+	triggerRef, _ := delivery["trigger_message_ref"].(map[string]any)
+	if got := asString(triggerRef["message_id"]); got != "1" {
+		t.Fatalf("unexpected trigger_message_ref: %#v", delivery)
 	}
 
 	var startedJSON []byte
@@ -748,8 +758,10 @@ func TestTelegramWebhookStoresStructuredInboundMessage(t *testing.T) {
 	if !strings.Contains(content.Parts[0].Text, `[图片: image]`) {
 		t.Fatalf("expected attachment placeholder in content_json, got %s", content.Parts[0].Text)
 	}
-	if !strings.Contains(content.Parts[0].Text, `platform-message-id: "7"`) {
-		t.Fatalf("expected platform metadata in content_json, got %s", content.Parts[0].Text)
+	for _, forbidden := range []string{`platform-message-id: "7"`, `platform-chat-id: "10001"`, `channel-identity-id:`} {
+		if strings.Contains(content.Parts[0].Text, forbidden) {
+			t.Fatalf("expected prompt header to omit transport metadata %q, got %s", forbidden, content.Parts[0].Text)
+		}
 	}
 
 	var metadata map[string]any
@@ -846,6 +858,10 @@ func TestTelegramWebhookGroupMessagePassiveAndActive(t *testing.T) {
 	}
 	if got := asString(delivery["platform_message_id"]); got != "12" {
 		t.Fatalf("unexpected platform_message_id: %#v", delivery)
+	}
+	conversationRef, _ := delivery["conversation_ref"].(map[string]any)
+	if got := asString(conversationRef["target"]); got != "-20001" {
+		t.Fatalf("unexpected conversation_ref: %#v", delivery)
 	}
 }
 

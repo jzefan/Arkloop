@@ -16,8 +16,8 @@ func TestParseChannelContextRejectsInvalidChannelID(t *testing.T) {
 	_, err := parseChannelContext(map[string]any{
 		"channel_id":                 "bad-id",
 		"channel_type":               "telegram",
-		"platform_chat_id":           "10001",
-		"platform_message_id":        "42",
+		"conversation_ref":           map[string]any{"target": "10001"},
+		"inbound_message_ref":        map[string]any{"message_id": "42"},
 		"sender_channel_identity_id": uuid.NewString(),
 	})
 	if err == nil {
@@ -65,11 +65,18 @@ func TestChannelContextMiddlewareOverridesUserIDFromSenderIdentity(t *testing.T)
 		UserID: &originalUserID,
 		JobPayload: map[string]any{
 			"channel_delivery": map[string]any{
-				"channel_id":                  channelID.String(),
-				"channel_type":                "telegram",
-				"platform_chat_id":            "10001",
-				"platform_message_id":         "99",
-				"reply_to_message_id":         "42",
+				"channel_id":   channelID.String(),
+				"channel_type": "telegram",
+				"conversation_ref": map[string]any{
+					"target":    "10001",
+					"thread_id": "thread-7",
+				},
+				"inbound_message_ref": map[string]any{
+					"message_id": "99",
+				},
+				"trigger_message_ref": map[string]any{
+					"message_id": "42",
+				},
 				"inbound_reply_to_message_id": "13",
 				"conversation_type":           "private",
 				"mentions_bot":                true,
@@ -88,14 +95,17 @@ func TestChannelContextMiddlewareOverridesUserIDFromSenderIdentity(t *testing.T)
 		if rc.ChannelContext.SenderUserID == nil || *rc.ChannelContext.SenderUserID != senderUserID {
 			t.Fatalf("unexpected sender user id: %#v", rc.ChannelContext.SenderUserID)
 		}
-		if rc.ChannelContext.ReplyToMessageID == nil || *rc.ChannelContext.ReplyToMessageID != "42" {
-			t.Fatalf("unexpected reply_to_message_id: %#v", rc.ChannelContext.ReplyToMessageID)
+		if rc.ChannelContext.TriggerMessage == nil || rc.ChannelContext.TriggerMessage.MessageID != "42" {
+			t.Fatalf("unexpected trigger message: %#v", rc.ChannelContext.TriggerMessage)
 		}
-		if rc.ChannelContext.InboundReplyToMessageID == nil || *rc.ChannelContext.InboundReplyToMessageID != "13" {
-			t.Fatalf("unexpected inbound_reply_to_message_id: %#v", rc.ChannelContext.InboundReplyToMessageID)
+		if rc.ChannelContext.InboundMessage.MessageID != "99" {
+			t.Fatalf("unexpected inbound message id: %q", rc.ChannelContext.InboundMessage.MessageID)
 		}
-		if rc.ChannelContext.PlatformMessageID != "99" {
-			t.Fatalf("unexpected platform_message_id: %q", rc.ChannelContext.PlatformMessageID)
+		if rc.ChannelContext.Conversation.Target != "10001" {
+			t.Fatalf("unexpected conversation target: %q", rc.ChannelContext.Conversation.Target)
+		}
+		if rc.ChannelContext.Conversation.ThreadID == nil || *rc.ChannelContext.Conversation.ThreadID != "thread-7" {
+			t.Fatalf("unexpected conversation thread: %#v", rc.ChannelContext.Conversation.ThreadID)
 		}
 		if rc.ChannelContext.ConversationType != "private" || !rc.ChannelContext.MentionsBot {
 			t.Fatalf("unexpected conversation flags: %#v", rc.ChannelContext)

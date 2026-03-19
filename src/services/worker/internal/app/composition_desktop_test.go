@@ -851,10 +851,14 @@ func TestDesktopChannelContextOverridesUserIDFromPayload(t *testing.T) {
 		UserID: &originalUserID,
 		JobPayload: map[string]any{
 			"channel_delivery": map[string]any{
-				"channel_id":                 channelID.String(),
-				"channel_type":               "telegram",
-				"platform_chat_id":           "10001",
-				"platform_message_id":        "55",
+				"channel_id":   channelID.String(),
+				"channel_type": "telegram",
+				"conversation_ref": map[string]any{
+					"target": "10001",
+				},
+				"inbound_message_ref": map[string]any{
+					"message_id": "55",
+				},
 				"sender_channel_identity_id": identityID.String(),
 			},
 		},
@@ -941,9 +945,11 @@ func TestDesktopChannelDeliveryRecordsFailureWhenChannelMissing(t *testing.T) {
 		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
 		FinalAssistantOutput: "你好，来自 desktop。",
 		ChannelContext: &pipeline.ChannelContext{
-			ChannelID:      uuid.New(),
-			ChannelType:    "telegram",
-			PlatformChatID: "10001",
+			ChannelID:   uuid.New(),
+			ChannelType: "telegram",
+			Conversation: pipeline.ChannelConversationRef{
+				Target: "10001",
+			},
 		},
 	}
 

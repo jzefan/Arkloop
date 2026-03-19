@@ -561,31 +561,19 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			return err
 		}
 
-		segments := pipeline.SplitTelegramMessage(pipeline.EscapeTelegramMarkdownV2(output), 4096)
-		for idx, segment := range segments {
-			req := telegrambot.SendMessageRequest{
-				ChatID:    rc.ChannelContext.PlatformChatID,
-				Text:      segment,
-				ParseMode: "MarkdownV2",
-			}
-			if rc.ChannelContext.ReplyToMessageID != nil {
-				req.ReplyToMessageID = *rc.ChannelContext.ReplyToMessageID
-			}
-			if rc.ChannelContext.MessageThreadID != nil {
-				req.MessageThreadID = *rc.ChannelContext.MessageThreadID
-			}
-			sent, sendErr := client.SendMessage(ctx, channel.Token, req)
-			if sendErr != nil {
-				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
-				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
-				return err
-			}
-			if sent != nil && sent.MessageID != 0 {
-				recordDesktopChannelDelivery(db, rc.Run.ID, rc.Run.ThreadID, rc.ChannelContext.ChannelID, rc.ChannelContext.PlatformChatID, strconv.FormatInt(sent.MessageID, 10))
-			}
-			if idx < len(segments)-1 {
-				time.Sleep(50 * time.Millisecond)
-			}
+		sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      rc.ChannelContext.TriggerMessage,
+		}, output)
+		if sendErr != nil {
+			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
+			slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+			return err
+		}
+		for _, messageID := range messageIDs {
+			recordDesktopChannelDelivery(db, rc.Run.ID, rc.Run.ThreadID, rc.ChannelContext.ChannelID, rc.ChannelContext.Conversation.Target, messageID)
 		}
 		return err
 	}
@@ -701,6 +689,27 @@ func recordDesktopChannelDelivery(
 		runRef,
 		threadRef,
 		channelID,
+		platformChatID,
+		platformMessageID,
+	); err != nil {
+		return
+	}
+	if _, err := tx.Exec(
+		context.Background(),
+		`INSERT INTO channel_message_ledger (
+			channel_id,
+			channel_type,
+			direction,
+			thread_id,
+			run_id,
+			platform_conversation_id,
+			platform_message_id,
+			metadata_json
+		) VALUES ($1, 'telegram', 'outbound', $2, $3, $4, $5, '{}')
+		ON CONFLICT (channel_id, direction, platform_conversation_id, platform_message_id) DO NOTHING`,
+		channelID,
+		threadRef,
+		runRef,
 		platformChatID,
 		platformMessageID,
 	); err != nil {
