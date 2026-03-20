@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/shared/desktop"
@@ -67,11 +69,23 @@ func RunDesktop(ctx context.Context) error {
 	}
 
 	sqlitePath := filepath.Join(dataDir, "data.db")
-	db, err := sqlitepgx.Open(sqlitePath)
-	if err != nil {
-		return fmt.Errorf("open sqlite: %w", err)
+	var db *sqlitepgx.Pool
+	ownsDB := false
+	if shared := desktop.GetSharedSQLitePool(); shared != nil {
+		db = shared
+	} else {
+		opened, openErr := sqlitepgx.Open(sqlitePath)
+		if openErr != nil {
+			return fmt.Errorf("open sqlite: %w", openErr)
+		}
+		db = opened
+		ownsDB = true
 	}
-	defer db.Close()
+	if ownsDB {
+		defer db.Close()
+	}
+
+	concurrency := desktopWorkerConcurrency()
 
 	engine, err := app.ComposeDesktopEngine(ctx, db, bus, executor.DefaultExecutorRegistry(), cq)
 	if err != nil {
@@ -96,7 +110,7 @@ func RunDesktop(ctx context.Context) error {
 		handler,
 		consumer.NewLocalRunLocker(),
 		consumer.Config{
-			Concurrency:      2,
+			Concurrency:      concurrency,
 			PollSeconds:      cfg.PollSeconds,
 			LeaseSeconds:     cfg.LeaseSeconds,
 			HeartbeatSeconds: cfg.HeartbeatSeconds,
@@ -110,11 +124,30 @@ func RunDesktop(ctx context.Context) error {
 	}
 
 	logger.Info("desktop worker entering consume mode", app.LogFields{}, map[string]any{
-		"concurrency": 2,
-		"job_types":   cfg.QueueJobTypes,
-		"sqlite_path": sqlitePath,
+		"concurrency":    concurrency,
+		"shared_sqlite":   !ownsDB,
+		"job_types":       cfg.QueueJobTypes,
+		"sqlite_path":     sqlitePath,
 	})
 	return loop.Run(ctx)
+}
+
+const desktopWorkerConcurrencyHardMax = 32
+
+// desktopWorkerConcurrency 默认 2，可通过 ARKLOOP_DESKTOP_WORKER_CONCURRENCY 调整（上限 32）。
+func desktopWorkerConcurrency() int {
+	raw := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_WORKER_CONCURRENCY"))
+	if raw == "" {
+		return 2
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return 2
+	}
+	if v > desktopWorkerConcurrencyHardMax {
+		return desktopWorkerConcurrencyHardMax
+	}
+	return v
 }
 
 type desktopHandler struct {

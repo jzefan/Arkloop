@@ -27,6 +27,25 @@ func New(db *sql.DB) *Pool {
 	return &Pool{db: db}
 }
 
+// DesktopMaxOpenConns and DesktopMaxIdleConns match the limits used by Open
+// so the desktop API path can share one *sql.DB with the Worker without a
+// second pool fighting the same file.
+const (
+	DesktopMaxOpenConns = 5
+	DesktopMaxIdleConns = 2
+)
+
+// ConfigureDesktopSQLPool applies [DesktopMaxOpenConns] and [DesktopMaxIdleConns]
+// to an existing *sql.DB (e.g. after sqliteadapter.AutoMigrate). Pragma setup
+// must already have been applied on this DB.
+func ConfigureDesktopSQLPool(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	db.SetMaxOpenConns(DesktopMaxOpenConns)
+	db.SetMaxIdleConns(DesktopMaxIdleConns)
+}
+
 // Open opens a SQLite database with sensible defaults for an embedded
 // single-writer workload (WAL, foreign keys, busy timeout, etc.).
 func Open(dsn string) (*Pool, error) {
@@ -35,13 +54,7 @@ func Open(dsn string) (*Pool, error) {
 		return nil, err
 	}
 
-	// Allow multiple concurrent connections so that tool executors (e.g. memory
-	// writes) can acquire a connection while desktopEventWriter holds one open
-	// in a transaction.  SQLite WAL mode supports one writer at a time; the
-	// busy_timeout=5000 below makes contending writers retry for up to 5 s
-	// instead of failing immediately.
-	db.SetMaxOpenConns(5)
-	db.SetMaxIdleConns(2)
+	ConfigureDesktopSQLPool(db)
 
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",

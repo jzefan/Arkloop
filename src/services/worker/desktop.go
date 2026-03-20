@@ -20,7 +20,7 @@ import (
 )
 
 // InitDesktopInfra 创建共享的 job queue 和 event bus，注册到全局状态。
-// 在 API 和 Worker 启动之前调用，避免 SQLite 锁竞争。
+// 在 API 与 Worker 启动之前调用；侧car 内 SQLite 由 API 单池打开后注入 Worker。
 func InitDesktopInfra() error {
 	bus := eventbus.NewLocalEventBus()
 	desktop.SetEventBus(bus)

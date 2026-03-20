@@ -26,28 +26,34 @@ func main() {
 }
 
 func run() error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	baseCtx := context.Background()
+	apiCtx, cancelAPI := context.WithCancel(baseCtx)
+	workerCtx, cancelWorker := context.WithCancel(baseCtx)
 
-	// 1. 提前初始化共享 queue 和 event bus，注入到 desktop 全局状态。
-	//    Worker.InitDesktopInfra 创建 ChannelJobQueue + LocalEventBus
-	//    并通过 desktop.Set* 注册，不打开 SQLite。
 	if err := worker.InitDesktopInfra(); err != nil {
+		cancelAPI()
+		cancelWorker()
 		return fmt.Errorf("init infra: %w", err)
 	}
-
-	// 2. API 先启动：打开 SQLite → 执行 migration → seed → HTTP server。
-	//    这样 migration 在 Worker 使用 db 之前完成，不会冲突。
-	apiErr := make(chan error, 1)
-	go func() {
-		apiErr <- api.StartDesktop(ctx)
+	desktop.SetSidecarProcess(true)
+	defer func() {
+		if err := desktop.CloseRegisteredSQLite(); err != nil {
+			fmt.Fprintf(os.Stderr, "sqlite close: %v\n", err)
+		}
 	}()
 
-	// 3. 等待 API 完成初始化（migration + HTTP server 启动）
-	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	apiErr := make(chan error, 1)
+	go func() {
+		apiErr <- api.StartDesktop(apiCtx)
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(apiCtx, 30*time.Second)
 	defer waitCancel()
 
-	// 同时监听 apiErr，避免 API 初始化失败时永远等待
 	apiReadyCh := make(chan error, 1)
 	go func() {
 		apiReadyCh <- desktop.WaitAPIReady(waitCtx)
@@ -56,55 +62,75 @@ func run() error {
 	select {
 	case err := <-apiReadyCh:
 		if err != nil {
+			cancelAPI()
+			cancelWorker()
 			return fmt.Errorf("api init: %w", err)
 		}
 	case err := <-apiErr:
+		cancelAPI()
+		cancelWorker()
 		return fmt.Errorf("api failed during init: %w", err)
 	}
 
-	// 4. Embedded sandbox (VZ isolation) - started before Worker so sandbox
-	//    address is available when ComposeDesktopEngine runs.
 	if strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_ISOLATION")) == "vm" {
-		startEmbeddedSandbox(ctx)
+		startEmbeddedSandbox(apiCtx)
 	}
 
-	// 5. Worker 启动：打开同一个 SQLite（migration 已完成），开始消费。
 	workerErr := make(chan error, 1)
 	go func() {
-		workerErr <- worker.StartDesktop(ctx)
+		workerErr <- worker.StartDesktop(workerCtx)
 	}()
 
-	// 6. Bridge service (best-effort, does not block API/Worker).
 	go func() {
-		if err := bridge.StartDesktop(ctx); err != nil {
+		if err := bridge.StartDesktop(apiCtx); err != nil {
 			fmt.Fprintf(os.Stderr, "bridge: %v\n", err)
 		}
 	}()
 
+	var firstErr error
 	select {
 	case err := <-apiErr:
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "api: %v\n", err)
+			firstErr = err
 		}
+		cancelWorker()
+		if werr := <-workerErr; werr != nil {
+			fmt.Fprintf(os.Stderr, "worker: %v\n", werr)
+			if firstErr == nil {
+				firstErr = werr
+			}
+		}
+		cancelAPI()
 	case err := <-workerErr:
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "worker: %v\n", err)
+			firstErr = err
 		}
-	case <-ctx.Done():
+		cancelWorker()
+		cancelAPI()
+		if aerr := <-apiErr; aerr != nil {
+			fmt.Fprintf(os.Stderr, "api: %v\n", aerr)
+			if firstErr == nil {
+				firstErr = aerr
+			}
+		}
+	case <-sigCh:
+		cancelWorker()
+		if werr := <-workerErr; werr != nil {
+			fmt.Fprintf(os.Stderr, "worker: %v\n", werr)
+			firstErr = werr
+		}
+		cancelAPI()
+		if aerr := <-apiErr; aerr != nil {
+			fmt.Fprintf(os.Stderr, "api: %v\n", aerr)
+			if firstErr == nil {
+				firstErr = aerr
+			}
+		}
 	}
 
-	stop()
-
-	graceful := time.After(5 * time.Second)
-	for i := 0; i < 2; i++ {
-		select {
-		case <-apiErr:
-		case <-workerErr:
-		case <-graceful:
-			return nil
-		}
-	}
-	return nil
+	return firstErr
 }
 
 // startEmbeddedSandbox creates and starts a lightweight VZ sandbox HTTP
