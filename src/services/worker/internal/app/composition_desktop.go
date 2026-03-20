@@ -20,6 +20,7 @@ import (
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -65,24 +66,25 @@ func (d *desktopTelegramTokenLoader) BotToken(ctx context.Context, channelID uui
 
 // DesktopEngine executes LLM agent runs backed by SQLite.
 type DesktopEngine struct {
-	db               data.DesktopDB
-	bus              eventbus.EventBus
-	stubRouter       *routing.ProviderRouter
-	stubGateway      llm.Gateway
-	emitDebugEvents  bool
-	toolRegistry     *tools.Registry
-	toolExecutors    map[string]tools.Executor
-	allLlmSpecs      []llm.ToolSpec
-	baseAllowlist    map[string]struct{}
-	executorRegistry pipeline.AgentExecutorBuilder
-	personaRegistry  func() *personas.Registry
-	memProvider      memory.MemoryProvider
-	useOV            bool
-	useVM            bool
-	skillLayout      pipeline.SkillLayoutResolver
-	runtimeSnapshot  *sharedtoolruntime.RuntimeSnapshot
-	jobQueue         queue.JobQueue
-	routingLoader    *routing.ConfigLoader
+	db                     data.DesktopDB
+	bus                    eventbus.EventBus
+	stubRouter             *routing.ProviderRouter
+	stubGateway            llm.Gateway
+	emitDebugEvents        bool
+	toolRegistry           *tools.Registry
+	toolExecutors          map[string]tools.Executor
+	allLlmSpecs            []llm.ToolSpec
+	baseAllowlist          map[string]struct{}
+	executorRegistry       pipeline.AgentExecutorBuilder
+	personaRegistry        func() *personas.Registry
+	memProvider            memory.MemoryProvider
+	useOV                  bool
+	useVM                  bool
+	skillLayout            pipeline.SkillLayoutResolver
+	runtimeSnapshot        *sharedtoolruntime.RuntimeSnapshot
+	jobQueue               queue.JobQueue
+	routingLoader          *routing.ConfigLoader
+	messageAttachmentStore objectstore.Store
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -193,6 +195,13 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.WarnContext(ctx, "desktop: artifact store init failed, skipping persisted artifact tools", "err", err.Error())
 	}
 
+	var messageAttachmentStore objectstore.Store
+	if mas, err := openDesktopMessageAttachmentStore(ctx); err != nil {
+		slog.WarnContext(ctx, "desktop: message attachment store init failed", "err", err.Error())
+	} else {
+		messageAttachmentStore = mas
+	}
+
 	var shellLlmSpecs []llm.ToolSpec
 	if useVM {
 		shellLlmSpecs = sandboxshell.LlmSpecs()
@@ -252,24 +261,25 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	)
 
 	return &DesktopEngine{
-		db:               db,
-		bus:              bus,
-		stubRouter:       stubRouter,
-		stubGateway:      stubGateway,
-		emitDebugEvents:  stubCfg.EmitDebugEvents,
-		toolRegistry:     toolRegistry,
-		toolExecutors:    executors,
-		allLlmSpecs:      allLlmSpecs,
-		baseAllowlist:    filtered,
-		executorRegistry: execRegistry,
-		personaRegistry:  personaGetter,
-		memProvider:      memProvider,
-		useOV:            useOV,
-		useVM:            useVM,
-		skillLayout:      skillLayout,
-		runtimeSnapshot:  runtimeSnapshot,
-		jobQueue:         jobQueue,
-		routingLoader:    routingLoader,
+		db:                     db,
+		bus:                    bus,
+		stubRouter:             stubRouter,
+		stubGateway:            stubGateway,
+		emitDebugEvents:        stubCfg.EmitDebugEvents,
+		toolRegistry:           toolRegistry,
+		toolExecutors:          executors,
+		allLlmSpecs:            allLlmSpecs,
+		baseAllowlist:          filtered,
+		executorRegistry:       execRegistry,
+		personaRegistry:        personaGetter,
+		memProvider:            memProvider,
+		useOV:                  useOV,
+		useVM:                  useVM,
+		skillLayout:            skillLayout,
+		runtimeSnapshot:        runtimeSnapshot,
+		jobQueue:               jobQueue,
+		routingLoader:          routingLoader,
+		messageAttachmentStore: messageAttachmentStore,
 	}, nil
 }
 
@@ -387,7 +397,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	middlewares := []pipeline.RunMiddleware{
 		desktopCancelGuard(),
-		desktopInputLoader(e.db, eventsRepo),
+		desktopInputLoader(e.db, eventsRepo, e.messageAttachmentStore),
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		pipeline.NewSpawnAgentMiddleware(),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
@@ -466,6 +476,7 @@ func desktopCancelGuard() pipeline.RunMiddleware {
 func desktopInputLoader(
 	db data.DesktopDB,
 	eventsRepo data.DesktopRunEventsRepository,
+	attachmentStore pipeline.MessageAttachmentStore,
 ) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 		messageLimit := rc.ThreadMessageHistoryLimit
@@ -517,9 +528,13 @@ func desktopInputLoader(
 			if strings.TrimSpace(msg.Role) == "" {
 				continue
 			}
+			parts, err := pipeline.BuildMessageParts(ctx, attachmentStore, msg)
+			if err != nil {
+				return err
+			}
 			llmMessages = append(llmMessages, llm.Message{
 				Role:    msg.Role,
-				Content: []llm.ContentPart{{Type: "text", Text: msg.Content}},
+				Content: parts,
 			})
 			ids = append(ids, msg.ID)
 		}
@@ -1377,13 +1392,13 @@ type desktopEventWriter struct {
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
-	hasTerminal               bool
-	terminalRunStatus         string
-	totalInputTokens          int64
-	totalOutputTokens         int64
-	totalCostUSD              float64
-	telegramBoundaryFlush     func(context.Context, string) error
-	telegramFlushSentDeltas   int
+	hasTerminal              bool
+	terminalRunStatus        string
+	totalInputTokens         int64
+	totalOutputTokens        int64
+	totalCostUSD             float64
+	telegramBoundaryFlush    func(context.Context, string) error
+	telegramFlushSentDeltas  int
 }
 
 func (w *desktopEventWriter) telegramStreamRemainder() string {
