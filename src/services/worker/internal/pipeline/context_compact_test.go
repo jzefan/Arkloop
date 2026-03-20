@@ -7,6 +7,7 @@ import (
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
+	"github.com/pkoukk/tiktoken-go"
 )
 
 func TestCompactThreadMessages_trimCount(t *testing.T) {
@@ -49,5 +50,23 @@ func TestContextCompactHasActiveBudget(t *testing.T) {
 	}
 	if !ContextCompactHasActiveBudget(ContextCompactSettings{Enabled: true, MaxMessages: 1}) {
 		t.Fatal("expected true")
+	}
+}
+
+func TestTrimPrefixMessagesForCompactLLM_keepsNewestUnderCap(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("x", 8000)}}},
+		{Role: "user", Content: []llm.TextPart{{Text: "tail-marker"}}},
+	}
+	out := TrimPrefixMessagesForCompactLLM(enc, msgs, 80)
+	if len(out) != 1 {
+		t.Fatalf("expected single message kept, got %d", len(out))
+	}
+	if messageText(out[0]) != "tail-marker" {
+		t.Fatalf("expected newest segment kept")
 	}
 }

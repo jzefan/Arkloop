@@ -37,7 +37,9 @@ func ResolveTiktokenForProviderModel(kind routing.ProviderKind, model string) (*
 	}
 }
 
-// HistoryThreadPromptTokens 线程消息按 Chat Completions 常见格式估算消耗的 token（含消息帧），用于与「上下文窗口」占比对齐。
+// HistoryThreadPromptTokens 线程消息按 Chat Completions 常见格式估算消耗的 token（含消息帧）。
+// 用途：持久化触发阈值（与路由 context 窗口比例）、trim 前后日志、压缩摘要 LLM 输入体量估算。
+// 裁切预算（MaxUserMessageTokens 等）用 SuffixRoleAndContentTokens，二者口径不同，勿混用。
 func HistoryThreadPromptTokens(enc *tiktoken.Tiktoken, msgs []llm.Message) int {
 	if enc == nil || len(msgs) == 0 {
 		return 0
@@ -51,6 +53,18 @@ func HistoryThreadPromptTokens(enc *tiktoken.Tiktoken, msgs []llm.Message) int {
 	}
 	n += 3
 	return n
+}
+
+// TrimPrefixMessagesForCompactLLM 从头部丢掉最旧消息，直到 HistoryThreadPromptTokens 不超过 maxPromptTokens（至少保留一条）。
+func TrimPrefixMessagesForCompactLLM(enc *tiktoken.Tiktoken, prefix []llm.Message, maxPromptTokens int) []llm.Message {
+	if maxPromptTokens <= 0 || len(prefix) == 0 {
+		return prefix
+	}
+	cur := prefix
+	for len(cur) > 1 && HistoryThreadPromptTokens(enc, cur) > maxPromptTokens {
+		cur = cur[1:]
+	}
+	return cur
 }
 
 // SuffixRoleAndContentTokens 从 start 起按 role+正文累加 tiktoken，不设消息帧；与裁切预算（max_total_text_tokens 等）语义一致。
