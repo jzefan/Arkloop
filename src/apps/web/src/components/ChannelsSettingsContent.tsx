@@ -102,13 +102,6 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
         setError(ct.personaRequired)
         return
       }
-      const allowedUsers = Array.isArray(ch.config_json?.allowed_user_ids)
-        ? ch.config_json.allowed_user_ids.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-        : []
-      if (allowedUsers.length === 0) {
-        setError(ct.allowlistRequired)
-        return
-      }
     }
     try {
       await updateChannel(accessToken, ch.id, { is_active: !ch.is_active })

@@ -330,16 +330,20 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
       setError(ct.personaRequired)
       return
     }
-    if (enabled && nextAllowedUserIDs.length === 0) {
-      setError(ct.allowlistRequired)
-      return
-    }
 
     setSaving(true)
     setError('')
     try {
-      const configJSON: Record<string, unknown> = { allowed_user_ids: nextAllowedUserIDs }
+      const base =
+        telegramChannel?.config_json !== null &&
+        telegramChannel?.config_json !== undefined &&
+        typeof telegramChannel.config_json === 'object' &&
+        !Array.isArray(telegramChannel.config_json)
+          ? { ...(telegramChannel.config_json as Record<string, unknown>) }
+          : {}
+      const configJSON: Record<string, unknown> = { ...base, allowed_user_ids: nextAllowedUserIDs }
       if (defaultModel.trim()) configJSON.default_model = defaultModel.trim()
+      else delete configJSON.default_model
 
       if (telegramChannel == null) {
         const created = await createChannel(accessToken, {

@@ -18,6 +18,7 @@ import {
   Route,
   MessageSquare,
   ShieldAlert,
+  Plug,
 } from "lucide-react";
 import type { MeResponse } from "../api";
 import { useLocale } from "../contexts/LocaleContext";
@@ -38,6 +39,7 @@ import {
   ModulesSettings,
   DeveloperSettings,
   DesktopPromptInjectionSettings,
+  ConnectorsSettings,
 } from "./settings";
 
 export type DesktopSettingsKey =
@@ -49,6 +51,7 @@ export type DesktopSettingsKey =
   | "channels"
   | "skills"
   | "mcp"
+  | "connectors"
   | "searchFetch"
   | "memory"
   | "connection"
@@ -72,6 +75,7 @@ const MAIN_NAV: NavItem[] = [
   { key: "channels",   icon: Radio },
   { key: "skills",     icon: Puzzle },
   { key: "mcp",        icon: Server },
+  { key: "connectors", icon: Plug },
   { key: "searchFetch",icon: Globe },
 ];
 
@@ -161,6 +165,8 @@ export function DesktopSettings({
         );
       case "mcp":
         return <MCPSettings />;
+      case "connectors":
+        return <ConnectorsSettings accessToken={accessToken} />;
       case "searchFetch":
         return <SearchFetchSettings />;
       case "memory":
