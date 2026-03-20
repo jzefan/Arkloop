@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Sparkles } from 'lucide-react'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
   getPlatformSetting,
   updatePlatformSetting,
 } from '../../api-admin'
-import { SettingsSectionHeader } from './_SettingsSectionHeader'
+import { SettingsPillToggle } from './_SettingsPillToggle'
 
 /** 与 shared/config 注册表默认值一致（无 platform_settings 行时） */
 const DEFAULT_KEEP_LAST_MESSAGES = 40
@@ -18,6 +17,17 @@ const KEY_FALLBACK = 'context.compact.fallback_context_window_tokens'
 /** 旧版绝对阈值，仅用于迁移显示 */
 const KEY_TRIGGER_LEGACY = 'context.compact.persist_trigger_approx_tokens'
 const KEY_KEEP = 'context.compact.persist_keep_last_messages'
+
+const cardShell =
+  'overflow-hidden rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
+
+const rangeClass =
+  'h-2 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-[var(--c-bg-deep)] ' +
+  '[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full ' +
+  '[&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-[var(--c-accent)] [&::-webkit-slider-thumb]:shadow-sm ' +
+  '[&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 ' +
+  '[&::-moz-range-thumb]:bg-[var(--c-accent)] ' +
+  '[&::-moz-range-track]:h-2 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-[var(--c-bg-deep)]'
 
 type Props = {
   accessToken: string
@@ -127,113 +137,102 @@ export function ChatSettings({ accessToken }: Props) {
   }
 
   return (
-    <div className="flex max-w-xl flex-col gap-8">
-      <SettingsSectionHeader title={st.chatSectionTitle} />
+    <div className="flex max-w-xl flex-col gap-4">
+      <p className="text-sm font-medium text-[var(--c-text-heading)]">{st.chatCompactCardTitle}</p>
 
-      <div
-        className="rounded-2xl p-5"
-        style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-      >
-        <div className="flex items-center gap-2">
-          <Sparkles size={18} className="text-[var(--c-text-secondary)]" />
-          <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">
-            {st.chatCompactCardTitle}
-          </h4>
-        </div>
+      {loadErr ? (
+        <p className="text-sm text-[var(--c-status-error)]">{loadErr}</p>
+      ) : null}
 
-        {loadErr ? (
-          <p className="mt-3 text-sm text-[var(--c-status-error)]">{loadErr}</p>
-        ) : null}
-
-        <label className="mt-4 flex cursor-pointer items-start gap-3">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 rounded border-[var(--c-border-mid)]"
-            checked={autoOn}
-            onChange={(ev) => setAutoOn(ev.target.checked)}
-          />
-          <div>
-            <div className="text-sm font-medium text-[var(--c-text-heading)]">
-              {st.chatCompactEnableLabel}
-            </div>
-            <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
-              {st.chatCompactEnableDesc}
-            </p>
+      <div className={cardShell}>
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex cursor-pointer items-center justify-between gap-4 px-4 py-4 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--c-bg-page)]"
+          onClick={() => setAutoOn((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setAutoOn((v) => !v)
+            }
+          }}
+        >
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="text-sm font-medium text-[var(--c-text-heading)]">{st.chatCompactEnableLabel}</p>
+            <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{st.chatCompactEnableDesc}</p>
           </div>
-        </label>
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <SettingsPillToggle checked={autoOn} onChange={setAutoOn} />
+          </div>
+        </div>
 
         <div
-          className={`mt-6 space-y-4 transition-opacity ${autoOn ? '' : 'pointer-events-none opacity-40'}`}
+          className={`flex flex-col gap-3 border-t border-[var(--c-border-subtle)] px-4 py-4 transition-opacity ${autoOn ? '' : 'pointer-events-none opacity-40'}`}
         >
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium text-[var(--c-text-heading)]">
-                {st.chatCompactThresholdLabel}
-              </span>
-              <span className="text-sm tabular-nums text-[var(--c-text-secondary)]">
-                {thresholdPct}%
-              </span>
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <span className="w-10 shrink-0 text-[11px] text-[var(--c-text-muted)]">
-                {st.chatCompactThresholdEarly}
-              </span>
-              <input
-                type="range"
-                min={5}
-                max={100}
-                step={1}
-                value={thresholdPct}
-                onChange={(ev) => setThresholdPct(Number(ev.target.value))}
-                className="min-w-0 flex-1 accent-[var(--c-accent)]"
-              />
-              <span className="w-10 shrink-0 text-right text-[11px] text-[var(--c-text-muted)]">
-                {st.chatCompactThresholdLate}
-              </span>
-            </div>
-            <p className="mt-1.5 text-xs text-[var(--c-text-muted)]">
-              {st.chatCompactThresholdDesc}
-            </p>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-[var(--c-text-heading)]">
+              {st.chatCompactThresholdLabel}
+            </span>
+            <span className="shrink-0 rounded-md bg-[var(--c-bg-deep)] px-2.5 py-0.5 text-xs font-medium tabular-nums text-[var(--c-text-secondary)]">
+              {thresholdPct}%
+            </span>
           </div>
-
-          <div>
-            <label className="text-sm font-medium text-[var(--c-text-heading)]">
-              {st.chatCompactKeepLabel}
-            </label>
+          <div className="flex items-center gap-3">
+            <span className="w-9 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+              {st.chatCompactThresholdEarly}
+            </span>
             <input
-              type="number"
-              min={2}
-              max={50}
+              type="range"
+              min={5}
+              max={100}
               step={1}
-              value={keepLast}
-              onChange={(ev) => {
-                const n = Number.parseInt(ev.target.value, 10)
-                if (Number.isFinite(n)) setKeepLast(n)
-              }}
-              className="mt-2 w-24 rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)]"
+              value={thresholdPct}
+              onChange={(ev) => setThresholdPct(Number(ev.target.value))}
+              className={rangeClass}
             />
-            <p className="mt-1.5 text-xs text-[var(--c-text-muted)]">
-              {st.chatCompactKeepDesc}
-            </p>
+            <span className="w-9 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+              {st.chatCompactThresholdLate}
+            </span>
           </div>
         </div>
 
-        {saveErr ? (
-          <p className="mt-4 text-sm text-[var(--c-status-error)]">{saveErr}</p>
-        ) : null}
-        {savedHint ? (
-          <p className="mt-4 text-sm text-[var(--c-status-success)]">{st.chatCompactSaved}</p>
-        ) : null}
-
-        <button
-          type="button"
-          className="mt-5 rounded-lg bg-[var(--c-accent)] px-4 py-2 text-sm font-medium text-[var(--c-accent-fg)] disabled:opacity-50"
-          disabled={saving}
-          onClick={() => void handleSave()}
+        <div
+          className={`flex items-center justify-between gap-4 border-t border-[var(--c-border-subtle)] px-4 py-4 transition-opacity ${autoOn ? '' : 'pointer-events-none opacity-40'}`}
         >
-          {saving ? st.chatCompactSaving : st.chatCompactSave}
-        </button>
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="text-sm font-medium text-[var(--c-text-heading)]">{st.chatCompactKeepLabel}</p>
+            <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{st.chatCompactKeepDesc}</p>
+          </div>
+          <input
+            type="number"
+            min={2}
+            max={50}
+            step={1}
+            value={keepLast}
+            onChange={(ev) => {
+              const n = Number.parseInt(ev.target.value, 10)
+              if (Number.isFinite(n)) setKeepLast(n)
+            }}
+            className="h-9 w-14 shrink-0 rounded-md border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-1 text-center text-sm tabular-nums text-[var(--c-text-primary)] outline-none focus:border-[var(--c-border)]"
+          />
+        </div>
       </div>
+
+      {saveErr ? (
+        <p className="text-sm text-[var(--c-status-error)]">{saveErr}</p>
+      ) : null}
+      {savedHint ? (
+        <p className="text-sm text-[var(--c-status-success)]">{st.chatCompactSaved}</p>
+      ) : null}
+
+      <button
+        type="button"
+        className="w-fit rounded-md bg-[var(--c-accent)] px-3.5 py-1.5 text-sm font-medium text-[var(--c-accent-fg)] transition-colors hover:opacity-90 disabled:opacity-50"
+        disabled={saving}
+        onClick={() => void handleSave()}
+      >
+        {saving ? st.chatCompactSaving : st.chatCompactSave}
+      </button>
     </div>
   )
 }

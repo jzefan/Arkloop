@@ -352,6 +352,8 @@ export function AppLayout({ accessToken, onLoggedOut }: Props) {
           narrow={rightPanelOpen}
           desktopMode={desktop}
           appMode={appMode}
+          suppressActiveThreadHighlight={settingsOpen}
+          beforeNavigateToThread={() => setSettingsOpen(false)}
         />}
 
         {/* Settings modal for web mode */}

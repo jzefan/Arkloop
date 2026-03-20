@@ -714,8 +714,6 @@ export const en: LocaleStrings = {
     chatCompactThresholdLabel: "Compression threshold",
     chatCompactThresholdEarly: "Early",
     chatCompactThresholdLate: "Late",
-    chatCompactThresholdDesc:
-      "The divisor is route advanced_json.available_catalog.context_length; if unset, platform fallback_context_window_tokens applies. Usage is estimated with tiktoken on thread messages (encoding follows the OpenAI-compatible model name when possible).",
     chatCompactKeepLabel: "Recent messages to keep",
     chatCompactKeepDesc: "How many latest messages stay uncompressed (2–50).",
     chatCompactSave: "Save",

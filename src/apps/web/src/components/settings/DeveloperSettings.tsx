@@ -4,10 +4,14 @@ import { getDesktopApi } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
 import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents } from '../../storage'
 import { RunsSettings } from './RunsSettings'
+import { SettingsPillToggle } from './_SettingsPillToggle'
 
 type Props = {
   accessToken?: string
 }
+
+const devPanelBtn =
+  'inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-40'
 
 export function DeveloperSettings({ accessToken }: Props) {
   const { t } = useLocale()
@@ -77,27 +81,13 @@ export function DeveloperSettings({ accessToken }: Props) {
               {ds.showRunEventsDesc}
             </div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={showRunEvents}
-            onClick={() => {
-              const next = !showRunEvents
+          <SettingsPillToggle
+            checked={showRunEvents}
+            onChange={(next) => {
               setShowRunEvents(next)
               writeDeveloperShowRunEvents(next)
             }}
-            className={[
-              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-[5px] p-[2px] transition-colors duration-200',
-              showRunEvents ? 'bg-[var(--c-accent)]' : 'bg-[var(--c-border)]',
-            ].join(' ')}
-          >
-            <span
-              className={[
-                'pointer-events-none inline-block h-4 w-4 rounded-[3px] bg-white transition-transform duration-200',
-                showRunEvents ? 'translate-x-[14px]' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
+          />
         </div>
 
         {/* Run history */}
@@ -114,10 +104,11 @@ export function DeveloperSettings({ accessToken }: Props) {
             </div>
           </div>
           <button
+            type="button"
             onClick={() => setRunsOpen(true)}
             disabled={!accessToken}
-            className="rounded-md bg-[var(--c-bg-deep)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:text-[var(--c-text-primary)] disabled:opacity-40"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            className={devPanelBtn}
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
           >
             {ds.runsHistoryOpen}
           </button>
@@ -137,9 +128,10 @@ export function DeveloperSettings({ accessToken }: Props) {
             </div>
           </div>
           <button
+            type="button"
             onClick={handleResetOnboarding}
-            className="rounded-md bg-[var(--c-bg-deep)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:text-[var(--c-text-primary)]"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            className={devPanelBtn}
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
           >
             {resetDone ? '✓' : ds.resetOnboardingBtn}
           </button>
