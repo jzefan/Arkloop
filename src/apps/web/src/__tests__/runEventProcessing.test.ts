@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildMessageCopBlocksFromRunEvents,
   buildMessageFileOpsFromRunEvents,
   buildMessageCodeExecutionsFromRunEvents,
   buildMessageSubAgentsFromRunEvents,
@@ -9,6 +8,7 @@ import {
   findAssistantMessageForRun,
   patchCodeExecutionList,
   selectFreshRunEvents,
+  runEventDismissesAssistantPlaceholder,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
   fileOpOutputFromResult,
@@ -129,6 +129,62 @@ describe('selectFreshRunEvents', () => {
 
     expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
     expect(result.nextProcessedCount).toBe(2)
+  })
+})
+
+describe('runEventDismissesAssistantPlaceholder', () => {
+  it('segment / 空 delta 不关闭占位', () => {
+    expect(
+      runEventDismissesAssistantPlaceholder(
+        makeRunEvent({
+          runId: 'r1',
+          seq: 1,
+          type: 'run.segment.start',
+          data: { segment_id: 's1', kind: 'planning_round', display: { label: 'x' } },
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      runEventDismissesAssistantPlaceholder(
+        makeRunEvent({
+          runId: 'r1',
+          seq: 2,
+          type: 'message.delta',
+          data: { content_delta: '', role: 'assistant' },
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      runEventDismissesAssistantPlaceholder(
+        makeRunEvent({
+          runId: 'r1',
+          seq: 3,
+          type: 'message.delta',
+          data: { content_delta: 'int', role: 'assistant', channel: 'thinking' },
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('助手正文 delta 与 tool 事件关闭占位', () => {
+    expect(
+      runEventDismissesAssistantPlaceholder(
+        makeRunEvent({
+          runId: 'r1',
+          seq: 1,
+          type: 'message.delta',
+          data: { content_delta: 'hi', role: 'assistant' },
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      runEventDismissesAssistantPlaceholder(makeRunEvent({ runId: 'r1', seq: 2, type: 'tool.call', data: {} })),
+    ).toBe(true)
+    expect(
+      runEventDismissesAssistantPlaceholder(
+        makeRunEvent({ runId: 'r1', seq: 3, type: 'tool.call.delta', data: { tool_call_index: 0, arguments_delta: '{' } }),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -932,162 +988,3 @@ describe('search_tools summary', () => {
   })
 })
 
-describe('buildMessageCopBlocksFromRunEvents', () => {
-  it('应把首段可见正文挂到首个 block，并保留 preText 供最终气泡裁剪', () => {
-    const events = [
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 1,
-        type: 'message.delta',
-        data: { role: 'assistant', content_delta: '我先检查一下当前配置。\n' },
-      }),
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 2,
-        type: 'tool.call',
-        data: {
-          tool_name: 'timeline_title',
-          tool_call_id: 'call_title',
-          arguments: { label: '检查已启用的 skills' },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 3,
-        type: 'tool.call',
-        data: {
-          tool_name: 'search_tools',
-          tool_call_id: 'call_tools',
-          arguments: { queries: ['exec_command'] },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 4,
-        type: 'tool.result',
-        data: {
-          tool_name: 'search_tools',
-          tool_call_id: 'call_tools',
-          result: { count: 1, matched: ['exec_command'] },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 5,
-        type: 'message.delta',
-        data: { role: 'assistant', content_delta: '后续我会直接调用 shell。' },
-      }),
-      makeRunEvent({
-        runId: 'run_intro',
-        seq: 6,
-        type: 'run.completed',
-        data: {},
-      }),
-    ]
-
-    const cop = buildMessageCopBlocksFromRunEvents(events)
-    expect(cop).not.toBeNull()
-    expect(cop?.preText).toBe('我先检查一下当前配置。\n')
-    expect(cop?.blocks[0]?.narratives?.[0]).toEqual({
-      id: 'cop-intro-1',
-      text: '我先检查一下当前配置。\n',
-      seq: 1,
-    })
-    expect(cop?.finalContent).toBe('后续我会直接调用 shell。')
-  })
-
-  it('应把工具间正文落到 narrative，并保留最终正文', () => {
-    const events = [
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 1,
-        type: 'tool.call',
-        data: {
-          tool_name: 'timeline_title',
-          tool_call_id: 'call_title',
-          arguments: { label: '检查已启用的 skills' },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 2,
-        type: 'tool.call',
-        data: {
-          tool_name: 'search_tools',
-          tool_call_id: 'call_tools',
-          arguments: { queries: ['exec_command', 'python_execute'] },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 3,
-        type: 'tool.result',
-        data: {
-          tool_name: 'search_tools',
-          tool_call_id: 'call_tools',
-          result: { count: 2, matched: ['exec_command', 'python_execute'] },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 4,
-        type: 'message.delta',
-        data: { role: 'assistant', content_delta: '我先整理一下现有工具。' },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 5,
-        type: 'tool.call',
-        data: {
-          tool_name: 'web_search',
-          tool_call_id: 'call_search',
-          arguments: { query: 'GeoGebra API embed JavaScript graphing calculator' },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 6,
-        type: 'tool.result',
-        data: {
-          tool_name: 'web_search',
-          tool_call_id: 'call_search',
-          result: {
-            results: [
-              { title: 'GeoGebra Manual', url: 'https://geogebra.org/manual', snippet: 'manual' },
-            ],
-          },
-        },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 7,
-        type: 'message.delta',
-        data: { role: 'assistant', content_delta: '最终我建议直接走 skill。' },
-      }),
-      makeRunEvent({
-        runId: 'run_1',
-        seq: 8,
-        type: 'run.completed',
-        data: {},
-      }),
-    ]
-
-    const cop = buildMessageCopBlocksFromRunEvents(events)
-    expect(cop).not.toBeNull()
-    expect(cop?.blocks).toHaveLength(1)
-    expect(cop?.blocks[0]?.title).toBe('检查已启用的 skills')
-    expect(cop?.blocks[0]?.narratives).toEqual([
-      { id: expect.any(String), text: '我先整理一下现有工具。', seq: 4 },
-    ])
-    expect(cop?.blocks[0]?.fileOps?.[0]).toMatchObject({
-      id: 'call_tools',
-      toolName: 'search_tools',
-      seq: 2,
-    })
-    expect(cop?.blocks[0]?.steps.map((step) => ({ kind: step.kind, seq: step.seq }))).toEqual([
-      { kind: 'searching', seq: 5 },
-      { kind: 'reviewing', seq: 6 },
-    ])
-    expect(cop?.finalContent).toBe('最终我建议直接走 skill。')
-  })
-})

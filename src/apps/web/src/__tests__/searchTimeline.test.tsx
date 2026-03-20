@@ -124,4 +124,5 @@ describe('SearchTimeline', () => {
     expect(html).toContain('>file<')
     expect(html).not.toContain('google.com/s2/favicons')
   })
+
 })

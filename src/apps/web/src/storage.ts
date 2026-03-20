@@ -3,6 +3,7 @@ import {
 } from '@arkloop/shared/storage'
 import type { Theme } from '@arkloop/shared/contexts/theme'
 import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition } from './themes/types'
+import type { AssistantTurnSegment, AssistantTurnUi, TurnToolCallRef } from './assistantTurnSegments'
 
 export {
   readAccessToken as readAccessTokenFromStorage,
@@ -660,6 +661,75 @@ export function writeMessageCopBlocks(messageId: string, data: MessageCopBlocksR
   } catch { /* ignore */ }
 }
 
+// -- Assistant turn segments (text | cop) --
+
+function messageAssistantTurnKey(messageId: string): string {
+  return `arkloop:web:msg_assistant_turn:${messageId}`
+}
+
+function parseTurnToolCallRef(raw: unknown): TurnToolCallRef | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.toolCallId !== 'string' || typeof o.toolName !== 'string') return null
+  if (!o.arguments || typeof o.arguments !== 'object' || Array.isArray(o.arguments)) return null
+  const rec: TurnToolCallRef = {
+    toolCallId: o.toolCallId,
+    toolName: o.toolName,
+    arguments: { ...(o.arguments as Record<string, unknown>) },
+  }
+  rec.result = o.result
+  if (typeof o.errorClass === 'string' && o.errorClass.trim() !== '') rec.errorClass = o.errorClass
+  return rec
+}
+
+function parseAssistantTurnSegment(raw: unknown): AssistantTurnSegment | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const ty = o.type
+  if (ty === 'text') {
+    if (typeof o.content !== 'string') return null
+    return { type: 'text', content: o.content }
+  }
+  if (ty !== 'cop') return null
+  const title = o.title === null ? null : typeof o.title === 'string' ? o.title : null
+  if (!Array.isArray(o.calls)) return null
+  const calls = o.calls.map(parseTurnToolCallRef).filter((c): c is TurnToolCallRef => c != null)
+  return { type: 'cop', title, calls }
+}
+
+export function readMessageAssistantTurn(messageId: string): AssistantTurnUi | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const item = localStorage.getItem(messageAssistantTurnKey(messageId))
+    if (!item) return null
+    const parsed = JSON.parse(item) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+    const obj = parsed as Record<string, unknown>
+    if (!Array.isArray(obj.segments)) return null
+    const segments = (obj.segments as unknown[])
+      .map(parseAssistantTurnSegment)
+      .filter((s): s is AssistantTurnSegment => s != null)
+    if (segments.length === 0) return null
+    return { segments }
+  } catch {
+    return null
+  }
+}
+
+export function writeMessageAssistantTurn(messageId: string, data: AssistantTurnUi): void {
+  if (!canUseLocalStorage() || !messageId || data.segments.length === 0) return
+  try {
+    localStorage.setItem(messageAssistantTurnKey(messageId), JSON.stringify(data))
+  } catch { /* ignore */ }
+}
+
+export function clearMessageAssistantTurn(messageId: string): void {
+  if (!canUseLocalStorage() || !messageId) return
+  try {
+    localStorage.removeItem(messageAssistantTurnKey(messageId))
+  } catch { /* ignore */ }
+}
+
 // -- File Operations --
 
 export type FileOpRef = {
@@ -1048,6 +1118,8 @@ export function migrateMessageMetadata(mapping: Array<{ old_id: string; new_id: 
     if (searchSteps) writeMessageSearchSteps(new_id, searchSteps)
     const copBlocks = readMessageCopBlocks(old_id)
     if (copBlocks) writeMessageCopBlocks(new_id, copBlocks)
+    const assistantTurn = readMessageAssistantTurn(old_id)
+    if (assistantTurn) writeMessageAssistantTurn(new_id, assistantTurn)
     const fileOps = readMessageFileOps(old_id)
     if (fileOps) writeMessageFileOps(new_id, fileOps)
     const webFetches = readMessageWebFetches(old_id)

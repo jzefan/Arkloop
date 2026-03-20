@@ -398,9 +398,12 @@ export const zh: LocaleStrings = {
     downloadFile: "下载文件",
     loadFailed: (detail: string) => `加载失败：${detail}`,
   },
-  // message actions
-  copyAction: "复制",
-  editAction: "编辑",
+  // message actions: short labels use EN in zh bundle
+  copyAction: "Copy",
+  assistantCopDefaultTitle: "Processing…",
+  assistantStreamThinkingPlaceholder: "Thinking",
+  searchTimelineLiveProgress: "In process",
+  editAction: "Edit",
   // model config
   models: {
     addProvider: "添加供应商",

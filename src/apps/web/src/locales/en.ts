@@ -405,6 +405,9 @@ export const en: LocaleStrings = {
   },
   // message actions
   copyAction: "Copy",
+  assistantCopDefaultTitle: "Processing…",
+  assistantStreamThinkingPlaceholder: "Thinking",
+  searchTimelineLiveProgress: "In process",
   editAction: "Edit",
   // model config
   models: {

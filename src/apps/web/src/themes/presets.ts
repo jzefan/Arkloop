@@ -124,7 +124,7 @@ export const BUILTIN_PRESETS: Record<string, ThemeDefinition> = {
       '--c-status-warn-text': '#c2410c',
       '--c-md-code-block-bg': '#F0EEE8',
       '--c-md-inline-code-bg': '#E8E5DC',
-      '--c-md-inline-code-color': '#dd5013',
+      '--c-md-inline-code-color': '#7F2C29',
       '--c-md-table-head-bg': '#F0EEE8',
       '--c-avatar-bg': '#3D3830',
       '--c-avatar-text': '#FAF9F6',

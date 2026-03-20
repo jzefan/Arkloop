@@ -9,6 +9,7 @@ export type ArtifactAction =
   | { type: 'prompt'; text: string }
   | { type: 'resize'; height: number }
   | { type: 'error'; message: string }
+  | { type: 'open_link'; url: string }
 
 export type ArtifactIframeHandle = {
   setStreamingContent: (html: string) => void
@@ -277,6 +278,35 @@ ${ARTIFACT_SVG_STYLES}
   window.sendPrompt = function(text) {
     window.arkloop.sendPrompt(text);
   };
+
+  function sanitizeHttpUrl(raw) {
+    var s = String(raw || '').trim().slice(0, 4000);
+    try {
+      var u = new URL(s);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+      return u.href;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  window.openLink = function(url) {
+    var ok = sanitizeHttpUrl(url);
+    if (!ok) return;
+    window.parent.postMessage({ type: 'arkloop:artifact:action', action: 'open_link', url: ok }, '*');
+  };
+
+  document.addEventListener('click', function(ev) {
+    var el = ev.target;
+    if (!el || typeof el.closest !== 'function') return;
+    var a = el.closest('a[href]');
+    if (!a || !a.href) return;
+    var ok = sanitizeHttpUrl(a.href);
+    if (!ok) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.parent.postMessage({ type: 'arkloop:artifact:action', action: 'open_link', url: ok }, '*');
+  }, true);
 
   function reportError(message) {
     window.parent.postMessage({ type: 'arkloop:artifact:action', action: 'error', message: String(message || 'render error').slice(0, 4000) }, '*');
@@ -726,6 +756,10 @@ export const ArtifactIframe = forwardRef<ArtifactIframeHandle, Props>(
         }
         if (action === 'prompt' && typeof event.data.text === 'string') {
           onAction?.({ type: 'prompt', text: event.data.text.slice(0, 4000) })
+          return
+        }
+        if (action === 'open_link' && typeof event.data.url === 'string') {
+          onAction?.({ type: 'open_link', url: event.data.url.slice(0, 4000) })
           return
         }
         if (action === 'error' && typeof event.data.message === 'string') {

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTypewriter } from '../hooks/useTypewriter'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Code2, Terminal } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -92,18 +93,19 @@ type Props = {
 
 export function ThinkingBlock({ label, mode, content, isStreaming, codeExecutions, onOpenCodeExecution }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const displayedThinkingMd = useTypewriter(content, !isStreaming)
 
   if (mode === 'hidden') return null
 
   if (mode === 'visible') {
     return (
       <div style={{ maxWidth: '663px' }}>
-        <MarkdownRenderer content={content} disableMath />
+        <MarkdownRenderer content={displayedThinkingMd} disableMath />
         {codeExecutions && codeExecutions.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
             {codeExecutions.map((ce) =>
               ce.language === 'shell'
-                ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} smooth={!!isStreaming} />
                 : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => onOpenCodeExecution?.(ce)} />
             )}
           </div>
@@ -169,12 +171,12 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
                 paddingTop: '8px',
               }}
             >
-              {content && <MarkdownRenderer content={content} disableMath />}
+              {content && <MarkdownRenderer content={displayedThinkingMd} disableMath />}
               {codeExecutions && codeExecutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
                   {codeExecutions.map((ce) =>
                     ce.language === 'shell'
-                      ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                      ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} smooth={!!isStreaming} />
                       : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => onOpenCodeExecution?.(ce)} />
                   )}
                 </div>

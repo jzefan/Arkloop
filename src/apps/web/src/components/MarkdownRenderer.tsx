@@ -566,9 +566,11 @@ type Props = {
   runId?: string
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   compact?: boolean
+  /** 下一兄弟为 COP 等块时去掉末段底距，避免正文→COP 过大缝隙 */
+  trimTrailingMargin?: boolean
 }
 
-export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false }: Props) {
+export function MarkdownRenderer({ content, disableMath, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false, trimTrailingMargin = false }: Props) {
   const remarkPlugins = disableMath
     ? [remarkGfm]
     : [remarkGfm, remarkMath]
@@ -593,7 +595,10 @@ export function MarkdownRenderer({ content, disableMath, webSources, artifacts, 
   return (
     <ArtifactsContext.Provider value={artifactsValue}>
       <WebSourcesContext.Provider value={webSources ?? []}>
-        <div className={`md-content${compact ? ' md-content--compact' : ''}`} style={{ maxWidth: '100%', fontWeight: 350 }}>
+        <div
+          className={`md-content${compact ? ' md-content--compact' : ''}${trimTrailingMargin ? ' md-content--trim-trailing' : ''}`}
+          style={{ maxWidth: '100%', fontWeight: 350 }}
+        >
           <ReactMarkdown
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}

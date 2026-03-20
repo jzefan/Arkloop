@@ -51,9 +51,14 @@ export function SubAgentBlock({
   const outputRef = useRef<HTMLDivElement>(null)
   const [scrollEdge, setScrollEdge] = useState<ScrollEdge>('none')
 
+  const displayOutput = output?.trim() ? output : error?.trim() ? error : undefined
   const rawLabel = nickname || personaId || t.agentSubAgent
-  const displayedLabel = useTypewriter(live ? rawLabel : '')
-  const label = live ? displayedLabel : rawLabel
+  const streamTw = !!live
+  const displayedLabel = useTypewriter(rawLabel, !streamTw)
+  const inputTrimmed = input?.trim() ?? ''
+  const displayedInput = useTypewriter(inputTrimmed, !streamTw)
+  const outputForTw = displayOutput?.trimEnd() ?? ''
+  const displayedOutput = useTypewriter(outputForTw, !streamTw)
 
   const cop = useSubAgentCop({
     runId: currentRunId,
@@ -64,7 +69,6 @@ export function SubAgentBlock({
 
   const hasCop = cop.steps.length > 0 || cop.sources.length > 0
 
-  const displayOutput = output?.trim() ? output : error?.trim() ? error : undefined
   // COP 激活时不显示原始 output 区域（除非最终 output 有意义且 COP 已完成）
   const showRawOutput = !hasCop && !!displayOutput
   const isWaiting = status === 'spawning' || status === 'active'
@@ -126,7 +130,7 @@ export function SubAgentBlock({
           color: 'var(--c-text-muted)',
           transition: 'color 150ms ease',
         }}>
-          {label}
+          {displayedLabel}
         </span>
         {expandable && (
           expanded
@@ -163,7 +167,7 @@ export function SubAgentBlock({
               </div>
 
               {/* Input */}
-              {input?.trim() && (
+              {inputTrimmed && (
                 <div style={{ padding: '2px 10px 8px' }}>
                   <div style={{ fontSize: '10px', color: 'var(--c-text-muted)', fontFamily: MONO, marginBottom: '2px' }}>
                     {t.agentInput}
@@ -179,7 +183,7 @@ export function SubAgentBlock({
                     maxHeight: '120px',
                     overflowY: 'auto',
                   }}>
-                    {input.trim()}
+                    {displayedInput}
                   </pre>
                 </div>
               )}
@@ -197,7 +201,7 @@ export function SubAgentBlock({
                     steps={cop.steps}
                     sources={cop.sources}
                     isComplete={cop.isComplete}
-                    live={cop.isStreaming}
+                    live={!!(live || cop.isStreaming)}
                   />
                 </div>
               )}
@@ -241,7 +245,7 @@ export function SubAgentBlock({
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-word',
                     }}>
-                      {displayOutput!.trimEnd()}
+                      {displayedOutput}
                     </pre>
                   </div>
                 </div>
