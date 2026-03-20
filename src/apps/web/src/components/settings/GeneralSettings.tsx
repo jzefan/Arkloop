@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Monitor, LogOut, HelpCircle, ChevronDown } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Monitor, LogOut, HelpCircle } from 'lucide-react'
 import type { MeResponse } from '../../api'
 import {
   listLlmProviders,
@@ -13,6 +13,7 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
 import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
 import { bridgeClient, checkBridgeAvailable } from '../../api-bridge'
+import { SettingsModelDropdown } from './SettingsModelDropdown'
 
 type Props = {
   me: MeResponse | null
@@ -21,103 +22,7 @@ type Props = {
   onMeUpdated?: (me: MeResponse) => void
 }
 
-type ModelOption = { value: string; label: string }
-
 const OPENVIKING_COMPATIBLE_PROVIDER = 'openai'
-
-function ModelDropdown({
-  value,
-  options,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  value: string
-  options: ModelOption[]
-  placeholder: string
-  disabled: boolean
-  onChange: (v: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  const currentLabel = options.find(o => o.value === value)?.label ?? (value || placeholder)
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (
-        menuRef.current?.contains(e.target as Node) ||
-        btnRef.current?.contains(e.target as Node)
-      ) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div className="relative">
-      <button
-        ref={btnRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(v => !v)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-secondary)' }}
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDown size={13} className="ml-2 shrink-0" />
-      </button>
-
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            width: '100%',
-            boxShadow: 'var(--c-dropdown-shadow)',
-            maxHeight: '220px',
-            overflowY: 'auto',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => { onChange(''); setOpen(false) }}
-            className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-            style={{
-              borderRadius: '8px',
-              fontWeight: !value ? 600 : 400,
-              color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-            }}
-          >
-            {placeholder}
-          </button>
-          {options.map(({ value: v, label }) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => { onChange(v); setOpen(false) }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{
-                borderRadius: '8px',
-                fontWeight: value === v ? 600 : 400,
-                color: value === v ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeUpdated }: Props) {
   const { t, locale, setLocale } = useLocale()
@@ -141,7 +46,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       .catch(() => {})
   }, [accessToken])
 
-  const modelOptions: ModelOption[] = providers
+  const modelOptions = providers
     .flatMap((p) => p.models.filter((m) => m.show_in_picker).map((m) => ({
       value: `${p.name}^${m.model}`,
       label: `${p.name} / ${m.model}`,
@@ -313,7 +218,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
         </p>
         <div className="flex flex-col gap-2">
           <p className="text-xs text-[var(--c-text-tertiary)]">{ds.toolModelDesc}</p>
-          <ModelDropdown
+          <SettingsModelDropdown
             value={toolModelValue}
             options={modelOptions}
             placeholder={ds.toolModelPlatformDefault}
