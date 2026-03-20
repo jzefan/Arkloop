@@ -107,6 +107,7 @@ func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var statuses map[string]string
+	batchFailed := false
 	if len(serviceNames) > 0 {
 		queryCtx, cancel := context.WithTimeout(r.Context(), dockerBatchQueryTimeout)
 		defer cancel()
@@ -114,10 +115,10 @@ func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 		var err error
 		statuses, err = h.compose.ContainerStatuses(queryCtx, serviceNames, profiles)
 		if err != nil {
+			batchFailed = true
 			h.appLogger.Error("batch container status query failed", map[string]any{
 				"error": err.Error(),
 			})
-			statuses = nil
 		}
 	}
 
@@ -125,6 +126,8 @@ func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 		var status module.ModuleStatus
 		if defs[i].ComposeService == "" {
 			status = h.virtualModuleStatus(&defs[i])
+		} else if batchFailed {
+			status = module.StatusError
 		} else if statuses != nil {
 			status = mapRawStatus(statuses[defs[i].ComposeService])
 		} else {
