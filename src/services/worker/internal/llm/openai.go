@@ -1983,26 +1983,32 @@ func openAIParseFailure(err error, message string, toolCallMessage string, llmCa
 func openAIErrorMessageAndDetails(body []byte, status int, fallback string) (string, map[string]any) {
 	details := map[string]any{"status_code": status}
 
+	if len(body) > 0 {
+		raw, truncated := truncateUTF8(string(body), openAIMaxErrorBodyBytes)
+		details["provider_error_body"] = raw
+		if truncated {
+			details["provider_error_body_truncated"] = true
+		}
+	}
+
 	if len(body) == 0 {
 		return fallback, details
 	}
 
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		raw, _ := truncateUTF8(string(body), 512)
-		details["raw_body"] = raw
 		return fallback, details
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		raw, _ := truncateUTF8(string(body), 512)
-		details["raw_body"] = raw
 		return fallback, details
 	}
+
 	errObj, ok := root["error"].(map[string]any)
 	if !ok {
-		raw, _ := truncateUTF8(string(body), 512)
-		details["raw_body"] = raw
+		if msg, ok := root["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return strings.TrimSpace(msg), details
+		}
 		return fallback, details
 	}
 
@@ -2021,9 +2027,40 @@ func openAIErrorMessageAndDetails(body []byte, status int, fallback string) (str
 		}
 	}
 
+	if meta, ok := errObj["metadata"].(map[string]any); ok && len(meta) > 0 {
+		if b, err := json.Marshal(meta); err == nil {
+			metaStr, metaTrunc := truncateUTF8(string(b), 1024)
+			details["openai_error_metadata_json"] = metaStr
+			if metaTrunc {
+				details["openai_error_metadata_truncated"] = true
+			}
+		}
+	}
+
 	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
 		return strings.TrimSpace(msg), details
 	}
+
+	var sb strings.Builder
+	if v, ok := details["openai_error_type"].(string); ok && strings.TrimSpace(v) != "" {
+		sb.WriteString(strings.TrimSpace(v))
+	}
+	if c, ok := details["openai_error_code"]; ok {
+		if sb.Len() > 0 {
+			sb.WriteString(": ")
+		}
+		sb.WriteString(fmt.Sprintf("%v", c))
+	}
+	if p, ok := details["openai_error_param"].(string); ok && strings.TrimSpace(p) != "" {
+		if sb.Len() > 0 {
+			sb.WriteString(", param=")
+		}
+		sb.WriteString(strings.TrimSpace(p))
+	}
+	if sb.Len() > 0 {
+		return sb.String(), details
+	}
+
 	return fallback, details
 }
 
