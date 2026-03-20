@@ -15,6 +15,24 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// JSONLogger 异步写 writer；mutex 避免测试读与后台写争用同一 bytes.Buffer。
+type lockingWriter struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (w *lockingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *lockingWriter) contains(sub []byte) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return bytes.Contains(w.b.Bytes(), sub)
+}
+
 func TestNewApplicationInitializesEmptyDynamicConfig(t *testing.T) {
 	app, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", io.Discard))
 	if err != nil {
@@ -34,20 +52,24 @@ func TestNewApplicationInitializesEmptyDynamicConfig(t *testing.T) {
 }
 
 func TestNewApplicationLogsWhenJWTSecretMissing(t *testing.T) {
-	var buf bytes.Buffer
-	_, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", &buf))
+	var out lockingWriter
+	_, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", &out))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
 
+	want := []byte(`"msg":"jwt secret missing"`)
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if bytes.Contains(buf.Bytes(), []byte(`"msg":"jwt secret missing"`)) {
+		if out.contains(want) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("missing jwt secret warning log: %s", buf.String())
+	out.mu.Lock()
+	got := out.b.String()
+	out.mu.Unlock()
+	t.Fatalf("missing jwt secret warning log: %s", got)
 }
 
 func TestLoadDynamicConfigOverridesEffectiveValues(t *testing.T) {

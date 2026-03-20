@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { Brain, Check, Loader2, Pencil, Search, Eye, Trash2, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { MemoryActionRef } from '../storage'
@@ -16,12 +17,24 @@ function getToolLabel(toolName: MemoryActionRef['toolName']): string {
   }
 }
 
-function getToolIcon(toolName: MemoryActionRef['toolName']) {
+function MemoryToolGlyph({
+  toolName,
+  size,
+  style,
+}: {
+  toolName: MemoryActionRef['toolName']
+  size: number
+  style: CSSProperties
+}) {
   switch (toolName) {
-    case 'memory_write': return Pencil
-    case 'memory_search': return Search
-    case 'memory_read': return Eye
-    case 'memory_forget': return Trash2
+    case 'memory_write':
+      return <Pencil size={size} style={style} />
+    case 'memory_search':
+      return <Search size={size} style={style} />
+    case 'memory_read':
+      return <Eye size={size} style={style} />
+    case 'memory_forget':
+      return <Trash2 size={size} style={style} />
   }
 }
 
@@ -47,7 +60,6 @@ function getArgSummary(action: MemoryActionRef): string {
 }
 
 function MemoryActionRow({ action, live }: { action: MemoryActionRef; live?: boolean }) {
-  const Icon = getToolIcon(action.toolName)
   const label = getToolLabel(action.toolName)
   const argSummary = getArgSummary(action)
   const isActive = action.status === 'active'
@@ -67,7 +79,7 @@ function MemoryActionRow({ action, live }: { action: MemoryActionRef; live?: boo
         color: isError ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)',
       }}
     >
-      <Icon size={11} style={{ flexShrink: 0, opacity: 0.7 }} />
+      <MemoryToolGlyph toolName={action.toolName} size={11} style={{ flexShrink: 0, opacity: 0.7 }} />
       <span style={{ fontWeight: 500, flexShrink: 0 }}>{label}</span>
       {argSummary && (
         <span

@@ -143,7 +143,7 @@ func normalizeOptionalRoleString(value any, label string) (any, error) {
 }
 
 func normalizeToolNameList(value any, label string) ([]string, error) {
-	items := []any{}
+	var items []any
 	switch raw := value.(type) {
 	case []any:
 		items = raw

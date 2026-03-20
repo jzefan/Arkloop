@@ -41,10 +41,11 @@ type TelegramDesktopPollerDeps struct {
 	JobRepo                 *data.JobRepository
 	CreditsRepo             *data.CreditsRepository
 	Pool                    data.DB
-	EntitlementService      *entitlement.Service
-	TelegramBotClient       *telegrambot.Client
-	PollInterval            time.Duration
-	PollLimit               int
+	EntitlementService       *entitlement.Service
+	TelegramBotClient        *telegrambot.Client
+	MessageAttachmentStore   MessageAttachmentPutStore
+	PollInterval             time.Duration
+	PollLimit                int
 	// TelegramMode 为 webhook 时不启动桌面轮询；空视为 polling。
 	TelegramMode string
 }
@@ -118,6 +119,7 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 		pool:                    deps.Pool,
 		entitlementSvc:          deps.EntitlementService,
 		telegramClient:          telegramForConnector,
+		attachmentStore:         deps.MessageAttachmentStore,
 	}
 
 	pollHTTP := &http.Client{Timeout: time.Duration(telegramLongPollSeconds+15) * time.Second}

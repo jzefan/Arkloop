@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
-	"arkloop/services/shared/database"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -30,32 +31,32 @@ type countingQuerier struct {
 	execErr error
 }
 
-func (q *countingQuerier) Exec(ctx context.Context, sql string, args ...any) (database.Result, error) {
+func (q *countingQuerier) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	_ = ctx
 	_ = sql
 	_ = args
 	q.execCalls++
 	if q.execErr != nil {
-		return stubResult{}, q.execErr
+		return pgconn.CommandTag{}, q.execErr
 	}
-	return stubResult{tag: "UPDATE 1"}, nil
+	return pgconn.NewCommandTag("UPDATE 1"), nil
 }
 
-func (q *countingQuerier) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
+func (q *countingQuerier) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	_ = ctx
 	_ = sql
 	_ = args
 	return nil, errors.New("not implemented")
 }
 
-func (q *countingQuerier) QueryRow(ctx context.Context, sql string, args ...any) database.Row {
+func (q *countingQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	_ = ctx
 	_ = sql
 	_ = args
 	q.queryRowCalls++
 	return &countingRow{scan: func(dest ...any) error {
 		if !q.userExists {
-			return database.ErrNoRows
+			return pgx.ErrNoRows
 		}
 		if len(dest) != 1 {
 			return errors.New("unexpected scan dest")

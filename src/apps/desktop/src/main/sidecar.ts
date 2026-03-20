@@ -57,7 +57,9 @@ const AUTO_PORT_SCAN_WINDOW = 20
 const DEFAULT_BRIDGE_PORT = 19003
 const SIDECAR_DIR = path.join(os.homedir(), '.arkloop', 'bin')
 const VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
-const DEFAULT_DOWNLOAD_BASE = 'https://github.com/nicepkg/arkloop/releases/download'
+const DEFAULT_GITHUB_REPO = 'qqqqqf-q/Arkloop'
+const DEFAULT_DOWNLOAD_BASE = `https://github.com/${DEFAULT_GITHUB_REPO}/releases/download`
+const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${DEFAULT_GITHUB_REPO}/releases/latest`
 const desktopAccessToken = `arkloop-desktop-${randomBytes(24).toString('hex')}`
 
 let proc: ChildProcess | null = null
@@ -191,7 +193,7 @@ export async function checkSidecarVersion(): Promise<{
 
   let latest: string | null = null
   try {
-    const res = await httpsGet('https://api.github.com/repos/qqqqqf-q/arkloop/releases/latest')
+    const res = await httpsGet(GITHUB_API_LATEST_RELEASE)
     const body = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = []
       res.on('data', (c: Buffer) => chunks.push(c))
@@ -222,7 +224,7 @@ export async function downloadSidecar(
   emit({ phase: 'connecting', percent: 0, bytesDownloaded: 0, bytesTotal: 0 })
 
   try {
-    const releaseRes = await httpsGet('https://api.github.com/repos/nicepkg/arkloop/releases/latest')
+    const releaseRes = await httpsGet(GITHUB_API_LATEST_RELEASE)
     const releaseBody = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = []
       releaseRes.on('data', (chunk: Buffer) => chunks.push(chunk))

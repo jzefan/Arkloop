@@ -79,7 +79,7 @@ func TestNotFoundReturnsEnvelope(t *testing.T) {
 	if payload.TraceID != traceID {
 		t.Fatalf("trace_id mismatch: header=%q payload=%q", traceID, payload.TraceID)
 	}
-	if payload.Code != "http.method_not_allowed" {
+	if payload.Code != "http.not_found" {
 		t.Fatalf("unexpected code: %q", payload.Code)
 	}
 	if payload.Message == "" {

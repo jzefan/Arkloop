@@ -355,6 +355,7 @@ type telegramConnector struct {
 	pool                    data.DB
 	entitlementSvc          *entitlement.Service
 	telegramClient          *telegrambot.Client
+	attachmentStore         MessageAttachmentPutStore
 }
 
 func (c telegramConnector) HandleUpdate(
@@ -521,7 +522,17 @@ func (c telegramConnector) HandleUpdate(
 			return ledgerErr
 		}
 	}
-	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessage(identity, *incoming)
+	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessageWithMedia(
+		ctx,
+		c.telegramClient,
+		c.attachmentStore,
+		token,
+		ch.AccountID,
+		threadID,
+		*identity.UserID,
+		identity,
+		*incoming,
+	)
 	if err != nil {
 		return err
 	}
@@ -593,6 +604,7 @@ func telegramWebhookEntry(
 	pool data.DB,
 	entitlementSvc *entitlement.Service,
 	telegramClient *telegrambot.Client,
+	messageAttachmentStore MessageAttachmentPutStore,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	var channelLedgerRepo *data.ChannelMessageLedgerRepository
 	if pool != nil {
@@ -622,6 +634,7 @@ func telegramWebhookEntry(
 		pool:                    pool,
 		entitlementSvc:          entitlementSvc,
 		telegramClient:          telegramClient,
+		attachmentStore:         messageAttachmentStore,
 	}
 
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -39,16 +39,21 @@ export function useTypewriter(targetText: string, isComplete = false): string {
   const prevTickRef = useRef(0)
   const rafRef = useRef(0)
   const isCompleteRef = useRef(isComplete)
-  isCompleteRef.current = isComplete
 
   const prevLenRef = useRef(0)
-  const lastGrowthAtRef = useRef(performance.now())
+  const lastGrowthAtRef = useRef(0)
   const chunkEwmaRef = useRef(MIN_CHUNK_EWMA)
   const gapEwmaRef = useRef(DEFAULT_GAP_MS)
   /** 是否已过首包（首包只用字数、间隔仍用占位，第二条起 EWMA 间隔） */
   const pastFirstChunkRef = useRef(false)
 
-  targetLenRef.current = targetText.length
+  useEffect(() => {
+    isCompleteRef.current = isComplete
+  }, [isComplete])
+
+  useEffect(() => {
+    targetLenRef.current = targetText.length
+  }, [targetText])
 
   const isEmpty = targetText.length === 0
   useEffect(() => {

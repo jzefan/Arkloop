@@ -19,7 +19,8 @@ import (
 	"github.com/google/uuid"
 )
 
-const messageAttachmentOwnerKind = "message_attachment"
+// MessageAttachmentOwnerKind 与 thread 附件在对象存储中的 owner 标记一致。
+const MessageAttachmentOwnerKind = "message_attachment"
 const uploadMultipartBodyLimit = (20 << 20) + (1 << 20)
 
 func uploadThreadAttachment(
@@ -78,13 +79,13 @@ func uploadThreadAttachment(
 		}
 		defer file.Close()
 
-		filename := sanitizeAttachmentFilename(header.Filename)
+		filename := sanitizeAttachmentFilenameImpl(header.Filename)
 		if filename == "" {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": "invalid filename"})
 			return
 		}
 
-		dataBytes, err := io.ReadAll(io.LimitReader(file, maxImageAttachmentBytes+1))
+		dataBytes, err := io.ReadAll(io.LimitReader(file, MaxImageAttachmentBytes+1))
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -97,8 +98,8 @@ func uploadThreadAttachment(
 		}
 
 		threadIDText := thread.ID.String()
-		key := fmt.Sprintf("threads/%s/attachments/%s/%s", thread.ID.String(), uuid.NewString(), sanitizeAttachmentKeyName(filename))
-		metadata := objectstore.ArtifactMetadata(messageAttachmentOwnerKind, actor.UserID.String(), actor.AccountID.String(), &threadIDText)
+		key := fmt.Sprintf("threads/%s/attachments/%s/%s", thread.ID.String(), uuid.NewString(), sanitizeAttachmentKeyNameImpl(filename))
+		metadata := objectstore.ArtifactMetadata(MessageAttachmentOwnerKind, actor.UserID.String(), actor.AccountID.String(), &threadIDText)
 		if err := store.PutObject(r.Context(), key, payload.bytes, objectstore.PutOptions{ContentType: payload.mimeType, Metadata: metadata}); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -208,16 +209,38 @@ type attachmentUploadPayload struct {
 	extractedText string
 }
 
+// AttachmentUploadPayload 与 POST /v1/threads/:id/attachments 相同的字节分类结果。
+type AttachmentUploadPayload struct {
+	Kind          string
+	MimeType      string
+	Bytes         []byte
+	ExtractedText string
+}
+
+// BuildAttachmentUploadPayload 对原始字节做类型与大小校验（图 / 可索引文本附件）。
+func BuildAttachmentUploadPayload(filename string, declaredMime string, dataBytes []byte) (AttachmentUploadPayload, error) {
+	raw, err := buildAttachmentUploadPayload(filename, declaredMime, dataBytes)
+	if err != nil {
+		return AttachmentUploadPayload{}, err
+	}
+	return AttachmentUploadPayload{
+		Kind:          raw.kind,
+		MimeType:      raw.mimeType,
+		Bytes:         raw.bytes,
+		ExtractedText: raw.extractedText,
+	}, nil
+}
+
 func buildAttachmentUploadPayload(filename string, declaredMime string, dataBytes []byte) (attachmentUploadPayload, error) {
 	if len(dataBytes) == 0 {
 		return attachmentUploadPayload{}, fmt.Errorf("file must not be empty")
 	}
-	if len(dataBytes) > maxImageAttachmentBytes {
+	if len(dataBytes) > MaxImageAttachmentBytes {
 		return attachmentUploadPayload{}, fmt.Errorf("attachment too large")
 	}
 	mimeType := normalizeUploadedMIME(declaredMime, dataBytes)
 	if _, ok := supportedImageMIMEs[mimeType]; ok {
-		if len(dataBytes) > maxImageAttachmentBytes {
+		if len(dataBytes) > MaxImageAttachmentBytes {
 			return attachmentUploadPayload{}, fmt.Errorf("image attachment too large")
 		}
 		return attachmentUploadPayload{kind: messagecontent.PartTypeImage, mimeType: mimeType, bytes: dataBytes}, nil
@@ -263,7 +286,12 @@ func normalizeTextMIME(mimeType string, filename string) string {
 	}
 }
 
-func sanitizeAttachmentFilename(raw string) string {
+// SanitizeAttachmentFilename 与 multipart 上传的文件名清理规则一致。
+func SanitizeAttachmentFilename(raw string) string {
+	return sanitizeAttachmentFilenameImpl(raw)
+}
+
+func sanitizeAttachmentFilenameImpl(raw string) string {
 	base := filepath.Base(strings.TrimSpace(raw))
 	if base == "." || base == string(filepath.Separator) {
 		return ""
@@ -282,8 +310,13 @@ func sanitizeAttachmentFilename(raw string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func sanitizeAttachmentKeyName(raw string) string {
-	name := sanitizeAttachmentFilename(raw)
+// SanitizeAttachmentKeyName object key 中的文件名片段。
+func SanitizeAttachmentKeyName(raw string) string {
+	return sanitizeAttachmentKeyNameImpl(raw)
+}
+
+func sanitizeAttachmentKeyNameImpl(raw string) string {
+	name := sanitizeAttachmentFilenameImpl(raw)
 	if name == "" {
 		return "file"
 	}
@@ -292,7 +325,7 @@ func sanitizeAttachmentKeyName(raw string) string {
 
 func resolveAttachmentThread(ctx context.Context, threadRepo *data.ThreadRepository, info objectstore.ObjectInfo) (*data.Thread, bool) {
 	metadata := info.Metadata
-	if strings.TrimSpace(metadata[objectstore.ArtifactMetaOwnerKind]) != messageAttachmentOwnerKind {
+	if strings.TrimSpace(metadata[objectstore.ArtifactMetaOwnerKind]) != MessageAttachmentOwnerKind {
 		return nil, false
 	}
 	threadIDText := strings.TrimSpace(metadata[objectstore.ArtifactMetaThreadID])
