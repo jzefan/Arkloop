@@ -12,6 +12,7 @@ import (
 	"arkloop/services/api/internal/http/accountapi"
 	shareddesktop "arkloop/services/shared/desktop"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/objectstore"
 )
 
 // TelegramDesktopPollerDepsForPool 为共享 SQLite 构造 getUpdates 依赖（供 Worker 独占进程 fallback）。
@@ -119,6 +120,17 @@ func TelegramDesktopPollerDepsForPool(pgxPool data.DB, keyRing *internalcrypto.K
 		return zero, fmt.Errorf("init entitlement service: %w", err)
 	}
 
+	cfg, err := LoadDesktopConfig()
+	if err != nil {
+		return zero, fmt.Errorf("load desktop config: %w", err)
+	}
+	storageRoot := shareddesktop.StorageRoot(cfg.DataDir)
+	opener := objectstore.NewFilesystemOpener(storageRoot)
+	msgAttach, err := opener.Open(context.Background(), "message-attachments")
+	if err != nil {
+		return zero, fmt.Errorf("open message-attachments: %w", err)
+	}
+
 	return accountapi.TelegramDesktopPollerDeps{
 		ChannelsRepo:            channelsRepo,
 		ChannelIdentitiesRepo:   channelIdentitiesRepo,
@@ -137,8 +149,9 @@ func TelegramDesktopPollerDepsForPool(pgxPool data.DB, keyRing *internalcrypto.K
 		RunEventRepo:            runEventRepo,
 		JobRepo:                 jobRepo,
 		CreditsRepo:             creditsRepo,
-		Pool:                    pgxPool,
-		EntitlementService:      entitlementService,
+		Pool:                   pgxPool,
+		EntitlementService:     entitlementService,
+		MessageAttachmentStore: msgAttach,
 		TelegramMode:            "polling",
 	}, nil
 }

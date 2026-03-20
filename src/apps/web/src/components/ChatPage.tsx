@@ -356,7 +356,7 @@ export function ChatPage() {
   const [sharedMessageId, setSharedMessageId] = useState<string | null>(null)
   const [pendingIncognito, setPendingIncognito] = useState(false)
   const [contextCompactBar, setContextCompactBar] = useState<'running' | 'done' | null>(null)
-  const contextCompactHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const contextCompactHideTimerRef = useRef<number | null>(null)
 
   const clearContextCompactHideTimer = useCallback(() => {
     if (contextCompactHideTimerRef.current != null) {
@@ -2576,8 +2576,8 @@ export function ChatPage() {
               {contextCompactBar && (
                 <ContextCompactBar
                   variant={contextCompactBar}
-                  runningLabel={t.chatCompactBannerRunning}
-                  doneLabel={t.chatCompactBannerDone}
+                  runningLabel={t.desktopSettings.chatCompactBannerRunning}
+                  doneLabel={t.desktopSettings.chatCompactBannerDone}
                 />
               )}
               {messages.map((msg, idx) => {

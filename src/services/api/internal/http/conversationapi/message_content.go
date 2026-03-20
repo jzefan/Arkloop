@@ -15,7 +15,8 @@ const (
 	maxUserMessageProjectionRunes  = 20000
 	maxMessageAttachmentCount      = 8
 	maxMessageAttachmentTotalBytes = 20 << 20
-	maxImageAttachmentBytes        = 10 << 20
+	// MaxImageAttachmentBytes 单图上限（与 Worker 多模态装载一致）。
+	MaxImageAttachmentBytes        = 10 << 20
 	maxTextAttachmentBytes         = 1 << 20
 	maxTextAttachmentRunes         = 12000
 	maxMessageAttachmentTextRunes  = 40000
@@ -113,6 +114,11 @@ func normalizeEditedMessagePayload(existingContentJSON json.RawMessage, body cre
 	return finalizeMessageContent(updated)
 }
 
+// FinalizeMessageContent 与 REST 创建用户消息相同校验，返回 projection 与 content_json。
+func FinalizeMessageContent(content messagecontent.Content) (messagecontent.Content, string, json.RawMessage, error) {
+	return finalizeMessageContent(content)
+}
+
 func finalizeMessageContent(content messagecontent.Content) (messagecontent.Content, string, json.RawMessage, error) {
 	if err := validateMessageContent(content); err != nil {
 		return messagecontent.Content{}, "", nil, err
@@ -148,7 +154,7 @@ func validateMessageContent(content messagecontent.Content) error {
 			if _, ok := supportedImageMIMEs[strings.TrimSpace(part.Attachment.MimeType)]; !ok {
 				return fmt.Errorf("unsupported image mime type")
 			}
-			if part.Attachment.Size > maxImageAttachmentBytes {
+			if part.Attachment.Size > MaxImageAttachmentBytes {
 				return fmt.Errorf("image attachment too large")
 			}
 			totalBytes += part.Attachment.Size

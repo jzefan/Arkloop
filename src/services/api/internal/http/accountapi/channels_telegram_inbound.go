@@ -232,6 +232,33 @@ func collectTelegramInboundAttachments(msg *telegramMessage) []telegramInboundAt
 	return items
 }
 
+func telegramInboundDisplayName(identity data.ChannelIdentity, incoming telegramIncomingMessage) string {
+	displayName := incoming.PlatformUserID
+	if identity.DisplayName != nil && strings.TrimSpace(*identity.DisplayName) != "" {
+		displayName = strings.TrimSpace(*identity.DisplayName)
+	}
+	return displayName
+}
+
+func telegramInboundMetadataJSON(identity data.ChannelIdentity, incoming telegramIncomingMessage, displayName string) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"source":              "telegram",
+		"channel_identity_id": identity.ID.String(),
+		"display_name":        displayName,
+		"platform_chat_id":    incoming.PlatformChatID,
+		"platform_message_id": incoming.PlatformMsgID,
+		"platform_user_id":    incoming.PlatformUserID,
+		"platform_username":   incoming.PlatformUsername,
+		"chat_type":           incoming.ChatType,
+		"conversation_title":  incoming.ConversationTitle,
+		"mentions_bot":        incoming.MentionsBot,
+		"is_reply_to_bot":     incoming.IsReplyToBot,
+		"media_attachments":   incoming.MediaAttachments,
+		"reply_to_message_id": incoming.ReplyToMsgID,
+		"message_thread_id":   incoming.MessageThreadID,
+	})
+}
+
 func buildTelegramStructuredMessage(
 	identity data.ChannelIdentity,
 	incoming telegramIncomingMessage,
@@ -249,10 +276,7 @@ func buildTelegramStructuredMessage(
 	if body == "" {
 		return "", nil, nil, fmt.Errorf("telegram inbound message content is empty")
 	}
-	displayName := incoming.PlatformUserID
-	if identity.DisplayName != nil && strings.TrimSpace(*identity.DisplayName) != "" {
-		displayName = strings.TrimSpace(*identity.DisplayName)
-	}
+	displayName := telegramInboundDisplayName(identity, incoming)
 	projection := buildTelegramEnvelopeText(identity.ID, incoming, displayName, body)
 	content, err := messagecontent.Normalize(messagecontent.FromText(projection).Parts)
 	if err != nil {
@@ -262,22 +286,7 @@ func buildTelegramStructuredMessage(
 	if err != nil {
 		return "", nil, nil, err
 	}
-	metadataJSON, err := json.Marshal(map[string]any{
-		"source":              "telegram",
-		"channel_identity_id": identity.ID.String(),
-		"display_name":        displayName,
-		"platform_chat_id":    incoming.PlatformChatID,
-		"platform_message_id": incoming.PlatformMsgID,
-		"platform_user_id":    incoming.PlatformUserID,
-		"platform_username":   incoming.PlatformUsername,
-		"chat_type":           incoming.ChatType,
-		"conversation_title":  incoming.ConversationTitle,
-		"mentions_bot":        incoming.MentionsBot,
-		"is_reply_to_bot":     incoming.IsReplyToBot,
-		"media_attachments":   incoming.MediaAttachments,
-		"reply_to_message_id": incoming.ReplyToMsgID,
-		"message_thread_id":   incoming.MessageThreadID,
-	})
+	metadataJSON, err := telegramInboundMetadataJSON(identity, incoming, displayName)
 	if err != nil {
 		return "", nil, nil, err
 	}

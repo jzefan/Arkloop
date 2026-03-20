@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
-	"arkloop/services/shared/database"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type noopRiskControl struct{}
@@ -27,46 +28,27 @@ type stubRow struct {
 func (r *stubRow) Scan(dest ...any) error { return r.scanFunc(dest...) }
 
 type stubQuerier struct {
-	queryRowFn func(ctx context.Context, sql string, args ...any) database.Row
-	execFn     func(ctx context.Context, sql string, args ...any) (database.Result, error)
+	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
+	execFn     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-func (q *stubQuerier) QueryRow(ctx context.Context, sql string, args ...any) database.Row {
+func (q *stubQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if q.queryRowFn != nil {
 		return q.queryRowFn(ctx, sql, args...)
 	}
-	return &stubRow{scanFunc: func(dest ...any) error { return database.ErrNoRows }}
+	return &stubRow{scanFunc: func(dest ...any) error { return pgx.ErrNoRows }}
 }
 
-func (q *stubQuerier) Exec(ctx context.Context, sql string, args ...any) (database.Result, error) {
+func (q *stubQuerier) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if q.execFn != nil {
 		return q.execFn(ctx, sql, args...)
 	}
-	return stubResult{tag: "OK 0"}, nil
+	return pgconn.NewCommandTag("OK 0"), nil
 }
 
-func (q *stubQuerier) Query(_ context.Context, _ string, _ ...any) (database.Rows, error) {
+func (q *stubQuerier) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
 	return nil, errors.New("Query not stubbed")
 }
-
-type stubResult struct{ tag string }
-
-func (r stubResult) RowsAffected() int64 {
-	// Parse "OK N" format
-	parts := strings.Fields(r.tag)
-	if len(parts) >= 2 {
-		var n int64
-		for _, c := range parts[len(parts)-1] {
-			if c >= '0' && c <= '9' {
-				n = n*10 + int64(c-'0')
-			}
-		}
-		return n
-	}
-	return 0
-}
-
-func (r stubResult) String() string { return r.tag }
 
 type otpTestEnv struct {
 	userQ       *stubQuerier
@@ -109,17 +91,18 @@ func scanActiveUser(userID uuid.UUID, username, email string, locale *string, em
 	return func(dest ...any) error {
 		*dest[0].(*uuid.UUID) = userID
 		*dest[1].(*string) = username
-		emailPtr := dest[2].(**string)
+		*dest[2].(*string) = "password"
+		emailPtr := dest[3].(**string)
 		*emailPtr = &email
-		*dest[3].(**time.Time) = emailVerifiedAt
-		*dest[4].(*string) = "active"
-		*dest[5].(**time.Time) = nil
-		*dest[6].(**string) = nil
-		*dest[7].(**string) = locale
-		*dest[8].(**string) = nil
-		*dest[9].(**time.Time) = nil
-		*dest[10].(*time.Time) = time.Time{}
-		*dest[11].(*time.Time) = time.Now()
+		*dest[4].(**time.Time) = emailVerifiedAt
+		*dest[5].(*string) = "active"
+		*dest[6].(**time.Time) = nil
+		*dest[7].(**string) = nil
+		*dest[8].(**string) = locale
+		*dest[9].(**string) = nil
+		*dest[10].(**time.Time) = nil
+		*dest[11].(*time.Time) = time.Time{}
+		*dest[12].(*time.Time) = time.Now()
 		return nil
 	}
 }
@@ -175,8 +158,8 @@ func TestNewEmailOTPLoginServiceAllValid(t *testing.T) {
 
 func TestSendLoginOTPUserNotFound(t *testing.T) {
 	env := newOTPTestEnv(t)
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
-		return &stubRow{scanFunc: func(_ ...any) error { return database.ErrNoRows }}
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
+		return &stubRow{scanFunc: func(_ ...any) error { return pgx.ErrNoRows }}
 	}
 
 	err := env.svc.SendLoginOTP(context.Background(), "unknown@example.com")
@@ -187,20 +170,21 @@ func TestSendLoginOTPUserNotFound(t *testing.T) {
 
 func TestSendLoginOTPUserSuspended(t *testing.T) {
 	env := newOTPTestEnv(t)
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*string) = "test"
-			*dest[2].(**string) = ptrStr("suspended@example.com")
-			*dest[3].(**time.Time) = nil
-			*dest[4].(*string) = "suspended"
-			*dest[5].(**time.Time) = nil
-			*dest[6].(**string) = nil
+			*dest[2].(*string) = "password"
+			*dest[3].(**string) = ptrStr("suspended@example.com")
+			*dest[4].(**time.Time) = nil
+			*dest[5].(*string) = "suspended"
+			*dest[6].(**time.Time) = nil
 			*dest[7].(**string) = nil
 			*dest[8].(**string) = nil
-			*dest[9].(**time.Time) = nil
-			*dest[10].(*time.Time) = time.Time{}
-			*dest[11].(*time.Time) = time.Now()
+			*dest[9].(**string) = nil
+			*dest[10].(**time.Time) = nil
+			*dest[11].(*time.Time) = time.Time{}
+			*dest[12].(*time.Time) = time.Now()
 			return nil
 		}}
 	}
@@ -215,11 +199,11 @@ func TestSendLoginOTPSuccess(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*uuid.UUID) = userID
@@ -232,11 +216,11 @@ func TestSendLoginOTPSuccess(t *testing.T) {
 	}
 
 	var enqueueCount int
-	env.jobQ.execFn = func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+	env.jobQ.execFn = func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
 		if strings.Contains(sql, "INSERT INTO jobs") {
 			enqueueCount++
 		}
-		return stubResult{tag: "INSERT 0 1"}, nil
+		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	}
 
 	err := env.svc.SendLoginOTP(context.Background(), "alice@example.com")
@@ -253,11 +237,11 @@ func TestSendLoginOTPChineseLocale(t *testing.T) {
 	userID := uuid.New()
 	zhLocale := "zh"
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "bob", "bob@example.com", &zhLocale, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*uuid.UUID) = userID
@@ -270,14 +254,14 @@ func TestSendLoginOTPChineseLocale(t *testing.T) {
 	}
 
 	var capturedSubject string
-	env.jobQ.execFn = func(_ context.Context, sql string, args ...any) (database.Result, error) {
+	env.jobQ.execFn = func(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 		if strings.Contains(sql, "INSERT INTO jobs") && len(args) >= 3 {
 			payload := args[2].(string)
 			if strings.Contains(payload, "登录验证码") {
 				capturedSubject = "zh"
 			}
 		}
-		return stubResult{tag: "INSERT 0 1"}, nil
+		return pgconn.NewCommandTag("INSERT 0 1"), nil
 	}
 
 	err := env.svc.SendLoginOTP(context.Background(), "bob@example.com")
@@ -292,7 +276,7 @@ func TestSendLoginOTPChineseLocale(t *testing.T) {
 func TestSendLoginOTPDbErrorOnLookup(t *testing.T) {
 	env := newOTPTestEnv(t)
 	dbErr := errors.New("connection refused")
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(_ ...any) error { return dbErr }}
 	}
 
@@ -309,11 +293,11 @@ func TestSendLoginOTPDbErrorOnOtpCreate(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(_ ...any) error { return errors.New("disk full") }}
 	}
 
@@ -330,11 +314,11 @@ func TestSendLoginOTPDbErrorOnEnqueue(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*uuid.UUID) = userID
@@ -346,11 +330,11 @@ func TestSendLoginOTPDbErrorOnEnqueue(t *testing.T) {
 		}}
 	}
 
-	env.jobQ.execFn = func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+	env.jobQ.execFn = func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
 		if strings.Contains(sql, "INSERT INTO jobs") {
-			return stubResult{}, errors.New("queue full")
+			return pgconn.CommandTag{}, errors.New("queue full")
 		}
-		return stubResult{tag: "OK"}, nil
+		return pgconn.NewCommandTag("OK"), nil
 	}
 
 	err := env.svc.SendLoginOTP(context.Background(), "alice@example.com")
@@ -376,8 +360,8 @@ func TestVerifyLoginOTPEmptyCode(t *testing.T) {
 
 func TestVerifyLoginOTPUserNotFound(t *testing.T) {
 	env := newOTPTestEnv(t)
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
-		return &stubRow{scanFunc: func(_ ...any) error { return database.ErrNoRows }}
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
+		return &stubRow{scanFunc: func(_ ...any) error { return pgx.ErrNoRows }}
 	}
 
 	_, err := env.svc.VerifyLoginOTP(context.Background(), "unknown@example.com", "123456")
@@ -394,20 +378,21 @@ func TestVerifyLoginOTPUserSuspended(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = userID
 			*dest[1].(*string) = "test"
-			*dest[2].(**string) = ptrStr("test@example.com")
-			*dest[3].(**time.Time) = nil
-			*dest[4].(*string) = "suspended"
-			*dest[5].(**time.Time) = nil
-			*dest[6].(**string) = nil
+			*dest[2].(*string) = "password"
+			*dest[3].(**string) = ptrStr("test@example.com")
+			*dest[4].(**time.Time) = nil
+			*dest[5].(*string) = "suspended"
+			*dest[6].(**time.Time) = nil
 			*dest[7].(**string) = nil
 			*dest[8].(**string) = nil
-			*dest[9].(**time.Time) = nil
-			*dest[10].(*time.Time) = time.Time{}
-			*dest[11].(*time.Time) = time.Now()
+			*dest[9].(**string) = nil
+			*dest[10].(**time.Time) = nil
+			*dest[11].(*time.Time) = time.Time{}
+			*dest[12].(*time.Time) = time.Now()
 			return nil
 		}}
 	}
@@ -426,12 +411,12 @@ func TestVerifyLoginOTPConsumeNotFound(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
-		return &stubRow{scanFunc: func(_ ...any) error { return database.ErrNoRows }}
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
+		return &stubRow{scanFunc: func(_ ...any) error { return pgx.ErrNoRows }}
 	}
 
 	_, err := env.svc.VerifyLoginOTP(context.Background(), "alice@example.com", "wrong-code")
@@ -449,11 +434,11 @@ func TestVerifyLoginOTPConsumeUserMismatch(t *testing.T) {
 	userID := uuid.New()
 	otherUserID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = otherUserID
 			return nil
@@ -475,11 +460,11 @@ func TestVerifyLoginOTPConsumeDbError(t *testing.T) {
 	userID := uuid.New()
 	dbErr := errors.New("connection reset")
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(_ ...any) error { return dbErr }}
 	}
 
@@ -497,22 +482,22 @@ func TestVerifyLoginOTPSuccessAlreadyVerified(t *testing.T) {
 	userID := uuid.New()
 	verifiedAt := time.Now()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, &verifiedAt)}
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, sql string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, sql string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = userID
 			return nil
 		}}
 	}
 
-	env.membershipQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
-		return &stubRow{scanFunc: func(_ ...any) error { return database.ErrNoRows }}
+	env.membershipQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
+		return &stubRow{scanFunc: func(_ ...any) error { return pgx.ErrNoRows }}
 	}
 
-	env.refreshQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.refreshQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*uuid.UUID) = userID
@@ -545,29 +530,29 @@ func TestVerifyLoginOTPSuccessEmailNotVerified(t *testing.T) {
 	userID := uuid.New()
 
 	var setEmailVerifiedCalled bool
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
-	env.userQ.execFn = func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+	env.userQ.execFn = func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
 		if strings.Contains(sql, "email_verified_at") {
 			setEmailVerifiedCalled = true
-			return stubResult{tag: "UPDATE 1"}, nil
+			return pgconn.NewCommandTag("UPDATE 1"), nil
 		}
-		return stubResult{tag: "OK"}, nil
+		return pgconn.NewCommandTag("OK"), nil
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = userID
 			return nil
 		}}
 	}
 
-	env.membershipQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
-		return &stubRow{scanFunc: func(_ ...any) error { return database.ErrNoRows }}
+	env.membershipQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
+		return &stubRow{scanFunc: func(_ ...any) error { return pgx.ErrNoRows }}
 	}
 
-	env.refreshQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.refreshQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = uuid.New()
 			*dest[1].(*uuid.UUID) = userID
@@ -596,17 +581,17 @@ func TestVerifyLoginOTPSetEmailVerifiedError(t *testing.T) {
 	env := newOTPTestEnv(t)
 	userID := uuid.New()
 
-	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.userQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: scanActiveUser(userID, "alice", "alice@example.com", nil, nil)}
 	}
-	env.userQ.execFn = func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+	env.userQ.execFn = func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
 		if strings.Contains(sql, "email_verified_at") {
-			return stubResult{}, errors.New("db write failed")
+			return pgconn.CommandTag{}, errors.New("db write failed")
 		}
-		return stubResult{tag: "OK"}, nil
+		return pgconn.NewCommandTag("OK"), nil
 	}
 
-	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) database.Row {
+	env.otpQ.queryRowFn = func(_ context.Context, _ string, _ ...any) pgx.Row {
 		return &stubRow{scanFunc: func(dest ...any) error {
 			*dest[0].(*uuid.UUID) = userID
 			return nil

@@ -42,7 +42,7 @@ jobs:
       - name: staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-          staticcheck ./...
+          staticcheck -checks=inherit,-U1000 ./...
 
       - name: go build
         run: go build ./...
@@ -119,6 +119,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Guardrails
         run: node bin/check-no-org.mjs

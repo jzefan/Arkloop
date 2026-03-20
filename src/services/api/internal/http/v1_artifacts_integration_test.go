@@ -16,6 +16,7 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/testutil"
@@ -37,6 +38,7 @@ type artifactTestEnv struct {
 	aliceToken      string
 	aliceUserID     uuid.UUID
 	aliceAccountID      uuid.UUID
+	featureFlagsRepo *data.FeatureFlagRepository
 	store           *fakeHTTPArtifactStore
 }
 
@@ -184,6 +186,14 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	if err != nil {
 		t.Fatalf("new job repo: %v", err)
 	}
+	featureFlagsRepo, err := data.NewFeatureFlagRepository(pool)
+	if err != nil {
+		t.Fatalf("new feature flags repo: %v", err)
+	}
+	featureFlagSvc, err := featureflag.NewService(featureFlagsRepo, nil)
+	if err != nil {
+		t.Fatalf("new feature flag service: %v", err)
+	}
 	authService, err := auth.NewService(userRepo, credRepo, membershipRepo, passwordHasher, tokenService, refreshTokenRepo, nil, nil)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
@@ -197,6 +207,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 	auditWriter := audit.NewWriter(auditRepo, membershipRepo, logger)
 	handler := NewHandler(HandlerConfig{
 		Pool:                   pool,
+		DirectPool:             pool,
 		Logger:                 logger,
 		AuthService:            authService,
 		RegistrationService:    registrationService,
@@ -208,6 +219,8 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		ShellSessionRepo:       shellSessionRepo,
 		AuditWriter:            auditWriter,
 		APIKeysRepo:            apiKeysRepo,
+		FeatureFlagsRepo:       featureFlagsRepo,
+		FeatureFlagService:     featureFlagSvc,
 		ArtifactStore:          store,
 		MessageAttachmentStore: store,
 		EnvironmentStore:       store,
@@ -245,6 +258,7 @@ func buildArtifactEnv(t *testing.T) artifactTestEnv {
 		aliceToken:      regPayload.AccessToken,
 		aliceUserID:     aliceUserID,
 		aliceAccountID:      membership.AccountID,
+		featureFlagsRepo: featureFlagsRepo,
 		store:           store,
 	}
 }

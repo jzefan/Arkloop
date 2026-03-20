@@ -53,8 +53,8 @@ func TestLoadRegistryLoadsClawPersona(t *testing.T) {
 	if def.ExecutorType != "agent.simple" {
 		t.Fatalf("unexpected executor_type: %s", def.ExecutorType)
 	}
-	if def.Budgets.MaxOutputTokens == nil || *def.Budgets.MaxOutputTokens != 12288 {
-		t.Fatalf("unexpected max_output_tokens: %#v", def.Budgets.MaxOutputTokens)
+	if def.Budgets.MaxOutputTokens != nil {
+		t.Fatalf("claw persona.yaml omits max_output_tokens; got %#v", def.Budgets.MaxOutputTokens)
 	}
 	if len(def.ToolAllowlist) == 0 {
 		t.Fatal("expected claw tool allowlist")

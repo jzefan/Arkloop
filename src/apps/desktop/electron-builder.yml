@@ -33,8 +33,8 @@ extraResources:
 
 publish:
   provider: github
-  owner: nicepkg
-  repo: arkloop
+  owner: qqqqqf-q
+  repo: Arkloop
   releaseType: release
 
 mac:

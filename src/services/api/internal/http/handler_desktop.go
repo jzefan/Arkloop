@@ -326,6 +326,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		GatewayRedisClient:      nil,
 		EntitlementsRepo:        cfg.EntitlementsRepo,
 		ConfigResolver:          resolver,
+		MessageAttachmentStore:  cfg.MessageAttachmentStore,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{

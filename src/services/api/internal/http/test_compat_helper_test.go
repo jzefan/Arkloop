@@ -539,12 +539,13 @@ func optionalLiteTrimmedString(value string) *string {
 func buildEffectiveToolCatalog(
 	ctx context.Context,
 	accountID uuid.UUID,
+	projectID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
 	pool *pgxpool.Pool,
 	mcpCache *catalogfamily.EffectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
-	resp, err := catalogfamily.BuildEffectiveToolCatalogCompat(ctx, accountID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+	resp, err := catalogfamily.BuildEffectiveToolCatalogCompat(ctx, accountID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 	if err != nil {
 		return toolCatalogResponse{}, err
 	}

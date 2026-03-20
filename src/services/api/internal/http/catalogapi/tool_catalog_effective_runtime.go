@@ -14,13 +14,24 @@ import (
 	"log/slog"
 )
 
+// *pgxpool.Pool 放进 data.DB 后，nil 指针仍是「非 nil 接口」，这里按真实连接判断。
+func effectiveCatalogPoolReady(pool data.DB) bool {
+	if pool == nil {
+		return false
+	}
+	if p, ok := pool.(*pgxpool.Pool); ok {
+		return p != nil
+	}
+	return true
+}
+
 func buildEffectiveBuiltinToolNameSet(
 	ctx context.Context,
 	pool data.DB,
 	artifactStoreAvailable bool,
 ) map[string]struct{} {
 	var configStore sharedconfig.Store
-	if pool != nil {
+	if effectiveCatalogPoolReady(pool) {
 		configStore = sharedconfig.NewPGXStore(pool)
 	}
 	resolver, _ := sharedconfig.NewResolver(
@@ -32,10 +43,10 @@ func buildEffectiveBuiltinToolNameSet(
 
 	snapshot, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
 		ConfigResolver:         resolver,
-		HasConversationSearch:  pool != nil,
+		HasConversationSearch:  effectiveCatalogPoolReady(pool),
 		ArtifactStoreAvailable: artifactStoreAvailable,
 		LoadPlatformProviders: func(loadCtx context.Context) ([]sharedtoolruntime.ProviderConfig, error) {
-			if pgxPool, ok := pool.(*pgxpool.Pool); ok {
+			if pgxPool, ok := pool.(*pgxpool.Pool); ok && pgxPool != nil {
 				return sharedtoolruntime.LoadPlatformProviders(loadCtx, pgxPool, decryptPlatformProviderSecret)
 			}
 			return nil, nil

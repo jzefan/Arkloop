@@ -19,7 +19,7 @@ import (
 func TestReadyzOKWhenDatabaseReachable(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_readyz_http")
 
-	appDB, _, err := data.NewPool(t.Context(), db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, err := data.NewPool(t.Context(), db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestReadyz503WhenSchemaMismatch(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_readyz_mismatch")
 
 	ctx := context.Background()
-	appDB, _, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
+	appDB, err := data.NewPool(ctx, db.DSN, data.PoolLimits{MaxConns: 32, MinConns: 0})
 	if err != nil {
 		t.Fatalf("new pool: %v", err)
 	}
