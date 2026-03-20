@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	nethttp "net/http"
 	"strings"
 	"time"
@@ -457,7 +458,13 @@ func updateChannel(
 	}
 
 	if req.ConfigJSON != nil {
-		normalizedConfig, _, err := normalizeChannelConfigJSON(ch.ChannelType, *req.ConfigJSON)
+		var normalizedConfig json.RawMessage
+		var err error
+		if ch.ChannelType == "telegram" {
+			normalizedConfig, err = mergeTelegramChannelConfigJSONPatch(ch.ConfigJSON, *req.ConfigJSON)
+		} else {
+			normalizedConfig, _, err = normalizeChannelConfigJSON(ch.ChannelType, *req.ConfigJSON)
+		}
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 			return
@@ -836,6 +843,12 @@ func verifyChannel(
 	username := ""
 	if info.Username != nil {
 		username = *info.Username
+	}
+	merged, changed, mergeErr := mergeTelegramBotProfileFromGetMe(ch.ConfigJSON, info)
+	if mergeErr == nil && changed {
+		if _, uerr := channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{ConfigJSON: &merged}); uerr != nil {
+			slog.Error("channels.telegram.verify_persist_config", "channel_id", channelID.String(), "err", uerr)
+		}
 	}
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: true, BotUsername: username})
 }

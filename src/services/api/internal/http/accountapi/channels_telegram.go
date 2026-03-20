@@ -245,9 +245,7 @@ func mustValidateTelegramActivation(
 	if err != nil {
 		return nil, "", telegramChannelConfig{}, err
 	}
-	if len(cfg.AllowedUserIDs) == 0 {
-		return nil, "", telegramChannelConfig{}, fmt.Errorf("telegram channel requires allowed_user_ids before activation")
-	}
+	// allowed_user_ids 为空：不限制 Telegram user_id（非空时仅允许列表内 ID）。
 	return persona, buildPersonaRef(*persona), cfg, nil
 }
 
@@ -329,33 +327,87 @@ func configureTelegramActivationRemote(
 	return configureTelegramPollingRemote(ctx, client, token)
 }
 
-func mergeTelegramBotUserIDIntoConfigJSON(raw json.RawMessage, botUserID int64) (json.RawMessage, error) {
-	if botUserID == 0 {
-		return nil, fmt.Errorf("telegram_bot_user_id must be non-zero")
+// mergeTelegramChannelConfigJSONPatch 将 patch 覆盖到 existing 的键上；patch 未出现的键保留（避免 Desktop 只发 allowlist/model 时抹掉 bot 元数据）。
+func mergeTelegramChannelConfigJSONPatch(existing, patch json.RawMessage) (json.RawMessage, error) {
+	if len(patch) == 0 {
+		return normalizeChannelConfigJSONFirst(existing)
+	}
+	ex := map[string]any{}
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &ex); err != nil {
+			return nil, fmt.Errorf("config_json must be a valid JSON object")
+		}
+	}
+	if ex == nil {
+		ex = map[string]any{}
+	}
+	patchMap := map[string]any{}
+	if err := json.Unmarshal(patch, &patchMap); err != nil {
+		return nil, fmt.Errorf("config_json must be a valid JSON object")
+	}
+	for k, v := range patchMap {
+		ex[k] = v
+	}
+	merged, err := json.Marshal(ex)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeChannelConfigJSONFirst(merged)
+}
+
+func normalizeChannelConfigJSONFirst(raw json.RawMessage) (json.RawMessage, error) {
+	normalized, _, err := normalizeChannelConfigJSON("telegram", raw)
+	return normalized, err
+}
+
+// mergeTelegramBotProfileFromGetMe 仅在缺省时写入 telegram_bot_user_id / bot_username（与 GetMe 一致）。
+func mergeTelegramBotProfileFromGetMe(raw json.RawMessage, info *telegrambot.BotInfo) (json.RawMessage, bool, error) {
+	if info == nil {
+		return nil, false, fmt.Errorf("telegram getMe result required")
 	}
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{}`)
 	}
+	cfg, err := resolveTelegramConfig("telegram", raw)
+	if err != nil {
+		return nil, false, err
+	}
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if generic == nil {
 		generic = map[string]any{}
 	}
-	generic["telegram_bot_user_id"] = botUserID
+	changed := false
+	if cfg.TelegramBotUserID == 0 && info.ID != 0 {
+		generic["telegram_bot_user_id"] = info.ID
+		changed = true
+	}
+	uname := ""
+	if info.Username != nil {
+		uname = strings.TrimSpace(*info.Username)
+	}
+	uname = strings.TrimPrefix(uname, "@")
+	if strings.TrimSpace(cfg.BotUsername) == "" && uname != "" {
+		generic["bot_username"] = uname
+		changed = true
+	}
+	if !changed {
+		return raw, false, nil
+	}
 	out, err := json.Marshal(generic)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	normalized, _, err := normalizeChannelConfigJSON("telegram", out)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return normalized, nil
+	return normalized, true, nil
 }
 
-// syncTelegramBotUserIDToConfig 在启用频道后写入 getMe 得到的 Bot 数字 ID，供群聊「回复本条 Bot」判定。
+// syncTelegramBotUserIDToConfig 在启用频道后写入 getMe 得到的 Bot ID / username（仅缺省时），供群聊 @ 与回复判定。
 func syncTelegramBotUserIDToConfig(
 	ctx context.Context,
 	channelsRepo *data.ChannelsRepository,
@@ -371,17 +423,17 @@ func syncTelegramBotUserIDToConfig(
 	if err != nil {
 		return nil
 	}
-	if cfg.TelegramBotUserID != 0 {
+	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" {
 		return nil
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
 	defer cancel()
 	info, err := client.GetMe(remoteCtx, strings.TrimSpace(token))
-	if err != nil || info == nil || info.ID == 0 {
+	if err != nil || info == nil {
 		return nil
 	}
-	merged, err := mergeTelegramBotUserIDIntoConfigJSON(current, info.ID)
-	if err != nil {
+	merged, changed, err := mergeTelegramBotProfileFromGetMe(current, info)
+	if err != nil || !changed {
 		return err
 	}
 	_, err = channelsRepo.Update(ctx, channelID, accountID, data.ChannelUpdate{ConfigJSON: &merged})
@@ -428,22 +480,25 @@ type telegramConnector struct {
 	attachmentStore         MessageAttachmentPutStore
 }
 
-func (c telegramConnector) refreshTelegramBotUserID(ctx context.Context, token string, ch *data.Channel) {
+func (c telegramConnector) refreshTelegramBotProfile(ctx context.Context, token string, ch *data.Channel) {
 	if c.channelsRepo == nil || c.telegramClient == nil || ch == nil || strings.TrimSpace(token) == "" {
 		return
 	}
 	cfg, err := resolveTelegramConfig("telegram", ch.ConfigJSON)
-	if err != nil || cfg.TelegramBotUserID != 0 {
+	if err != nil {
+		return
+	}
+	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" {
 		return
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
 	defer cancel()
 	info, err := c.telegramClient.GetMe(remoteCtx, strings.TrimSpace(token))
-	if err != nil || info == nil || info.ID == 0 {
+	if err != nil || info == nil {
 		return
 	}
-	merged, err := mergeTelegramBotUserIDIntoConfigJSON(ch.ConfigJSON, info.ID)
-	if err != nil {
+	merged, changed, err := mergeTelegramBotProfileFromGetMe(ch.ConfigJSON, info)
+	if err != nil || !changed {
 		return
 	}
 	upd, err := c.channelsRepo.Update(ctx, ch.ID, ch.AccountID, data.ChannelUpdate{ConfigJSON: &merged})
@@ -542,7 +597,7 @@ func (c telegramConnector) HandleUpdate(
 	if update.Message == nil || update.Message.From == nil {
 		return nil
 	}
-	c.refreshTelegramBotUserID(ctx, token, &ch)
+	c.refreshTelegramBotProfile(ctx, token, &ch)
 	cfg, err := resolveTelegramConfig(ch.ChannelType, ch.ConfigJSON)
 	if err != nil {
 		return fmt.Errorf("invalid channel config: %w", err)
@@ -1019,6 +1074,9 @@ func parseTelegramWebhookChannelID(path string) (uuid.UUID, bool) {
 }
 
 func telegramUserAllowed(allowed []string, userID string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
 	for _, item := range allowed {
 		if item == userID {
 			return true
