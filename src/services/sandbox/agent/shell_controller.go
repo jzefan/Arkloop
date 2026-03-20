@@ -256,6 +256,7 @@ func (c *ShellController) waitWithCursor(deadline time.Time, initial <-chan stru
 	ch := initial
 	var lastOutputAt time.Time
 	var exitObservedAt time.Time
+	commandRunning := true
 	for {
 		waitFor := time.Until(deadline)
 		if !exitObservedAt.IsZero() {
@@ -270,7 +271,7 @@ func (c *ShellController) waitWithCursor(deadline time.Time, initial <-chan stru
 			if remainingGrace < waitFor {
 				waitFor = remainingGrace
 			}
-		} else if !lastOutputAt.IsZero() {
+		} else if !lastOutputAt.IsZero() && !commandRunning {
 			quietUntil := lastOutputAt.Add(quietOutputWindow)
 			remainingQuiet := time.Until(quietUntil)
 			if remainingQuiet <= 0 {
@@ -288,6 +289,7 @@ func (c *ShellController) waitWithCursor(deadline time.Time, initial <-chan stru
 			now := time.Now()
 			c.mu.Lock()
 			snapshot := c.snapshotLocked(cursor)
+			commandRunning = snapshot.response.Running
 			if snapshot.endCursor > observedEnd {
 				observedEnd = snapshot.endCursor
 				lastOutputAt = now

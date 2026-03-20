@@ -107,6 +107,7 @@ type acpProcess struct {
 	stderr       *limitedBuffer
 	killGrace    time.Duration
 	cleanupDelay time.Duration
+	pumpWG       sync.WaitGroup
 
 	mu       sync.Mutex
 	exitCode *int
@@ -170,6 +171,7 @@ func (m *ACPManager) Start(req ACPStartRequest) (*ACPStartResponse, error) {
 		exitCh:       make(chan struct{}),
 	}
 
+	p.pumpWG.Add(2)
 	go p.pumpOutput(stdoutPipe, true)
 	go p.pumpOutput(stderrPipe, false)
 	go p.waitLoop()
@@ -361,6 +363,7 @@ func (m *ACPManager) scheduleCleanup(p *acpProcess) {
 // ---------- acpProcess goroutines ----------
 
 func (p *acpProcess) pumpOutput(r io.Reader, isStdout bool) {
+	defer p.pumpWG.Done()
 	buf := make([]byte, acpReadBufChunk)
 	for {
 		n, err := r.Read(buf)
@@ -389,6 +392,8 @@ func (p *acpProcess) waitLoop() {
 			code = -1
 		}
 	}
+
+	p.pumpWG.Wait()
 
 	p.mu.Lock()
 	p.exitCode = &code
