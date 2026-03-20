@@ -687,7 +687,6 @@ export interface LocaleStrings {
     chatCompactThresholdLabel: string;
     chatCompactThresholdEarly: string;
     chatCompactThresholdLate: string;
-    chatCompactThresholdDesc: string;
     chatCompactKeepLabel: string;
     chatCompactKeepDesc: string;
     chatCompactSave: string;

@@ -38,6 +38,10 @@ type Props = {
   narrow?: boolean
   desktopMode?: boolean
   appMode?: AppMode
+  /** 设置等覆盖层打开时，URL 仍在 /t/:id 但不要高亮该会话 */
+  suppressActiveThreadHighlight?: boolean
+  /** 点到历史会话时先收起设置等全屏层；否则同 URL 的 navigate 不会触发，桌面端无法回到聊天 */
+  beforeNavigateToThread?: () => void
 }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
@@ -61,11 +65,14 @@ export function Sidebar({
   narrow,
   desktopMode,
   appMode,
+  suppressActiveThreadHighlight,
+  beforeNavigateToThread,
 }: Props) {
   const isClawMode = appMode === 'claw'
   const navigate = useNavigate()
   const location = useLocation()
   const { threadId } = useParams<{ threadId: string }>()
+  const activeThreadId = suppressActiveThreadHighlight ? undefined : threadId
   const { t } = useLocale()
 
   const [starredIds, setStarredIds] = useState<string[]>([])
@@ -312,7 +319,7 @@ export function Sidebar({
                     transition={{ duration: 0.15, ease: 'easeOut' }}
                     className={[
                       'group relative flex w-full items-center rounded-[6px]',
-                      thread.id === threadId || isMenuOpen
+                      thread.id === activeThreadId || isMenuOpen
                         ? 'bg-[var(--c-bg-deep)]'
                         : 'hover:bg-[var(--c-bg-deep)]',
                     ].join(' ')}
@@ -337,10 +344,13 @@ export function Sidebar({
                       />
                     ) : (
                       <button
-                        onClick={() => navigate(`/t/${thread.id}`)}
+                        onClick={() => {
+                          beforeNavigateToThread?.()
+                          navigate(`/t/${thread.id}`)
+                        }}
                         className={[
                           'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] font-[325] group-hover:text-[var(--c-text-primary)]',
-                          thread.id === threadId
+                          thread.id === activeThreadId
                             ? 'text-[var(--c-text-primary)]'
                             : 'text-[var(--c-text-secondary)]',
                         ].join(' ')}

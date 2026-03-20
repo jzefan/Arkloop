@@ -29,6 +29,7 @@ import {
 import { useLocale } from '../../contexts/LocaleContext'
 import { DEFAULT_PERSONA_KEY } from '../../storage'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
+import { SettingsPillToggle } from './_SettingsPillToggle'
 
 type ModelOption = { value: string; label: string }
 
@@ -489,26 +490,13 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
               </div>
             </div>
 
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              onClick={() => {
-                setEnabled((current) => !current)
+            <SettingsPillToggle
+              checked={enabled}
+              onChange={(next) => {
+                setEnabled(next)
                 setSaved(false)
               }}
-              className={[
-                'relative inline-flex h-5 w-10 shrink-0 items-center rounded-[5px] p-[2px] transition-colors duration-200',
-                enabled ? 'bg-[var(--c-accent)]' : 'bg-[var(--c-border)]',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'pointer-events-none inline-block h-4 w-4 rounded-[3px] bg-white transition-transform duration-200',
-                  enabled ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
+            />
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
