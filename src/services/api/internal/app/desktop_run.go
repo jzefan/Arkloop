@@ -519,6 +519,7 @@ func RunDesktop(ctx context.Context) error {
 		CreditsRepo:             creditsRepo,
 		Pool:                    pgxPool,
 		EntitlementService:      entitlementService,
+		TelegramMode:            "polling",
 	})
 
 	// ---- HTTP server ----

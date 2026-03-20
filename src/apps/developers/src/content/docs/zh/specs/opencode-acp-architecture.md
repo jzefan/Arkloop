@@ -809,6 +809,8 @@ Arkloop 接入 OpenCode 的第一阶段，最简单且最稳的方案是：
 
 ### PR-7.1：Desktop Local Process Host + OpenCode 首接入
 
+当前状态：**已完成**
+
 目标：让 Desktop 先以 OpenCode 作为第一个 provider 真正跑通。
 
 范围：
@@ -817,6 +819,14 @@ Arkloop 接入 OpenCode 的第一阶段，最简单且最稳的方案是：
 - 增加 OpenCode provider preset，启动命令固定为 `opencode acp`
 - 允许保留 custom command provider，便于后续接入 Codex / Claude / Gemini
 - 处理 Desktop provider 的干净配置目录与启动超时治理
+
+实现要点：
+
+- **Local host**：`worker/internal/acp/local_host.go`，`HostKindLocal` 时 `ResolveProcessHost` 走本地子进程
+- **Preset**：`worker/internal/acp/provider.go` 内置 `acp.opencode` → `command`+`args` 等价于 `opencode acp`
+- **自定义启动行**：平台 `acp` provider 的 `config_json.command` 可为字符串（按空白分词）或字符串数组，覆盖预设的 `command`/`args`；`env_overrides` / `cwd` 仍生效
+- **干净配置目录**：`acp_agent` 在本地宿主且为默认 OpenCode provider、且环境与配置未提供 `XDG_CONFIG_HOME` 时，注入 `{ARKLOOP_DATA_DIR 或 ~/.arkloop}/acp-runs/{run_id}/config`（`worker/internal/tools/builtin/acptool/local_config_home.go`）
+- **启动超时**：`session/new` 握手单独限时：`BridgeConfig.SessionHandshakeTimeoutMs`（0 则默认 180s）；`ExecutionContext.TimeoutMs` 存在时用于握手并在 30s～300s 内截断。`BridgeConfig.ProcessStartTimeoutMs` 映射到 host `StartRequest.TimeoutMs`（长驻会话默认 0，避免误杀进程；本地 host 对非 0 值的语义见单测）
 
 验收标准：
 
@@ -958,8 +968,8 @@ LLM -> acp_agent(task="...", profile="strong")
 6. PR-6 前端展示（延后，复用 subagent UI）
 7. PR-7 ACP Host 抽象与 Provider 规格
 8. PR-7.0.1 Session-first 文档收敛与协议校准
-9. PR-7.1 Desktop Local Process Host + OpenCode 首接入
-10. 真实测试：验证 Desktop 完整链路（ACP session / `acp_agent` -> OpenCode -> 完成编码任务）
+9. PR-7.1 Desktop Local Process Host + OpenCode 首接入（已完成）
+10. 真实测试：本机安装 `opencode` 后跑 Desktop 完整链路（ACP session / `acp_agent` -> OpenCode -> 完成编码任务）；可选 `ARKLOOP_RUN_ACP_CONTRACT=1` 跑 `worker/internal/acp/opencode_contract_test.go`
 11. PR-7.5 SaaS LLM Proxy + Profile 映射补齐运行态 wiring
 12. PR-9 权限确认与治理增强（已完成）
 13. PR-10 恢复与复用（已完成第一版）

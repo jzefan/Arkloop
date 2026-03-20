@@ -1,3 +1,4 @@
+import { isACPDelegateEventData } from '@arkloop/shared'
 import type { RunEvent } from './sse'
 
 export type TurnToolCallRef = {
@@ -167,6 +168,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
   }
 
   if (event.type === 'message.delta') {
+    if (isACPDelegateEventData(event.data)) return
     const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
     const delta = obj.content_delta
     const isAssistant =
@@ -181,6 +183,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
   }
 
   if (event.type === 'tool.call') {
+    if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     if (toolName === TIMELINE_TITLE_TOOL) {
       ensureCop()
@@ -204,6 +207,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
   }
 
   if (event.type === 'tool.result') {
+    if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     const toolCallId = pickToolCallId(event)
     const result = extractResultPayload(event)

@@ -649,7 +649,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                           : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(entry.item as CodeExecution) : undefined} isActive={activeCodeExecutionId === entry.item.id} />
                         )}
                         {entry.kind === 'agent' && (
-                          <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={live} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
+                          <SubAgentBlock sourceTool={entry.item.sourceTool} nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={live} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                         )}
                         {entry.kind === 'fileop' && (
                           <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth={!!live} />
@@ -716,7 +716,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                               <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: agent.status === 'completed' ? 'var(--c-text-muted)' : agent.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)', border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                            <SubAgentBlock nickname={agent.nickname} personaId={agent.personaId} input={agent.input} output={agent.output} status={agent.status} error={agent.error} live={live} currentRunId={agent.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
+                            <SubAgentBlock sourceTool={agent.sourceTool} nickname={agent.nickname} personaId={agent.personaId} input={agent.input} output={agent.output} status={agent.status} error={agent.error} live={live} currentRunId={agent.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                           </div>
                         )
                       })}

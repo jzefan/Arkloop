@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -26,14 +27,35 @@ import (
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	"arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"arkloop/services/worker/internal/tools/builtin/platform"
 	sandboxtool "arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	memorytool "arkloop/services/worker/internal/tools/memory"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
+
+type pgTelegramChannelTokenLoader struct {
+	pool *pgxpool.Pool
+	repo data.ChannelDeliveryRepository
+}
+
+func (l *pgTelegramChannelTokenLoader) BotToken(ctx context.Context, channelID uuid.UUID) (string, error) {
+	if l.pool == nil {
+		return "", fmt.Errorf("telegram channel tools: db unavailable")
+	}
+	ch, err := l.repo.GetChannel(ctx, l.pool, channelID)
+	if err != nil {
+		return "", err
+	}
+	if ch == nil {
+		return "", fmt.Errorf("telegram channel tools: channel not found")
+	}
+	return strings.TrimSpace(ch.Token), nil
+}
 
 const runtimeSnapshotTTL = 5 * time.Second
 
@@ -248,6 +270,11 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
+	var chTelegram channel_telegram.TokenLoader
+	if pool != nil {
+		chTelegram = &pgTelegramChannelTokenLoader{pool: pool}
+	}
+
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                       router,
 		DBPool:                       pool,
@@ -275,6 +302,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		RoutingConfigLoader:          routingLoader,
 		MessageAttachmentStore:       messageAttachmentStore,
 		PlatformToolExecutor:         platformExec,
+		ChannelTelegramLoader:        chTelegram,
 	})
 }
 

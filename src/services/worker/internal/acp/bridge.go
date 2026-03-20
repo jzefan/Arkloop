@@ -15,7 +15,25 @@ const (
 	defaultPollInterval   = 500 * time.Millisecond
 	defaultReadMaxBytes   = 32 * 1024
 	defaultControlTimeout = 5 * time.Second
+	// handshake 只覆盖 session/new 等待，不限制长驻进程寿命
+	defaultSessionHandshakeTimeoutMs = 180000
+
+	// delegateLayerKey 标记事件来自 ACP 子进程（OpenCode），与主 Agent 的 tool/message 流区分，供前端/UI 过滤。
+	delegateLayerKey   = "delegate_layer"
+	delegateLayerValue = "acp"
 )
+
+func acpDelegateData(data map[string]any) map[string]any {
+	if data == nil {
+		data = map[string]any{}
+	}
+	out := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	out[delegateLayerKey] = delegateLayerValue
+	return out
+}
 
 // BridgeConfig holds configuration for a single ACP bridge run.
 type BridgeConfig struct {
@@ -30,6 +48,11 @@ type BridgeConfig struct {
 	ReadMaxBytes   int           // max bytes per read, default 32KB
 	KillGraceMs    int           // configurable kill grace period
 	CleanupDelayMs int           // configurable cleanup delay
+	// ProcessStartTimeoutMs 传给 host Start：>0 时 Local/Sandbox 会在该毫秒后对子进程强杀。
+	// 长驻 ACP 会话应置 0，否则会误杀后续 turn。
+	ProcessStartTimeoutMs int
+	// SessionHandshakeTimeoutMs 仅约束 session/new 首包等待；0 表示 defaultSessionHandshakeTimeoutMs。
+	SessionHandshakeTimeoutMs int
 	// StandardCancelCalibrated gates session/cancel usage behind an explicit
 	// contract calibration flag. When false, cancellation falls back to host stop.
 	StandardCancelCalibrated bool
@@ -128,13 +151,13 @@ func (b *Bridge) EnsureSession(ctx context.Context) (*EnsureSessionResult, error
 }
 
 func (b *Bridge) emitRunStarted(reused bool, emitter events.Emitter, yield func(events.RunEvent) error) error {
-	return yield(emitter.Emit("run.started", map[string]any{
+	return yield(emitter.Emit("run.started", acpDelegateData(map[string]any{
 		"status":              "working",
 		"command":             b.config.Command,
 		"agent_version":       b.agentVersion,
 		"runtime_session_key": b.config.RuntimeSessionKey,
 		"reused":              reused,
-	}, nil, nil))
+	}), nil, nil))
 }
 
 // RunPrompt sends a prompt to an already-established ACP session.
@@ -184,6 +207,7 @@ func (b *Bridge) ensureHostProcess(ctx context.Context, result *EnsureSessionRes
 		Command:           cmd,
 		Cwd:               b.config.Cwd,
 		Env:               b.config.Env,
+		TimeoutMs:         b.config.ProcessStartTimeoutMs,
 		KillGraceMs:       b.config.KillGraceMs,
 		CleanupDelayMs:    b.config.CleanupDelayMs,
 	})
@@ -204,7 +228,13 @@ func (b *Bridge) ensureProtocolSession(ctx context.Context, result *EnsureSessio
 	if err := b.sendMessage(ctx, NewSessionNewMessage(b.nextID(), SessionModeCode, b.config.Cwd)); err != nil {
 		return fmt.Errorf("bridge: send session/new: %w", err)
 	}
-	if err := b.waitForSessionNew(ctx); err != nil {
+	handshakeMs := b.config.SessionHandshakeTimeoutMs
+	if handshakeMs <= 0 {
+		handshakeMs = defaultSessionHandshakeTimeoutMs
+	}
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, time.Duration(handshakeMs)*time.Millisecond)
+	defer cancelHandshake()
+	if err := b.waitForSessionNew(handshakeCtx); err != nil {
 		return fmt.Errorf("bridge: wait for session/new response: %w", err)
 	}
 	result.Created = true
@@ -364,7 +394,7 @@ func (b *Bridge) pollUpdates(ctx context.Context, emitter events.Emitter, yield 
 			} else if resp.Stderr != "" {
 				diagnostic["stderr_tail"] = resp.Stderr[len(resp.Stderr)-1024:]
 			}
-			return yield(emitter.Emit("run.failed", diagnostic, nil, &errClass))
+			return yield(emitter.Emit("run.failed", acpDelegateData(diagnostic), nil, &errClass))
 		}
 
 		select {
@@ -389,7 +419,7 @@ func (b *Bridge) handleCancellation(emitter events.Emitter, yield func(events.Ru
 			stopped, err := b.waitForTurnStop()
 			if err == nil && stopped {
 				cancelPayload["cancel_mode"] = "session_cancel"
-				return yield(emitter.Emit("run.cancelled", cancelPayload, nil, nil))
+				return yield(emitter.Emit("run.cancelled", acpDelegateData(cancelPayload), nil, nil))
 			}
 			slog.Warn("acp: session cancel did not settle turn, falling back to host stop", "error", err, "process_id", b.hostProcessID)
 			cancelPayload["fallback_from"] = "session_cancel"
@@ -408,10 +438,10 @@ func (b *Bridge) handleCancellation(emitter events.Emitter, yield func(events.Ru
 			failed["fallback_from"] = fallbackFrom
 		}
 		failed["stop_error"] = err.Error()
-		return yield(emitter.Emit("run.failed", failed, nil, &errClass))
+		return yield(emitter.Emit("run.failed", acpDelegateData(failed), nil, &errClass))
 	}
 
-	return yield(emitter.Emit("run.cancelled", cancelPayload, nil, nil))
+	return yield(emitter.Emit("run.cancelled", acpDelegateData(cancelPayload), nil, nil))
 }
 
 func (b *Bridge) handlePermissionRequest(emitter events.Emitter, yield func(events.RunEvent) error, update SessionUpdateParams) error {
@@ -422,13 +452,13 @@ func (b *Bridge) handlePermissionRequest(emitter events.Emitter, yield func(even
 		"runtime_session_key", b.config.RuntimeSessionKey,
 	)
 
-	if err := yield(emitter.Emit("acp.permission_required", map[string]any{
+	if err := yield(emitter.Emit("acp.permission_required", acpDelegateData(map[string]any{
 		"permission_id":      update.PermissionID,
 		"description":        update.Content,
 		"sensitive":          update.Sensitive,
 		"approved":           false,
 		"response_supported": false,
-	}, nil, nil)); err != nil {
+	}), nil, nil)); err != nil {
 		return err
 	}
 
@@ -448,7 +478,7 @@ func (b *Bridge) handlePermissionRequest(emitter events.Emitter, yield func(even
 	if stopErr != nil {
 		failed["stop_error"] = stopErr.Error()
 	}
-	return yield(emitter.Emit("run.failed", failed, nil, &errClass))
+	return yield(emitter.Emit("run.failed", acpDelegateData(failed), nil, &errClass))
 }
 
 func (b *Bridge) sendStandardCancel() error {
@@ -533,49 +563,49 @@ func mapUpdateToEvent(update SessionUpdateParams, emitter events.Emitter) (event
 	switch update.Type {
 	case UpdateTypeStatus:
 		if update.Status == StatusWorking {
-			return emitter.Emit("run.started", map[string]any{"status": "working"}, nil, nil), true
+			return emitter.Emit("run.started", acpDelegateData(map[string]any{"status": "working"}), nil, nil), true
 		}
 		return events.RunEvent{}, false
 
 	case UpdateTypeTextDelta:
-		return emitter.Emit("message.delta", map[string]any{
+		return emitter.Emit("message.delta", acpDelegateData(map[string]any{
 			"content_delta": update.Content,
 			"role":          "assistant",
-		}, nil, nil), true
+		}), nil, nil), true
 
 	case UpdateTypeToolCall:
 		name := update.Name
 		// tool_call_update with status "completed" has result content
 		if update.Status == "completed" {
-			return emitter.Emit("tool.result", map[string]any{
+			return emitter.Emit("tool.result", acpDelegateData(map[string]any{
 				"tool_name": update.Name,
 				"output":    update.Output,
-			}, &name, nil), true
+			}), &name, nil), true
 		}
-		return emitter.Emit("tool.call", map[string]any{
+		return emitter.Emit("tool.call", acpDelegateData(map[string]any{
 			"tool_name": update.Name,
 			"arguments": update.Arguments,
-		}, &name, nil), true
+		}), &name, nil), true
 
 	case UpdateTypeToolResult:
 		name := update.Name
-		return emitter.Emit("tool.result", map[string]any{
+		return emitter.Emit("tool.result", acpDelegateData(map[string]any{
 			"tool_name": update.Name,
 			"output":    update.Output,
-		}, &name, nil), true
+		}), &name, nil), true
 
 	case UpdateTypeComplete:
-		return emitter.Emit("run.completed", map[string]any{
+		return emitter.Emit("run.completed", acpDelegateData(map[string]any{
 			"summary": update.Summary,
-		}, nil, nil), true
+		}), nil, nil), true
 
 	case UpdateTypeError:
 		errClass := "acp.agent_error"
-		return emitter.Emit("run.failed", map[string]any{
+		return emitter.Emit("run.failed", acpDelegateData(map[string]any{
 			"error_class": errClass,
 			"message":     update.Message,
 			"layer":       "opencode",
-		}, nil, &errClass), true
+		}), nil, &errClass), true
 	}
 
 	return events.RunEvent{}, false

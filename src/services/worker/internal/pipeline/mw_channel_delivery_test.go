@@ -391,6 +391,7 @@ func TestRecordChannelDeliverySuccessRollsBackOnLedgerFailure(t *testing.T) {
 		data.ChannelDeliveryRepository{},
 		data.ChannelMessageLedgerRepository{},
 		rc,
+		nil,
 		[]string{"701"},
 	)
 	if err == nil {

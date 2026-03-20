@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ACP_DELEGATE_LAYER } from '@arkloop/shared'
 import {
   applyRunEventToWebSearchSteps,
   isWebSearchToolName,
@@ -56,5 +57,54 @@ describe('applyRunEventToWebSearchSteps', () => {
     expect(steps[0]?.queries).toEqual(['q1'])
     steps = applyRunEventToWebSearchSteps(steps, result)
     expect(steps.some((s) => s.kind === 'reviewing')).toBe(true)
+  })
+
+  it('忽略 delegate_layer 的搜索工具与内层 run 生命周期', () => {
+    const d = { delegate_layer: ACP_DELEGATE_LAYER }
+    const delegateCall: RunEvent = {
+      type: 'tool.call',
+      seq: 1,
+      ts: '',
+      event_id: 'e1',
+      run_id: 'r',
+      data: {
+        ...d,
+        tool_name: 'web_search',
+        tool_call_id: 'inner',
+        arguments: { query: 'q' },
+      },
+    }
+    expect(applyRunEventToWebSearchSteps([], delegateCall)).toEqual([])
+
+    const active = applyRunEventToWebSearchSteps([], {
+      type: 'tool.call',
+      seq: 2,
+      ts: '',
+      event_id: 'e2',
+      run_id: 'r',
+      data: {
+        tool_name: 'web_search',
+        tool_call_id: 'host',
+        arguments: { query: 'h' },
+      },
+    })
+    expect(active).toHaveLength(1)
+    expect(active[0]?.status).toBe('active')
+
+    const afterInnerComplete = applyRunEventToWebSearchSteps(active, {
+      type: 'run.completed',
+      seq: 3,
+      ts: '',
+      event_id: 'e3',
+      run_id: 'r',
+      data: { ...d },
+    })
+    expect(afterInnerComplete).toEqual(active)
+
+    const afterHostComplete = applyRunEventToWebSearchSteps(
+      afterInnerComplete,
+      { type: 'run.completed', seq: 4, ts: '', event_id: 'e4', run_id: 'r', data: {} },
+    )
+    expect(afterHostComplete.every((s) => s.status === 'done')).toBe(true)
   })
 })

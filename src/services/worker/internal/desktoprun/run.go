@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	api "arkloop/services/api"
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/eventbus"
@@ -97,6 +98,10 @@ func RunDesktop(ctx context.Context) error {
 		return fmt.Errorf("desktop lifecycle bootstrap: %w", err)
 	}
 	lifecycle.Start(ctx)
+
+	if err := api.StartDesktopTelegramPollWorker(ctx, db); err != nil {
+		return fmt.Errorf("telegram desktop poll: %w", err)
+	}
 
 	handler := &desktopHandler{
 		db:     db,

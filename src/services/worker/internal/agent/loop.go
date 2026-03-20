@@ -85,6 +85,8 @@ type RunContext struct {
 	// ToolOutputScanFunc 扫描 tool output，检测间接注入。
 	// 返回 (sanitized, true) 表示检测到注入；返回 ("", false) 表示安全。
 	ToolOutputScanFunc func(toolName, text string) (string, bool)
+
+	Channel *tools.ChannelToolSurface
 }
 
 type Loop struct {
@@ -521,6 +523,7 @@ func (l *Loop) executeToolCall(
 		Emitter:                          emitter,
 		PendingMemoryWrites:              runCtx.PendingMemoryWrites,
 		RuntimeSnapshot:                  runCtx.Runtime,
+		Channel:                          runCtx.Channel,
 	}
 	return runCtx.ToolExecutor.Execute(ctx, call.ToolName, copyMap(call.ArgumentsJSON), execCtx, call.ToolCallID)
 }

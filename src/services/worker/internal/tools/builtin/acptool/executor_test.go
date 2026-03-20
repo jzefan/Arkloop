@@ -127,3 +127,21 @@ func TestBuildRuntimeSessionKey(t *testing.T) {
 		t.Fatal("runtime session key should distinguish provider")
 	}
 }
+
+func TestSessionHandshakeTimeoutMsClamp(t *testing.T) {
+	if v := sessionHandshakeTimeoutMs(tools.ExecutionContext{}); v != 0 {
+		t.Fatalf("nil timeout: got %d", v)
+	}
+	mid := 90000
+	if v := sessionHandshakeTimeoutMs(tools.ExecutionContext{TimeoutMs: &mid}); v != 90000 {
+		t.Fatalf("mid: got %d", v)
+	}
+	low := 1000
+	if v := sessionHandshakeTimeoutMs(tools.ExecutionContext{TimeoutMs: &low}); v != 30000 {
+		t.Fatalf("min clamp: got %d", v)
+	}
+	high := 99999999
+	if v := sessionHandshakeTimeoutMs(tools.ExecutionContext{TimeoutMs: &high}); v != 300000 {
+		t.Fatalf("max clamp: got %d", v)
+	}
+}

@@ -129,6 +129,7 @@ func (e *InteractiveExecutor) Execute(
 		WaitForInput:                     rc.WaitForInput,
 		UserPromptScanFunc:               rc.UserPromptScanFunc,
 		ToolOutputScanFunc:               rc.ToolOutputScanFunc,
+		Channel:                          rc.ChannelToolSurface,
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},

@@ -68,6 +68,7 @@ import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copS
 import { applyRunEventToWebSearchSteps, isWebSearchToolName } from '../webSearchTimelineFromRunEvent'
 import { useLocale } from '../contexts/LocaleContext'
 import { apiBaseUrl } from '@arkloop/shared/api'
+import { isACPDelegateEventData } from '@arkloop/shared'
 import type { UserInputRequest, UserInputResponse, RequestedSchema } from '../userInputTypes'
 import {
   createMessage,
@@ -1294,6 +1295,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'message.delta') {
+        if (isACPDelegateEventData(event.data)) continue
         noResponseMsgIdRef.current = null
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
@@ -1346,6 +1348,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'tool.call') {
+        if (isACPDelegateEventData(event.data)) continue
         seenFirstToolCallInRunRef.current = true
         const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
@@ -1439,6 +1442,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'tool.result') {
+        if (isACPDelegateEventData(event.data)) continue
         const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown; error?: unknown }
         const resultToolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
         if (isWebSearchToolName(resultToolName)) {
@@ -1591,6 +1595,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.completed') {
+        if (isACPDelegateEventData(event.data)) continue
         const completedRunId = event.run_id
         injectionBlockedRunIdRef.current = null
         noResponseMsgIdRef.current = null
@@ -1704,6 +1709,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.cancelled') {
+        if (isACPDelegateEventData(event.data)) continue
         const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
         injectionBlockedRunIdRef.current = null
         sse.disconnect()
@@ -1735,6 +1741,7 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.failed') {
+        if (isACPDelegateEventData(event.data)) continue
         injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
@@ -2963,7 +2970,7 @@ export function ChatPage() {
                             : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
                           )}
                           {entry.kind === 'agent' && (
-                            <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
+                            <SubAgentBlock sourceTool={entry.item.sourceTool} nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                           )}
                           {entry.kind === 'fileop' && (
                             <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />

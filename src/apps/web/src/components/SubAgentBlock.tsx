@@ -7,6 +7,7 @@ import { useSubAgentCop } from '../hooks/useSubAgentCop'
 import { CopTimeline } from './CopTimeline'
 
 type Props = {
+  sourceTool?: 'acp_agent'
   nickname?: string
   role?: string
   personaId?: string
@@ -35,6 +36,7 @@ function maskFor(edge: ScrollEdge): string | undefined {
 }
 
 export function SubAgentBlock({
+  sourceTool,
   nickname,
   personaId,
   input,
@@ -52,7 +54,10 @@ export function SubAgentBlock({
   const [scrollEdge, setScrollEdge] = useState<ScrollEdge>('none')
 
   const displayOutput = output?.trim() ? output : error?.trim() ? error : undefined
-  const rawLabel = nickname || personaId || t.agentSubAgent
+  const rawLabel =
+    sourceTool === 'acp_agent'
+      ? t.agentAcpAgent
+      : (nickname || personaId || t.agentSubAgent)
   const streamTw = !!live
   const displayedLabel = useTypewriter(rawLabel, !streamTw)
   const inputTrimmed = input?.trim() ?? ''
