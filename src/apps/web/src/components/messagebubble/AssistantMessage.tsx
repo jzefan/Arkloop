@@ -8,11 +8,14 @@ import { DocumentCard } from '../DocumentCard'
 import { BrowserScreenshotCard } from '../BrowserScreenshotCard'
 import type { ArtifactAction } from '../ArtifactIframe'
 import { useLocale } from '../../contexts/LocaleContext'
+import { useTypewriter } from '../../hooks/useTypewriter'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
 
 type Props = {
   message: MessageResponse
+  /** 与 ChatPage 中「正在流式且为最后一条助手气泡」对齐；未分段正文用 */
+  streamMarkdown?: boolean
   onRetry?: () => void
   onFork?: () => void
   onShare?: () => void
@@ -29,6 +32,8 @@ type Props = {
   onViewRunDetail?: () => void
   contentPrefix?: string
   contentOverride?: string
+  /** 与正文展示解耦的复制文本（例如分段 Markdown 合并） */
+  plainTextForCopy?: string
 }
 
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
@@ -53,6 +58,7 @@ function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessTok
 
 export function AssistantMessage({
   message,
+  streamMarkdown = false,
   onRetry,
   onFork,
   onShare,
@@ -69,13 +75,16 @@ export function AssistantMessage({
   onViewRunDetail,
   contentPrefix,
   contentOverride,
+  plainTextForCopy,
 }: Props) {
   const { t } = useLocale()
   const [copied, setCopied] = useState(false)
   const renderedContent = contentOverride ?? (contentPrefix && message.content.startsWith(contentPrefix) ? message.content.slice(contentPrefix.length).trimStart() : message.content)
+  const textForCopy = plainTextForCopy ?? renderedContent
+  const displayedAssistantMd = useTypewriter(renderedContent, !streamMarkdown)
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(renderedContent).then(() => {
+    void navigator.clipboard.writeText(textForCopy).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -108,8 +117,16 @@ export function AssistantMessage({
           )
         })()}
         {renderBrowserScreenshots(browserActions, accessToken)}
-        <MarkdownRenderer content={renderedContent} webSources={webSources} artifacts={artifacts} accessToken={accessToken} runId={message.run_id} onOpenDocument={onOpenDocument} />
-        <div style={{ marginTop: '12px' }}>
+        <MarkdownRenderer
+          content={displayedAssistantMd}
+          webSources={webSources}
+          artifacts={artifacts}
+          accessToken={accessToken}
+          runId={message.run_id}
+          onOpenDocument={onOpenDocument}
+          trimTrailingMargin
+        />
+        <div style={{ marginTop: '4px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
             <div style={{ position: 'relative' }}>
               <button

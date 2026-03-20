@@ -9,6 +9,8 @@ import { useTypewriter } from '../hooks/useTypewriter'
 
 type Props = {
   message: MessageResponse
+  /** 仅当前线程正在 SSE 且本条为最后一条助手消息时为 true */
+  streamAssistantMarkdown?: boolean
   animateUserEnter?: boolean
   onRetry?: () => void
   onEdit?: (newContent: string) => void
@@ -27,9 +29,10 @@ type Props = {
   onViewRunDetail?: () => void
   contentPrefix?: string
   contentOverride?: string
+  plainTextForCopy?: string
 }
 
-export function MessageBubble({ message, animateUserEnter, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride }: Props) {
+export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy }: Props) {
   if (message.role === 'user') {
     return (
       <UserMessage
@@ -45,6 +48,7 @@ export function MessageBubble({ message, animateUserEnter, onRetry, onEdit, onFo
   return (
     <AssistantMessage
       message={message}
+      streamMarkdown={streamAssistantMarkdown}
       onRetry={onRetry}
       onFork={onFork}
       onShare={onShare}
@@ -61,6 +65,7 @@ export function MessageBubble({ message, animateUserEnter, onRetry, onEdit, onFo
       onViewRunDetail={onViewRunDetail}
       contentPrefix={contentPrefix}
       contentOverride={contentOverride}
+      plainTextForCopy={plainTextForCopy}
     />
   )
 }

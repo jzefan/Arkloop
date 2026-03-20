@@ -249,6 +249,7 @@ var registry = []ToolMeta{
 			"CSS variables (--c-bg-page, --c-text-primary, --c-border etc.) are automatically available. " +
 			"The host runtime provides preloaded SVG helper classes and host skin tokens; keep the outer shell transparent and host-native. " +
 			"To send a follow-up message from a widget: call sendPrompt(text). " +
+			"Optionally set loading_messages to 1-4 short lines shown while widget_code streams. " +
 			"NEVER use python_execute + exec_command open for HTML visualizations.",
 	},
 	{

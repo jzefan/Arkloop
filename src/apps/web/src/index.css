@@ -543,6 +543,34 @@ button:not(:disabled) {
   margin-top: 0 !important;
 }
 
+/*
+ * 源码中的单独空行在 AST 里变成「前一块 + 标题」相邻兄弟，p 的 margin-bottom 与标题的 margin-top 会叠成接近一整行高。
+ * 收紧为约半行感受（须 !important 才能压过 MarkdownRenderer 内联 margin）。
+ */
+.md-content p:has(+ :is(h1, h2, h3, h4, h5, h6)),
+.md-content ul:has(+ :is(h1, h2, h3, h4, h5, h6)),
+.md-content ol:has(+ :is(h1, h2, h3, h4, h5, h6)),
+.md-content blockquote:has(+ :is(h1, h2, h3, h4, h5, h6)) {
+  margin-bottom: 0.3em !important;
+}
+.md-content p + :is(h1, h2, h3, h4, h5, h6),
+.md-content ul + :is(h1, h2, h3, h4, h5, h6),
+.md-content ol + :is(h1, h2, h3, h4, h5, h6),
+.md-content blockquote + :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.55em !important;
+}
+.md-content p + h1,
+.md-content ul + h1,
+.md-content ol + h1,
+.md-content blockquote + h1 {
+  margin-top: 0.65em !important;
+}
+
+/* turn 内正文紧接 SearchTimeline：覆盖内联 margin-bottom */
+.md-content.md-content--trim-trailing > *:last-child {
+  margin-bottom: 0 !important;
+}
+
 .md-content--compact .md-table {
   font-size: 13px;
 }

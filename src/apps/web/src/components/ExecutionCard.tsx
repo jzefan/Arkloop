@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, ChevronDown, Check, Copy, Loader2 } from 'lucide-react'
 import { useLocale } from '../contexts/LocaleContext'
+import { useTypewriter } from '../hooks/useTypewriter'
 
 type Status = 'running' | 'success' | 'failed' | 'completed'
 
@@ -13,6 +14,8 @@ type Props = {
   output?: string
   errorMessage?: string
   status: Status
+  /** 仅流式时为 true：逐字平滑；历史/静态为 false 立即展示 */
+  smooth?: boolean
 }
 
 const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
@@ -100,7 +103,7 @@ function StatusBadge({ status }: { status: Status }) {
   )
 }
 
-export function ExecutionCard({ variant, toolName, label, code, output, errorMessage, status }: Props) {
+export function ExecutionCard({ variant, toolName, label, code, output, errorMessage, status, smooth = false }: Props) {
   const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const [cmdHovered, setCmdHovered] = useState(false)
@@ -116,6 +119,10 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
     : errorMessage?.trim()
       ? errorMessage
       : undefined
+  const previewTw = useTypewriter(preview, !smooth)
+  const shellCodeTw = useTypewriter(variant === 'shell' && code ? code.trim() : '', !smooth)
+  const outputForTw = displayOutput?.trimEnd() ?? ''
+  const outputTw = useTypewriter(outputForTw, !smooth)
   const hasOutput = !!displayOutput
   const hasCommand = variant === 'shell' && !!code
   const expandable = !!(hasCommand || displayOutput || status === 'running')
@@ -179,7 +186,7 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
           color: 'var(--c-text-muted)',
           transition: 'color 150ms ease',
         }}>
-          {preview}
+          {previewTw}
         </span>
         {expandable && (
           expanded
@@ -236,7 +243,7 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
                     overflowY: 'auto',
                     paddingRight: '34px',
                   }}>
-                    <span style={{ color: 'var(--c-text-muted)' }}>$ </span>{code.trim()}
+                    <span style={{ color: 'var(--c-text-muted)' }}>$ </span>{shellCodeTw}
                   </pre>
                 </div>
               )}
@@ -282,7 +289,7 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
                       }}>
-                        {displayOutput!.trimEnd()}
+                        {outputTw}
                       </pre>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '20px' }}>

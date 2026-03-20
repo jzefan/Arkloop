@@ -32,6 +32,15 @@ var LlmSpec = llm.ToolSpec{
 				"type":        "string",
 				"description": "raw HTML fragment. Order: <style>, HTML structure, <script>. MUST be last parameter.",
 			},
+			"loading_messages": map[string]any{
+				"type":        "array",
+				"description": "optional short status lines while the widget streams (1-4 items)",
+				"items": map[string]any{
+					"type": "string",
+				},
+				"minItems": 1,
+				"maxItems": 4,
+			},
 		},
 		"required":             []string{"title", "i_have_seen_read_me", "widget_code"},
 		"additionalProperties": false,

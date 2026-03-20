@@ -77,8 +77,9 @@ vi.mock('../storage', async () => {
     writeMessageThinking: vi.fn(),
     readMessageSearchSteps: vi.fn(() => null),
     writeMessageSearchSteps: vi.fn(),
-    readMessageCopBlocks: vi.fn(() => null),
-    writeMessageCopBlocks: vi.fn(),
+    readMessageAssistantTurn: vi.fn(() => null),
+    writeMessageAssistantTurn: vi.fn(),
+    clearMessageAssistantTurn: vi.fn(),
     readMessageBrowserActions: vi.fn(() => null),
     writeMessageBrowserActions: vi.fn(),
     migrateMessageMetadata: vi.fn(),
@@ -91,7 +92,6 @@ vi.mock('../components/ChatInput', () => ({
 
 vi.mock('../components/MessageBubble', () => ({
   MessageBubble: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
-  StreamingBubble: () => <div>streaming</div>,
 }))
 
 vi.mock('../components/ThinkingBlock', () => ({
@@ -632,5 +632,24 @@ describe('extractPartialArtifactFields', () => {
     const result = extractPartialArtifactFields('{"widget_code":"<div class=\\"chip\\">line 1\\nline 2<\\/div>"}')
 
     expect(result.content).toBe('<div class="chip">line 1\nline 2</div>')
+  })
+
+  it('应解析流式 loading_messages 已完整项并忽略未闭合字符串', () => {
+    const partial = '{"loading_messages":["a","b'
+    expect(extractPartialArtifactFields(partial).loadingMessages).toEqual(['a'])
+
+    const partial2 = '{"loading_messages":["first", "sec'
+    expect(extractPartialArtifactFields(partial2).loadingMessages).toEqual(['first'])
+  })
+
+  it('应解析完整 loading_messages 与转义', () => {
+    const result = extractPartialArtifactFields(
+      '{"loading_messages":["x","line \\"quote\\""],"widget_code":"<div />"}',
+    )
+    expect(result.loadingMessages).toEqual(['x', 'line "quote"'])
+  })
+
+  it('loading_messages 空数组应返回空数组', () => {
+    expect(extractPartialArtifactFields('{"loading_messages":[]').loadingMessages).toEqual([])
   })
 })

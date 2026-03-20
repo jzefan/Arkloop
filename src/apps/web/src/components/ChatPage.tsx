@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, Fragment, type ComponentProps } from 'react'
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -6,12 +6,14 @@ import { ArrowDown, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2,
 import { isDesktop } from '@arkloop/shared/desktop'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { ChatInput, type Attachment } from './ChatInput'
-import { MessageBubble, StreamingBubble } from './MessageBubble'
+import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
-import { SearchTimeline, WebFetchItem, type SearchNarrative, type SearchStep } from './SearchTimeline'
+import { SearchTimeline, WebFetchItem, type SearchStep } from './SearchTimeline'
+import { MarkdownRenderer } from './MarkdownRenderer'
+import { useTypewriter } from '../hooks/useTypewriter'
 import { ArtifactStreamBlock, extractPartialArtifactFields, type StreamingArtifactEntry } from './ArtifactStreamBlock'
 import { WidgetBlock } from './WidgetBlock'
 import UserInputCard from './UserInputCard'
@@ -25,7 +27,6 @@ import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
 import { ClawRightPanel } from './ClawRightPanel'
 import { useSSE } from '../hooks/useSSE'
-import { useTypewriter } from '../hooks/useTypewriter'
 import { SSEApiError } from '../sse'
 import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import {
@@ -37,6 +38,7 @@ import {
   buildMessageWidgetsFromRunEvents,
   findAssistantMessageForRun,
   selectFreshRunEvents,
+  runEventDismissesAssistantPlaceholder,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
   applyBrowserToolCall,
@@ -51,9 +53,18 @@ import {
   applyWebFetchToolCall,
   applyWebFetchToolResult,
   buildMessageWebFetchesFromRunEvents,
-  buildMessageCopBlocksFromRunEvents,
-  prependIntroNarrativeToCopBlocks,
 } from '../runEventProcessing'
+import {
+  assistantTurnPlainText,
+  buildAssistantTurnFromRunEvents,
+  createEmptyAssistantTurnFoldState,
+  drainAssistantTurnForPersist,
+  foldAssistantTurnEvent,
+  snapshotAssistantTurn,
+  type AssistantTurnSegment,
+  type AssistantTurnUi,
+} from '../assistantTurnSegments'
+import { searchTimelinePayloadForCopSegment, toolCallIdsInCopSearchTimelines } from '../copSegmentTimeline'
 import { useLocale } from '../contexts/LocaleContext'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { UserInputRequest, UserInputResponse, RequestedSchema } from '../userInputTypes'
@@ -101,8 +112,8 @@ import {
 
   readMessageSearchSteps,
   writeMessageSearchSteps,
-  readMessageCopBlocks,
-  writeMessageCopBlocks,
+  readMessageAssistantTurn,
+  writeMessageAssistantTurn,
   type WebSource,
   type ArtifactRef,
   type CodeExecutionRef,
@@ -111,8 +122,6 @@ import {
   type FileOpRef,
   type MessageThinkingRef,
   type MessageSearchStepRef,
-
-  type MessageCopBlocksRef,
   readMessageSubAgents,
   writeMessageSubAgents,
   readMessageFileOps,
@@ -184,30 +193,6 @@ type DocumentPanelState = {
 
 const SHOW_EXPLICIT_THINKING = false
 
-const SEARCH_PLANNING_LABEL_MAX_LEN = 60
-const SEARCH_PLANNING_TOOL_NAME = 'timeline_title'
-
-function compactSingleLine(raw: string | undefined, maxLen = SEARCH_PLANNING_LABEL_MAX_LEN): string {
-  const withoutFiles = (raw ?? '').replace(/<file[\s\S]*?<\/file>/g, ' ')
-  const text = withoutFiles.replace(/\s+/g, ' ').trim()
-  if (!text) return ''
-  if (text.length <= maxLen) return text
-  if (maxLen <= 3) return text.slice(0, maxLen)
-  return text.slice(0, maxLen - 3).trimEnd() + '...'
-}
-
-type CopBlock = {
-  id: string
-  title: string
-  steps: SearchStep[]
-  sources: WebSource[]
-  narratives: SearchNarrative[]
-  codeExecutions: CodeExecution[]
-  subAgents: SubAgentRef[]
-  fileOps: FileOpRef[]
-  webFetches: WebFetchRef[]
-}
-
 // finalizeSearchSteps converts live SearchStep[] to the storage format.
 // Identical to finalizeBlockSteps but kept as a standalone function for the
 // legacy (non-COP) search path.
@@ -244,125 +229,85 @@ function collectCompletedWidgets(entries: StreamingArtifactEntry[]): WidgetRef[]
     }))
 }
 
-function finalizeCopBlocks(
-  blocks: CopBlock[],
-  options?: {
-    finalContent?: string
-    preText?: string
-    preTextSeq?: number | null
-  },
-): MessageCopBlocksRef {
-  const normalizedFinalContent = options?.finalContent && options.finalContent.trim()
-    ? options.finalContent
-    : undefined
-  const normalizedPreText = options?.preText && options.preText.trim()
-    ? options.preText
-    : undefined
-  const finalizedBlocks = prependIntroNarrativeToCopBlocks(
-    blocks.map((block) => ({
-      id: block.id,
-      title: block.title,
-      steps: finalizeBlockSteps(block.steps),
-      sources: [...block.sources],
-      narratives: block.narratives.length > 0 ? [...block.narratives] : undefined,
-      codeExecutions: block.codeExecutions.length > 0 ? [...block.codeExecutions] : undefined,
-      subAgents: block.subAgents.length > 0 ? [...block.subAgents] : undefined,
-      fileOps: block.fileOps.length > 0 ? [...block.fileOps] : undefined,
-      webFetches: block.webFetches.length > 0 ? [...block.webFetches] : undefined,
-    })),
-    normalizedPreText,
-    options?.preTextSeq ?? null,
-  )
-  return {
-    blocks: finalizedBlocks,
-    preText: normalizedPreText,
-    finalContent: normalizedFinalContent,
+type CopSegment = Extract<AssistantTurnSegment, { type: 'cop' }>
+
+function widgetToolCallIdsPlacedInTurn(turn: AssistantTurnUi, widgets: WidgetRef[] | undefined | null): Set<string> {
+  const placed = new Set<string>()
+  const want = new Set((widgets ?? []).map((w) => w.id))
+  if (want.size === 0) return placed
+  for (const s of turn.segments) {
+    if (s.type !== 'cop') continue
+    for (const c of s.calls) {
+      if (c.toolName === 'show_widget' && want.has(c.toolCallId)) placed.add(c.toolCallId)
+    }
   }
+  return placed
 }
 
-function ensureCopBlock(blocks: CopBlock[]): CopBlock[] {
-  if (blocks.length > 0) return blocks
-  return [{ id: crypto.randomUUID(), title: '', steps: [], sources: [], narratives: [], codeExecutions: [], subAgents: [], fileOps: [], webFetches: [] }]
+function historicWidgetsForCop(seg: CopSegment, widgets: WidgetRef[] | undefined | null): WidgetRef[] {
+  if (!widgets?.length) return []
+  const ids = new Set(seg.calls.filter((c) => c.toolName === 'show_widget').map((c) => c.toolCallId))
+  if (ids.size === 0) return []
+  return widgets.filter((w) => ids.has(w.id))
 }
 
-function addStepToLastBlock(blocks: CopBlock[], step: SearchStep): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((b, i) =>
-    i === withBlock.length - 1
-      ? { ...b, steps: [...b.steps, step] }
-      : b,
-  )
+function liveStreamingWidgetEntriesForCop(seg: CopSegment, entries: StreamingArtifactEntry[]): StreamingArtifactEntry[] {
+  const out: StreamingArtifactEntry[] = []
+  for (const c of seg.calls) {
+    if (c.toolName !== 'show_widget') continue
+    const e = entries.find((x) => x.toolName === 'show_widget' && x.toolCallId === c.toolCallId)
+    if (!e) continue
+    if ((e.content != null && e.content.length > 0) || (e.loadingMessages != null && e.loadingMessages.length > 0)) {
+      out.push(e)
+    }
+  }
+  return out
 }
 
-function updateStepInBlocks(blocks: CopBlock[], stepId: string, updater: (s: SearchStep) => SearchStep): CopBlock[] {
-  return blocks.map((b) => ({
-    ...b,
-    steps: b.steps.map((s) => s.id === stepId ? updater(s) : s),
-  }))
+function liveInlineArtifactEntriesForCop(seg: CopSegment, entries: StreamingArtifactEntry[]): StreamingArtifactEntry[] {
+  const out: StreamingArtifactEntry[] = []
+  for (const c of seg.calls) {
+    if (c.toolName !== 'create_artifact') continue
+    const e = entries.find((x) => x.toolName === 'create_artifact' && x.toolCallId === c.toolCallId)
+    if (e && e.content && e.display !== 'panel') out.push(e)
+  }
+  return out
 }
 
-function appendCodeExecutionToLastBlock(blocks: CopBlock[], entry: CodeExecution): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((block, index) =>
-    index === withBlock.length - 1
-      ? { ...block, codeExecutions: [...block.codeExecutions, entry] }
-      : block,
-  )
+function liveCopShowWidgetCallIds(turn: AssistantTurnUi | null): Set<string> {
+  const ids = new Set<string>()
+  if (!turn) return ids
+  for (const s of turn.segments) {
+    if (s.type !== 'cop') continue
+    for (const c of s.calls) {
+      if (c.toolName === 'show_widget' && c.toolCallId) ids.add(c.toolCallId)
+    }
+  }
+  return ids
 }
 
-function patchCodeExecutionInBlocks(blocks: CopBlock[], target: CodeExecution): CopBlock[] {
-  return blocks.map((block) => ({
-    ...block,
-    codeExecutions: patchCodeExecutionList(block.codeExecutions, target).next,
-  }))
+function liveCopCreateArtifactCallIds(turn: AssistantTurnUi | null): Set<string> {
+  const ids = new Set<string>()
+  if (!turn) return ids
+  for (const s of turn.segments) {
+    if (s.type !== 'cop') continue
+    for (const c of s.calls) {
+      if (c.toolName === 'create_artifact' && c.toolCallId) ids.add(c.toolCallId)
+    }
+  }
+  return ids
 }
 
-function appendSubAgentToLastBlock(blocks: CopBlock[], entry: SubAgentRef): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((block, index) =>
-    index === withBlock.length - 1
-      ? { ...block, subAgents: [...block.subAgents, entry] }
-      : block,
-  )
-}
-
-function patchSubAgentInBlocks(blocks: CopBlock[], target: SubAgentRef): CopBlock[] {
-  return blocks.map((block) => ({
-    ...block,
-    subAgents: block.subAgents.map((agent) => agent.id === target.id ? target : agent),
-  }))
-}
-
-function appendFileOpToLastBlock(blocks: CopBlock[], entry: FileOpRef): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((block, index) =>
-    index === withBlock.length - 1
-      ? { ...block, fileOps: [...block.fileOps, entry] }
-      : block,
-  )
-}
-
-function patchFileOpInBlocks(blocks: CopBlock[], target: FileOpRef): CopBlock[] {
-  return blocks.map((block) => ({
-    ...block,
-    fileOps: block.fileOps.map((op) => op.id === target.id ? target : op),
-  }))
-}
-
-function appendWebFetchToLastBlock(blocks: CopBlock[], entry: WebFetchRef): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((block, index) =>
-    index === withBlock.length - 1
-      ? { ...block, webFetches: [...block.webFetches, entry] }
-      : block,
-  )
-}
-
-function patchWebFetchInBlocks(blocks: CopBlock[], target: WebFetchRef): CopBlock[] {
-  return blocks.map((block) => ({
-    ...block,
-    webFetches: block.webFetches.map((fetch) => fetch.id === target.id ? target : fetch),
-  }))
+function LiveTurnMarkdown({
+  content,
+  typewriterDone,
+  ...rest
+}: {
+  content: string
+  typewriterDone: boolean
+} & Omit<ComponentProps<typeof MarkdownRenderer>, 'content'>) {
+  const displayed = useTypewriter(content, typewriterDone)
+  return <MarkdownRenderer content={displayed} {...rest} />
 }
 
 export function ChatPage() {
@@ -384,10 +329,8 @@ export function ChatPage() {
   const [userEnterMessageId, setUserEnterMessageId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [assistantDraft, setAssistantDraft] = useState('')
-  const [preCopText, setPreCopText] = useState('')
-  const preCopTextRef = useRef('')
-  const preCopTextSeqRef = useRef<number | null>(null)
+  const assistantTurnFoldStateRef = useRef(createEmptyAssistantTurnFoldState())
+  const [liveAssistantTurn, setLiveAssistantTurn] = useState<AssistantTurnUi | null>(null)
   const seenFirstToolCallInRunRef = useRef(false)
   const [activeRunId, setActiveRunId] = useState<string | null>(
     locationState?.initialRunId ?? null,
@@ -420,7 +363,6 @@ export function ChatPage() {
   // 浏览器操作记录：messageId -> BrowserActionRef[]
   const [messageBrowserActionsMap, setMessageBrowserActionsMap] = useState<Map<string, BrowserActionRef[]>>(new Map())
   const currentRunBrowserActionsRef = useRef<BrowserActionRef[]>([])
-  const [topLevelBrowserActions, setTopLevelBrowserActions] = useState<BrowserActionRef[]>([])
   // sub-agent 记录
   const [messageSubAgentsMap, setMessageSubAgentsMap] = useState<Map<string, SubAgentRef[]>>(new Map())
   const currentRunSubAgentsRef = useRef<SubAgentRef[]>([])
@@ -442,8 +384,7 @@ export function ChatPage() {
   // Live search steps for the legacy (non-COP) search path
   const [searchSteps, setSearchSteps] = useState<SearchStep[]>([])
   const searchStepsRef = useRef<SearchStep[]>([])
-  // COP blocks 缓存：messageId -> cop blocks data
-  const [messageCopBlocksMap, setMessageCopBlocksMap] = useState<Map<string, MessageCopBlocksRef>>(new Map())
+  const [messageAssistantTurnMap, setMessageAssistantTurnMap] = useState<Map<string, AssistantTurnUi>>(new Map())
   // show_widget 缓存：messageId -> WidgetRef[]
   const [messageWidgetsMap, setMessageWidgetsMap] = useState<Map<string, WidgetRef[]>>(new Map())
   // 跟踪未响应的用户消息，用于取消后重发时替换
@@ -469,15 +410,10 @@ export function ChatPage() {
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
   const thinkingDraftRef = useRef('')
+  /** 当前 run 在首条 SSE 并入前为 true；任意 fresh 事件到达后即 false */
+  const [awaitingFirstSse, setAwaitingFirstSse] = useState(() => Boolean(locationState?.initialRunId))
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
-  // COP blocks: 多段工作流（run 结束后保持，下次 run 开始时清除）
-  const [copBlocks, setCopBlocks] = useState<CopBlock[]>([])
-  const copBlocksRef = useRef<CopBlock[]>([])
-  const pendingTextRef = useRef('')
-  const pendingTextSeqRef = useRef<number | null>(null)
-  const [liveTimelineExiting, setLiveTimelineExiting] = useState(false)
-  const liveTimelineExitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // --- Claw todo 进度 ---
   const [clawTodos, setClawTodos] = useState<Array<{ id: string; content: string; status: string }>>([])
@@ -604,32 +540,12 @@ export function ChatPage() {
     setShareModalOpen(true)
   }, [])
 
-  const applyCopBlocks = useCallback((updater: (prev: CopBlock[]) => CopBlock[]) => {
-    setCopBlocks((prev) => {
-      const next = updater(prev)
-      copBlocksRef.current = next
-      return next
-    })
+  const resetAssistantTurnLive = useCallback(() => {
+    assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
+    setLiveAssistantTurn(null)
   }, [])
-  const resetCopState = useCallback(() => {
-    copBlocksRef.current = []
-    setCopBlocks([])
-    pendingTextRef.current = ''
-    pendingTextSeqRef.current = null
-  }, [])
-  const resetPreCopText = useCallback(() => {
-    preCopTextRef.current = ''
-    preCopTextSeqRef.current = null
-    setPreCopText('')
-  }, [])
-  const appendPreCopText = useCallback((delta: string, seq: number) => {
-    if (preCopTextSeqRef.current == null) preCopTextSeqRef.current = seq
-    preCopTextRef.current += delta
-    setPreCopText(preCopTextRef.current)
-  }, [])
-  const flushPendingNarrativeToTimeline = useCallback(() => {
-    // 不再将文本移入 COP - 文本始终留在 pendingTextRef 中，最终通过 finalContent 显示在正文
-    // 保留此函数仅用于未来可能需要的其他清理逻辑
+  const bumpAssistantTurnSnapshot = useCallback(() => {
+    setLiveAssistantTurn(snapshotAssistantTurn(assistantTurnFoldStateRef.current))
   }, [])
   const resetSearchSteps = useCallback(() => {
     searchStepsRef.current = []
@@ -642,14 +558,11 @@ export function ChatPage() {
     pendingSearchStepsRef.current = getter()
   }, [])
   const clearLiveRunSecurityArtifacts = useCallback(() => {
-    setAssistantDraft('')
-    resetPreCopText()
+    resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setTopLevelBrowserActions([])
     setSegments([])
-    setLiveTimelineExiting(false)
     activeSegmentIdRef.current = null
     currentRunSourcesRef.current = []
     currentRunArtifactsRef.current = []
@@ -657,11 +570,10 @@ export function ChatPage() {
     currentRunBrowserActionsRef.current = []
     resetSearchSteps()
     pendingSearchStepsRef.current = null
-    resetCopState()
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
-  }, [resetCopState, resetPreCopText, resetSearchSteps])
+  }, [resetAssistantTurnLive, resetSearchSteps])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -855,10 +767,10 @@ export function ChatPage() {
       invalidateMessageSync()
       setUserEnterMessageId(message.id)
       setMessages((prev) => [...prev, message])
-      setAssistantDraft('')
       noResponseMsgIdRef.current = message.id
       const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadClawFolder(threadId) ?? undefined)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       isAtBottomRef.current = true
@@ -879,9 +791,16 @@ export function ChatPage() {
   const sendMessageRef = useRef(sendMessage)
   useEffect(() => { sendMessageRef.current = sendMessage }, [sendMessage])
 
-  const handleArtifactAction = useCallback((action: { type: string; text?: string; message?: string }) => {
+  const handleArtifactAction = useCallback((action: { type: string; text?: string; message?: string; url?: string }) => {
     if (action.type === 'prompt' && typeof action.text === 'string' && action.text.trim()) {
       void sendMessageRef.current(action.text.trim())
+      return
+    }
+    if (action.type === 'open_link' && typeof action.url === 'string') {
+      const u = action.url.trim()
+      if (u.startsWith('https://') || u.startsWith('http://')) {
+        window.open(u, '_blank', 'noopener,noreferrer')
+      }
       return
     }
     if (action.type === 'error' && typeof action.message === 'string' && action.message.trim()) {
@@ -900,7 +819,6 @@ export function ChatPage() {
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
-    setAssistantDraft('')
 
     void (async () => {
       try {
@@ -931,7 +849,7 @@ export function ChatPage() {
         const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
 
         const runEventsMap = new Map<string, MsgRunEvent[]>()
-        const copBlocksMap = new Map<string, MessageCopBlocksRef>()
+        const assistantTurnMap = new Map<string, AssistantTurnUi>()
         for (const msg of items) {
           if (msg.role !== 'assistant') continue
 
@@ -962,8 +880,8 @@ export function ChatPage() {
 
           const cachedRunEvents = readMsgRunEvents(msg.id)
           if (cachedRunEvents) runEventsMap.set(msg.id, cachedRunEvents)
-          const cachedCopBlocks = readMessageCopBlocks(msg.id)
-          if (cachedCopBlocks) copBlocksMap.set(msg.id, cachedCopBlocks)
+          const cachedTurn = readMessageAssistantTurn(msg.id)
+          if (cachedTurn) assistantTurnMap.set(msg.id, cachedTurn)
         }
 
         // 服务端回放：补齐最新一轮的 thinking / 代码执行缓存
@@ -977,8 +895,8 @@ export function ChatPage() {
         const replaySubAgentsNeeded = !!(lastAssistant && !subAgentsMap.has(lastAssistant.id))
         const replayFileOpsNeeded = !!(lastAssistant && !fileOpsMap.has(lastAssistant.id))
         const replayWebFetchesNeeded = !!(lastAssistant && !webFetchesMap.has(lastAssistant.id))
-        const replayCopBlocksNeeded = !!(lastAssistant && !copBlocksMap.has(lastAssistant.id))
-        if (latest && latest.status !== 'running' && lastAssistant && (replayThinkingNeeded || replayWidgetsNeeded || replayCodeExecNeeded || replayBrowserActionsNeeded || replaySubAgentsNeeded || replayFileOpsNeeded || replayWebFetchesNeeded || replayCopBlocksNeeded)) {
+        const replayAssistantTurnNeeded = !!(lastAssistant && !assistantTurnMap.has(lastAssistant.id))
+        if (latest && latest.status !== 'running' && lastAssistant && (replayThinkingNeeded || replayWidgetsNeeded || replayCodeExecNeeded || replayBrowserActionsNeeded || replaySubAgentsNeeded || replayFileOpsNeeded || replayWebFetchesNeeded || replayAssistantTurnNeeded)) {
           try {
             const replayEvents = await listRunEvents(accessToken, latest.run_id, { follow: false })
             if (replayThinkingNeeded) {
@@ -1028,11 +946,11 @@ export function ChatPage() {
                 writeMessageWebFetches(lastAssistant.id, replayWebFetches)
               }
             }
-            if (replayCopBlocksNeeded) {
-              const replayCopBlocks = buildMessageCopBlocksFromRunEvents(replayEvents)
-              if (replayCopBlocks) {
-                copBlocksMap.set(lastAssistant.id, replayCopBlocks)
-                writeMessageCopBlocks(lastAssistant.id, replayCopBlocks)
+            if (replayAssistantTurnNeeded) {
+              const replayTurn = buildAssistantTurnFromRunEvents(replayEvents)
+              if (replayTurn.segments.length > 0) {
+                assistantTurnMap.set(lastAssistant.id, replayTurn)
+                writeMessageAssistantTurn(lastAssistant.id, replayTurn)
               }
             }
           } catch {
@@ -1051,7 +969,7 @@ export function ChatPage() {
         setMessageSearchStepsMap(searchStepsMap)
 
         setMsgRunEventsMap(runEventsMap)
-        setMessageCopBlocksMap(copBlocksMap)
+        setMessageAssistantTurnMap(assistantTurnMap)
         setMessageWebFetchesMap(webFetchesMap)
 
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
@@ -1060,10 +978,12 @@ export function ChatPage() {
           locationState?.initialRunId &&
           (!latest || (latest.run_id === locationState.initialRunId && latest.status === 'running'))
         ) {
+          setAwaitingFirstSse(true)
           setActiveRunId(locationState.initialRunId)
           if (threadId) onRunStarted(threadId)
         } else {
           const isRunning = latest?.status === 'running'
+          if (isRunning) setAwaitingFirstSse(true)
           setActiveRunId(isRunning ? latest.run_id : null)
           if (isRunning && threadId) onRunStarted(threadId)
           else if (threadId) onRunEnded(threadId)
@@ -1090,8 +1010,7 @@ export function ChatPage() {
   // 切换 thread 时清理 SSE 和排队消息，并重置 pendingIncognito
   useEffect(() => {
     setActiveRunId(null)
-    setAssistantDraft('')
-    resetPreCopText()
+    resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
@@ -1099,10 +1018,6 @@ export function ChatPage() {
     activeSegmentIdRef.current = null
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setTopLevelBrowserActions([])
-    resetCopState()
-    setLiveTimelineExiting(false)
-    clearTimeout(liveTimelineExitTimerRef.current)
     setCancelSubmitting(false)
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -1122,7 +1037,7 @@ export function ChatPage() {
     setMessageSubAgentsMap(new Map())
     setMessageThinkingMap(new Map())
     setMessageSearchStepsMap(new Map())
-    setMessageCopBlocksMap(new Map())
+    setMessageAssistantTurnMap(new Map())
     setSourcePanelMessageId(null)
     disconnectSSE()
     sse.clearEvents()
@@ -1131,7 +1046,7 @@ export function ChatPage() {
     // activeRunId effect 在新 run 启动时负责归零。
     setPendingIncognito(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, resetPreCopText])
+  }, [threadId, resetAssistantTurnLive])
 
   // 同步 pendingIncognito 到 AppLayout（用于 Sidebar 无痕 UI）
   useEffect(() => {
@@ -1157,23 +1072,21 @@ export function ChatPage() {
     currentRunSubAgentsRef.current = []
     currentRunFileOpsRef.current = []
     currentRunWebFetchesRef.current = []
-    setAssistantDraft('')
-    resetPreCopText()
+    resetAssistantTurnLive()
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setTopLevelBrowserActions([])
     setTopLevelSubAgents([])
     setTopLevelFileOps([])
     setTopLevelWebFetches([])
     streamingArtifactsRef.current = []
     setStreamingArtifacts([])
-    resetCopState()
     setCancelSubmitting(false)
+    setAwaitingFirstSse(true)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, baseUrl, resetPreCopText])
+  }, [activeRunId, baseUrl, resetAssistantTurnLive])
 
   // 避免上一轮 run 的 closed/error 状态误触发当前 run 的终端兜底。
   useEffect(() => {
@@ -1215,6 +1128,7 @@ export function ChatPage() {
       processedCount: processedEventCountRef.current,
     })
     processedEventCountRef.current = nextProcessedCount
+    let dismissAssistantPlaceholder = false
 
     for (const event of fresh) {
       if (shouldSuppressLiveRunEventAfterInjectionBlock({
@@ -1224,9 +1138,11 @@ export function ChatPage() {
       })) {
         continue
       }
+      if (runEventDismissesAssistantPlaceholder(event)) {
+        dismissAssistantPlaceholder = true
+      }
 
       if (event.type === 'run.segment.start') {
-        flushPendingNarrativeToTimeline()
         const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
         const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
         const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
@@ -1235,31 +1151,10 @@ export function ChatPage() {
         const label = typeof display.label === 'string' ? display.label : ''
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
-
-        // search_* kind 路由到 copBlocks
         if (kind.startsWith('search_')) {
-          if (kind === 'search_planning') {
-            // planning 段: 确保存在 COP block（不新增 step，标题由 timeline_title 设置）
-            applyCopBlocks((prev) => ensureCopBlock(prev))
-          } else {
-            const searchKind = kind === 'search_queries' ? 'searching'
-              : kind === 'search_reviewing' ? 'reviewing'
-              : 'searching'
-            const queries = Array.isArray(display.queries)
-              ? (display.queries as unknown[]).filter((q): q is string => typeof q === 'string')
-              : undefined
-            applyCopBlocks((prev) => addStepToLastBlock(prev, {
-              id: segmentId,
-              kind: searchKind as SearchStep['kind'],
-              label,
-              status: 'active',
-              queries,
-              seq: event.seq,
-            }))
-          }
-        } else {
-          setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true, codeExecutions: [] }])
+          continue
         }
+        setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true, codeExecutions: [] }])
         continue
       }
 
@@ -1286,12 +1181,10 @@ export function ChatPage() {
         setSegments((prev) =>
           prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
         )
-        applyCopBlocks((prev) => updateStepInBlocks(prev, segmentId, (s) => ({ ...s, status: 'done' as const })))
         continue
       }
 
       if (event.type === 'message.delta') {
-        // 收到第一条 delta 说明模型已开始响应，清除"未响应"标记
         noResponseMsgIdRef.current = null
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
@@ -1299,33 +1192,22 @@ export function ChatPage() {
         const delta = obj.content_delta
         const isThinking = obj.channel === 'thinking'
         const activeSeg = activeSegmentIdRef.current
-        if (activeSeg) {
-          if (!isThinking && !SHOW_EXPLICIT_THINKING) {
-            if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
-            pendingTextRef.current += delta
-            setAssistantDraft((prev) => prev + delta)
-          } else {
-            setSegments((prev) =>
-              prev.map((s) =>
-                s.segmentId === activeSeg && s.mode !== 'hidden'
-                  ? { ...s, content: s.content + delta }
-                  : s,
-              ),
-            )
-          }
-        } else if (isThinking) {
+        if (isThinking) {
           setThinkingDraft((prev) => prev + delta)
-        } else if (!seenFirstToolCallInRunRef.current) {
-          appendPreCopText(delta, event.seq)
-          // 同时写入 assistantDraft，让 StreamingBubble 能以 typewriter+markdown 展示
-          if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
-          pendingTextRef.current += delta
-          setAssistantDraft((prev) => prev + delta)
-        } else {
-          if (pendingTextSeqRef.current == null) pendingTextSeqRef.current = event.seq
-          pendingTextRef.current += delta
-          setAssistantDraft((prev) => prev + delta)
+          continue
         }
+        if (activeSeg && SHOW_EXPLICIT_THINKING) {
+          setSegments((prev) =>
+            prev.map((s) =>
+              s.segmentId === activeSeg && s.mode !== 'hidden'
+                ? { ...s, content: s.content + delta }
+                : s,
+            ),
+          )
+          continue
+        }
+        foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
+        bumpAssistantTurnSnapshot()
         continue
       }
 
@@ -1355,18 +1237,15 @@ export function ChatPage() {
       }
 
       if (event.type === 'tool.call') {
-        flushPendingNarrativeToTimeline()
         seenFirstToolCallInRunRef.current = true
         const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
-        const llmName = typeof obj.llm_name === 'string' ? obj.llm_name : undefined
         const codeExecutionCall = applyCodeExecutionToolCall(currentRunCodeExecutionsRef.current, event)
         if (codeExecutionCall.appended) {
           const entry: CodeExecution = codeExecutionCall.appended
           currentRunCodeExecutionsRef.current = codeExecutionCall.nextExecutions
           const activeSeg = activeSegmentIdRef.current
-          const isSearchSeg = activeSeg && copBlocksRef.current.some((b) => b.steps.some((s) => s.id === activeSeg))
-          if (SHOW_EXPLICIT_THINKING && activeSeg && !isSearchSeg) {
+          if (SHOW_EXPLICIT_THINKING && activeSeg) {
             setSegments((prev) =>
               prev.map((s) =>
                 s.segmentId === activeSeg
@@ -1374,92 +1253,28 @@ export function ChatPage() {
                   : s,
               ),
             )
-          } else if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => appendCodeExecutionToLastBlock(prev, entry))
           } else {
             setTopLevelCodeExecutions((prev) => [...prev, entry])
           }
         }
-        // browser tool.call
         const browserCall = applyBrowserToolCall(currentRunBrowserActionsRef.current, event)
         if (browserCall.appended) {
           currentRunBrowserActionsRef.current = browserCall.nextActions
-          setTopLevelBrowserActions((prev) => [...prev, browserCall.appended!])
         }
-        // spawn_agent tool.call
         const subAgentCall = applySubAgentToolCall(currentRunSubAgentsRef.current, event)
         if (subAgentCall.appended) {
           currentRunSubAgentsRef.current = subAgentCall.nextAgents
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => appendSubAgentToLastBlock(prev, subAgentCall.appended!))
-          } else {
-            setTopLevelSubAgents((prev) => [...prev, subAgentCall.appended!])
-          }
+          setTopLevelSubAgents((prev) => [...prev, subAgentCall.appended!])
         }
-        // file op tool.call (grep/glob/read_file/write_file/edit_file)
         const fileOpCall = applyFileOpToolCall(currentRunFileOpsRef.current, event)
         if (fileOpCall.appended) {
           currentRunFileOpsRef.current = fileOpCall.nextOps
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => appendFileOpToLastBlock(prev, fileOpCall.appended!))
-          } else {
-            setTopLevelFileOps((prev) => [...prev, fileOpCall.appended!])
-          }
+          setTopLevelFileOps((prev) => [...prev, fileOpCall.appended!])
         }
-        // web_fetch tool.call
         const webFetchCall = applyWebFetchToolCall(currentRunWebFetchesRef.current, event)
         if (webFetchCall.appended) {
           currentRunWebFetchesRef.current = webFetchCall.nextFetches
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => appendWebFetchToLastBlock(prev, webFetchCall.appended!))
-          } else {
-            setTopLevelWebFetches((prev) => [...prev, webFetchCall.appended!])
-          }
-        }
-        // timeline_title: COP 块分割线
-        if (toolName === SEARCH_PLANNING_TOOL_NAME) {
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const rawLabel = typeof args?.label === 'string' ? args.label : undefined
-          const label = compactSingleLine(rawLabel) || ''
-          applyCopBlocks((prev) => {
-            if (prev.length > 0) {
-              const last = prev[prev.length - 1]
-              const isEmpty = last.steps.length === 0
-                && last.narratives.length === 0
-                && last.codeExecutions.length === 0
-                && last.subAgents.length === 0
-                && last.fileOps.length === 0
-                && last.webFetches.length === 0
-                && last.sources.length === 0
-              if (last.title === '' || isEmpty) {
-                return prev.map((b, i) => i === prev.length - 1 ? { ...b, title: label } : b)
-              }
-            }
-            return [...prev, { id: crypto.randomUUID(), title: label, steps: [], sources: [], narratives: [], codeExecutions: [], subAgents: [], fileOps: [], webFetches: [] }]
-          })
-          continue
-        }
-        // web_search tool.call → 添加到当前 COP 块
-        if (toolName === 'web_search' || llmName === 'web_search') {
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const query = typeof args?.query === 'string' ? args.query : undefined
-          const queries = Array.isArray(args?.queries)
-            ? (args.queries as unknown[]).filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
-            : undefined
-          const displayQueries = queries && queries.length > 0
-            ? queries
-            : query
-              ? [query]
-              : undefined
-          applyCopBlocks((prev) => addStepToLastBlock(prev, {
-            id: callId,
-            kind: 'searching' as const,
-            label: 'Searching',
-            status: 'active' as const,
-            queries: displayQueries,
-            seq: event.seq,
-          }))
+          setTopLevelWebFetches((prev) => [...prev, webFetchCall.appended!])
         }
         // show_widget tool.call: mark streaming entry as complete
         if (toolName === 'show_widget') {
@@ -1509,11 +1324,12 @@ export function ChatPage() {
           if (typeof args?.display === 'string') entry.display = args.display as 'inline' | 'panel'
           setStreamingArtifacts([...streamingArtifactsRef.current])
         }
+        foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
+        bumpAssistantTurnSnapshot()
         continue
       }
 
       if (event.type === 'tool.result') {
-        flushPendingNarrativeToTimeline()
         const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown; error?: unknown }
         const resultToolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
         if (resultToolName === 'web_search' || resultToolName.startsWith('web_search.')) {
@@ -1528,31 +1344,6 @@ export function ChatPage() {
               }))
               .filter((s) => !!s.url)
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
-            applyCopBlocks((prev) => {
-              if (prev.length === 0) return prev
-              return prev.map((b, i) =>
-                i === prev.length - 1 ? { ...b, sources: [...b.sources, ...newSources] } : b,
-              )
-            })
-          }
-          // 标记 searching 步骤完成（在当前 COP 块内）
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
-          if (callId) {
-            applyCopBlocks((prev) => {
-              let next = updateStepInBlocks(prev, callId, (s) => ({ ...s, status: 'done' as const }))
-              const lastBlock = next[next.length - 1]
-              if (lastBlock) {
-                const allSearchDone = lastBlock.steps.filter((s) => s.kind === 'searching').every((s) => s.status === 'done')
-                if (allSearchDone && !lastBlock.steps.some((s) => s.kind === 'reviewing')) {
-                  next = next.map((b, i) =>
-                    i === next.length - 1
-                      ? { ...b, steps: [...b.steps, { id: 'auto-reviewing', kind: 'reviewing' as const, label: 'Reviewing sources', status: 'active' as const, seq: event.seq }] }
-                      : b,
-                  )
-                }
-              }
-              return next
-            })
           }
         }
         // 检测 sandbox 执行产物 + document_write / create_artifact 产物 + browser 产物
@@ -1592,11 +1383,7 @@ export function ChatPage() {
             currentRunCodeExecutionsRef.current = codeExecutionResult.nextExecutions
             const target: CodeExecution = codeExecutionResult.updated
             if (codeExecutionResult.appended) {
-              if (copBlocksRef.current.length > 0) {
-                applyCopBlocks((prev) => appendCodeExecutionToLastBlock(prev, target))
-              } else {
-                setTopLevelCodeExecutions((prev) => [...prev, target])
-              }
+              setTopLevelCodeExecutions((prev) => [...prev, target])
             } else {
               setTopLevelCodeExecutions((prev) => patchCodeExecutionList(prev, target).next)
               setSegments((prev) =>
@@ -1605,7 +1392,6 @@ export function ChatPage() {
                   codeExecutions: patchCodeExecutionList(segment.codeExecutions, target).next,
                 })),
               )
-              applyCopBlocks((prev) => patchCodeExecutionInBlocks(prev, target))
             }
           }
         }
@@ -1614,55 +1400,40 @@ export function ChatPage() {
           const browserResult = applyBrowserToolResult(currentRunBrowserActionsRef.current, event)
           if (browserResult.updated) {
             currentRunBrowserActionsRef.current = browserResult.nextActions
-            setTopLevelBrowserActions((prev) => {
-              const idx = prev.findIndex((a) => a.id === browserResult.updated!.id)
-              if (idx >= 0) return prev.map((a, i) => i === idx ? browserResult.updated! : a)
-              return [...prev, browserResult.updated!]
-            })
           }
         }
         // sub-agent tool.result
         const subAgentResult = applySubAgentToolResult(currentRunSubAgentsRef.current, event)
         if (subAgentResult.updated) {
           currentRunSubAgentsRef.current = subAgentResult.nextAgents
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => patchSubAgentInBlocks(prev, subAgentResult.updated!))
-          } else {
-            setTopLevelSubAgents((prev) => {
-              const idx = prev.findIndex((a) => a.id === subAgentResult.updated!.id)
-              if (idx >= 0) return prev.map((a, i) => i === idx ? subAgentResult.updated! : a)
-              return [...prev, subAgentResult.updated!]
-            })
-          }
+          setTopLevelSubAgents((prev) => {
+            const idx = prev.findIndex((a) => a.id === subAgentResult.updated!.id)
+            if (idx >= 0) return prev.map((a, i) => i === idx ? subAgentResult.updated! : a)
+            return [...prev, subAgentResult.updated!]
+          })
         }
         // file op tool.result
         const fileOpResult = applyFileOpToolResult(currentRunFileOpsRef.current, event)
         if (fileOpResult.updated) {
           currentRunFileOpsRef.current = fileOpResult.nextOps
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => patchFileOpInBlocks(prev, fileOpResult.updated!))
-          } else {
-            setTopLevelFileOps((prev) => {
-              const idx = prev.findIndex((o) => o.id === fileOpResult.updated!.id)
-              if (idx >= 0) return prev.map((o, i) => i === idx ? fileOpResult.updated! : o)
-              return [...prev, fileOpResult.updated!]
-            })
-          }
+          setTopLevelFileOps((prev) => {
+            const idx = prev.findIndex((o) => o.id === fileOpResult.updated!.id)
+            if (idx >= 0) return prev.map((o, i) => i === idx ? fileOpResult.updated! : o)
+            return [...prev, fileOpResult.updated!]
+          })
         }
         // web_fetch tool.result
         const webFetchResult = applyWebFetchToolResult(currentRunWebFetchesRef.current, event)
         if (webFetchResult.updated) {
           currentRunWebFetchesRef.current = webFetchResult.nextFetches
-          if (copBlocksRef.current.length > 0) {
-            applyCopBlocks((prev) => patchWebFetchInBlocks(prev, webFetchResult.updated!))
-          } else {
-            setTopLevelWebFetches((prev) => {
-              const idx = prev.findIndex((f) => f.id === webFetchResult.updated!.id)
-              if (idx >= 0) return prev.map((f, i) => i === idx ? webFetchResult.updated! : f)
-              return [...prev, webFetchResult.updated!]
-            })
-          }
+          setTopLevelWebFetches((prev) => {
+            const idx = prev.findIndex((f) => f.id === webFetchResult.updated!.id)
+            if (idx >= 0) return prev.map((f, i) => i === idx ? webFetchResult.updated! : f)
+            return [...prev, webFetchResult.updated!]
+          })
         }
+        foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
+        bumpAssistantTurnSnapshot()
         continue
       }
 
@@ -1717,13 +1488,12 @@ export function ChatPage() {
         replaceOnCancelRef.current = null
         const runThinking = buildLiveThinkingSnapshot()
         const runWidgets = collectCompletedWidgets(streamingArtifactsRef.current)
-        const runFinalContent = pendingTextRef.current
+        const runAssistantTurn = drainAssistantTurnForPersist(assistantTurnFoldStateRef.current)
+        setLiveAssistantTurn(null)
         sse.disconnect()
         setActiveRunId(null)
-        // assistantDraft 延迟到 refreshMessages 完成后清除，避免"闪空"
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
-        setTopLevelBrowserActions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
         setTopLevelWebFetches([])
@@ -1734,35 +1504,6 @@ export function ChatPage() {
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
-        const runCopData = finalizeCopBlocks(copBlocksRef.current, {
-          finalContent: runFinalContent,
-          preText: preCopTextRef.current,
-          preTextSeq: preCopTextSeqRef.current,
-        })
-        if (runCopData.blocks.length > 0) {
-          applyCopBlocks(() => runCopData.blocks.map((b) => ({
-            id: b.id,
-            title: b.title,
-            steps: b.steps,
-            sources: b.sources,
-            narratives: b.narratives ?? [],
-            codeExecutions: b.codeExecutions ?? [],
-            subAgents: b.subAgents ?? [],
-            fileOps: b.fileOps ?? [],
-            webFetches: b.webFetches ?? [],
-          })))
-        }
-        // 让 live SearchTimeline 平滑收起而非瞬间消失
-        if (copBlocksRef.current.length > 0) {
-          setLiveTimelineExiting(true)
-          clearTimeout(liveTimelineExitTimerRef.current)
-          liveTimelineExitTimerRef.current = setTimeout(() => {
-            setLiveTimelineExiting(false)
-            resetCopState()
-          }, 500)
-        }
-        pendingTextRef.current = ''
-        pendingTextSeqRef.current = null
         setQueuedDraft(null)
         setAwaitingInput(false)
         setPendingUserInput(null)
@@ -1785,7 +1526,6 @@ export function ChatPage() {
         void refreshMessages({ requiredCompletedRunId: completedRunId }).then((items) => {
           const completedAssistant = findAssistantMessageForRun(items, completedRunId)
           if (completedAssistant) {
-            setAssistantDraft('')
             if (runWidgets.length > 0) {
               writeMessageWidgets(completedAssistant.id, runWidgets)
               setMessageWidgetsMap((prev) => new Map(prev).set(completedAssistant.id, runWidgets))
@@ -1800,9 +1540,9 @@ export function ChatPage() {
               writeMessageSearchSteps(completedAssistant.id, pendingSearchSteps)
               setMessageSearchStepsMap((prev) => new Map(prev).set(completedAssistant.id, pendingSearchSteps))
             }
-            if (runCopData.blocks.length > 0) {
-              writeMessageCopBlocks(completedAssistant.id, runCopData)
-              setMessageCopBlocksMap((prev) => new Map(prev).set(completedAssistant.id, runCopData))
+            if (runAssistantTurn.segments.length > 0) {
+              writeMessageAssistantTurn(completedAssistant.id, runAssistantTurn)
+              setMessageAssistantTurnMap((prev) => new Map(prev).set(completedAssistant.id, runAssistantTurn))
             }
             if (runArtifacts.length > 0) {
               writeMessageArtifacts(completedAssistant.id, runArtifacts)
@@ -1844,8 +1584,6 @@ export function ChatPage() {
             pendingMessageRef.current = null
             void sendMessageRef.current(pending)
           }
-        }).finally(() => {
-          resetPreCopText()
         })
         // 标题生成在后端异步执行，run.completed 后 SSE 已断开，轮询补偿
         if (threadId) {
@@ -1872,12 +1610,11 @@ export function ChatPage() {
         setActiveRunId(null)
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
-        setTopLevelBrowserActions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
         setTopLevelWebFetches([])
         setSegments([])
-        resetCopState()
+        resetAssistantTurnLive()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
@@ -1902,12 +1639,11 @@ export function ChatPage() {
         setActiveRunId(null)
         setThinkingDraft('')
         setTopLevelCodeExecutions([])
-        setTopLevelBrowserActions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
         setTopLevelWebFetches([])
         setSegments([])
-        resetCopState()
+        resetAssistantTurnLive()
         activeSegmentIdRef.current = null
         currentRunCodeExecutionsRef.current = []
         currentRunBrowserActionsRef.current = []
@@ -1926,7 +1662,6 @@ export function ChatPage() {
 
         if (errorClass === 'security.injection_blocked') {
           // 注入拦截：渲染在对话流中，不用底部 error card
-          setAssistantDraft('')
           setInjectionBlocked(typeof obj?.message === 'string' ? obj.message : 'blocked')
         } else {
           setError({
@@ -1937,6 +1672,7 @@ export function ChatPage() {
         }
       }
     }
+    if (dismissAssistantPlaceholder) setAwaitingFirstSse(false)
   }, [activeRunId, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
@@ -1965,7 +1701,8 @@ export function ChatPage() {
     const runSources = [...currentRunSourcesRef.current]
     const runArtifacts = [...currentRunArtifactsRef.current]
     const runWidgets = collectCompletedWidgets(streamingArtifactsRef.current)
-    const runFinalContent = pendingTextRef.current
+    const runAssistantTurn = drainAssistantTurnForPersist(assistantTurnFoldStateRef.current)
+    setLiveAssistantTurn(null)
     const runCodeExecs = [...currentRunCodeExecutionsRef.current]
     const runBrowserActions = [...currentRunBrowserActionsRef.current]
     currentRunArtifactsRef.current = []
@@ -1979,10 +1716,8 @@ export function ChatPage() {
     currentRunWebFetchesRef.current = []
 
     setActiveRunId(null)
-    setAssistantDraft('')
     setThinkingDraft('')
     setTopLevelCodeExecutions([])
-    setTopLevelBrowserActions([])
     setTopLevelSubAgents([])
     setTopLevelFileOps([])
     setTopLevelWebFetches([])
@@ -1990,26 +1725,6 @@ export function ChatPage() {
     setStreamingArtifacts([])
     setSegments([])
     activeSegmentIdRef.current = null
-    const runCopData = finalizeCopBlocks(copBlocksRef.current, {
-      finalContent: runFinalContent,
-      preText: preCopTextRef.current,
-      preTextSeq: preCopTextSeqRef.current,
-    })
-    if (runCopData.blocks.length > 0) {
-      applyCopBlocks(() => runCopData.blocks.map((b) => ({
-        id: b.id,
-        title: b.title,
-        steps: b.steps,
-        sources: b.sources,
-        narratives: b.narratives ?? [],
-        codeExecutions: b.codeExecutions ?? [],
-        subAgents: b.subAgents ?? [],
-        fileOps: b.fileOps ?? [],
-        webFetches: b.webFetches ?? [],
-      })))
-    }
-    pendingTextRef.current = ''
-    pendingTextSeqRef.current = null
     setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -2028,9 +1743,9 @@ export function ChatPage() {
           writeMessageSources(completedAssistant.id, runSources)
           setMessageSourcesMap((prev) => new Map(prev).set(completedAssistant.id, runSources))
         }
-        if (runCopData.blocks.length > 0) {
-          writeMessageCopBlocks(completedAssistant.id, runCopData)
-          setMessageCopBlocksMap((prev) => new Map(prev).set(completedAssistant.id, runCopData))
+        if (runAssistantTurn.segments.length > 0) {
+          writeMessageAssistantTurn(completedAssistant.id, runAssistantTurn)
+          setMessageAssistantTurnMap((prev) => new Map(prev).set(completedAssistant.id, runAssistantTurn))
         }
         if (runArtifacts.length > 0) {
           writeMessageArtifacts(completedAssistant.id, runArtifacts)
@@ -2059,8 +1774,6 @@ export function ChatPage() {
           setMessageThinkingMap((prev) => new Map(prev).set(completedAssistant.id, runThinking))
         }
       }
-    }).finally(() => {
-      resetPreCopText()
     })
   }, [activeRunId, sse.state, buildLiveThinkingSnapshot]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2081,7 +1794,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: isStreaming ? 'instant' : 'smooth' })
-  }, [messages, assistantDraft, segments, isStreaming])
+  }, [messages, liveAssistantTurn, segments, isStreaming])
 
   // COP 代码执行列表：新 item 添加时自动滚动到底部
   useEffect(() => {
@@ -2244,7 +1957,6 @@ export function ChatPage() {
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         setDraft('')
         setAttachments([])
-        setAssistantDraft('')
         injectionBlockedRunIdRef.current = null
         invalidateMessageSync()
         const originalMsg = messages.find((m) => m.id === replaceMessageId)
@@ -2262,6 +1974,7 @@ export function ChatPage() {
         const run = await editMessage(accessToken, threadId, replaceMessageId, text, replacedContentJson)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         noResponseMsgIdRef.current = replaceMessageId
+        setAwaitingFirstSse(true)
         setActiveRunId(run.run_id)
         onRunStarted(threadId)
         scrollToBottom()
@@ -2274,12 +1987,12 @@ export function ChatPage() {
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         setDraft('')
         setAttachments([])
-        setAssistantDraft('')
         injectionBlockedRunIdRef.current = null
         noResponseMsgIdRef.current = message.id
 
         const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadClawFolder(threadId) ?? undefined)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+        setAwaitingFirstSse(true)
         setActiveRunId(run.run_id)
         onRunStarted(threadId)
         scrollToBottom()
@@ -2301,7 +2014,6 @@ export function ChatPage() {
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
-    setAssistantDraft('')
     try {
       const nonTextParts = original.content_json?.parts?.filter((p) => p.type !== 'text') ?? []
       const newContentJson: MessageContent | undefined = original.content_json
@@ -2317,6 +2029,7 @@ export function ChatPage() {
           i === idx ? { ...m, content: newContent, content_json: newContentJson ?? m.content_json } : m,
         )
       })
+      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -2337,7 +2050,6 @@ export function ChatPage() {
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
-    setAssistantDraft('')
     try {
       const run = await retryThread(accessToken, threadId)
       // 乐观地移除最后一条 assistant 消息（后端已标记 hidden）
@@ -2347,6 +2059,7 @@ export function ChatPage() {
         if (lastAssistantIdx === -1) return prev
         return prev.filter((_, i) => i !== lastAssistantIdx)
       })
+      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -2457,7 +2170,6 @@ export function ChatPage() {
 
     disconnectSSE()
     setActiveRunId(null)
-    setAssistantDraft('')
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
@@ -2494,19 +2206,6 @@ export function ChatPage() {
   const resolvedMessageSources = useMemo(() => {
     return resolveMessageSourcesForRender(messages, messageSourcesMap)
   }, [messages, messageSourcesMap])
-
-  const historicalCopMap = useMemo(() => {
-    const copMap = new Map<string, { copData: MessageCopBlocksRef; sources: WebSource[] }>()
-    messages.forEach((msg) => {
-      if (msg.role !== 'assistant') return
-      const sources = resolvedMessageSources.get(msg.id) ?? []
-      const cachedCop = messageCopBlocksMap.get(msg.id)
-      if (cachedCop && cachedCop.blocks.length > 0) {
-        copMap.set(msg.id, { copData: cachedCop, sources })
-      }
-    })
-    return copMap
-  }, [messages, resolvedMessageSources, messageCopBlocksMap])
 
   const sourcePanelSources = sourcePanelMessageId ? resolvedMessageSources.get(sourcePanelMessageId) : undefined
   const sourcePanelUserQuery = useMemo(() => {
@@ -2594,48 +2293,26 @@ export function ChatPage() {
     ...topLevelFileOps.map(op => ({ kind: 'fileop' as const, id: op.id, seq: op.seq ?? 0, item: op })),
     ...topLevelWebFetches.map(wf => ({ kind: 'fetch' as const, id: wf.id, seq: wf.seq ?? 0, item: wf })),
   ].sort((a, b) => a.seq - b.seq), [dedupedTopLevelCodeExecutions, topLevelSubAgents, topLevelFileOps, topLevelWebFetches])
-  const liveIntroNarratives = useMemo(() => {
-    if (!preCopText.trim() || preCopTextSeqRef.current == null) return undefined
-    return [{
-      id: `cop-intro-${preCopTextSeqRef.current}`,
-      text: preCopText,
-      seq: preCopTextSeqRef.current,
-    }]
-  }, [preCopText])
-  const liveCopBlocks = useMemo(
-    () => prependIntroNarrativeToCopBlocks(copBlocks, preCopText, preCopTextSeqRef.current),
-    [copBlocks, preCopText],
-  )
 
-  const copStepCount = useMemo(() => {
-    const timelineSteps = copBlocks.flatMap((b) => b.steps).filter((s) => s.kind !== 'finished').length
-    const segmentSteps = copBlocks.length === 0
-      ? segments.filter(s => s.mode !== 'hidden').length
-      : 0
-    const codeExecSteps = timelineSteps === 0 && segmentSteps === 0
-      ? copBlocks.length > 0
-        ? copBlocks.reduce((sum, b) => sum + b.codeExecutions.length, 0)
-        : dedupedTopLevelCodeExecutions.length
-      : 0
-    const agentSteps = topLevelSubAgents.length
-    return timelineSteps + segmentSteps + codeExecSteps + agentSteps
-  }, [copBlocks, segments, dedupedTopLevelCodeExecutions, topLevelSubAgents])
+  const livePlacedShowWidgetCallIds = useMemo(() => liveCopShowWidgetCallIds(liveAssistantTurn), [liveAssistantTurn])
+  const livePlacedCreateArtifactCallIds = useMemo(() => liveCopCreateArtifactCallIds(liveAssistantTurn), [liveAssistantTurn])
 
-  const lastCopBlock = copBlocks[copBlocks.length - 1]
-  const copHeaderLabel = !assistantDraft
-    ? (lastCopBlock?.title || 'Thinking')
-    : copStepCount > 0
-      ? `${copStepCount} steps completed`
-      : 'Completed'
-  const hasStreamingWidgetPreview = streamingArtifacts.some((entry) => entry.toolName === 'show_widget' && !!entry.content)
-  const hasStreamingInlineArtifact = streamingArtifacts.some((entry) => entry.toolName === 'create_artifact' && !!entry.content && entry.display !== 'panel')
-  const hideLiveCopHeader = !assistantDraft
-    && segments.length === 0
-    && allStreamItems.length === 0
-    && !preCopText
-    && (hasStreamingWidgetPreview || hasStreamingInlineArtifact)
+  const copTimelineStreamHiddenIds = useMemo(() => {
+    if (!isStreaming || !liveAssistantTurn) return new Set<string>()
+    return toolCallIdsInCopSearchTimelines(liveAssistantTurn, {
+      codeExecutions: topLevelCodeExecutions,
+      fileOps: topLevelFileOps,
+      webFetches: topLevelWebFetches,
+      subAgents: topLevelSubAgents,
+      searchSteps,
+      sources: currentRunSourcesRef.current,
+    })
+  }, [isStreaming, liveAssistantTurn, topLevelCodeExecutions, topLevelFileOps, topLevelWebFetches, topLevelSubAgents, searchSteps])
 
-  const copHeaderDisplayed = useTypewriter(isStreaming ? copHeaderLabel : '')
+  const allStreamItemsForUi = useMemo(() => {
+    if (copTimelineStreamHiddenIds.size === 0) return allStreamItems
+    return allStreamItems.filter((e) => !copTimelineStreamHiddenIds.has(e.id))
+  }, [allStreamItems, copTimelineStreamHiddenIds])
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -2791,14 +2468,14 @@ export function ChatPage() {
               {messages.map((msg, idx) => {
                 const resolvedSources = msg.role === 'assistant' ? resolvedMessageSources.get(msg.id) : undefined
                 const canShowSources = !!(resolvedSources && resolvedSources.length > 0)
-                const historicalCop = msg.role === 'assistant' ? historicalCopMap.get(msg.id) : undefined
-                const historicalBlocks = historicalCop?.copData.blocks ?? []
-                const historicalPreText = historicalCop?.copData.preText
-                const historicalFinalContent = historicalCop?.copData.finalContent
-                const historicalPreTextInTimeline = !!(
-                  historicalPreText
-                  && historicalBlocks[0]?.narratives?.some((entry) => entry.text === historicalPreText)
-                )
+                const historicalTurn = msg.role === 'assistant' ? messageAssistantTurnMap.get(msg.id) : undefined
+                const hasAssistantTurn = !!(historicalTurn && historicalTurn.segments.length > 0)
+                const msgWidgetsRaw =
+                  msg.role === 'assistant' ? (messageWidgetsMap.get(msg.id) ?? readMessageWidgets(msg.id) ?? undefined) : undefined
+                const bubbleWidgets =
+                  msg.role === 'assistant' && historicalTurn && historicalTurn.segments.length > 0
+                    ? msgWidgetsRaw?.filter((w) => !widgetToolCallIdsPlacedInTurn(historicalTurn, msgWidgetsRaw).has(w.id))
+                    : msgWidgetsRaw
 
                 const messageCodeExecutions = msg.role === 'assistant' ? messageCodeExecutionsMap.get(msg.id) : undefined
                 const hasMessageCodeExecutions = !!(messageCodeExecutions && messageCodeExecutions.length > 0)
@@ -2807,47 +2484,75 @@ export function ChatPage() {
                 const timelineSteps = messageSearchSteps ?? []
                 const messageFileOps = msg.role === 'assistant' ? messageFileOpsMap.get(msg.id) : undefined
                 const messageWebFetches = msg.role === 'assistant' ? messageWebFetchesMap.get(msg.id) : undefined
-                const hasPerBlockCodeExecs = historicalBlocks.some(b => b.codeExecutions && b.codeExecutions.length > 0)
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
-                  {/* 完成后的 COP 时间轴 */}
-                  {(historicalBlocks.length > 0 || timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
-                    <div style={{ marginBottom: '12px' }}>
-                      {historicalPreText && !historicalPreTextInTimeline && (
-                        <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px', paddingBottom: '8px' }}>
-                          {historicalPreText}
-                        </div>
-                      )}
-                      {historicalBlocks.map((block, bi) => {
-                        const blockCodeExecs = hasPerBlockCodeExecs
-                          ? (block.codeExecutions?.length ? block.codeExecutions : undefined)
-                          : (bi === historicalBlocks.length - 1 ? messageCodeExecutions : undefined)
-                        return (
-                        <Fragment key={block.id}>
-                          <SearchTimeline
-                            steps={block.steps}
-                            sources={block.sources}
-                            narratives={block.narratives}
-                            isComplete
-                            codeExecutions={blockCodeExecs}
-                            onOpenCodeExecution={openCodePanel}
-                            activeCodeExecutionId={codePanelExecution?.id}
-                            subAgents={(block.subAgents?.length ?? 0) > 0 ? block.subAgents : (bi === historicalBlocks.length - 1 ? messageSubAgents : undefined)}
-                            fileOps={(block.fileOps?.length ?? 0) > 0 ? block.fileOps : (bi === historicalBlocks.length - 1 ? messageFileOps : undefined)}
-                            webFetches={(block.webFetches?.length ?? 0) > 0 ? block.webFetches : (bi === historicalBlocks.length - 1 ? messageWebFetches : undefined)}
-                            headerOverride={block.title || undefined}
+                  {msg.role === 'assistant' && hasAssistantTurn && (
+                    <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+                      {historicalTurn!.segments.map((seg, si) =>
+                        seg.type === 'text' ? (
+                          <MarkdownRenderer
+                            key={`${msg.id}-at-${si}`}
+                            content={seg.content}
+                            webSources={resolvedSources}
+                            artifacts={messageArtifactsMap.get(msg.id)}
                             accessToken={accessToken}
-                            baseUrl={baseUrl}
+                            runId={msg.run_id ?? undefined}
+                            onOpenDocument={openDocumentPanel}
+                            trimTrailingMargin={
+                              historicalTurn!.segments[si + 1] == null ||
+                              historicalTurn!.segments[si + 1]?.type === 'cop'
+                            }
                           />
-                          {(!block.narratives || block.narratives.length === 0) && historicalCop?.copData.bridgeTexts?.[bi] && (
-                            <div style={{ padding: '6px 0 8px', fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px' }}>
-                              {historicalCop.copData.bridgeTexts[bi]}
-                            </div>
-                          )}
-                        </Fragment>
-                        )
-                      })}
-                      {historicalBlocks.length === 0 && timelineSteps.length > 0 && (
+                        ) : (
+                          (() => {
+                            const payload = searchTimelinePayloadForCopSegment(seg, {
+                              codeExecutions: messageCodeExecutions,
+                              fileOps: messageFileOps,
+                              webFetches: messageWebFetches,
+                              subAgents: messageSubAgents,
+                              searchSteps: messageSearchSteps ?? [],
+                              sources: resolvedSources ?? [],
+                            })
+                            const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
+                            if (!payload && histWidgets.length === 0) return null
+                            const titleTrim = seg.title?.trim()
+                            return (
+                              <Fragment key={`${msg.id}-acw-${si}`}>
+                                {payload && (
+                                  <SearchTimeline
+                                    steps={payload.steps}
+                                    sources={payload.sources}
+                                    isComplete
+                                    codeExecutions={payload.codeExecutions}
+                                    onOpenCodeExecution={openCodePanel}
+                                    activeCodeExecutionId={codePanelExecution?.id}
+                                    subAgents={payload.subAgents}
+                                    fileOps={payload.fileOps}
+                                    webFetches={payload.webFetches}
+                                    {...(titleTrim ? { headerOverride: titleTrim } : {})}
+                                    accessToken={accessToken}
+                                    baseUrl={baseUrl}
+                                  />
+                                )}
+                                {histWidgets.map((w) => (
+                                  <WidgetBlock
+                                    key={w.id}
+                                    html={w.html}
+                                    title={w.title}
+                                    complete
+                                    onAction={handleArtifactAction}
+                                  />
+                                ))}
+                              </Fragment>
+                            )
+                          })()
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {msg.role === 'assistant' && !hasAssistantTurn && (timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
+                    <div style={{ marginBottom: '12px' }}>
+                      {timelineSteps.length > 0 && (
                         <SearchTimeline
                           steps={timelineSteps}
                           sources={resolvedSources ?? []}
@@ -2862,7 +2567,7 @@ export function ChatPage() {
                           baseUrl={baseUrl}
                         />
                       )}
-                      {historicalBlocks.length === 0 && timelineSteps.length === 0 && (hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
+                      {timelineSteps.length === 0 && (hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
                         <SearchTimeline
                           steps={[]}
                           sources={[]}
@@ -2881,6 +2586,9 @@ export function ChatPage() {
                   )}
                   <MessageBubble
                     message={msg}
+                    streamAssistantMarkdown={
+                      isStreaming && msg.role === 'assistant' && idx === messages.length - 1
+                    }
                     animateUserEnter={msg.role === 'user' && msg.id === userEnterMessageId}
                     onRetry={
                       msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming && !sending
@@ -2922,7 +2630,7 @@ export function ChatPage() {
                     webSources={resolvedSources}
                     artifacts={msg.role === 'assistant' ? messageArtifactsMap.get(msg.id) : undefined}
                     browserActions={msg.role === 'assistant' ? messageBrowserActionsMap.get(msg.id) : undefined}
-                    widgets={msg.role === 'assistant' ? (messageWidgetsMap.get(msg.id) ?? readMessageWidgets(msg.id) ?? undefined) : undefined}
+                    widgets={bubbleWidgets}
                     accessToken={accessToken}
                     onWidgetAction={msg.role === 'assistant' ? handleArtifactAction : undefined}
                     onShowSources={
@@ -2945,8 +2653,8 @@ export function ChatPage() {
                         ? () => setRunDetailPanelRunId(msg.run_id!)
                         : undefined
                     }
-                    contentPrefix={msg.role === 'assistant' && !historicalFinalContent ? historicalPreText : undefined}
-                    contentOverride={msg.role === 'assistant' ? historicalFinalContent : undefined}
+                    contentOverride={msg.role === 'assistant' && hasAssistantTurn ? '' : undefined}
+                    plainTextForCopy={msg.role === 'assistant' && hasAssistantTurn ? assistantTurnPlainText(historicalTurn!) : undefined}
                   />
                   {/* 无痕分割线：固定在 fork 基点之后 */}
                   {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
@@ -2956,8 +2664,8 @@ export function ChatPage() {
                 )
               })}
 
-              {/* 流式 COP 状态指示（无 copBlocks 时）：Thinking / XX steps completed */}
-              {isStreaming && copBlocks.length === 0 && !hideLiveCopHeader && (segments.length > 0 || allStreamItems.length > 0 || !assistantDraft) && (
+              {/* 流式：首条 SSE 前占位（放在正文列之前）；收到任意 fresh 后 awaitingFirstSse=false */}
+              {isStreaming && awaitingFirstSse && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -2975,139 +2683,188 @@ export function ChatPage() {
                       fontWeight: 500,
                     }}
                   >
-                    {copHeaderDisplayed && (
-                      <span className={!assistantDraft ? 'thinking-shimmer' : undefined}>{copHeaderDisplayed}</span>
-                    )}
+                    <span className="thinking-shimmer">{t.assistantStreamThinkingPlaceholder}</span>
                   </div>
-                  {!assistantDraft && segments.length > 0 && (
-                    <div style={{ paddingLeft: '24px', paddingTop: '2px' }}>
-                      {segments.filter(s => s.label && s.mode !== 'hidden').map(seg => (
-                        <div
-                          key={seg.segmentId}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            fontSize: '13px',
-                            color: 'var(--c-text-muted)',
-                            padding: '4px 0',
-                          }}
-                        >
-                          {seg.isStreaming && (
-                            <Loader2 size={12} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
-                          )}
-                          <span>{seg.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {allStreamItems.length > 0 && (
-                    <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', display: 'flex', flexDirection: 'column' }}>
-                      {allStreamItems.map((entry, idx) => {
-                        const isFirst = idx === 0
-                        const isLast = idx === allStreamItems.length - 1
-                        const multiItems = allStreamItems.length >= 2
-                        const isShell = entry.kind === 'code' && entry.item.language === 'shell'
-                        const dotTop = entry.kind === 'code' && !isShell
-                          ? LIVE_TIMELINE_CODE_DOT_TOP
-                          : LIVE_TIMELINE_DOT_TOP
-                        const dotColor = entry.kind === 'code'
-                          ? codeExecutionAccentColor(entry.item.status)
-                          : entry.kind === 'agent'
-                            ? entry.item.status === 'completed' ? 'var(--c-text-muted)' : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)'
-                            : entry.kind === 'fileop'
-                              ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
-                              : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
-                        return (
-                          <motion.div
-                            key={entry.id}
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.25, ease: 'easeOut' }}
-                            style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}
-                          >
-                            {!isLast && (
-                              <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                            )}
-                            {multiItems && !isFirst && (
-                              <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                            )}
-                            <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: '8px', height: '8px', borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                            {entry.kind === 'code' && (isShell
-                              ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
-                              : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
-                            )}
-                            {entry.kind === 'agent' && (
-                              <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
-                            )}
-                            {entry.kind === 'fileop' && (
-                              <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
-                            )}
-                            {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} />}
-                          </motion.div>
-                        )
-                      })}
-                    </div>
-                  )}
                 </motion.div>
               )}
 
-              {/* 流式期间 tool 调用前生成的文字（仅在 assistantDraft 为空时显示，否则由 StreamingBubble 负责） */}
-              {(isStreaming || liveTimelineExiting) && preCopText && !assistantDraft && liveCopBlocks.length === 0 && searchSteps.length === 0 && (
-                <div style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', maxWidth: '663px', paddingBottom: '8px' }}>
-                  {preCopText}
+              {isStreaming &&
+                !awaitingFirstSse &&
+                (!liveAssistantTurn || liveAssistantTurn.segments.length === 0) &&
+                segments.some((s) => s.label && s.mode !== 'hidden') && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  style={{ maxWidth: '663px' }}
+                >
+                  <div style={{ paddingLeft: '24px', paddingTop: '2px' }}>
+                    {segments.filter((s) => s.label && s.mode !== 'hidden').map((seg) => (
+                      <div
+                        key={seg.segmentId}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '13px',
+                          color: 'var(--c-text-muted)',
+                          padding: '4px 0',
+                        }}
+                      >
+                        {seg.isStreaming && (
+                          <Loader2 size={12} className="animate-spin" style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
+                        )}
+                        <span>{seg.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* 流式：正文 Markdown + COP 用 SearchTimeline 点线 */}
+              {isStreaming && liveAssistantTurn && liveAssistantTurn.segments.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+                  {liveAssistantTurn.segments.map((seg, si) => {
+                    const lastSegIdx = liveAssistantTurn.segments.length - 1
+                    const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
+                    const mdTypewriterDone =
+                      !isStreaming ||
+                      lastTurnSeg?.type !== 'text' ||
+                      si !== lastSegIdx
+                    const copClosedByFollowingSeg = si < lastSegIdx
+                    const copTimelineComplete = !isStreaming || copClosedByFollowingSeg
+                    const copTimelineLive = isStreaming && !copClosedByFollowingSeg
+
+                    return seg.type === 'text' ? (
+                      <LiveTurnMarkdown
+                        key={`live-at-${si}`}
+                        content={seg.content}
+                        typewriterDone={mdTypewriterDone}
+                        webSources={currentRunSourcesRef.current.length > 0 ? currentRunSourcesRef.current : undefined}
+                        artifacts={currentRunArtifactsRef.current.length > 0 ? currentRunArtifactsRef.current : undefined}
+                        accessToken={accessToken}
+                        runId={activeRunId ?? undefined}
+                        onOpenDocument={openDocumentPanel}
+                        trimTrailingMargin={
+                          liveAssistantTurn.segments[si + 1] == null ||
+                          liveAssistantTurn.segments[si + 1]?.type === 'cop'
+                        }
+                      />
+                    ) : (
+                      (() => {
+                        const payload = searchTimelinePayloadForCopSegment(seg, {
+                          codeExecutions: topLevelCodeExecutions,
+                          fileOps: topLevelFileOps,
+                          webFetches: topLevelWebFetches,
+                          subAgents: topLevelSubAgents,
+                          searchSteps,
+                          sources: currentRunSourcesRef.current,
+                        })
+                        const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
+                        const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
+                        if (!payload && liveWidgets.length === 0 && liveArts.length === 0) return null
+                        const titleTrim = seg.title?.trim()
+                        return (
+                          <Fragment key={`live-acw-${si}`}>
+                            {payload && (
+                              <SearchTimeline
+                                steps={payload.steps}
+                                sources={payload.sources}
+                                isComplete={copTimelineComplete}
+                                codeExecutions={payload.codeExecutions}
+                                onOpenCodeExecution={openCodePanel}
+                                activeCodeExecutionId={codePanelExecution?.id}
+                                subAgents={payload.subAgents}
+                                fileOps={payload.fileOps}
+                                webFetches={payload.webFetches}
+                                {...(titleTrim ? { headerOverride: titleTrim } : {})}
+                                shimmer={copTimelineLive}
+                                live={copTimelineLive}
+                                accessToken={accessToken}
+                                baseUrl={baseUrl}
+                              />
+                            )}
+                            {liveWidgets.map((entry) => (
+                              <WidgetBlock
+                                key={`live-w-${entry.toolCallId ?? entry.toolCallIndex}`}
+                                html={entry.content ?? ''}
+                                title={entry.title ?? 'Widget'}
+                                complete={entry.complete}
+                                loadingMessages={entry.loadingMessages}
+                                onAction={handleArtifactAction}
+                              />
+                            ))}
+                            {liveArts.map((entry) => (
+                              <ArtifactStreamBlock
+                                key={`live-art-${entry.toolCallId ?? entry.toolCallIndex}`}
+                                entry={entry}
+                                accessToken={accessToken}
+                                onAction={handleArtifactAction}
+                              />
+                            ))}
+                          </Fragment>
+                        )
+                      })()
+                    )
+                  })}
                 </div>
               )}
 
-              {/* 流式期间的 live COP 时间轴 */}
-              {(isStreaming || liveTimelineExiting) && (copBlocks.length > 0 || searchSteps.length > 0) && (
-                liveCopBlocks.length > 0 ? (
-                  <div>
-                    {liveCopBlocks.map((block, bi) => {
-                      const isLastBlock = bi === liveCopBlocks.length - 1
-                      const blockComplete = !isLastBlock || (liveTimelineExiting && !isStreaming)
+              {/* 流式：顶层代码 / 子代理 / 文件 / 抓取（已出现在 COP SearchTimeline 的 id 不再渲染） */}
+              {isStreaming && allStreamItemsForUi.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  style={{ maxWidth: '663px' }}
+                >
+                  <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', display: 'flex', flexDirection: 'column' }}>
+                    {allStreamItemsForUi.map((entry, idx) => {
+                      const isFirst = idx === 0
+                      const isLast = idx === allStreamItemsForUi.length - 1
+                      const multiItems = allStreamItemsForUi.length >= 2
+                      const isShell = entry.kind === 'code' && entry.item.language === 'shell'
+                      const dotTop = entry.kind === 'code' && !isShell
+                        ? LIVE_TIMELINE_CODE_DOT_TOP
+                        : LIVE_TIMELINE_DOT_TOP
+                      const dotColor = entry.kind === 'code'
+                        ? codeExecutionAccentColor(entry.item.status)
+                        : entry.kind === 'agent'
+                          ? entry.item.status === 'completed' ? 'var(--c-text-muted)' : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)'
+                          : entry.kind === 'fileop'
+                            ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
+                            : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
                       return (
-                        <Fragment key={block.id}>
-                          <SearchTimeline
-                            steps={block.steps}
-                            sources={block.sources}
-                            narratives={block.narratives}
-                            isComplete={blockComplete}
-                            codeExecutions={(block.codeExecutions?.length ?? 0) > 0 ? block.codeExecutions : (isLastBlock && dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined)}
-                            onOpenCodeExecution={openCodePanel}
-                            activeCodeExecutionId={codePanelExecution?.id}
-                            subAgents={(block.subAgents?.length ?? 0) > 0 ? block.subAgents : (isLastBlock && topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined)}
-                            fileOps={(block.fileOps?.length ?? 0) > 0 ? block.fileOps : (isLastBlock && topLevelFileOps.length > 0 ? topLevelFileOps : undefined)}
-                            webFetches={(block.webFetches?.length ?? 0) > 0 ? block.webFetches : (isLastBlock && topLevelWebFetches.length > 0 ? topLevelWebFetches : undefined)}
-                            headerOverride={block.title || (!liveTimelineExiting ? copHeaderLabel : undefined)}
-                            shimmer={!liveTimelineExiting && isLastBlock && !assistantDraft}
-                            live={!liveTimelineExiting && isLastBlock}
-                            accessToken={accessToken}
-                            baseUrl={baseUrl}
-                          />
-                        </Fragment>
+                        <motion.div
+                          key={entry.id}
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.25, ease: 'easeOut' }}
+                          style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}
+                        >
+                          {!isLast && (
+                            <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                          )}
+                          {multiItems && !isFirst && (
+                            <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
+                          )}
+                          <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: '8px', height: '8px', borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
+                          {entry.kind === 'code' && (isShell
+                            ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
+                            : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
+                          )}
+                          {entry.kind === 'agent' && (
+                            <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
+                          )}
+                          {entry.kind === 'fileop' && (
+                            <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
+                          )}
+                          {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} live />}
+                        </motion.div>
                       )
                     })}
                   </div>
-                ) : (
-                  <SearchTimeline
-                    steps={searchSteps}
-                    sources={currentRunSourcesRef.current}
-                    narratives={liveIntroNarratives}
-                    isComplete={liveTimelineExiting && !isStreaming}
-                    codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
-                    onOpenCodeExecution={openCodePanel}
-                    activeCodeExecutionId={codePanelExecution?.id}
-                    subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
-                    fileOps={topLevelFileOps.length > 0 ? topLevelFileOps : undefined}
-                    webFetches={topLevelWebFetches.length > 0 ? topLevelWebFetches : undefined}
-                    headerOverride={!liveTimelineExiting ? copHeaderLabel : undefined}
-                    shimmer={!liveTimelineExiting && !assistantDraft}
-                    live={!liveTimelineExiting}
-                    accessToken={accessToken}
-                    baseUrl={baseUrl}
-                  />
-                )
+                </motion.div>
               )}
 
               {/* 非搜索模式：常规 segment 渲染 */}
@@ -3153,17 +2910,21 @@ export function ChatPage() {
                 </div>
               )}
 
-              {streamingArtifacts.filter((e) => e.toolName === 'show_widget' && e.content).map((entry) => (
+              {streamingArtifacts.filter((e) => e.toolName === 'show_widget' && (
+                (e.content != null && e.content.length > 0) ||
+                (e.loadingMessages != null && e.loadingMessages.length > 0)
+              ) && (!e.toolCallId || !livePlacedShowWidgetCallIds.has(e.toolCallId))).map((entry) => (
                 <WidgetBlock
                   key={`streaming-widget-${entry.toolCallIndex}`}
-                  html={entry.content!}
+                  html={entry.content ?? ''}
                   title={entry.title ?? 'Widget'}
                   complete={entry.complete}
+                  loadingMessages={entry.loadingMessages}
                   onAction={handleArtifactAction}
                 />
               ))}
 
-              {streamingArtifacts.filter((e) => e.toolName === 'create_artifact' && e.content && e.display !== 'panel').map((entry) => (
+              {streamingArtifacts.filter((e) => e.toolName === 'create_artifact' && e.content && e.display !== 'panel' && (!e.toolCallId || !livePlacedCreateArtifactCallIds.has(e.toolCallId))).map((entry) => (
                 <ArtifactStreamBlock
                   key={`streaming-artifact-${entry.toolCallIndex}`}
                   entry={entry}
@@ -3171,16 +2932,6 @@ export function ChatPage() {
                   onAction={handleArtifactAction}
                 />
               ))}
-
-              {assistantDraft && (
-                <StreamingBubble
-                  content={assistantDraft}
-                  isComplete={!isStreaming}
-                  webSources={currentRunSourcesRef.current.length > 0 ? currentRunSourcesRef.current : undefined}
-                  browserActions={topLevelBrowserActions.length > 0 ? topLevelBrowserActions : undefined}
-                  accessToken={accessToken}
-                />
-              )}
 
               {injectionBlocked && (
                 <div className="max-w-[720px] rounded-xl border-[0.5px] border-[var(--c-error-border)] bg-[var(--c-error-bg)] px-4 py-3 text-sm text-[var(--c-error-text)]">

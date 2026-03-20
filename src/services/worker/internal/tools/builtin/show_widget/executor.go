@@ -2,6 +2,7 @@ package showwidget
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"arkloop/services/worker/internal/tools"
@@ -33,6 +34,10 @@ func (e *ToolExecutor) Execute(
 		return errResult("tool.args_invalid", "widget_code is required", started)
 	}
 
+	if err := validateLoadingMessages(args["loading_messages"]); err != "" {
+		return errResult("tool.args_invalid", err, started)
+	}
+
 	title, _ := args["title"].(string)
 
 	return tools.ExecutionResult{
@@ -46,6 +51,27 @@ func errResult(class, msg string, started time.Time) tools.ExecutionResult {
 		Error:      &tools.ExecutionError{ErrorClass: class, Message: msg},
 		DurationMs: durationMs(started),
 	}
+}
+
+func validateLoadingMessages(raw any) string {
+	if raw == nil {
+		return ""
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return "loading_messages must be an array"
+	}
+	n := len(arr)
+	if n < 1 || n > 4 {
+		return "loading_messages must have 1 to 4 items"
+	}
+	for _, item := range arr {
+		s, ok := item.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return "loading_messages items must be non-empty strings"
+		}
+	}
+	return ""
 }
 
 func durationMs(started time.Time) int {

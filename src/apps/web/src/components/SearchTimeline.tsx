@@ -6,6 +6,7 @@ import type { WebSource } from '../storage'
 import type { SubAgentRef, FileOpRef, WebFetchRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
+import { useLocale } from '../contexts/LocaleContext'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
 
@@ -42,9 +43,9 @@ type Props = {
   baseUrl?: string
 }
 
-function TypewriterText({ text, className, active }: { text: string; className?: string; active: boolean }) {
-  const displayed = useTypewriter(active ? text : '')
-  return <span className={className}>{active ? displayed : text}</span>
+function TypewriterText({ text, className, live }: { text: string; className?: string; live?: boolean }) {
+  const displayed = useTypewriter(text, !live)
+  return <span className={className}>{displayed}</span>
 }
 
 function getDomain(url: string): string {
@@ -74,7 +75,8 @@ function isHttpUrl(url: string): boolean {
   }
 }
 
-function QueryPill({ text }: { text: string }) {
+function QueryPill({ text, live }: { text: string; live?: boolean }) {
+  const displayed = useTypewriter(text, !live)
   return (
     <span
       style={{
@@ -98,9 +100,28 @@ function QueryPill({ text }: { text: string }) {
         }}
       >
         <Search size={11} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} />
-        {text}
+        {displayed}
       </span>
     </span>
+  )
+}
+
+function TimelineNarrativeBody({ text, tone = 'secondary', live }: { text: string; tone?: 'primary' | 'secondary'; live?: boolean }) {
+  const displayed = useTypewriter(text, !live)
+  const color = tone === 'primary' ? 'var(--c-text-primary)' : 'var(--c-text-secondary)'
+  return (
+    <div
+      style={{
+        fontSize: '14px',
+        lineHeight: '1.6',
+        color,
+        ...(tone === 'primary' ? {} : { fontWeight: 'var(--c-narrative-weight, 275)' as const }),
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}
+    >
+      {displayed}
+    </div>
   )
 }
 
@@ -175,7 +196,7 @@ function getUrlScheme(url: string): string {
   }
 }
 
-export function WebFetchItem({ fetch: f }: { fetch: WebFetchRef }) {
+export function WebFetchItem({ fetch: f, live }: { fetch: WebFetchRef; live?: boolean }) {
   const [faviconFailed, setFaviconFailed] = useState(false)
   const isFetching = f.status === 'fetching'
   const isHttp = isHttpUrl(f.url)
@@ -184,9 +205,11 @@ export function WebFetchItem({ fetch: f }: { fetch: WebFetchRef }) {
   const scheme = getUrlScheme(f.url)
   const shortName = isHttp ? getShortName(f.url) : (scheme || 'invalid')
   const primaryText = f.title || (isHttp ? domain : (f.url || 'Invalid URL'))
+  const displayedPrimary = useTypewriter(primaryText, !live)
   const secondaryText = typeof f.statusCode === 'number'
     ? `${f.statusCode}`
     : shortName
+  const displayedSecondary = useTypewriter(secondaryText, !live)
   const content = (
     <>
       <div
@@ -236,10 +259,10 @@ export function WebFetchItem({ fetch: f }: { fetch: WebFetchRef }) {
           minWidth: 0,
         }}
       >
-        {primaryText}
+        {displayedPrimary}
       </span>
       <span style={{ fontSize: '11px', color: 'var(--c-text-muted)', flexShrink: 0 }}>
-        {secondaryText}
+        {displayedSecondary}
       </span>
     </>
   )
@@ -289,6 +312,7 @@ const SHELL_DOT_TOP = 9 + TIMELINE_DOT_NUDGE_Y
 const PYTHON_DOT_TOP = 16 + TIMELINE_DOT_NUDGE_Y
 
 export function SearchTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl }: Props) {
+  const { t } = useLocale()
   const [collapsed, setCollapsed] = useState(() => isComplete)
   const prevIsCompleteRef = useRef(isComplete)
   useEffect(() => {
@@ -361,7 +385,9 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
         : 'Completed'
     : visibleSteps.length > 0
       ? (visibleSteps[visibleSteps.length - 1]?.label || 'Searching...')
-      : 'Thinking'
+      : effectiveStepCount > 0
+        ? t.searchTimelineLiveProgress
+        : 'Searching...'
 
   const headerLabel = headerOverride ?? autoLabel
   const dottedStepCount = visibleSteps.length
@@ -391,7 +417,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
           transition: 'color 0.15s ease',
         }}
       >
-        <TypewriterText text={headerLabel} className={shimmer ? 'thinking-shimmer' : undefined} active={!!live} />
+        <TypewriterText text={headerLabel} className={shimmer ? 'thinking-shimmer' : undefined} live={!!live} />
         {isComplete && sources.length > 0 && (
           <span style={{ fontSize: '12px', color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-muted)', fontWeight: 400, transition: 'color 0.15s ease' }}>
             {sources.length} sources
@@ -489,14 +515,14 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                       <TypewriterText
                         text={step.kind === 'reviewing' ? 'Reviewing sources' : step.label}
                         className={step.kind === 'reviewing' && step.status === 'active' ? 'thinking-shimmer-dim' : undefined}
-                        active={!!live}
+                        live={!!live}
                       />
                     </div>
 
                     {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
                         {step.queries.map((q) => (
-                          <QueryPill key={q} text={q} />
+                          <QueryPill key={q} text={q} live={!!live} />
                         ))}
                       </div>
                     )}
@@ -580,14 +606,14 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                               <TypewriterText
                                 text={entry.item.kind === 'reviewing' ? 'Reviewing sources' : entry.item.label}
                                 className={entry.item.kind === 'reviewing' && entry.item.status === 'active' ? 'thinking-shimmer-dim' : undefined}
-                                active={!!live}
+                                live={!!live}
                               />
                             </div>
 
                             {entry.item.kind === 'searching' && entry.item.queries && entry.item.queries.length > 0 && (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
                                 {entry.item.queries.map((q) => (
-                                  <QueryPill key={q} text={q} />
+                                  <QueryPill key={q} text={q} live={!!live} />
                                 ))}
                               </div>
                             )}
@@ -614,31 +640,18 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                             )}
                           </div>
                         )}
-                        {entry.kind === 'text' && (
-                          <div
-                            style={{
-                              fontSize: '14px',
-                              lineHeight: '1.6',
-                              color: 'var(--c-text-secondary)',
-                              fontWeight: 'var(--c-narrative-weight, 275)',
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                            }}
-                          >
-                            {entry.item.text}
-                          </div>
-                        )}
+                        {entry.kind === 'text' && <TimelineNarrativeBody text={entry.item.text} live={!!live} />}
                         {entry.kind === 'code' && (entry.item.language === 'shell'
-                          ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                          ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth={!!live} />
                           : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(entry.item as CodeExecution) : undefined} isActive={activeCodeExecutionId === entry.item.id} />
                         )}
                         {entry.kind === 'agent' && (
                           <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={live} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                         )}
                         {entry.kind === 'fileop' && (
-                          <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                          <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth={!!live} />
                         )}
-                        {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} />}
+                        {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} live={!!live} />}
                       </div>
                     )
                   })}
@@ -648,9 +661,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                   {textEntries.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: visibleSteps.length > 0 ? '8px' : '0' }}>
                       {textEntries.map((entry) => (
-                        <div key={entry.id} style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--c-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {entry.text}
-                        </div>
+                        <TimelineNarrativeBody key={entry.id} text={entry.text} tone="primary" live={!!live} />
                       ))}
                     </div>
                   )}
@@ -674,7 +685,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: codeExecutionAccentColor(ce.status), border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
                             {ce.language === 'shell'
-                              ? <ExecutionCard variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                              ? <ExecutionCard variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} smooth={!!live} />
                               : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined} isActive={activeCodeExecutionId === ce.id} />
                             }
                           </div>
@@ -729,7 +740,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                               <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                            <ExecutionCard variant="fileop" toolName={op.toolName} label={op.label} output={op.output} status={op.status} errorMessage={op.errorMessage} />
+                            <ExecutionCard variant="fileop" toolName={op.toolName} label={op.label} output={op.output} status={op.status} errorMessage={op.errorMessage} smooth={!!live} />
                           </div>
                         )
                       })}
@@ -756,7 +767,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                               <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                            <WebFetchItem fetch={f} />
+                            <WebFetchItem fetch={f} live={!!live} />
                           </div>
                         )
                       })}
