@@ -122,15 +122,15 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       }
 
       const params: Record<string, string> = {
-        'embedding.provider': resolved.embedding.provider,
-        'embedding.model': resolved.embedding.model,
-        'embedding.api_key': resolved.embedding.api_key,
-        'embedding.api_base': resolved.embedding.api_base,
-        'embedding.dimension': String(resolved.embedding.dimension),
-        'vlm.provider': resolved.vlm.provider,
-        'vlm.model': resolved.vlm.model,
-        'vlm.api_key': resolved.vlm.api_key,
-        'vlm.api_base': resolved.vlm.api_base,
+        embedding_provider: resolved.embedding.provider,
+        embedding_model: resolved.embedding.model,
+        embedding_api_key: resolved.embedding.api_key,
+        embedding_api_base: resolved.embedding.api_base,
+        embedding_dimension: String(resolved.embedding.dimension),
+        vlm_provider: resolved.vlm.provider,
+        vlm_model: resolved.vlm.model,
+        vlm_api_key: resolved.vlm.api_key,
+        vlm_api_base: resolved.vlm.api_base,
       }
       if (currentOV.rootApiKey) {
         params.root_api_key = currentOV.rootApiKey

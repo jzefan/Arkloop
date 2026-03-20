@@ -38,3 +38,29 @@ not-json
 		t.Fatalf("entries[1].Service = %q, want bridge", entries[1].Service)
 	}
 }
+
+func TestMapStatus(t *testing.T) {
+	cases := []struct {
+		entry psEntry
+		want  string
+	}{
+		{psEntry{State: "running", Health: "healthy"}, "running"},
+		{psEntry{State: "running", Health: ""}, "running"},
+		{psEntry{State: "running", Health: "unhealthy"}, "error"},
+		{psEntry{State: "exited", Health: ""}, "stopped"},
+		{psEntry{State: "created", Health: ""}, "stopped"},
+		{psEntry{State: "paused", Health: ""}, "stopped"},
+		{psEntry{State: "restarting", Health: ""}, "error"},
+		{psEntry{State: "Restarting (1)", Health: ""}, "error"},
+		{psEntry{State: "dead", Health: ""}, "error"},
+		{psEntry{State: "removing", Health: ""}, "error"},
+		{psEntry{State: "unknown-state", Health: ""}, "error"},
+		{psEntry{State: "", Health: ""}, "not_installed"},
+	}
+	for _, tc := range cases {
+		got := mapStatus(tc.entry)
+		if got != tc.want {
+			t.Fatalf("mapStatus(%#v) = %q, want %q", tc.entry, got, tc.want)
+		}
+	}
+}

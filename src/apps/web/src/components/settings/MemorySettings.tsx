@@ -29,6 +29,20 @@ import {
   type LlmProvider,
 } from '../../api'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
+import { SettingsModelDropdown } from './SettingsModelDropdown'
+import type { LocaleStrings } from '../../locales'
+
+const MEMORY_CONFIGURE_DEADLINE_MS = 120_000
+
+function promiseWithTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const id = window.setTimeout(() => reject(new Error('__configure_timeout__')), ms)
+    p.then(
+      (v) => { window.clearTimeout(id); resolve(v) },
+      (e) => { window.clearTimeout(id); reject(e) },
+    )
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Local helpers (minimal)
@@ -66,14 +80,14 @@ function moduleStatusColor(status: ModuleStatus): string {
   }
 }
 
-function moduleStatusLabel(status: ModuleStatus): string {
+function moduleStatusLabel(status: ModuleStatus, ds: LocaleStrings['desktopSettings']): string {
   switch (status) {
-    case 'running': return 'Running'
-    case 'stopped': return 'Stopped'
-    case 'installed_disconnected': return 'Disconnected'
-    case 'pending_bootstrap': return 'Pending'
-    case 'error': return 'Error'
-    case 'not_installed': return 'Not installed'
+    case 'running': return ds.memoryModuleRunning
+    case 'stopped': return ds.memoryModuleStopped
+    case 'installed_disconnected': return ds.memoryModuleDisconnected
+    case 'pending_bootstrap': return ds.memoryModulePending
+    case 'error': return ds.memoryModuleError
+    case 'not_installed': return ds.memoryModuleNotInstalled
     default: return status
   }
 }
@@ -83,16 +97,17 @@ function actionForStatus(status: ModuleStatus): ModuleAction | null {
     case 'not_installed': return 'install'
     case 'stopped': return 'start'
     case 'running': return 'stop'
+    case 'error': return 'restart'
     default: return null
   }
 }
 
-function actionLabel(action: ModuleAction): string {
+function actionLabel(action: ModuleAction, ds: LocaleStrings['desktopSettings']): string {
   switch (action) {
-    case 'install': return 'Install'
-    case 'start': return 'Start'
-    case 'stop': return 'Stop'
-    case 'restart': return 'Restart'
+    case 'install': return ds.memoryModuleInstall
+    case 'start': return ds.memoryModuleStart
+    case 'stop': return ds.memoryModuleStop
+    case 'restart': return ds.memoryModuleRestart
     default: return action
   }
 }
@@ -213,16 +228,48 @@ function SnapshotView({ snapshot }: { snapshot: string }) {
 // OpenViking module card — same logic as ModulesSettings.tsx
 // ---------------------------------------------------------------------------
 
+type ModuleListProbe = 'idle' | 'loading' | 'ready' | 'failed'
+
 type OVModuleCardProps = {
   bridgeOnline: boolean | null
+  bridgeOfflineHint: string
   module: ModuleInfo | null
+  moduleListProbe: ModuleListProbe
   actionInProgress: boolean
   onAction: (action: ModuleAction) => void
+  onRefreshModules: () => void
+  ds: LocaleStrings['desktopSettings']
 }
 
-function OVModuleCard({ bridgeOnline, module, actionInProgress, onAction }: OVModuleCardProps) {
-  const status: ModuleStatus = module?.status ?? 'not_installed'
-  const action = actionForStatus(status)
+function OVModuleCard({
+  bridgeOnline,
+  bridgeOfflineHint,
+  module,
+  moduleListProbe,
+  actionInProgress,
+  onAction,
+  onRefreshModules,
+  ds,
+}: OVModuleCardProps) {
+  const statusReady = bridgeOnline === true && moduleListProbe === 'ready'
+  const statusChecking = bridgeOnline === true && (moduleListProbe === 'loading' || moduleListProbe === 'idle')
+  const listFailed = bridgeOnline === true && moduleListProbe === 'failed'
+
+  const effectiveStatus: ModuleStatus | null = statusChecking || (listFailed && !module)
+    ? null
+    : (module?.status ?? 'not_installed')
+
+  const action = effectiveStatus ? actionForStatus(effectiveStatus) : null
+
+  let statusLineColor = 'var(--c-text-muted)'
+  let statusLineText = ds.memoryModuleChecking
+  if (effectiveStatus) {
+    statusLineColor = moduleStatusColor(effectiveStatus)
+    statusLineText = moduleStatusLabel(effectiveStatus, ds)
+  } else if (listFailed && !module) {
+    statusLineColor = '#ef4444'
+    statusLineText = ds.memoryModuleDockerUnavailable
+  }
 
   return (
     <div
@@ -240,25 +287,40 @@ function OVModuleCard({ bridgeOnline, module, actionInProgress, onAction }: OVMo
       </div>
 
       {bridgeOnline === false ? (
-        <p className="text-xs text-[var(--c-text-muted)]">
-          Installer Bridge is required to install and manage OpenViking.
-        </p>
+        <p className="text-xs text-[var(--c-text-muted)]">{bridgeOfflineHint}</p>
+      ) : bridgeOnline === null ? (
+        <p className="text-xs text-[var(--c-text-muted)]">{ds.memoryModuleChecking}</p>
       ) : (
-        <div className="flex items-center justify-between">
-          <span className="text-xs" style={{ color: moduleStatusColor(status) }}>
-            {moduleStatusLabel(status)}
-          </span>
-          {action && bridgeOnline && (
-            <button
-              onClick={() => onAction(action)}
-              disabled={actionInProgress}
-              className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)', color: 'var(--c-text-secondary)' }}
-            >
-              {actionInProgress ? <SpinnerIcon /> : actionLabel(action)}
-            </button>
-          )}
-        </div>
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 flex-1 text-xs" style={{ color: statusLineColor }}>
+              {statusLineText}
+            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onRefreshModules()}
+                disabled={actionInProgress}
+                className="rounded-md px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ border: '0.5px solid var(--c-border-subtle)', color: 'var(--c-text-secondary)' }}
+                title={ds.memoryRetryModuleList}
+              >
+                <RefreshCw size={14} className={statusChecking ? 'animate-spin' : ''} />
+              </button>
+              {action && statusReady && (
+                <button
+                  type="button"
+                  onClick={() => onAction(action)}
+                  disabled={actionInProgress}
+                  className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)', color: 'var(--c-text-secondary)' }}
+                >
+                  {actionInProgress ? <SpinnerIcon /> : actionLabel(action, ds)}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
@@ -295,7 +357,7 @@ function buildOpenVikingModelOptions(
       .filter((model) => filter(provider, model))
       .map((model) => ({
         value: `${provider.name}^${model.model}`,
-        label: `${provider.name} · ${model.model}`,
+        label: `${provider.name} / ${model.model}`,
         model: model.model,
         providerKind: provider.provider,
         apiBase: provider.base_url ?? undefined,
@@ -394,26 +456,19 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryToolModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryToolModelDesc}</p>
-        <select
+        <SettingsModelDropdown
           value={loadingProviders ? '' : currentVlm}
+          placeholder={loadingProviders ? '…' : (vlmOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel)}
           disabled={loadingProviders}
-          onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
+          options={vlmOptions}
+          onChange={(v) => onChange(applySelectedOption(ov, v, {
             selector: 'vlmSelector',
             model: 'vlmModel',
             provider: 'vlmProvider',
             apiKey: 'vlmApiKey',
             apiBase: 'vlmApiBase',
           }, vlmOptions))}
-          className={inputCls}
-        >
-          {loadingProviders
-            ? <option value="">— Loading… —</option>
-            : <>
-                <option value="">— {vlmOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
-                {vlmOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </>
-          }
-        </select>
+        />
         {!loadingProviders && vlmOptions.length === 0 && (
           <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoCompatibleModels}</p>
         )}
@@ -422,26 +477,19 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryEmbeddingModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryEmbeddingModelDesc}</p>
-        <select
+        <SettingsModelDropdown
           value={loadingProviders ? '' : currentEmb}
+          placeholder={loadingProviders ? '…' : (embeddingOptions.length === 0 ? ds.memoryNoEmbeddingModels : ds.memorySelectModel)}
           disabled={loadingProviders}
-          onChange={(e) => onChange(applySelectedOption(ov, e.target.value, {
+          options={embeddingOptions}
+          onChange={(v) => onChange(applySelectedOption(ov, v, {
             selector: 'embeddingSelector',
             model: 'embeddingModel',
             provider: 'embeddingProvider',
             apiKey: 'embeddingApiKey',
             apiBase: 'embeddingApiBase',
           }, embeddingOptions))}
-          className={inputCls}
-        >
-          {loadingProviders
-            ? <option value="">— Loading… —</option>
-            : <>
-                <option value="">— {embeddingOptions.length === 0 ? ds.memoryNoCompatibleModels : ds.memorySelectModel} —</option>
-                {embeddingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </>
-          }
-        </select>
+        />
         {!loadingProviders && embeddingOptions.length === 0 && (
           <p className="mt-2 text-xs text-[var(--c-text-muted)]">{ds.memoryNoEmbeddingModels}</p>
         )}
@@ -488,6 +536,7 @@ export function MemorySettings({ accessToken }: Props) {
   // Bridge — same pattern as ModulesSettings
   const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null)
   const [ovModule, setOvModule] = useState<ModuleInfo | null>(null)
+  const [moduleListProbe, setModuleListProbe] = useState<ModuleListProbe>('idle')
   const [actionInProgress, setActionInProgress] = useState(false)
   const [bridgeError, setBridgeError] = useState<string | null>(null)
 
@@ -527,14 +576,22 @@ export function MemorySettings({ accessToken }: Props) {
     try {
       const online = await checkBridgeAvailable()
       setBridgeOnline(online)
-      if (online) {
+      if (!online) {
+        setModuleListProbe('idle')
+        return
+      }
+      setModuleListProbe('loading')
+      try {
         const list = await bridgeClient.listModules()
         setOvModule(list.find((m) => m.id === 'openviking') ?? null)
-      } else {
-        setOvModule(null)
+        setModuleListProbe('ready')
+      } catch (e) {
+        setBridgeError(e instanceof Error ? e.message : 'Bridge error')
+        setModuleListProbe('failed')
       }
     } catch (e) {
       setBridgeOnline(false)
+      setModuleListProbe('idle')
       setBridgeError(e instanceof Error ? e.message : 'Bridge error')
     }
   }, [])
@@ -636,100 +693,110 @@ export function MemorySettings({ accessToken }: Props) {
   }, [loadBridge])
 
   const handleConfigure = useCallback(async () => {
-    setConfiguring(true); setConfigureResult(null); setBridgeError(null)
+    setConfiguring(true)
+    setConfigureResult(null)
+    setBridgeError(null)
     try {
-      if (!accessToken) {
-        throw new Error(ds.memoryConfigureError)
-      }
+      await promiseWithTimeout((async () => {
+        if (!accessToken) {
+          throw new Error(ds.memoryConfigureError)
+        }
 
-      const vlmOptions = buildOpenVikingModelOptions(
-        providers,
-        (provider, model) =>
-          provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
-          && model.show_in_picker
-          && !model.tags.includes('embedding'),
-      )
-      const embeddingOptions = buildOpenVikingModelOptions(
-        providers,
-        (provider, model) =>
-          provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
-          && model.tags.includes('embedding'),
-      )
-      const vlmSelector = resolveCurrentSelector(ovDraft.vlmSelector, ovDraft.vlmModel, vlmOptions)
-      const embeddingSelector = resolveCurrentSelector(ovDraft.embeddingSelector, ovDraft.embeddingModel, embeddingOptions)
-      if (!vlmSelector || !embeddingSelector) {
-        throw new Error(ds.memoryConfigureMissingModels)
-      }
+        const vlmOptions = buildOpenVikingModelOptions(
+          providers,
+          (provider, model) =>
+            provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+            && model.show_in_picker
+            && !model.tags.includes('embedding'),
+        )
+        const embeddingOptions = buildOpenVikingModelOptions(
+          providers,
+          (provider, model) =>
+            provider.provider === OPENVIKING_COMPATIBLE_PROVIDER
+            && model.tags.includes('embedding'),
+        )
+        const vlmSelector = resolveCurrentSelector(ovDraft.vlmSelector, ovDraft.vlmModel, vlmOptions)
+        const embeddingSelector = resolveCurrentSelector(ovDraft.embeddingSelector, ovDraft.embeddingModel, embeddingOptions)
+        if (!vlmSelector || !embeddingSelector) {
+          throw new Error(ds.memoryConfigureMissingModels)
+        }
 
-      const resolved = await resolveOpenVikingConfig(accessToken, {
-        vlm_selector: vlmSelector,
-        embedding_selector: embeddingSelector,
-        embedding_dimension_hint: ovDraft.embeddingDimension,
-      })
-      if (!resolved.vlm || !resolved.embedding) {
-        throw new Error(ds.memoryConfigureError)
-      }
-
-      const params: Record<string, string> = {}
-      params['embedding.provider'] = resolved.embedding.provider
-      params['embedding.model'] = resolved.embedding.model
-      params['embedding.api_key'] = resolved.embedding.api_key
-      params['embedding.api_base'] = resolved.embedding.api_base
-      params['embedding.dimension'] = String(resolved.embedding.dimension)
-      params['vlm.provider'] = resolved.vlm.provider
-      params['vlm.model'] = resolved.vlm.model
-      params['vlm.api_key'] = resolved.vlm.api_key
-      params['vlm.api_base'] = resolved.vlm.api_base
-      if (ovDraft.rootApiKey)   params['root_api_key'] = ovDraft.rootApiKey
-
-      const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
-      await new Promise<void>((resolve, reject) => {
-        let done = false
-        // configure is a fast operation; if the bridge received the request it almost certainly
-        // succeeded. Guard against the EventSource missing the status event (race: bridge sends
-        // completion before the SSE connection is established) by treating a timeout as success.
-        const timeout = setTimeout(() => {
-          if (done) return
-          done = true
-          resolve()
-        }, 45_000)
-        const stop = bridgeClient.streamOperation(operation_id, () => {}, (result) => {
-          if (done) return
-          done = true
-          clearTimeout(timeout)
-          stop()
-          if (result.status === 'completed') resolve()
-          else reject(new Error(result.error ?? 'configure failed'))
+        const resolved = await resolveOpenVikingConfig(accessToken, {
+          vlm_selector: vlmSelector,
+          embedding_selector: embeddingSelector,
+          embedding_dimension_hint: ovDraft.embeddingDimension,
         })
-      })
-      setConfigureResult('ok')
-      const nextOvDraft: OpenVikingDesktopConfig = {
-        ...ovDraft,
-        vlmSelector: resolved.vlm.selector,
-        vlmProvider: resolved.vlm.provider,
-        vlmModel: resolved.vlm.model,
-        vlmApiBase: resolved.vlm.api_base,
-        vlmApiKey: undefined,
-        embeddingSelector: resolved.embedding.selector,
-        embeddingProvider: resolved.embedding.provider,
-        embeddingModel: resolved.embedding.model,
-        embeddingApiBase: resolved.embedding.api_base,
-        embeddingApiKey: undefined,
-        embeddingDimension: resolved.embedding.dimension,
-      }
-      setOvDraft(nextOvDraft)
-      if (memConfig) {
-        await saveConfig({ ...memConfig, provider: 'openviking', openviking: nextOvDraft })
-      }
-      await setSpawnProfile(accessToken, 'tool', resolved.vlm.selector)
-      await loadBridge()
+        if (!resolved.vlm || !resolved.embedding) {
+          throw new Error(ds.memoryConfigureError)
+        }
+
+        const params: Record<string, string> = {}
+        params.embedding_provider = resolved.embedding.provider
+        params.embedding_model = resolved.embedding.model
+        params.embedding_api_key = resolved.embedding.api_key
+        params.embedding_api_base = resolved.embedding.api_base
+        params.embedding_dimension = String(resolved.embedding.dimension)
+        params.vlm_provider = resolved.vlm.provider
+        params.vlm_model = resolved.vlm.model
+        params.vlm_api_key = resolved.vlm.api_key
+        params.vlm_api_base = resolved.vlm.api_base
+        if (ovDraft.rootApiKey) params.root_api_key = ovDraft.rootApiKey
+
+        const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const timeout = setTimeout(() => {
+            if (done) return
+            done = true
+            resolve()
+          }, 45_000)
+          const stop = bridgeClient.streamOperation(operation_id, () => {}, (result) => {
+            if (done) return
+            done = true
+            clearTimeout(timeout)
+            stop()
+            if (result.status === 'completed') resolve()
+            else reject(new Error(result.error ?? 'configure failed'))
+          })
+        })
+        setConfigureResult('ok')
+        const nextOvDraft: OpenVikingDesktopConfig = {
+          ...ovDraft,
+          vlmSelector: resolved.vlm.selector,
+          vlmProvider: resolved.vlm.provider,
+          vlmModel: resolved.vlm.model,
+          vlmApiBase: resolved.vlm.api_base,
+          vlmApiKey: undefined,
+          embeddingSelector: resolved.embedding.selector,
+          embeddingProvider: resolved.embedding.provider,
+          embeddingModel: resolved.embedding.model,
+          embeddingApiBase: resolved.embedding.api_base,
+          embeddingApiKey: undefined,
+          embeddingDimension: resolved.embedding.dimension,
+        }
+        setOvDraft(nextOvDraft)
+        if (memConfig) {
+          await saveConfig({ ...memConfig, provider: 'openviking', openviking: nextOvDraft })
+        }
+        await setSpawnProfile(accessToken, 'tool', resolved.vlm.selector)
+        await loadBridge()
+      })(), MEMORY_CONFIGURE_DEADLINE_MS)
     } catch (error) {
-      setBridgeError(isApiError(error) ? error.message : error instanceof Error ? error.message : ds.memoryConfigureError)
+      const timedOut = error instanceof Error && error.message === '__configure_timeout__'
+      setBridgeError(
+        timedOut
+          ? ds.memoryConfigureTimeout
+          : isApiError(error)
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : ds.memoryConfigureError,
+      )
       setConfigureResult('error')
     } finally {
       setConfiguring(false)
     }
-  }, [accessToken, ds.memoryConfigureError, ds.memoryConfigureMissingModels, loadBridge, memConfig, ovDraft, providers, saveConfig])
+  }, [accessToken, ds, loadBridge, memConfig, ovDraft, providers, saveConfig])
 
   const handleDelete = useCallback(async (id: string) => {
     if (!api?.memory) return
@@ -767,7 +834,9 @@ export function MemorySettings({ accessToken }: Props) {
 
   const enabled = memConfig?.enabled ?? true
   const isLocal = (memConfig?.provider ?? 'local') !== 'openviking'
-  const ovRunning = ovModule?.status === 'running'
+  const ovShowConfigure = Boolean(
+    ovModule && ovModule.status !== 'not_installed',
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -828,13 +897,16 @@ export function MemorySettings({ accessToken }: Props) {
               {/* Module card — mirrors ModulesSettings */}
               <OVModuleCard
                 bridgeOnline={bridgeOnline}
+                bridgeOfflineHint={ds.modulesOffline}
                 module={ovModule}
+                moduleListProbe={moduleListProbe}
                 actionInProgress={actionInProgress}
                 onAction={handleModuleAction}
+                onRefreshModules={() => void loadBridge()}
+                ds={ds}
               />
 
-              {/* Configure form — only after module is running */}
-              {ovRunning && (
+              {ovShowConfigure && (
                 <OVConfigForm
                   ov={ovDraft}
                   providers={providers}
