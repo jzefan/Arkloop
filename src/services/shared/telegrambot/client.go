@@ -70,6 +70,34 @@ type GetUpdatesRequest struct {
 	Updates        []string `json:"allowed_updates,omitempty"`
 }
 
+// SendChatActionRequest mirrors Telegram sendChatAction (chat_id + action).
+type SendChatActionRequest struct {
+	ChatID string `json:"chat_id"`
+	Action string `json:"action"`
+}
+
+// MessageReactionEmoji is one element of setMessageReaction.reaction.
+type MessageReactionEmoji struct {
+	Type  string `json:"type"`
+	Emoji string `json:"emoji,omitempty"`
+}
+
+// SetMessageReactionRequest mirrors Telegram setMessageReaction.
+type SetMessageReactionRequest struct {
+	ChatID    string                 `json:"chat_id"`
+	MessageID int64                  `json:"message_id"`
+	Reaction  []MessageReactionEmoji `json:"reaction"`
+}
+
+// EditMessageTextRequest mirrors Telegram editMessageText (for future streaming).
+type EditMessageTextRequest struct {
+	ChatID          string `json:"chat_id"`
+	MessageID       int64  `json:"message_id"`
+	Text            string `json:"text"`
+	ParseMode       string `json:"parse_mode,omitempty"`
+	MessageThreadID string `json:"message_thread_id,omitempty"`
+}
+
 type apiEnvelope struct {
 	OK          bool            `json:"ok"`
 	Description string          `json:"description"`
@@ -113,6 +141,36 @@ func (c *Client) GetMe(ctx context.Context, token string) (*BotInfo, error) {
 		return nil, err
 	}
 	return &info, nil
+}
+
+// SendChatAction posts a chat action (e.g. action "typing").
+func (c *Client) SendChatAction(ctx context.Context, token string, req SendChatActionRequest) error {
+	var ok bool
+	if err := c.callJSON(ctx, token, "sendChatAction", req, &ok); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("telegrambot: sendChatAction returned non-true result")
+	}
+	return nil
+}
+
+// SetMessageReaction sets emoji reactions on a message (empty reaction clears bot reactions).
+func (c *Client) SetMessageReaction(ctx context.Context, token string, req SetMessageReactionRequest) error {
+	var ok bool
+	if err := c.callJSON(ctx, token, "setMessageReaction", req, &ok); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("telegrambot: setMessageReaction returned non-true result")
+	}
+	return nil
+}
+
+// EditMessageText updates an existing message (optional streaming UX).
+// Telegram returns either a Message or true; we only require ok envelope.
+func (c *Client) EditMessageText(ctx context.Context, token string, req EditMessageTextRequest) error {
+	return c.callJSON(ctx, token, "editMessageText", req, nil)
 }
 
 func (c *Client) callJSON(ctx context.Context, token string, method string, body any, out any) error {

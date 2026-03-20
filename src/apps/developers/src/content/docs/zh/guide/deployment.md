@@ -367,6 +367,12 @@ ARKLOOP_GATEWAY_UPSTREAM=http://host.docker.internal:19001 docker compose -f com
 |------|--------|------|
 | `ARKLOOP_WORKER_CONCURRENCY` | `4` | Worker 并发数 |
 | `ARKLOOP_WORKER_QUEUE_JOB_TYPES` | `run.execute` | 处理的 Job 类型 |
+| `ARKLOOP_TELEGRAM_BOT_API_BASE_URL` | `https://api.telegram.org` | Telegram Bot HTTP 根 URL（Worker / Desktop 发消息、typing、reaction） |
+| `ARKLOOP_CHANNEL_MESSAGE_SEGMENT_DELAY_MS` | `50` | 超长回复分段发送间隔（毫秒） |
+
+### Telegram Channel
+
+Webhook 由 API 接收入站；无公网时用 Desktop 轮询 `getUpdates`，链路仍落到同一套 run / `mw_channel_delivery`。`channels.config_json` 可设 `telegram_typing_indicator`（默认 true）、`telegram_reaction_emoji`（空则关闭；非空则在投递成功后对用户入站消息点表情）。详情见 [社交平台 Channel 接入架构](/docs/specs/channel-integration-architecture)。
 
 ### 调试
 

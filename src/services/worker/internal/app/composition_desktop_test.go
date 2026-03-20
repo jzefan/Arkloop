@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -902,7 +903,8 @@ func TestDesktopChannelDeliveryRecordsFailureWhenChannelMissing(t *testing.T) {
 			id TEXT PRIMARY KEY,
 			channel_type TEXT NOT NULL,
 			credentials_id TEXT NULL,
-			is_active INTEGER NOT NULL DEFAULT 0
+			is_active INTEGER NOT NULL DEFAULT 0,
+			config_json TEXT NOT NULL DEFAULT '{}'
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
@@ -997,7 +999,8 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 			id TEXT PRIMARY KEY,
 			channel_type TEXT NOT NULL,
 			credentials_id TEXT NULL,
-			is_active INTEGER NOT NULL DEFAULT 0
+			is_active INTEGER NOT NULL DEFAULT 0,
+			config_json TEXT NOT NULL DEFAULT '{}'
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
@@ -1033,6 +1036,11 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 	}
 
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendChatAction") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			return
+		}
 		if r.URL.Path != "/botdesktop-token/sendMessage" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}

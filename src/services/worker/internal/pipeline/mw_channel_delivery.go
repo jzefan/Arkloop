@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
@@ -17,12 +18,48 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ChannelDeliveryMiddlewareOptions overrides Telegram HTTP client (tests inject httptest base URL).
+type ChannelDeliveryMiddlewareOptions struct {
+	Telegram *telegrambot.Client
+}
+
+// NewChannelDeliveryMiddleware posts assistant output to Telegram and records deliveries.
 func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
+	return NewChannelDeliveryMiddlewareWithOptions(pool, ChannelDeliveryMiddlewareOptions{})
+}
+
+// NewChannelDeliveryMiddlewareWithOptions is like NewChannelDeliveryMiddleware but allows a custom Telegram client.
+func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDeliveryMiddlewareOptions) RunMiddleware {
 	repo := data.ChannelDeliveryRepository{}
 	ledgerRepo := data.ChannelMessageLedgerRepository{}
+	tgClient := opts.Telegram
+	if tgClient == nil {
+		tgClient = telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+	}
 
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		var preloaded *data.DeliveryChannelRecord
+		var ux TelegramChannelUX
+		if pool != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" {
+			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
+			if prefetchErr != nil {
+				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
+			} else if ch != nil {
+				preloaded = ch
+				ux = ParseTelegramChannelUX(ch.ConfigJSON)
+			}
+		}
+
+		var stopTyping context.CancelFunc
+		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && tgClient != nil {
+			stopTyping = StartTelegramTypingRefresh(ctx, tgClient, preloaded.Token, rc.ChannelContext.Conversation.Target)
+		}
+
 		err := next(ctx, rc)
+		if stopTyping != nil {
+			stopTyping()
+		}
+
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
@@ -34,7 +71,11 @@ func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			return err
 		}
 
-		channel, lookupErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
+		channel := preloaded
+		var lookupErr error
+		if channel == nil {
+			channel, lookupErr = repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
+		}
 		if lookupErr != nil {
 			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, lookupErr)
 			slog.WarnContext(ctx, "channel delivery lookup failed", "run_id", rc.Run.ID, "err", lookupErr.Error())
@@ -44,8 +85,9 @@ func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
+		uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
 
-		sender := NewTelegramChannelSender(channel.Token)
+		sender := NewTelegramChannelSenderWithClient(tgClient, channel.Token, resolveSegmentDelay())
 		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
 			ChannelType:  rc.ChannelContext.ChannelType,
 			Conversation: rc.ChannelContext.Conversation,
@@ -59,8 +101,64 @@ func NewChannelDeliveryMiddleware(pool *pgxpool.Pool) RunMiddleware {
 		if recordErr := recordChannelDeliverySuccess(ctx, pool, repo, ledgerRepo, rc, messageIDs); recordErr != nil {
 			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, recordErr)
 			slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
+		} else if strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
+			MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
 		}
 		return err
+	}
+}
+
+// StartTelegramTypingRefresh sends Telegram typing actions until cancel (about every 4s, first immediately).
+func StartTelegramTypingRefresh(ctx context.Context, client *telegrambot.Client, token, chatID string) context.CancelFunc {
+	if client == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		send := func() {
+			_ = client.SendChatAction(ctx, token, telegrambot.SendChatActionRequest{
+				ChatID: strings.TrimSpace(chatID),
+				Action: "typing",
+			})
+		}
+		send()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				send()
+			}
+		}
+	}()
+	return cancel
+}
+
+// MaybeTelegramInboundReaction reacts to the triggering user message (best effort).
+func MaybeTelegramInboundReaction(ctx context.Context, client *telegrambot.Client, token string, rc *RunContext, emoji string) {
+	if client == nil || rc == nil || rc.ChannelContext == nil || strings.TrimSpace(emoji) == "" || strings.TrimSpace(token) == "" {
+		return
+	}
+	midStr := strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID)
+	if midStr == "" {
+		return
+	}
+	mid, convErr := strconv.ParseInt(midStr, 10, 64)
+	if convErr != nil {
+		return
+	}
+	chatID := strings.TrimSpace(rc.ChannelContext.Conversation.Target)
+	if chatID == "" {
+		return
+	}
+	if err := client.SetMessageReaction(ctx, token, telegrambot.SetMessageReactionRequest{
+		ChatID:    chatID,
+		MessageID: mid,
+		Reaction:  []telegrambot.MessageReactionEmoji{{Type: "emoji", Emoji: strings.TrimSpace(emoji)}},
+	}); err != nil {
+		slog.WarnContext(ctx, "telegram inbound reaction failed", "run_id", rc.Run.ID, "err", err.Error())
 	}
 }
 
