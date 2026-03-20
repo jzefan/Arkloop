@@ -99,6 +99,8 @@ function actionForStatus(status: ModuleStatus): ModuleAction | null {
       return "start";
     case "running":
       return "stop";
+    case "error":
+      return "restart";
     default:
       return null;
   }

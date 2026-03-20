@@ -65,13 +65,13 @@ func defaultConfig() map[string]any {
 			"vectordb": map[string]any{
 				"name":    "context",
 				"backend": "local",
-				"path":    "/app/data",
+				"path":    "./data",
 			},
 			"agfs": map[string]any{
 				"port":      1833,
 				"log_level": "warn",
 				"backend":   "local",
-				"path":      "/app/data",
+				"path":      "./data",
 			},
 		},
 		"embedding": map[string]any{
@@ -103,10 +103,16 @@ func RenderConfig(configPath string, params ConfigureParams) ([]byte, error) {
 
 	// Ensure nested maps exist before writing into them.
 	ensureMap(cfg, "server")
+	ensureMap(cfg, "storage")
+	normalizeStoragePaths(cfg)
 	ensureMap(cfg, "embedding")
 	embeddingMap := cfg["embedding"].(map[string]any)
 	ensureMap(embeddingMap, "dense")
 	ensureMap(cfg, "vlm")
+
+	srv := cfg["server"].(map[string]any)
+	srv["host"] = "0.0.0.0"
+	srv["port"] = 19010
 
 	// --- Embedding ---
 	dim := int(params.EmbeddingDimension)
@@ -205,5 +211,28 @@ func ensureMap(cfg map[string]any, key string) {
 	}
 	if _, isMap := v.(map[string]any); !isMap {
 		cfg[key] = map[string]any{}
+	}
+}
+
+// OpenViking 会忽略旧版绝对 path 并打告警；统一用工作区相对路径。
+func normalizeStoragePaths(cfg map[string]any) {
+	storageRaw, ok := cfg["storage"]
+	if !ok {
+		return
+	}
+	storage, ok := storageRaw.(map[string]any)
+	if !ok {
+		return
+	}
+	for _, key := range []string{"vectordb", "agfs"} {
+		subRaw, ok := storage[key]
+		if !ok {
+			continue
+		}
+		sub, ok := subRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		sub["path"] = "./data"
 	}
 }

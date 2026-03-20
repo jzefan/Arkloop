@@ -415,18 +415,31 @@ func (c *Compose) RunMigrate(ctx context.Context, profiles []string, extraFiles 
 
 // mapStatus converts Docker container state/health into a module status string.
 func mapStatus(e psEntry) string {
-	switch strings.ToLower(e.State) {
+	state := strings.ToLower(strings.TrimSpace(e.State))
+	health := strings.ToLower(strings.TrimSpace(e.Health))
+
+	if strings.Contains(state, "restarting") {
+		return "error"
+	}
+
+	switch state {
 	case "running":
-		switch strings.ToLower(e.Health) {
+		switch health {
 		case "unhealthy":
 			return "error"
 		default:
-			// "healthy", "", or no healthcheck → running
 			return "running"
 		}
 	case "exited", "created":
 		return "stopped"
+	case "paused":
+		return "stopped"
+	case "dead", "removing":
+		return "error"
 	default:
+		if state != "" {
+			return "error"
+		}
 		return "not_installed"
 	}
 }

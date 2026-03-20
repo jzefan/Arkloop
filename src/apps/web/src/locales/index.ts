@@ -615,6 +615,7 @@ export interface LocaleStrings {
     connectors: string;
     searchFetch: string;
     connection: string;
+    chat: string;
     extensions: string;
     developer: string;
     // general settings
@@ -678,6 +679,20 @@ export interface LocaleStrings {
     runsHistoryOpen: string;
     runsHistoryPrev: string;
     runsHistoryNext: string;
+    chatSectionTitle: string;
+    chatCompactCardTitle: string;
+    chatCompactEnableLabel: string;
+    chatCompactEnableDesc: string;
+    chatCompactThresholdLabel: string;
+    chatCompactThresholdEarly: string;
+    chatCompactThresholdLate: string;
+    chatCompactThresholdDesc: string;
+    chatCompactKeepLabel: string;
+    chatCompactKeepDesc: string;
+    chatCompactSave: string;
+    chatCompactSaving: string;
+    chatCompactSaved: string;
+    chatCompactLoading: string;
     // desktop connectors section
     desktopConnectorsTitle: string;
     desktopConnectorsDesc: string;
@@ -745,6 +760,15 @@ export interface LocaleStrings {
     memoryModuleInstalling: string;
     memoryModuleInstall: string;
     memoryModuleStart: string;
+    memoryModuleStop: string;
+    memoryModuleRestart: string;
+    memoryModuleDisconnected: string;
+    memoryModulePending: string;
+    memoryModuleError: string;
+    memoryModuleChecking: string;
+    memoryModuleDockerUnavailable: string;
+    memoryRetryModuleList: string;
+    memoryConfigureTimeout: string;
     memoryToolModel: string;
     memoryToolModelDesc: string;
     memoryEmbeddingModel: string;

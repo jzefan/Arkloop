@@ -380,11 +380,11 @@ func (h *Handler) handleConfigure(ctx context.Context, moduleID, composeService 
 		// 4. Health check.
 		op.AppendLog("Waiting for OpenViking health check...")
 		if err := openviking.WaitHealthy(ctx, healthURL, healthCheckTimeout); err != nil {
-			op.AppendLog("WARNING: health check did not pass: " + err.Error())
-			// Don't fail the operation — the service may still be starting.
-		} else {
-			op.AppendLog("OpenViking health check passed")
+			op.AppendLog("ERROR: " + err.Error())
+			opErr = err
+			return
 		}
+		op.AppendLog("OpenViking health check passed")
 
 		op.AppendLog("OpenViking configured successfully")
 	}()
