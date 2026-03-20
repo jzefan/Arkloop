@@ -10,7 +10,7 @@ import {
 } from '../../api'
 import type { LlmProvider, SpawnProfile } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
+import { getDesktopMode, isDesktop, isLocalMode, getDesktopApi } from '@arkloop/shared/desktop'
 import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
 import { bridgeClient, checkBridgeAvailable } from '../../api-bridge'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
@@ -28,6 +28,9 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
   const { t, locale, setLocale } = useLocale()
   const ds = t.desktopSettings
   const localMode = isLocalMode()
+  // 桌面壳或本地连接都不应出现「平台默认」文案（与 isDesktop 是否已挂 arkloop 解耦）
+  const nonSaaSUi =
+    getDesktopMode() !== null || isDesktop() || localMode
 
   const [osUsername, setOsUsername] = useState<string | null>(null)
   const [providers, setProviders] = useState<LlmProvider[]>([])
@@ -221,7 +224,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
           <SettingsModelDropdown
             value={toolModelValue}
             options={modelOptions}
-            placeholder={ds.toolModelPlatformDefault}
+            placeholder={nonSaaSUi ? ds.toolModelSameAsChat : ds.toolModelPlatformDefault}
             disabled={savingTool}
             onChange={handleToolModelChange}
           />

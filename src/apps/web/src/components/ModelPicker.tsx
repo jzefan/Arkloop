@@ -2,9 +2,21 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { listLlmProviders, type LlmProvider } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { isDesktop } from '@arkloop/shared/desktop'
 
 // 模块级缓存：accessToken -> providers，打开时先展示缓存，后台静默刷新
 const providersCache = new Map<string, LlmProvider[]>()
+
+function pickFirstChatPickerModel(providers: LlmProvider[]): string | null {
+  for (const p of providers) {
+    for (const m of p.models) {
+      if (m.show_in_picker && !m.tags.includes('embedding')) {
+        return `${p.name}^${m.model}`
+      }
+    }
+  }
+  return null
+}
 
 type Props = {
   accessToken?: string
@@ -17,6 +29,7 @@ type Props = {
 export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant = 'chat' }: Props) {
   const { t } = useLocale()
   const mp = t.modelPicker
+  const desktopShell = isDesktop()
   const [open, setOpen] = useState(false)
   const cached = accessToken ? (providersCache.get(accessToken) ?? null) : null
   const [providers, setProviders] = useState<LlmProvider[]>(cached ?? [])
@@ -41,6 +54,20 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     }
   }, [accessToken])
 
+  // 桌面壳：无需点开下拉即可拿到模型列表，供自动选第一条
+  useEffect(() => {
+    if (!accessToken || !desktopShell) return
+    void load(true)
+  }, [accessToken, desktopShell, load])
+
+  // 桌面壳：未选手动值时自动落第一条可选模型（不保留「Persona / 默认」空选项语义）
+  useEffect(() => {
+    if (!desktopShell || value != null || !accessToken) return
+    if (loading && providers.length === 0) return
+    const first = pickFirstChatPickerModel(providers)
+    if (first) onChange(first)
+  }, [desktopShell, value, accessToken, loading, providers, onChange])
+
   // 打开时：有缓存则静默刷新，无缓存则显示 loading
   useEffect(() => {
     if (open) {
@@ -64,11 +91,19 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  // 从 value "credName^model" 中提取 model 部分作为显示名
+  const anyPickerModel = pickFirstChatPickerModel(providers) !== null
+
   const displayLabel = (() => {
-    if (!value) return mp.defaultLabel
-    const parts = value.split('^')
-    return parts[parts.length - 1]
+    if (value) {
+      const parts = value.split('^')
+      return parts[parts.length - 1]
+    }
+    if (desktopShell) {
+      if (anyPickerModel) return '…'
+      if (loading && providers.length === 0) return '…'
+      return mp.addProviderFirst
+    }
+    return mp.defaultLabel
   })()
 
   const handleSelect = (model: string | null) => {
@@ -85,6 +120,8 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     .filter((p) => p.models.length > 0)
 
   const hasModels = visibleProviders.length > 0
+
+  const showWebDefaultRow = !desktopShell
 
   return (
     <div className="relative" style={{ flexShrink: 0 }}>
@@ -138,7 +175,6 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {/* 搜索框 */}
             <div style={{ padding: '4px 4px 2px' }}>
               <input
                 ref={searchRef}
@@ -155,31 +191,43 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
               />
             </div>
 
-            {/* Default 选项 */}
-            <button
-              type="button"
-              onClick={() => handleSelect(null)}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
-              style={{
-                color: value === null ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
-                fontWeight: value === null ? 600 : 400,
-              }}
-            >
-              <span>{mp.defaultLabel}</span>
-              {value === null && (
-                <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--c-text-muted)' }}>✓</span>
-              )}
-            </button>
+            {showWebDefaultRow && (
+              <button
+                type="button"
+                onClick={() => handleSelect(null)}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                style={{
+                  color: value === null ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                  fontWeight: value === null ? 600 : 400,
+                }}
+              >
+                <span>{mp.defaultLabel}</span>
+                {value === null && (
+                  <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--c-text-muted)' }}>✓</span>
+                )}
+              </button>
+            )}
 
-            {/* 无缓存时的首次加载态 */}
+            {desktopShell && !hasModels && !loading && !search && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onAddApiKey() }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                style={{ color: 'var(--c-text-secondary)' }}
+              >
+                <span>{mp.addProviderFirst}</span>
+              </button>
+            )}
+
             {loading && providers.length === 0 && (
               <p className="px-3 py-2 text-xs" style={{ color: 'var(--c-text-muted)' }}>...</p>
             )}
 
-            {/* 可滚动模型列表 */}
             {hasModels && (
               <>
-                <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
+                {(showWebDefaultRow || search) && (
+                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
                   {visibleProviders.map((provider) => (
                     <div key={provider.id}>
