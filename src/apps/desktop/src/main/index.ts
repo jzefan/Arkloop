@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu } from 'electron'
 import * as path from 'path'
 import { loadConfig, normalizeConfig, saveConfig } from './config'
 import {
@@ -163,6 +163,42 @@ async function restartLocalSidecar(): Promise<SidecarRuntime> {
   return getSidecarRuntime()
 }
 
+function attachRendererContextMenu(win: BrowserWindow): void {
+  win.webContents.on('context-menu', (_event, params) => {
+    const template: Electron.MenuItemConstructorOptions[] = []
+
+    if (params.isEditable) {
+      template.push(
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      )
+    } else {
+      if (params.selectionText && params.selectionText.trim().length > 0) {
+        template.push({ role: 'copy' })
+      }
+      if (params.mediaType === 'image') {
+        template.push({
+          label: '复制图片',
+          click: () => {
+            win.webContents.copyImageAt(Math.floor(params.x), Math.floor(params.y))
+          },
+        })
+      }
+    }
+
+    if (template.length === 0) {
+      return
+    }
+    Menu.buildFromTemplate(template).popup({ window: win })
+  })
+}
+
 function createWindow(): BrowserWindow {
   const config = loadConfig()
 
@@ -203,6 +239,8 @@ function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => {
     win.show()
   })
+
+  attachRendererContextMenu(win)
 
   return win
 }

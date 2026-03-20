@@ -16,3 +16,11 @@ func openDesktopArtifactStore(ctx context.Context) (objectstore.Store, error) {
 	}
 	return objectstore.NewFilesystemOpener(desktop.StorageRoot(dataDir)).Open(ctx, objectstore.ArtifactBucket)
 }
+
+func openDesktopMessageAttachmentStore(ctx context.Context) (objectstore.Store, error) {
+	dataDir, err := desktop.ResolveDataDir("")
+	if err != nil {
+		return nil, err
+	}
+	return objectstore.NewFilesystemOpener(desktop.StorageRoot(dataDir)).Open(ctx, "message-attachments")
+}

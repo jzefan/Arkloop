@@ -528,7 +528,7 @@ func TestResolveDesktopRunBindingsIgnoresWorkDirForWorkspaceAndSkills(t *testing
 		t.Fatalf("expected identical skill sets, got first=%#v second=%#v", firstItems, secondItems)
 	}
 
-	loader := desktopInputLoader(db, data.DesktopRunEventsRepository{})
+	loader := desktopInputLoader(db, data.DesktopRunEventsRepository{}, nil)
 	firstRC := &pipeline.RunContext{Run: first, ThreadMessageHistoryLimit: 10}
 	if err := loader(ctx, firstRC, func(_ context.Context, rc *pipeline.RunContext) error {
 		if rc.WorkDir != "/tmp/work-a" {
