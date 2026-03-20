@@ -124,6 +124,22 @@ func (c *Client) SendMessage(ctx context.Context, token string, req SendMessageR
 	return &result, nil
 }
 
+// SendMessageWithHTMLFallback 先按 req.ParseMode 发送；若为 HTML 实体解析错误则同一条内容降级为纯文本再发一次。
+func (c *Client) SendMessageWithHTMLFallback(ctx context.Context, token string, req SendMessageRequest) (*SentMessage, error) {
+	sent, err := c.SendMessage(ctx, token, req)
+	if err == nil || !IsTelegramEntityParseError(err) || strings.TrimSpace(req.ParseMode) == "" {
+		return sent, err
+	}
+	plain := StripTelegramHTMLToPlain(req.Text)
+	if strings.TrimSpace(plain) == "" {
+		return nil, err
+	}
+	retry := req
+	retry.ParseMode = ""
+	retry.Text = plain
+	return c.SendMessage(ctx, token, retry)
+}
+
 func (c *Client) GetUpdates(ctx context.Context, token string, req GetUpdatesRequest, out any) error {
 	return c.callJSON(ctx, token, "getUpdates", req, out)
 }

@@ -45,7 +45,7 @@ func (s *TelegramChannelSender) SendText(ctx context.Context, target ChannelDeli
 		if target.Conversation.ThreadID != nil {
 			req.MessageThreadID = *target.Conversation.ThreadID
 		}
-		sent, err := s.client.SendMessage(ctx, s.token, req)
+		sent, err := s.client.SendMessageWithHTMLFallback(ctx, s.token, req)
 		if err != nil {
 			return nil, err
 		}

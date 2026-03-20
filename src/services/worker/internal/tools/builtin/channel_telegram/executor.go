@@ -250,7 +250,7 @@ func (e *Executor) reply(
 		if surface.MessageThreadID != nil && strings.TrimSpace(*surface.MessageThreadID) != "" {
 			req.MessageThreadID = strings.TrimSpace(*surface.MessageThreadID)
 		}
-		sent, err := e.tg.SendMessage(ctx, token, req)
+		sent, err := e.tg.SendMessageWithHTMLFallback(ctx, token, req)
 		if err != nil {
 			return tools.ExecutionResult{
 				Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: err.Error()},
