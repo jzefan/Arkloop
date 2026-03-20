@@ -126,6 +126,24 @@ class BridgeClient {
       es.close()
     }
   }
+
+  waitForOperation(operationId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stop = () => {}
+      stop = this.streamOperation(
+        operationId,
+        () => {},
+        (result) => {
+          stop()
+          if (result.status === 'completed') {
+            resolve()
+            return
+          }
+          reject(new Error(result.error || `Operation ${result.status}`))
+        },
+      )
+    })
+  }
 }
 
 function resolveBridgeBaseUrl(): string {
