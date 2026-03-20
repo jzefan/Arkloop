@@ -26,6 +26,7 @@ type DeliveryChannelRecord struct {
 	ID          uuid.UUID
 	ChannelType string
 	Token       string
+	ConfigJSON  []byte
 }
 
 type ChannelDeliveryRepository struct{}
@@ -58,15 +59,16 @@ func (ChannelDeliveryRepository) GetChannel(ctx context.Context, pool *pgxpool.P
 	var (
 		item           DeliveryChannelRecord
 		encryptedValue *string
+		configJSON     []byte
 	)
 	err := pool.QueryRow(
 		ctx,
-		`SELECT c.id, c.channel_type, s.encrypted_value
+		`SELECT c.id, c.channel_type, s.encrypted_value, COALESCE(c.config_json, '{}'::jsonb)
 		 FROM channels c
 		 LEFT JOIN secrets s ON s.id = c.credentials_id
 		 WHERE c.id = $1 AND c.is_active = true`,
 		channelID,
-	).Scan(&item.ID, &item.ChannelType, &encryptedValue)
+	).Scan(&item.ID, &item.ChannelType, &encryptedValue, &configJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -81,6 +83,7 @@ func (ChannelDeliveryRepository) GetChannel(ctx context.Context, pool *pgxpool.P
 		return nil, fmt.Errorf("channel_delivery.GetChannel: decrypt token: %w", err)
 	}
 	item.Token = string(plaintext)
+	item.ConfigJSON = configJSON
 	return &item, nil
 }
 

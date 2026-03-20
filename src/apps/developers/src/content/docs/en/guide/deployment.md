@@ -353,6 +353,12 @@ ARKLOOP_GATEWAY_UPSTREAM=http://host.docker.internal:19001 docker compose -f com
 |------|--------|------|
 | `ARKLOOP_WORKER_CONCURRENCY` | `4` | Worker concurrency level |
 | `ARKLOOP_WORKER_QUEUE_JOB_TYPES` | `run.execute` | Job types handled |
+| `ARKLOOP_TELEGRAM_BOT_API_BASE_URL` | `https://api.telegram.org` | Telegram Bot API base URL (Worker / Desktop: send, typing, reactions) |
+| `ARKLOOP_CHANNEL_MESSAGE_SEGMENT_DELAY_MS` | `50` | Delay between long-message segments (ms) |
+
+### Telegram channel
+
+Inbound: API webhook; without a public URL, Desktop uses `getUpdates` polling and the same run / `mw_channel_delivery` path. In `channels.config_json`: `telegram_typing_indicator` (default true), `telegram_reaction_emoji` (empty disables; if set, reaction is applied to the inbound user message after successful delivery). See [Channel integration architecture](/docs/specs/channel-integration-architecture) (ZH).
 
 ### Debugging
 

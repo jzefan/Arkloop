@@ -363,6 +363,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		}),
 		memMiddleware,
 		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
+		pipeline.NewContextCompactMiddleware(nil, data.MessagesRepository{}, e.stubGateway, e.emitDebugEvents),
 		pipeline.NewToolBuildMiddleware(),
 		desktopChannelDelivery(e.db),
 	}
@@ -471,6 +472,7 @@ func desktopInputLoader(
 			rc.WorkDir = strings.TrimSpace(wd)
 		}
 		llmMessages := make([]llm.Message, 0, len(messages))
+		ids := make([]uuid.UUID, 0, len(messages))
 		for _, msg := range messages {
 			if strings.TrimSpace(msg.Role) == "" {
 				continue
@@ -479,8 +481,10 @@ func desktopInputLoader(
 				Role:    msg.Role,
 				Content: []llm.ContentPart{{Type: "text", Text: msg.Content}},
 			})
+			ids = append(ids, msg.ID)
 		}
 		rc.Messages = llmMessages
+		rc.ThreadMessageIDs = ids
 
 		for i := len(messages) - 1; i >= 0; i-- {
 			if messages[i].Role == "user" && strings.TrimSpace(messages[i].Content) != "" {
@@ -515,7 +519,8 @@ type desktopChannelIdentityRecord struct {
 }
 
 type desktopDeliveryChannelRecord struct {
-	Token string
+	Token      string
+	ConfigJSON []byte
 }
 
 func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
@@ -552,7 +557,28 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
 
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		var preloaded *desktopDeliveryChannelRecord
+		var ux pipeline.TelegramChannelUX
+		if db != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" {
+			ch, prefetchErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+			if prefetchErr != nil {
+				slog.WarnContext(ctx, "desktop channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
+			} else if ch != nil {
+				preloaded = ch
+				ux = pipeline.ParseTelegramChannelUX(ch.ConfigJSON)
+			}
+		}
+
+		var stopTyping context.CancelFunc
+		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" {
+			stopTyping = pipeline.StartTelegramTypingRefresh(ctx, client, preloaded.Token, rc.ChannelContext.Conversation.Target)
+		}
+
 		err := next(ctx, rc)
+		if stopTyping != nil {
+			stopTyping()
+		}
+
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
@@ -561,7 +587,11 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			return err
 		}
 
-		channel, lookupErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+		channel := preloaded
+		var lookupErr error
+		if channel == nil {
+			channel, lookupErr = loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+		}
 		if lookupErr != nil {
 			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, lookupErr)
 			slog.WarnContext(ctx, "desktop channel delivery lookup failed", "run_id", rc.Run.ID, "err", lookupErr.Error())
@@ -571,6 +601,8 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
+
+		uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
 
 		sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
 		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
@@ -596,6 +628,8 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		); recordErr != nil {
 			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, recordErr)
 			slog.WarnContext(ctx, "desktop telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
+		} else if strings.TrimSpace(uxSend.ReactionEmoji) != "" {
+			pipeline.MaybeTelegramInboundReaction(ctx, client, channel.Token, rc, uxSend.ReactionEmoji)
 		}
 		return err
 	}
@@ -629,16 +663,17 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 	var (
 		encryptedValue *string
 		keyVersion     *int
+		configRaw      []byte
 	)
 	err := db.QueryRow(
 		ctx,
-		`SELECT s.encrypted_value, s.key_version
+		`SELECT s.encrypted_value, s.key_version, COALESCE(c.config_json, '{}')
 		   FROM channels c
 		   LEFT JOIN secrets s ON s.id = c.credentials_id
 		  WHERE c.id = $1
 		    AND c.is_active = 1`,
 		channelID,
-	).Scan(&encryptedValue, &keyVersion)
+	).Scan(&encryptedValue, &keyVersion, &configRaw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -656,7 +691,7 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 	if err != nil {
 		return nil, fmt.Errorf("desktop channel lookup: decrypt token: %w", err)
 	}
-	return &desktopDeliveryChannelRecord{Token: token}, nil
+	return &desktopDeliveryChannelRecord{Token: token, ConfigJSON: configRaw}, nil
 }
 
 func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err error) {

@@ -11,8 +11,17 @@
 2. **不改 Pipeline 核心**。通过新增中间件和 post-hook 扩展，不修改现有中间件逻辑。
 3. **平台接入是通用能力**。任何 Persona 都可通过 Channel 对外服务。
 4. **Channel Config 是 Account 级资源**。Bot Token 属于 Account（类似 BYOK），一个 Account 每个平台最多一个 Bot Token，默认关联到当前活跃 Persona。
-5. **Memory 天然复用**。群聊 Run 按发送者加载 Memory，与 Web 端共享同一个 MemoryIdentity。
+5. **Memory 按 UserID 锚定**。`MemoryIdentity` 为 `{AccountID, UserID, AgentID}`。绑定后 `channel_identities.user_id` 与 DM Thread 指向正式用户，**之后**的新 Run 与 Web 共用同一 UserID；shadow 阶段已写入的长期记忆 **不会** 随绑定自动搬迁（批量迁移见 7.3 现状）。
 6. **Credit 由用户承担**。Channel 产生的消耗扣用户 credit。self-host / local-only 场景下扣到本地默认用户。
+
+### 1.1 能力阶段（Telegram 私信）
+
+| 档位 | 内容 |
+|------|------|
+| 基础 | Webhook 或 Desktop `getUpdates`、DM thread、`/new`、`run.started` 模型、`channel_message_ledger` 入站 |
+| 投递 | `sendMessage`、`reply_to_message_id`、分段、`channel_message_deliveries` + 出站 ledger |
+| 交互 | `sendChatAction`（typing，可 `config_json.telegram_typing_indicator` 关闭）、`setMessageReaction`（`telegram_reaction_emoji`，空则关）；`editMessageText` 已在共享 `telegrambot.Client` 暴露，Agent loop 流式编辑未接 |
+| 登记读 | Worker `LookupByPlatformMessage(channel_id, platform_conversation_id, platform_message_id)` |
 
 ## 2. 术语
 
@@ -49,9 +58,9 @@ Telegram/Discord/Feishu
          v
   Worker (Pipeline)
   ├── 现有中间件链
-  ├── mw_channel_context (新增: 注入平台上下文, 动态加载平台 ToolProvider)
-  ├── handler_agent_loop (不变)
-  └── post-hook: ChannelSender (新增: 格式转换 + 平台 API 回推)
+  ├── mw_channel_context（解析 channel_delivery，注入 ChannelContext / sender UserID）
+  ├── handler_agent_loop
+  └── mw_channel_delivery（投递、typing、可选 reaction、ledger）
          |
          v
   Telegram/Discord/Feishu API (发送响应)
@@ -85,9 +94,15 @@ CREATE TABLE channels (
 {
   "bot_username": "arkloop_bot",
   "allowed_updates": ["message", "callback_query"],
-  "group_privacy_mode": false
+  "group_privacy_mode": false,
+  "default_model": "openai^gpt-4.1-mini",
+  "telegram_typing_indicator": true,
+  "telegram_reaction_emoji": ""
 }
 ```
+
+- `telegram_typing_indicator`：缺省按 `true`；`false` 时不发 typing。
+- `telegram_reaction_emoji`：非空时在成功投递后对**用户入站消息**调用 `setMessageReaction`；空字符串表示关闭。
 
 ### 4.2 `channel_identities`
 
@@ -139,7 +154,7 @@ Shadow User 特征：
 - 不可登录（无密码、无 OAuth 绑定）
 - 自动创建 personal Account
 - Memory 长期保留，不清理
-- 绑定正式账号后，Memory 迁移到正式用户，shadow user 标记为已合并
+- 绑定正式账号后：**身份与 Thread owner** 切到正式用户；**向量 / 快照记忆的批量迁移** 当前未实现（见 7.3）
 
 ## 5. Webhook 接收（API 层）
 
@@ -236,9 +251,9 @@ time: "2026-03-16T10:00:00Z"
 
 当 `channel_delivery` 为 `null` 时，行为与现有 Web 流程完全一致。
 
-### 6.2 mw_channel_context（新增中间件）
+### 6.2 mw_channel_context
 
-插入位置：`mw_persona_resolution` 之后，`mw_tool_build` 之前。
+插入位置以代码 `runengine` 为准（在 Persona 解析之后，便于带上 `sender_channel_identity_id` 解析出的 `UserID`）。
 
 职责：
 1. 从 job payload 读取 `channel_delivery`，无则跳过
@@ -246,17 +261,7 @@ time: "2026-03-16T10:00:00Z"
 3. 根据 `sender_channel_identity_id` 解析发送者的 UserID，用于 MemoryMiddleware
 4. 注册对应平台的 ToolProvider（动态注入平台工具）
 
-```go
-type ChannelContext struct {
-    ChannelID              uuid.UUID
-    ChannelType            string
-    PlatformChatID         string
-    ReplyToMessageID       *string
-    IsGroupChat            bool
-    SenderChannelIdentityID uuid.UUID
-    SenderUserID           *uuid.UUID  // 用于 Memory 加载
-}
-```
+结构体字段以 `worker/internal/pipeline/mw_channel_context.go` 为准（含 `Conversation`、`InboundMessage`、`TriggerMessage` 等）。
 
 ### 6.3 Memory 加载逻辑
 
@@ -283,8 +288,8 @@ Telegram 工具示例：
 
 | 工具名 | 说明 |
 |--------|------|
-| `telegram_reply` | 回复引用特定消息 |
-| `telegram_react` | 给消息添加 emoji reaction |
+| `telegram_reply` | 回复引用特定消息（投递链已 `reply_to`；工具层可再暴露） |
+| `telegram_react` | 表情反应（投递成功后可配置 `telegram_reaction_emoji`；独立工具可后续接 `setMessageReaction`） |
 | `telegram_pin` | 置顶消息 |
 | `telegram_send_photo` | 发送图片 |
 | `telegram_send_document` | 发送文件 |
@@ -293,17 +298,18 @@ Discord/飞书同理，按平台能力定义工具集。
 
 工具执行时通过 `ChannelContext` 获取 chat_id、bot token 等信息，直接调用平台 API。
 
-### 6.5 Post-hook: ChannelSender
+### 6.5 Post-hook: ChannelSender（`mw_channel_delivery`）
 
-在 `handler_agent_loop` 完成后执行。位于 Pipeline 的 defer 逻辑中（类似现有 webhook enqueue）。
+在 `handler_agent_loop` **之后**执行（中间件包裹 terminal，出站侧后处理）。
 
 职责：
 1. 检查 `rc.ChannelContext` 是否存在，无则跳过
-2. 提取 `rc.FinalAssistantOutput`
-3. 格式转换：Markdown -> 平台格式（Telegram MarkdownV2 / Discord Markdown / 飞书富文本 JSON）
-4. 长消息自动分段（Telegram: 4096 字符，Discord: 2000 字符）
-5. 调用平台 API 发送
-6. 群聊时设置 `reply_to_message_id`（回复触发消息）
+2. Agent 循环期间可选 **Telegram typing**（ goroutine 周期 `sendChatAction`）
+3. 提取 `rc.FinalAssistantOutput`
+4. MarkdownV2 转义、分段（Telegram 4096）
+5. `sendMessage`，带 `reply_to_message_id` / `message_thread_id`
+6. 写入 `channel_message_deliveries` 与 `channel_message_ledger`（outbound）
+7. 可选对用户入站消息 `setMessageReaction`
 
 ```go
 type ChannelSender interface {
@@ -349,28 +355,23 @@ type ChannelSender interface {
     |      从 shadow_user 更新为     |
     |      real_user                 |
     |                                |
-    |    Shadow user Memory          |
-    |      迁移到 real_user          |
+    |    （OpenViking 记忆批量迁移     |
+    |     当前未实现，见 7.3）         |
     |                                |
     |<-- 绑定成功 -------------------|
 ```
 
 或通过 Telegram Deep Link：`t.me/{bot_username}?start=bind_{code}`
 
-### 7.3 Shadow User Memory 迁移
+### 7.3 Shadow User Memory 迁移（规划 vs 现状）
 
-绑定正式账号时的 Memory 处理：
+**规划**（理想行为）：将 shadow `UserID` 下的向量 / 快照条目改写为正式用户，并合并 shadow 身份。
 
-1. 读取 shadow user 的所有 Memory 条目
-2. 将 MemoryIdentity 中的 UserID 从 shadow_user_id 替换为 real_user_id
-3. 写入正式用户的 Memory 空间
-4. shadow user 标记 `source = 'channel_shadow_merged'`
-5. channel_identity.user_id 更新为 real_user_id
-6. 后续 Memory 在正式账号下继续积累，且与 Web 端共享
+**现状（代码）**：绑定仅更新 `channel_identities.user_id`、相关 Thread `owner`、消费 bind code。不会扫描或改写 OpenViking / `user_memory_snapshots` 中旧 `user_id` 的数据。若需要与 Web 历史合一，须另做迁移 Job 或 alias 设计。
 
 ### 7.4 DM Memory 一致性
 
-私聊 Thread 按 `(channel_id, channel_identity_id, persona_id)` 唯一确定。绑定用户后，该 Thread 的后续 Run 携带正式 UserID，Memory 与 Web 端共享同一份。
+私聊 Thread 按 `(channel_id, channel_identity_id, persona_id)` 映射。绑定后新 Run 的 `UserID` 为正式用户，**之后**积累的记忆与 Web 同 identity；**绑定前** shadow 侧已写入的内容仍挂在旧 `user_id` 下，除非执行 7.3 的迁移。
 
 ## 8. 群聊交互模型
 
@@ -405,7 +406,7 @@ type ChannelSender interface {
 
 1. 已绑定用户：Run 携带其正式 UserID，MemoryMiddleware 正常读写
 2. Shadow 用户：Run 携带 shadow UserID，Memory 同样正常积累
-3. 绑定正式账号后，Memory 迁移并与 Web 端合并
+3. 绑定正式账号后：身份切换，**新**记忆写入正式用户；历史 shadow 记忆不自动合并（见 7.3）
 
 群聊 Run 的 MemoryIdentity 是 `{AccountID, sender.UserID, PersonaID}`，长期记忆按人隔离，群聊语境由 Thread 历史提供。
 
@@ -622,7 +623,7 @@ type Formatter interface {
 - API: `DELETE /v1/me/channel-identities/{id}`（解除绑定）
 - Shadow User 创建逻辑: 首次看到平台用户时自动创建 `source='channel_shadow'` 用户 + personal account
 - Bind Code 消费逻辑: Bot 侧 /bind 命令触发，事务级 lock + consume + channel_identity.user_id 更新
-- Shadow User Memory 迁移: 绑定时将 shadow user Memory 迁移到正式用户，标记 `source='channel_shadow_merged'`
+- Shadow User Memory 迁移: **未实现**（规划项）；当前仅身份与 Thread owner 切换
 - Web: SettingsModal 绑定管理区域（已绑定列表、生成 code、解绑）
 
 ### Phase 2: Telegram 私聊
@@ -649,8 +650,9 @@ type Formatter interface {
 
 - `mw_channel_context` 中间件: 读取 `channel_delivery`，构建 `ChannelContext`，解析 sender UserID
 - MemoryMiddleware 集成: 通过 `ChannelContext.SenderUserID` 加载发送者个人 Memory
-- ChannelSender（Telegram）: 提取 `FinalAssistantOutput`，Markdown -> MarkdownV2 格式转换（特殊字符转义）
-- 长消息分段: 超 4096 字符按段落 > 句子 > 硬切优先级分段，段间 50ms 间隔
+- `mw_channel_delivery`（Telegram）: Agent 循环期间 `sendChatAction(typing)`；结束后 `sendMessage`（MarkdownV2、分段、reply/thread）
+- `channel_message_deliveries` + `channel_message_ledger` 出站登记；`LookupByPlatformMessage` 供按平台 message id 反查
+- `config_json`: `telegram_typing_indicator`、`telegram_reaction_emoji`
 - 群聊回复时设置 `reply_to_message_id`
 
 ### Phase 3: Telegram 群聊

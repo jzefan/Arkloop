@@ -11,11 +11,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/testutil"
 
@@ -135,6 +137,11 @@ func TestChannelDeliveryMiddlewarePersistsDeliveryAndLedger(t *testing.T) {
 		MessageThreadID  string `json:"message_thread_id"`
 	}
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendChatAction") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			return
+		}
 		if r.URL.Path != "/botbot-token/sendMessage" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -231,6 +238,111 @@ func TestChannelDeliveryMiddlewarePersistsDeliveryAndLedger(t *testing.T) {
 	}
 }
 
+func TestChannelDeliveryMiddlewareSetsInboundReaction(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_reaction")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 1)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var reactionJSON string
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendChatAction") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/setMessageReaction") {
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read reaction body: %v", err)
+			}
+			reactionJSON = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			return
+		}
+		if r.URL.Path != "/botbot-token/sendMessage" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":702,"chat":{"id":10001}}}`))
+	}))
+	defer server.Close()
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`,
+		secretID,
+		encryptChannelToken(t, keyBytes, "bot-token"),
+	); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channels (id, channel_type, credentials_id, is_active, config_json)
+		 VALUES ($1, 'telegram', $2, TRUE, '{"telegram_reaction_emoji":"👍"}'::jsonb)`,
+		channelID,
+		secretID,
+	); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	telegramClient := telegrambot.NewClient(server.URL, server.Client())
+
+	rc := &RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "reaction probe",
+		ChannelContext: &ChannelContext{
+			ChannelID:   channelID,
+			ChannelType: "telegram",
+			Conversation: ChannelConversationRef{
+				Target: "10001",
+			},
+			InboundMessage: ChannelMessageRef{MessageID: "601"},
+			TriggerMessage: &ChannelMessageRef{MessageID: "601"},
+		},
+	}
+
+	mw := NewChannelDeliveryMiddlewareWithOptions(pool, ChannelDeliveryMiddlewareOptions{Telegram: telegramClient})
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if !strings.Contains(reactionJSON, `"message_id":601`) || !strings.Contains(reactionJSON, "👍") {
+		t.Fatalf("unexpected setMessageReaction body: %s", reactionJSON)
+	}
+}
+
 func TestRecordChannelDeliverySuccessRollsBackOnLedgerFailure(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_atomic")
@@ -301,7 +413,8 @@ func createChannelDeliveryTables(t *testing.T, pool *pgxpool.Pool, ledgerTableSQ
 			id UUID PRIMARY KEY,
 			channel_type TEXT NOT NULL,
 			credentials_id UUID NULL,
-			is_active BOOLEAN NOT NULL DEFAULT FALSE
+			is_active BOOLEAN NOT NULL DEFAULT FALSE,
+			config_json JSONB NOT NULL DEFAULT '{}'::jsonb
 		)`,
 		`CREATE TABLE channel_message_deliveries (
 			run_id UUID NULL,

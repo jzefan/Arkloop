@@ -3,11 +3,14 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type channelMessageLedgerExecer interface {
@@ -100,4 +103,79 @@ func trimOptionalLedgerString(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+// ChannelMessageLedgerRow is a read model for channel_message_ledger lookups.
+type ChannelMessageLedgerRow struct {
+	ChannelID               uuid.UUID
+	ChannelType             string
+	Direction               ChannelMessageDirection
+	ThreadID                *uuid.UUID
+	RunID                   *uuid.UUID
+	PlatformConversationID  string
+	PlatformMessageID       string
+	PlatformParentMessageID *string
+	PlatformThreadID        *string
+	MetadataJSON            json.RawMessage
+}
+
+// LookupByPlatformMessage returns the latest ledger row for a platform message in a conversation.
+func (ChannelMessageLedgerRepository) LookupByPlatformMessage(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	channelID uuid.UUID,
+	platformConversationID string,
+	platformMessageID string,
+) (*ChannelMessageLedgerRow, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("pool must not be nil")
+	}
+	if channelID == uuid.Nil {
+		return nil, fmt.Errorf("channel_message_ledger: channel_id must not be empty")
+	}
+	if strings.TrimSpace(platformConversationID) == "" || strings.TrimSpace(platformMessageID) == "" {
+		return nil, fmt.Errorf("channel_message_ledger: platform ids must not be empty")
+	}
+	var row ChannelMessageLedgerRow
+	var direction string
+	var metadata []byte
+	err := pool.QueryRow(
+		ctx,
+		`SELECT channel_id, channel_type, direction, thread_id, run_id,
+			platform_conversation_id, platform_message_id,
+			platform_parent_message_id, platform_thread_id, metadata_json
+		   FROM channel_message_ledger
+		  WHERE channel_id = $1
+		    AND platform_conversation_id = $2
+		    AND platform_message_id = $3
+		  ORDER BY created_at DESC
+		  LIMIT 1`,
+		channelID,
+		strings.TrimSpace(platformConversationID),
+		strings.TrimSpace(platformMessageID),
+	).Scan(
+		&row.ChannelID,
+		&row.ChannelType,
+		&direction,
+		&row.ThreadID,
+		&row.RunID,
+		&row.PlatformConversationID,
+		&row.PlatformMessageID,
+		&row.PlatformParentMessageID,
+		&row.PlatformThreadID,
+		&metadata,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("channel_message_ledger.LookupByPlatformMessage: %w", err)
+	}
+	row.Direction = ChannelMessageDirection(direction)
+	if len(metadata) > 0 {
+		row.MetadataJSON = metadata
+	} else {
+		row.MetadataJSON = json.RawMessage(`{}`)
+	}
+	return &row, nil
 }
