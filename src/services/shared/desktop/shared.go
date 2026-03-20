@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/database/sqlitepgx"
+
 	"github.com/google/uuid"
 )
 
@@ -34,6 +36,8 @@ var (
 	sandboxAddr  string
 	ready        chan struct{}
 	apiReady     chan struct{}
+
+	sharedSQLitePool *sqlitepgx.Pool
 )
 
 func init() {
@@ -89,4 +93,24 @@ func WaitAPIReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// SetSharedSQLitePool 由侧car API 在 migration 后注入，Worker 与同进程共用同一 *sql.DB。
+// 仅 API RunDesktop 的 defer 可触发最终 Close 底层连接。
+func SetSharedSQLitePool(p *sqlitepgx.Pool) {
+	mu.Lock()
+	defer mu.Unlock()
+	sharedSQLitePool = p
+}
+
+func GetSharedSQLitePool() *sqlitepgx.Pool {
+	mu.Lock()
+	defer mu.Unlock()
+	return sharedSQLitePool
+}
+
+func ClearSharedSQLitePool() {
+	mu.Lock()
+	defer mu.Unlock()
+	sharedSQLitePool = nil
 }

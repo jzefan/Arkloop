@@ -826,29 +826,26 @@ func TestDesktopChannelContextOverridesUserIDFromPayload(t *testing.T) {
 	}
 	defer sqlitePool.Close()
 
+	sqlitepgx.ConfigureDesktopSQLPool(sqlitePool.Unwrap())
 	db := sqlitepgx.New(sqlitePool.Unwrap())
 
-	if _, err := db.Exec(
-		ctx,
-		`CREATE TABLE channel_identities (
-			id TEXT PRIMARY KEY,
-			channel_type TEXT NOT NULL,
-			platform_subject_id TEXT NOT NULL,
-			user_id TEXT NULL,
-			metadata_json TEXT NOT NULL DEFAULT '{}'
-		)`,
-	); err != nil {
-		t.Fatalf("create channel_identities table: %v", err)
-	}
-
-	identityID := uuid.New()
 	senderUserID := uuid.New()
 	if _, err := db.Exec(
 		ctx,
-		`INSERT INTO channel_identities (id, channel_type, platform_subject_id, user_id, metadata_json)
+		`INSERT INTO users (id, username, status) VALUES ($1, $2, 'active')`,
+		senderUserID.String(),
+		"tuser_"+senderUserID.String(),
+	); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	identityID := uuid.New()
+	if _, err := db.Exec(
+		ctx,
+		`INSERT INTO channel_identities (id, channel_type, platform_subject_id, user_id, metadata)
 		 VALUES ($1, 'telegram', '10001', $2, '{}')`,
-		identityID,
-		senderUserID,
+		identityID.String(),
+		senderUserID.String(),
 	); err != nil {
 		t.Fatalf("insert channel identity: %v", err)
 	}

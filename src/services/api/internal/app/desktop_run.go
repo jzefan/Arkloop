@@ -72,9 +72,21 @@ func RunDesktop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sqlite migrate: %w", err)
 	}
-	defer dbPool.Close()
+	desktop.RegisterSQLiteCloser(func() error {
+		return dbPool.Close()
+	})
+	defer func() {
+		desktop.ClearSharedSQLitePool()
+		if !desktop.SidecarProcess() {
+			if err := desktop.CloseRegisteredSQLite(); err != nil {
+				logger.Warn("desktop_sqlite_close", observability.LogFields{}, map[string]any{"error": err.Error()})
+			}
+		}
+	}()
 
+	sqlitepgx.ConfigureDesktopSQLPool(dbPool.Unwrap())
 	pgxPool := sqlitepgx.New(dbPool.Unwrap())
+	desktop.SetSharedSQLitePool(pgxPool)
 
 	// ---- seed data ----
 
