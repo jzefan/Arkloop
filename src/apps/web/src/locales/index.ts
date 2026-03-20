@@ -513,7 +513,6 @@ export interface LocaleStrings {
     deleteFailed: string
     loadFailed: string
     personaRequired: string
-    allowlistRequired: string
     telegram: string
     discord: string
     feishu: string
