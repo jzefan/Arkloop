@@ -60,8 +60,9 @@ func TestShellControllerExecCommandPreservesCwd(t *testing.T) {
 	controller := NewShellController()
 	defer closeController(controller)
 
-	// 相对工作区根的 cd，避免不同环境对绝对路径/引用的解析差异
+	// 显式 Cwd：部分环境下首个会话命令前交互目录未必已是工作区，外层 cd 避免相对路径误判
 	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
+		Cwd:         workspace,
 		Command:     "cd cdtarget && pwd",
 		YieldTimeMs: 1000,
 		TimeoutMs:   5000,
