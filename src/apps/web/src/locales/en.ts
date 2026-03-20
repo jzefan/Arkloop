@@ -519,6 +519,7 @@ export const en: LocaleStrings = {
   // model picker
   modelPicker: {
     defaultLabel: 'Default',
+    addProviderFirst: 'Add an API key under Providers first',
     addApiKey: 'Add API Key',
     byokSection: 'Your API Keys',
     noByok: 'No matching models',
@@ -721,6 +722,8 @@ export const en: LocaleStrings = {
     chatCompactSaving: "Saving…",
     chatCompactSaved: "Saved",
     chatCompactLoading: "Loading…",
+    chatCompactBannerRunning: "Compressing context",
+    chatCompactBannerDone: "Context updated",
     // Memory settings tab
     memory: "Memory",
     memorySettingsTitle: "Memory",
@@ -785,6 +788,7 @@ export const en: LocaleStrings = {
     toolModel: "Tool Model",
     toolModelDesc: "Model used for background tasks such as title generation.",
     toolModelPlatformDefault: "Platform Default",
+    toolModelSameAsChat: "Same as chat model",
   },
 
   adminProviders: {

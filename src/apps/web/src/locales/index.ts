@@ -529,6 +529,7 @@ export interface LocaleStrings {
   // model picker (chat input)
   modelPicker: {
     defaultLabel: string
+    addProviderFirst: string
     addApiKey: string
     byokSection: string
     noByok: string
@@ -693,6 +694,8 @@ export interface LocaleStrings {
     chatCompactSaving: string;
     chatCompactSaved: string;
     chatCompactLoading: string;
+    chatCompactBannerRunning: string;
+    chatCompactBannerDone: string;
     // desktop connectors section
     desktopConnectorsTitle: string;
     desktopConnectorsDesc: string;
@@ -793,6 +796,7 @@ export interface LocaleStrings {
     toolModel: string;
     toolModelDesc: string;
     toolModelPlatformDefault: string;
+    toolModelSameAsChat: string;
   };
 
   // admin providers/models settings (ported from console-lite)

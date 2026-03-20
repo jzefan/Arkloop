@@ -513,6 +513,7 @@ export const zh: LocaleStrings = {
   // model picker
   modelPicker: {
     defaultLabel: '默认',
+    addProviderFirst: '请先在供应商中添加 API Key',
     addApiKey: '添加 API Key',
     byokSection: '你的 API Key',
     noByok: '无匹配模型',
@@ -676,6 +677,8 @@ export const zh: LocaleStrings = {
     chatCompactSaving: "保存中…",
     chatCompactSaved: "已保存",
     chatCompactLoading: "加载中…",
+    chatCompactBannerRunning: "正在压缩上下文",
+    chatCompactBannerDone: "上下文已更新",
     desktopConnectorsTitle: "搜索与抓取",
     desktopConnectorsDesc: "配置 Agent 读取网页和搜索互联网的方式，重启后生效。",
     fetchConnectorTitle: "网页抓取",
@@ -774,6 +777,7 @@ export const zh: LocaleStrings = {
     toolModel: "工具模型",
     toolModelDesc: "用于标题生成等后台轻量任务的模型。",
     toolModelPlatformDefault: "平台默认",
+    toolModelSameAsChat: "与主对话相同",
   },
 
 
