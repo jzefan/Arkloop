@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
+import { LocaleProvider } from '../contexts/LocaleContext'
 import type { WebSource } from '../storage'
 
 function renderMarkdown(content: string, options?: { webSources?: WebSource[]; disableMath?: boolean; accessToken?: string; runId?: string }): string {
   return renderToStaticMarkup(
-    <MarkdownRenderer
-      content={content}
-      webSources={options?.webSources}
-      disableMath={options?.disableMath}
-      accessToken={options?.accessToken}
-      runId={options?.runId}
-    />,
+    <LocaleProvider>
+      <MarkdownRenderer
+        content={content}
+        webSources={options?.webSources}
+        disableMath={options?.disableMath}
+        accessToken={options?.accessToken}
+        runId={options?.runId}
+      />
+    </LocaleProvider>,
   )
 }
 

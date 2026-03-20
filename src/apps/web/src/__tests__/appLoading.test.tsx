@@ -18,11 +18,15 @@ const {
   setClientApp: vi.fn(),
 }))
 
-vi.mock('../api', () => ({
-  restoreAccessSession,
-  setUnauthenticatedHandler,
-  setAccessTokenHandler,
-}))
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>()
+  return {
+    ...actual,
+    restoreAccessSession,
+    setUnauthenticatedHandler,
+    setAccessTokenHandler,
+  }
+})
 
 vi.mock('@arkloop/shared/api', () => ({
   setClientApp,
@@ -31,9 +35,16 @@ vi.mock('@arkloop/shared/api', () => ({
 describe('App loading state', () => {
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+  const originalRAF = globalThis.requestAnimationFrame
+  const originalCAF = globalThis.cancelAnimationFrame
 
   beforeEach(() => {
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      cb(performance.now())
+      return 0
+    }
+    globalThis.cancelAnimationFrame = () => {}
     restoreAccessSession.mockReset()
     setUnauthenticatedHandler.mockReset()
     setAccessTokenHandler.mockReset()
@@ -43,6 +54,8 @@ describe('App loading state', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    globalThis.requestAnimationFrame = originalRAF
+    globalThis.cancelAnimationFrame = originalCAF
     if (originalActEnvironment === undefined) {
       delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
     } else {

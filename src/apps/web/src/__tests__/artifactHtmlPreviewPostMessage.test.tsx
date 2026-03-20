@@ -14,6 +14,9 @@ type GlobalWithActEnvironment = typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
 
+const originalRAF = globalThis.requestAnimationFrame
+const originalCAF = globalThis.cancelAnimationFrame
+
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
     .then(() => Promise.resolve())
@@ -30,6 +33,11 @@ describe('ArtifactHtmlPreview', () => {
 
   beforeEach(() => {
     actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = true
+    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      cb(performance.now())
+      return 0
+    }
+    globalThis.cancelAnimationFrame = () => {}
     urlWithObjectURL.createObjectURL = vi.fn(() => 'blob:mock')
     urlWithObjectURL.revokeObjectURL = vi.fn()
     globalThis.fetch = vi.fn(async () => new Response('<html></html>', {
@@ -54,6 +62,8 @@ describe('ArtifactHtmlPreview', () => {
     } else {
       actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
     }
+    globalThis.requestAnimationFrame = originalRAF
+    globalThis.cancelAnimationFrame = originalCAF
     vi.restoreAllMocks()
   })
 
@@ -97,8 +107,9 @@ describe('ArtifactHtmlPreview', () => {
     window.dispatchEvent(goodSource)
     expect(iframe.style.height).toBe('456px')
 
-    act(() => {
+    await act(async () => {
       root.unmount()
+      await flushMicrotasks()
     })
     container.remove()
   })

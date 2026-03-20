@@ -60,8 +60,9 @@ func TestShellControllerExecCommandPreservesCwd(t *testing.T) {
 	controller := NewShellController()
 	defer closeController(controller)
 
+	// 相对工作区根的 cd，避免不同环境对绝对路径/引用的解析差异
 	resp, code, msg := controller.ExecCommand(shellapi.AgentExecCommandRequest{
-		Command:     fmt.Sprintf("cd %q && pwd", target),
+		Command:     "cd cdtarget && pwd",
 		YieldTimeMs: 1000,
 		TimeoutMs:   5000,
 	})
@@ -371,8 +372,10 @@ func TestShellControllerDebugSnapshotShowsTranscriptTruncation(t *testing.T) {
 	if !debug.Transcript.Truncated || debug.Transcript.OmittedBytes <= 0 {
 		t.Fatalf("expected transcript truncation, got %#v", debug.Transcript)
 	}
-	if !strings.HasPrefix(debug.Transcript.Text, "HEAD\n") {
-		t.Fatalf("unexpected transcript head: %q", debug.Transcript.Text[:minInt(len(debug.Transcript.Text), 16)])
+	transcriptText := debug.Transcript.Text
+	transcriptText = strings.TrimPrefix(transcriptText, "\x1b[?2004h")
+	if !strings.HasPrefix(transcriptText, "HEAD\n") {
+		t.Fatalf("unexpected transcript head: %q", debug.Transcript.Text[:minInt(len(debug.Transcript.Text), 48)])
 	}
 	if !strings.Contains(debug.Transcript.Text, "TAIL") {
 		t.Fatalf("expected transcript tail marker, got %q", debug.Transcript.Text)
