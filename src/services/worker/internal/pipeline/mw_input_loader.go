@@ -10,6 +10,7 @@ import (
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,6 +37,7 @@ func NewInputLoaderMiddleware(
 		rc.InputJSON = inputJSON
 
 		llmMessages := make([]llm.Message, 0, len(threadMessages))
+		ids := make([]uuid.UUID, 0, len(threadMessages))
 		for _, msg := range threadMessages {
 			if strings.TrimSpace(msg.Role) == "" {
 				continue
@@ -48,8 +50,10 @@ func NewInputLoaderMiddleware(
 				Role:    msg.Role,
 				Content: parts,
 			})
+			ids = append(ids, msg.ID)
 		}
 		rc.Messages = llmMessages
+		rc.ThreadMessageIDs = ids
 
 		return next(ctx, rc)
 	}

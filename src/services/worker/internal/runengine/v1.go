@@ -38,6 +38,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	defaultPersistTriggerApproxTokensWorker = 120000
+	defaultPersistKeepLastMessagesWorker    = 40
+)
+
 type EngineV1 struct {
 	middlewares           []pipeline.RunMiddleware
 	terminal              pipeline.RunHandler
@@ -217,6 +222,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
 		pipeline.NewCallPlatformMiddleware(),
 		pipeline.NewPlatformToolsMiddleware(deps.PlatformToolExecutor),
@@ -299,6 +305,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	registry := sharedconfig.DefaultRegistry()
 	platformScope := sharedconfig.Scope{}
 	rc.ThreadMessageHistoryLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.thread_message_history", platformScope, 200)
+	rc.ContextCompact = pipeline.ContextCompactSettings{
+		Enabled:                    resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
+		MaxMessages:                resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
+		MaxUserMessageTokens:       resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_message_tokens", platformScope, 0),
+		MaxTotalTextTokens:         resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_tokens", platformScope, 0),
+		MaxUserTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
+		MaxTotalTextBytes:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
+		PersistEnabled:             resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
+		PersistTriggerApproxTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, defaultPersistTriggerApproxTokensWorker),
+		PersistKeepLastMessages:    resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
+	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
 	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", platformScope, 32)
 	rc.MaxParallelTasks = resolvePositiveInt(ctx, e.configResolver, registry, "limit.max_parallel_tasks", sharedconfig.Scope{}, 32)
