@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+var debugEnabled = true
+
 type Message struct {
 	ID              uuid.UUID
 	AccountID       uuid.UUID
@@ -146,6 +148,9 @@ func (r *MessageRepository) CreateStructuredWithMetadata(
 	metadataJSON json.RawMessage,
 	createdByUserID *uuid.UUID,
 ) (Message, error) {
+	if debugEnabled {
+		fmt.Printf("[DEBUG-MSG-REPO] CreateStructuredWithMetadata: accountID=%s, threadID=%s, role=%s, content=%q\n", accountID, threadID, role, content)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -165,10 +170,16 @@ func (r *MessageRepository) CreateStructuredWithMetadata(
 	var normalizedContentJSON json.RawMessage
 	if len(contentJSON) > 0 {
 		normalizedContentJSON = contentJSON
+	} else {
+		// SQLite requires NOT NULL, use empty object
+		normalizedContentJSON = json.RawMessage("{}")
 	}
 	var normalizedMetadataJSON json.RawMessage
 	if len(metadataJSON) > 0 {
 		normalizedMetadataJSON = metadataJSON
+	} else {
+		// SQLite requires NOT NULL, use empty object
+		normalizedMetadataJSON = json.RawMessage("{}")
 	}
 
 	var message Message
@@ -208,10 +219,16 @@ func (r *MessageRepository) CreateStructuredWithMetadata(
 		&message.Hidden,
 	)
 	if err != nil {
+		if debugEnabled {
+			fmt.Printf("[DEBUG-MSG-REPO] CreateStructuredWithMetadata: query error=%v (type=%T)\n", err, err)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Message{}, ThreadNotFoundError{ThreadID: threadID}
 		}
 		return Message{}, err
+	}
+	if debugEnabled {
+		fmt.Printf("[DEBUG-MSG-REPO] CreateStructuredWithMetadata: success, id=%s\n", message.ID)
 	}
 
 	return message, nil
