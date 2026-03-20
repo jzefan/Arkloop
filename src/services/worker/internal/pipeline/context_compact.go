@@ -16,6 +16,7 @@ type ContextCompactSettings struct {
 	// MaxMessages 尾部最多保留多少条消息；0 表示不按条数收缩。
 	MaxMessages int
 
+	// MaxUserMessageTokens 尾部 user 消息的 tiktoken 上限（SuffixRoleAndContentTokens 口径）；0 表示不限制。
 	MaxUserMessageTokens int
 	MaxTotalTextTokens   int
 	MaxUserTextBytes     int
@@ -27,7 +28,7 @@ type ContextCompactSettings struct {
 	PersistTriggerContextPct int
 	// FallbackContextWindowTokens 路由无 available_catalog.context_length 时用于比例换算。
 	FallbackContextWindowTokens int
-	PersistKeepLastMessages       int
+	PersistKeepLastMessages     int
 }
 
 func approxTokensFromText(s string) int {
