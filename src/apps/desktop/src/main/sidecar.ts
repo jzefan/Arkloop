@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from 'child_process'
+import { ChildProcess, execFileSync, spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
@@ -44,6 +44,13 @@ export class SidecarStartError extends Error {
 
 const HEALTH_POLL_MS = 500
 const HEALTH_TIMEOUT_MS = 30_000
+const BRIDGE_READY_POLL_MS = 400
+const BRIDGE_READY_ATTEMPTS = 40
+const OPENVIKING_INSTALL_WAIT_MS = 600_000
+const OPENVIKING_START_WAIT_MS = 180_000
+const OPENVIKING_STOP_WAIT_MS = 120_000
+const MODULE_ACTION_RETRIES = 3
+const MODULE_ACTION_RETRY_MS = 2000
 const MAX_RESTARTS = 3
 const MAX_AUTO_PORT_RETRIES = 6
 const AUTO_PORT_SCAN_WINDOW = 20
@@ -329,6 +336,12 @@ function isProjectDir(candidate: string): boolean {
   return pathIsFile(path.join(candidate, 'compose.yaml')) && pathIsDirectory(path.join(candidate, 'src'))
 }
 
+// Bridge 只依赖 compose 工程根；不必有 monorepo 的 src/
+function isBridgeProjectDir(candidate: string): boolean {
+  return pathIsFile(path.join(candidate, 'compose.yaml'))
+    || pathIsFile(path.join(candidate, 'docker-compose.yml'))
+}
+
 function resolveDevProjectDir(): string | null {
   const candidates = [
     // dist/main -> repo root
@@ -343,14 +356,74 @@ function resolveDevProjectDir(): string | null {
   return null
 }
 
+function discoverProjectDirFromDocker(): string | null {
+  try {
+    const out = execFileSync('docker', ['compose', 'ls', '-a', '--format', 'json'], {
+      encoding: 'utf-8',
+      timeout: 8000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    const trimmed = out.trim()
+    if (!trimmed) return null
+
+    type ComposeLsRow = { Name?: string; ConfigFiles?: string }
+    const rows: ComposeLsRow[] = []
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === 'object') rows.push(item as ComposeLsRow)
+        }
+      } else if (parsed && typeof parsed === 'object') {
+        rows.push(parsed as ComposeLsRow)
+      }
+    } catch {
+      for (const line of trimmed.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          rows.push(JSON.parse(line) as ComposeLsRow)
+        } catch {
+          // skip bad line
+        }
+      }
+    }
+
+    const candidates: string[] = []
+    for (const row of rows) {
+      const files = row.ConfigFiles
+      if (typeof files !== 'string' || !files) continue
+      const first = files.split(',')[0]?.trim()
+      if (!first) continue
+      const dir = path.dirname(first)
+      if (!isBridgeProjectDir(dir)) continue
+      candidates.push(dir)
+    }
+
+    const unique = [...new Set(candidates)]
+    for (const c of unique) {
+      if (isProjectDir(c)) return c
+    }
+    for (const c of unique) {
+      if (pathIsFile(path.join(c, 'install', 'modules.yaml'))) return c
+    }
+    return unique[0] ?? null
+  } catch {
+    return null
+  }
+}
+
 function resolveProjectDir(): string | null {
   const explicit = readEnvVar('ARKLOOP_PROJECT_DIR')
-  if (explicit && isProjectDir(explicit)) {
-    return explicit
+  if (explicit) {
+    if (isProjectDir(explicit) || isBridgeProjectDir(explicit)) {
+      return explicit
+    }
   }
   const bundled = resolveBundledProjectDir()
   if (bundled) return bundled
-  return resolveDevProjectDir()
+  const dev = resolveDevProjectDir()
+  if (dev) return dev
+  return discoverProjectDirFromDocker()
 }
 
 function buildRuntimeResourceEnv(projectDir: string | null): Record<string, string> {
@@ -451,7 +524,7 @@ function buildBridgeEnv(bridgePort: number, projectDir: string | null): Record<s
 
   if (!projectDir) return env
 
-  if (isProjectDir(projectDir)) {
+  if (isBridgeProjectDir(projectDir)) {
     env.ARKLOOP_BRIDGE_PROJECT_DIR = projectDir
   }
   const modulesFile = path.join(projectDir, 'install', 'modules.yaml')
@@ -494,6 +567,234 @@ function healthCheck(port: number): Promise<boolean> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+type BridgeModuleRow = { id: string; status: string }
+
+async function waitForBridgeReady(): Promise<boolean> {
+  const base = bridgeBaseUrl
+  for (let i = 0; i < BRIDGE_READY_ATTEMPTS; i++) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const req = http.get(`${base}/healthz`, (res) => {
+        resolve(res.statusCode === 200)
+      })
+      req.on('error', () => resolve(false))
+      req.setTimeout(1500, () => {
+        req.destroy()
+        resolve(false)
+      })
+    })
+    if (ok) return true
+    await sleep(BRIDGE_READY_POLL_MS)
+  }
+  return false
+}
+
+async function bridgeGetJson<T>(urlPath: string): Promise<T | null> {
+  const base = bridgeBaseUrl
+  return new Promise((resolve) => {
+    const req = http.get(`${base}${urlPath}`, (res) => {
+      let data = ''
+      res.on('data', (c) => { data += c })
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          resolve(null)
+          return
+        }
+        try {
+          resolve(JSON.parse(data) as T)
+        } catch {
+          resolve(null)
+        }
+      })
+    })
+    req.on('error', () => resolve(null))
+    req.setTimeout(10_000, () => {
+      req.destroy()
+      resolve(null)
+    })
+  })
+}
+
+async function bridgePostModuleAction(
+  moduleId: string,
+  action: string,
+): Promise<{ operationId: string | null; statusCode: number }> {
+  const base = bridgeBaseUrl
+  const body = JSON.stringify({ action })
+  return new Promise((resolve) => {
+    const url = new URL(`${base}/v1/modules/${encodeURIComponent(moduleId)}/actions`)
+    const req = http.request(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body, 'utf8'),
+        },
+      },
+      (res) => {
+        let data = ''
+        res.on('data', (c) => { data += c })
+        res.on('end', () => {
+          if (res.statusCode !== 202) {
+            resolve({ operationId: null, statusCode: res.statusCode ?? 0 })
+            return
+          }
+          try {
+            const j = JSON.parse(data) as { operation_id?: string }
+            resolve({ operationId: j.operation_id ?? null, statusCode: 202 })
+          } catch {
+            resolve({ operationId: null, statusCode: 202 })
+          }
+        })
+      },
+    )
+    req.on('error', () => resolve({ operationId: null, statusCode: 0 }))
+    req.setTimeout(15_000, () => {
+      req.destroy()
+      resolve({ operationId: null, statusCode: 0 })
+    })
+    req.write(body)
+    req.end()
+  })
+}
+
+async function bridgePostActionWithRetry(moduleId: string, action: string): Promise<string | null> {
+  for (let attempt = 0; attempt < MODULE_ACTION_RETRIES; attempt++) {
+    const { operationId, statusCode } = await bridgePostModuleAction(moduleId, action)
+    if (operationId) return operationId
+    if (statusCode === 409 && attempt + 1 < MODULE_ACTION_RETRIES) {
+      await sleep(MODULE_ACTION_RETRY_MS)
+      continue
+    }
+    return null
+  }
+  return null
+}
+
+async function waitForBridgeOperation(
+  operationId: string,
+  timeoutMs: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const base = bridgeBaseUrl
+  return new Promise((resolve) => {
+    const url = new URL(`/v1/operations/${encodeURIComponent(operationId)}/stream`, base)
+    const req = http.get(url, (res) => {
+      let buf = ''
+      const timer = setTimeout(() => {
+        req.destroy()
+        resolve({ ok: false, error: 'timeout' })
+      }, timeoutMs)
+
+      const done = (result: { ok: boolean; error?: string }) => {
+        clearTimeout(timer)
+        req.destroy()
+        resolve(result)
+      }
+
+      res.on('data', (chunk: Buffer) => {
+        buf += chunk.toString()
+        let scanFrom = 0
+        for (;;) {
+          const ev = buf.indexOf('event: status', scanFrom)
+          if (ev < 0) break
+          const dataLabel = buf.indexOf('data:', ev)
+          if (dataLabel < 0) break
+          const lineEnd = buf.indexOf('\n', dataLabel)
+          if (lineEnd < 0) break
+          const jsonStr = buf.slice(dataLabel + 5, lineEnd).trim()
+          scanFrom = lineEnd + 1
+          try {
+            const j = JSON.parse(jsonStr) as { status: string; error?: string }
+            if (j.status === 'completed') {
+              done({ ok: true })
+              return
+            }
+            if (j.status === 'failed') {
+              done({ ok: false, error: j.error })
+              return
+            }
+          } catch {
+            // keep scanning
+          }
+        }
+        if (buf.length > 512 * 1024) {
+          buf = buf.slice(-256 * 1024)
+        }
+      })
+
+      res.on('end', () => {
+        clearTimeout(timer)
+        resolve({ ok: false, error: 'stream_closed' })
+      })
+    })
+    req.on('error', () => resolve({ ok: false, error: 'request' }))
+  })
+}
+
+async function bridgeListModules(): Promise<BridgeModuleRow[] | null> {
+  return await bridgeGetJson<BridgeModuleRow[]>('/v1/modules')
+}
+
+async function maybeEnsureOpenVikingRunning(): Promise<void> {
+  const cfg = memoryConfig
+  if (!cfg?.enabled || cfg.provider !== 'openviking') return
+
+  const ready = await waitForBridgeReady()
+  if (!ready) {
+    console.error('[sidecar] bridge health timeout (openviking autostart skipped)')
+    return
+  }
+
+  let list = await bridgeListModules()
+  if (!list) return
+  let mod = list.find((m) => m.id === 'openviking')
+  if (!mod) return
+
+  if (mod.status === 'not_installed') {
+    const opId = await bridgePostActionWithRetry('openviking', 'install')
+    if (!opId) {
+      console.error('[sidecar] openviking install request failed')
+      return
+    }
+    const inst = await waitForBridgeOperation(opId, OPENVIKING_INSTALL_WAIT_MS)
+    if (!inst.ok) {
+      console.error('[sidecar] openviking install:', inst.error ?? 'failed')
+      return
+    }
+    list = await bridgeListModules()
+    mod = list?.find((m) => m.id === 'openviking')
+  }
+
+  if (mod?.status === 'running') return
+
+  if (mod?.status === 'stopped' || mod?.status === 'error') {
+    const startOp = await bridgePostActionWithRetry('openviking', 'start')
+    if (!startOp) {
+      console.error('[sidecar] openviking start request failed')
+      return
+    }
+    const st = await waitForBridgeOperation(startOp, OPENVIKING_START_WAIT_MS)
+    if (!st.ok) {
+      console.error('[sidecar] openviking start:', st.error ?? 'failed')
+    }
+  }
+}
+
+export async function stopBridgeOpenvikingIfNeeded(memory: MemoryConfig): Promise<void> {
+  if (!memory.enabled || memory.provider !== 'openviking') return
+
+  const ready = await waitForBridgeReady()
+  if (!ready) return
+
+  const list = await bridgeListModules()
+  const mod = list?.find((m) => m.id === 'openviking')
+  if (!mod || mod.status !== 'running') return
+
+  const opId = await bridgePostActionWithRetry('openviking', 'stop')
+  if (!opId) return
+  await waitForBridgeOperation(opId, OPENVIKING_STOP_WAIT_MS)
 }
 
 function isPortConflictText(text: string, sidecarPort: number): boolean {
@@ -765,6 +1066,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
   healthy = true
   restartCount = 0
   setRuntime({ status: 'running', port, portMode, lastError: undefined })
+  await maybeEnsureOpenVikingRunning()
   return getSidecarRuntime()
 }
 

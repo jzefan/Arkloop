@@ -11,6 +11,7 @@ import {
   setMemoryConfig,
   getSidecarRuntime,
   getBridgeBaseUrl,
+  stopBridgeOpenvikingIfNeeded,
   type SidecarRuntime,
 } from './sidecar'
 import { createTray, registerGlobalShortcut, destroyTray } from './tray'
@@ -118,6 +119,16 @@ async function applyConfigUpdate(config: AppConfig): Promise<AppConfig> {
     return candidate
   }
 
+  const wasOpenviking = previous.mode === 'local'
+    && previous.memory.enabled
+    && previous.memory.provider === 'openviking'
+  const wantOpenviking = candidate.mode === 'local'
+    && candidate.memory.enabled
+    && candidate.memory.provider === 'openviking'
+  if (wasOpenviking && !wantOpenviking) {
+    await stopBridgeOpenvikingIfNeeded(previous.memory)
+  }
+
   await stopSidecar()
   try {
     const applied = await ensureLocalSidecar(candidate)
@@ -209,10 +220,7 @@ function loadContent(win: BrowserWindow): void {
 }
 
 let isQuitting = false
-
-app.on('before-quit', () => {
-  isQuitting = true
-})
+let shutdownInProgress = false
 
 app.whenReady().then(async () => {
   setStatusListener((status) => {
@@ -264,7 +272,22 @@ app.on('activate', () => {
   }
 })
 
-app.on('will-quit', async () => {
-  destroyTray()
-  await stopSidecar()
+app.on('before-quit', (e) => {
+  if (shutdownInProgress) return
+  e.preventDefault()
+  shutdownInProgress = true
+  isQuitting = true
+  void (async () => {
+    destroyTray()
+    try {
+      const cfg = loadConfig()
+      if (cfg.mode === 'local') {
+        await stopBridgeOpenvikingIfNeeded(cfg.memory)
+      }
+      await stopSidecar()
+    } catch (err) {
+      console.error('[desktop] shutdown error:', err)
+    }
+    app.quit()
+  })()
 })
