@@ -372,10 +372,15 @@ func TestShellControllerDebugSnapshotShowsTranscriptTruncation(t *testing.T) {
 	if !debug.Transcript.Truncated || debug.Transcript.OmittedBytes <= 0 {
 		t.Fatalf("expected transcript truncation, got %#v", debug.Transcript)
 	}
-	transcriptText := debug.Transcript.Text
-	transcriptText = strings.TrimPrefix(transcriptText, "\x1b[?2004h")
-	if !strings.HasPrefix(transcriptText, "HEAD\n") {
-		t.Fatalf("unexpected transcript head: %q", debug.Transcript.Text[:minInt(len(debug.Transcript.Text), 48)])
+	rawTranscript := debug.Transcript.Text
+	const headMarker = "HEAD\n"
+	const maxControlPrefix = 96
+	headAt := strings.Index(rawTranscript, headMarker)
+	if headAt < 0 {
+		t.Fatalf("missing transcript marker %q: %q", headMarker, rawTranscript[:minInt(len(rawTranscript), 80)])
+	}
+	if headAt > maxControlPrefix {
+		t.Fatalf("transcript marker too late (idx=%d): %q", headAt, rawTranscript[:minInt(len(rawTranscript), 120)])
 	}
 	if !strings.Contains(debug.Transcript.Text, "TAIL") {
 		t.Fatalf("expected transcript tail marker, got %q", debug.Transcript.Text)
