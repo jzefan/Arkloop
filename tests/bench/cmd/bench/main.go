@@ -284,9 +284,9 @@ func runGateway(args []string) {
 
 	// JWT 认证场景
 	if secret != "" {
-		const benchOrgID = "00000000-0000-4000-8000-000000000001"
+		const benchAccountID = "00000000-0000-4000-8000-000000000001"
 		const benchUserID = "00000000-0000-4000-8000-000000000002"
-		token, err := seed.MakeJWT(secret, benchOrgID, benchUserID, 10*time.Minute)
+		token, err := seed.MakeJWT(secret, benchAccountID, benchUserID, 10*time.Minute)
 		if err != nil {
 			rep.Results = append(rep.Results, tokenRequiredResult("gateway_jwt", "jwt.sign.error"))
 		} else {
@@ -301,14 +301,14 @@ func runGateway(args []string) {
 	}
 	if rURL != "" && secret != "" {
 		const benchAPIKey = "ak-bench-00000000000000000000000000000001"
-		const benchOrgID = "00000000-0000-4000-8000-000000000001"
+		const benchAccountID = "00000000-0000-4000-8000-000000000001"
 
 		rdb, err := seed.ConnectRedis(ctx, rURL)
 		if err != nil {
 			rep.Results = append(rep.Results, tokenRequiredResult("gateway_apikey", "redis.connect.error"))
 		} else {
 			defer rdb.Close()
-			if err := seed.SeedAPIKey(ctx, rdb, benchAPIKey, benchOrgID); err != nil {
+			if err := seed.SeedAPIKey(ctx, rdb, benchAPIKey, benchAccountID); err != nil {
 				rep.Results = append(rep.Results, tokenRequiredResult("gateway_apikey", "redis.seed.error"))
 			} else {
 				defer seed.CleanupAPIKey(ctx, rdb, benchAPIKey)

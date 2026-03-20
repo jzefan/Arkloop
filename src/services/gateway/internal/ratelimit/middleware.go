@@ -138,10 +138,6 @@ func extractAccountIDFromBearer(r *http.Request, parser *jwt.Parser, secret []by
 		if s, ok := accountRaw.(string); ok {
 			accountStr = s
 		}
-	} else if orgRaw, exists := claims["org"]; exists {
-		if s, ok := orgRaw.(string); ok {
-			accountStr = s
-		}
 	}
 	if accountStr == "" {
 		return uuid.Nil

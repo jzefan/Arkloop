@@ -508,7 +508,7 @@ func buildEffectiveToolCatalog(
 	mcpCache *catalogfamily.EffectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
-	resp, err := catalogfamily.BuildEffectiveToolCatalogCompat(ctx, accountID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+	resp, err := catalogfamily.BuildEffectiveToolCatalog(ctx, accountID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 	if err != nil {
 		return toolCatalogResponse{}, err
 	}

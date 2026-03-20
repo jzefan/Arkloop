@@ -120,11 +120,6 @@ func extractAccountIDFromJWT(token string, secret []byte) string {
 			return strings.TrimSpace(accountStr)
 		}
 	}
-	if orgRaw, exists := claims["org"]; exists {
-		if orgStr, ok := orgRaw.(string); ok {
-			return strings.TrimSpace(orgStr)
-		}
-	}
 	return ""
 }
 
@@ -141,17 +136,18 @@ func extractInfoFromJWTVerified(token string, secret []byte) Info {
 		return Info{Type: IdentityAnonymous}
 	}
 
-	var accountID string
-	if accountRaw, _ := claims["account"].(string); accountRaw != "" {
-		accountID = accountRaw
-	} else if orgRaw, _ := claims["org"].(string); orgRaw != "" {
-		accountID = orgRaw
+	accountID := ""
+	if s, _ := claims["account"].(string); s != "" {
+		accountID = strings.TrimSpace(s)
+	}
+	if accountID == "" {
+		return Info{Type: IdentityAnonymous}
 	}
 	subRaw, _ := claims["sub"].(string)
 
 	return Info{
 		Type:      IdentityJWT,
-		AccountID: strings.TrimSpace(accountID),
+		AccountID: accountID,
 		UserID:    strings.TrimSpace(subRaw),
 	}
 }

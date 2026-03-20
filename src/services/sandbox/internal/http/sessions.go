@@ -30,9 +30,6 @@ func handleSessionTranscript(shellSvc shell.Service) http.HandlerFunc {
 		}
 
 		accountID := strings.TrimSpace(r.Header.Get("X-Account-ID"))
-		if accountID == "" {
-			accountID = strings.TrimSpace(r.Header.Get("X-Org-ID")) // backward compat
-		}
 		resp, err := shellSvc.DebugSnapshot(r.Context(), id, accountID)
 		if err != nil {
 			if shellErr, ok := err.(*shell.Error); ok {
@@ -62,9 +59,6 @@ func handleForkSession(shellSvc shell.Service) http.HandlerFunc {
 		req.ToSessionID = strings.TrimSpace(req.ToSessionID)
 		if req.AccountID == "" {
 			req.AccountID = strings.TrimSpace(r.Header.Get("X-Account-ID"))
-			if req.AccountID == "" {
-				req.AccountID = strings.TrimSpace(r.Header.Get("X-Org-ID")) // backward compat
-			}
 		}
 		if req.FromSessionID == "" || req.ToSessionID == "" {
 			writeError(w, http.StatusBadRequest, "sandbox.missing_session_id", "from_session_id and to_session_id are required")
@@ -89,9 +83,6 @@ func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, logger *l
 		}
 
 		accountID := strings.TrimSpace(r.Header.Get("X-Account-ID"))
-		if accountID == "" {
-			accountID = strings.TrimSpace(r.Header.Get("X-Org-ID")) // backward compat
-		}
 		if shellSvc != nil {
 			if err := shellSvc.Close(r.Context(), id, accountID); err == nil {
 				w.WriteHeader(http.StatusNoContent)

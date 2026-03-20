@@ -47,7 +47,7 @@ func NewChannelJobQueue(maxAttempts int, onEnqueue func()) (*ChannelJobQueue, er
 
 func (q *ChannelJobQueue) EnqueueRun(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	runID uuid.UUID,
 	traceID string,
 	queueJobType string,
@@ -67,13 +67,13 @@ func (q *ChannelJobQueue) EnqueueRun(
 	}
 
 	payloadJSON := map[string]any{
-		"v":        JobPayloadVersionV1,
-		"job_id":   jobID.String(),
-		"type":     RunExecuteJobType,
-		"trace_id": chosenTraceID,
-		"org_id":   orgID.String(),
-		"run_id":   runID.String(),
-		"payload":  payloadCopy,
+		"v":          JobPayloadVersionV1,
+		"job_id":     jobID.String(),
+		"type":       RunExecuteJobType,
+		"trace_id":   chosenTraceID,
+		"account_id": accountID.String(),
+		"run_id":     runID.String(),
+		"payload":    payloadCopy,
 	}
 
 	// Round-trip through JSON so that numeric types match PgQueue behaviour
