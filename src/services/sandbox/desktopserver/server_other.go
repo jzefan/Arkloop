@@ -21,11 +21,11 @@ type Config struct {
 type Server struct{}
 
 func New(_ Config) (*Server, error) {
-	return nil, fmt.Errorf("Apple VM isolation requires macOS")
+	return nil, fmt.Errorf("apple VM isolation requires macOS")
 }
 
 func (s *Server) Start(_ context.Context) (string, error) {
-	return "", fmt.Errorf("Apple VM isolation requires macOS")
+	return "", fmt.Errorf("apple VM isolation requires macOS")
 }
 
 func (s *Server) Addr() string { return "" }

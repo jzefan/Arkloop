@@ -22,8 +22,9 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
+
+	cerrdefs "github.com/containerd/errdefs"
 )
 
 const defaultAgentEgressNetworkName = "arkloop_sandbox_agent_egress"
@@ -139,7 +140,7 @@ func cleanupStaleContainers(ctx context.Context, cli *client.Client) error {
 		return fmt.Errorf("list stale sandbox containers: %w", err)
 	}
 	for _, item := range containers {
-		if err := cli.ContainerRemove(ctx, item.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if err := cli.ContainerRemove(ctx, item.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("remove stale sandbox container %s: %w", item.ID, err)
 		}
 	}
@@ -161,7 +162,7 @@ func ensureNetworkExists(ctx context.Context, cli *client.Client, name string, i
 		}
 		return nil
 	}
-	if !errdefs.IsNotFound(err) {
+	if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect docker network %s: %w", name, err)
 	}
 

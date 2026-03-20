@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Store interface {
@@ -14,15 +15,11 @@ type Store interface {
 	GetProjectSetting(ctx context.Context, projectID uuid.UUID, key string) (string, bool, error)
 }
 
-type dbQueryRow interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
 type PGXStore struct {
-	pool dbQueryRow
+	pool *pgxpool.Pool
 }
 
-func NewPGXStore(pool dbQueryRow) *PGXStore {
+func NewPGXStore(pool *pgxpool.Pool) *PGXStore {
 	return &PGXStore{pool: pool}
 }
 
