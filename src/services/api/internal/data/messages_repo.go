@@ -257,13 +257,19 @@ func (r *MessageRepository) ListByThread(
 		ctx,
 		`SELECT id, account_id, thread_id, created_by_user_id, role, content,
 		        content_json, metadata_json, token_count, deleted_at, created_at, hidden
-		 FROM messages
-		 WHERE account_id = $1
-		   AND thread_id = $2
-		   AND hidden = FALSE
-		   AND deleted_at IS NULL
-		 ORDER BY created_at ASC, id ASC
-		 LIMIT $3`,
+		 FROM (
+			SELECT id, account_id, thread_id, created_by_user_id, role, content,
+			       content_json, metadata_json, token_count, deleted_at, created_at, hidden
+			  FROM messages
+			 WHERE account_id = $1
+			   AND thread_id = $2
+			   AND hidden = FALSE
+			   AND deleted_at IS NULL
+			   AND COALESCE(compacted, false) = false
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $3
+		 ) recent
+		 ORDER BY created_at ASC, id ASC`,
 		accountID,
 		threadID,
 		limit,
@@ -566,6 +572,7 @@ func (r *MessageRepository) CopyUpTo(
 		   AND thread_id = $2
 		   AND hidden = FALSE
 		   AND deleted_at IS NULL
+		   AND COALESCE(compacted, false) = false
 		   AND (created_at, id) <= (
 		     SELECT created_at, id
 		     FROM messages

@@ -522,6 +522,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			content_json       JSONB       NULL,
 			metadata_json      JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
+			compacted          BOOLEAN     NOT NULL DEFAULT FALSE,
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,

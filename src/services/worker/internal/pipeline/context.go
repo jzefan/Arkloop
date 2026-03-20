@@ -76,6 +76,11 @@ type RunContext struct {
 	// -- InputLoaderMiddleware 写入 --
 	InputJSON map[string]any
 	Messages  []llm.Message
+	// ThreadMessageIDs 与 Messages 对齐（仅来自线程加载的条目），供 context compact 持久化写回。
+	ThreadMessageIDs []uuid.UUID
+
+	// -- EngineV1.Execute 注入：context compact（[middleware 内可能改写 Messages]） --
+	ContextCompact ContextCompactSettings
 
 	// -- PersonaResolutionMiddleware 写入 --
 	AgentConfig     *ResolvedAgentConfig

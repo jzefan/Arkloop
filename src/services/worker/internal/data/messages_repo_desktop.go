@@ -120,13 +120,18 @@ func (MessagesRepository) ListByThread(
 	rows, err := tx.Query(
 		ctx,
 		`SELECT id, role, content, content_json, created_at
-		 FROM messages
-		 WHERE account_id = $1
-		   AND thread_id = $2
-		   AND hidden = FALSE
-		   AND deleted_at IS NULL
-		 ORDER BY created_at ASC
-		 LIMIT $3`,
+		 FROM (
+			SELECT id, role, content, content_json, created_at
+			  FROM messages
+			 WHERE account_id = $1
+			   AND thread_id = $2
+			   AND hidden = FALSE
+			   AND deleted_at IS NULL
+			   AND COALESCE(compacted, 0) = 0
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $3
+		 ) recent
+		 ORDER BY created_at ASC, id ASC`,
 		accountID,
 		threadID,
 		limit,
@@ -235,6 +240,7 @@ func (MessagesRepository) ListRecentByThread(
 		 	   AND thread_id = $2
 		 	   AND hidden = FALSE
 		 	   AND deleted_at IS NULL
+		 	   AND COALESCE(compacted, 0) = 0
 		 	 ORDER BY created_at DESC, id DESC
 		 	 LIMIT $3
 		 ) recent
@@ -311,6 +317,81 @@ func (MessagesRepository) InsertThreadMessage(
 		return uuid.Nil, err
 	}
 	return messageID, nil
+}
+
+func (MessagesRepository) InsertCompactSummaryMessage(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	content string,
+	metadata json.RawMessage,
+) (uuid.UUID, error) {
+	if tx == nil {
+		return uuid.Nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return uuid.Nil, fmt.Errorf("content must not be empty")
+	}
+	if len(metadata) == 0 {
+		metadata = []byte(`{}`)
+	}
+	emptyParts := json.RawMessage(`{"parts":[]}`)
+	var messageID uuid.UUID
+	err := tx.QueryRow(
+		ctx,
+		`INSERT INTO messages (
+			account_id, thread_id, created_by_user_id, role, content, content_json, metadata_json, hidden, compacted
+		) VALUES (
+			$1, $2, NULL, 'system', $3, $4, $5::jsonb, false, false
+		)
+		 RETURNING id`,
+		accountID,
+		threadID,
+		content,
+		emptyParts,
+		string(metadata),
+	).Scan(&messageID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return messageID, nil
+}
+
+func (MessagesRepository) MarkThreadMessagesCompacted(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	messageIDs []uuid.UUID,
+) error {
+	if tx == nil {
+		return fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return fmt.Errorf("account_id and thread_id must not be empty")
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(
+		ctx,
+		`UPDATE messages
+		    SET compacted = true,
+		        hidden = true
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND id = ANY($3::uuid[])
+		    AND deleted_at IS NULL`,
+		accountID,
+		threadID,
+		messageIDs,
+	)
+	return err
 }
 
 func (MessagesRepository) SearchVisibleByOwner(

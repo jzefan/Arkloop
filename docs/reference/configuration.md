@@ -6,6 +6,15 @@
 | browser.enabled | bool | platform | false | false | 是否在 Worker 中注册 browser 自动化工具 |
 | budget.max_cost_micros | int | both | 0 | false | 单次 run 最大累计费用 (微美元), 0 表示不限 |
 | budget.max_total_output_tokens | int | both | 0 | false | 单次 run 最大累计输出 token 数, 0 表示不限 |
+| context.compact.enabled | bool | platform | false | false | 启用线程上下文预算裁切（在 Routing 之后） |
+| context.compact.max_messages | int | platform | 0 | false | compact 尾部消息条数上限，0 表示仅按 token/字节预算 |
+| context.compact.max_total_text_bytes | int | platform | 0 | false | 全消息文本字节上限，0 表示不限制 |
+| context.compact.max_total_text_tokens | int | platform | 0 | false | 全消息文本近似 token 上限，0 表示不限制 |
+| context.compact.max_user_message_tokens | int | platform | 0 | false | 保留 user 文本的近似 token 上限，0 表示不限制 |
+| context.compact.max_user_text_bytes | int | platform | 0 | false | 保留 user 文本字节上限，0 表示不限制 |
+| context.compact.persist_enabled | bool | platform | false | false | 超阈值时将较早消息摘要并标记 compacted（需迁移 00134） |
+| context.compact.persist_keep_last_messages | int | platform | 40 | false | 持久化摘要时保留的尾部消息条数 |
+| context.compact.persist_trigger_approx_tokens | int | platform | 120000 | false | 触发持久化摘要的近似输入 token 阈值 |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新账户初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
@@ -90,16 +99,16 @@
 | skills.registry.api_key | string | platform |  | true | 官方技能 Registry API Key |
 | skills.registry.base_url | string | platform | https://clawhub.ai | false | 官方技能 Registry 页面基础地址 |
 | skills.registry.provider | string | platform | clawhub | false | 官方技能 Registry Provider |
-| spawn.profile.balanced | string | both | anthropic^claude-sonnet-4-5 | false | ACP agent 'balanced' profile: 平衡性价比模型 |
-| spawn.profile.fast | string | both | anthropic^claude-haiku-3-5 | false | ACP agent 'fast' profile: 低延迟低成本模型 |
-| spawn.profile.strong | string | both | anthropic^claude-sonnet-4-5 | false | ACP agent 'strong' profile: 最强推理能力模型 |
+| spawn.profile.explore | string | both | anthropic^claude-haiku-3-5 | false | Sub-agent 'explore' profile: 低延迟低成本模型 |
+| spawn.profile.strong | string | both | anthropic^claude-sonnet-4-5 | false | Sub-agent 'strong' profile: 最强推理能力模型 |
+| spawn.profile.task | string | both | anthropic^claude-sonnet-4-5 | false | Sub-agent 'task' profile: 平衡性价比模型 |
 | turnstile.allowed_host | string | platform |  | false | Turnstile Allowed Host |
 | turnstile.secret_key | string | platform |  | true | Turnstile Secret Key |
 | turnstile.site_key | string | platform |  | false | Turnstile Site Key |
 | web_fetch.firecrawl_api_key | string | both |  | true | Firecrawl API Key |
 | web_fetch.firecrawl_base_url | string | both |  | false | Firecrawl Base URL |
 | web_fetch.jina_api_key | string | both |  | true | Jina API Key |
-| web_fetch.provider | string | both | basic | false | Web Fetch Provider：basic/firecrawl/jina |
-| web_search.provider | string | both |  | false | Web Search Provider：searxng/tavily |
+| web_fetch.provider | string | both | jina | false | Web Fetch Provider：basic/firecrawl/jina (default: jina anonymous free tier) |
+| web_search.provider | string | both |  | false | Web Search Provider：searxng/tavily/duckduckgo |
 | web_search.searxng_base_url | string | both |  | false | SearXNG Base URL |
 | web_search.tavily_api_key | string | both |  | true | Tavily API Key |
