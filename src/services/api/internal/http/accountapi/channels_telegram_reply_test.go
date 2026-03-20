@@ -63,3 +63,19 @@ func jsonInt(v int64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestTelegramUserAllowed_emptyAllowlistOpens(t *testing.T) {
+	t.Helper()
+	if !telegramUserAllowed(nil, "5957030043") {
+		t.Fatal("nil allowlist should allow any user id")
+	}
+	if !telegramUserAllowed([]string{}, "123") {
+		t.Fatal("empty allowlist should allow")
+	}
+	if telegramUserAllowed([]string{"0"}, "5957030043") {
+		t.Fatal("\"0\" is a literal Telegram user id, not a wildcard")
+	}
+	if !telegramUserAllowed([]string{"5957030043"}, "5957030043") {
+		t.Fatal("explicit id should match")
+	}
+}
