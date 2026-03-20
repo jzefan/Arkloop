@@ -499,19 +499,36 @@ func normalizeRouteTags(tags []string) []string {
 
 func mapLlmRouteWriteError(err error, credentialID uuid.UUID, model string) error {
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		switch pgErr.ConstraintName {
+		case "ux_llm_routes_credential_model_lower":
+			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+		case "ux_llm_routes_credential_default":
+			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+		}
 		return err
 	}
-	if pgErr.Code != "23505" {
-		return err
-	}
-	switch pgErr.ConstraintName {
-	case "ux_llm_routes_credential_model_lower":
-		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
-	case "ux_llm_routes_credential_default":
-		// treating a duplicate-default as a model conflict so the caller
-		// can show a user-friendly error rather than "internal error"
-		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+	if conflict := sqliteLlmRouteUniqueConflict(err, credentialID, model); conflict != nil {
+		return conflict
 	}
 	return err
+}
+
+// SQLite（desktop）不报 pgconn；唯一冲突文案含索引名，与 modernc.org/sqlite 一致。
+func sqliteLlmRouteUniqueConflict(err error, credentialID uuid.UUID, model string) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "UNIQUE constraint failed") && !strings.Contains(msg, "constraint failed: UNIQUE") {
+		return nil
+	}
+	switch {
+	case strings.Contains(msg, "ux_llm_routes_credential_model_lower"):
+		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+	case strings.Contains(msg, "ux_llm_routes_credential_default"):
+		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+	default:
+		return nil
+	}
 }
