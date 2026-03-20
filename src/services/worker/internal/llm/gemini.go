@@ -208,7 +208,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 
 		var chunk geminiGenerateContentResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			parseErr = fmt.Errorf("Gemini SSE JSON parse failed: %w", err)
+			parseErr = fmt.Errorf("gemini SSE JSON parse failed: %w", err)
 			return parseErr
 		}
 

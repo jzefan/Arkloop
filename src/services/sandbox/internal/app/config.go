@@ -397,6 +397,9 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("provider must be %q, %q, %q, or %q", ProviderFirecracker, ProviderDocker, ProviderVz, ProviderLocal)
 	}
+	if c.WarmBrowser > 0 && !c.AllowEgress {
+		return fmt.Errorf("browser warm pool requires allow_egress=true")
+	}
 	if c.Provider == ProviderLocal {
 		return nil
 	}
@@ -442,9 +445,6 @@ func (c Config) Validate() error {
 		}
 		if strings.TrimSpace(c.BrowserDockerImage) == "" {
 			return fmt.Errorf("browser_docker_image must not be empty")
-		}
-		if c.WarmBrowser > 0 && !c.AllowEgress {
-			return fmt.Errorf("browser warm pool requires allow_egress=true")
 		}
 	}
 	if c.Provider == ProviderFirecracker {

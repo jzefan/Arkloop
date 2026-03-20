@@ -102,6 +102,7 @@ describe('UserInputCard', () => {
 
     it('renders multiselect checkboxes', () => {
       renderCard(multiField)
+      act(() => { (findRole('button', 'PostgreSQL') as HTMLElement).click() })
       expect(container.textContent).toContain('auth')
       expect(container.textContent).toContain('billing')
       expect(container.textContent).toContain('search')
@@ -161,9 +162,11 @@ describe('UserInputCard', () => {
       const onDismiss = vi.fn()
       renderCard(multiField, vi.fn(), onDismiss)
 
-      const skipBtn = findBtn('跳过') ?? findBtn('Skip')
+      const skipBtn =
+        container.querySelector('button[aria-label="跳过"]') ??
+        container.querySelector('button[aria-label="Skip"]')
       expect(skipBtn).toBeTruthy()
-      act(() => { skipBtn!.click() })
+      act(() => { (skipBtn as HTMLElement).click() })
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
     })

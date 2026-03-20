@@ -7,14 +7,16 @@
 | budget.max_cost_micros | int | both | 0 | false | 单次 run 最大累计费用 (微美元), 0 表示不限 |
 | budget.max_total_output_tokens | int | both | 0 | false | 单次 run 最大累计输出 token 数, 0 表示不限 |
 | context.compact.enabled | bool | platform | false | false | 启用线程上下文预算裁切（在 Routing 之后） |
+| context.compact.fallback_context_window_tokens | int | platform | 200000 | false | 路由 advanced_json 未解析出上下文窗口时用于百分比换算的窗口上限 |
 | context.compact.max_messages | int | platform | 0 | false | compact 尾部消息条数上限，0 表示仅按 token/字节预算 |
 | context.compact.max_total_text_bytes | int | platform | 0 | false | 全消息文本字节上限，0 表示不限制 |
-| context.compact.max_total_text_tokens | int | platform | 0 | false | 全消息文本近似 token 上限，0 表示不限制 |
-| context.compact.max_user_message_tokens | int | platform | 0 | false | 保留 user 文本的近似 token 上限，0 表示不限制 |
+| context.compact.max_total_text_tokens | int | platform | 0 | false | 全消息 tiktoken 累计上限（role+正文），0 表示不限制 |
+| context.compact.max_user_message_tokens | int | platform | 0 | false | 保留 user 的 tiktoken 累计上限（role+正文），0 表示不限制 |
 | context.compact.max_user_text_bytes | int | platform | 0 | false | 保留 user 文本字节上限，0 表示不限制 |
 | context.compact.persist_enabled | bool | platform | false | false | 超阈值时将较早消息摘要并标记 compacted（需迁移 00134） |
 | context.compact.persist_keep_last_messages | int | platform | 40 | false | 持久化摘要时保留的尾部消息条数 |
-| context.compact.persist_trigger_approx_tokens | int | platform | 120000 | false | 触发持久化摘要的近似输入 token 阈值 |
+| context.compact.persist_trigger_approx_tokens | int | platform | 120000 | false | 触发持久化摘要的 token 阈值（tiktoken）；PersistTriggerContextPct>0 时忽略此项 |
+| context.compact.persist_trigger_context_pct | int | platform | 0 | false | 按路由 available_catalog.context_length（否则 fallback）的百分比触发 persist，0 表示只用 persist_trigger_approx_tokens |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新账户初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
