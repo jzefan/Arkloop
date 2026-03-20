@@ -6,8 +6,7 @@ import type { WebSource } from '../storage'
 import type { SubAgentRef, FileOpRef, WebFetchRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
-import { ShellExecutionBlock } from './ShellExecutionBlock'
-import { FileOpBlock } from './FileOpBlock'
+import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
 
 export type SearchStep = {
@@ -630,14 +629,14 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                           </div>
                         )}
                         {entry.kind === 'code' && (entry.item.language === 'shell'
-                          ? <ShellExecutionBlock code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                          ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
                           : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(entry.item as CodeExecution) : undefined} isActive={activeCodeExecutionId === entry.item.id} />
                         )}
                         {entry.kind === 'agent' && (
                           <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={live} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                         )}
                         {entry.kind === 'fileop' && (
-                          <FileOpBlock toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                          <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
                         )}
                         {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} />}
                       </div>
@@ -675,7 +674,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: codeExecutionAccentColor(ce.status), border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
                             {ce.language === 'shell'
-                              ? <ShellExecutionBlock code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                              ? <ExecutionCard variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
                               : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined} isActive={activeCodeExecutionId === ce.id} />
                             }
                           </div>
@@ -730,7 +729,7 @@ export function SearchTimeline({ steps, sources, narratives, isComplete, codeExe
                               <div style={{ position: 'absolute', left: '-16px', top: '-8px', height: `${dotTop + 8}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                            <FileOpBlock toolName={op.toolName} label={op.label} output={op.output} status={op.status} errorMessage={op.errorMessage} />
+                            <ExecutionCard variant="fileop" toolName={op.toolName} label={op.label} output={op.output} status={op.status} errorMessage={op.errorMessage} />
                           </div>
                         )
                       })}

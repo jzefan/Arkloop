@@ -373,6 +373,7 @@ export const en: LocaleStrings = {
   shellFailed: "Failed",
   shellCompleted: "Completed",
   shellNoOutput: "No output",
+  shellRunning: "Running",
   agentSubAgent: "Sub Agent",
   agentSpawning: "Spawning",
   agentRunning: "Running",

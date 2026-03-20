@@ -9,8 +9,7 @@ import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble, StreamingBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
 import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
-import { ShellExecutionBlock } from './ShellExecutionBlock'
-import { FileOpBlock } from './FileOpBlock'
+import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
 import { SearchTimeline, WebFetchItem, type SearchNarrative, type SearchStep } from './SearchTimeline'
 import { ArtifactStreamBlock, extractPartialArtifactFields, type StreamingArtifactEntry } from './ArtifactStreamBlock'
@@ -300,15 +299,6 @@ function updateStepInBlocks(blocks: CopBlock[], stepId: string, updater: (s: Sea
     ...b,
     steps: b.steps.map((s) => s.id === stepId ? updater(s) : s),
   }))
-}
-
-function addNarrativeToLastBlock(blocks: CopBlock[], narrative: SearchNarrative): CopBlock[] {
-  const withBlock = ensureCopBlock(blocks)
-  return withBlock.map((block, index) =>
-    index === withBlock.length - 1
-      ? { ...block, narratives: [...block.narratives, narrative] }
-      : block,
-  )
 }
 
 function appendCodeExecutionToLastBlock(blocks: CopBlock[], entry: CodeExecution): CopBlock[] {
@@ -637,18 +627,9 @@ export function ChatPage() {
     setPreCopText(preCopTextRef.current)
   }, [])
   const flushPendingNarrativeToTimeline = useCallback(() => {
-    const text = pendingTextRef.current
-    const seq = pendingTextSeqRef.current
-    if (!text.trim() || seq == null) return
-    applyCopBlocks((prev) => addNarrativeToLastBlock(prev, {
-      id: crypto.randomUUID(),
-      text,
-      seq,
-    }))
-    pendingTextRef.current = ''
-    pendingTextSeqRef.current = null
-    setAssistantDraft('')
-  }, [applyCopBlocks])
+    // 不再将文本移入 COP - 文本始终留在 pendingTextRef 中，最终通过 finalContent 显示在正文
+    // 保留此函数仅用于未来可能需要的其他清理逻辑
+  }, [])
   const resetSearchSteps = useCallback(() => {
     searchStepsRef.current = []
     setSearchSteps([])
@@ -3038,14 +3019,14 @@ export function ChatPage() {
                             )}
                             <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: '8px', height: '8px', borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
                             {entry.kind === 'code' && (isShell
-                              ? <ShellExecutionBlock code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                              ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
                               : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
                             )}
                             {entry.kind === 'agent' && (
                               <SubAgentBlock nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
                             )}
                             {entry.kind === 'fileop' && (
-                              <FileOpBlock toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
+                              <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} />
                             )}
                             {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} />}
                           </motion.div>
