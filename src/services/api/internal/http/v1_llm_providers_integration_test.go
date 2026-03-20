@@ -13,6 +13,7 @@ import (
 	"arkloop/services/api/internal/auth"
 	apiCrypto "arkloop/services/api/internal/crypto"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -320,7 +321,7 @@ func TestLlmProvidersAvailableModelsOpenAI(t *testing.T) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
 		}
-		writeJSON(w, "", nethttp.StatusOK, map[string]any{
+		httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
 			"data": []map[string]any{{"id": "gpt-4.1"}, {"id": "gpt-4o"}},
 		})
 	}))
@@ -375,7 +376,7 @@ func TestLlmProvidersAvailableModelsAnthropicHeadersAndAuthFailure(t *testing.T)
 		lastVersion = r.Header.Get("anthropic-version")
 		lastBeta = r.Header.Get("anthropic-beta")
 		if requestCount == 1 {
-			writeJSON(w, "", nethttp.StatusOK, map[string]any{
+			httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
 				"data": []map[string]any{{"id": "claude-3-7-sonnet-latest", "display_name": "Claude 3.7 Sonnet"}},
 			})
 			return

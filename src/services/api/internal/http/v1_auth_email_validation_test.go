@@ -2,7 +2,11 @@
 
 package http
 
-import "testing"
+import (
+	"testing"
+
+	"arkloop/services/api/internal/http/authapi"
+)
 
 func TestIsValidEmail(t *testing.T) {
 	cases := []struct {
@@ -21,8 +25,8 @@ func TestIsValidEmail(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.email, func(t *testing.T) {
-			if got := isValidEmail(tc.email); got != tc.want {
-				t.Fatalf("isValidEmail(%q)=%v want=%v", tc.email, got, tc.want)
+			if got := authapi.IsValidEmail(tc.email); got != tc.want {
+				t.Fatalf("IsValidEmail(%q)=%v want=%v", tc.email, got, tc.want)
 			}
 		})
 	}
