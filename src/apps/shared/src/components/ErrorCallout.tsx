@@ -65,7 +65,15 @@ function hasCjk(text: string): boolean {
 function isNetworkErrorMessage(text: string): boolean {
   const m = text.trim().toLowerCase()
   if (!m) return false
-  return m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network error') || m.includes('load failed')
+  return (
+    m.includes('failed to fetch') ||
+    m.includes('networkerror') ||
+    m.includes('network error') ||
+    m.includes('load failed') ||
+    m.includes('err_incomplete_chunked_encoding') ||
+    m.includes('net::err_') ||
+    m.includes('failed to load')
+  )
 }
 
 function formatDetailValue(value: unknown): string {

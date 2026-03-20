@@ -59,6 +59,10 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
 
   const handleStateChange = useCallback((newState: SSEClientState) => {
     setState(newState)
+    // 重连成功后清除之前的网络错误，避免瞬时错误持续显示
+    if (newState === 'connected') {
+      setError(null)
+    }
   }, [])
 
   const handleError = useCallback((err: Error) => {

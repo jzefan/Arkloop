@@ -197,6 +197,7 @@ export const zh: LocaleStrings = {
       fieldApiKey: 'API Key',
       fieldBaseUrl: 'Base URL',
       fieldBaseUrlOptional: 'Base URL（可选）',
+      fieldAllowInternalHttp: '允许内网 HTTP',
       currentKeyPrefix: '当前前缀',
       errApiKeyRequired: 'API Key 为必填项。',
       errBaseUrlRequired: 'Base URL 为必填项。',
@@ -208,6 +209,11 @@ export const zh: LocaleStrings = {
       toastLoadFailed: '加载失败',
       toastUpdated: '已更新',
       toastUpdateFailed: '更新失败',
+      // URL validation errors
+      errUrlInvalid: 'URL 格式无效',
+      errUrlLocalhostDenied: '不允许使用 localhost 地址',
+      errUrlPrivateIpDenied: '不允许使用私有/内网 IP 地址',
+      errUrlInsecureSchemeDenied: '不允许使用非安全协议，仅支持 HTTPS',
     },
     tools: {
       title: '工具管理',

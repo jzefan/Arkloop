@@ -103,8 +103,9 @@ type toolProviderItemResponse struct {
 }
 
 type upsertToolProviderCredentialRequest struct {
-	APIKey  *string `json:"api_key"`
-	BaseURL *string `json:"base_url"`
+	APIKey             *string `json:"api_key"`
+	BaseURL            *string `json:"base_url"`
+	AllowInternalHTTP  *bool   `json:"allow_internal_http"`
 }
 
 func toolProvidersEntry(
@@ -482,12 +483,22 @@ func upsertToolProviderCredential(
 			normalizedBaseURL *string
 			err               error
 		)
-		if def.AllowsInternalHTTP {
+		allowInternalHTTP := def.AllowsInternalHTTP
+		if req.AllowInternalHTTP != nil {
+			allowInternalHTTP = *req.AllowInternalHTTP
+		}
+		if allowInternalHTTP {
 			normalizedBaseURL, err = normalizeOptionalInternalBaseURL(req.BaseURL)
 		} else {
 			normalizedBaseURL, err = normalizeOptionalBaseURL(req.BaseURL)
 		}
 		if err != nil {
+			wrappedErr := wrapDeniedError(err)
+			var deniedErr *deniedURLError
+			if errors.As(wrappedErr, &deniedErr) {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", wrappedErr.Error(), traceID, map[string]any{"reason": deniedErr.Reason()})
+				return
+			}
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 			return
 		}

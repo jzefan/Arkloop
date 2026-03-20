@@ -197,6 +197,7 @@ export const en: LocaleStrings = {
       fieldApiKey: 'API Key',
       fieldBaseUrl: 'Base URL',
       fieldBaseUrlOptional: 'Base URL (optional)',
+      fieldAllowInternalHttp: 'Allow internal HTTP',
       currentKeyPrefix: 'Current Prefix',
       errApiKeyRequired: 'API Key is required.',
       errBaseUrlRequired: 'Base URL is required.',
@@ -208,6 +209,11 @@ export const en: LocaleStrings = {
       toastLoadFailed: 'Failed to load',
       toastUpdated: 'Updated',
       toastUpdateFailed: 'Update failed',
+      // URL validation errors
+      errUrlInvalid: 'Invalid URL format',
+      errUrlLocalhostDenied: 'localhost addresses are not allowed',
+      errUrlPrivateIpDenied: 'Private/internal IP addresses are not allowed',
+      errUrlInsecureSchemeDenied: 'Insecure protocols not allowed, HTTPS required',
     },
     tools: {
       title: 'Tools',
