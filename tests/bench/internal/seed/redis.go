@@ -14,16 +14,16 @@ import (
 const apiKeyCacheKeyPrefix = "arkloop:api_keys:"
 
 type apiKeyCacheEntry struct {
-	OrgID   string `json:"org_id"`
-	Revoked bool   `json:"revoked"`
+	AccountID string `json:"account_id"`
+	Revoked   bool   `json:"revoked"`
 }
 
-// SeedAPIKey 向 Redis 写入一条模拟的 API Key 缓存，格式与 identity 包一致。
-func SeedAPIKey(ctx context.Context, rdb *redis.Client, rawKey string, orgID string) error {
+// SeedAPIKey 写入与 gateway identity 一致的 API Key 缓存。
+func SeedAPIKey(ctx context.Context, rdb *redis.Client, rawKey string, accountID string) error {
 	digest := sha256.Sum256([]byte(rawKey))
 	redisKey := apiKeyCacheKeyPrefix + hex.EncodeToString(digest[:])
 
-	entry := apiKeyCacheEntry{OrgID: orgID, Revoked: false}
+	entry := apiKeyCacheEntry{AccountID: accountID, Revoked: false}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal api key entry: %w", err)

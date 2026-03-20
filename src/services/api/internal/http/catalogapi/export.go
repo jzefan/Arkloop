@@ -18,7 +18,7 @@ type PersonaResponse = personaResponse
 
 type LLMProviderAvailableModelsResponse = llmProviderAvailableModelsResponse
 
-func BuildEffectiveToolCatalogCompat(
+func BuildEffectiveToolCatalog(
 	ctx context.Context,
 	accountID uuid.UUID,
 	projectID uuid.UUID,

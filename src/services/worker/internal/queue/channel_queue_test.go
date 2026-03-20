@@ -41,11 +41,11 @@ func TestChannelQueueBasicEnqueueAndLease(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	traceID := "0123456789abcdef0123456789abcdef"
 
-	jobID, err := q.EnqueueRun(ctx, orgID, runID, traceID, RunExecuteJobType, map[string]any{"source": "test"}, nil)
+	jobID, err := q.EnqueueRun(ctx, accountID, runID, traceID, RunExecuteJobType, map[string]any{"source": "test"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -78,8 +78,8 @@ func TestChannelQueueBasicEnqueueAndLease(t *testing.T) {
 	if lease.PayloadJSON["run_id"] != runID.String() {
 		t.Fatalf("expected payload run_id %s, got %v", runID.String(), lease.PayloadJSON["run_id"])
 	}
-	if lease.PayloadJSON["org_id"] != orgID.String() {
-		t.Fatalf("expected payload org_id %s, got %v", orgID.String(), lease.PayloadJSON["org_id"])
+	if lease.PayloadJSON["account_id"] != accountID.String() {
+		t.Fatalf("expected payload account_id %s, got %v", accountID.String(), lease.PayloadJSON["account_id"])
 	}
 	if lease.PayloadJSON["trace_id"] != traceID {
 		t.Fatalf("expected payload trace_id %s, got %v", traceID, lease.PayloadJSON["trace_id"])
@@ -98,11 +98,11 @@ func TestChannelQueueLeaseIsMutuallyExclusive(t *testing.T) {
 	q := newChannelQueue(t, 25)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	traceID := "0123456789abcdef0123456789abcdef"
 
-	jobID, err := q.EnqueueRun(ctx, orgID, runID, traceID, RunExecuteJobType, map[string]any{"source": "test"}, nil)
+	jobID, err := q.EnqueueRun(ctx, accountID, runID, traceID, RunExecuteJobType, map[string]any{"source": "test"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -155,11 +155,11 @@ func TestChannelQueuePayloadIsCompatible(t *testing.T) {
 	q := newChannelQueue(t, 25)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	traceID := "0123456789abcdef0123456789abcdef"
 
-	jobID, err := q.EnqueueRun(ctx, orgID, runID, traceID, RunExecuteJobType, map[string]any{"note": "compat"}, nil)
+	jobID, err := q.EnqueueRun(ctx, accountID, runID, traceID, RunExecuteJobType, map[string]any{"note": "compat"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -184,8 +184,8 @@ func TestChannelQueuePayloadIsCompatible(t *testing.T) {
 	if lease.PayloadJSON["run_id"] != runID.String() {
 		t.Fatalf("unexpected run_id in payload: %v", lease.PayloadJSON["run_id"])
 	}
-	if lease.PayloadJSON["org_id"] != orgID.String() {
-		t.Fatalf("unexpected org_id in payload: %v", lease.PayloadJSON["org_id"])
+	if lease.PayloadJSON["account_id"] != accountID.String() {
+		t.Fatalf("unexpected account_id in payload: %v", lease.PayloadJSON["account_id"])
 	}
 	if lease.PayloadJSON["trace_id"] != traceID {
 		t.Fatalf("unexpected trace_id in payload: %v", lease.PayloadJSON["trace_id"])
@@ -196,10 +196,10 @@ func TestChannelQueueDeadLettersAfterMaxAttempts(t *testing.T) {
 	q := newChannelQueue(t, 2)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "dead_letter"}, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "dead_letter"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -255,16 +255,16 @@ func TestChannelQueueLeaseCanFilterByJobType(t *testing.T) {
 	q := newChannelQueue(t, 25)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 	otherJobType := "run.execute.test_other"
 
-	pythonJobID, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "python"}, nil)
+	pythonJobID, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "python"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue python job failed: %v", err)
 	}
 
-	goJobID, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", otherJobType, map[string]any{"note": "other"}, nil)
+	goJobID, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", otherJobType, map[string]any{"note": "other"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue go job failed: %v", err)
 	}
@@ -304,10 +304,10 @@ func TestChannelQueueRejectsLeaseTokenMismatch(t *testing.T) {
 	q := newChannelQueue(t, 25)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, nil, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, nil, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -343,10 +343,10 @@ func TestChannelQueueAckRemovesJob(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "ack"}, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "ack"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -377,10 +377,10 @@ func TestChannelQueueNackRequeuesJob(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "nack"}, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "nack"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -418,10 +418,10 @@ func TestChannelQueueHeartbeatExtendsLease(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "heartbeat"}, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "heartbeat"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -456,11 +456,11 @@ func TestChannelQueueDelayedJob(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
 	futureTime := time.Now().Add(1 * time.Hour)
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "delayed"}, &futureTime)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "delayed"}, &futureTime)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -479,10 +479,10 @@ func TestChannelQueueExpiredLeaseCanBeReclaimed(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "expired"}, nil)
+	_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"note": "expired"}, nil)
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -522,11 +522,11 @@ func TestChannelQueueOnEnqueueCallback(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
 	for i := 0; i < 3; i++ {
-		_, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"i": i}, nil)
+		_, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, map[string]any{"i": i}, nil)
 		if err != nil {
 			t.Fatalf("enqueue #%d failed: %v", i, err)
 		}
@@ -554,10 +554,10 @@ func TestChannelQueueNilPayload(t *testing.T) {
 	q := newChannelQueue(t, 5)
 	ctx := context.Background()
 
-	orgID := uuid.New()
+	accountID := uuid.New()
 	runID := uuid.New()
 
-	jobID, err := q.EnqueueRun(ctx, orgID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, nil, nil)
+	jobID, err := q.EnqueueRun(ctx, accountID, runID, "0123456789abcdef0123456789abcdef", RunExecuteJobType, nil, nil)
 	if err != nil {
 		t.Fatalf("enqueue with nil payload failed: %v", err)
 	}

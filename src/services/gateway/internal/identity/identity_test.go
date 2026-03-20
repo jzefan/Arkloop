@@ -22,21 +22,27 @@ func signJWT(t *testing.T, claims jwt.MapClaims, secret []byte) string {
 
 func TestExtractAccountID(t *testing.T) {
 	validJWT := signJWT(t, jwt.MapClaims{
-		"org": "org-123",
-		"sub": "user-456",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"account": "org-123",
+		"sub":     "user-456",
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	}, testSecret)
 
 	forgedJWT := signJWT(t, jwt.MapClaims{
-		"org": "forged-org",
-		"sub": "attacker",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"account": "forged-org",
+		"sub":     "attacker",
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	}, []byte("wrong-secret"))
 
 	expiredJWT := signJWT(t, jwt.MapClaims{
-		"org": "org-123",
+		"account": "org-123",
+		"sub":     "user-456",
+		"exp":     time.Now().Add(-time.Hour).Unix(),
+	}, testSecret)
+
+	orgClaimOnlyJWT := signJWT(t, jwt.MapClaims{
+		"org": "legacy-tenant",
 		"sub": "user-456",
-		"exp": time.Now().Add(-time.Hour).Unix(),
+		"exp": time.Now().Add(time.Hour).Unix(),
 	}, testSecret)
 
 	accountJWT := signJWT(t, jwt.MapClaims{
@@ -52,16 +58,22 @@ func TestExtractAccountID(t *testing.T) {
 		want       string
 	}{
 		{
-			name:       "valid jwt with org claim (fallback)",
+			name:       "valid jwt with account claim",
 			authHeader: "Bearer " + validJWT,
 			secret:     testSecret,
 			want:       "org-123",
 		},
 		{
-			name:       "valid jwt with account claim",
+			name:       "second valid jwt with account claim",
 			authHeader: "Bearer " + accountJWT,
 			secret:     testSecret,
 			want:       "account-789",
+		},
+		{
+			name:       "org claim without account is rejected",
+			authHeader: "Bearer " + orgClaimOnlyJWT,
+			secret:     testSecret,
+			want:       "",
 		},
 		{
 			name:       "forged jwt rejected",
@@ -119,16 +131,22 @@ func TestExtractAccountID(t *testing.T) {
 
 func TestExtractInfo(t *testing.T) {
 	validJWT := signJWT(t, jwt.MapClaims{
-		"org": "org-abc",
-		"sub": "user-xyz",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"account": "org-abc",
+		"sub":     "user-xyz",
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	}, testSecret)
 
 	forgedJWT := signJWT(t, jwt.MapClaims{
-		"org": "forged-org",
-		"sub": "attacker",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"account": "forged-org",
+		"sub":     "attacker",
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	}, []byte("wrong-secret"))
+
+	orgClaimOnlyJWT := signJWT(t, jwt.MapClaims{
+		"org": "tenant",
+		"sub": "user-xyz",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}, testSecret)
 
 	accountJWT := signJWT(t, jwt.MapClaims{
 		"account": "acct-abc",
@@ -145,7 +163,7 @@ func TestExtractInfo(t *testing.T) {
 		wantUserID    string
 	}{
 		{
-			name:          "valid jwt with org claim (fallback)",
+			name:          "valid jwt with account claim",
 			authHeader:    "Bearer " + validJWT,
 			secret:        testSecret,
 			wantType:      IdentityJWT,
@@ -153,12 +171,20 @@ func TestExtractInfo(t *testing.T) {
 			wantUserID:    "user-xyz",
 		},
 		{
-			name:          "valid jwt with account claim",
+			name:          "valid jwt second account",
 			authHeader:    "Bearer " + accountJWT,
 			secret:        testSecret,
 			wantType:      IdentityJWT,
 			wantAccountID: "acct-abc",
 			wantUserID:    "user-xyz",
+		},
+		{
+			name:          "org claim without account is anonymous",
+			authHeader:    "Bearer " + orgClaimOnlyJWT,
+			secret:        testSecret,
+			wantType:      IdentityAnonymous,
+			wantAccountID: "",
+			wantUserID:    "",
 		},
 		{
 			name:          "forged jwt rejected to anonymous",

@@ -190,7 +190,7 @@ func TestProjectWorkspaceStatusAndFilesFlow(t *testing.T) {
 	liveSessionID := "live-project-shell"
 	if _, err := env.pool.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
-			session_ref, session_type, org_id, profile_ref, workspace_ref,
+			session_ref, session_type, account_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
 		) VALUES ($1, 'shell', $2, $3, $4, 'workspace', 'ready', $5, now(), '{}'::jsonb)
 		ON CONFLICT (session_ref) DO UPDATE SET
@@ -349,7 +349,7 @@ func TestProjectWorkspaceClosedDefaultSessionStaysIdle(t *testing.T) {
 	}
 	if _, err := env.pool.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
-			session_ref, session_type, org_id, profile_ref, workspace_ref,
+			session_ref, session_type, account_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
 		) VALUES ($1, 'shell', $2, $3, $4, 'workspace', 'closed', NULL, now(), '{}'::jsonb)
 		ON CONFLICT (session_ref) DO UPDATE SET
@@ -398,7 +398,7 @@ func TestProjectWorkspaceUsesLatestLiveSessionAcrossWorkspace(t *testing.T) {
 	}
 	if _, err := env.pool.Exec(context.Background(), `
 		INSERT INTO shell_sessions (
-			session_ref, session_type, org_id, profile_ref, workspace_ref,
+			session_ref, session_type, account_id, profile_ref, workspace_ref,
 			share_scope, state, live_session_id, last_used_at, metadata_json
 		) VALUES
 			($1, 'shell', $2, $3, $4, 'workspace', 'ready', $5, $6, '{}'::jsonb),

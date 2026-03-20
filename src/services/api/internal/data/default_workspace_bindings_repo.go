@@ -19,7 +19,7 @@ const (
 type DefaultWorkspaceBinding struct {
 	ProfileRef      string
 	OwnerUserID     *uuid.UUID
-	OrgID           uuid.UUID
+	AccountID       uuid.UUID
 	BindingScope    string
 	BindingTargetID uuid.UUID
 	WorkspaceRef    string
@@ -40,7 +40,7 @@ func NewDefaultWorkspaceBindingsRepository(db Querier) (*DefaultWorkspaceBinding
 
 func (r *DefaultWorkspaceBindingsRepository) Get(
 	ctx context.Context,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	profileRef string,
 	bindingScope string,
 	bindingTargetID uuid.UUID,
@@ -53,8 +53,8 @@ func (r *DefaultWorkspaceBindingsRepository) Get(
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	bindingScope = strings.TrimSpace(bindingScope)
-	if orgID == uuid.Nil || profileRef == "" || bindingTargetID == uuid.Nil {
-		return nil, fmt.Errorf("org_id, profile_ref and binding_target_id must not be empty")
+	if accountID == uuid.Nil || profileRef == "" || bindingTargetID == uuid.Nil {
+		return nil, fmt.Errorf("account_id, profile_ref and binding_target_id must not be empty")
 	}
 	if bindingScope != DefaultWorkspaceBindingScopeProject && bindingScope != DefaultWorkspaceBindingScopeThread {
 		return nil, fmt.Errorf("binding_scope must be project or thread")
@@ -65,25 +65,25 @@ func (r *DefaultWorkspaceBindingsRepository) Get(
 		ctx,
 		`SELECT profile_ref,
 		        owner_user_id,
-		        org_id,
+		        account_id,
 		        binding_scope,
 		        binding_target_id,
 		        workspace_ref,
 		        created_at,
 		        updated_at
 		   FROM default_workspace_bindings
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND binding_scope = $3
 		    AND binding_target_id = $4`,
-		orgID,
+		accountID,
 		profileRef,
 		bindingScope,
 		bindingTargetID,
 	).Scan(
 		&record.ProfileRef,
 		&record.OwnerUserID,
-		&record.OrgID,
+		&record.AccountID,
 		&record.BindingScope,
 		&record.BindingTargetID,
 		&record.WorkspaceRef,
@@ -102,7 +102,7 @@ func (r *DefaultWorkspaceBindingsRepository) Get(
 func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 	ctx context.Context,
 	tx pgx.Tx,
-	orgID uuid.UUID,
+	accountID uuid.UUID,
 	ownerUserID *uuid.UUID,
 	profileRef string,
 	bindingScope string,
@@ -115,8 +115,8 @@ func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 	if tx == nil {
 		return "", false, fmt.Errorf("tx must not be nil")
 	}
-	if orgID == uuid.Nil {
-		return "", false, fmt.Errorf("org_id must not be empty")
+	if accountID == uuid.Nil {
+		return "", false, fmt.Errorf("account_id must not be empty")
 	}
 	profileRef = strings.TrimSpace(profileRef)
 	bindingScope = strings.TrimSpace(bindingScope)
@@ -133,12 +133,12 @@ func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 		ctx,
 		`SELECT workspace_ref
 		   FROM default_workspace_bindings
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND binding_scope = $3
 		    AND binding_target_id = $4
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		profileRef,
 		bindingScope,
 		bindingTargetID,
@@ -155,15 +155,15 @@ func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 		`INSERT INTO default_workspace_bindings (
 			profile_ref,
 			owner_user_id,
-			org_id,
+			account_id,
 			binding_scope,
 			binding_target_id,
 			workspace_ref
 		 ) VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (org_id, profile_ref, binding_scope, binding_target_id) DO NOTHING`,
+		 ON CONFLICT (account_id, profile_ref, binding_scope, binding_target_id) DO NOTHING`,
 		profileRef,
 		ownerUserID,
-		orgID,
+		accountID,
 		bindingScope,
 		bindingTargetID,
 		workspaceRef,
@@ -179,12 +179,12 @@ func (r *DefaultWorkspaceBindingsRepository) GetOrCreate(
 		ctx,
 		`SELECT workspace_ref
 		   FROM default_workspace_bindings
-		  WHERE org_id = $1
+		  WHERE account_id = $1
 		    AND profile_ref = $2
 		    AND binding_scope = $3
 		    AND binding_target_id = $4
 		  LIMIT 1`,
-		orgID,
+		accountID,
 		profileRef,
 		bindingScope,
 		bindingTargetID,

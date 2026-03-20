@@ -171,17 +171,6 @@ func (s *JwtAccessTokenService) Verify(token string) (VerifiedAccessToken, error
 			}
 		}
 	}
-	// 向后兼容：旧 token 仍使用 "org" claim
-	if accountID == uuid.Nil {
-		if raw, exists := claims["org"]; exists {
-			if str, ok := raw.(string); ok {
-				if parsed, err := uuid.Parse(str); err == nil {
-					accountID = parsed
-				}
-			}
-		}
-	}
-
 	accountRole := ""
 	if roleRaw, exists := claims["role"]; exists {
 		if roleStr, ok := roleRaw.(string); ok {
