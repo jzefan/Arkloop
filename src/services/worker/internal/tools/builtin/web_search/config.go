@@ -7,35 +7,30 @@ import (
 )
 
 const (
-	webSearchProviderEnv        = "ARKLOOP_WEB_SEARCH_PROVIDER"
-	searxngBaseURLEnv           = "ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL"
-	tavilyAPIKeyEnv             = "ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"
-	desktopCallbackAddrEnv      = "ARKLOOP_WEB_SEARCH_DESKTOP_CALLBACK_ADDR"
+	webSearchProviderEnv = "ARKLOOP_WEB_SEARCH_PROVIDER"
+	searxngBaseURLEnv    = "ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL"
+	tavilyAPIKeyEnv      = "ARKLOOP_WEB_SEARCH_TAVILY_API_KEY"
 )
 
 const (
-	settingProvider             = "web_search.provider"
-	settingSearxngURL           = "web_search.searxng_base_url"
-	settingTavilyKey            = "web_search.tavily_api_key"
-	settingDesktopCallbackAddr  = "web_search.desktop_callback_addr"
+	settingProvider    = "web_search.provider"
+	settingSearxngURL  = "web_search.searxng_base_url"
+	settingTavilyKey   = "web_search.tavily_api_key"
 )
 
 type ProviderKind string
 
 const (
-	ProviderKindSearxng ProviderKind = "searxng"
-	ProviderKindTavily  ProviderKind = "tavily"
-	ProviderKindSerper  ProviderKind = "serper"
-	// ProviderKindBrowser delegates search to the Electron host browser via
-	// a local HTTP callback server. Requires ARKLOOP_WEB_SEARCH_DESKTOP_CALLBACK_ADDR.
-	ProviderKindBrowser ProviderKind = "browser"
+	ProviderKindSearxng     ProviderKind = "searxng"
+	ProviderKindTavily      ProviderKind = "tavily"
+	ProviderKindSerper      ProviderKind = "serper"
+	ProviderKindDuckduckgo  ProviderKind = "duckduckgo"
 )
 
 type Config struct {
-	ProviderKind        ProviderKind
-	SearxngBaseURL      string
-	TavilyAPIKey        string
-	DesktopCallbackAddr string
+	ProviderKind   ProviderKind
+	SearxngBaseURL string
+	TavilyAPIKey   string
 }
 
 func ConfigFromEnv(required bool) (*Config, error) {
@@ -74,14 +69,10 @@ func ConfigFromEnv(required bool) (*Config, error) {
 		}, nil
 	case ProviderKindSerper:
 		return &Config{ProviderKind: kind}, nil
-	case ProviderKindBrowser:
-		addr := strings.TrimSpace(os.Getenv(desktopCallbackAddrEnv))
-		return &Config{
-			ProviderKind:        kind,
-			DesktopCallbackAddr: addr,
-		}, nil
+	case ProviderKindDuckduckgo:
+		return &Config{ProviderKind: kind}, nil
 	default:
-		return nil, fmt.Errorf("%s must be searxng/tavily/serper/browser", webSearchProviderEnv)
+		return nil, fmt.Errorf("%s must be searxng/tavily/serper/duckduckgo", webSearchProviderEnv)
 	}
 }
 
@@ -94,9 +85,12 @@ func parseProviderKind(raw string) (ProviderKind, error) {
 		return ProviderKindTavily, nil
 	case "serper":
 		return ProviderKindSerper, nil
+	case "duckduckgo":
+		return ProviderKindDuckduckgo, nil
 	case "browser":
-		return ProviderKindBrowser, nil
+		// 旧桌面内置搜索已移除；曾写入 platform_settings / 环境变量者仍解析为 DuckDuckGo
+		return ProviderKindDuckduckgo, nil
 	default:
-		return "", fmt.Errorf("%s must be searxng/tavily/serper/browser", webSearchProviderEnv)
+		return "", fmt.Errorf("%s must be searxng/tavily/serper/duckduckgo", webSearchProviderEnv)
 	}
 }

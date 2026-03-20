@@ -357,11 +357,11 @@ export function SearchFetchSettings() {
       <Section icon={<Search size={16} />} title={ds.searchConnectorTitle} subtitle={ds.searchConnectorDesc}>
         <ProviderCard
           icon={<Zap size={14} />}
-          title={ds.searchProviderBrowser}
-          description={ds.searchProviderBrowserDesc}
+          title={ds.searchProviderDuckduckgo}
+          description={ds.searchProviderDuckduckgoDesc}
           badge="free"
-          selected={searchP === 'browser'}
-          onSelect={() => patchSearch({ provider: 'browser' as SearchProvider })}
+          selected={searchP === 'duckduckgo'}
+          onSelect={() => patchSearch({ provider: 'duckduckgo' as SearchProvider })}
           t={badgeT}
         />
 

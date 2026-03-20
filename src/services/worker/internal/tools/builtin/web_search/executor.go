@@ -224,8 +224,8 @@ func buildProvider(cfg *Config) (Provider, error) {
 		return NewTavilyProvider(cfg.TavilyAPIKey), nil
 	case ProviderKindSerper:
 		return nil, nil // not yet implemented
-	case ProviderKindBrowser:
-		return NewDesktopBrowserProvider(cfg.DesktopCallbackAddr), nil
+	case ProviderKindDuckduckgo:
+		return NewDuckduckgoProvider(), nil
 	default:
 		return nil, fmt.Errorf("web_search provider not implemented")
 	}
@@ -250,10 +250,9 @@ func configFromSettings(m map[string]string, forcedKind ProviderKind) (*Config, 
 	}
 
 	cfg := &Config{
-		ProviderKind:        kind,
-		SearxngBaseURL:      strings.TrimRight(strings.TrimSpace(m[settingSearxngURL]), "/"),
-		TavilyAPIKey:        strings.TrimSpace(m[settingTavilyKey]),
-		DesktopCallbackAddr: strings.TrimSpace(m[settingDesktopCallbackAddr]),
+		ProviderKind:   kind,
+		SearxngBaseURL: strings.TrimRight(strings.TrimSpace(m[settingSearxngURL]), "/"),
+		TavilyAPIKey:   strings.TrimSpace(m[settingTavilyKey]),
 	}
 	return cfg, true, nil
 }

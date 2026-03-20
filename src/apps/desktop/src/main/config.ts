@@ -50,7 +50,9 @@ function normalizeFetchProvider(p: unknown): FetchProvider {
 }
 
 function normalizeSearchProvider(p: unknown): SearchProvider {
-  return p === 'tavily' || p === 'searxng' ? p : 'browser'
+  if (p === 'browser') return 'duckduckgo'
+  if (p === 'tavily' || p === 'searxng' || p === 'duckduckgo') return p
+  return 'duckduckgo'
 }
 
 function normalizeFetchConnector(raw: unknown): FetchConnectorConfig {

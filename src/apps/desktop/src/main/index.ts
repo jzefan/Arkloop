@@ -9,12 +9,10 @@ import {
   setBridgeUrlListener,
   setConnectorsConfig,
   setMemoryConfig,
-  setBrowserSearchCallbackAddr,
   getSidecarRuntime,
   getBridgeBaseUrl,
   type SidecarRuntime,
 } from './sidecar'
-import { startBrowserSearchServer, stopBrowserSearchServer } from './browser-search'
 import { createTray, registerGlobalShortcut, destroyTray } from './tray'
 import { registerIpcHandlers } from './ipc'
 import type { AppConfig } from './types'
@@ -233,15 +231,6 @@ app.whenReady().then(async () => {
     getSidecarRuntime,
   })
 
-  // Start the browser search callback server so the sidecar can perform
-  // browser-based searches via the Electron Chromium session.
-  try {
-    const callbackAddr = await startBrowserSearchServer()
-    setBrowserSearchCallbackAddr(callbackAddr)
-  } catch (error) {
-    console.error('[desktop] failed to start browser search server:', error)
-  }
-
   const config = loadConfig()
   if (config.mode === 'local') {
     try {
@@ -277,6 +266,5 @@ app.on('activate', () => {
 
 app.on('will-quit', async () => {
   destroyTray()
-  stopBrowserSearchServer()
   await stopSidecar()
 })

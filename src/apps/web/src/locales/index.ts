@@ -707,10 +707,10 @@ export interface LocaleStrings {
     fetchProviderJina: string;
     fetchProviderBasic: string;
     fetchProviderFirecrawl: string;
-    searchProviderBrowser: string;
+    searchProviderDuckduckgo: string;
     searchProviderTavily: string;
     searchProviderSearxng: string;
-    searchProviderBrowserDesc: string;
+    searchProviderDuckduckgoDesc: string;
     searchProviderTavilyDesc: string;
     searchProviderSearxngDesc: string;
     fetchProviderJinaDesc: string;

@@ -17,7 +17,6 @@ core_tools:
     - document_write
     - memory_search
 budgets:
-    max_output_tokens: 20480
     reasoning_iterations: 99999
     temperature: 1
 title_summarize:

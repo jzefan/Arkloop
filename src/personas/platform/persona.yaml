@@ -6,7 +6,6 @@ soul_file: soul.md
 tool_allowlist:
     - platform_manage
 budgets:
-    max_output_tokens: 4096
     reasoning_iterations: 20
     temperature: 0.3
 reasoning_mode: auto

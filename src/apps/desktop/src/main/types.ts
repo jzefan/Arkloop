@@ -2,7 +2,7 @@ export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
 export type FetchProvider = 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'browser' | 'tavily' | 'searxng'
+export type SearchProvider = 'duckduckgo' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -70,7 +70,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   onboarding_completed: false,
   connectors: {
     fetch: { provider: 'jina' },
-    search: { provider: 'browser' },
+    search: { provider: 'duckduckgo' },
   },
   memory: { enabled: true, provider: 'local' },
 }

@@ -125,6 +125,29 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 	}, nil
 }
 
+// MergeBuiltinToolNamesFrom 合并 s 与 other 的「托管 builtin 工具名」集合。
+// Desktop 手写 Snapshot 只带 Sandbox/ACP；需与 BuildRuntimeSnapshot 产物合并后，
+// filterAllowlistByRuntime 才能依据环境识别 web_search / web_fetch 等。
+func (s RuntimeSnapshot) MergeBuiltinToolNamesFrom(other RuntimeSnapshot) RuntimeSnapshot {
+	left := s.BuiltinToolNameSet()
+	right := other.BuiltinToolNameSet()
+	union := make(map[string]struct{}, len(left)+len(right))
+	for k := range left {
+		union[k] = struct{}{}
+	}
+	for k := range right {
+		union[k] = struct{}{}
+	}
+	names := make([]string, 0, len(union))
+	for n := range union {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := s
+	out.builtinAvailability = BuiltinAvailability{toolNames: names}
+	return out
+}
+
 func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 	available := map[string]struct{}{
 		"visualize_read_me":   {},
@@ -337,6 +360,11 @@ func webSearchEnvConfigured(env EnvConfig) bool {
 		return env.WebSearchBaseURL != ""
 	case "tavily":
 		return env.WebSearchAPIKey != ""
+	case "duckduckgo":
+		return true
+	case "browser":
+		// 与 worker parse 一致：遗留 provider 名视为 DuckDuckGo 档位
+		return true
 	default:
 		return false
 	}

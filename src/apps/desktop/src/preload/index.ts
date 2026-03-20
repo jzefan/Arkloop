@@ -4,7 +4,7 @@ export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
 export type FetchProvider = 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'browser' | 'tavily' | 'searxng'
+export type SearchProvider = 'duckduckgo' | 'tavily' | 'searxng'
 
 export type ConnectorsConfig = {
   fetch: {
