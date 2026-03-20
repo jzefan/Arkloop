@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Loader2, Code2, Terminal } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import { ShellExecutionBlock } from './ShellExecutionBlock'
+import { ExecutionCard } from './ExecutionCard'
 import type { CodeExecutionRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 
@@ -103,7 +103,7 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
             {codeExecutions.map((ce) =>
               ce.language === 'shell'
-                ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
                 : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => onOpenCodeExecution?.(ce)} />
             )}
           </div>
@@ -174,7 +174,7 @@ export function ThinkingBlock({ label, mode, content, isStreaming, codeExecution
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: content ? '10px' : '0' }}>
                   {codeExecutions.map((ce) =>
                     ce.language === 'shell'
-                      ? <ShellExecutionBlock key={ce.id} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
+                      ? <ExecutionCard key={ce.id} variant="shell" code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} />
                       : <CodeExecutionCard key={ce.id} language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={() => onOpenCodeExecution?.(ce)} />
                   )}
                 </div>

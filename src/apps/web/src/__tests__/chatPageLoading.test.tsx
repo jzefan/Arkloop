@@ -99,8 +99,8 @@ vi.mock('../components/ThinkingBlock', () => ({
   CodeExecutionCard: () => <div />,
 }))
 
-vi.mock('../components/ShellExecutionBlock', () => ({
-  ShellExecutionBlock: () => <div />,
+vi.mock('../components/ExecutionCard', () => ({
+  ExecutionCard: () => <div />,
 }))
 
 vi.mock('../components/SearchTimeline', () => ({

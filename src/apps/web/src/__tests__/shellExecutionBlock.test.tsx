@@ -2,7 +2,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ShellExecutionBlock } from '../components/ShellExecutionBlock'
+import { ExecutionCard } from '../components/ExecutionCard'
 import { LocaleProvider } from '../contexts/LocaleContext'
 
 function createMemoryStorage(): Storage {
@@ -62,7 +62,7 @@ describe('ShellExecutionBlock', () => {
     await act(async () => {
       root.render(
         <LocaleProvider>
-          <ShellExecutionBlock code="python3 /tmp/script.py" status="running" />
+          <ExecutionCard variant="shell" code="python3 /tmp/script.py" status="running" />
         </LocaleProvider>,
       )
     })
@@ -78,7 +78,7 @@ describe('ShellExecutionBlock', () => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(container.querySelectorAll('.animate-spin')).toHaveLength(2)
+    expect(container.querySelectorAll('.animate-spin')).toHaveLength(1)
     expect(container.textContent).not.toContain('无输出')
 
     act(() => {
@@ -95,7 +95,7 @@ describe('ShellExecutionBlock', () => {
     await act(async () => {
       root.render(
         <LocaleProvider>
-          <ShellExecutionBlock code="ls -la /workspace/" status="failed" errorMessage="profile_ref and workspace_ref are required" />
+          <ExecutionCard variant="shell" code="ls -la /workspace/" status="failed" errorMessage="profile_ref and workspace_ref are required" />
         </LocaleProvider>,
       )
     })
@@ -125,7 +125,7 @@ describe('ShellExecutionBlock', () => {
     await act(async () => {
       root.render(
         <LocaleProvider>
-          <ShellExecutionBlock code="ls -la /workspace/" status="completed" />
+          <ExecutionCard variant="shell" code="ls -la /workspace/" status="completed" />
         </LocaleProvider>,
       )
     })

@@ -379,6 +379,7 @@ export interface LocaleStrings {
   shellFailed: string
   shellCompleted: string
   shellNoOutput: string
+  shellRunning: string
   // sub-agent
   agentSubAgent: string
   agentSpawning: string

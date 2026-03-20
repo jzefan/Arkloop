@@ -368,6 +368,7 @@ export const zh: LocaleStrings = {
   shellFailed: "失败",
   shellCompleted: "完成",
   shellNoOutput: "无输出",
+  shellRunning: "运行中",
   agentSubAgent: "子代理",
   agentSpawning: "启动中",
   agentRunning: "运行中",
