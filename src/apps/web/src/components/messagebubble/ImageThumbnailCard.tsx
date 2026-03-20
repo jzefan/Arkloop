@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { X, Download, ExternalLink } from 'lucide-react'
+import { X, Download, ExternalLink, Copy } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../../storage'
 import { LIGHTBOX_ANIM_MS } from './utils'
@@ -68,6 +68,19 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
     a.click()
   }, [blobUrl, artifact.filename])
 
+  const handleCopyImage = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!blobUrl || !navigator.clipboard?.write) return
+    try {
+      const res = await fetch(blobUrl)
+      const blob = await res.blob()
+      const mime = blob.type && blob.type !== '' ? blob.type : 'image/png'
+      await navigator.clipboard.write([new ClipboardItem({ [mime]: blob })])
+    } catch {
+      // clipboard / permission
+    }
+  }, [blobUrl])
+
   const transition = `all ${LIGHTBOX_ANIM_MS}ms ease-out`
 
   return (
@@ -99,6 +112,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
           <img
             src={blobUrl}
             alt={artifact.filename}
+            draggable={false}
             onLoad={() => setLoaded(true)}
             style={{
               width: '100%',
@@ -208,7 +222,30 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
               <ExternalLink size={14} style={{ color: 'var(--c-text-icon)', flexShrink: 0 }} />
             </a>
             <button
+              type="button"
+              onClick={handleCopyImage}
+              title="复制图片"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                color: 'var(--c-text-icon)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              className="bg-[var(--c-bg-sub)] hover:bg-[var(--c-bg-deep)]"
+            >
+              <Copy size={16} />
+            </button>
+            <button
+              type="button"
               onClick={handleDownload}
+              title="下载"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
