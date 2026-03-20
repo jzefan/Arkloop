@@ -45,6 +45,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type desktopTelegramTokenLoader struct {
+	db data.DesktopDB
+}
+
+func (d *desktopTelegramTokenLoader) BotToken(ctx context.Context, channelID uuid.UUID) (string, error) {
+	if d.db == nil {
+		return "", fmt.Errorf("telegram channel tools: db unavailable")
+	}
+	rec, err := loadDesktopDeliveryChannel(ctx, d.db, channelID)
+	if err != nil {
+		return "", err
+	}
+	if rec == nil {
+		return "", fmt.Errorf("telegram channel tools: channel not found")
+	}
+	return strings.TrimSpace(rec.Token), nil
+}
+
 // DesktopEngine executes LLM agent runs backed by SQLite.
 type DesktopEngine struct {
 	db               data.DesktopDB
@@ -374,6 +392,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewSpawnAgentMiddleware(),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
 		desktopChannelContext(e.db),
+		pipeline.NewChannelTelegramToolsMiddleware(&desktopTelegramTokenLoader{db: e.db}, nil),
 		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
 		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve:        desktopSkillResolver(e.db),
@@ -567,6 +586,7 @@ func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
 			}
 		}
 		rc.ChannelContext = channelCtx
+		rc.ChannelToolSurface = pipeline.NewChannelToolSurfaceFromContext(channelCtx)
 		if channelCtx.SenderUserID != nil {
 			rc.UserID = channelCtx.SenderUserID
 		}
@@ -590,12 +610,40 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			}
 		}
 
+		streamMidCount := 0
+		var streamFlush func(context.Context, string) error
+		if preloaded != nil && db != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" &&
+			strings.TrimSpace(preloaded.Token) != "" {
+			uxReg := pipeline.ParseTelegramChannelUX(preloaded.ConfigJSON)
+			replyRef := pipeline.ResolveTelegramOutboundReplyTo(rc, uxReg)
+			sender := pipeline.NewTelegramChannelSenderWithClient(client, preloaded.Token, 50*time.Millisecond)
+			streamFlush = func(ctx2 context.Context, text string) error {
+				ids, sendErr := sender.SendText(ctx2, pipeline.ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					ReplyTo:      replyRef,
+				}, text)
+				if sendErr != nil {
+					return sendErr
+				}
+				if err := recordDesktopChannelDelivery(ctx2, db, rc.Run.ID, rc.Run.ThreadID, rc.ChannelContext.ChannelID, rc.ChannelContext.Conversation.Target, replyRef, rc.ChannelContext.Conversation.ThreadID, ids); err != nil {
+					return err
+				}
+				streamMidCount++
+				return nil
+			}
+			rc.TelegramToolBoundaryFlush = streamFlush
+		}
+
 		var stopTyping context.CancelFunc
 		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" {
 			stopTyping = pipeline.StartTelegramTypingRefresh(ctx, client, preloaded.Token, rc.ChannelContext.Conversation.Target)
 		}
 
 		err := next(ctx, rc)
+		if rc != nil {
+			rc.TelegramToolBoundaryFlush = nil
+		}
 		if stopTyping != nil {
 			stopTyping()
 		}
@@ -603,9 +651,25 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
-		output := strings.TrimSpace(rc.FinalAssistantOutput)
-		if output == "" || db == nil || rc.ChannelContext.ChannelType != "telegram" {
+		if db == nil || rc.ChannelContext.ChannelType != "telegram" {
 			return err
+		}
+
+		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
+		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
+		if fullOut == "" && remainder == "" && streamMidCount == 0 {
+			return err
+		}
+
+		output := fullOut
+		if streamFlush != nil {
+			if remainder != "" {
+				output = remainder
+			} else if streamMidCount > 0 {
+				output = ""
+			} else {
+				output = fullOut
+			}
 		}
 
 		channel := preloaded
@@ -625,31 +689,38 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 
 		uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
 
-		sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
-		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
-			ChannelType:  rc.ChannelContext.ChannelType,
-			Conversation: rc.ChannelContext.Conversation,
-			ReplyTo:      rc.ChannelContext.TriggerMessage,
-		}, output)
-		if sendErr != nil {
-			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
-			slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
-			return err
+		var finalRecordErr error
+		if output != "" {
+			replyTo := pipeline.ResolveTelegramOutboundReplyTo(rc, uxSend)
+			sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+			messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+				ChannelType:  rc.ChannelContext.ChannelType,
+				Conversation: rc.ChannelContext.Conversation,
+				ReplyTo:      replyTo,
+			}, output)
+			if sendErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
+				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+				return err
+			}
+			finalRecordErr = recordDesktopChannelDelivery(
+				ctx,
+				db,
+				rc.Run.ID,
+				rc.Run.ThreadID,
+				rc.ChannelContext.ChannelID,
+				rc.ChannelContext.Conversation.Target,
+				replyTo,
+				rc.ChannelContext.Conversation.ThreadID,
+				messageIDs,
+			)
+			if finalRecordErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "desktop telegram channel delivery record failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+			}
 		}
-		if recordErr := recordDesktopChannelDelivery(
-			ctx,
-			db,
-			rc.Run.ID,
-			rc.Run.ThreadID,
-			rc.ChannelContext.ChannelID,
-			rc.ChannelContext.Conversation.Target,
-			rc.ChannelContext.TriggerMessage,
-			rc.ChannelContext.Conversation.ThreadID,
-			messageIDs,
-		); recordErr != nil {
-			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, recordErr)
-			slog.WarnContext(ctx, "desktop telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
-		} else if strings.TrimSpace(uxSend.ReactionEmoji) != "" {
+
+		if finalRecordErr == nil && strings.TrimSpace(uxSend.ReactionEmoji) != "" {
 			pipeline.MaybeTelegramInboundReaction(ctx, client, channel.Token, rc, uxSend.ReactionEmoji)
 		}
 		return err
@@ -1209,14 +1280,15 @@ func desktopAgentLoop(
 		}
 
 		w := &desktopEventWriter{
-			db:         db,
-			bus:        bus,
-			run:        rc.Run,
-			traceID:    rc.TraceID,
-			model:      selected.Route.Model,
-			runsRepo:   runsRepo,
-			eventsRepo: eventsRepo,
-			projector:  projector,
+			db:                    db,
+			bus:                   bus,
+			run:                   rc.Run,
+			traceID:               rc.TraceID,
+			model:                 selected.Route.Model,
+			runsRepo:              runsRepo,
+			eventsRepo:            eventsRepo,
+			projector:             projector,
+			telegramBoundaryFlush: rc.TelegramToolBoundaryFlush,
 		}
 		defer w.close(ctx)
 
@@ -1268,6 +1340,7 @@ func desktopAgentLoop(
 				slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
 			}
 			rc.FinalAssistantOutput = content
+			rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
 		}
 		rc.RunToolCallCount = w.toolCallCount
 		rc.RunIterationCount = w.iterationCount
@@ -1304,11 +1377,23 @@ type desktopEventWriter struct {
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
-	hasTerminal              bool
-	terminalRunStatus        string
-	totalInputTokens         int64
-	totalOutputTokens        int64
-	totalCostUSD             float64
+	hasTerminal               bool
+	terminalRunStatus         string
+	totalInputTokens          int64
+	totalOutputTokens         int64
+	totalCostUSD              float64
+	telegramBoundaryFlush     func(context.Context, string) error
+	telegramFlushSentDeltas   int
+}
+
+func (w *desktopEventWriter) telegramStreamRemainder() string {
+	if w.telegramBoundaryFlush == nil {
+		return ""
+	}
+	if w.telegramFlushSentDeltas >= len(w.assistantDeltas) {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
 }
 
 func (w *desktopEventWriter) ensureTx(ctx context.Context) error {
@@ -1377,6 +1462,19 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	w.accumUsage(ev.DataJSON)
 
 	if ev.Type == "tool.call" {
+		if w.telegramBoundaryFlush != nil && len(w.assistantDeltas) > w.telegramFlushSentDeltas {
+			chunk := strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], "")
+			if err := w.commit(ctx); err != nil {
+				return err
+			}
+			w.tx = nil
+			if trimmed := strings.TrimSpace(chunk); trimmed != "" {
+				if err := w.telegramBoundaryFlush(ctx, trimmed); err != nil {
+					return err
+				}
+			}
+			w.telegramFlushSentDeltas = len(w.assistantDeltas)
+		}
 		w.toolCallCount++
 	}
 	if ev.Type == "llm.request" {

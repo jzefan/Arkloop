@@ -31,6 +31,7 @@ import (
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
 
 	"github.com/google/uuid"
@@ -101,6 +102,9 @@ type EngineV1Deps struct {
 
 	// PlatformToolExecutor: platform_manage 的执行器，nil 时跳过注入
 	PlatformToolExecutor tools.Executor
+
+	// ChannelTelegramLoader: Telegram Channel 工具取 token；nil 时不注入 telegram_react/reply
+	ChannelTelegramLoader channel_telegram.TokenLoader
 }
 
 func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
@@ -211,6 +215,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewChannelContextMiddleware(deps.DBPool),
+		pipeline.NewChannelTelegramToolsMiddleware(deps.ChannelTelegramLoader, nil),
 		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
 		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve: func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {

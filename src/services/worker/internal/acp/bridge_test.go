@@ -221,9 +221,58 @@ func TestBridge_FullLifecycle(t *testing.T) {
 	if got[2].DataJSON["summary"] != "done" {
 		t.Errorf("summary = %v, want %q", got[2].DataJSON["summary"], "done")
 	}
+	for i := range got {
+		if got[i].DataJSON["delegate_layer"] != "acp" {
+			t.Errorf("event[%d].delegate_layer = %v, want %q", i, got[i].DataJSON["delegate_layer"], "acp")
+		}
+	}
 
 	if mock.stopped {
 		t.Error("process should not be stopped after successful Run (caller owns lifecycle)")
+	}
+}
+
+func TestBridge_StartPassesProcessStartTimeoutMs(t *testing.T) {
+	var gotTimeout int
+	mock := &mockTransport{
+		startFn: func(_ context.Context, req StartRequest) (*StartResponse, error) {
+			gotTimeout = req.TimeoutMs
+			return &StartResponse{ProcessID: "proc-timeout-field"}, nil
+		},
+		readFn: func(_ context.Context, _ ReadRequest) (*ReadResponse, error) {
+			return &ReadResponse{Data: sessionNewResponseLine(1, "sid-t")}, nil
+		},
+	}
+	cfg := testConfig()
+	cfg.ProcessStartTimeoutMs = 12345
+	bridge := NewBridge(mock, cfg)
+	if _, err := bridge.EnsureSession(context.Background()); err != nil {
+		t.Fatalf("EnsureSession: %v", err)
+	}
+	if gotTimeout != 12345 {
+		t.Fatalf("StartRequest.TimeoutMs = %d, want 12345", gotTimeout)
+	}
+}
+
+func TestBridge_SessionHandshakeTimeout(t *testing.T) {
+	mock := &mockTransport{
+		startFn: func(_ context.Context, _ StartRequest) (*StartResponse, error) {
+			return &StartResponse{ProcessID: "proc-handshake"}, nil
+		},
+		readFn: func(_ context.Context, _ ReadRequest) (*ReadResponse, error) {
+			return &ReadResponse{Data: ""}, nil
+		},
+	}
+	cfg := testConfig()
+	cfg.SessionHandshakeTimeoutMs = 80
+	cfg.PollInterval = 15 * time.Millisecond
+	bridge := NewBridge(mock, cfg)
+	_, err := bridge.EnsureSession(context.Background())
+	if err == nil {
+		t.Fatal("expected handshake error")
+	}
+	if !strings.Contains(err.Error(), "session/new") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -46,6 +46,7 @@ type ExecutionContext struct {
 	PendingMemoryWrites              *memory.PendingWriteBuffer
 	RuntimeSnapshot                  *sharedtoolruntime.RuntimeSnapshot
 	GenerativeUIReadMeSeen           bool
+	Channel                          *ChannelToolSurface
 }
 
 type ExecutionError struct {

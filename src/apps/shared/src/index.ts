@@ -105,5 +105,6 @@ export { TurnView } from './components/TurnView'
 
 export { buildTurns } from './run-turns'
 export type { LlmTurn, RunEventRaw } from './run-turns'
+export { ACP_DELEGATE_LAYER, isACPDelegateEventData } from './runEventDelegate'
 export { buildThreadTurns, threadMessageTextContent } from './thread-turns'
 export type { ThreadMessage, ThreadTurn } from './thread-turns'

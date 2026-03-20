@@ -50,12 +50,40 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			}
 		}
 
+		streamMidCount := 0
+		var streamFlush func(context.Context, string) error
+		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" &&
+			tgClient != nil && strings.TrimSpace(preloaded.Token) != "" {
+			uxReg := ParseTelegramChannelUX(preloaded.ConfigJSON)
+			replyRef := ResolveTelegramOutboundReplyTo(rc, uxReg)
+			sender := NewTelegramChannelSenderWithClient(tgClient, preloaded.Token, resolveSegmentDelay())
+			streamFlush = func(ctx2 context.Context, text string) error {
+				ids, sendErr := sender.SendText(ctx2, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					ReplyTo:      replyRef,
+				}, text)
+				if sendErr != nil {
+					return sendErr
+				}
+				if err := recordChannelDeliverySuccess(ctx2, pool, repo, ledgerRepo, rc, replyRef, ids); err != nil {
+					return err
+				}
+				streamMidCount++
+				return nil
+			}
+			rc.TelegramToolBoundaryFlush = streamFlush
+		}
+
 		var stopTyping context.CancelFunc
 		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && tgClient != nil {
 			stopTyping = StartTelegramTypingRefresh(ctx, tgClient, preloaded.Token, rc.ChannelContext.Conversation.Target)
 		}
 
 		err := next(ctx, rc)
+		if rc != nil {
+			rc.TelegramToolBoundaryFlush = nil
+		}
 		if stopTyping != nil {
 			stopTyping()
 		}
@@ -63,12 +91,26 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
-		output := strings.TrimSpace(rc.FinalAssistantOutput)
-		if output == "" || pool == nil {
+		if pool == nil || rc.ChannelContext.ChannelType != "telegram" {
 			return err
 		}
-		if rc.ChannelContext.ChannelType != "telegram" {
+
+		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
+		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
+		if fullOut == "" && remainder == "" && streamMidCount == 0 {
 			return err
+		}
+
+		output := fullOut
+		if streamFlush != nil {
+			if remainder != "" {
+				output = remainder
+			} else if streamMidCount > 0 {
+				output = ""
+			} else {
+				// Desktop 等仍用 desktopEventWriter：未写 remainder 时不能用空串覆盖整段输出
+				output = fullOut
+			}
 		}
 
 		channel := preloaded
@@ -85,23 +127,31 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
+
 		uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
 
-		sender := NewTelegramChannelSenderWithClient(tgClient, channel.Token, resolveSegmentDelay())
-		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
-			ChannelType:  rc.ChannelContext.ChannelType,
-			Conversation: rc.ChannelContext.Conversation,
-			ReplyTo:      rc.ChannelContext.TriggerMessage,
-		}, output)
-		if sendErr != nil {
-			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
-			slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
-			return err
+		var finalRecordErr error
+		if output != "" {
+			replyTo := ResolveTelegramOutboundReplyTo(rc, uxSend)
+			sender := NewTelegramChannelSenderWithClient(tgClient, channel.Token, resolveSegmentDelay())
+			messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+				ChannelType:  rc.ChannelContext.ChannelType,
+				Conversation: rc.ChannelContext.Conversation,
+				ReplyTo:      replyTo,
+			}, output)
+			if sendErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
+				slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+				return err
+			}
+			finalRecordErr = recordChannelDeliverySuccess(ctx, pool, repo, ledgerRepo, rc, replyTo, messageIDs)
+			if finalRecordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+			}
 		}
-		if recordErr := recordChannelDeliverySuccess(ctx, pool, repo, ledgerRepo, rc, messageIDs); recordErr != nil {
-			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, recordErr)
-			slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", recordErr.Error())
-		} else if strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
+
+		if finalRecordErr == nil && strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
 			MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
 		}
 		return err
@@ -282,6 +332,7 @@ func recordChannelDeliverySuccess(
 	deliveryRepo data.ChannelDeliveryRepository,
 	ledgerRepo data.ChannelMessageLedgerRepository,
 	rc *RunContext,
+	ledgerParent *ChannelMessageRef,
 	messageIDs []string,
 ) error {
 	if pool == nil || rc == nil || rc.ChannelContext == nil || len(messageIDs) == 0 {
@@ -313,7 +364,7 @@ func recordChannelDeliverySuccess(
 			RunID:                   uuidPtr(rc.Run.ID),
 			PlatformConversationID:  rc.ChannelContext.Conversation.Target,
 			PlatformMessageID:       messageID,
-			PlatformParentMessageID: channelMessageIDPtr(rc.ChannelContext.TriggerMessage),
+			PlatformParentMessageID: channelMessageIDPtr(ledgerParent),
 			PlatformThreadID:        rc.ChannelContext.Conversation.ThreadID,
 		}); err != nil {
 			return err

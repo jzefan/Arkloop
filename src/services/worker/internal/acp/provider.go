@@ -72,6 +72,7 @@ func ResolveProviderInvocation(
 
 	useActiveConfig := hasActive && strings.EqualFold(strings.TrimSpace(activeCfg.ProviderName), providerID)
 	if useActiveConfig {
+		applyCommandFromConfig(activeCfg.ConfigJSON, &provider)
 		if hostKind := parseHostKind(activeCfg.ConfigJSON); hostKind != "" {
 			provider.HostKind = hostKind
 		}
@@ -107,6 +108,51 @@ func ResolveProviderInvocation(
 	}
 
 	return invocation, nil
+}
+
+func applyCommandFromConfig(config map[string]any, provider *ResolvedProvider) {
+	if len(config) == 0 || provider == nil {
+		return
+	}
+	raw, ok := config["command"]
+	if !ok || raw == nil {
+		return
+	}
+	switch v := raw.(type) {
+	case string:
+		fields := strings.Fields(strings.TrimSpace(v))
+		if len(fields) == 0 {
+			return
+		}
+		provider.Command = fields[0]
+		if len(fields) > 1 {
+			provider.Args = append([]string(nil), fields[1:]...)
+		} else {
+			provider.Args = nil
+		}
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			if t := strings.TrimSpace(s); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		if len(parts) == 0 {
+			return
+		}
+		provider.Command = parts[0]
+		if len(parts) > 1 {
+			provider.Args = append([]string(nil), parts[1:]...)
+		} else {
+			provider.Args = nil
+		}
+	default:
+		return
+	}
 }
 
 func defaultHostKind(snapshot *sharedtoolruntime.RuntimeSnapshot) HostKind {

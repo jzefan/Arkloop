@@ -1,3 +1,5 @@
+import { isACPDelegateEventData } from './runEventDelegate'
+
 export type RunEventRaw = {
   event_id: string
   run_id: string
@@ -426,6 +428,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     if (!currentState) continue
 
     if (event.type === 'message.delta') {
+      if (isACPDelegateEventData(event.data)) continue
       const data = event.data as Record<string, unknown>
       if (data.channel === 'thinking') continue
       const delta = String(data.content_delta ?? '')
@@ -437,6 +440,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'tool.call') {
+      if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
@@ -458,6 +462,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'tool.result') {
+      if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
@@ -508,9 +513,12 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled') {
-      flushAssistant()
-      currentState = null
-      activeRequestCallID = ''
+      if (!isACPDelegateEventData(event.data)) {
+        flushAssistant()
+        currentState = null
+        activeRequestCallID = ''
+      }
+      continue
     }
   }
 

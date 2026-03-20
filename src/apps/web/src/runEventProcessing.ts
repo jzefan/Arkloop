@@ -1,3 +1,4 @@
+import { isACPDelegateEventData } from '@arkloop/shared'
 import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
@@ -197,6 +198,9 @@ export function applyCodeExecutionToolCall(
   if (event.type !== 'tool.call') {
     return { nextExecutions: executions }
   }
+  if (isACPDelegateEventData(event.data)) {
+    return { nextExecutions: executions }
+  }
 
   const toolName = pickToolName(event.data)
   if (!CODE_EXECUTION_TOOL_NAMES.has(toolName)) {
@@ -232,6 +236,9 @@ export function applyCodeExecutionToolResult(
   event: RunEvent,
 ): CodeExecutionToolResultPatch {
   if (event.type !== 'tool.result') {
+    return { nextExecutions: executions }
+  }
+  if (isACPDelegateEventData(event.data)) {
     return { nextExecutions: executions }
   }
 
@@ -371,6 +378,7 @@ export function selectFreshRunEvents(params: {
 export function runEventDismissesAssistantPlaceholder(event: RunEvent): boolean {
   switch (event.type) {
     case 'message.delta': {
+      if (isACPDelegateEventData(event.data)) return false
       const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
       if (obj.role != null && obj.role !== 'assistant') return false
       if (obj.channel === 'thinking') return false
@@ -379,7 +387,7 @@ export function runEventDismissesAssistantPlaceholder(event: RunEvent): boolean 
     case 'tool.call':
     case 'tool.call.delta':
     case 'tool.result':
-      return true
+      return !isACPDelegateEventData(event.data)
     default:
       return false
   }
@@ -428,6 +436,7 @@ export function buildMessageWidgetsFromRunEvents(events: RunEvent[]): WidgetRef[
 
   for (const event of events) {
     if (event.type !== 'tool.call') continue
+    if (isACPDelegateEventData(event.data)) continue
     const toolName = pickToolName(event.data) || event.tool_name || ''
     if (toolName !== 'show_widget') continue
 
@@ -486,6 +495,7 @@ export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageTh
     }
 
     if (event.type !== 'message.delta') continue
+    if (isACPDelegateEventData(event.data)) continue
     const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
     if (obj.role != null && obj.role !== 'assistant') continue
     if (typeof obj.content_delta !== 'string' || obj.content_delta === '') continue
@@ -568,6 +578,7 @@ export function applyBrowserToolCall(
   event: RunEvent,
 ): BrowserActionToolCallPatch {
   if (event.type !== 'tool.call') return { nextActions: actions }
+  if (isACPDelegateEventData(event.data)) return { nextActions: actions }
   const toolName = pickToolName(event.data)
   if (toolName !== 'browser') return { nextActions: actions }
 
@@ -587,6 +598,7 @@ export function applyBrowserToolResult(
   event: RunEvent,
 ): BrowserActionToolResultPatch {
   if (event.type !== 'tool.result') return { nextActions: actions }
+  if (isACPDelegateEventData(event.data)) return { nextActions: actions }
   const toolName = pickToolName(event.data)
   if (toolName !== 'browser') return { nextActions: actions }
 
@@ -649,10 +661,21 @@ type SubAgentToolResultPatch = {
   updated?: SubAgentRef
 }
 
-const SUB_AGENT_CALL_TOOL_NAMES = new Set(['spawn_agent'])
+const SUB_AGENT_CALL_TOOL_NAMES = new Set(['spawn_agent', 'acp_agent'])
 const SUB_AGENT_RESULT_TOOL_NAMES = new Set([
-  'spawn_agent', 'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
+  'spawn_agent', 'acp_agent', 'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
 ])
+
+function extractAcpAgentCallArgs(data: unknown): { task?: string; provider?: string } {
+  if (!data || typeof data !== 'object') return {}
+  const args = (data as { arguments?: unknown }).arguments
+  if (!args || typeof args !== 'object') return {}
+  const typed = args as Record<string, unknown>
+  return {
+    task: typeof typed.task === 'string' ? typed.task : undefined,
+    provider: typeof typed.provider === 'string' ? typed.provider : undefined,
+  }
+}
 
 function extractSpawnArguments(data: unknown): Partial<SubAgentRef> {
   if (!data || typeof data !== 'object') return {}
@@ -704,8 +727,22 @@ export function applySubAgentToolCall(
   event: RunEvent,
 ): SubAgentToolCallPatch {
   if (event.type !== 'tool.call') return { nextAgents: agents }
+  if (isACPDelegateEventData(event.data)) return { nextAgents: agents }
   const toolName = pickToolName(event.data)
   if (!SUB_AGENT_CALL_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
+
+  if (toolName === 'acp_agent') {
+    const { task, provider } = extractAcpAgentCallArgs(event.data)
+    const appended: SubAgentRef = {
+      id: pickToolCallId(event),
+      status: 'active',
+      input: task,
+      personaId: provider,
+      sourceTool: 'acp_agent',
+      seq: event.seq,
+    }
+    return { appended, nextAgents: [...agents, appended] }
+  }
 
   const fields = extractSpawnArguments(event.data)
   const appended: SubAgentRef = {
@@ -726,6 +763,7 @@ export function applySubAgentToolResult(
   event: RunEvent,
 ): SubAgentToolResultPatch {
   if (event.type !== 'tool.result') return { nextAgents: agents }
+  if (isACPDelegateEventData(event.data)) return { nextAgents: agents }
   const toolName = pickToolName(event.data)
   if (!SUB_AGENT_RESULT_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
 
@@ -737,6 +775,21 @@ export function applySubAgentToolResult(
   const output = typeof result.output === 'string' ? result.output : undefined
   const nickname = typeof result.nickname === 'string' ? result.nickname : undefined
   const depth = typeof result.depth === 'number' ? result.depth : undefined
+
+  if (toolName === 'acp_agent') {
+    const idx = findAgentByToolCallId(agents, toolCallId)
+    if (idx < 0) return { nextAgents: agents }
+    const summary = typeof result.summary === 'string' ? result.summary.trim() : ''
+    const out = typeof result.output === 'string' ? result.output.trim() : ''
+    const text = [summary, out].filter((x) => x.length > 0).join('\n\n')
+    const updated: SubAgentRef = {
+      ...agents[idx],
+      output: text || out || summary || undefined,
+      status: isError ? 'failed' : 'completed',
+      error: errorMessage,
+    }
+    return { updated, nextAgents: agents.map((a, i) => (i === idx ? updated : a)) }
+  }
 
   if (toolName === 'spawn_agent') {
     const idx = findAgentByToolCallId(agents, toolCallId)
@@ -1027,6 +1080,7 @@ export function applyFileOpToolCall(
   event: RunEvent,
 ): FileOpToolCallPatch {
   if (event.type !== 'tool.call') return { nextOps: ops }
+  if (isACPDelegateEventData(event.data)) return { nextOps: ops }
   const toolName = pickToolName(event.data)
   if (!FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
@@ -1048,6 +1102,7 @@ export function applyFileOpToolResult(
   event: RunEvent,
 ): FileOpToolResultPatch {
   if (event.type !== 'tool.result') return { nextOps: ops }
+  if (isACPDelegateEventData(event.data)) return { nextOps: ops }
   const toolName = pickToolName(event.data)
   if (!FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
@@ -1103,6 +1158,7 @@ export function applyWebFetchToolCall(
   event: RunEvent,
 ): WebFetchToolCallPatch {
   if (event.type !== 'tool.call') return { nextFetches: fetches }
+  if (isACPDelegateEventData(event.data)) return { nextFetches: fetches }
   const toolName = pickToolName(event.data)
   if (toolName !== 'web_fetch') return { nextFetches: fetches }
 
@@ -1124,6 +1180,7 @@ export function applyWebFetchToolResult(
   event: RunEvent,
 ): WebFetchToolResultPatch {
   if (event.type !== 'tool.result') return { nextFetches: fetches }
+  if (isACPDelegateEventData(event.data)) return { nextFetches: fetches }
   const toolName = pickToolName(event.data)
   if (toolName !== 'web_fetch') return { nextFetches: fetches }
 

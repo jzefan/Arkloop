@@ -85,6 +85,7 @@ func (e ToolExecutor) Execute(
 	}
 
 	env := copyStringMap(invocation.Env)
+	maybeInjectLocalOpenCodeConfigHome(invocation.Provider, execCtx.ActiveToolProviderConfigsByGroup, execCtx.RunID, env)
 	profileName := ""
 	if rawProfile, ok := args["profile"].(string); ok {
 		profileName = strings.TrimSpace(rawProfile)
@@ -98,13 +99,15 @@ func (e ToolExecutor) Execute(
 
 	runtimeSessionKey := buildRuntimeSessionKey(execCtx.RunID.String(), invocation.Provider)
 	cfg := acp.BridgeConfig{
-		RuntimeSessionKey: runtimeSessionKey,
-		AccountID:         accountID,
-		Command:           cmd,
-		Cwd:               invocation.Cwd,
-		Env:               env,
-		KillGraceMs:       5000,   // 5 second default grace for ACP tool calls
-		CleanupDelayMs:    300000, // 5 min cleanup delay
+		RuntimeSessionKey:         runtimeSessionKey,
+		AccountID:                 accountID,
+		Command:                   cmd,
+		Cwd:                       invocation.Cwd,
+		Env:                       env,
+		KillGraceMs:               5000,   // 5 second default grace for ACP tool calls
+		CleanupDelayMs:            300000, // 5 min cleanup delay
+		SessionHandshakeTimeoutMs: sessionHandshakeTimeoutMs(execCtx),
+		ProcessStartTimeoutMs:     0,
 	}
 
 	host, err := acp.ResolveProcessHost(invocation.Provider, rt)
@@ -386,4 +389,20 @@ func errResult(errorClass, message string, started time.Time) tools.ExecutionRes
 		},
 		DurationMs: int(time.Since(started) / time.Millisecond),
 	}
+}
+
+func sessionHandshakeTimeoutMs(execCtx tools.ExecutionContext) int {
+	if execCtx.TimeoutMs == nil || *execCtx.TimeoutMs <= 0 {
+		return 0
+	}
+	v := *execCtx.TimeoutMs
+	const minMs = 30000
+	const maxMs = 300000
+	if v < minMs {
+		v = minMs
+	}
+	if v > maxMs {
+		v = maxMs
+	}
+	return v
 }

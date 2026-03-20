@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,7 @@ func NewChannelContextMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			}
 		}
 		rc.ChannelContext = channelCtx
+		rc.ChannelToolSurface = NewChannelToolSurfaceFromContext(channelCtx)
 		if channelCtx.SenderUserID != nil {
 			rc.UserID = channelCtx.SenderUserID
 		}
@@ -211,4 +213,24 @@ func optionalBoolValue(values map[string]any, key string) (bool, bool) {
 		return false, false
 	}
 	return value, true
+}
+
+// NewChannelToolSurfaceFromContext 从 ChannelContext 构造工具可见片段（Desktop 与 Server 共用）。
+func NewChannelToolSurfaceFromContext(c *ChannelContext) *tools.ChannelToolSurface {
+	if c == nil {
+		return nil
+	}
+	surface := &tools.ChannelToolSurface{
+		ChannelID:        c.ChannelID,
+		ChannelType:      c.ChannelType,
+		PlatformChatID:   strings.TrimSpace(c.Conversation.Target),
+		InboundMessageID: strings.TrimSpace(c.InboundMessage.MessageID),
+	}
+	if c.Conversation.ThreadID != nil {
+		t := strings.TrimSpace(*c.Conversation.ThreadID)
+		if t != "" {
+			surface.MessageThreadID = &t
+		}
+	}
+	return surface
 }

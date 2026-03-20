@@ -48,3 +48,31 @@ func TestLocalProcessHostLifecycle(t *testing.T) {
 		t.Fatalf("unexpected stdout: %q", waitResp.Stdout)
 	}
 }
+
+func TestLocalProcessHostStartTimeoutKillsHungProcess(t *testing.T) {
+	host := NewLocalProcessHost()
+	ctx := context.Background()
+
+	startResp, err := host.Start(ctx, StartRequest{
+		RuntimeSessionKey: "run-timeout",
+		Command:           []string{"sleep", "30"},
+		TimeoutMs:         400,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitResp, err := host.Wait(ctx, WaitRequest{RuntimeSessionKey: "run-timeout", ProcessID: startResp.ProcessID, TimeoutMs: 5000})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if !waitResp.Exited {
+		t.Fatal("expected process to exit after start timeout")
+	}
+	if waitResp.ExitCode == nil {
+		t.Fatal("expected exit code after kill")
+	}
+	if *waitResp.ExitCode == 0 {
+		t.Fatalf("expected non-zero exit after timeout kill, got 0")
+	}
+}

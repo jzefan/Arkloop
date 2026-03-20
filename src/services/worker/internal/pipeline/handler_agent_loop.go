@@ -82,6 +82,7 @@ func NewAgentLoopHandler(
 			selected.Route.CostPer1kCacheWrite, selected.Route.CostPer1kCacheRead,
 			policy,
 			rc.ReleaseSlot,
+			rc.TelegramToolBoundaryFlush,
 		)
 		defer writer.Close(ctx)
 
@@ -144,6 +145,7 @@ func NewAgentLoopHandler(
 				return err
 			}
 			rc.FinalAssistantOutput = writer.AssistantOutput()
+			rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
 		}
 		rc.RunToolCallCount = writer.toolCallCount
 		rc.RunIterationCount = writer.iterationCount
@@ -191,6 +193,9 @@ type eventWriter struct {
 	totalCachedTokens        int64
 	totalCostUSD             float64
 
+	telegramToolBoundaryFlush func(context.Context, string) error
+	telegramFlushSentDeltas   int
+
 	// 子 Run 完成通知：commit 时将终态状态发布到 run.child.{runID}.done
 	terminalRunStatus    string
 	terminalMessage      string
@@ -216,6 +221,7 @@ func newEventWriter(
 	costPer1kCacheRead *float64,
 	policy creditpolicy.CreditDeductionPolicy,
 	releaseSlot func(),
+	telegramToolBoundaryFlush func(context.Context, string) error,
 ) *eventWriter {
 	if creditsPerUSD <= 0 {
 		creditsPerUSD = 1000.0
@@ -242,9 +248,20 @@ func newEventWriter(
 		costPer1kOutput:     costPer1kOutput,
 		costPer1kCacheWrite: costPer1kCacheWrite,
 		costPer1kCacheRead:  costPer1kCacheRead,
-		policy:              policy,
-		releaseSlot:         releaseSlot,
+		policy:                    policy,
+		releaseSlot:               releaseSlot,
+		telegramToolBoundaryFlush: telegramToolBoundaryFlush,
 	}
+}
+
+func (w *eventWriter) telegramStreamRemainder() string {
+	if w.telegramToolBoundaryFlush == nil {
+		return ""
+	}
+	if w.telegramFlushSentDeltas >= len(w.assistantDeltas) {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
 }
 
 func (w *eventWriter) ensureTx(ctx context.Context) error {
@@ -345,6 +362,15 @@ func (w *eventWriter) Append(
 	w.accumUsage(ev.DataJSON)
 
 	if ev.Type == "tool.call" {
+		if w.telegramToolBoundaryFlush != nil && len(w.assistantDeltas) > w.telegramFlushSentDeltas {
+			chunk := strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], "")
+			if trimmed := strings.TrimSpace(chunk); trimmed != "" {
+				if err := w.telegramToolBoundaryFlush(ctx, trimmed); err != nil {
+					return err
+				}
+			}
+			w.telegramFlushSentDeltas = len(w.assistantDeltas)
+		}
 		w.toolCallCount++
 	}
 	if ev.Type == "llm.request" {

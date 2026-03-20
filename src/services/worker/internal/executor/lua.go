@@ -472,6 +472,7 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		Emitter:                          rt.emitter,
 		PendingMemoryWrites:              rt.rc.PendingMemoryWrites,
 		RuntimeSnapshot:                  rt.rc.Runtime,
+		Channel:                          rt.rc.ChannelToolSurface,
 	}
 	result := rt.rc.ToolExecutor.Execute(rt.ctx, toolName, args, execCtx, "")
 
@@ -1504,6 +1505,7 @@ func (rt *luaRuntime) runAgentLoop(
 		LlmRetryBaseDelayMs:    rt.rc.LlmRetryBaseDelayMs,
 		UserPromptScanFunc:     rt.rc.UserPromptScanFunc,
 		ToolOutputScanFunc:     rt.rc.ToolOutputScanFunc,
+		Channel:                rt.rc.ChannelToolSurface,
 		CancelSignal: func() bool {
 			return rt.ctx.Err() != nil
 		},
@@ -1675,6 +1677,7 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				Emitter:                          rt.emitter,
 				PendingMemoryWrites:              rt.rc.PendingMemoryWrites,
 				RuntimeSnapshot:                  rt.rc.Runtime,
+				Channel:                          rt.rc.ChannelToolSurface,
 			}
 			result := rt.rc.ToolExecutor.Execute(rt.ctx, c.name, c.args, execCtx, "")
 
