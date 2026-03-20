@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"mime"
-	"net/mail"
 	"path"
 	"regexp"
 	"strings"
@@ -65,42 +64,6 @@ type meResponse struct {
 	AccountName               string   `json:"account_name,omitempty"`
 	Role                      string   `json:"role,omitempty"`
 	Permissions               []string `json:"permissions"`
-}
-
-func isValidEmail(value string) bool {
-	if strings.ContainsAny(value, "\r\n") {
-		return false
-	}
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return false
-	}
-	addr, err := mail.ParseAddress(trimmed)
-	if err != nil || addr == nil {
-		return false
-	}
-	return addr.Address == trimmed
-}
-
-const maxJSONBodySize = 1 << 20
-
-func decodeJSON(r *nethttp.Request, dst any) error {
-	reader := nethttp.MaxBytesReader(nil, r.Body, maxJSONBodySize)
-	decoder := json.NewDecoder(reader)
-	decoder.UseNumber()
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(dst)
-}
-
-func writeJSON(w nethttp.ResponseWriter, traceID string, statusCode int, payload any) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(statusCode)
-	_, _ = w.Write(raw)
 }
 
 // --- admin ---

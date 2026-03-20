@@ -612,7 +612,7 @@ func register(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if body.Email == "" || len(body.Email) > 256 || !isValidEmail(body.Email) {
+		if body.Email == "" || len(body.Email) > 256 || !IsValidEmail(body.Email) {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "email is required and must be valid", traceID, nil)
 			return
 		}
@@ -771,7 +771,7 @@ func me(authService *auth.Service, membershipRepo *data.AccountMembershipReposit
 	}
 }
 
-func isValidEmail(value string) bool {
+func IsValidEmail(value string) bool {
 	if strings.ContainsAny(value, "\r\n") {
 		return false
 	}
@@ -1055,7 +1055,7 @@ func emailOTPSend(otpLoginService *auth.EmailOTPLoginService, resolver sharedcon
 			return
 		}
 		body.Email = strings.TrimSpace(body.Email)
-		if body.Email == "" || len(body.Email) > 256 || !isValidEmail(body.Email) {
+		if body.Email == "" || len(body.Email) > 256 || !IsValidEmail(body.Email) {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "valid email is required", traceID, nil)
 			return
 		}
