@@ -45,6 +45,7 @@ export type ToolProvidersAndCatalogResponse = {
 export type UpdateToolProviderCredentialPayload = {
   api_key?: string
   base_url?: string
+  allow_internal_http?: boolean
 }
 
 function withScope(path: string, scope?: ToolProviderScope): string {

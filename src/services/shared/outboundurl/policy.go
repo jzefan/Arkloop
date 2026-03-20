@@ -44,7 +44,7 @@ func DefaultPolicy() Policy {
 func allowLoopbackHTTPFromEnv() bool {
 	raw := strings.TrimSpace(os.Getenv(AllowLoopbackHTTPEnv))
 	if raw == "" {
-		return false
+		return defaultAllowLoopbackHTTP()
 	}
 	ok, err := strconv.ParseBool(raw)
 	return err == nil && ok

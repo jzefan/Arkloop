@@ -217,6 +217,7 @@ export interface LocaleStrings {
       fieldApiKey: string
       fieldBaseUrl: string
       fieldBaseUrlOptional: string
+      fieldAllowInternalHttp: string
       currentKeyPrefix: string
       errApiKeyRequired: string
       errBaseUrlRequired: string
@@ -228,6 +229,11 @@ export interface LocaleStrings {
       toastLoadFailed: string
       toastUpdated: string
       toastUpdateFailed: string
+      // URL validation errors (i18n key: reason code)
+      errUrlInvalid: string
+      errUrlLocalhostDenied: string
+      errUrlPrivateIpDenied: string
+      errUrlInsecureSchemeDenied: string
     }
     tools: {
       title: string

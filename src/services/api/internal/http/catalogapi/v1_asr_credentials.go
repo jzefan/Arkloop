@@ -143,6 +143,12 @@ func createAsrCredential(
 	req.Model = strings.TrimSpace(req.Model)
 	normalizedBaseURL, err := normalizeOptionalBaseURL(req.BaseURL)
 	if err != nil {
+		wrappedErr := wrapDeniedError(err)
+		var deniedErr *deniedURLError
+		if errors.As(wrappedErr, &deniedErr) {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", wrappedErr.Error(), traceID, map[string]any{"reason": deniedErr.Reason()})
+			return
+		}
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 		return
 	}

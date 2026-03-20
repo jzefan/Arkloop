@@ -249,6 +249,12 @@ func createLlmProvider(
 	}
 	normalizedBaseURL, err := normalizeOptionalBaseURL(req.BaseURL)
 	if err != nil {
+		wrappedErr := wrapDeniedError(err)
+		var deniedErr *deniedURLError
+		if errors.As(wrappedErr, &deniedErr) {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", wrappedErr.Error(), traceID, map[string]any{"reason": deniedErr.Reason()})
+			return
+		}
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 		return
 	}
@@ -395,6 +401,12 @@ func patchLlmProvider(
 	}
 	normalizedBaseURL, err := normalizeOptionalBaseURL(baseURL)
 	if err != nil {
+		wrappedErr := wrapDeniedError(err)
+		var deniedErr *deniedURLError
+		if errors.As(wrappedErr, &deniedErr) {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", wrappedErr.Error(), traceID, map[string]any{"reason": deniedErr.Reason()})
+			return
+		}
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
 		return
 	}
@@ -803,6 +815,11 @@ func validateCreateLlmProviderRequest(req createLlmProviderRequest) error {
 		return errors.New("invalid provider")
 	}
 	if _, err := normalizeOptionalBaseURL(req.BaseURL); err != nil {
+		wrappedErr := wrapDeniedError(err)
+		var deniedErr *deniedURLError
+		if errors.As(wrappedErr, &deniedErr) {
+			return errors.New(wrappedErr.Error())
+		}
 		return errors.New("base_url is invalid")
 	}
 	return validateProviderFields(provider, normalizeOptionalString(req.OpenAIAPIMode), req.AdvancedJSON)
