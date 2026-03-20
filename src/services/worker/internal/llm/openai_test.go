@@ -1441,6 +1441,29 @@ func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T
 	}
 }
 
+func TestOpenAIErrorMessageAndDetails(t *testing.T) {
+	body := []byte(`{"error":{"type":"invalid_request_error","code":400,"param":"tools[0]","message":""}}`)
+	msg, details := openAIErrorMessageAndDetails(body, 400, "fallback")
+	if msg != "invalid_request_error: 400, param=tools[0]" {
+		t.Fatalf("synthetic message: got %q", msg)
+	}
+	if details["provider_error_body"] != string(body) {
+		t.Fatalf("expected provider_error_body to mirror body")
+	}
+	if details["openai_error_type"] != "invalid_request_error" {
+		t.Fatalf("type: %#v", details["openai_error_type"])
+	}
+
+	flat := []byte(`{"message":"flat provider message"}`)
+	msg2, d2 := openAIErrorMessageAndDetails(flat, 502, "f")
+	if msg2 != "flat provider message" {
+		t.Fatalf("flat message: %q", msg2)
+	}
+	if d2["provider_error_body"] != string(flat) {
+		t.Fatalf("missing provider_error_body")
+	}
+}
+
 // sseErrorReader returns the specified error after sending data, simulating a network read interruption
 type sseErrorReader struct {
 	data []byte
