@@ -121,11 +121,14 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
       : undefined
   const previewTw = useTypewriter(preview, !smooth)
   const shellCodeTw = useTypewriter(variant === 'shell' && code ? code.trim() : '', !smooth)
+  const fileOpInputTw = useTypewriter(variant === 'fileop' && label ? label.trim() : '', !smooth)
   const outputForTw = displayOutput?.trimEnd() ?? ''
   const outputTw = useTypewriter(outputForTw, !smooth)
   const hasOutput = !!displayOutput
-  const hasCommand = variant === 'shell' && !!code
-  const expandable = !!(hasCommand || displayOutput || status === 'running')
+  const hasShellInput = variant === 'shell' && !!code?.trim()
+  const hasFileOpInput = variant === 'fileop' && !!label?.trim()
+  const hasInputBlock = hasShellInput || hasFileOpInput
+  const expandable = !!(hasInputBlock || displayOutput || status === 'running')
 
   const copyText = useCallback((text: string, setter: (v: boolean) => void) => {
     void navigator.clipboard.writeText(text)
@@ -211,8 +214,8 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
                 {variant === 'shell' ? 'shell' : toolKindLabel(toolName || '')}
               </div>
 
-              {/* Command input (shell only) */}
-              {variant === 'shell' && code && (
+              {/* Input: shell 命令 / fileop 参数摘要 */}
+              {hasInputBlock && (
                 <div
                   style={{ position: 'relative', padding: '2px 10px 8px' }}
                   onMouseEnter={() => setCmdHovered(true)}
@@ -227,7 +230,10 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
                         transition={{ duration: 0.15 }}
                         style={{ position: 'absolute', top: '2px', right: '6px', zIndex: 1 }}
                       >
-                        <CopyBtn copied={cmdCopied} onClick={() => copyText(code, setCmdCopied)} />
+                        <CopyBtn
+                          copied={cmdCopied}
+                          onClick={() => copyText(hasShellInput ? code!.trim() : label!.trim(), setCmdCopied)}
+                        />
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -243,7 +249,10 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
                     overflowY: 'auto',
                     paddingRight: '34px',
                   }}>
-                    <span style={{ color: 'var(--c-text-muted)' }}>$ </span>{smooth ? shellCodeTw : (variant === 'shell' && code ? code.trim() : '')}
+                    {hasShellInput && <span style={{ color: 'var(--c-text-muted)' }}>$ </span>}
+                    {hasShellInput
+                      ? (smooth ? shellCodeTw : code!.trim())
+                      : (smooth ? fileOpInputTw : label!.trim())}
                   </pre>
                 </div>
               )}

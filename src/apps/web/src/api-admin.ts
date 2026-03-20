@@ -6,7 +6,7 @@
  * wrapper from @arkloop/shared/api).
  */
 
-import { apiFetch } from '@arkloop/shared/api'
+import { apiFetch, isApiError } from '@arkloop/shared/api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -301,6 +301,23 @@ export async function listPlatformSettings(
   return await apiFetch<PlatformSetting[]>('/v1/admin/platform-settings', {
     accessToken,
   })
+}
+
+export async function getPlatformSetting(
+  accessToken: string,
+  key: string,
+): Promise<PlatformSetting | null> {
+  try {
+    return await apiFetch<PlatformSetting>(
+      `/v1/admin/platform-settings/${encodeURIComponent(key)}`,
+      { accessToken },
+    )
+  } catch (err) {
+    if (isApiError(err) && err.status === 404) {
+      return null
+    }
+    throw err
+  }
 }
 
 export async function updatePlatformSetting(

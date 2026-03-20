@@ -147,3 +147,66 @@ describe('ExecutionCard shell variant', () => {
     container.remove()
   })
 })
+
+describe('ExecutionCard fileop variant', () => {
+  const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+  const originalLocalStorage = globalThis.localStorage
+  const originalScrollTo = window.scrollTo
+
+  beforeEach(() => {
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+    const storage = createMemoryStorage()
+    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
+    Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
+    Object.defineProperty(window, 'scrollTo', { value: vi.fn(), configurable: true })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+    Object.defineProperty(window, 'localStorage', { value: originalLocalStorage, configurable: true })
+    Object.defineProperty(window, 'scrollTo', { value: originalScrollTo, configurable: true })
+    if (originalActEnvironment === undefined) {
+      delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
+    } else {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
+    }
+  })
+
+  it('展开后应同时显示输入摘要与输出', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <ExecutionCard
+            variant="fileop"
+            toolName="search_tools"
+            label='search_tools "memory", "tool"'
+            output="(no matches)"
+            status="success"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    const trigger = container.querySelector('[role="button"]')
+    expect(trigger).not.toBeNull()
+    if (!trigger) return
+
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('search_tools')
+    expect(container.textContent).toContain('memory')
+    expect(container.textContent).toContain('(no matches)')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+})
