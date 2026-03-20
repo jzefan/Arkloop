@@ -87,8 +87,7 @@ func (c *Compose) ContainerStatus(ctx context.Context, serviceName string, profi
 
 	out, err := cmd.Output()
 	if err != nil {
-		// If docker compose ps fails or returns nothing, the service is not installed.
-		return "not_installed", nil
+		return "", fmt.Errorf("docker compose ps %s: %w", serviceName, err)
 	}
 
 	entries := parsePSEntries(out)
