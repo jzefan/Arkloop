@@ -67,7 +67,6 @@ let runtime: SidecarRuntime = {
 let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
 let connectorsConfig: ConnectorsConfig | null = null
 let memoryConfig: MemoryConfig | null = null
-let browserSearchCallbackAddr: string | null = null
 
 export function getSidecarStatus(): SidecarStatus {
   return runtime.status
@@ -79,10 +78,6 @@ export function setConnectorsConfig(config: ConnectorsConfig): void {
 
 export function setMemoryConfig(config: MemoryConfig): void {
   memoryConfig = config
-}
-
-export function setBrowserSearchCallbackAddr(addr: string): void {
-  browserSearchCallbackAddr = addr
 }
 
 export function getSidecarRuntime(): SidecarRuntime {
@@ -420,11 +415,6 @@ function buildConnectorsEnv(): Record<string, string> {
   }
   if (cfg.search.provider === 'searxng' && cfg.search.searxngBaseUrl) {
     env.ARKLOOP_WEB_SEARCH_SEARXNG_BASE_URL = cfg.search.searxngBaseUrl
-  }
-
-  // Browser search callback address (for the browser provider)
-  if (cfg.search.provider === 'browser' && browserSearchCallbackAddr) {
-    env.ARKLOOP_WEB_SEARCH_DESKTOP_CALLBACK_ADDR = browserSearchCallbackAddr
   }
 
   return env

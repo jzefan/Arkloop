@@ -67,7 +67,7 @@ func RegisterTrackA(r *Registry) error {
 			Key:         "web_search.provider",
 			Type:        TypeString,
 			Default:     "",
-			Description: "Web Search Provider：searxng/tavily/browser",
+			Description: "Web Search Provider：searxng/tavily/duckduckgo",
 			Sensitive:   false,
 			Scope:       ScopeBoth,
 		},
@@ -85,14 +85,6 @@ func RegisterTrackA(r *Registry) error {
 			Default:     "",
 			Description: "Tavily API Key",
 			Sensitive:   true,
-			Scope:       ScopeBoth,
-		},
-		{
-			Key:         "web_search.desktop_callback_addr",
-			Type:        TypeString,
-			Default:     "",
-			Description: "Desktop browser-search callback address (host:port), set by Electron main process",
-			Sensitive:   false,
 			Scope:       ScopeBoth,
 		},
 

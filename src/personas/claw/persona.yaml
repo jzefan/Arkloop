@@ -20,7 +20,6 @@ tool_allowlist:
   - timeline_title
   - todo_write
 budgets:
-  max_output_tokens: 12288
   reasoning_iterations: 99999
   tool_continuation_budget: 128
   temperature: 0.4

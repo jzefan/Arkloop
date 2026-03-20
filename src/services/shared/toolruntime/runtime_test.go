@@ -1,6 +1,7 @@
 package toolruntime
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -148,6 +149,32 @@ func TestResolveBuiltinAddsWebToolsFromEnv(t *testing.T) {
 	}
 	if _, ok := resolved.ToolNameSet()["web_fetch"]; ok {
 		t.Fatal("web_fetch should be absent without configuration")
+	}
+}
+
+func TestResolveBuiltinAddsWebSearchDuckduckgoWithoutExtraEnv(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		Env: EnvConfig{
+			WebSearchProvider: "duckduckgo",
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["web_search"]; !ok {
+		t.Fatal("web_search should be present when ARKLOOP_WEB_SEARCH_PROVIDER=duckduckgo")
+	}
+}
+
+func TestRuntimeSnapshotMergeBuiltinToolNamesFromPreservesStubAndAddsBuiltins(t *testing.T) {
+	envLayer, err := BuildRuntimeSnapshot(context.Background(), SnapshotInput{})
+	if err != nil {
+		t.Fatalf("BuildRuntimeSnapshot: %v", err)
+	}
+	stub := RuntimeSnapshot{ACPHostKind: "local"}
+	merged := stub.MergeBuiltinToolNamesFrom(envLayer)
+	if merged.ACPHostKind != "local" {
+		t.Fatalf("lost stub ACPHostKind, got %q", merged.ACPHostKind)
+	}
+	if !merged.BuiltinAvailable("grep") {
+		t.Fatal("expected grep from env merge (static filesystem tools)")
 	}
 }
 

@@ -193,6 +193,17 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write"})
 	}
 
+	envSnap, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
+		HasConversationSearch:  true,
+		ArtifactStoreAvailable: artifactToolsRegistered,
+		ConfigResolver:          nil,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("desktop: env runtime snapshot: %w", err)
+	}
+	mergedRT := (*runtimeSnapshot).MergeBuiltinToolNamesFrom(envSnap)
+	runtimeSnapshot = &mergedRT
+
 	baseAllowlist := make(map[string]struct{})
 	for _, name := range toolRegistry.ListNames() {
 		baseAllowlist[name] = struct{}{}
