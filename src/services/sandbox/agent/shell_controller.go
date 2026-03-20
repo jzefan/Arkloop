@@ -534,6 +534,10 @@ func (c *ShellController) finishCommandLocked(current *shellCommand, line string
 	if current.timer != nil {
 		current.timer.Stop()
 	}
+	line = strings.TrimRight(line, "\r")
+	if idx := strings.Index(line, current.endPrefix); idx >= 0 {
+		line = line[idx:]
+	}
 	if !strings.HasPrefix(line, current.endPrefix) {
 		c.status = shellapi.StatusIdle
 		return
