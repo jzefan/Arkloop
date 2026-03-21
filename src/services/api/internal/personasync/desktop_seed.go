@@ -211,11 +211,10 @@ func seedBoolInt(b bool) int {
 }
 
 func seedReasoningMode(val string) string {
-	trimmed := strings.TrimSpace(val)
-	if trimmed == "" {
+	if strings.TrimSpace(val) == "" {
 		return "auto"
 	}
-	return trimmed
+	return data.NormalizePersonaReasoningMode(val)
 }
 
 func seedPromptCacheControl(val string) string {

@@ -330,9 +330,18 @@ func normalizePersonaReasoningMode(value *string) string {
 	if value == nil {
 		return "auto"
 	}
-	switch strings.TrimSpace(*value) {
-	case "enabled", "disabled", "none", "auto", "low", "medium", "high":
-		return strings.TrimSpace(*value)
+	s := strings.TrimSpace(*value)
+	switch s {
+	case "enabled", "启用":
+		return "enabled"
+	case "disabled", "禁用":
+		return "disabled"
+	case "none", "无":
+		return "none"
+	case "auto", "自动":
+		return "auto"
+	case "low", "medium", "high":
+		return s
 	default:
 		return "auto"
 	}

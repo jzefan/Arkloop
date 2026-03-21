@@ -1081,12 +1081,26 @@ func normalizeOptionalPersonaString(value *string) *string {
 }
 
 func normalizePersonaReasoningMode(value string) string {
-	switch strings.TrimSpace(value) {
-	case "enabled", "disabled", "none", "auto", "low", "medium", "high":
-		return strings.TrimSpace(value)
+	s := strings.TrimSpace(value)
+	switch s {
+	case "enabled", "启用":
+		return "enabled"
+	case "disabled", "禁用":
+		return "disabled"
+	case "none", "无":
+		return "none"
+	case "auto", "自动":
+		return "auto"
+	case "low", "medium", "high":
+		return s
 	default:
 		return "auto"
 	}
+}
+
+// NormalizePersonaReasoningMode 供 desktop 同步等跨包调用，与 normalizePersonaReasoningMode 一致。
+func NormalizePersonaReasoningMode(value string) string {
+	return normalizePersonaReasoningMode(value)
 }
 
 // NormalizePersonaStreamThinkingPtr 将 API / YAML 省略值视为 true（默认向客户端下发思维链流）。
