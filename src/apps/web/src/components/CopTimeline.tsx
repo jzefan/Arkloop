@@ -1,4 +1,4 @@
-import { useState, Fragment, type ReactNode } from 'react'
+import { useState, useRef, useEffect, Fragment, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Globe, Loader2, Search } from 'lucide-react'
 import { useTypewriter } from '../hooks/useTypewriter'
@@ -54,6 +54,8 @@ type Props = {
   baseUrl?: string
   /** 与 narrative / 工具行同一套 unified 点线，仅多一行 Markdown */
   assistantThinking?: { markdown: string; live?: boolean } | null
+  /** thinking 阶段开始的 Unix ms 时间戳（流式用），用于完成后显示 "Thought for X seconds" */
+  thinkingStartedAt?: number
 }
 
 function TypewriterText({ text, className, live }: { text: string; className?: string; live?: boolean }) {
@@ -402,10 +404,25 @@ export function CopTimelineUnifiedRow({
   )
 }
 
-export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, assistantThinking }: Props) {
+export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, assistantThinking, thinkingStartedAt }: Props) {
   const { t } = useLocale()
-  /** 首屏：历史已完结的 COP 默认收起；流式结束后不自动收起，避免「输出完就只剩一行标题」 */
+  /** 首屏：历史已完结的 COP 默认收起；thinking 完成后自动收起 */
   const [collapsed, setCollapsed] = useState(() => isComplete)
+  const [elapsedSeconds, setElapsedSeconds] = useState(
+    () => (isComplete && thinkingStartedAt ? Math.round((Date.now() - thinkingStartedAt) / 1000) : 0),
+  )
+  const prevThinkingLive = useRef(assistantThinking?.live ?? false)
+  const hasAssistantThinking = !!(assistantThinking && (assistantThinking.markdown.trim() !== '' || assistantThinking.live))
+  useEffect(() => {
+    const isLive = !!assistantThinking?.live
+    if (prevThinkingLive.current && !isLive && hasAssistantThinking) {
+      setCollapsed(true)
+      if (thinkingStartedAt) {
+        setElapsedSeconds(Math.round((Date.now() - thinkingStartedAt) / 1000))
+      }
+    }
+    prevThinkingLive.current = isLive
+  }, [assistantThinking?.live, hasAssistantThinking, thinkingStartedAt])
 
   const visibleSteps = steps.filter((step) => step.kind !== 'finished')
   const textEntries = narratives ?? []
@@ -414,7 +431,6 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const fileOpCount = fileOps?.length ?? 0
   const webFetchCount = webFetches?.length ?? 0
   const [hovered, setHovered] = useState(false)
-  const hasAssistantThinking = !!(assistantThinking && (assistantThinking.markdown.trim() !== '' || assistantThinking.live))
   if (
     visibleSteps.length === 0 &&
     textEntries.length === 0 &&
@@ -488,18 +504,27 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   }
 
   const effectiveStepCount = visibleSteps.length || (codeExecCount + subAgentCount + fileOpCount + webFetchCount)
+  const hasThinkingOnly = hasAssistantThinking && effectiveStepCount === 0 && sources.length === 0
+
+  const thoughtDurationLabel = elapsedSeconds > 0
+    ? `Thought for ${elapsedSeconds}s`
+    : t.assistantStreamThinkingPlaceholder
 
   const autoLabel = isComplete
     ? sources.length > 0
       ? `Reviewed ${sources.length} sources`
       : effectiveStepCount > 0
         ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
-        : 'Completed'
+        : hasThinkingOnly
+          ? thoughtDurationLabel
+          : 'Completed'
     : visibleSteps.length > 0
       ? (visibleSteps[visibleSteps.length - 1]?.label || 'Searching...')
       : effectiveStepCount > 0
         ? t.copTimelineLiveProgress
-        : 'Searching...'
+        : hasThinkingOnly
+          ? t.assistantStreamThinkingPlaceholder
+          : 'Searching...'
 
   const headerLabel = headerOverride ?? autoLabel
   const dottedStepCount = visibleSteps.length
@@ -535,7 +560,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
             {sources.length} sources
           </span>
         )}
-        {isComplete && hasContent && (
+        {(isComplete || live) && hasContent && (
           <motion.div
             animate={{ rotate: collapsed ? 0 : 90 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
