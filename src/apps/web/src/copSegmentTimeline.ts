@@ -19,7 +19,7 @@ type WebSearchPhaseStepLike = Pick<MessageSearchStepRef, 'id' | 'kind' | 'label'
 
 /**
  * 仅返回 CopTimeline 已支持的数据子集（代码 / 子代理 / 文件 / 抓取 / 搜索阶段步骤）。
- * 其余 tool call 不生成任何 UI。
+ * segment 内有 toolCallId 但池子尚未匹配时返回 { steps:[], sources:[] }，避免外层把整条 COP 拆掉。
  */
 export function copTimelinePayloadForSegment(
   segment: CopSegment,
@@ -40,7 +40,6 @@ export function copTimelinePayloadForSegment(
   subAgents?: SubAgentRef[]
 } | null {
   const ids = new Set(segment.calls.map((c) => c.toolCallId))
-  if (ids.size === 0) return null
 
   const codeExecutions = sortBySeq((pools.codeExecutions ?? []).filter((x) => ids.has(x.id)))
   const fileOps = sortBySeq((pools.fileOps ?? []).filter((x) => ids.has(x.id)))
@@ -70,7 +69,10 @@ export function copTimelinePayloadForSegment(
     webFetches.length > 0 ||
     subAgents.length > 0
 
-  if (!hasAny) return null
+  // 有 toolCall 但池子尚未对齐时仍返回壳子，避免流式结束/刷新间隙整条 COP 被 ChatPage 直接 return null 拆掉
+  if (!hasAny) {
+    return { steps: [], sources: [] }
+  }
 
   return {
     steps,

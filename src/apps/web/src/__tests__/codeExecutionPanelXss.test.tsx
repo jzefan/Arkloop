@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import hljs from 'highlight.js/lib/core'
 
 import { CodeExecutionPanel } from '../components/CodeExecutionPanel'
-import type { CodeExecution } from '../components/ThinkingBlock'
+import type { CodeExecution } from '../components/CodeExecutionCard'
 
 describe('CodeExecutionPanel', () => {
   afterEach(() => {

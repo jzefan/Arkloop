@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { CopTimeline } from '../components/CopTimeline'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import type { SubAgentRef, WebSource } from '../storage'
-import type { CodeExecution } from '../components/ThinkingBlock'
+import type { CodeExecution } from '../components/CodeExecutionCard'
 
 function renderTimeline(params: {
   isComplete: boolean
