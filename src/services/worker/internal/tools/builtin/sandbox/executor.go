@@ -18,6 +18,7 @@ import (
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/environmentbindings"
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -403,6 +404,22 @@ func (e *ToolExecutor) pollExecUntilOutputOrDone(
 			break
 		}
 	}
+
+	// Fallback: if we exhausted all polls and still have a running process,
+	// mark the last result with a timeout error so the caller knows.
+	// This handles the case where a command like "python3 <<EOF" hangs because
+	// stdin was not properly closed.
+	if last != nil {
+		resp := decodeExecSessionResult(last.ResultJSON)
+		if resp != nil && resp.Running {
+			last.Error = &tools.ExecutionError{
+				ErrorClass: errorSandboxTimeout,
+				Message:    "exec_command timed out after " + fmt.Sprintf("%d", maxPolls) + " polls, session still running",
+				Details:    map[string]any{"session_ref": resolution.SessionRef, "polls": maxPolls},
+			}
+		}
+	}
+
 	return last
 }
 
@@ -455,6 +472,22 @@ func (e *ToolExecutor) executeWriteStdin(
 		result.ResultJSON["reused"] = true
 		result.ResultJSON["restored_from_restore_state"] = false
 	}
+
+	// Emit TerminalInteraction event so the model sees what was sent to stdin.
+	// This enables the model to know what input was auto-filled and respond accordingly.
+	toolName := "write_stdin"
+	ev := execCtx.Emitter.Emit(
+		"terminal.stdin_interaction",
+		map[string]any{
+			"session_ref": resolution.SessionRef,
+			"chars":        reqArgs.Chars,
+			"running":      resp != nil && resp.Running,
+		},
+		&toolName,
+		nil,
+	)
+	result.Events = []events.RunEvent{ev}
+
 	delete(result.ResultJSON, "session_id")
 	return result
 }
