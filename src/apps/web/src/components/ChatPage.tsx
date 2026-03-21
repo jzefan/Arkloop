@@ -8,10 +8,19 @@ import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
-import { ThinkingBlock, CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
+import type { CodeExecution } from './CodeExecutionCard'
+import { CodeExecutionCard } from './CodeExecutionCard'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
-import { CopTimeline, WebFetchItem, type WebSearchPhaseStep } from './CopTimeline'
+import {
+  CopTimeline,
+  CopTimelineUnifiedRow,
+  WebFetchItem,
+  type WebSearchPhaseStep,
+  COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
+  COP_TIMELINE_DOT_TOP,
+  COP_TIMELINE_PYTHON_DOT_TOP,
+} from './CopTimeline'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { useTypewriter } from '../hooks/useTypewriter'
 import { ArtifactStreamBlock, extractPartialArtifactFields, type StreamingArtifactEntry } from './ArtifactStreamBlock'
@@ -38,7 +47,6 @@ import {
   buildMessageWidgetsFromRunEvents,
   findAssistantMessageForRun,
   selectFreshRunEvents,
-  runEventDismissesAssistantPlaceholder,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
   applyBrowserToolCall,
@@ -144,9 +152,6 @@ import {
 
 const sidePanelWidth = 360
 const documentPanelWidth = 560
-const LIVE_TIMELINE_DOT_NUDGE_Y = 1
-const LIVE_TIMELINE_DOT_TOP = 8 + LIVE_TIMELINE_DOT_NUDGE_Y
-const LIVE_TIMELINE_CODE_DOT_TOP = 16 + LIVE_TIMELINE_DOT_NUDGE_Y
 
 function normalizeError(error: unknown): AppError {
   if (isApiError(error)) {
@@ -423,8 +428,6 @@ export function ChatPage() {
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
   const thinkingDraftRef = useRef('')
-  /** 当前 run 在首条 SSE 并入前为 true；任意 fresh 事件到达后即 false */
-  const [awaitingFirstSse, setAwaitingFirstSse] = useState(() => Boolean(locationState?.initialRunId))
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
 
@@ -774,6 +777,7 @@ export function ChatPage() {
           s.mode !== 'hidden' &&
           (s.isStreaming || s.content.trim() !== '' || s.label.trim() !== ''),
       ))
+
   const canCancel =
     activeRunId != null &&
     (sse.state === 'connecting' || sse.state === 'connected' || sse.state === 'reconnecting')
@@ -825,7 +829,6 @@ export function ChatPage() {
       const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadClawFolder(threadId) ?? undefined)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
-      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       isAtBottomRef.current = true
@@ -1037,12 +1040,10 @@ export function ChatPage() {
           locationState?.initialRunId &&
           (!latest || (latest.run_id === locationState.initialRunId && latest.status === 'running'))
         ) {
-          setAwaitingFirstSse(true)
           setActiveRunId(locationState.initialRunId)
           if (threadId) onRunStarted(threadId)
         } else {
           const isRunning = latest?.status === 'running'
-          if (isRunning) setAwaitingFirstSse(true)
           setActiveRunId(isRunning ? latest.run_id : null)
           if (isRunning && threadId) onRunStarted(threadId)
           else if (threadId) onRunEnded(threadId)
@@ -1176,7 +1177,6 @@ export function ChatPage() {
     streamingArtifactsRef.current = []
     setStreamingArtifacts([])
     setCancelSubmitting(false)
-    setAwaitingFirstSse(true)
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRunId, baseUrl, resetAssistantTurnLive])
@@ -1221,8 +1221,6 @@ export function ChatPage() {
       processedCount: processedEventCountRef.current,
     })
     processedEventCountRef.current = nextProcessedCount
-    let dismissAssistantPlaceholder = false
-
     for (const event of fresh) {
       if (shouldSuppressLiveRunEventAfterInjectionBlock({
         activeRunId,
@@ -1230,9 +1228,6 @@ export function ChatPage() {
         event,
       })) {
         continue
-      }
-      if (runEventDismissesAssistantPlaceholder(event)) {
-        dismissAssistantPlaceholder = true
       }
 
       const nextWebSearchSteps = applyRunEventToWebSearchSteps(searchStepsRef.current, event)
@@ -1787,7 +1782,6 @@ export function ChatPage() {
         }
       }
     }
-    if (dismissAssistantPlaceholder) setAwaitingFirstSse(false)
   }, [activeRunId, clearContextCompactHideTimer, clearDeferredLiveRunUi, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, resetSearchSteps, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
@@ -1901,13 +1895,13 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({
       behavior: isStreaming || liveHandoffPaint ? 'instant' : 'smooth',
     })
-  }, [messages, liveAssistantTurn, segments, isStreaming, thinkingDraft])
+  }, [messages, liveAssistantTurn, isStreaming, thinkingDraft])
 
   // COP 代码执行列表：新 item 添加时自动滚动到底部
   useEffect(() => {
     const el = copCodeExecScrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [topLevelCodeExecutions.length])
+  }, [topLevelCodeExecutions.length, thinkingDraft])
 
   // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
   const scrollToBottom = useCallback(() => {
@@ -2087,7 +2081,6 @@ export function ChatPage() {
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         noResponseMsgIdRef.current = replaceMessageId
         resetSearchSteps()
-        setAwaitingFirstSse(true)
         setActiveRunId(run.run_id)
         onRunStarted(threadId)
         scrollToBottom()
@@ -2106,7 +2099,6 @@ export function ChatPage() {
         const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadClawFolder(threadId) ?? undefined)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         resetSearchSteps()
-        setAwaitingFirstSse(true)
         setActiveRunId(run.run_id)
         onRunStarted(threadId)
         scrollToBottom()
@@ -2144,7 +2136,6 @@ export function ChatPage() {
         )
       })
       resetSearchSteps()
-      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -2175,7 +2166,6 @@ export function ChatPage() {
         return prev.filter((_, i) => i !== lastAssistantIdx)
       })
       resetSearchSteps()
-      setAwaitingFirstSse(true)
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
       scrollToBottom()
@@ -2605,40 +2595,22 @@ export function ChatPage() {
                 const timelineSteps = messageSearchSteps ?? []
                 const messageFileOps = msg.role === 'assistant' ? messageFileOpsMap.get(msg.id) : undefined
                 const messageWebFetches = msg.role === 'assistant' ? messageWebFetchesMap.get(msg.id) : undefined
+                const msgThinking = msg.role === 'assistant' ? messageThinkingMap.get(msg.id) : undefined
                 return (
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
-                  {msg.role === 'assistant' && !isSearchThread && (() => {
-                    const th = messageThinkingMap.get(msg.id)
-                    if (!th || (th.thinkingText.trim() === '' && th.segments.length === 0)) {
-                      return null
-                    }
-                    return (
-                      <div className="mb-1.5 flex flex-col gap-2" style={{ maxWidth: '663px' }}>
-                        {th.segments.map((s) => (
-                          <ThinkingBlock
-                            key={s.segmentId}
-                            kind={s.kind}
-                            label={s.label}
-                            mode={s.mode as 'visible' | 'collapsed' | 'hidden'}
-                            content={s.content}
-                            isStreaming={false}
-                            onOpenCodeExecution={openCodePanel}
-                          />
-                        ))}
-                        {th.thinkingText.trim() !== '' && (
-                          <ThinkingBlock
-                            kind="thinking"
-                            label={t.assistantStreamThinkingPlaceholder}
-                            mode="collapsed"
-                            content={th.thinkingText}
-                            isStreaming={false}
-                          />
-                        )}
-                      </div>
-                    )
-                  })()}
                   {msg.role === 'assistant' && hasAssistantTurn && (
                     <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+                      {msgThinking != null && msgThinking.thinkingText.trim() !== '' && !isSearchThread && (
+                        <CopTimeline
+                          steps={[]}
+                          sources={[]}
+                          isComplete
+                          headerOverride={t.assistantCopDefaultTitle}
+                          assistantThinking={{ markdown: msgThinking.thinkingText, live: false }}
+                          accessToken={accessToken}
+                          baseUrl={baseUrl}
+                        />
+                      )}
                       {historicalTurn!.segments.map((seg, si) =>
                         seg.type === 'text' ? (
                           <MarkdownRenderer
@@ -2666,7 +2638,7 @@ export function ChatPage() {
                             })
                             const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
                             if (!payload && histWidgets.length === 0) return null
-                            const titleTrim = seg.title?.trim()
+                            const copHeader = seg.title?.trim() || t.assistantCopDefaultTitle
                             return (
                               <Fragment key={`${msg.id}-acw-${si}`}>
                                 {payload && (
@@ -2680,7 +2652,7 @@ export function ChatPage() {
                                     subAgents={payload.subAgents}
                                     fileOps={payload.fileOps}
                                     webFetches={payload.webFetches}
-                                    {...(titleTrim ? { headerOverride: titleTrim } : {})}
+                                    headerOverride={copHeader}
                                     accessToken={accessToken}
                                     baseUrl={baseUrl}
                                   />
@@ -2816,60 +2788,17 @@ export function ChatPage() {
                 )
               })}
 
-              {isStreaming && !isSearchThread && hasLiveStreamThinkingUi && (
-                <div className="mb-1.5 flex flex-col gap-2" style={{ maxWidth: '663px' }}>
-                  {segments
-                    .filter(
-                      (s) =>
-                        s.mode !== 'hidden' &&
-                        (s.label.trim() !== '' || s.content.trim() !== '' || s.isStreaming),
-                    )
-                    .map((seg) => (
-                      <ThinkingBlock
-                        key={seg.segmentId}
-                        kind={seg.kind}
-                        label={seg.label}
-                        mode={seg.mode as 'visible' | 'collapsed' | 'hidden'}
-                        content={seg.content}
-                        isStreaming={seg.isStreaming}
-                        codeExecutions={seg.codeExecutions}
-                        onOpenCodeExecution={openCodePanel}
-                      />
-                    ))}
-                  {thinkingDraft.trim() !== '' && (
-                    <ThinkingBlock
-                      kind="thinking"
-                      label={t.assistantStreamThinkingPlaceholder}
-                      mode="collapsed"
-                      content={thinkingDraft}
-                      isStreaming
-                    />
-                  )}
-                </div>
-              )}
-
-              {/* 流式：首条 SSE 前占位（放在正文列之前）；收到任意 fresh 后 awaitingFirstSse=false */}
-              {isStreaming && awaitingFirstSse && !hasLiveStreamThinkingUi && (
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: 'easeOut' }}
-                  style={{ maxWidth: '663px' }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '6px 0',
-                      color: 'var(--c-text-secondary)',
-                      fontSize: '13px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    <span className="thinking-shimmer">{t.assistantStreamThinkingPlaceholder}</span>
-                  </div>
-                </motion.div>
+              {!isSearchThread &&
+                (thinkingDraft.trim() !== '' || hasLiveStreamThinkingUi) && (
+                <CopTimeline
+                  steps={[]}
+                  sources={[]}
+                  isComplete={false}
+                  headerOverride={t.assistantStreamThinkingPlaceholder}
+                  assistantThinking={{ markdown: thinkingDraft, live: isStreaming }}
+                  accessToken={accessToken}
+                  baseUrl={baseUrl}
+                />
               )}
 
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
@@ -2914,7 +2843,7 @@ export function ChatPage() {
                         const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
                         const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
                         if (!payload && liveWidgets.length === 0 && liveArts.length === 0) return null
-                        const titleTrim = seg.title?.trim()
+                        const copHeader = seg.title?.trim() || t.assistantCopDefaultTitle
                         return (
                           <Fragment key={`live-acw-${si}`}>
                             {payload && (
@@ -2928,7 +2857,7 @@ export function ChatPage() {
                                 subAgents={payload.subAgents}
                                 fileOps={payload.fileOps}
                                 webFetches={payload.webFetches}
-                                {...(titleTrim ? { headerOverride: titleTrim } : {})}
+                                headerOverride={copHeader}
                                 shimmer={copTimelineLive}
                                 live={copTimelineLive}
                                 accessToken={accessToken}
@@ -2961,7 +2890,6 @@ export function ChatPage() {
                 </div>
               )}
 
-              {/* 流式：顶层代码 / 子代理 / 文件 / 抓取（已出现在 COP CopTimeline 的 id 不再渲染） */}
               {allStreamItemsForUi.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
@@ -2969,15 +2897,24 @@ export function ChatPage() {
                   transition={{ duration: 0.3, ease: 'easeOut' }}
                   style={{ maxWidth: '663px' }}
                 >
-                  <div ref={copCodeExecScrollRef} style={{ paddingLeft: '24px', paddingTop: '6px', display: 'flex', flexDirection: 'column' }}>
+                  <div
+                    ref={copCodeExecScrollRef}
+                    style={{
+                      paddingLeft: COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
+                      paddingTop: '6px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
                     {allStreamItemsForUi.map((entry, idx) => {
+                      const total = allStreamItemsForUi.length
                       const isFirst = idx === 0
-                      const isLast = idx === allStreamItemsForUi.length - 1
-                      const multiItems = allStreamItemsForUi.length >= 2
-                      const isShell = entry.kind === 'code' && entry.item.language === 'shell'
-                      const dotTop = entry.kind === 'code' && !isShell
-                        ? LIVE_TIMELINE_CODE_DOT_TOP
-                        : LIVE_TIMELINE_DOT_TOP
+                      const isLast = idx === total - 1
+                      const multiItems = total >= 2
+                      const dotTop =
+                        entry.kind === 'code' && entry.item.language !== 'shell'
+                          ? COP_TIMELINE_PYTHON_DOT_TOP
+                          : COP_TIMELINE_DOT_TOP
                       const dotColor = entry.kind === 'code'
                         ? codeExecutionAccentColor(entry.item.status)
                         : entry.kind === 'agent'
@@ -2985,32 +2922,33 @@ export function ChatPage() {
                           : entry.kind === 'fileop'
                             ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
                             : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
+                      const isShell = entry.kind === 'code' && entry.item.language === 'shell'
                       return (
                         <motion.div
                           key={entry.id}
                           initial={{ opacity: 0, y: 6 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.25, ease: 'easeOut' }}
-                          style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}
                         >
-                          {!isLast && (
-                            <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + 8}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                          )}
-                          {multiItems && !isFirst && (
-                            <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                          )}
-                          <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: '8px', height: '8px', borderRadius: '50%', background: dotColor, border: '2px solid var(--c-bg-page)', zIndex: 1 }} />
-                          {entry.kind === 'code' && (isShell
-                            ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
-                            : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
-                          )}
-                          {entry.kind === 'agent' && (
-                            <SubAgentBlock sourceTool={entry.item.sourceTool} nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
-                          )}
-                          {entry.kind === 'fileop' && (
-                            <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
-                          )}
-                          {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} live />}
+                          <CopTimelineUnifiedRow
+                            isFirst={isFirst}
+                            isLast={isLast}
+                            multiItems={multiItems}
+                            dotTop={dotTop}
+                            dotColor={dotColor}
+                          >
+                            {entry.kind === 'code' && (isShell
+                              ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
+                              : <CodeExecutionCard language={entry.item.language} code={entry.item.code} output={entry.item.output} errorMessage={entry.item.errorMessage} status={entry.item.status} onOpen={() => openCodePanel(entry.item as CodeExecution)} isActive={codePanelExecution?.id === entry.item.id} />
+                            )}
+                            {entry.kind === 'agent' && (
+                              <SubAgentBlock sourceTool={entry.item.sourceTool} nickname={entry.item.nickname} personaId={entry.item.personaId} input={entry.item.input} output={entry.item.output} status={entry.item.status} error={entry.item.error} live={isStreaming} currentRunId={entry.item.currentRunId} accessToken={accessToken} baseUrl={baseUrl} />
+                            )}
+                            {entry.kind === 'fileop' && (
+                              <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth />
+                            )}
+                            {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} live />}
+                          </CopTimelineUnifiedRow>
                         </motion.div>
                       )
                     })}

@@ -1,14 +1,25 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, Fragment, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Globe, Loader2, Search } from 'lucide-react'
 import { useTypewriter } from '../hooks/useTypewriter'
 import type { WebSource } from '../storage'
 import type { SubAgentRef, FileOpRef, WebFetchRef } from '../storage'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
-import { CodeExecutionCard, type CodeExecution } from './ThinkingBlock'
+import { CodeExecutionCard, type CodeExecution } from './CodeExecutionCard'
+import { MarkdownRenderer } from './MarkdownRenderer'
 import { useLocale } from '../contexts/LocaleContext'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
+
+/** CopTimeline 左轴点线几何；ChatPage 顶层条与之对齐 */
+export const COP_TIMELINE_DOT_NUDGE_Y = 1
+export const COP_TIMELINE_DOT_TOP = 5 + COP_TIMELINE_DOT_NUDGE_Y
+export const COP_TIMELINE_DOT_SIZE = 8
+export const COP_TIMELINE_SHELL_DOT_TOP = 9 + COP_TIMELINE_DOT_NUDGE_Y
+export const COP_TIMELINE_PYTHON_DOT_TOP = 16 + COP_TIMELINE_DOT_NUDGE_Y
+export const COP_TIMELINE_LINE_LEFT_PX = -16
+export const COP_TIMELINE_DOT_LEFT_PX = -19
+export const COP_TIMELINE_CONTENT_PADDING_LEFT_PX = 24
 
 export type WebSearchPhaseStep = {
   id: string
@@ -41,6 +52,8 @@ type Props = {
   live?: boolean
   accessToken?: string
   baseUrl?: string
+  /** 与 narrative / 工具行同一套 unified 点线，仅多一行 Markdown */
+  assistantThinking?: { markdown: string; live?: boolean } | null
 }
 
 function TypewriterText({ text, className, live }: { text: string; className?: string; live?: boolean }) {
@@ -105,6 +118,19 @@ function QueryPill({ text, live }: { text: string; live?: boolean }) {
       </span>
     </span>
   )
+}
+
+function AssistantThinkingMarkdown({ markdown, live }: { markdown: string; live: boolean }) {
+  const displayed = useTypewriter(markdown, !live)
+  const { t } = useLocale()
+  if (!markdown.trim() && live) {
+    return (
+      <span className="thinking-shimmer" style={{ fontSize: '14px', lineHeight: 1.6, color: 'var(--c-text-secondary)' }}>
+        {t.assistantStreamThinkingPlaceholder}
+      </span>
+    )
+  }
+  return <MarkdownRenderer content={live ? displayed : markdown} disableMath />
 }
 
 function TimelineNarrativeBody({ text, tone = 'secondary', live }: { text: string; tone?: 'primary' | 'secondary'; live?: boolean }) {
@@ -307,25 +333,79 @@ export function WebFetchItem({ fetch: f, live }: { fetch: WebFetchRef; live?: bo
   )
 }
 
-const TIMELINE_DOT_NUDGE_Y = 1
-const DOT_TOP = 5 + TIMELINE_DOT_NUDGE_Y
-const DOT_SIZE = 8
-const SHELL_DOT_TOP = 9 + TIMELINE_DOT_NUDGE_Y
-// CodeExecutionCard: border(0.5) + padding(6) + icon-center(14) = 20.5 → dot top ≈ 16
-const PYTHON_DOT_TOP = 16 + TIMELINE_DOT_NUDGE_Y
+const DOT_TOP = COP_TIMELINE_DOT_TOP
+const DOT_SIZE = COP_TIMELINE_DOT_SIZE
+const SHELL_DOT_TOP = COP_TIMELINE_SHELL_DOT_TOP
+const PYTHON_DOT_TOP = COP_TIMELINE_PYTHON_DOT_TOP
 
-export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl }: Props) {
+/** 与 unified 列表项同一套点线（ChatPage 顶层工具条等复用） */
+export function CopTimelineUnifiedRow({
+  isFirst,
+  isLast,
+  multiItems,
+  dotTop = COP_TIMELINE_DOT_TOP,
+  dotColor,
+  paddingBottom = 6,
+  children,
+}: {
+  isFirst: boolean
+  isLast: boolean
+  multiItems: boolean
+  dotTop?: number
+  dotColor: string
+  paddingBottom?: number
+  children: ReactNode
+}) {
+  return (
+    <div style={{ position: 'relative', paddingBottom: isLast ? 0 : paddingBottom }}>
+      {!isLast && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${COP_TIMELINE_LINE_LEFT_PX}px`,
+            top: `${dotTop + COP_TIMELINE_DOT_SIZE}px`,
+            bottom: 0,
+            width: '1.5px',
+            background: 'var(--c-border-subtle)',
+            zIndex: 0,
+          }}
+        />
+      )}
+      {multiItems && !isFirst && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${COP_TIMELINE_LINE_LEFT_PX}px`,
+            top: 0,
+            height: `${dotTop}px`,
+            width: '1.5px',
+            background: 'var(--c-border-subtle)',
+            zIndex: 0,
+          }}
+        />
+      )}
+      <div
+        style={{
+          position: 'absolute',
+          left: `${COP_TIMELINE_DOT_LEFT_PX}px`,
+          top: `${dotTop}px`,
+          width: `${COP_TIMELINE_DOT_SIZE}px`,
+          height: `${COP_TIMELINE_DOT_SIZE}px`,
+          borderRadius: '50%',
+          background: dotColor,
+          border: '2px solid var(--c-bg-page)',
+          zIndex: 1,
+        }}
+      />
+      {children}
+    </div>
+  )
+}
+
+export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, assistantThinking }: Props) {
   const { t } = useLocale()
+  /** 首屏：历史已完结的 COP 默认收起；流式结束后不自动收起，避免「输出完就只剩一行标题」 */
   const [collapsed, setCollapsed] = useState(() => isComplete)
-  const prevIsCompleteRef = useRef(isComplete)
-  useEffect(() => {
-    if (isComplete && !prevIsCompleteRef.current) {
-      const timer = setTimeout(() => setCollapsed(true), 80)
-      prevIsCompleteRef.current = isComplete
-      return () => clearTimeout(timer)
-    }
-    prevIsCompleteRef.current = isComplete
-  }, [isComplete])
 
   const visibleSteps = steps.filter((step) => step.kind !== 'finished')
   const textEntries = narratives ?? []
@@ -334,9 +414,22 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const fileOpCount = fileOps?.length ?? 0
   const webFetchCount = webFetches?.length ?? 0
   const [hovered, setHovered] = useState(false)
-  if (visibleSteps.length === 0 && textEntries.length === 0 && codeExecCount === 0 && subAgentCount === 0 && fileOpCount === 0 && webFetchCount === 0 && !headerOverride) return null
+  const hasAssistantThinking = !!(assistantThinking && (assistantThinking.markdown.trim() !== '' || assistantThinking.live))
+  if (
+    visibleSteps.length === 0 &&
+    textEntries.length === 0 &&
+    codeExecCount === 0 &&
+    subAgentCount === 0 &&
+    fileOpCount === 0 &&
+    webFetchCount === 0 &&
+    !headerOverride &&
+    !hasAssistantThinking
+  ) {
+    return null
+  }
 
   type UEntry =
+    | { kind: 'thinking'; id: string; seq: number; item: { markdown: string; live: boolean } }
     | { kind: 'step'; id: string; seq: number; item: WebSearchPhaseStep }
     | { kind: 'text'; id: string; seq: number; item: SearchNarrative }
     | { kind: 'code'; id: string; seq: number; item: CodeExecution }
@@ -363,11 +456,27 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   for (const wf of (webFetches ?? [])) {
     if (wf.seq != null) allUnified.push({ kind: 'fetch', id: wf.id, seq: wf.seq, item: wf })
   }
-  const totalUnifiableItems = visibleSteps.length + textEntries.length + codeExecCount + subAgentCount + fileOpCount + webFetchCount
+  if (hasAssistantThinking) {
+    allUnified.push({
+      kind: 'thinking',
+      id: '_assistant_thinking',
+      seq: Number.MIN_SAFE_INTEGER,
+      item: { markdown: assistantThinking!.markdown, live: !!assistantThinking!.live },
+    })
+  }
+  const totalUnifiableItems =
+    visibleSteps.length +
+    textEntries.length +
+    codeExecCount +
+    subAgentCount +
+    fileOpCount +
+    webFetchCount +
+    (hasAssistantThinking ? 1 : 0)
   const hasContent = totalUnifiableItems > 0 || sources.length > 0
   const useUnified = allUnified.length === totalUnifiableItems && totalUnifiableItems > 0
   if (useUnified) {
     const priority: Record<UEntry['kind'], number> = {
+      thinking: -1,
       step: 0,
       text: 1,
       code: 2,
@@ -446,7 +555,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: visibleSteps.length > 0 || textEntries.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 || fileOpCount > 0 ? '24px' : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: visibleSteps.length > 0 || textEntries.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 || fileOpCount > 0 || hasAssistantThinking ? `${COP_TIMELINE_CONTENT_PADDING_LEFT_PX}px` : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
 
               <AnimatePresence initial={false}>
               {!useUnified && visibleSteps.map((step, idx) => {
@@ -563,30 +672,33 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                     const isLast = idx === allUnified.length - 1
                     const multiItems = allUnified.length >= 2
                     const dotTop = entry.kind === 'code' && entry.item.language !== 'shell' ? PYTHON_DOT_TOP : DOT_TOP
-                    const dotColor = entry.kind === 'step'
-                      ? entry.item.status === 'active'
+                    const dotColor = entry.kind === 'thinking'
+                      ? entry.item.live && !entry.item.markdown.trim()
                         ? 'var(--c-text-secondary)'
-                        : 'var(--c-text-muted)'
-                      : entry.kind === 'text'
-                        ? 'var(--c-border-mid)'
-                        : entry.kind === 'code'
-                          ? codeExecutionAccentColor(entry.item.status)
-                          : entry.kind === 'agent'
-                            ? entry.item.status === 'completed' ? 'var(--c-text-muted)' : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)'
-                            : entry.kind === 'fileop'
-                              ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
-                              : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
+                        : 'var(--c-border-mid)'
+                      : entry.kind === 'step'
+                        ? entry.item.status === 'active'
+                          ? 'var(--c-text-secondary)'
+                          : 'var(--c-text-muted)'
+                        : entry.kind === 'text'
+                          ? 'var(--c-border-mid)'
+                          : entry.kind === 'code'
+                            ? codeExecutionAccentColor(entry.item.status)
+                            : entry.kind === 'agent'
+                              ? entry.item.status === 'completed' ? 'var(--c-text-muted)' : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)'
+                              : entry.kind === 'fileop'
+                                ? entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'running' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
+                                : entry.item.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : entry.item.status === 'fetching' ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
                     const dotBackground = dotColor
-                    const dotBorder = '2px solid var(--c-bg-page)'
                     return (
-                      <div key={entry.id} style={{ position: 'relative', paddingBottom: isLast ? 0 : '6px' }}>
-                        {!isLast && (
-                          <div style={{ position: 'absolute', left: '-16px', top: `${dotTop + DOT_SIZE}px`, bottom: 0, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                        )}
-                        {multiItems && !isFirst && (
-                          <div style={{ position: 'absolute', left: '-16px', top: 0, height: `${dotTop}px`, width: '1.5px', background: 'var(--c-border-subtle)', zIndex: 0 }} />
-                        )}
-                        <div style={{ position: 'absolute', left: '-19px', top: `${dotTop}px`, width: `${DOT_SIZE}px`, height: `${DOT_SIZE}px`, borderRadius: '50%', background: dotBackground, border: dotBorder, zIndex: 1 }} />
+                      <CopTimelineUnifiedRow
+                        key={entry.id}
+                        isFirst={isFirst}
+                        isLast={isLast}
+                        multiItems={multiItems}
+                        dotTop={dotTop}
+                        dotColor={dotBackground}
+                      >
                         {entry.kind === 'step' && (
                           <div>
                             <div
@@ -643,6 +755,9 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                             )}
                           </div>
                         )}
+                        {entry.kind === 'thinking' && (
+                          <AssistantThinkingMarkdown markdown={entry.item.markdown} live={entry.item.live} />
+                        )}
                         {entry.kind === 'text' && <TimelineNarrativeBody text={entry.item.text} live={!!live} />}
                         {entry.kind === 'code' && (entry.item.language === 'shell'
                           ? <ExecutionCard variant="shell" code={entry.item.code} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth={!!live} />
@@ -655,7 +770,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                           <ExecutionCard variant="fileop" toolName={entry.item.toolName} label={entry.item.label} output={entry.item.output} status={entry.item.status} errorMessage={entry.item.errorMessage} smooth={!!live} />
                         )}
                         {entry.kind === 'fetch' && <WebFetchItem fetch={entry.item} live={!!live} />}
-                      </div>
+                      </CopTimelineUnifiedRow>
                     )
                   })}
                 </div>

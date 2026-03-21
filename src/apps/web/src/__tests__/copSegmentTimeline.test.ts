@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
 
 describe('copTimelinePayloadForSegment', () => {
-  it('无匹配富数据时返回 null', () => {
+  it('无匹配富数据时仍返回空壳，供 COP 标题行挂载', () => {
     const r = copTimelinePayloadForSegment(
       { type: 'cop', title: null, calls: [{ toolCallId: 'x', toolName: 'search_tools', arguments: {} }] },
       { sources: [] },
     )
-    expect(r).toBeNull()
+    expect(r).toEqual({ steps: [], sources: [] })
   })
 
   it('按 tool_call_id 筛出代码执行', () => {

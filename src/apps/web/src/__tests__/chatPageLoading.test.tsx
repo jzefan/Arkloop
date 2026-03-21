@@ -94,11 +94,6 @@ vi.mock('../components/MessageBubble', () => ({
   MessageBubble: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
 }))
 
-vi.mock('../components/ThinkingBlock', () => ({
-  ThinkingBlock: () => <div />,
-  CodeExecutionCard: () => <div />,
-}))
-
 vi.mock('../components/ExecutionCard', () => ({
   ExecutionCard: () => <div />,
 }))

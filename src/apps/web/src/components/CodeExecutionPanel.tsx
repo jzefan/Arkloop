@@ -3,7 +3,7 @@ import { X, Code2, Terminal } from 'lucide-react'
 import hljs from 'highlight.js/lib/core'
 import python from 'highlight.js/lib/languages/python'
 import bash from 'highlight.js/lib/languages/bash'
-import type { CodeExecution } from './ThinkingBlock'
+import type { CodeExecution } from './CodeExecutionCard'
 
 hljs.registerLanguage('python', python)
 hljs.registerLanguage('bash', bash)
