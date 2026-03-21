@@ -428,6 +428,7 @@ export function ChatPage() {
   // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
   const [thinkingDraft, setThinkingDraft] = useState('')
   const thinkingDraftRef = useRef('')
+  const thinkingStartedAtRef = useRef<number | null>(null)
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
 
@@ -577,6 +578,8 @@ export function ChatPage() {
     resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
     setThinkingDraft('')
+    thinkingStartedAtRef.current = null
+    thinkingStartedAtRef.current = null
     setTopLevelCodeExecutions([])
     setSegments([])
     activeSegmentIdRef.current = null
@@ -769,14 +772,6 @@ export function ChatPage() {
   const disconnectSSE = sse.disconnect
 
   const isStreaming = activeRunId != null
-  const hasLiveStreamThinkingUi =
-    isStreaming &&
-    (thinkingDraft.trim() !== '' ||
-      segments.some(
-        (s) =>
-          s.mode !== 'hidden' &&
-          (s.isStreaming || s.content.trim() !== '' || s.label.trim() !== ''),
-      ))
 
   const canCancel =
     activeRunId != null &&
@@ -1091,6 +1086,8 @@ export function ChatPage() {
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
+    thinkingStartedAtRef.current = null
+    thinkingStartedAtRef.current = null
     setTopLevelCodeExecutions([])
     setCancelSubmitting(false)
     setAwaitingInput(false)
@@ -1170,6 +1167,8 @@ export function ChatPage() {
     setSegments([])
     activeSegmentIdRef.current = null
     setThinkingDraft('')
+    thinkingStartedAtRef.current = null
+    thinkingStartedAtRef.current = null
     setTopLevelCodeExecutions([])
     setTopLevelSubAgents([])
     setTopLevelFileOps([])
@@ -1305,6 +1304,9 @@ export function ChatPage() {
         const isThinking = obj.channel === 'thinking'
         const activeSeg = activeSegmentIdRef.current
         if (isThinking) {
+          if (thinkingDraftRef.current === '') {
+            thinkingStartedAtRef.current = Date.now()
+          }
           setThinkingDraft((prev) => prev + delta)
           continue
         }
@@ -1608,6 +1610,7 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        thinkingStartedAtRef.current = null
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
@@ -1716,6 +1719,7 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        thinkingStartedAtRef.current = null
         setTopLevelCodeExecutions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
@@ -1747,6 +1751,7 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        thinkingStartedAtRef.current = null
         setTopLevelCodeExecutions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
@@ -1820,6 +1825,7 @@ export function ChatPage() {
 
     setActiveRunId(null)
     setThinkingDraft('')
+    thinkingStartedAtRef.current = null
     setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -2605,7 +2611,6 @@ export function ChatPage() {
                           steps={[]}
                           sources={[]}
                           isComplete
-                          headerOverride={t.assistantCopDefaultTitle}
                           assistantThinking={{ markdown: msgThinking.thinkingText, live: false }}
                           accessToken={accessToken}
                           baseUrl={baseUrl}
@@ -2639,6 +2644,7 @@ export function ChatPage() {
                             const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
                             if (!payload && histWidgets.length === 0) return null
                             const copHeader = seg.title?.trim() || t.assistantCopDefaultTitle
+                            const firstHistCopSi = historicalTurn!.segments.findIndex((s) => s.type === 'cop')
                             return (
                               <Fragment key={`${msg.id}-acw-${si}`}>
                                 {payload && (
@@ -2653,6 +2659,14 @@ export function ChatPage() {
                                     fileOps={payload.fileOps}
                                     webFetches={payload.webFetches}
                                     headerOverride={copHeader}
+                                    assistantThinking={
+                                      !isSearchThread &&
+                                      firstHistCopSi === si &&
+                                      msgThinking != null &&
+                                      msgThinking.thinkingText.trim() !== ''
+                                        ? { markdown: msgThinking.thinkingText, live: false }
+                                        : undefined
+                                    }
                                     accessToken={accessToken}
                                     baseUrl={baseUrl}
                                   />
@@ -2788,25 +2802,14 @@ export function ChatPage() {
                 )
               })}
 
-              {!isSearchThread &&
-                (thinkingDraft.trim() !== '' || hasLiveStreamThinkingUi) && (
-                <CopTimeline
-                  steps={[]}
-                  sources={[]}
-                  isComplete={false}
-                  headerOverride={t.assistantStreamThinkingPlaceholder}
-                  assistantThinking={{ markdown: thinkingDraft, live: isStreaming }}
-                  accessToken={accessToken}
-                  baseUrl={baseUrl}
-                />
-              )}
-
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
               {liveAssistantTurn && liveAssistantTurn.segments.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
                   {liveAssistantTurn.segments.map((seg, si) => {
                     const lastSegIdx = liveAssistantTurn.segments.length - 1
                     const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
+                    const firstLiveCopSegIdx =
+                      liveAssistantTurn.segments.findIndex((s) => s.type === 'cop')
                     const mdTypewriterDone =
                       !isStreaming ||
                       lastTurnSeg?.type !== 'text' ||
@@ -2860,6 +2863,14 @@ export function ChatPage() {
                                 headerOverride={copHeader}
                                 shimmer={copTimelineLive}
                                 live={copTimelineLive}
+                                assistantThinking={
+                                  !isSearchThread &&
+                                  firstLiveCopSegIdx === si &&
+                                  (thinkingDraft.trim() !== '' || isStreaming)
+                                    ? { markdown: thinkingDraft, live: isStreaming }
+                                    : undefined
+                                }
+                                thinkingStartedAt={firstLiveCopSegIdx === si ? (thinkingStartedAtRef.current ?? undefined) : undefined}
                                 accessToken={accessToken}
                                 baseUrl={baseUrl}
                               />
