@@ -1064,6 +1064,7 @@ func desktopPersonaResolution(
 		rc.ToolBudget = map[string]any{}
 		rc.PerToolSoftLimits = tools.DefaultPerToolSoftLimits()
 		rc.ToolDenylist = nil
+		rc.StreamThinking = true
 		rc.PersonaDefinition = resolution.Definition
 
 		limits := sharedexec.NormalizePlatformLimits(sharedexec.PlatformLimits{
@@ -1103,6 +1104,7 @@ func desktopPersonaResolution(
 
 		if resolution.Definition != nil {
 			def := resolution.Definition
+			rc.StreamThinking = def.StreamThinking
 			rc.ToolDenylist = append([]string(nil), def.ToolDenylist...)
 			if len(def.ToolAllowlist) > 0 {
 				narrowed := make(map[string]struct{}, len(def.ToolAllowlist))
