@@ -345,6 +345,29 @@ func distillAfterRun(provider memory.MemoryProvider, pool *pgxpool.Pool, configR
 			return
 		}
 
+		// distill 成功后用最后一条 user 消息做 query 重建快照
+		if pool != nil {
+			userQuery := lastUserMessageText(rc.Messages)
+			if userQuery != "" {
+				snapCtx, snapCancel := context.WithTimeout(context.Background(), snapshotFindTimeout)
+				block, hits, ok := rebuildSnapshotBlock(snapCtx, provider, ident, map[memory.MemoryScope][]string{
+					memory.MemoryScopeUser: {userQuery},
+				})
+				snapCancel()
+				if ok {
+					uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer uCancel()
+					if err := snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, block, hitsToCache(hits)); err != nil {
+						slog.Warn("memory: distill snapshot upsert failed",
+							"account_id", accountID.String(),
+							"session_id", sessionID,
+							"err", err.Error(),
+						)
+					}
+				}
+			}
+		}
+
 		if costPerCommit > 0 && pool != nil {
 			uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer uCancel()
