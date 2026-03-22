@@ -5,7 +5,13 @@ import { useLocation } from 'react-router-dom'
 import type { GlobalRun, AdminRunDetail, AdminRunUsageItem, AdminRunUsageAggregate, RunEventRaw } from '../api/runs'
 import { getAdminRunDetail, fetchRunEventsOnce } from '../api/runs'
 import { TurnView } from './TurnView'
-import { buildThreadTurns, buildTurns, type ThreadTurn } from '@arkloop/shared'
+import {
+  buildThreadTurns,
+  buildTurns,
+  jsonStringifyForDebugDisplay,
+  redactDataUrlsInString,
+  type ThreadTurn,
+} from '@arkloop/shared'
 import { Badge, type BadgeVariant } from './Badge'
 import { useLocale } from '../contexts/LocaleContext'
 
@@ -738,7 +744,8 @@ function formatEventTime(value: string): string {
 
 function UserPromptBlock({ prompt, label }: { prompt: string; label: string }) {
   const [open, setOpen] = useState(false)
-  const preview = prompt.slice(0, 100) + (prompt.length > 100 ? '…' : '')
+  const safe = redactDataUrlsInString(prompt)
+  const preview = safe.slice(0, 100) + (safe.length > 100 ? '…' : '')
 
   return (
     <div className="mb-3 rounded border border-[var(--c-border)] overflow-hidden">
@@ -756,7 +763,7 @@ function UserPromptBlock({ prompt, label }: { prompt: string; label: string }) {
       {open && (
         <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-2">
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--c-text-secondary)]">
-            {prompt}
+            {redactDataUrlsInString(prompt)}
           </pre>
         </div>
       )}
@@ -792,7 +799,7 @@ function RawEventRow({ event }: RawEventRowProps) {
       {open && hasData && (
         <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-3 py-2">
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--c-text-secondary)]">
-            {JSON.stringify(event.data, null, 2)}
+            {jsonStringifyForDebugDisplay(event.data, 2)}
           </pre>
         </div>
       )}

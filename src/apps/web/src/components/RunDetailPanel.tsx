@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { TurnView, buildThreadTurns, buildTurns } from '@arkloop/shared'
+import { TurnView, buildThreadTurns, buildTurns, jsonStringifyForDebugDisplay } from '@arkloop/shared'
 import type { LlmTurn, RunEventRaw, ThreadTurn } from '@arkloop/shared'
 import type { RunDetail, RunEvent } from '../api'
 import { getRunDetail, listRunEvents } from '../api'
@@ -52,16 +52,19 @@ function formatTime(value: string | undefined): string {
 }
 
 function formatEventJSON(event: RunEvent): string {
-  return JSON.stringify({
-    event_id: event.event_id,
-    run_id: event.run_id,
-    seq: event.seq,
-    ts: event.ts,
-    type: event.type,
-    tool_name: event.tool_name,
-    error_class: event.error_class,
-    data: event.data,
-  }, null, 2)
+  return jsonStringifyForDebugDisplay(
+    {
+      event_id: event.event_id,
+      run_id: event.run_id,
+      seq: event.seq,
+      ts: event.ts,
+      type: event.type,
+      tool_name: event.tool_name,
+      error_class: event.error_class,
+      data: event.data,
+    },
+    2,
+  )
 }
 
 function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
