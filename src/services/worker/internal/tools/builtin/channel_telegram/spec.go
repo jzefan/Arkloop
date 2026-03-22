@@ -90,7 +90,7 @@ var SendFileAgentSpec = tools.AgentToolSpec{
 var SendFileLlmSpec = llm.ToolSpec{
 	Name: ToolSendFile,
 	Description: sp(
-		"Send a media file to the current Telegram chat. The file_url must be a publicly accessible URL (S3, CDN, etc.). " +
+		"Send a media file to the current Telegram chat. The file_url can be either a publicly accessible URL (S3, CDN) OR a local file path on the bot's filesystem (e.g., /Users/x/Downloads/file.pdf). " +
 			"Use kind to specify the media type: photo, document, audio, video, voice, or animation.",
 	),
 	JSONSchema: map[string]any{
@@ -98,7 +98,7 @@ var SendFileLlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"file_url": map[string]any{
 				"type":        "string",
-				"description": "Public URL to the file (S3, CDN, or any publicly accessible URL)",
+				"description": "URL to the file (https://...) or local file path (/Users/x/Downloads/...)",
 			},
 			"kind": map[string]any{
 				"type": "string",

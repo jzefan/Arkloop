@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -189,8 +192,100 @@ func (c *Client) EditMessageText(ctx context.Context, token string, req EditMess
 	return c.callJSON(ctx, token, "editMessageText", req, nil)
 }
 
-// SendPhoto sends a photo by URL or file_id.
+// isLocalPath returns true if the path looks like a local filesystem path.
+func isLocalPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	// Unix absolute path, home dir, or Windows drive letter
+	return strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~/") ||
+		(len(path) >= 2 && path[1] == ':')
+}
+
+// sendMediaMultipart uploads a local file using multipart/form-data.
+func (c *Client) sendMediaMultipart(ctx context.Context, token, method, fieldName, chatID, filePath, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if strings.HasPrefix(filePath, "~/") {
+		home := os.Getenv("HOME")
+		if home != "" {
+			filePath = filepath.Join(home, filePath[2:])
+		}
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: open file %q: %w", filePath, err)
+	}
+	defer file.Close()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: create form file: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("telegrambot: copy file content: %w", err)
+	}
+
+	// Add fields
+	writer.WriteField("chat_id", chatID)
+	if caption != "" {
+		writer.WriteField("caption", caption)
+	}
+	if parseMode != "" {
+		writer.WriteField("parse_mode", parseMode)
+	}
+	if messageThreadID != "" {
+		writer.WriteField("message_thread_id", messageThreadID)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("telegrambot: close writer: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/bot%s/%s", c.baseURL, url.PathEscape(token), method)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body.Bytes()))
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: new request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: multipart upload: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return c.parseSentMessageResp(resp)
+}
+
+func (c *Client) parseSentMessageResp(resp *http.Response) (*SentMessage, error) {
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("telegrambot: upload failed status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var envelope apiEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("telegrambot: decode response: %w", err)
+	}
+	if !envelope.OK {
+		return nil, fmt.Errorf("telegrambot: upload failed: %s", envelope.Description)
+	}
+	var result SentMessage
+	if err := json.Unmarshal(envelope.Result, &result); err != nil {
+		return nil, fmt.Errorf("telegrambot: unmarshal result: %w", err)
+	}
+	return &result, nil
+}
+
+// SendPhoto sends a photo by URL, file_id, or local file path.
 func (c *Client) SendPhoto(ctx context.Context, token string, chatID, photo, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(photo) {
+		return c.sendMediaMultipart(ctx, token, "sendPhoto", "photo", chatID, photo, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "photo": photo}
 	if caption != "" {
 		req["caption"] = caption
@@ -208,8 +303,11 @@ func (c *Client) SendPhoto(ctx context.Context, token string, chatID, photo, cap
 	return &result, nil
 }
 
-// SendDocument sends a document by URL or file_id.
+// SendDocument sends a document by URL, file_id, or local file path.
 func (c *Client) SendDocument(ctx context.Context, token string, chatID, document, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(document) {
+		return c.sendMediaMultipart(ctx, token, "sendDocument", "document", chatID, document, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "document": document}
 	if caption != "" {
 		req["caption"] = caption
@@ -227,8 +325,11 @@ func (c *Client) SendDocument(ctx context.Context, token string, chatID, documen
 	return &result, nil
 }
 
-// SendAudio sends an audio file by URL or file_id.
+// SendAudio sends an audio file by URL, file_id, or local file path.
 func (c *Client) SendAudio(ctx context.Context, token string, chatID, audio, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(audio) {
+		return c.sendMediaMultipart(ctx, token, "sendAudio", "audio", chatID, audio, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "audio": audio}
 	if caption != "" {
 		req["caption"] = caption
@@ -246,8 +347,11 @@ func (c *Client) SendAudio(ctx context.Context, token string, chatID, audio, cap
 	return &result, nil
 }
 
-// SendVideo sends a video by URL or file_id.
+// SendVideo sends a video by URL, file_id, or local file path.
 func (c *Client) SendVideo(ctx context.Context, token string, chatID, video, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(video) {
+		return c.sendMediaMultipart(ctx, token, "sendVideo", "video", chatID, video, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "video": video}
 	if caption != "" {
 		req["caption"] = caption
@@ -265,8 +369,11 @@ func (c *Client) SendVideo(ctx context.Context, token string, chatID, video, cap
 	return &result, nil
 }
 
-// SendVoice sends a voice note by URL or file_id.
+// SendVoice sends a voice note by URL, file_id, or local file path.
 func (c *Client) SendVoice(ctx context.Context, token string, chatID, voice, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(voice) {
+		return c.sendMediaMultipart(ctx, token, "sendVoice", "voice", chatID, voice, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "voice": voice}
 	if caption != "" {
 		req["caption"] = caption
@@ -284,8 +391,11 @@ func (c *Client) SendVoice(ctx context.Context, token string, chatID, voice, cap
 	return &result, nil
 }
 
-// SendAnimation sends an animation (GIF) by URL or file_id.
+// SendAnimation sends an animation (GIF) by URL, file_id, or local file path.
 func (c *Client) SendAnimation(ctx context.Context, token string, chatID, animation, caption, parseMode, messageThreadID string) (*SentMessage, error) {
+	if isLocalPath(animation) {
+		return c.sendMediaMultipart(ctx, token, "sendAnimation", "animation", chatID, animation, caption, parseMode, messageThreadID)
+	}
 	req := map[string]any{"chat_id": chatID, "animation": animation}
 	if caption != "" {
 		req["caption"] = caption
