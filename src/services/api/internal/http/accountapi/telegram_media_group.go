@@ -143,7 +143,7 @@ func flushTelegramMediaGroupBucket(key string) {
 		return
 	}
 	bgCtx := context.Background()
-	if err := conn.processTelegramMediaGroupMerged(bgCtx, traceID, ch, token, items, *merged, persona); err != nil {
+	if err := conn.processTelegramMediaGroupMerged(bgCtx, traceID, ch, token, cfg.BotUsername, items, *merged, persona); err != nil {
 		slog.Error("telegram_media_group_flush", "phase", "persist", "err", err)
 	}
 }
@@ -204,6 +204,7 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	traceID string,
 	ch data.Channel,
 	token string,
+	botUsername string,
 	originals []telegramUpdate,
 	incoming telegramIncomingMessage,
 	persona *data.Persona,
@@ -266,12 +267,16 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	}
 
 	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
-		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText))
+		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText), botUsername)
 		if ok && cmd == "/new" {
 			var replyText string
 			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
 				replyText = "当前会话未配置 persona。"
 			} else if identity.UserID == nil {
+				replyText = "无权限。"
+			} else if membership, err := c.membershipRepo.GetByAccountAndUser(ctx, ch.AccountID, *identity.UserID); err != nil {
+				return err
+			} else if membership == nil || membership.Role != "account_admin" {
 				replyText = "无权限。"
 			} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
 				return err
