@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
 
+const call = (id: string, name: string, seq: number) =>
+  ({ kind: 'call' as const, call: { toolCallId: id, toolName: name, arguments: {} }, seq })
+
 describe('copTimelinePayloadForSegment', () => {
   it('无匹配富数据时仍返回空壳，供 COP 标题行挂载', () => {
     const r = copTimelinePayloadForSegment(
-      { type: 'cop', title: null, calls: [{ toolCallId: 'x', toolName: 'search_tools', arguments: {} }] },
+      { type: 'cop', title: null, items: [call('x', 'search_tools', 1)] },
       { sources: [] },
     )
     expect(r).toEqual({ steps: [], sources: [] })
@@ -15,9 +18,9 @@ describe('copTimelinePayloadForSegment', () => {
       {
         type: 'cop',
         title: 't',
-        calls: [
-          { toolCallId: 'a', toolName: 'python_execute', arguments: {} },
-          { toolCallId: 'b', toolName: 'unknown', arguments: {} },
+        items: [
+          call('a', 'python_execute', 2),
+          call('b', 'unknown', 3),
         ],
       },
       {
@@ -28,9 +31,8 @@ describe('copTimelinePayloadForSegment', () => {
         sources: [],
       },
     )
-    expect(r).not.toBeNull()
-    expect(r!.codeExecutions).toEqual([{ id: 'a', language: 'python', code: '1', status: 'success', seq: 2 }])
-    expect(r!.steps).toEqual([])
+    expect(r.codeExecutions).toEqual([{ id: 'a', language: 'python', code: '1', status: 'success', seq: 2 }])
+    expect(r.steps).toEqual([])
   })
 
   it('含 searching 步骤时附带 sources', () => {
@@ -38,7 +40,7 @@ describe('copTimelinePayloadForSegment', () => {
       {
         type: 'cop',
         title: null,
-        calls: [{ toolCallId: 'ws1', toolName: 'web_search', arguments: {} }],
+        items: [call('ws1', 'web_search', 1)],
       },
       {
         searchSteps: [
@@ -47,8 +49,7 @@ describe('copTimelinePayloadForSegment', () => {
         sources: [{ title: 'u', url: 'https://u.test' }],
       },
     )
-    expect(r).not.toBeNull()
-    expect(r!.sources).toHaveLength(1)
+    expect(r.sources).toHaveLength(1)
   })
 
   it('toolCallIdsInCopTimelines 汇总 COP 时间轴已占用的 id', () => {
@@ -58,7 +59,7 @@ describe('copTimelinePayloadForSegment', () => {
           {
             type: 'cop',
             title: null,
-            calls: [{ toolCallId: 'fo1', toolName: 'search_tools', arguments: {} }],
+            items: [call('fo1', 'search_tools', 1)],
           },
         ],
       },
