@@ -407,6 +407,149 @@ func TestRecordChannelDeliverySuccessRollsBackOnLedgerFailure(t *testing.T) {
 	}
 }
 
+func TestTerminalStatusMessagePrefersProviderMessage(t *testing.T) {
+	got := TerminalStatusMessage(map[string]any{
+		"message": "OpenAI stream returned error",
+		"details": map[string]any{
+			"provider_message": "usage limit exceeded (2056)",
+			"type":             "rate_limit_error",
+		},
+	})
+	want := "usage limit exceeded (2056) (rate_limit_error)"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestTerminalStatusMessageOmitsRedundantType(t *testing.T) {
+	got := TerminalStatusMessage(map[string]any{
+		"message": "x",
+		"details": map[string]any{
+			"provider_message": "rate_limit_error: slow down",
+			"type":             "rate_limit_error",
+		},
+	})
+	want := "rate_limit_error: slow down"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestTerminalStatusMessageFallbackMessage(t *testing.T) {
+	got := TerminalStatusMessage(map[string]any{
+		"message": "build executor failed",
+	})
+	if got != "build executor failed" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestChannelDeliveryMiddlewareSendsChannelTerminalNotice(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_notice")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 1)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var sent struct {
+		ReplyToMessageID string `json:"reply_to_message_id"`
+		MessageThreadID  string `json:"message_thread_id"`
+		Text             string `json:"text"`
+	}
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendChatAction") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+			return
+		}
+		if r.URL.Path != "/botbot-token/sendMessage" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":801,"chat":{"id":10001}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL", server.URL)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+	threadRef := "topic-9"
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`,
+		secretID,
+		encryptChannelToken(t, keyBytes, "bot-token"),
+	); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channels (id, channel_type, credentials_id, is_active) VALUES ($1, 'telegram', $2, TRUE)`,
+		channelID,
+		secretID,
+	); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	notice := "usage limit exceeded (2056) (rate_limit_error)"
+	rc := &RunContext{
+		Run:                   data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput:  "",
+		ChannelTerminalNotice: notice,
+		ChannelContext: &ChannelContext{
+			ChannelID:   channelID,
+			ChannelType: "telegram",
+			Conversation: ChannelConversationRef{
+				Target:   "10001",
+				ThreadID: &threadRef,
+			},
+			TriggerMessage: &ChannelMessageRef{MessageID: "55"},
+		},
+	}
+
+	mw := NewChannelDeliveryMiddleware(pool)
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if !strings.Contains(sent.Text, "usage limit exceeded") {
+		t.Fatalf("expected notice in telegram text, got %q", sent.Text)
+	}
+	if sent.ReplyToMessageID != "55" || sent.MessageThreadID != threadRef {
+		t.Fatalf("unexpected telegram send payload: %#v", sent)
+	}
+}
+
 func createChannelDeliveryTables(t *testing.T, pool *pgxpool.Pool, ledgerTableSQL string) {
 	t.Helper()
 	for _, stmt := range []string{
