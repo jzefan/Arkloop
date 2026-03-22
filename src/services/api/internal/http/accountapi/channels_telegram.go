@@ -517,7 +517,8 @@ func isTelegramGroupLikeChatType(chatType string) bool {
 }
 
 // telegramCommandBase 返回命令名（不含 @bot），如 "/new"。
-func telegramCommandBase(text string) (cmd string, ok bool) {
+// 若命令带有 @target 且与 botUsername 不匹配，返回 ok=false（命令非发给本 bot）。
+func telegramCommandBase(text, botUsername string) (cmd string, ok bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", false
@@ -526,8 +527,15 @@ func telegramCommandBase(text string) (cmd string, ok bool) {
 	if len(fields) == 0 {
 		return "", false
 	}
-	base := strings.SplitN(fields[0], "@", 2)[0]
-	return base, true
+	parts := strings.SplitN(fields[0], "@", 2)
+	if len(parts) == 2 && parts[1] != "" {
+		cleanTarget := strings.ToLower(strings.TrimSpace(parts[1]))
+		cleanBot := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(botUsername, "@")))
+		if cleanBot == "" || cleanTarget != cleanBot {
+			return "", false
+		}
+	}
+	return parts[0], true
 }
 
 func (c telegramConnector) ingestTelegramGroupPassiveMessage(
@@ -712,12 +720,16 @@ func (c telegramConnector) HandleUpdate(
 	}
 
 	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
-		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText))
+		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText), cfg.BotUsername)
 		if ok && cmd == "/new" {
 			var replyText string
 			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
 				replyText = "当前会话未配置 persona。"
 			} else if identity.UserID == nil {
+				replyText = "无权限。"
+			} else if membership, err := c.membershipRepo.GetByAccountAndUser(ctx, ch.AccountID, *identity.UserID); err != nil {
+				return err
+			} else if membership == nil || membership.Role != "account_admin" {
 				replyText = "无权限。"
 			} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
 				return err
