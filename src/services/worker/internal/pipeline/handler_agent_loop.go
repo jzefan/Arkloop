@@ -124,6 +124,7 @@ func NewAgentLoopHandler(
 				}
 				return err
 			}
+			rc.ChannelTerminalNotice = writer.TerminalUserMessage()
 			return writer.Flush(ctx)
 		}
 
@@ -140,6 +141,9 @@ func NewAgentLoopHandler(
 			return err
 		}
 
+		if !writer.Completed() {
+			rc.ChannelTerminalNotice = writer.TerminalUserMessage()
+		}
 		if writer.Completed() {
 			if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID); err != nil {
 				return err
@@ -424,7 +428,7 @@ func (w *eventWriter) Append(
 		}
 		w.terminalRunStatus = status
 		if status != "completed" {
-			w.terminalMessage = terminalStatusMessage(ev.DataJSON)
+			w.terminalMessage = TerminalStatusMessage(ev.DataJSON)
 		}
 		w.hasTerminal = true
 		return nil
@@ -502,6 +506,11 @@ func (w *eventWriter) commit(ctx context.Context) error {
 
 func (w *eventWriter) Completed() bool {
 	return w.completed
+}
+
+// TerminalUserMessage 返回终局失败/取消时用于对外的摘要（Flush 前可读，commit 后会清空内部缓存）。
+func (w *eventWriter) TerminalUserMessage() string {
+	return strings.TrimSpace(w.terminalMessage)
 }
 
 // AssistantOutput 返回本次 run 的 assistant 最终拼接文本，供调用方写回 RunContext。

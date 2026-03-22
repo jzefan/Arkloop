@@ -727,7 +727,8 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 
 		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
-		if fullOut == "" && remainder == "" && streamMidCount == 0 {
+		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
+		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
 			return err
 		}
 
@@ -740,6 +741,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			} else {
 				output = fullOut
 			}
+		}
+		if strings.TrimSpace(output) == "" && notice != "" {
+			output = notice
 		}
 
 		channel := preloaded
@@ -1391,6 +1395,7 @@ func desktopAgentLoop(
 				"message":     fmt.Sprintf("build executor %q: %s", executorType, err),
 			}, nil, pipeline.StringPtr("internal.error"))
 			_ = w.append(ctx, rc.Run.ID, failed, "")
+			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
 			return w.flush(ctx)
 		}
 
@@ -1401,6 +1406,9 @@ func desktopAgentLoop(
 			return execErr
 		}
 
+		if !w.completed {
+			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
+		}
 		if w.completed {
 			messagesRepo := data.MessagesRepository{}
 			if err := w.ensureTx(ctx); err != nil {
@@ -1456,6 +1464,7 @@ type desktopEventWriter struct {
 	totalCostUSD             float64
 	telegramBoundaryFlush    func(context.Context, string) error
 	telegramFlushSentDeltas  int
+	terminalUserMessage      string
 }
 
 func (w *desktopEventWriter) telegramStreamRemainder() string {
@@ -1563,6 +1572,9 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	if status, ok := desktopTerminalStatuses[ev.Type]; ok {
 		if status == "completed" {
 			w.completed = true
+			w.terminalUserMessage = ""
+		} else {
+			w.terminalUserMessage = pipeline.TerminalStatusMessage(ev.DataJSON)
 		}
 		_ = w.runsRepo.UpdateRunTerminalStatus(ctx, w.tx, runID, data.TerminalStatusUpdate{
 			Status: status, TotalInputTokens: w.totalInputTokens, TotalOutputTokens: w.totalOutputTokens, TotalCostUSD: w.totalCostUSD,

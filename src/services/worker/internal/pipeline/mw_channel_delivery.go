@@ -97,7 +97,8 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 
 		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
-		if fullOut == "" && remainder == "" && streamMidCount == 0 {
+		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
+		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
 			return err
 		}
 
@@ -111,6 +112,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				// Desktop 等仍用 desktopEventWriter：未写 remainder 时不能用空串覆盖整段输出
 				output = fullOut
 			}
+		}
+		if strings.TrimSpace(output) == "" && notice != "" {
+			output = notice
 		}
 
 		channel := preloaded

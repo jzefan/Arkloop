@@ -136,6 +136,8 @@ type RunContext struct {
 	TelegramToolBoundaryFlush func(ctx context.Context, text string) error
 	// TelegramStreamDeliveryRemainder 由 AgentLoopHandler 写入：分段投递模式下终态只发此尾段（已 TrimSpace）。
 	TelegramStreamDeliveryRemainder string
+	// ChannelTerminalNotice 由 AgentLoopHandler 在非 completed 终局时写入，供 Channel 在无任何助手正文时仍向用户说明原因。
+	ChannelTerminalNotice string
 
 	// -- EngineV1.Execute 注入：平台限制 --
 	ThreadMessageHistoryLimit     int

@@ -170,7 +170,7 @@ func appendAndCommitSingle(
 		}
 		if subAgent != nil {
 			var lastError *string
-			if msg := terminalStatusMessage(ev.DataJSON); msg != "" {
+			if msg := TerminalStatusMessage(ev.DataJSON); msg != "" {
 				lastError = &msg
 			}
 			if err := (data.SubAgentRepository{}).TransitionToTerminal(ctx, tx, run.ID, status, lastError); err != nil {
@@ -210,7 +210,7 @@ func appendAndCommitSingle(
 
 	if rdb != nil {
 		if termStatus, ok := TerminalStatuses[ev.Type]; ok {
-			payload := truncateChildRunPayload(terminalStatusMessage(ev.DataJSON))
+			payload := truncateChildRunPayload(TerminalStatusMessage(ev.DataJSON))
 			ch := fmt.Sprintf("run.child.%s.done", run.ID.String())
 			_, _ = rdb.Publish(ctx, ch, termStatus+"\n"+payload).Result()
 		}
@@ -219,12 +219,35 @@ func appendAndCommitSingle(
 	return nil
 }
 
-func terminalStatusMessage(dataJSON map[string]any) string {
+// TerminalStatusMessage 从终态事件 data_json 提取对用户可读的摘要（Channel、子 run、cancel guard 等共用）。
+func TerminalStatusMessage(dataJSON map[string]any) string {
 	if dataJSON == nil {
 		return ""
 	}
-	message, _ := dataJSON["message"].(string)
-	return strings.TrimSpace(message)
+	details, _ := dataJSON["details"].(map[string]any)
+	main := ""
+	if details != nil {
+		if pm, _ := details["provider_message"].(string); strings.TrimSpace(pm) != "" {
+			main = strings.TrimSpace(pm)
+		}
+	}
+	if main == "" {
+		if msg, _ := dataJSON["message"].(string); strings.TrimSpace(msg) != "" {
+			main = strings.TrimSpace(msg)
+		}
+	}
+	if main == "" {
+		return ""
+	}
+	if details != nil {
+		if t, _ := details["type"].(string); strings.TrimSpace(t) != "" {
+			t = strings.TrimSpace(t)
+			if !strings.Contains(strings.ToLower(main), strings.ToLower(t)) {
+				main = main + " (" + t + ")"
+			}
+		}
+	}
+	return main
 }
 
 func truncateChildRunPayload(raw string) string {
