@@ -25,22 +25,26 @@ const (
 	quietOutputWindow     = 100 * time.Millisecond
 	trailingOutputGrace   = 100 * time.Millisecond
 	timeoutKillDelay      = 2 * time.Second
+
+	// Output delta limits per Codex design
+	MaxOutputDeltaBytes    = 8 * 1024
+	MaxOutputDeltasPerCall = 10_000
 )
 
 type ShellController struct {
-	mu            sync.Mutex
-	cmd           *exec.Cmd
-	ptyFile       *os.File
-	pendingOutput *shellapi.RingBuffer
-	pendingCursor uint64
-	transcript    *shellapi.HeadTailBuffer
-	tail          *shellapi.RingBuffer
-	status        string
-	cwd           string
-	current       *shellCommand
-	lastExit      *int
-	lastTO        bool
-	updateCh      chan struct{}
+	mu             sync.Mutex
+	cmd            *exec.Cmd
+	ptyFile        *os.File
+	pendingOutput  *shellapi.RingBuffer
+	pendingCursor  uint64
+	transcript     *shellapi.HeadTailBuffer
+	tail           *shellapi.RingBuffer
+	status         string
+	cwd            string
+	current        *shellCommand
+	lastExit       *int
+	lastTO         bool
+	updateCh       chan struct{}
 }
 
 type shellCommand struct {
@@ -68,6 +72,27 @@ func NewShellController() *ShellController {
 	}
 	controller.resetBuffersLocked()
 	return controller
+}
+
+// ReadNewOutput returns all output accumulated since the last call to
+// ReadNewOutput, as (stdout, stderr, running). This method is safe to
+// call from a separate goroutine while the shell controller is running.
+func (c *ShellController) ReadNewOutput() (stdout []byte, stderr []byte, running bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.pendingCursor >= c.pendingOutput.EndCursor() {
+		return nil, nil, c.status == shellapi.StatusRunning
+	}
+
+	// For now, we can't distinguish stdout/stderr in the buffer
+	// Return all new output as stdout
+	chunk, nextCursor, _, ok := c.pendingOutput.ReadFrom(c.pendingCursor, MaxOutputDeltaBytes)
+	if !ok {
+		nextCursor = c.pendingOutput.EndCursor()
+	}
+	c.pendingCursor = nextCursor
+	return chunk, nil, c.status == shellapi.StatusRunning
 }
 
 func (c *ShellController) ExecCommand(req shellapi.AgentExecCommandRequest) (*shellapi.AgentSessionResponse, string, string) {

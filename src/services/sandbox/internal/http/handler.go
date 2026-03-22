@@ -23,7 +23,7 @@ func NewHandler(mgr *session.Manager, envMgr *environment.Manager, skillMgr *san
 	mux.HandleFunc("POST /v1/exec_command", handleExecCommand(shellSvc, logger))
 	mux.HandleFunc("POST /v1/write_stdin", handleWriteStdin(shellSvc, logger))
 	mux.HandleFunc("POST /v1/sessions/fork", handleForkSession(shellSvc))
-	mux.HandleFunc("GET /v1/sessions/", handleSessionTranscript(shellSvc))
+	mux.HandleFunc("GET /v1/sessions/", handleSessionInfo(shellSvc))
 	mux.HandleFunc("DELETE /v1/sessions/", handleDeleteSession(mgr, shellSvc, logger))
 	mux.HandleFunc("POST /v1/acp/start", handleACPStart(acpSvc, logger))
 	mux.HandleFunc("POST /v1/acp/write", handleACPWrite(acpSvc, logger))
