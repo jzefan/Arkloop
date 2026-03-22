@@ -136,6 +136,7 @@ type AgentResponse struct {
 	Session      *shellapi.AgentSessionResponse `json:"session,omitempty"`
 	Debug        *shellapi.AgentDebugResponse   `json:"debug,omitempty"`
 	State        *shellapi.AgentStateResponse   `json:"state,omitempty"`
+	ExecOutput   *ExecOutputResponse            `json:"exec_output,omitempty"`
 	ACPStart     *ACPStartResponse              `json:"acp_start,omitempty"`
 	ACPWrite     *ACPWriteResponse              `json:"acp_write,omitempty"`
 	ACPRead      *ACPReadResponse               `json:"acp_read,omitempty"`
@@ -144,6 +145,13 @@ type AgentResponse struct {
 	ACPStatus    *ACPStatusResponse             `json:"acp_status,omitempty"`
 	Code         string                         `json:"code,omitempty"`
 	Error        string                         `json:"error,omitempty"`
+}
+
+// ExecOutputResponse carries output deltas from a running command.
+type ExecOutputResponse struct {
+	Stdout  string `json:"stdout"`
+	Stderr  string `json:"stderr"`
+	Running bool   `json:"running"`
 }
 
 type AgentCapabilities struct {
@@ -297,6 +305,14 @@ func handleV2(conn net.Conn, req AgentRequest) {
 	case "shell_capture_state":
 		result, code, errMsg := shellController.CaptureState()
 		writeJSON(conn, AgentResponse{Action: req.Action, State: result, Code: code, Error: errMsg})
+
+	case "exec_read_output":
+		stdout, stderr, running := shellController.ReadNewOutput()
+		writeJSON(conn, AgentResponse{Action: req.Action, ExecOutput: &ExecOutputResponse{
+			Stdout:  string(stdout),
+			Stderr:  string(stderr),
+			Running: running,
+		}})
 
 	case "agent_capabilities":
 		writeJSON(conn, AgentResponse{Action: req.Action, Capabilities: &AgentCapabilities{

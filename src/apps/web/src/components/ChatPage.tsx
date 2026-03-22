@@ -41,6 +41,7 @@ import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock
 import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
+  applyTerminalDelta,
   buildMessageCodeExecutionsFromRunEvents,
   patchCodeExecutionList,
   buildMessageThinkingFromRunEvents,
@@ -429,6 +430,13 @@ export function ChatPage() {
   const [thinkingDraft, setThinkingDraft] = useState('')
   const thinkingDraftRef = useRef('')
   const thinkingStartedAtRef = useRef<number | null>(null)
+  // 是否已有过 segment（用于判断 thinking 是否属于 segment 前的"前置 thinking"）
+  const hasHadSegmentRef = useRef(false)
+  // segment 开始前的 thinking（渲染在所有 segment 之前）
+  const [preSegmentThinking, setPreSegmentThinking] = useState('')
+  const preSegmentThinkingRef = useRef('')
+  // pending thinking shimmer: Enter 后 thinking 内容到达前显示
+  const [pendingThinking, setPendingThinking] = useState(false)
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
 
@@ -637,6 +645,10 @@ export function ChatPage() {
   useEffect(() => {
     thinkingDraftRef.current = thinkingDraft
   }, [thinkingDraft])
+
+  useEffect(() => {
+    preSegmentThinkingRef.current = preSegmentThinking
+  }, [preSegmentThinking])
 
   const beginMessageSync = useCallback(() => {
     messageSyncVersionRef.current += 1
@@ -1244,6 +1256,13 @@ export function ChatPage() {
         const label = typeof display.label === 'string' ? display.label : ''
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
+        // 首个 segment 开始时：保存此前的 thinking 到 preSegmentThinking，并清空 thinkingDraft
+        if (!hasHadSegmentRef.current && thinkingDraftRef.current.trim() !== '') {
+          preSegmentThinkingRef.current = thinkingDraftRef.current
+          setPreSegmentThinking(thinkingDraftRef.current)
+          setThinkingDraft('')
+        }
+        hasHadSegmentRef.current = true
         if (kind.startsWith('search_')) {
           continue
         }
@@ -1304,6 +1323,7 @@ export function ChatPage() {
         const isThinking = obj.channel === 'thinking'
         const activeSeg = activeSegmentIdRef.current
         if (isThinking) {
+          setPendingThinking(false)
           if (thinkingDraftRef.current === '') {
             thinkingStartedAtRef.current = Date.now()
           }
@@ -1441,6 +1461,22 @@ export function ChatPage() {
         }
         foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
         bumpAssistantTurnSnapshot()
+        continue
+      }
+
+      // Handle terminal output delta events for real-time streaming
+      if (event.type === 'terminal.stdout_delta' || event.type === 'terminal.stderr_delta') {
+        const deltaPatch = applyTerminalDelta(currentRunCodeExecutionsRef.current, event)
+        if (deltaPatch.updated) {
+          currentRunCodeExecutionsRef.current = deltaPatch.nextExecutions
+          setTopLevelCodeExecutions((prev) => patchCodeExecutionList(prev, deltaPatch.updated!).next)
+          setSegments((prev) =>
+            prev.map((segment) => ({
+              ...segment,
+              codeExecutions: patchCodeExecutionList(segment.codeExecutions, deltaPatch.updated!).next,
+            })),
+          )
+        }
         continue
       }
 
@@ -1610,6 +1646,9 @@ export function ChatPage() {
         sse.disconnect()
         setActiveRunId(null)
         setThinkingDraft('')
+        setPendingThinking(false)
+        setPreSegmentThinking('')
+        hasHadSegmentRef.current = false
         thinkingStartedAtRef.current = null
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
@@ -2021,6 +2060,7 @@ export function ChatPage() {
     if (!text && attachments.length === 0) return
 
     setSending(true)
+    setPendingThinking(true)
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
@@ -2805,6 +2845,19 @@ export function ChatPage() {
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
               {liveAssistantTurn && liveAssistantTurn.segments.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+                  {/* pending thinking shimmer: Enter 后 thinking 内容到达前显示 */}
+                  {pendingThinking && !thinkingDraft.trim() && !preSegmentThinking.trim() && (
+                    <CopTimelineUnifiedRow
+                      isFirst
+                      isLast={false}
+                      multiItems={false}
+                      dotColor="var(--c-text-secondary)"
+                    >
+                      <span style={{ fontSize: '14px', color: 'var(--c-text-secondary)' }}>
+                        {t.assistantStreamThinkingPlaceholder}
+                      </span>
+                    </CopTimelineUnifiedRow>
+                  )}
                   {liveAssistantTurn.segments.map((seg, si) => {
                     const lastSegIdx = liveAssistantTurn.segments.length - 1
                     const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
@@ -2866,8 +2919,8 @@ export function ChatPage() {
                                 assistantThinking={
                                   !isSearchThread &&
                                   firstLiveCopSegIdx === si &&
-                                  (thinkingDraft.trim() !== '' || isStreaming)
-                                    ? { markdown: thinkingDraft, live: isStreaming }
+                                  (preSegmentThinking.trim() !== '' || thinkingDraft.trim() !== '' || isStreaming)
+                                    ? { markdown: preSegmentThinking.trim() || thinkingDraft, live: isStreaming }
                                     : undefined
                                 }
                                 thinkingStartedAt={firstLiveCopSegIdx === si ? (thinkingStartedAtRef.current ?? undefined) : undefined}

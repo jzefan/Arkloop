@@ -28,6 +28,11 @@ type CodeExecutionErrorDetails = {
   errorMessage?: string
 }
 
+type CodeExecutionDeltaPatch = {
+  nextExecutions: CodeExecutionRef[]
+  updated?: CodeExecutionRef
+}
+
 function pickToolName(data: unknown): string {
   if (!data || typeof data !== 'object') return ''
   const raw = (data as { tool_name?: unknown }).tool_name
@@ -191,6 +196,56 @@ function patchExecution(
   return next
 }
 
+// applyTerminalDelta applies a terminal output delta event to update running executions.
+export function applyTerminalDelta(
+  executions: CodeExecutionRef[],
+  event: RunEvent,
+): CodeExecutionDeltaPatch {
+  const eventType = event.type
+  if (eventType !== 'terminal.stdout_delta' && eventType !== 'terminal.stderr_delta') {
+    return { nextExecutions: executions }
+  }
+  if (isACPDelegateEventData(event.data)) {
+    return { nextExecutions: executions }
+  }
+
+  const data = event.data as { session_ref?: unknown; chunk?: unknown }
+  const sessionRef = typeof data?.session_ref === 'string' ? data.session_ref : undefined
+  const chunk = typeof data?.chunk === 'string' ? data.chunk : undefined
+  if (!sessionRef || !chunk) {
+    return { nextExecutions: executions }
+  }
+
+  const targetIndex = findExecutionIndex(executions, {
+    sessionId: sessionRef,
+    preferSession: true,
+  })
+  if (targetIndex < 0) {
+    return { nextExecutions: executions }
+  }
+
+  const target = executions[targetIndex]
+  // Only update if still running (don't append output to completed executions)
+  if (target.status !== 'running') {
+    return { nextExecutions: executions }
+  }
+
+  const sanitizedChunk = sanitizeTerminalOutput(chunk)
+  const mergedOutput = mergeExecutionOutput(target.output, sanitizedChunk)
+  if (!mergedOutput || mergedOutput === target.output) {
+    return { nextExecutions: executions }
+  }
+
+  const updated = patchExecution(target, {
+    output: mergedOutput,
+    status: 'running',
+  })
+  return {
+    updated,
+    nextExecutions: executions.map((item, index) => index === targetIndex ? updated : item),
+  }
+}
+
 export function applyCodeExecutionToolCall(
   executions: CodeExecutionRef[],
   event: RunEvent,
@@ -329,6 +384,10 @@ export function buildMessageCodeExecutionsFromRunEvents(events: RunEvent[]): Cod
     }
     if (event.type === 'tool.result') {
       executions = applyCodeExecutionToolResult(executions, event).nextExecutions
+      continue
+    }
+    if (event.type === 'terminal.stdout_delta' || event.type === 'terminal.stderr_delta') {
+      executions = applyTerminalDelta(executions, event).nextExecutions
     }
   }
   return executions
