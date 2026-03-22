@@ -47,6 +47,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type desktopTelegramTokenLoader struct {
@@ -399,8 +400,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	var memMiddleware pipeline.RunMiddleware
 	if e.useOV {
-		// OpenViking: full semantic memory middleware (nil pool = no snapshot cache, nil configResolver = no billing)
-		memMiddleware = pipeline.NewMemoryMiddleware(e.memProvider, nil, nil)
+		// OpenViking: full semantic memory middleware (e.db enables snapshot cache for settings UI and post-distill updates)
+		memMiddleware = pipeline.NewMemoryMiddleware(e.memProvider, e.db.(*pgxpool.Pool), nil)
 	} else {
 		// Local SQLite: lightweight snapshot injection
 		memMiddleware = desktopMemoryInjection(e.db)
