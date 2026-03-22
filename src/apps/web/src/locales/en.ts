@@ -518,6 +518,7 @@ export const en: LocaleStrings = {
     unbinding: 'Unlinking...',
     unbindConfirm: 'Are you sure you want to unlink this account?',
     unbindFailed: 'Failed to unlink',
+    bindingBotAdmin: 'Bot admin',
   },
   // model picker
   modelPicker: {

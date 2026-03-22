@@ -74,7 +74,8 @@ func ingestTelegramMediaAttachments(
 	client *telegrambot.Client,
 	store MessageAttachmentPutStore,
 	token string,
-	accountID, threadID, userID uuid.UUID,
+	accountID, threadID uuid.UUID,
+	userID *uuid.UUID,
 	items []telegramInboundAttachment,
 ) (ingested []messagecontent.Part, remaining []telegramInboundAttachment, err error) {
 	for _, att := range items {
@@ -104,9 +105,13 @@ func ingestTelegramMediaAttachments(
 		keySuffix := conversationapi.SanitizeAttachmentKeyName(displayFilename)
 		key := fmt.Sprintf("threads/%s/attachments/%s/%s", threadID.String(), uuid.NewString(), keySuffix)
 		threadIDText := threadID.String()
+		ownerID := ""
+		if userID != nil {
+			ownerID = userID.String()
+		}
 		meta := objectstore.ArtifactMetadata(
 			conversationapi.MessageAttachmentOwnerKind,
-			userID.String(),
+			ownerID,
 			accountID.String(),
 			&threadIDText,
 		)
@@ -154,7 +159,8 @@ func buildTelegramStructuredMessageWithMedia(
 	client *telegrambot.Client,
 	store MessageAttachmentPutStore,
 	token string,
-	accountID, threadID, userID uuid.UUID,
+	accountID, threadID uuid.UUID,
+	userID *uuid.UUID,
 	identity data.ChannelIdentity,
 	incoming telegramIncomingMessage,
 ) (string, json.RawMessage, json.RawMessage, error) {

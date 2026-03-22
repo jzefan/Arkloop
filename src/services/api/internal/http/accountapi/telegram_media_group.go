@@ -209,14 +209,6 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	persona *data.Persona,
 ) error {
 	personaRef := buildPersonaRef(*persona)
-	initialGrant := int64(1000)
-	if c.entitlementSvc != nil {
-		if value, entErr := c.entitlementSvc.Resolve(ctx, ch.AccountID, "credit.initial_grant"); entErr == nil {
-			if v := value.Int(); v > 0 {
-				initialGrant = v
-			}
-		}
-	}
 
 	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -255,7 +247,6 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			c.channelIdentitiesRepo,
 			c.channelDMThreadsRepo,
 			c.threadRepo,
-			c.usersRepo,
 		); err != nil {
 			return err
 		} else if handled {
@@ -274,29 +265,36 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 		}
 	}
 
-	if !incoming.HasContent() {
-		return tx.Commit(ctx)
+	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
+		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText))
+		if ok && cmd == "/new" {
+			var replyText string
+			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
+				replyText = "当前会话未配置 persona。"
+			} else if identity.UserID == nil {
+				replyText = "无权限。"
+			} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
+				return err
+			} else {
+				replyText = "已开启新会话。"
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil
+		}
 	}
 
-	if identity.UserID == nil {
-		shadowUser, bootstrapErr := bootstrapTelegramShadowUser(
-			ctx,
-			tx,
-			c.usersRepo,
-			c.accountRepo,
-			c.membershipRepo,
-			c.projectRepo,
-			c.creditsRepo,
-			initialGrant,
-			last.From.ID,
-		)
-		if bootstrapErr != nil {
-			return bootstrapErr
-		}
-		if err := c.channelIdentitiesRepo.WithTx(tx).UpdateUserID(ctx, identity.ID, &shadowUser.ID); err != nil {
-			return err
-		}
-		identity.UserID = &shadowUser.ID
+	if !incoming.HasContent() {
+		return tx.Commit(ctx)
 	}
 
 	cfg, err := resolveTelegramConfig("telegram", ch.ConfigJSON)
@@ -363,7 +361,7 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 		token,
 		ch.AccountID,
 		threadID,
-		*identity.UserID,
+		identity.UserID,
 		identity,
 		incoming,
 	)

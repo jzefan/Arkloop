@@ -512,6 +512,7 @@ export const zh: LocaleStrings = {
     unbinding: '解除中...',
     unbindConfirm: '确定要解除此关联吗？',
     unbindFailed: '解除关联失败',
+    bindingBotAdmin: '机器人管理员',
   },
   // model picker
   modelPicker: {
