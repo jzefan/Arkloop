@@ -531,6 +531,7 @@ export interface LocaleStrings {
     unbinding: string
     unbindConfirm: string
     unbindFailed: string
+    bindingBotAdmin: string
   }
   // model picker (chat input)
   modelPicker: {

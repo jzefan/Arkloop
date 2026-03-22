@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
 	httpkit "arkloop/services/api/internal/http/httpkit"
@@ -508,6 +507,29 @@ func (c telegramConnector) refreshTelegramBotProfile(ctx context.Context, token 
 	ch.ConfigJSON = upd.ConfigJSON
 }
 
+func isTelegramGroupLikeChatType(chatType string) bool {
+	switch strings.ToLower(strings.TrimSpace(chatType)) {
+	case "group", "supergroup", "channel":
+		return true
+	default:
+		return false
+	}
+}
+
+// telegramCommandBase 返回命令名（不含 @bot），如 "/new"。
+func telegramCommandBase(text string) (cmd string, ok bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return "", false
+	}
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return "", false
+	}
+	base := strings.SplitN(fields[0], "@", 2)[0]
+	return base, true
+}
+
 func (c telegramConnector) ingestTelegramGroupPassiveMessage(
 	ctx context.Context,
 	ch data.Channel,
@@ -518,9 +540,6 @@ func (c telegramConnector) ingestTelegramGroupPassiveMessage(
 ) error {
 	if persona == nil {
 		return fmt.Errorf("telegram passive ingest: persona required")
-	}
-	if identity.UserID == nil {
-		return fmt.Errorf("telegram passive ingest: identity user id required")
 	}
 	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -565,7 +584,7 @@ func (c telegramConnector) ingestTelegramGroupPassiveMessage(
 		token,
 		ch.AccountID,
 		threadID,
-		*identity.UserID,
+		identity.UserID,
 		identity,
 		incoming,
 	)
@@ -634,15 +653,6 @@ func (c telegramConnector) HandleUpdate(
 		return err
 	}
 
-	initialGrant := int64(1000)
-	if c.entitlementSvc != nil {
-		if value, entErr := c.entitlementSvc.Resolve(ctx, ch.AccountID, "credit.initial_grant"); entErr == nil {
-			if v := value.Int(); v > 0 {
-				initialGrant = v
-			}
-		}
-	}
-
 	if c.tryScheduleTelegramMediaGroup(ctx, traceID, ch, token, update, *incoming, persona) {
 		return nil
 	}
@@ -683,7 +693,6 @@ func (c telegramConnector) HandleUpdate(
 			c.channelIdentitiesRepo,
 			c.channelDMThreadsRepo,
 			c.threadRepo,
-			c.usersRepo,
 		); err != nil {
 			return err
 		} else if handled {
@@ -701,29 +710,37 @@ func (c telegramConnector) HandleUpdate(
 			return nil
 		}
 	}
-	if !incoming.HasContent() {
-		return tx.Commit(ctx)
+
+	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
+		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText))
+		if ok && cmd == "/new" {
+			var replyText string
+			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
+				replyText = "当前会话未配置 persona。"
+			} else if identity.UserID == nil {
+				replyText = "无权限。"
+			} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
+				return err
+			} else {
+				replyText = "已开启新会话。"
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil
+		}
 	}
 
-	if identity.UserID == nil {
-		shadowUser, bootstrapErr := bootstrapTelegramShadowUser(
-			ctx,
-			tx,
-			c.usersRepo,
-			c.accountRepo,
-			c.membershipRepo,
-			c.projectRepo,
-			c.creditsRepo,
-			initialGrant,
-			update.Message.From.ID,
-		)
-		if bootstrapErr != nil {
-			return bootstrapErr
-		}
-		if err := c.channelIdentitiesRepo.WithTx(tx).UpdateUserID(ctx, identity.ID, &shadowUser.ID); err != nil {
-			return err
-		}
-		identity.UserID = &shadowUser.ID
+	if !incoming.HasContent() {
+		return tx.Commit(ctx)
 	}
 
 	if !incoming.IsPrivate() && !incoming.ShouldCreateRun() {
@@ -785,7 +802,7 @@ func (c telegramConnector) HandleUpdate(
 		token,
 		ch.AccountID,
 		threadID,
-		*identity.UserID,
+		identity.UserID,
 		identity,
 		*incoming,
 	)
@@ -1132,42 +1149,6 @@ func trimOptional(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func bootstrapTelegramShadowUser(
-	ctx context.Context,
-	tx pgx.Tx,
-	usersRepo *data.UserRepository,
-	accountRepo *data.AccountRepository,
-	membershipRepo *data.AccountMembershipRepository,
-	projectRepo *data.ProjectRepository,
-	creditsRepo *data.CreditsRepository,
-	initialGrant int64,
-	telegramUserID int64,
-) (data.User, error) {
-	user, err := usersRepo.WithTx(tx).CreateShadow(ctx, fmt.Sprintf("tg_shadow_%d", telegramUserID), "channel_shadow")
-	if err != nil {
-		return data.User{}, err
-	}
-	account, err := accountRepo.WithTx(tx).Create(
-		ctx,
-		fmt.Sprintf("personal-shadow-%s", strings.ReplaceAll(user.ID.String(), "-", "")[:12]),
-		fmt.Sprintf("Telegram %d", telegramUserID),
-		"personal",
-	)
-	if err != nil {
-		return data.User{}, err
-	}
-	if _, err := membershipRepo.WithTx(tx).Create(ctx, account.ID, user.ID, auth.RoleAccountAdmin); err != nil {
-		return data.User{}, err
-	}
-	if _, err := projectRepo.WithTx(tx).CreateDefaultForOwner(ctx, account.ID, user.ID); err != nil {
-		return data.User{}, err
-	}
-	if _, err := creditsRepo.WithTx(tx).InitBalance(ctx, account.ID, initialGrant); err != nil {
-		return data.User{}, err
-	}
-	return user, nil
-}
-
 func handleTelegramCommand(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1178,7 +1159,6 @@ func handleTelegramCommand(
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	threadRepo *data.ThreadRepository,
-	usersRepo *data.UserRepository,
 ) (bool, string, error) {
 	if !strings.HasPrefix(text, "/") {
 		return false, "", nil
@@ -1193,15 +1173,15 @@ func handleTelegramCommand(
 		return true, "可用命令：/start /help /bind <code> /new", nil
 	case command == "/start":
 		if len(parts) > 1 && strings.HasPrefix(parts[1], "bind_") {
-			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo, usersRepo)
+			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo)
 			return true, replyText, err
 		}
-		return true, "已连接 Arkloop。使用 /bind <code> 绑定账号，或用 /new 开启新会话。", nil
+		return true, "已连接 Arkloop。使用 /bind <code> 绑定账号；私聊可用 /new 开新会话，群内已绑定账号可用 /new 重置群会话。", nil
 	case command == "/bind":
 		if len(parts) < 2 {
 			return true, "用法：/bind <code>", nil
 		}
-		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo, usersRepo)
+		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo)
 		return true, replyText, err
 	case command == "/new":
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
@@ -1226,7 +1206,6 @@ func bindTelegramIdentity(
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	threadRepo *data.ThreadRepository,
-	usersRepo *data.UserRepository,
 ) (string, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
@@ -1239,26 +1218,14 @@ func bindTelegramIdentity(
 	if activeCode == nil || (activeCode.ChannelType != nil && *activeCode.ChannelType != channel.ChannelType) {
 		return "绑定码无效或已过期。", nil
 	}
+	if identity.UserID != nil && *identity.UserID != activeCode.IssuedByUserID {
+		return "当前 Telegram 身份已绑定到其他账号。", nil
+	}
 	if identity.UserID != nil {
-		shadow := false
-		if usersRepo != nil {
-			currentUser, err := usersRepo.WithTx(tx).GetByID(ctx, *identity.UserID)
-			if err != nil {
-				return "", err
-			}
-			if currentUser != nil && strings.HasPrefix(strings.TrimSpace(currentUser.Source), "channel_shadow") {
-				shadow = true
-			}
+		if _, err := channelBindCodesRepo.WithTx(tx).ConsumeForChannel(ctx, code, identity.ID, channel.ChannelType); err != nil {
+			return "", err
 		}
-		if !shadow && *identity.UserID != activeCode.IssuedByUserID {
-			return "当前 Telegram 身份已绑定到其他账号。", nil
-		}
-		if !shadow {
-			if _, err := channelBindCodesRepo.WithTx(tx).ConsumeForChannel(ctx, code, identity.ID, channel.ChannelType); err != nil {
-				return "", err
-			}
-			return "账号已绑定。", nil
-		}
+		return "账号已绑定。", nil
 	}
 
 	consumed, err := channelBindCodesRepo.WithTx(tx).ConsumeForChannel(ctx, code, identity.ID, channel.ChannelType)

@@ -389,16 +389,8 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
 
-	var source string
-	if err := env.pool.QueryRow(context.Background(), `SELECT u.source
-		FROM users u
-		JOIN channel_identities ci ON ci.user_id = u.id
-		LIMIT 1`).Scan(&source); err != nil {
-		t.Fatalf("query shadow source: %v", err)
-	}
-	if source != "channel_shadow" {
-		t.Fatalf("unexpected shadow source: %s", source)
-	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM users WHERE source = 'channel_shadow'`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_identities WHERE user_id IS NOT NULL`, 0)
 
 	var payloadJSON []byte
 	if err := env.pool.QueryRow(context.Background(), `SELECT payload_json::text::jsonb FROM jobs LIMIT 1`).Scan(&payloadJSON); err != nil {
@@ -907,6 +899,184 @@ func TestTelegramWebhookGroupMessagePassiveAndActive(t *testing.T) {
 			t.Fatalf("expected group prompt header to omit transport metadata %q, got %s", forbidden, content.Parts[0].Text)
 		}
 	}
+}
+
+func TestTelegramWebhookGroupNewDeniedWithoutBind(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
+		"allowed_user_ids": []string{"10001"},
+		"bot_username":     "arkloopbot",
+	})
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	active := map[string]any{
+		"message": map[string]any{
+			"message_id": 12,
+			"date":       1710000001,
+			"text":       "@arkloopbot hi",
+			"entities": []map[string]any{
+				{"type": "mention", "offset": 0, "length": 11},
+			},
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", active, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("active webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_group_threads`, 1)
+
+	newCmd := map[string]any{
+		"message": map[string]any{
+			"message_id": 13,
+			"date":       1710000002,
+			"text":       "/new",
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp = doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", newCmd, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("/new webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_group_threads`, 1)
+}
+
+func TestTelegramWebhookGroupNewClearsBindingWhenBound(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
+		"allowed_user_ids": []string{"10001"},
+		"bot_username":     "arkloopbot",
+	})
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	bindCreate := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/me/channel-binds", map[string]any{}, authHeader(env.accessToken))
+	if bindCreate.Code != nethttp.StatusCreated {
+		t.Fatalf("create bind code: %d %s", bindCreate.Code, bindCreate.Body.String())
+	}
+	var bindBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(bindCreate.Body.Bytes(), &bindBody); err != nil {
+		t.Fatalf("decode bind response: %v", err)
+	}
+	if strings.TrimSpace(bindBody.Token) == "" {
+		t.Fatal("empty bind token")
+	}
+
+	bindPrivate := map[string]any{
+		"message": map[string]any{
+			"message_id": 1,
+			"date":       1710000000,
+			"text":       "/bind " + bindBody.Token,
+			"chat": map[string]any{
+				"id":   10001,
+				"type": "private",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", bindPrivate, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("bind webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_identities WHERE user_id IS NOT NULL`, 1)
+
+	active := map[string]any{
+		"message": map[string]any{
+			"message_id": 12,
+			"date":       1710000001,
+			"text":       "@arkloopbot hi",
+			"entities": []map[string]any{
+				{"type": "mention", "offset": 0, "length": 11},
+			},
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp = doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", active, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("active webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_group_threads`, 1)
+
+	newCmd := map[string]any{
+		"message": map[string]any{
+			"message_id": 13,
+			"date":       1710000002,
+			"text":       "/new",
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp = doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", newCmd, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("/new webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_group_threads`, 0)
+
+	activeAgain := map[string]any{
+		"message": map[string]any{
+			"message_id": 14,
+			"date":       1710000003,
+			"text":       "@arkloopbot again",
+			"entities": []map[string]any{
+				{"type": "mention", "offset": 0, "length": 11},
+			},
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+		},
+	}
+	resp = doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", activeAgain, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("second active webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_group_threads`, 1)
 }
 
 func doJSONAccount(handler nethttp.Handler, method string, path string, payload any, headers map[string]string) *httptest.ResponseRecorder {

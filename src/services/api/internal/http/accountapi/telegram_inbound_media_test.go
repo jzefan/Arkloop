@@ -71,7 +71,7 @@ func TestBuildTelegramStructuredMessageWithMedia_Photo(t *testing.T) {
 		"TOK",
 		accID,
 		threadID,
-		userID,
+		&userID,
 		identity,
 		incoming,
 	)
@@ -112,6 +112,7 @@ func TestBuildTelegramStructuredMessageWithMedia_NilStoreFallback(t *testing.T) 
 		Text:             "hi",
 		MediaAttachments: []telegramInboundAttachment{{Type: "image", FileID: "fid"}},
 	}
+	var nilUser *uuid.UUID
 	proj, _, _, err := buildTelegramStructuredMessageWithMedia(
 		context.Background(),
 		nil,
@@ -119,7 +120,7 @@ func TestBuildTelegramStructuredMessageWithMedia_NilStoreFallback(t *testing.T) 
 		"TOK",
 		uuid.New(),
 		uuid.New(),
-		uuid.New(),
+		nilUser,
 		identity,
 		incoming,
 	)

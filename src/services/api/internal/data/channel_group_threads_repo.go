@@ -103,3 +103,28 @@ func (r *ChannelGroupThreadsRepository) Create(
 	}
 	return item, nil
 }
+
+func (r *ChannelGroupThreadsRepository) DeleteByBinding(
+	ctx context.Context,
+	channelID uuid.UUID,
+	platformChatID string,
+	personaID uuid.UUID,
+) error {
+	if channelID == uuid.Nil || personaID == uuid.Nil {
+		return fmt.Errorf("channel_group_threads: ids must not be empty")
+	}
+	if platformChatID == "" {
+		return fmt.Errorf("channel_group_threads: platform_chat_id must not be empty")
+	}
+	if _, err := r.db.Exec(
+		ctx,
+		`DELETE FROM channel_group_threads
+		 WHERE channel_id = $1 AND platform_chat_id = $2 AND persona_id = $3`,
+		channelID,
+		platformChatID,
+		personaID,
+	); err != nil {
+		return fmt.Errorf("channel_group_threads.DeleteByBinding: %w", err)
+	}
+	return nil
+}

@@ -672,13 +672,21 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
                       {identity.platform_subject_id}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleUnbind(identity.id)}
-                    className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                  >
-                    {ct.unbind}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[11px] font-medium text-[var(--c-text-secondary)]"
+                      style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)' }}
+                    >
+                      {ct.bindingBotAdmin}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleUnbind(identity.id)}
+                      className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+                    >
+                      {ct.unbind}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
