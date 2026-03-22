@@ -630,15 +630,19 @@ func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[strin
 
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "Anthropic request failed", details
+		// body is not JSON; include raw body in message for visibility
+		details["raw_body"] = string(body)
+		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "Anthropic request failed", details
+		details["raw_body"] = string(body)
+		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
 	}
 	errObj, ok := root["error"].(map[string]any)
 	if !ok {
-		return "Anthropic request failed", details
+		details["raw_body"] = string(body)
+		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
 	}
 	if errType, ok := errObj["type"].(string); ok && strings.TrimSpace(errType) != "" {
 		details["anthropic_error_type"] = strings.TrimSpace(errType)
@@ -646,7 +650,8 @@ func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[strin
 	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
 		return strings.TrimSpace(msg), details
 	}
-	return "Anthropic request failed", details
+	details["raw_body"] = string(body)
+	return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
 }
 
 func parseAnthropicUsage(body []byte) *Usage {
