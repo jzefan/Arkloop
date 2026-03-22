@@ -5,7 +5,13 @@ import { useLocation } from 'react-router-dom'
 import type { AdminRunDetail, GlobalRun, RunEventRaw } from '../api/runs'
 import { fetchRunEventsOnce, getRunDetail } from '../api/runs'
 import { TurnView } from './TurnView'
-import { buildThreadTurns, buildTurns, type LlmTurn, type ThreadTurn } from '@arkloop/shared'
+import {
+  buildThreadTurns,
+  buildTurns,
+  jsonStringifyForDebugDisplay,
+  type LlmTurn,
+  type ThreadTurn,
+} from '@arkloop/shared'
 import { Badge, type BadgeVariant } from './Badge'
 import { useLocale } from '../contexts/LocaleContext'
 import { useToast } from '@arkloop/shared'
@@ -52,16 +58,19 @@ function formatAbsoluteTime(value: string | undefined, locale: 'zh' | 'en', fall
 }
 
 function formatEventJSON(event: RunEventRaw): string {
-  return JSON.stringify({
-    event_id: event.event_id,
-    run_id: event.run_id,
-    seq: event.seq,
-    ts: event.ts,
-    type: event.type,
-    tool_name: event.tool_name,
-    error_class: event.error_class,
-    data: event.data,
-  }, null, 2)
+  return jsonStringifyForDebugDisplay(
+    {
+      event_id: event.event_id,
+      run_id: event.run_id,
+      seq: event.seq,
+      ts: event.ts,
+      type: event.type,
+      tool_name: event.tool_name,
+      error_class: event.error_class,
+      data: event.data,
+    },
+    2,
+  )
 }
 
 
