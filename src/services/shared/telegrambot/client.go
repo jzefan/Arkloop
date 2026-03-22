@@ -154,6 +154,25 @@ type BotInfo struct {
 	Username  *string `json:"username"`
 }
 
+type GetChatMemberRequest struct {
+	ChatID string `json:"chat_id"`
+	UserID int64  `json:"user_id"`
+}
+
+// ChatMemberStatus: "creator" | "administrator" | "member" | "restricted" | "left" | "kicked"
+type ChatMemberInfo struct {
+	Status string `json:"status"`
+}
+
+func (c *Client) GetChatMember(ctx context.Context, token string, req GetChatMemberRequest) (*ChatMemberInfo, error) {
+	var info ChatMemberInfo
+	if err := c.callJSON(ctx, token, "getChatMember", req, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// GetMe reports whether the bot can perform the operation.
 func (c *Client) GetMe(ctx context.Context, token string) (*BotInfo, error) {
 	var info BotInfo
 	if err := c.callJSON(ctx, token, "getMe", map[string]any{}, &info); err != nil {
