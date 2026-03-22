@@ -274,12 +274,19 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 				replyText = "当前会话未配置 persona。"
 			} else if identity.UserID == nil {
 				replyText = "无权限。"
-			} else if membership, err := c.membershipRepo.GetByAccountAndUser(ctx, ch.AccountID, *identity.UserID); err != nil {
-				return err
-			} else if membership == nil || membership.Role != "account_admin" {
-				replyText = "无权限。"
-			} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
-				return err
+			} else if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				tgUserID, _ := strconv.ParseInt(incoming.PlatformUserID, 10, 64)
+				member, err := c.telegramClient.GetChatMember(ctx, token, telegrambot.GetChatMemberRequest{
+					ChatID: incoming.PlatformChatID,
+					UserID: tgUserID,
+				})
+				if err != nil || member == nil || (member.Status != "creator" && member.Status != "administrator") {
+					replyText = "无权限。"
+				} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
+					return err
+				} else {
+					replyText = "已开启新会话。"
+				}
 			} else {
 				replyText = "已开启新会话。"
 			}
