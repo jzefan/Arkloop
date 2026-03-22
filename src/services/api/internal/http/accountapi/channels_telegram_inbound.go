@@ -270,7 +270,11 @@ func buildTelegramStructuredMessage(
 	identity data.ChannelIdentity,
 	incoming telegramIncomingMessage,
 ) (string, json.RawMessage, json.RawMessage, error) {
-	body := strings.TrimSpace(incoming.Text)
+	prefix := "[Telegram]"
+	if !incoming.IsPrivate() && strings.TrimSpace(incoming.ConversationTitle) != "" {
+		prefix = "[Telegram in " + strings.TrimSpace(incoming.ConversationTitle) + "]"
+	}
+	body := prefix + " " + strings.TrimSpace(incoming.Text)
 	attachmentBlock := renderTelegramAttachmentBlock(incoming.MediaAttachments)
 	if attachmentBlock != "" {
 		if body != "" {

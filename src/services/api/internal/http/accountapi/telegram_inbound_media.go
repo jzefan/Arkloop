@@ -168,7 +168,11 @@ func buildTelegramStructuredMessageWithMedia(
 		return "", nil, nil, err
 	}
 
-	userBody := strings.TrimSpace(incoming.Text)
+	userPrefix := "[Telegram]"
+	if !incoming.IsPrivate() && strings.TrimSpace(incoming.ConversationTitle) != "" {
+		userPrefix = "[Telegram in " + strings.TrimSpace(incoming.ConversationTitle) + "]"
+	}
+	userBody := userPrefix + " " + strings.TrimSpace(incoming.Text)
 	attachBlock := renderTelegramAttachmentBlock(remaining)
 	if attachBlock != "" {
 		if userBody != "" {
