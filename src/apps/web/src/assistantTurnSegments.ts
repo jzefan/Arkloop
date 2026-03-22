@@ -9,19 +9,34 @@ export type TurnToolCallRef = {
   errorClass?: string
 }
 
+/** COP 段内有序项：与多 tool 同段，thinking 不单独成顶层 segment */
+export type CopBlockItem =
+  | { kind: 'thinking'; content: string; seq: number }
+  | { kind: 'assistant_text'; content: string; seq: number }
+  | { kind: 'call'; call: TurnToolCallRef; seq: number }
+
 export type AssistantTurnSegment =
   | { type: 'text'; content: string }
-  | { type: 'cop'; title: string | null; calls: TurnToolCallRef[] }
+  | { type: 'cop'; title: string | null; items: CopBlockItem[] }
 
 export type AssistantTurnUi = { segments: AssistantTurnSegment[] }
 
 /** SSE 递增折叠用状态（事件按 seq 递增到达，禁止对 live 路径全量 sort）。 */
 export type AssistantTurnFoldState = {
   segments: AssistantTurnSegment[]
-  currentCop: { type: 'cop'; title: string | null; calls: TurnToolCallRef[] } | null
+  currentCop: { type: 'cop'; title: string | null; items: CopBlockItem[] } | null
+  /** 为 true 时下一次 thinking 必须新开一项（不拼进上一段 thinking） */
+  thinkingMustBreakBeforeNext: boolean
 }
 
 const TIMELINE_TITLE_TOOL = 'timeline_title'
+
+/** 首个 tool 之前、可并入同一段 COP 的可见短正文累计上限（避免无工具时长文塞进 COP） */
+const MAX_COP_INLINE_ASSISTANT_CHARS = 512
+
+export function copSegmentCalls(segment: { type: 'cop'; items: CopBlockItem[] }): TurnToolCallRef[] {
+  return segment.items.filter((i): i is Extract<CopBlockItem, { kind: 'call' }> => i.kind === 'call').map((i) => i.call)
+}
 
 function pickToolName(data: unknown): string {
   if (!data || typeof data !== 'object') return ''
@@ -53,8 +68,8 @@ function extractResultPayload(event: RunEvent): unknown {
   return (event.data as { result?: unknown }).result
 }
 
-function copIsEmpty(cop: { title: string | null; calls: TurnToolCallRef[] }): boolean {
-  return cop.title == null && cop.calls.length === 0
+function copIsEmpty(cop: { title: string | null; items: CopBlockItem[] }): boolean {
+  return cop.title == null && cop.items.length === 0
 }
 
 function cloneTurnToolCall(c: TurnToolCallRef): TurnToolCallRef {
@@ -67,12 +82,22 @@ function cloneTurnToolCall(c: TurnToolCallRef): TurnToolCallRef {
   }
 }
 
+function cloneCopItem(i: CopBlockItem): CopBlockItem {
+  if (i.kind === 'thinking') {
+    return { kind: 'thinking', content: i.content, seq: i.seq }
+  }
+  if (i.kind === 'assistant_text') {
+    return { kind: 'assistant_text', content: i.content, seq: i.seq }
+  }
+  return { kind: 'call', call: cloneTurnToolCall(i.call), seq: i.seq }
+}
+
 function cloneSegment(s: AssistantTurnSegment): AssistantTurnSegment {
   if (s.type === 'text') return { type: 'text', content: s.content }
   return {
     type: 'cop',
     title: s.title,
-    calls: s.calls.map(cloneTurnToolCall),
+    items: s.items.map(cloneCopItem),
   }
 }
 
@@ -82,11 +107,17 @@ export function drainAssistantTurnForPersist(state: AssistantTurnFoldState): Ass
   const turn: AssistantTurnUi = { segments: state.segments.map(cloneSegment) }
   state.segments = []
   state.currentCop = null
+  state.thinkingMustBreakBeforeNext = false
   return turn
 }
 
 export function createEmptyAssistantTurnFoldState(): AssistantTurnFoldState {
-  return { segments: [], currentCop: null }
+  return { segments: [], currentCop: null, thinkingMustBreakBeforeNext: false }
+}
+
+/** segment 可见正文、run 段起止等与 tool 同类：后续 thinking 不得并回上一块 */
+export function requestAssistantTurnThinkingBreak(state: AssistantTurnFoldState): void {
+  state.thinkingMustBreakBeforeNext = true
 }
 
 function flushCopToSegments(
@@ -98,7 +129,7 @@ function flushCopToSegments(
     segments.push({
       type: 'cop',
       title: currentCop.title,
-      calls: currentCop.calls.map(cloneTurnToolCall),
+      items: currentCop.items.map(cloneCopItem),
     })
   }
 }
@@ -121,7 +152,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       segments.push({
         type: 'cop',
         title: currentCop.title,
-        calls: currentCop.calls.map(cloneTurnToolCall),
+        items: currentCop.items.map(cloneCopItem),
       })
     }
     currentCop = null
@@ -129,7 +160,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
 
   const appendAssistantDelta = (delta: string) => {
     if (delta === '') return
-    // 流式里工具批之间常插 \n 或仅空白 delta，若 flush 会把同一轮 tool 拆成两段 cop
     if (delta.trim() === '') {
       const last = segments[segments.length - 1]
       if (last?.type === 'text') last.content += delta
@@ -146,38 +176,95 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
 
   const ensureCop = () => {
     if (currentCop == null) {
-      currentCop = { type: 'cop', title: null, calls: [] }
+      currentCop = { type: 'cop', title: null, items: [] }
     }
   }
 
   const attachResultToCop = (toolCallId: string, toolName: string, result: unknown, errorClass?: string) => {
     if (!currentCop) return
-    const call = currentCop.calls.find((c) => c.toolCallId === toolCallId)
-    if (call) {
-      call.result = result
-      if (errorClass) call.errorClass = errorClass
+    for (const item of currentCop.items) {
+      if (item.kind !== 'call') continue
+      if (item.call.toolCallId !== toolCallId) continue
+      item.call.result = result
+      if (errorClass) item.call.errorClass = errorClass
       return
     }
-    currentCop.calls.push({
-      toolCallId,
-      toolName: toolName || 'unknown',
-      arguments: {},
-      result,
-      errorClass,
+    currentCop.items.push({
+      kind: 'call',
+      call: {
+        toolCallId,
+        toolName: toolName || 'unknown',
+        arguments: {},
+        result,
+        errorClass,
+      },
+      seq: event.seq,
     })
   }
 
   if (event.type === 'message.delta') {
     if (isACPDelegateEventData(event.data)) return
     const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
-    const delta = obj.content_delta
-    const isAssistant =
-      (obj.role == null || obj.role === 'assistant') &&
-      obj.channel !== 'thinking' &&
-      typeof delta === 'string'
-    if (isAssistant) {
-      appendAssistantDelta(delta)
+    if (obj.role != null && obj.role !== 'assistant') {
+      state.currentCop = currentCop
+      return
     }
+    const delta = obj.content_delta
+    if (typeof delta !== 'string' || delta === '') {
+      state.currentCop = currentCop
+      return
+    }
+    if (obj.channel === 'thinking') {
+      ensureCop()
+      const items = currentCop!.items
+      const last = items[items.length - 1]
+      const forceNew = state.thinkingMustBreakBeforeNext
+      if (forceNew) {
+        state.thinkingMustBreakBeforeNext = false
+      }
+      if (!forceNew && last?.kind === 'thinking') {
+        last.content += delta
+      } else {
+        items.push({ kind: 'thinking', content: delta, seq: event.seq })
+      }
+      state.currentCop = currentCop
+      return
+    }
+
+    const hasCallsInOpenCop = currentCop != null && currentCop.items.some((i) => i.kind === 'call')
+
+    if (delta.trim() === '') {
+      if (currentCop != null && !hasCallsInOpenCop) {
+        const lastItem = currentCop.items[currentCop.items.length - 1]
+        if (lastItem?.kind === 'thinking' || lastItem?.kind === 'assistant_text') {
+          lastItem.content += delta
+          state.currentCop = currentCop
+          return
+        }
+      }
+      appendAssistantDelta(delta)
+      state.currentCop = currentCop
+      return
+    }
+
+    if (currentCop != null && !hasCallsInOpenCop) {
+      const inlineUsed = currentCop.items
+        .filter((i): i is Extract<CopBlockItem, { kind: 'assistant_text' }> => i.kind === 'assistant_text')
+        .reduce((n, i) => n + i.content.length, 0)
+      if (inlineUsed + delta.length <= MAX_COP_INLINE_ASSISTANT_CHARS) {
+        const items = currentCop.items
+        const last = items[items.length - 1]
+        if (last?.kind === 'assistant_text') {
+          last.content += delta
+        } else {
+          items.push({ kind: 'assistant_text', content: delta, seq: event.seq })
+        }
+        state.currentCop = currentCop
+        return
+      }
+    }
+
+    appendAssistantDelta(delta)
     state.currentCop = currentCop
     return
   }
@@ -197,11 +284,16 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       return
     }
     ensureCop()
-    currentCop!.calls.push({
-      toolCallId: pickToolCallId(event),
-      toolName,
-      arguments: extractArguments(event.data),
+    currentCop!.items.push({
+      kind: 'call',
+      call: {
+        toolCallId: pickToolCallId(event),
+        toolName,
+        arguments: extractArguments(event.data),
+      },
+      seq: event.seq,
     })
+    state.thinkingMustBreakBeforeNext = true
     state.currentCop = currentCop
     return
   }
@@ -216,6 +308,10 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
         ? event.error_class
         : undefined
     attachResultToCop(toolCallId, toolName, result, err)
+    const tail = currentCop?.items.at(-1)
+    if (tail?.kind === 'call') {
+      state.thinkingMustBreakBeforeNext = true
+    }
     state.currentCop = currentCop
   }
 }
@@ -227,7 +323,7 @@ export function finalizeAssistantTurnFoldState(state: AssistantTurnFoldState): v
     state.segments.push({
       type: 'cop',
       title: state.currentCop.title,
-      calls: state.currentCop.calls.map(cloneTurnToolCall),
+      items: state.currentCop.items.map(cloneCopItem),
     })
   }
   state.currentCop = null
@@ -243,11 +339,29 @@ export function buildAssistantTurnFromRunEvents(events: readonly RunEvent[]): As
   return { segments: state.segments.map(cloneSegment) }
 }
 
-/** 将所有 text 段拼接为单一字符串（复制、与 message.content 对照）。 */
+/** 将所有 text 段与 COP 内 assistant_text 按段顺序拼接（复制、与 message.content 对照）。 */
 export function assistantTurnPlainText(turn: AssistantTurnUi): string {
   let out = ''
   for (const s of turn.segments) {
-    if (s.type === 'text') out += s.content
+    if (s.type === 'text') {
+      out += s.content
+      continue
+    }
+    for (const it of s.items) {
+      if (it.kind === 'assistant_text') out += it.content
+    }
+  }
+  return out
+}
+
+/** COP 内全部 thinking 拼接（与 MessageThinkingRef.thinkingText 对齐）。 */
+export function assistantTurnThinkingPlainText(turn: AssistantTurnUi): string {
+  let out = ''
+  for (const s of turn.segments) {
+    if (s.type !== 'cop') continue
+    for (const it of s.items) {
+      if (it.kind === 'thinking') out += it.content
+    }
   }
   return out
 }

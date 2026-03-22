@@ -52,7 +52,11 @@ type Props = {
   live?: boolean
   accessToken?: string
   baseUrl?: string
-  /** 与 narrative / 工具行同一套 unified 点线，仅多一行 Markdown */
+  /** 与 tool 同序交错的多段 thinking（seq 与工具池子对齐排序） */
+  thinkingRows?: Array<{ id: string; markdown: string; live?: boolean; seq: number }> | null
+  /** COP 内可见短正文（与 thinking / 工具行同序） */
+  copInlineTextRows?: Array<{ id: string; text: string; live?: boolean; seq: number }> | null
+  /** 与 narrative / 工具行同一套 unified 点线，仅多一行 Markdown（无 thinkingRows 时的单块） */
   assistantThinking?: { markdown: string; live?: boolean } | null
   /** thinking 阶段开始的 Unix ms 时间戳（流式用），用于完成后显示 "Thought for X seconds" */
   thinkingStartedAt?: number
@@ -61,6 +65,74 @@ type Props = {
 function TypewriterText({ text, className, live }: { text: string; className?: string; live?: boolean }) {
   const displayed = useTypewriter(text, !live)
   return <span className={className}>{live ? displayed : text}</span>
+}
+
+const HEADER_TYPE_CPS = 38
+
+/** 非流式：首帧直接出字；之后每次标题变更从空打字；流式仍用 useTypewriter */
+function useCopTimelineHeaderDisplay(fullText: string, live: boolean): string {
+  const streamed = useTypewriter(fullText, !live)
+  const [settled, setSettled] = useState(fullText)
+  const prevFullRef = useRef<string | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (live) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      prevFullRef.current = fullText
+      return
+    }
+
+    if (prevFullRef.current === null) {
+      prevFullRef.current = fullText
+      setSettled(fullText)
+      return
+    }
+
+    if (fullText === prevFullRef.current) {
+      setSettled(fullText)
+      return
+    }
+
+    prevFullRef.current = fullText
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+
+    setSettled('')
+    let pos = 0
+    const ms = Math.max(12, Math.floor(1000 / HEADER_TYPE_CPS))
+    intervalRef.current = setInterval(() => {
+      pos += 1
+      if (pos >= fullText.length) {
+        setSettled(fullText)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+      } else {
+        setSettled(fullText.slice(0, pos))
+      }
+    }, ms)
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [fullText, live])
+
+  return live ? streamed : settled
+}
+
+function CopTimelineHeaderLabel({ text, live, shimmer }: { text: string; live: boolean; shimmer?: boolean }) {
+  const shown = useCopTimelineHeaderDisplay(text, live)
+  return <span className={shimmer ? 'thinking-shimmer' : undefined}>{shown}</span>
 }
 
 function getDomain(url: string): string {
@@ -122,17 +194,22 @@ function QueryPill({ text, live }: { text: string; live?: boolean }) {
   )
 }
 
-function AssistantThinkingMarkdown({ markdown, live }: { markdown: string; live: boolean }) {
+export function AssistantThinkingMarkdown({ markdown, live }: { markdown: string; live: boolean }) {
   const displayed = useTypewriter(markdown, !live)
   const { t } = useLocale()
-  if (!markdown.trim() && live) {
-    return (
-      <span className="thinking-shimmer" style={{ fontSize: '14px', lineHeight: 1.6, color: 'var(--c-text-secondary)' }}>
-        {t.assistantStreamThinkingPlaceholder}
-      </span>
-    )
-  }
-  return <MarkdownRenderer content={live ? displayed : markdown} disableMath />
+  return (
+    <div className="cop-timeline-thinking-wrap">
+      {!markdown.trim() && live ? (
+        <span className="thinking-shimmer cop-timeline-thinking-placeholder">
+          {t.assistantStreamThinkingPlaceholder}
+        </span>
+      ) : (
+        <div className="cop-timeline-thinking-body">
+          <MarkdownRenderer content={live ? displayed : markdown} disableMath />
+        </div>
+      )}
+    </div>
+  )
 }
 
 function TimelineNarrativeBody({ text, tone = 'secondary', live }: { text: string; tone?: 'primary' | 'secondary'; live?: boolean }) {
@@ -404,25 +481,32 @@ export function CopTimelineUnifiedRow({
   )
 }
 
-export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, assistantThinking, thinkingStartedAt }: Props) {
+export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, thinkingRows, copInlineTextRows, assistantThinking, thinkingStartedAt }: Props) {
   const { t } = useLocale()
   /** 首屏：历史已完结的 COP 默认收起；thinking 完成后自动收起 */
   const [collapsed, setCollapsed] = useState(() => isComplete)
   const [elapsedSeconds, setElapsedSeconds] = useState(
     () => (isComplete && thinkingStartedAt ? Math.round((Date.now() - thinkingStartedAt) / 1000) : 0),
   )
-  const prevThinkingLive = useRef(assistantThinking?.live ?? false)
-  const hasAssistantThinking = !!(assistantThinking && (assistantThinking.markdown.trim() !== '' || assistantThinking.live))
+  const thinkingRowList = thinkingRows ?? []
+  const copInlineList = copInlineTextRows ?? []
+  const interleavedThinkingLive = thinkingRowList.some((r) => r.live)
+  const legacyThinkingLive = !!assistantThinking?.live
+  const legacyThinkingVisible = !!(assistantThinking && (assistantThinking.markdown.trim() !== '' || assistantThinking.live))
+  const hasInterleavedThinking = thinkingRowList.length > 0
+  const hasAnyThinking = hasInterleavedThinking || legacyThinkingVisible
+  const anyThinkingLive = interleavedThinkingLive || legacyThinkingLive
+  const prevThinkingLive = useRef(anyThinkingLive)
   useEffect(() => {
-    const isLive = !!assistantThinking?.live
-    if (prevThinkingLive.current && !isLive && hasAssistantThinking) {
+    const isLive = anyThinkingLive
+    if (prevThinkingLive.current && !isLive && hasAnyThinking) {
       setCollapsed(true)
       if (thinkingStartedAt) {
         setElapsedSeconds(Math.round((Date.now() - thinkingStartedAt) / 1000))
       }
     }
     prevThinkingLive.current = isLive
-  }, [assistantThinking?.live, hasAssistantThinking, thinkingStartedAt])
+  }, [anyThinkingLive, hasAnyThinking, thinkingStartedAt])
 
   const visibleSteps = steps.filter((step) => step.kind !== 'finished')
   const textEntries = narratives ?? []
@@ -439,13 +523,15 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     fileOpCount === 0 &&
     webFetchCount === 0 &&
     !headerOverride &&
-    !hasAssistantThinking
+    !hasAnyThinking &&
+    copInlineList.length === 0
   ) {
     return null
   }
 
   type UEntry =
     | { kind: 'thinking'; id: string; seq: number; item: { markdown: string; live: boolean } }
+    | { kind: 'copinline'; id: string; seq: number; item: { text: string; live: boolean } }
     | { kind: 'step'; id: string; seq: number; item: WebSearchPhaseStep }
     | { kind: 'text'; id: string; seq: number; item: SearchNarrative }
     | { kind: 'code'; id: string; seq: number; item: CodeExecution }
@@ -472,7 +558,23 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   for (const wf of (webFetches ?? [])) {
     if (wf.seq != null) allUnified.push({ kind: 'fetch', id: wf.id, seq: wf.seq, item: wf })
   }
-  if (hasAssistantThinking) {
+  for (const row of thinkingRowList) {
+    allUnified.push({
+      kind: 'thinking',
+      id: row.id,
+      seq: row.seq,
+      item: { markdown: row.markdown, live: !!row.live },
+    })
+  }
+  for (const row of copInlineList) {
+    allUnified.push({
+      kind: 'copinline',
+      id: row.id,
+      seq: row.seq,
+      item: { text: row.text, live: !!row.live },
+    })
+  }
+  if (legacyThinkingVisible) {
     allUnified.push({
       kind: 'thinking',
       id: '_assistant_thinking',
@@ -487,28 +589,32 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     subAgentCount +
     fileOpCount +
     webFetchCount +
-    (hasAssistantThinking ? 1 : 0)
+    thinkingRowList.length +
+    copInlineList.length +
+    (legacyThinkingVisible ? 1 : 0)
   const hasContent = totalUnifiableItems > 0 || sources.length > 0
   const useUnified = allUnified.length === totalUnifiableItems && totalUnifiableItems > 0
   if (useUnified) {
     const priority: Record<UEntry['kind'], number> = {
       thinking: -1,
-      step: 0,
-      text: 1,
-      code: 2,
-      agent: 3,
-      fileop: 4,
-      fetch: 5,
+      copinline: 0,
+      step: 1,
+      text: 2,
+      code: 3,
+      agent: 4,
+      fileop: 5,
+      fetch: 6,
     }
     allUnified.sort((a, b) => a.seq - b.seq || priority[a.kind] - priority[b.kind] || a.id.localeCompare(b.id))
   }
 
   const effectiveStepCount = visibleSteps.length || (codeExecCount + subAgentCount + fileOpCount + webFetchCount)
-  const hasThinkingOnly = hasAssistantThinking && effectiveStepCount === 0 && sources.length === 0
+  const hasThinkingOnly = hasAnyThinking && effectiveStepCount === 0 && sources.length === 0
 
-  const thoughtDurationLabel = elapsedSeconds > 0
-    ? `Thought for ${elapsedSeconds}s`
-    : t.assistantStreamThinkingPlaceholder
+  const thoughtDurationLabel =
+    elapsedSeconds > 0
+      ? t.copTimelineThoughtForSeconds(elapsedSeconds)
+      : t.copTimelineThinkingDoneNoDuration
 
   const autoLabel = isComplete
     ? sources.length > 0
@@ -523,14 +629,14 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
       : effectiveStepCount > 0
         ? t.copTimelineLiveProgress
         : hasThinkingOnly
-          ? t.assistantStreamThinkingPlaceholder
+          ? t.assistantCopDefaultTitle
           : 'Searching...'
 
   const headerLabel = headerOverride ?? autoLabel
   const dottedStepCount = visibleSteps.length
 
   return (
-    <div style={{ maxWidth: '663px' }}>
+    <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
       <button
         type="button"
         onClick={() => { if (!hasContent && isComplete) return; setCollapsed((p) => !p) }}
@@ -554,7 +660,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
           transition: 'color 0.15s ease',
         }}
       >
-        <TypewriterText text={headerLabel} className={shimmer ? 'thinking-shimmer' : undefined} live={!!live} />
+        <CopTimelineHeaderLabel text={headerLabel} live={!!live} shimmer={!!shimmer} />
         {isComplete && sources.length > 0 && (
           <span style={{ fontSize: '12px', color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-muted)', fontWeight: 400, transition: 'color 0.15s ease' }}>
             {sources.length} sources
@@ -580,7 +686,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ position: 'relative', paddingLeft: visibleSteps.length > 0 || textEntries.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 || fileOpCount > 0 || hasAssistantThinking ? `${COP_TIMELINE_CONTENT_PADDING_LEFT_PX}px` : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
+            <div style={{ position: 'relative', paddingLeft: visibleSteps.length > 0 || textEntries.length > 0 || codeExecCount > 0 || subAgentCount > 0 || webFetchCount > 0 || fileOpCount > 0 || hasAnyThinking || copInlineList.length > 0 ? `${COP_TIMELINE_CONTENT_PADDING_LEFT_PX}px` : undefined, paddingTop: '2px', paddingBottom: '2px' }}>
 
               <AnimatePresence initial={false}>
               {!useUnified && visibleSteps.map((step, idx) => {
@@ -701,6 +807,8 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                       ? entry.item.live && !entry.item.markdown.trim()
                         ? 'var(--c-text-secondary)'
                         : 'var(--c-border-mid)'
+                      : entry.kind === 'copinline'
+                        ? 'var(--c-border-mid)'
                       : entry.kind === 'step'
                         ? entry.item.status === 'active'
                           ? 'var(--c-text-secondary)'
@@ -782,6 +890,9 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                         )}
                         {entry.kind === 'thinking' && (
                           <AssistantThinkingMarkdown markdown={entry.item.markdown} live={entry.item.live} />
+                        )}
+                        {entry.kind === 'copinline' && (
+                          <TimelineNarrativeBody text={entry.item.text} tone="primary" live={entry.item.live} />
                         )}
                         {entry.kind === 'text' && <TimelineNarrativeBody text={entry.item.text} live={!!live} />}
                         {entry.kind === 'code' && (entry.item.language === 'shell'

@@ -3,7 +3,7 @@ import {
 } from '@arkloop/shared/storage'
 import type { Theme } from '@arkloop/shared/contexts/theme'
 import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition } from './themes/types'
-import type { AssistantTurnSegment, AssistantTurnUi, TurnToolCallRef } from './assistantTurnSegments'
+import type { AssistantTurnSegment, AssistantTurnUi, CopBlockItem, TurnToolCallRef } from './assistantTurnSegments'
 
 export {
   readAccessToken as readAccessTokenFromStorage,
@@ -682,6 +682,28 @@ function parseTurnToolCallRef(raw: unknown): TurnToolCallRef | null {
   return rec
 }
 
+function parseCopBlockItem(raw: unknown): CopBlockItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (o.kind === 'thinking') {
+    if (typeof o.content !== 'string') return null
+    const seq = typeof o.seq === 'number' ? o.seq : 0
+    return { kind: 'thinking', content: o.content, seq }
+  }
+  if (o.kind === 'assistant_text') {
+    if (typeof o.content !== 'string') return null
+    const seq = typeof o.seq === 'number' ? o.seq : 0
+    return { kind: 'assistant_text', content: o.content, seq }
+  }
+  if (o.kind === 'call') {
+    const call = parseTurnToolCallRef(o.call)
+    if (!call) return null
+    const seq = typeof o.seq === 'number' ? o.seq : 0
+    return { kind: 'call', call, seq }
+  }
+  return null
+}
+
 function parseAssistantTurnSegment(raw: unknown): AssistantTurnSegment | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
@@ -690,11 +712,26 @@ function parseAssistantTurnSegment(raw: unknown): AssistantTurnSegment | null {
     if (typeof o.content !== 'string') return null
     return { type: 'text', content: o.content }
   }
+  if (ty === 'thinking') {
+    if (typeof o.content !== 'string') return null
+    return {
+      type: 'cop',
+      title: null,
+      items: [{ kind: 'thinking', content: o.content, seq: 0 }],
+    }
+  }
   if (ty !== 'cop') return null
   const title = o.title === null ? null : typeof o.title === 'string' ? o.title : null
-  if (!Array.isArray(o.calls)) return null
-  const calls = o.calls.map(parseTurnToolCallRef).filter((c): c is TurnToolCallRef => c != null)
-  return { type: 'cop', title, calls }
+  if (Array.isArray(o.items)) {
+    const items = (o.items as unknown[]).map(parseCopBlockItem).filter((x): x is CopBlockItem => x != null)
+    if (items.length > 0) return { type: 'cop', title, items }
+  }
+  if (Array.isArray(o.calls)) {
+    const calls = o.calls.map(parseTurnToolCallRef).filter((c): c is TurnToolCallRef => c != null)
+    const items: CopBlockItem[] = calls.map((c, i) => ({ kind: 'call', call: c, seq: i }))
+    return { type: 'cop', title, items }
+  }
+  return null
 }
 
 export function readMessageAssistantTurn(messageId: string): AssistantTurnUi | null {

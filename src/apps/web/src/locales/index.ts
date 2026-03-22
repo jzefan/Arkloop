@@ -420,6 +420,10 @@ export interface LocaleStrings {
   assistantStreamThinkingPlaceholder: string
   /** CopTimeline：流式未完结、按代码/工具条目计数时的标题 */
   copTimelineLiveProgress: string
+  /** CopTimeline：仅 thinking、已结束且无计时时 */
+  copTimelineThinkingDoneNoDuration: string
+  /** CopTimeline：仅 thinking、已结束且有时长（秒） */
+  copTimelineThoughtForSeconds: (sec: number) => string
   // model config
   models: {
     addProvider: string

@@ -404,6 +404,8 @@ export const zh: LocaleStrings = {
   assistantCopDefaultTitle: "Processing…",
   assistantStreamThinkingPlaceholder: "Thinking",
   copTimelineLiveProgress: "In process",
+  copTimelineThinkingDoneNoDuration: "Thought",
+  copTimelineThoughtForSeconds: (sec: number) => `Thought for ${sec}s`,
   editAction: "Edit",
   // model config
   models: {

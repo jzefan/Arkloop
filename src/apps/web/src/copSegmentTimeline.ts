@@ -1,4 +1,4 @@
-import type { AssistantTurnSegment, AssistantTurnUi } from './assistantTurnSegments'
+import { copSegmentCalls, type AssistantTurnSegment, type AssistantTurnUi } from './assistantTurnSegments'
 import type {
   CodeExecutionRef,
   FileOpRef,
@@ -38,8 +38,9 @@ export function copTimelinePayloadForSegment(
   fileOps?: FileOpRef[]
   webFetches?: WebFetchRef[]
   subAgents?: SubAgentRef[]
-} | null {
-  const ids = new Set(segment.calls.map((c) => c.toolCallId))
+} {
+  const calls = copSegmentCalls(segment)
+  const ids = new Set(calls.map((c) => c.toolCallId))
 
   const codeExecutions = sortBySeq((pools.codeExecutions ?? []).filter((x) => ids.has(x.id)))
   const fileOps = sortBySeq((pools.fileOps ?? []).filter((x) => ids.has(x.id)))
@@ -62,15 +63,20 @@ export function copTimelinePayloadForSegment(
   const hasSearchish = steps.some((s) => s.kind === 'searching' || s.kind === 'reviewing')
   const sources = hasSearchish ? pools.sources : []
 
-  const hasAny =
+  const hasRich =
     steps.length > 0 ||
     codeExecutions.length > 0 ||
     fileOps.length > 0 ||
     webFetches.length > 0 ||
     subAgents.length > 0
 
+  // 仅有 thinking、无 call：仍返回壳子供 CopTimeline 挂 thinkingRows
+  if (calls.length === 0) {
+    return { steps: [], sources: [] }
+  }
+
   // 有 toolCall 但池子尚未对齐时仍返回壳子，避免流式结束/刷新间隙整条 COP 被 ChatPage 直接 return null 拆掉
-  if (!hasAny) {
+  if (!hasRich) {
     return { steps: [], sources: [] }
   }
 
@@ -100,7 +106,6 @@ export function toolCallIdsInCopTimelines(
   for (const seg of turn.segments) {
     if (seg.type !== 'cop') continue
     const payload = copTimelinePayloadForSegment(seg, pools)
-    if (!payload) continue
     for (const s of payload.steps) ids.add(s.id)
     for (const c of payload.codeExecutions ?? []) ids.add(c.id)
     for (const f of payload.fileOps ?? []) ids.add(f.id)

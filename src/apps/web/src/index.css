@@ -571,6 +571,119 @@ button:not(:disabled) {
   margin-bottom: 0 !important;
 }
 
+/*
+ * COP 时间轴根：thinking 与工具行字重对齐（--c-cop-inline-weight），工具字色更浅、thinking 更深（随浅/深主题对调 token）。
+ * MarkdownRenderer 在 p/ul/ol 上有内联样式，需 !important。
+ */
+.cop-timeline-root {
+  --c-cop-inline-weight: 275;
+  /* 等宽预览行：多数 mono 无 275，会落到 400，和 thinking 的 sans 275 不对齐 */
+  --c-cop-tool-mono-preview-weight: 250;
+  /* 默认按本站首段 :root = 深色 */
+  --c-cop-tool-trigger-fg: var(--c-text-tertiary);
+}
+.cop-timeline-root .cop-timeline-thinking-wrap {
+  --c-cop-thinking-fg: var(--c-text-muted);
+  --c-cop-thinking-size: 13px;
+  --c-cop-thinking-weight: var(--c-cop-inline-weight);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .cop-timeline-root {
+    --c-cop-tool-trigger-fg: var(--c-text-muted);
+  }
+  :root:not([data-theme="dark"]) .cop-timeline-root .cop-timeline-thinking-wrap {
+    --c-cop-thinking-fg: var(--c-text-tertiary);
+  }
+}
+:root[data-theme="light"] .cop-timeline-root {
+  --c-cop-tool-trigger-fg: var(--c-text-muted);
+}
+:root[data-theme="light"] .cop-timeline-root .cop-timeline-thinking-wrap {
+  --c-cop-thinking-fg: var(--c-text-tertiary);
+}
+
+.cop-timeline-root .shell-exec-trigger > span:first-of-type {
+  font-weight: var(--c-cop-tool-mono-preview-weight) !important;
+  color: var(--c-cop-tool-trigger-fg) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.cop-timeline-root .shell-exec-trigger svg {
+  color: var(--c-cop-tool-trigger-fg);
+}
+.cop-timeline-root [data-status] > button > div:last-of-type > span:first-of-type {
+  font-weight: var(--c-cop-inline-weight) !important;
+  color: var(--c-cop-tool-trigger-fg) !important;
+}
+.cop-timeline-root [data-status] > button > div:last-of-type > span:last-of-type {
+  font-weight: var(--c-cop-inline-weight) !important;
+  color: var(--c-cop-tool-trigger-fg) !important;
+}
+.cop-timeline-thinking-placeholder {
+  display: inline-block;
+  font-size: var(--c-cop-thinking-size);
+  line-height: 1.55;
+  font-weight: var(--c-cop-thinking-weight);
+  color: var(--c-cop-thinking-fg);
+}
+.cop-timeline-thinking-body .md-content {
+  font-size: var(--c-cop-thinking-size) !important;
+  line-height: 1.55 !important;
+  font-weight: var(--c-cop-thinking-weight) !important;
+  color: var(--c-cop-thinking-fg) !important;
+}
+.cop-timeline-thinking-body .md-content p,
+.cop-timeline-thinking-body .md-content li,
+.cop-timeline-thinking-body .md-content ul,
+.cop-timeline-thinking-body .md-content ol,
+.cop-timeline-thinking-body .md-content td,
+.cop-timeline-thinking-body .md-content th {
+  color: var(--c-cop-thinking-fg) !important;
+  font-size: var(--c-cop-thinking-size) !important;
+  font-weight: var(--c-cop-thinking-weight) !important;
+  line-height: 1.55 !important;
+}
+.cop-timeline-thinking-body .md-content h1 {
+  color: var(--c-cop-thinking-fg) !important;
+  font-size: 15px !important;
+  font-weight: 300 !important;
+  line-height: 1.4 !important;
+}
+.cop-timeline-thinking-body .md-content h2 {
+  color: var(--c-cop-thinking-fg) !important;
+  font-size: 14.5px !important;
+  font-weight: 300 !important;
+  line-height: 1.4 !important;
+}
+.cop-timeline-thinking-body .md-content h3,
+.cop-timeline-thinking-body .md-content h4,
+.cop-timeline-thinking-body .md-content h5,
+.cop-timeline-thinking-body .md-content h6 {
+  color: var(--c-cop-thinking-fg) !important;
+  font-size: 14px !important;
+  font-weight: 300 !important;
+  line-height: 1.4 !important;
+}
+.cop-timeline-thinking-body .md-content blockquote {
+  color: var(--c-cop-thinking-fg) !important;
+  font-size: var(--c-cop-thinking-size) !important;
+  font-weight: var(--c-cop-thinking-weight) !important;
+}
+.cop-timeline-thinking-body .md-content strong {
+  color: var(--c-cop-thinking-fg) !important;
+  font-weight: 325 !important;
+}
+.cop-timeline-thinking-body .md-content em {
+  color: var(--c-cop-thinking-fg) !important;
+  font-weight: var(--c-cop-thinking-weight) !important;
+}
+.cop-timeline-thinking-body .md-content a {
+  color: color-mix(in srgb, var(--c-cop-thinking-fg) 75%, var(--c-text-secondary) 25%) !important;
+  font-size: inherit !important;
+  font-weight: var(--c-cop-thinking-weight) !important;
+}
+
 .md-content--compact .md-table {
   font-size: 13px;
 }

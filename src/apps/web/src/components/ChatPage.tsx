@@ -65,10 +65,13 @@ import {
 } from '../runEventProcessing'
 import {
   assistantTurnPlainText,
+  assistantTurnThinkingPlainText,
   buildAssistantTurnFromRunEvents,
+  copSegmentCalls,
   createEmptyAssistantTurnFoldState,
   drainAssistantTurnForPersist,
   foldAssistantTurnEvent,
+  requestAssistantTurnThinkingBreak,
   snapshotAssistantTurn,
   type AssistantTurnSegment,
   type AssistantTurnUi,
@@ -245,7 +248,7 @@ function widgetToolCallIdsPlacedInTurn(turn: AssistantTurnUi, widgets: WidgetRef
   if (want.size === 0) return placed
   for (const s of turn.segments) {
     if (s.type !== 'cop') continue
-    for (const c of s.calls) {
+    for (const c of copSegmentCalls(s)) {
       if (c.toolName === 'show_widget' && want.has(c.toolCallId)) placed.add(c.toolCallId)
     }
   }
@@ -254,14 +257,14 @@ function widgetToolCallIdsPlacedInTurn(turn: AssistantTurnUi, widgets: WidgetRef
 
 function historicWidgetsForCop(seg: CopSegment, widgets: WidgetRef[] | undefined | null): WidgetRef[] {
   if (!widgets?.length) return []
-  const ids = new Set(seg.calls.filter((c) => c.toolName === 'show_widget').map((c) => c.toolCallId))
+  const ids = new Set(copSegmentCalls(seg).filter((c) => c.toolName === 'show_widget').map((c) => c.toolCallId))
   if (ids.size === 0) return []
   return widgets.filter((w) => ids.has(w.id))
 }
 
 function liveStreamingWidgetEntriesForCop(seg: CopSegment, entries: StreamingArtifactEntry[]): StreamingArtifactEntry[] {
   const out: StreamingArtifactEntry[] = []
-  for (const c of seg.calls) {
+  for (const c of copSegmentCalls(seg)) {
     if (c.toolName !== 'show_widget') continue
     const e = entries.find((x) => x.toolName === 'show_widget' && x.toolCallId === c.toolCallId)
     if (!e) continue
@@ -274,7 +277,7 @@ function liveStreamingWidgetEntriesForCop(seg: CopSegment, entries: StreamingArt
 
 function liveInlineArtifactEntriesForCop(seg: CopSegment, entries: StreamingArtifactEntry[]): StreamingArtifactEntry[] {
   const out: StreamingArtifactEntry[] = []
-  for (const c of seg.calls) {
+  for (const c of copSegmentCalls(seg)) {
     if (c.toolName !== 'create_artifact') continue
     const e = entries.find((x) => x.toolName === 'create_artifact' && x.toolCallId === c.toolCallId)
     if (e && e.content && e.display !== 'panel') out.push(e)
@@ -287,7 +290,7 @@ function liveCopShowWidgetCallIds(turn: AssistantTurnUi | null): Set<string> {
   if (!turn) return ids
   for (const s of turn.segments) {
     if (s.type !== 'cop') continue
-    for (const c of s.calls) {
+    for (const c of copSegmentCalls(s)) {
       if (c.toolName === 'show_widget' && c.toolCallId) ids.add(c.toolCallId)
     }
   }
@@ -299,7 +302,7 @@ function liveCopCreateArtifactCallIds(turn: AssistantTurnUi | null): Set<string>
   if (!turn) return ids
   for (const s of turn.segments) {
     if (s.type !== 'cop') continue
-    for (const c of s.calls) {
+    for (const c of copSegmentCalls(s)) {
       if (c.toolName === 'create_artifact' && c.toolCallId) ids.add(c.toolCallId)
     }
   }
@@ -316,6 +319,71 @@ function LiveTurnMarkdown({
 } & Omit<ComponentProps<typeof MarkdownRenderer>, 'content'>) {
   const displayed = useTypewriter(content, typewriterDone)
   return <MarkdownRenderer content={displayed} {...rest} />
+}
+
+function liveTurnHasThinkingSegment(turn: AssistantTurnUi | null): boolean {
+  if (!turn) return false
+  return turn.segments.some(
+    (s) => s.type === 'cop' && s.items.some((i) => i.kind === 'thinking'),
+  )
+}
+
+function thinkingRowsForCop(
+  seg: CopSegment,
+  opts: { live: boolean; segmentIndex: number; lastSegmentIndex: number },
+): Array<{ id: string; markdown: string; live?: boolean; seq: number }> {
+  let lastThinkIdx = -1
+  for (let i = seg.items.length - 1; i >= 0; i--) {
+    if (seg.items[i]?.kind === 'thinking') {
+      lastThinkIdx = i
+      break
+    }
+  }
+  const out: Array<{ id: string; markdown: string; live?: boolean; seq: number }> = []
+  seg.items.forEach((it, itemIdx) => {
+    if (it.kind !== 'thinking') return
+    const rowLive =
+      opts.live && opts.segmentIndex === opts.lastSegmentIndex && itemIdx === lastThinkIdx
+    out.push({
+      id: `think-${opts.segmentIndex}-${itemIdx}-${it.seq}`,
+      markdown: it.content,
+      seq: it.seq,
+      live: rowLive,
+    })
+  })
+  return out
+}
+
+function copInlineTextRowsForCop(
+  seg: CopSegment,
+  opts: { live: boolean; segmentIndex: number; lastSegmentIndex: number },
+): Array<{ id: string; text: string; live?: boolean; seq: number }> {
+  let lastInlineIdx = -1
+  for (let i = seg.items.length - 1; i >= 0; i--) {
+    if (seg.items[i]?.kind === 'assistant_text') {
+      lastInlineIdx = i
+      break
+    }
+  }
+  const out: Array<{ id: string; text: string; live?: boolean; seq: number }> = []
+  seg.items.forEach((it, itemIdx) => {
+    if (it.kind !== 'assistant_text') return
+    const rowLive =
+      opts.live && opts.segmentIndex === opts.lastSegmentIndex && itemIdx === lastInlineIdx
+    out.push({
+      id: `inline-${opts.segmentIndex}-${itemIdx}-${it.seq}`,
+      text: it.content,
+      seq: it.seq,
+      live: rowLive,
+    })
+  })
+  return out
+}
+
+function turnHasCopThinkingItems(turn: AssistantTurnUi): boolean {
+  return turn.segments.some(
+    (s) => s.type === 'cop' && s.items.some((i) => i.kind === 'thinking'),
+  )
 }
 
 export function ChatPage() {
@@ -426,17 +494,10 @@ export function ChatPage() {
   const [segments, setSegments] = useState<Segment[]>([])
   const activeSegmentIdRef = useRef<string | null>(null)
   const segmentsRef = useRef<Segment[]>([])
-  // Pro 路径的 LLM 原生 thinking 内容（channel: "thinking"）
-  const [thinkingDraft, setThinkingDraft] = useState('')
-  const thinkingDraftRef = useRef('')
-  const thinkingStartedAtRef = useRef<number | null>(null)
-  // 是否已有过 segment（用于判断 thinking 是否属于 segment 前的"前置 thinking"）
-  const hasHadSegmentRef = useRef(false)
-  // segment 开始前的 thinking（渲染在所有 segment 之前）
-  const [preSegmentThinking, setPreSegmentThinking] = useState('')
-  const preSegmentThinkingRef = useRef('')
-  // pending thinking shimmer: Enter 后 thinking 内容到达前显示
+  // Enter 后、首包 thinking 前进来的占位（与 Cop 点线对齐）
   const [pendingThinking, setPendingThinking] = useState(false)
+  /** 本轮首条 thinking 到达时刻，供 COP 标题「思考 N 秒」 */
+  const [copThinkingStartedAtMs, setCopThinkingStartedAtMs] = useState<number | undefined>(undefined)
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
 
@@ -585,9 +646,7 @@ export function ChatPage() {
   const clearLiveRunSecurityArtifacts = useCallback(() => {
     resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
-    setThinkingDraft('')
-    thinkingStartedAtRef.current = null
-    thinkingStartedAtRef.current = null
+    setPendingThinking(false)
     setTopLevelCodeExecutions([])
     setSegments([])
     activeSegmentIdRef.current = null
@@ -641,14 +700,6 @@ export function ChatPage() {
   useEffect(() => {
     segmentsRef.current = segments
   }, [segments])
-
-  useEffect(() => {
-    thinkingDraftRef.current = thinkingDraft
-  }, [thinkingDraft])
-
-  useEffect(() => {
-    preSegmentThinkingRef.current = preSegmentThinking
-  }, [preSegmentThinking])
 
   const beginMessageSync = useCallback(() => {
     messageSyncVersionRef.current += 1
@@ -740,6 +791,8 @@ export function ChatPage() {
   }, [])
 
   const buildLiveThinkingSnapshot = useCallback((): MessageThinkingRef | null => {
+    const snap = snapshotAssistantTurn(assistantTurnFoldStateRef.current)
+    const fromTurn = assistantTurnThinkingPlainText(snap)
     const liveSegments = segmentsRef.current
       .filter((s) => s.mode !== 'hidden' && s.content.trim() !== '')
       .map((s) => ({
@@ -749,12 +802,11 @@ export function ChatPage() {
         label: s.label,
         content: s.content,
       }))
-    const liveThinking = thinkingDraftRef.current
-    if (liveSegments.length === 0 && liveThinking.trim() === '') {
+    if (liveSegments.length === 0 && fromTurn.trim() === '') {
       return null
     }
     return {
-      thinkingText: liveThinking,
+      thinkingText: fromTurn,
       segments: liveSegments,
     }
   }, [])
@@ -784,6 +836,10 @@ export function ChatPage() {
   const disconnectSSE = sse.disconnect
 
   const isStreaming = activeRunId != null
+
+  useEffect(() => {
+    if (!activeRunId) setCopThinkingStartedAtMs(undefined)
+  }, [activeRunId])
 
   const canCancel =
     activeRunId != null &&
@@ -1097,9 +1153,6 @@ export function ChatPage() {
     injectionBlockedRunIdRef.current = null
     setSegments([])
     activeSegmentIdRef.current = null
-    setThinkingDraft('')
-    thinkingStartedAtRef.current = null
-    thinkingStartedAtRef.current = null
     setTopLevelCodeExecutions([])
     setCancelSubmitting(false)
     setAwaitingInput(false)
@@ -1125,7 +1178,7 @@ export function ChatPage() {
     disconnectSSE()
     sse.clearEvents()
     // 不重置 processedEventCountRef: clearEvents 是异步的，若此处归零，
-    // 同一 effects 阶段内事件处理 effect 会重放旧事件导致 thinkingDraft 串线。
+    // 同一 effects 阶段内事件处理 effect 会重放旧事件导致串线。
     // activeRunId effect 在新 run 启动时负责归零。
     setPendingIncognito(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1178,9 +1231,6 @@ export function ChatPage() {
     resetAssistantTurnLive()
     setSegments([])
     activeSegmentIdRef.current = null
-    setThinkingDraft('')
-    thinkingStartedAtRef.current = null
-    thinkingStartedAtRef.current = null
     setTopLevelCodeExecutions([])
     setTopLevelSubAgents([])
     setTopLevelFileOps([])
@@ -1256,13 +1306,7 @@ export function ChatPage() {
         const label = typeof display.label === 'string' ? display.label : ''
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
-        // 首个 segment 开始时：保存此前的 thinking 到 preSegmentThinking，并清空 thinkingDraft
-        if (!hasHadSegmentRef.current && thinkingDraftRef.current.trim() !== '') {
-          preSegmentThinkingRef.current = thinkingDraftRef.current
-          setPreSegmentThinking(thinkingDraftRef.current)
-          setThinkingDraft('')
-        }
-        hasHadSegmentRef.current = true
+        requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
         if (kind.startsWith('search_')) {
           continue
         }
@@ -1307,6 +1351,7 @@ export function ChatPage() {
         if (segmentId && activeSegmentIdRef.current === segmentId) {
           activeSegmentIdRef.current = null
         }
+        requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
         setSegments((prev) =>
           prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
         )
@@ -1324,13 +1369,14 @@ export function ChatPage() {
         const activeSeg = activeSegmentIdRef.current
         if (isThinking) {
           setPendingThinking(false)
-          if (thinkingDraftRef.current === '') {
-            thinkingStartedAtRef.current = Date.now()
-          }
-          setThinkingDraft((prev) => prev + delta)
+          setCopThinkingStartedAtMs((prev) => prev ?? Date.now())
+          foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
+          bumpAssistantTurnSnapshot()
           continue
         }
+        setPendingThinking(false)
         if (activeSeg) {
+          requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
           setSegments((prev) =>
             prev.map((s) =>
               s.segmentId === activeSeg && s.mode !== 'hidden'
@@ -1372,6 +1418,7 @@ export function ChatPage() {
 
       if (event.type === 'tool.call') {
         if (isACPDelegateEventData(event.data)) continue
+        setPendingThinking(false)
         seenFirstToolCallInRunRef.current = true
         const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
@@ -1645,11 +1692,7 @@ export function ChatPage() {
         setLiveAssistantTurn(runAssistantTurn.segments.length > 0 ? runAssistantTurn : null)
         sse.disconnect()
         setActiveRunId(null)
-        setThinkingDraft('')
         setPendingThinking(false)
-        setPreSegmentThinking('')
-        hasHadSegmentRef.current = false
-        thinkingStartedAtRef.current = null
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) applySearchSteps(() => runSearchSteps)
@@ -1757,8 +1800,7 @@ export function ChatPage() {
         injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
-        setThinkingDraft('')
-        thinkingStartedAtRef.current = null
+        setPendingThinking(false)
         setTopLevelCodeExecutions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
@@ -1789,8 +1831,7 @@ export function ChatPage() {
         injectionBlockedRunIdRef.current = null
         sse.disconnect()
         setActiveRunId(null)
-        setThinkingDraft('')
-        thinkingStartedAtRef.current = null
+        setPendingThinking(false)
         setTopLevelCodeExecutions([])
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
@@ -1863,8 +1904,7 @@ export function ChatPage() {
     const runWebFetches2 = [...currentRunWebFetchesRef.current]
 
     setActiveRunId(null)
-    setThinkingDraft('')
-    thinkingStartedAtRef.current = null
+    setPendingThinking(false)
     setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
@@ -1940,13 +1980,13 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({
       behavior: isStreaming || liveHandoffPaint ? 'instant' : 'smooth',
     })
-  }, [messages, liveAssistantTurn, isStreaming, thinkingDraft])
+  }, [messages, liveAssistantTurn, isStreaming])
 
   // COP 代码执行列表：新 item 添加时自动滚动到底部
   useEffect(() => {
     const el = copCodeExecScrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [topLevelCodeExecutions.length, thinkingDraft])
+  }, [topLevelCodeExecutions.length, liveAssistantTurn])
 
   // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
   const scrollToBottom = useCallback(() => {
@@ -2646,8 +2686,12 @@ export function ChatPage() {
                   <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
                   {msg.role === 'assistant' && hasAssistantTurn && (
                     <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
-                      {msgThinking != null && msgThinking.thinkingText.trim() !== '' && !isSearchThread && (
+                      {!isSearchThread &&
+                        msgThinking != null &&
+                        msgThinking.thinkingText.trim() !== '' &&
+                        !turnHasCopThinkingItems(historicalTurn!) && (
                         <CopTimeline
+                          key={`${msg.id}-legacy-thinking`}
                           steps={[]}
                           sources={[]}
                           isComplete
@@ -2682,35 +2726,47 @@ export function ChatPage() {
                               sources: resolvedSources ?? [],
                             })
                             const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
-                            if (!payload && histWidgets.length === 0) return null
-                            const copHeader = seg.title?.trim() || t.assistantCopDefaultTitle
-                            const firstHistCopSi = historicalTurn!.segments.findIndex((s) => s.type === 'cop')
+                            const thinkingRowsHist = !isSearchThread
+                              ? thinkingRowsForCop(seg, {
+                                  live: false,
+                                  segmentIndex: si,
+                                  lastSegmentIndex: historicalTurn!.segments.length - 1,
+                                })
+                              : []
+                            const copInlineHist = !isSearchThread
+                              ? copInlineTextRowsForCop(seg, {
+                                  live: false,
+                                  segmentIndex: si,
+                                  lastSegmentIndex: historicalTurn!.segments.length - 1,
+                                })
+                              : []
+                            if (
+                              copSegmentCalls(seg).length === 0 &&
+                              thinkingRowsHist.length === 0 &&
+                              copInlineHist.length === 0 &&
+                              histWidgets.length === 0
+                            ) {
+                              return null
+                            }
+                            const timelineTitleOverride = seg.title?.trim() || undefined
                             return (
                               <Fragment key={`${msg.id}-acw-${si}`}>
-                                {payload && (
-                                  <CopTimeline
-                                    steps={payload.steps}
-                                    sources={payload.sources}
-                                    isComplete
-                                    codeExecutions={payload.codeExecutions}
-                                    onOpenCodeExecution={openCodePanel}
-                                    activeCodeExecutionId={codePanelExecution?.id}
-                                    subAgents={payload.subAgents}
-                                    fileOps={payload.fileOps}
-                                    webFetches={payload.webFetches}
-                                    headerOverride={copHeader}
-                                    assistantThinking={
-                                      !isSearchThread &&
-                                      firstHistCopSi === si &&
-                                      msgThinking != null &&
-                                      msgThinking.thinkingText.trim() !== ''
-                                        ? { markdown: msgThinking.thinkingText, live: false }
-                                        : undefined
-                                    }
-                                    accessToken={accessToken}
-                                    baseUrl={baseUrl}
-                                  />
-                                )}
+                                <CopTimeline
+                                  steps={payload.steps}
+                                  sources={payload.sources}
+                                  isComplete
+                                  codeExecutions={payload.codeExecutions}
+                                  onOpenCodeExecution={openCodePanel}
+                                  activeCodeExecutionId={codePanelExecution?.id}
+                                  subAgents={payload.subAgents}
+                                  fileOps={payload.fileOps}
+                                  webFetches={payload.webFetches}
+                                  headerOverride={timelineTitleOverride}
+                                  thinkingRows={thinkingRowsHist.length > 0 ? thinkingRowsHist : undefined}
+                                  copInlineTextRows={copInlineHist.length > 0 ? copInlineHist : undefined}
+                                  accessToken={accessToken}
+                                  baseUrl={baseUrl}
+                                />
                                 {histWidgets.map((w) => (
                                   <WidgetBlock
                                     key={w.id}
@@ -2846,23 +2902,23 @@ export function ChatPage() {
               {liveAssistantTurn && liveAssistantTurn.segments.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
                   {/* pending thinking shimmer: Enter 后 thinking 内容到达前显示 */}
-                  {pendingThinking && !thinkingDraft.trim() && !preSegmentThinking.trim() && (
-                    <CopTimelineUnifiedRow
-                      isFirst
-                      isLast={false}
-                      multiItems={false}
-                      dotColor="var(--c-text-secondary)"
-                    >
-                      <span style={{ fontSize: '14px', color: 'var(--c-text-secondary)' }}>
-                        {t.assistantStreamThinkingPlaceholder}
-                      </span>
-                    </CopTimelineUnifiedRow>
+                  {pendingThinking && !liveTurnHasThinkingSegment(liveAssistantTurn) && (
+                    <CopTimeline
+                      key="pending-thinking"
+                      steps={[]}
+                      sources={[]}
+                      isComplete={false}
+                      live
+                      shimmer
+                      assistantThinking={{ markdown: '', live: true }}
+                      thinkingStartedAt={copThinkingStartedAtMs}
+                      accessToken={accessToken}
+                      baseUrl={baseUrl}
+                    />
                   )}
                   {liveAssistantTurn.segments.map((seg, si) => {
                     const lastSegIdx = liveAssistantTurn.segments.length - 1
                     const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
-                    const firstLiveCopSegIdx =
-                      liveAssistantTurn.segments.findIndex((s) => s.type === 'cop')
                     const mdTypewriterDone =
                       !isStreaming ||
                       lastTurnSeg?.type !== 'text' ||
@@ -2898,36 +2954,51 @@ export function ChatPage() {
                         })
                         const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
                         const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
-                        if (!payload && liveWidgets.length === 0 && liveArts.length === 0) return null
-                        const copHeader = seg.title?.trim() || t.assistantCopDefaultTitle
+                        const thinkingRowsLive = !isSearchThread
+                          ? thinkingRowsForCop(seg, {
+                              live: isStreaming,
+                              segmentIndex: si,
+                              lastSegmentIndex: lastSegIdx,
+                            })
+                          : []
+                        const copInlineLive = !isSearchThread
+                          ? copInlineTextRowsForCop(seg, {
+                              live: isStreaming,
+                              segmentIndex: si,
+                              lastSegmentIndex: lastSegIdx,
+                            })
+                          : []
+                        if (
+                          copSegmentCalls(seg).length === 0 &&
+                          thinkingRowsLive.length === 0 &&
+                          copInlineLive.length === 0 &&
+                          liveWidgets.length === 0 &&
+                          liveArts.length === 0
+                        ) {
+                          return null
+                        }
+                        const timelineTitleOverride = seg.title?.trim() || undefined
                         return (
                           <Fragment key={`live-acw-${si}`}>
-                            {payload && (
-                              <CopTimeline
-                                steps={payload.steps}
-                                sources={payload.sources}
-                                isComplete={copTimelineComplete}
-                                codeExecutions={payload.codeExecutions}
-                                onOpenCodeExecution={openCodePanel}
-                                activeCodeExecutionId={codePanelExecution?.id}
-                                subAgents={payload.subAgents}
-                                fileOps={payload.fileOps}
-                                webFetches={payload.webFetches}
-                                headerOverride={copHeader}
-                                shimmer={copTimelineLive}
-                                live={copTimelineLive}
-                                assistantThinking={
-                                  !isSearchThread &&
-                                  firstLiveCopSegIdx === si &&
-                                  (preSegmentThinking.trim() !== '' || thinkingDraft.trim() !== '' || isStreaming)
-                                    ? { markdown: preSegmentThinking.trim() || thinkingDraft, live: isStreaming }
-                                    : undefined
-                                }
-                                thinkingStartedAt={firstLiveCopSegIdx === si ? (thinkingStartedAtRef.current ?? undefined) : undefined}
-                                accessToken={accessToken}
-                                baseUrl={baseUrl}
-                              />
-                            )}
+                            <CopTimeline
+                              steps={payload.steps}
+                              sources={payload.sources}
+                              isComplete={copTimelineComplete}
+                              codeExecutions={payload.codeExecutions}
+                              onOpenCodeExecution={openCodePanel}
+                              activeCodeExecutionId={codePanelExecution?.id}
+                              subAgents={payload.subAgents}
+                              fileOps={payload.fileOps}
+                              webFetches={payload.webFetches}
+                              headerOverride={timelineTitleOverride}
+                                  thinkingRows={thinkingRowsLive.length > 0 ? thinkingRowsLive : undefined}
+                                  copInlineTextRows={copInlineLive.length > 0 ? copInlineLive : undefined}
+                                  shimmer={copTimelineLive}
+                                  live={copTimelineLive}
+                                  thinkingStartedAt={copThinkingStartedAtMs}
+                                  accessToken={accessToken}
+                                  baseUrl={baseUrl}
+                            />
                             {liveWidgets.map((entry) => (
                               <WidgetBlock
                                 key={`live-w-${entry.toolCallId ?? entry.toolCallIndex}`}
@@ -2956,6 +3027,7 @@ export function ChatPage() {
 
               {allStreamItemsForUi.length > 0 && (
                 <motion.div
+                  className="cop-timeline-root"
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, ease: 'easeOut' }}

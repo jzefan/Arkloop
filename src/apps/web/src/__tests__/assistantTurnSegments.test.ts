@@ -3,6 +3,11 @@ import { ACP_DELEGATE_LAYER } from '@arkloop/shared'
 import {
   assistantTurnPlainText,
   buildAssistantTurnFromRunEvents,
+  copSegmentCalls,
+  createEmptyAssistantTurnFoldState,
+  finalizeAssistantTurnFoldState,
+  foldAssistantTurnEvent,
+  requestAssistantTurnThinkingBreak,
 } from '../assistantTurnSegments'
 import type { RunEvent } from '../sse'
 
@@ -19,6 +24,24 @@ function ev(runId: string, seq: number, type: string, data?: unknown, errorClass
 }
 
 describe('buildAssistantTurnFromRunEvents', () => {
+  it('requestAssistantTurnThinkingBreak 将连续 thinking 拆成多项', () => {
+    const state = createEmptyAssistantTurnFoldState()
+    foldAssistantTurnEvent(state, ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'a' }))
+    requestAssistantTurnThinkingBreak(state)
+    foldAssistantTurnEvent(state, ev('r1', 2, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'b' }))
+    finalizeAssistantTurnFoldState(state)
+    expect(state.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          { kind: 'thinking', content: 'a', seq: 1 },
+          { kind: 'thinking', content: 'b', seq: 2 },
+        ],
+      },
+    ])
+  })
+
   it('合并连续 assistant 文本为单一 text segment', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'message.delta', { role: 'assistant', content_delta: 'a' }),
@@ -27,12 +50,94 @@ describe('buildAssistantTurnFromRunEvents', () => {
     expect(turn.segments).toEqual([{ type: 'text', content: 'ab' }])
   })
 
-  it('忽略 thinking channel', () => {
+  it('thinking 后短正文并入同一段 cop（不 flush 成独立 text）', () => {
     const turn = buildAssistantTurnFromRunEvents([
-      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'hidden' }),
+      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 't1' }),
       ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: 'visible' }),
     ])
-    expect(turn.segments).toEqual([{ type: 'text', content: 'visible' }])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          { kind: 'thinking', content: 't1', seq: 1 },
+          { kind: 'assistant_text', content: 'visible', seq: 2 },
+        ],
+      },
+    ])
+  })
+
+  it('工具后 thinking 与 tool 同一段 cop；首个 tool 前短正文留在上一段 cop', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'a' }),
+      ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: 'hi' }),
+      ev('r1', 3, 'tool.call', { tool_name: 'read_file', tool_call_id: 'c1', arguments: {} }),
+      ev('r1', 4, 'tool.result', { tool_name: 'read_file', tool_call_id: 'c1', result: {} }),
+      ev('r1', 5, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'b' }),
+      ev('r1', 6, 'message.delta', { role: 'assistant', content_delta: 'bye' }),
+    ])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          { kind: 'thinking', content: 'a', seq: 1 },
+          { kind: 'assistant_text', content: 'hi', seq: 2 },
+          {
+            kind: 'call',
+            call: { toolCallId: 'c1', toolName: 'read_file', arguments: {}, result: {} },
+            seq: 3,
+          },
+          { kind: 'thinking', content: 'b', seq: 5 },
+        ],
+      },
+      { type: 'text', content: 'bye' },
+    ])
+    expect(assistantTurnPlainText(turn)).toBe('hibye')
+  })
+
+  it('thinking、短可见句与首个 tool 同一段 cop', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'plan' }),
+      ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: '我来查一下。' }),
+      ev('r1', 3, 'tool.call', { tool_name: 'read_file', tool_call_id: 'c1', arguments: {} }),
+    ])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          { kind: 'thinking', content: 'plan', seq: 1 },
+          { kind: 'assistant_text', content: '我来查一下。', seq: 2 },
+          {
+            kind: 'call',
+            call: { toolCallId: 'c1', toolName: 'read_file', arguments: {}, result: undefined },
+            seq: 3,
+          },
+        ],
+      },
+    ])
+  })
+
+  it('thinking 与首个 tool 同 cop（中间无正文）', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'plan' }),
+      ev('r1', 2, 'tool.call', { tool_name: 'read_file', tool_call_id: 'c1', arguments: {} }),
+    ])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          { kind: 'thinking', content: 'plan', seq: 1 },
+          {
+            kind: 'call',
+            call: { toolCallId: 'c1', toolName: 'read_file', arguments: {}, result: undefined },
+            seq: 2,
+          },
+        ],
+      },
+    ])
   })
 
   it('忽略 ACP delegate_layer 的 delta 与工具事件', () => {
@@ -88,18 +193,26 @@ describe('buildAssistantTurnFromRunEvents', () => {
       {
         type: 'cop',
         title: null,
-        calls: [
+        items: [
           {
-            toolCallId: 'c1',
-            toolName: 'search_tools',
-            arguments: { q: 'x' },
-            result: { ok: true },
+            kind: 'call',
+            call: {
+              toolCallId: 'c1',
+              toolName: 'search_tools',
+              arguments: { q: 'x' },
+              result: { ok: true },
+            },
+            seq: 2,
           },
           {
-            toolCallId: 'c2',
-            toolName: 'read_file',
-            arguments: { path: '/a' },
-            result: null,
+            kind: 'call',
+            call: {
+              toolCallId: 'c2',
+              toolName: 'read_file',
+              arguments: { path: '/a' },
+              result: null,
+            },
+            seq: 3,
           },
         ],
       },
@@ -107,12 +220,16 @@ describe('buildAssistantTurnFromRunEvents', () => {
       {
         type: 'cop',
         title: null,
-        calls: [
+        items: [
           {
-            toolCallId: 'c3',
-            toolName: 'read_file',
-            arguments: { path: '/b' },
-            result: { content: 'x' },
+            kind: 'call',
+            call: {
+              toolCallId: 'c3',
+              toolName: 'read_file',
+              arguments: { path: '/b' },
+              result: { content: 'x' },
+            },
+            seq: 7,
           },
         ],
       },
@@ -133,10 +250,10 @@ describe('buildAssistantTurnFromRunEvents', () => {
     expect(turn.segments).toHaveLength(2)
     expect(turn.segments[1]?.type).toBe('cop')
     if (turn.segments[1]?.type !== 'cop') throw new Error('expected cop')
-    expect(turn.segments[1].calls).toHaveLength(5)
+    expect(copSegmentCalls(turn.segments[1])).toHaveLength(5)
   })
 
-  it('timeline_title 仅设置 cop.title，不进入 calls', () => {
+  it('timeline_title 仅设置 cop.title，不进入 items', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'tool.call', {
         tool_name: 'timeline_title',
@@ -153,7 +270,13 @@ describe('buildAssistantTurnFromRunEvents', () => {
     expect(turn.segments[0]).toEqual({
       type: 'cop',
       title: '读取 Skills',
-      calls: [{ toolCallId: 'c1', toolName: 'search_tools', arguments: {}, result: undefined }],
+      items: [
+        {
+          kind: 'call',
+          call: { toolCallId: 'c1', toolName: 'search_tools', arguments: {}, result: undefined },
+          seq: 2,
+        },
+      ],
     })
   })
 
@@ -177,9 +300,10 @@ describe('buildAssistantTurnFromRunEvents', () => {
     const first = turn.segments[0]
     expect(first?.type).toBe('cop')
     if (first?.type !== 'cop') throw new Error('expected cop')
-    expect(first.calls).toHaveLength(2)
-    expect(first.calls[0]?.toolCallId).toBe('c1')
-    expect(first.calls[1]).toMatchObject({
+    const calls = copSegmentCalls(first)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.toolCallId).toBe('c1')
+    expect(calls[1]).toMatchObject({
       toolCallId: 'orphan',
       toolName: 'exec_command',
       arguments: {},
@@ -187,7 +311,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
     })
   })
 
-  it('空 timeline_title 不单独产出空 cop', () => {
+  it('空 timeline_title 后短正文进入当前 cop（不先 flush 成独立 text）', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'tool.call', {
         tool_name: 'timeline_title',
@@ -196,6 +320,12 @@ describe('buildAssistantTurnFromRunEvents', () => {
       }),
       ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: 'hi' }),
     ])
-    expect(turn.segments).toEqual([{ type: 'text', content: 'hi' }])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [{ kind: 'assistant_text', content: 'hi', seq: 2 }],
+      },
+    ])
   })
 })
