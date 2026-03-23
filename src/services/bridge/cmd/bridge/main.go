@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 
 	"arkloop/services/bridge/internal/app"
+	sharedlog "arkloop/services/shared/log"
 )
 
 func main() {
@@ -19,13 +21,19 @@ func run() error {
 		return err
 	}
 
+	// 统一 slog 输出格式
+	slog.SetDefault(sharedlog.New(sharedlog.Config{
+		Component: "bridge",
+		Level:     slog.LevelDebug,
+		Output:    os.Stdout,
+	}))
+
 	cfg, err := app.LoadConfigFromEnv()
 	if err != nil {
 		return err
 	}
 
-	logger := app.NewJSONLogger("bridge", os.Stdout)
-	application, err := app.NewApplication(cfg, logger)
+	application, err := app.NewApplication(cfg, slog.Default())
 	if err != nil {
 		return err
 	}

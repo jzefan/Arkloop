@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -32,7 +33,7 @@ const (
 	corsExposeHeadersValue = traceIDHeader
 )
 
-func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rdb *goredis.Client, redisTimeout time.Duration, jwtSecret []byte, trustIncomingTraceID bool) http.Handler {
+func traceMiddleware(next http.Handler, logger *slog.Logger, geo geoip.Lookup, rdb *goredis.Client, redisTimeout time.Duration, jwtSecret []byte, trustIncomingTraceID bool) http.Handler {
 	var logWriter *accesslog.Writer
 	if rdb != nil {
 		logWriter = accesslog.NewWriter(rdb)
@@ -80,23 +81,18 @@ func traceMiddleware(next http.Handler, logger *JSONLogger, geo geoip.Lookup, rd
 		cancel()
 
 		if logger != nil {
-			extra := map[string]any{
-				"method":      r.Method,
-				"path":        r.URL.Path,
-				"status_code": recorder.StatusCode,
-				"duration_ms": durationMs,
-				"client_ip":   ip,
-				"user_agent":  uaInfo.Raw,
-				"ua_type":     string(uaInfo.Type),
-			}
-			if geoResult.Country != "" {
-				extra["country"] = geoResult.Country
-			}
-			if riskScore > 0 {
-				extra["risk_score"] = riskScore
-			}
-			tid := traceID
-			logger.Info("request", LogFields{TraceID: &tid}, extra)
+			logger.Info("request",
+				"trace_id", traceID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status_code", recorder.StatusCode,
+				"duration_ms", durationMs,
+				"client_ip", ip,
+				"user_agent", uaInfo.Raw,
+				"ua_type", string(uaInfo.Type),
+				"country", geoResult.Country,
+				"risk_score", riskScore,
+			)
 		}
 
 		if logWriter != nil {
@@ -172,7 +168,7 @@ func appendVaryHeader(header http.Header, value string) {
 	header.Add("Vary", value)
 }
 
-func recoverMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
+func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if value := recover(); value != nil {
@@ -181,10 +177,11 @@ func recoverMiddleware(next http.Handler, logger *JSONLogger) http.Handler {
 					traceID = newTraceID()
 				}
 				if logger != nil {
-					logger.Error("panic", LogFields{TraceID: &traceID}, map[string]any{
-						"panic": fmt.Sprint(value),
-						"stack": string(debug.Stack()),
-					})
+					logger.Error("panic",
+						"trace_id", traceID,
+						"panic", fmt.Sprint(value),
+						"stack", string(debug.Stack()),
+					)
 				}
 				http.Error(w, `{"code":"internal.error","message":"internal error"}`, http.StatusInternalServerError)
 			}

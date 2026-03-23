@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os/signal"
@@ -46,12 +47,12 @@ type gatewayDynamicConfig struct {
 
 type Application struct {
 	config Config
-	logger *JSONLogger
+	logger *slog.Logger
 	// dynamicCfg 原子指针，30s 轮询刷新
 	dynamicCfg atomic.Pointer[gatewayDynamicConfig]
 }
 
-func NewApplication(config Config, logger *JSONLogger) (*Application, error) {
+func NewApplication(config Config, logger *slog.Logger) (*Application, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -60,7 +61,7 @@ func NewApplication(config Config, logger *JSONLogger) (*Application, error) {
 	}
 	app := &Application{config: config, logger: logger}
 	if strings.TrimSpace(config.JWTSecret) == "" {
-		logger.Info("jwt secret missing", LogFields{}, map[string]any{"jwt_secret_configured": false})
+		logger.Info("jwt secret missing", "jwt_secret_configured", false)
 	}
 	// 初始化为空配置（不覆盖 env 值）
 	empty := &gatewayDynamicConfig{}
@@ -164,23 +165,23 @@ func (a *Application) Run(ctx context.Context) error {
 	if a.config.GeoIPLicenseKey != "" {
 		updater := geoip.NewUpdater(a.config.GeoIPDBPath, a.config.GeoIPLicenseKey, &geoipLogAdapter{logger: a.logger})
 		if err := updater.Init(); err != nil {
-			a.logger.Error("geoip init failed", LogFields{}, map[string]any{"error": err.Error()})
+			a.logger.Error("geoip init failed", "error", err.Error())
 			return fmt.Errorf("geoip init: %w", err)
 		} else {
 			defer updater.Close()
 			geo = updater
-			a.logger.Info("geoip enabled (auto-update)", LogFields{}, map[string]any{"path": a.config.GeoIPDBPath})
+			a.logger.Info("geoip enabled (auto-update)", "path", a.config.GeoIPDBPath)
 			go updater.Run(ctx)
 		}
 	} else if a.config.GeoIPDBPath != "" {
 		mm, err := geoip.NewMaxMind(a.config.GeoIPDBPath)
 		if err != nil {
-			a.logger.Error("geoip init failed", LogFields{}, map[string]any{"path": a.config.GeoIPDBPath, "error": err.Error()})
+			a.logger.Error("geoip init failed", "path", a.config.GeoIPDBPath, "error", err.Error())
 			return fmt.Errorf("geoip init: %w", err)
 		} else {
 			defer mm.Close()
 			geo = mm
-			a.logger.Info("geoip enabled", LogFields{}, map[string]any{"path": a.config.GeoIPDBPath})
+			a.logger.Info("geoip enabled", "path", a.config.GeoIPDBPath)
 		}
 	}
 
@@ -214,11 +215,11 @@ func (a *Application) Run(ctx context.Context) error {
 		ipFilter = ipfilter.NewFilter(rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret))
 
 		effectiveRL := a.effectiveRateLimit()
-		a.logger.Info("ratelimit enabled", LogFields{}, map[string]any{
-			"capacity":        effectiveRL.Capacity,
-			"rate_per_minute": effectiveRL.RatePerMinute,
-		})
-		a.logger.Info("ipfilter enabled", LogFields{}, nil)
+		a.logger.Info("ratelimit enabled",
+			"capacity", effectiveRL.Capacity,
+			"rate_per_minute", effectiveRL.RatePerMinute,
+		)
+		a.logger.Info("ipfilter enabled")
 
 		// 后台 30s 轮询动态配置
 		go func() {
@@ -271,12 +272,12 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	a.logger.Info("gateway started", LogFields{}, map[string]any{
-		"addr":              a.config.Addr,
-		"upstream":          a.config.Upstream,
-		"frontend_upstream": a.config.FrontendUpstream,
-		"ip_mode":           string(a.effectiveIPMode()),
-	})
+	a.logger.Info("gateway started",
+		"addr", a.config.Addr,
+		"upstream", a.config.Upstream,
+		"frontend_upstream", a.config.FrontendUpstream,
+		"ip_mode", string(a.effectiveIPMode()),
+	)
 
 	server := &http.Server{
 		Handler:           root,
@@ -369,15 +370,15 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(healthzPayload)
 }
 
-// geoipLogAdapter 将 JSONLogger 适配为 geoip.Logger 接口。
+// geoipLogAdapter 将 slog.Logger 适配为 geoip.Logger 接口。
 type geoipLogAdapter struct {
-	logger *JSONLogger
+	logger *slog.Logger
 }
 
 func (a *geoipLogAdapter) Info(msg string, extra map[string]any) {
-	a.logger.Info(msg, LogFields{}, extra)
+	a.logger.Info(msg, "extra", extra)
 }
 
 func (a *geoipLogAdapter) Error(msg string, extra map[string]any) {
-	a.logger.Error(msg, LogFields{}, extra)
+	a.logger.Error(msg, "extra", extra)
 }
