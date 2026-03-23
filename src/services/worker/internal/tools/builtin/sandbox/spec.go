@@ -97,6 +97,10 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"maximum":     30000,
 				"description": "time to wait for incremental output before returning",
 			},
+			"background": map[string]any{
+				"type":        "boolean",
+				"description": "start the command and return immediately without waiting for output; use write_stdin to poll",
+			},
 			"env": map[string]any{
 				"type":                 "object",
 				"description":         "environment variable overrides for the command",

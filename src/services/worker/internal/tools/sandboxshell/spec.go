@@ -43,6 +43,16 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"maximum":     1800000,
 				"description": "command timeout in milliseconds",
 			},
+			"yield_time_ms": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"maximum":     30000,
+				"description": "time to wait for incremental output before returning",
+			},
+			"background": map[string]any{
+				"type":        "boolean",
+				"description": "start the command and return immediately without waiting for output; use write_stdin to poll",
+			},
 			"env": map[string]any{
 				"type":                 "object",
 				"description":         "environment variable overrides for the command",

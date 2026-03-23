@@ -83,17 +83,14 @@ func (e *Executor) executeExecCommand(
 	execCtx tools.ExecutionContext,
 	started time.Time,
 ) tools.ExecutionResult {
-	command := readStringArg(args, "command")
-	if strings.TrimSpace(command) == "" {
-		return errResult(errorArgsInvalid, "parameter command is required", started)
+	reqArgs, argErr := parseExecCommandArgs(args)
+	if argErr != nil {
+		return errResult(errorArgsInvalid, argErr.Error(), started)
 	}
-
-	cwd := readStringArg(args, "cwd")
-	timeoutMs := readIntArg(args, "timeout_ms")
-	env := readMapStringArg(args, "env")
 
 	controller := e.getOrCreateController(execCtx.RunID.String(), execCtx.WorkDir)
 
+	command := reqArgs.Command
 	if rewritten := rtkRewrite(ctx, command); rewritten != "" {
 		command = rewritten
 	}
@@ -101,15 +98,48 @@ func (e *Executor) executeExecCommand(
 	slog.Info("local_shell: exec_command",
 		"run_id", execCtx.RunID.String(),
 		"command", truncateForLog(command, 200),
-		"cwd", cwd,
+		"cwd", reqArgs.Cwd,
 	)
 
-	resp, err := controller.execCommand(command, cwd, timeoutMs, env)
+	resp, err := controller.execCommand(command, reqArgs.Cwd, reqArgs.TimeoutMs, reqArgs.Env)
 	if err != nil {
 		return errResult(errorShellError, err.Error(), started)
 	}
 
 	return buildResult(resp, execCtx.RunID.String(), started)
+}
+
+type execCommandArgs struct {
+	Cwd       string
+	Command   string
+	TimeoutMs int
+	YieldTimeMs int
+	Background bool
+	Env       map[string]string
+}
+
+func parseExecCommandArgs(args map[string]any) (execCommandArgs, error) {
+	command := readStringArg(args, "command")
+	if strings.TrimSpace(command) == "" {
+		return execCommandArgs{}, fmt.Errorf("parameter command is required")
+	}
+	reqArgs := execCommandArgs{
+		Cwd:        readStringArg(args, "cwd"),
+		Command:    command,
+		TimeoutMs:  readIntArg(args, "timeout_ms"),
+		YieldTimeMs: readIntArg(args, "yield_time_ms"),
+		Background: readBoolArg(args, "background"),
+		Env:        readMapStringArg(args, "env"),
+	}
+	if reqArgs.Background {
+		reqArgs.YieldTimeMs = 1
+	} else if reqArgs.YieldTimeMs <= 0 {
+		reqArgs.YieldTimeMs = min(reqArgs.TimeoutMs, 30_000)
+		if reqArgs.YieldTimeMs <= 0 {
+			reqArgs.YieldTimeMs = 30_000
+		}
+	}
+	return reqArgs, nil
 }
 
 func (e *Executor) executeWriteStdin(
@@ -231,6 +261,11 @@ func readMapStringArg(args map[string]any, key string) map[string]string {
 		return nil
 	}
 	return result
+}
+
+func readBoolArg(args map[string]any, key string) bool {
+	v, _ := args[key].(bool)
+	return v
 }
 
 func readIntArg(args map[string]any, key string) int {

@@ -86,6 +86,14 @@ func (e *Executor) executeExecCommand(
 	if timeoutMs <= 0 {
 		timeoutMs = 30000
 	}
+	yieldTimeMs := readIntArg(args, "yield_time_ms")
+	if yieldTimeMs <= 0 {
+		yieldTimeMs = 2000
+	}
+	background := readBoolArg(args, "background")
+	if background {
+		yieldTimeMs = 1
+	}
 
 	slog.Info("sandbox_shell: exec_command",
 		"run_id", execCtx.RunID.String(),
@@ -99,7 +107,7 @@ func (e *Executor) executeExecCommand(
 		"session_id":    sessionID,
 		"command":       command,
 		"timeout_ms":    timeoutMs,
-		"yield_time_ms": 2000,
+		"yield_time_ms": yieldTimeMs,
 		"tier":          defaultTier,
 	}
 	if cwd != "" {
@@ -256,6 +264,11 @@ func readMapStringArg(args map[string]any, key string) map[string]string {
 		return nil
 	}
 	return result
+}
+
+func readBoolArg(args map[string]any, key string) bool {
+	v, _ := args[key].(bool)
+	return v
 }
 
 func readIntArg(args map[string]any, key string) int {
