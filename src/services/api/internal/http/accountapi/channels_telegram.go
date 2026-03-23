@@ -756,6 +756,24 @@ func (c telegramConnector) HandleUpdate(
 			}
 			return nil
 		}
+		if ok && strings.HasPrefix(cmd, "/heartbeat") {
+			replyText, err := handleTelegramHeartbeatCommand(ctx, tx, identity, incoming.CommandText, c.channelIdentitiesRepo)
+			if err != nil {
+				return err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil
+		}
 	}
 
 	if !incoming.HasContent() {
@@ -1215,6 +1233,78 @@ func handleTelegramCommand(
 	}
 }
 
+// handleTelegramHeartbeatCommand 处理群内 /heartbeat 命令。
+// 支持：/heartbeat、/heartbeat on、/heartbeat off、/heartbeat interval N、/heartbeat model NAME
+func handleTelegramHeartbeatCommand(
+	ctx context.Context,
+	tx pgx.Tx,
+	identity data.ChannelIdentity,
+	rawText string,
+	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+) (string, error) {
+	parts := strings.Fields(rawText)
+
+	enabled, intervalMin, model, err := channelIdentitiesRepo.WithTx(tx).GetHeartbeatConfig(ctx, identity.ID)
+	if err != nil {
+		return "", err
+	}
+
+	if len(parts) == 1 {
+		status := "关闭"
+		if enabled {
+			status = "开启"
+		}
+		modelDisplay := "跟随对话"
+		if strings.TrimSpace(model) != "" {
+			modelDisplay = model
+		}
+		return fmt.Sprintf("心跳：%s\n间隔：%d 分钟\n模型：%s", status, intervalMin, modelDisplay), nil
+	}
+
+	sub := strings.TrimSpace(parts[1])
+	switch sub {
+	case "on":
+		if intervalMin <= 0 {
+			intervalMin = 30
+		}
+		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, true, intervalMin, model); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("心跳已开启（间隔 %d 分钟）。", intervalMin), nil
+	case "off":
+		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, false, intervalMin, model); err != nil {
+			return "", err
+		}
+		return "心跳已关闭。", nil
+	case "interval":
+		if len(parts) < 3 {
+			return "用法：/heartbeat interval <分钟数>", nil
+		}
+		n, parseErr := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if parseErr != nil || n <= 0 {
+			return "间隔必须是正整数（分钟）。", nil
+		}
+		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, enabled, n, model); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("心跳间隔已设为 %d 分钟。", n), nil
+	case "model":
+		newModel := ""
+		if len(parts) >= 3 {
+			newModel = strings.TrimSpace(parts[2])
+		}
+		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, enabled, intervalMin, newModel); err != nil {
+			return "", err
+		}
+		if newModel == "" {
+			return "心跳模型已设为跟随对话。", nil
+		}
+		return fmt.Sprintf("心跳模型已设为 %s。", newModel), nil
+	default:
+		return "可用子命令：on、off、interval <分钟>、model <模型名>", nil
+	}
+}
+
 func bindTelegramIdentity(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1301,4 +1391,380 @@ func derefUUID(value *uuid.UUID) uuid.UUID {
 		return uuid.Nil
 	}
 	return *value
+}
+
+// telegramPassiveTask 收集 passive 群消息所需参数。threadID 在 resolvePassiveThreadIDs 后填充。
+type telegramPassiveTask struct {
+	ch       data.Channel
+	token    string
+	incoming telegramIncomingMessage
+	identity data.ChannelIdentity
+	persona  data.Persona
+	threadID uuid.UUID
+}
+
+// preparedPassiveMessage 保存媒体下载完成后的消息内容，等待批量写入。
+type preparedPassiveMessage struct {
+	task         telegramPassiveTask
+	content      string
+	contentJSON  json.RawMessage
+	metadataJSON json.RawMessage
+}
+
+// HandleUpdateForPoll 是 HandleUpdate 的轮询路径变体：passive 群消息不立即写库，
+// 而是以 telegramPassiveTask 形式返回，由调用方批量处理。
+func (c telegramConnector) HandleUpdateForPoll(
+	ctx context.Context,
+	traceID string,
+	ch data.Channel,
+	token string,
+	update telegramUpdate,
+) (*telegramPassiveTask, error) {
+	if update.Message == nil || update.Message.From == nil {
+		return nil, nil
+	}
+	c.refreshTelegramBotProfile(ctx, token, &ch)
+	cfg, err := resolveTelegramConfig(ch.ChannelType, ch.ConfigJSON)
+	if err != nil {
+		return nil, fmt.Errorf("invalid channel config: %w", err)
+	}
+	rawPayload, err := json.Marshal(update)
+	if err != nil {
+		return nil, err
+	}
+	incoming, err := normalizeTelegramIncomingMessage(ch.ID, ch.ChannelType, rawPayload, update, cfg.BotUsername, cfg.TelegramBotUserID)
+	if err != nil {
+		return nil, err
+	}
+	if incoming == nil {
+		return nil, nil
+	}
+
+	if !telegramUserAllowed(cfg.AllowedUserIDs, incoming.PlatformUserID) {
+		if incoming.IsPrivate() && c.telegramClient != nil && strings.TrimSpace(token) != "" {
+			sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+			_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+				ChatID: incoming.PlatformChatID,
+				Text:   "当前账号未被授权使用这个机器人。",
+			})
+			sendCancel()
+		}
+		return nil, nil
+	}
+
+	persona, personaRef, _, err := mustValidateTelegramActivation(ctx, ch.AccountID, c.personasRepo, ch.PersonaID, ch.ConfigJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.tryScheduleTelegramMediaGroup(ctx, traceID, ch, token, update, *incoming, persona) {
+		return nil, nil
+	}
+
+	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	accepted, err := c.channelReceiptsRepo.WithTx(tx).Record(
+		ctx,
+		ch.ID,
+		incoming.PlatformChatID,
+		incoming.PlatformMsgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !accepted {
+		return nil, tx.Commit(ctx)
+	}
+
+	identity, err := upsertTelegramIdentity(ctx, c.channelIdentitiesRepo.WithTx(tx), update.Message.From)
+	if err != nil {
+		return nil, err
+	}
+
+	if incoming.IsPrivate() {
+		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
+		if handled, replyText, err := handleTelegramCommand(
+			ctx,
+			tx,
+			&ch,
+			identity,
+			trimmedCommandText,
+			c.channelBindCodesRepo,
+			c.channelIdentitiesRepo,
+			c.channelDMThreadsRepo,
+			c.threadRepo,
+		); err != nil {
+			return nil, err
+		} else if handled {
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil, nil
+		}
+	}
+
+	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
+		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText), cfg.BotUsername)
+		if ok && cmd == "/new" {
+			var replyText string
+			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
+				replyText = "当前会话未配置 persona。"
+			} else if identity.UserID == nil {
+				replyText = "无权限。"
+			} else if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				tgUserID, _ := strconv.ParseInt(incoming.PlatformUserID, 10, 64)
+				member, err := c.telegramClient.GetChatMember(ctx, token, telegrambot.GetChatMemberRequest{
+					ChatID: incoming.PlatformChatID,
+					UserID: tgUserID,
+				})
+				if err != nil || member == nil || (member.Status != "creator" && member.Status != "administrator") {
+					replyText = "无权限。"
+				} else if err := c.channelGroupThreadsRepo.WithTx(tx).DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID); err != nil {
+					return nil, err
+				} else {
+					replyText = "已开启新会话。"
+				}
+			} else {
+				replyText = "已开启新会话。"
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil, nil
+		}
+		if ok && strings.HasPrefix(cmd, "/heartbeat") {
+			replyText, err := handleTelegramHeartbeatCommand(ctx, tx, identity, incoming.CommandText, c.channelIdentitiesRepo)
+			if err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   replyText,
+				})
+				sendCancel()
+			}
+			return nil, nil
+		}
+	}
+
+	if !incoming.HasContent() {
+		return nil, tx.Commit(ctx)
+	}
+
+	// passive 群消息：提交 receipt+identity，返回 task 由调用方批量处理
+	if !incoming.IsPrivate() && !incoming.ShouldCreateRun() {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return &telegramPassiveTask{
+			ch:       ch,
+			token:    token,
+			incoming: *incoming,
+			identity: identity,
+			persona:  *persona,
+		}, nil
+	}
+
+	// active 路径：与 HandleUpdate 完全一致
+	threadProjectID := derefUUID(persona.ProjectID)
+	threadID, err := c.resolveTelegramThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, *incoming)
+	if err != nil {
+		return nil, err
+	}
+	if c.channelLedgerRepo != nil {
+		ledgerMetadata, metaErr := json.Marshal(map[string]any{
+			"source":            "telegram",
+			"conversation_type": incoming.ChatType,
+			"mentions_bot":      incoming.MentionsBot,
+			"is_reply_to_bot":   incoming.IsReplyToBot,
+		})
+		if metaErr != nil {
+			return nil, metaErr
+		}
+		if _, ledgerErr := c.channelLedgerRepo.WithTx(tx).Record(ctx, data.ChannelMessageLedgerRecordInput{
+			ChannelID:               ch.ID,
+			ChannelType:             ch.ChannelType,
+			Direction:               data.ChannelMessageDirectionInbound,
+			ThreadID:                &threadID,
+			PlatformConversationID:  incoming.PlatformChatID,
+			PlatformMessageID:       incoming.PlatformMsgID,
+			PlatformParentMessageID: incoming.ReplyToMsgID,
+			PlatformThreadID:        incoming.MessageThreadID,
+			SenderChannelIdentityID: &identity.ID,
+			MetadataJSON:            ledgerMetadata,
+		}); ledgerErr != nil {
+			return nil, ledgerErr
+		}
+	}
+	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessageWithMedia(
+		ctx,
+		c.telegramClient,
+		c.attachmentStore,
+		token,
+		ch.AccountID,
+		threadID,
+		identity.UserID,
+		identity,
+		*incoming,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
+		ctx,
+		ch.AccountID,
+		threadID,
+		"user",
+		content,
+		contentJSON,
+		metadataJSON,
+		identity.UserID,
+	); err != nil {
+		return nil, err
+	}
+
+	if !channelAgentTriggerConsume(ch.ID) {
+		return nil, tx.Commit(ctx)
+	}
+
+	runStartedData := buildTelegramRunStartedData(personaRef, cfg.DefaultModel)
+	run, _, err := c.runEventRepo.WithTx(tx).CreateRunWithStartedEvent(
+		ctx,
+		ch.AccountID,
+		threadID,
+		identity.UserID,
+		"run.started",
+		runStartedData,
+	)
+	if err != nil {
+		return nil, err
+	}
+	jobPayload := map[string]any{
+		"source":           "telegram",
+		"channel_delivery": buildTelegramChannelDeliveryPayload(ch.ID, identity.ID, *incoming),
+	}
+	if _, err := c.jobRepo.WithTx(tx).EnqueueRun(
+		ctx,
+		ch.AccountID,
+		run.ID,
+		traceID,
+		data.RunExecuteJobType,
+		jobPayload,
+		nil,
+	); err != nil {
+		return nil, err
+	}
+
+	return nil, tx.Commit(ctx)
+}
+
+// resolvePassiveThreadIDs 为 passive task 列表预解析 thread IDs。
+// 按 (channel_id, platform_chat_id, persona_id) 分组，每组一个短事务立即 commit。
+// 解析失败的 task 的 threadID 保持 uuid.Nil，调用方跳过该 task。
+func (c telegramConnector) resolvePassiveThreadIDs(ctx context.Context, tasks []telegramPassiveTask) {
+	type groupKey struct{ channelID, chatID, personaID string }
+	cache := map[groupKey]uuid.UUID{}
+	for i := range tasks {
+		t := &tasks[i]
+		key := groupKey{t.ch.ID.String(), t.incoming.PlatformChatID, t.persona.ID.String()}
+		if id, ok := cache[key]; ok {
+			t.threadID = id
+			continue
+		}
+		tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			slog.Error("telegram_passive_resolve_thread_begin", "err", err)
+			continue
+		}
+		id, err := c.resolveTelegramThreadID(ctx, tx, t.ch, t.persona.ID,
+			derefUUID(t.persona.ProjectID), t.identity, t.incoming)
+		if err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			slog.Error("telegram_passive_resolve_thread", "err", err)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			slog.Error("telegram_passive_resolve_thread_commit", "err", err)
+			continue
+		}
+		cache[key] = id
+		t.threadID = id
+	}
+}
+
+// batchWritePassiveMessages 在单个事务内批量写入所有已准备好的 passive 消息。
+func (c telegramConnector) batchWritePassiveMessages(ctx context.Context, prepared []preparedPassiveMessage) error {
+	if len(prepared) == 0 {
+		return nil
+	}
+	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	for _, p := range prepared {
+		if c.channelLedgerRepo != nil {
+			ledgerMeta, metaErr := json.Marshal(map[string]any{
+				"source":            "telegram",
+				"conversation_type": p.task.incoming.ChatType,
+				"mentions_bot":      p.task.incoming.MentionsBot,
+				"is_reply_to_bot":   p.task.incoming.IsReplyToBot,
+			})
+			if metaErr != nil {
+				return metaErr
+			}
+			if _, ledgerErr := c.channelLedgerRepo.WithTx(tx).Record(ctx, data.ChannelMessageLedgerRecordInput{
+				ChannelID:               p.task.ch.ID,
+				ChannelType:             p.task.ch.ChannelType,
+				Direction:               data.ChannelMessageDirectionInbound,
+				ThreadID:                &p.task.threadID,
+				PlatformConversationID:  p.task.incoming.PlatformChatID,
+				PlatformMessageID:       p.task.incoming.PlatformMsgID,
+				PlatformParentMessageID: p.task.incoming.ReplyToMsgID,
+				PlatformThreadID:        p.task.incoming.MessageThreadID,
+				SenderChannelIdentityID: &p.task.identity.ID,
+				MetadataJSON:            ledgerMeta,
+			}); ledgerErr != nil {
+				return ledgerErr
+			}
+		}
+		if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
+			ctx,
+			p.task.ch.AccountID,
+			p.task.threadID,
+			"user",
+			p.content,
+			p.contentJSON,
+			p.metadataJSON,
+			p.task.identity.UserID,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

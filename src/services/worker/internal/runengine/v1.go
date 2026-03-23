@@ -200,10 +200,23 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		slog.Error("failed to initialize security auditor", "error", err)
 	}
 
+	// 中间件执行顺序有隐含的前置条件依赖，不可随意调整：
+	//   CancelGuard     — 必须最先：建立取消监听和 WaitForInput，后续中间件依赖
+	//   InputLoader     — 在 Entitlement 前：Entitlement 需要 Messages 判断空输入
+	//   Entitlement     — 在 Routing 前：配额检查不依赖模型路由
+	//   MCPDiscovery    — 在 ToolBuild 前：发现的 MCP tools 需进入 allowlist
+	//   SpawnAgent      — 在 PersonaResolution 前：注入 spawn_agent tool 到 allowlist
+	//   ToolProvider    — 在 PersonaResolution 前：provider override 需先于 persona 合并
+	//   PersonaResolution — 在 Memory/Routing 前：SystemPrompt、AgentConfig 由此确定
+	//   ChannelContext  — 在 HeartbeatSchedule 前：后者依赖 ChannelContext.ChannelID
+	//   Memory          — 在 Routing 前：可能修改 SystemPrompt，Routing 依赖最终 prompt
+	//   InjectionScan   — 在 Routing 前：扫描结果影响路由决策（trust source）
+	//   Routing         — 在 ContextCompact/TitleSummarizer 前：后两者依赖 Gateway
+	//   ToolBuild       — 必须最后：依赖前面所有 mw 对 ToolRegistry/Specs 的修改
+	//   ChannelDelivery — 必须最后：包裹 handler，在 run 结束后执行投递
 	middlewares := []pipeline.RunMiddleware{
 		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub),
 		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, deps.MessageAttachmentStore),
-		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewMCPDiscoveryMiddleware(
 			deps.MCPDiscoveryCache,
@@ -216,6 +229,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewChannelContextMiddleware(deps.DBPool),
+		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
 		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
 		pipeline.NewChannelGroupContextTrimMiddleware(),
 		pipeline.NewChannelTelegramToolsMiddleware(deps.ChannelTelegramLoader, nil),
@@ -381,6 +395,11 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	return err
 }
 
+// 以下辅助函数共享三层回退优先级：
+//  1. resolver.Resolve（运行时动态配置，来自数据库）
+//  2. registry.Default（编译时静态默认值，来自 DefaultRegistry）
+//  3. lastResort（调用方硬编码兜底）
+// resolver 或 registry 为 nil 时跳过对应层直接降级。
 func resolvePositiveInt(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort int) int {
 	fallback := lastResort
 	if registry != nil {

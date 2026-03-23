@@ -28,4 +28,3 @@ executor_type: agent.simple
 allow_platform_delegation: true
 heartbeat:
   enabled: true
-  interval_minutes: 1
