@@ -5,7 +5,7 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"os"
+	"log/slog"
 
 	"arkloop/services/bridge/internal/app"
 )
@@ -25,7 +25,7 @@ func StartDesktop(ctx context.Context) error {
 		return fmt.Errorf("bridge config: %w", err)
 	}
 
-	logger := app.NewJSONLogger("bridge", os.Stderr)
+	logger := slog.Default()
 	application, err := app.NewApplication(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("bridge init: %w", err)

@@ -138,7 +138,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 
 	sandboxAddr := desktop.GetSandboxAddr()
 	authToken := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
-	fmt.Fprintf(os.Stderr, "[DEBUG] composition_desktop: sandboxAddr=%q authToken=%q\n", sandboxAddr, authToken)
+	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authToken", authToken)
 	shellExec := runtime.NewDynamicShellExecutor(sandboxAddr, authToken)
 
 	// 已有持久化或用户已选模式时不覆盖；否则按当前 sandbox 可用性设默认。
@@ -146,10 +146,10 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if cur != "vm" && cur != "local" {
 		if sandboxAddr != "" {
 			desktop.SetExecutionMode("vm")
-			fmt.Fprintf(os.Stderr, "[DEBUG] composition_desktop: sandbox available, setting mode to vm\n")
+			slog.Debug("composition_desktop: sandbox available, setting mode to vm")
 		} else {
 			desktop.SetExecutionMode("local")
-			fmt.Fprintf(os.Stderr, "[DEBUG] composition_desktop: no sandbox, setting mode to local\n")
+			slog.Debug("composition_desktop: no sandbox, setting mode to local")
 		}
 	}
 
@@ -379,7 +379,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 
 	if e.jobQueue != nil && subAgentsEnabled {
-		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{})
+		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{}, nil)
 	}
 
 	// pipeline 限制规范化
@@ -1633,7 +1633,7 @@ func (w *desktopEventWriter) commit(ctx context.Context) error {
 			if w.projector == nil {
 				continue
 			}
-			if err := w.projector.EnqueueRun(ctx, w.run.AccountID, nextRunID, w.traceID, nil); err != nil {
+			if err := w.projector.EnqueueRun(ctx, w.run.AccountID, nextRunID, w.traceID, nil, nil); err != nil {
 				_ = w.projector.MarkRunFailed(context.Background(), nextRunID, "failed to enqueue child run job")
 			}
 		}
