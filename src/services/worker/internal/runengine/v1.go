@@ -222,7 +222,6 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 			baseAllowlistSet,
 			deps.ToolRegistry,
 		),
-		pipeline.NewSpawnAgentMiddleware(),
 		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
 		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
 		pipeline.NewChannelContextMiddleware(deps.DBPool),

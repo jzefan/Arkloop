@@ -236,11 +236,16 @@ func pollTelegramDesktopOnce(
 		}
 
 		nextOffset := offsets[ch.ID]
+		var passiveTasks []telegramPassiveTask
 		for _, update := range updates {
-			if err := connector.HandleUpdate(ctx, observability.NewTraceID(), ch, strings.TrimSpace(*token), update); err != nil {
+			task, err := connector.HandleUpdateForPoll(ctx, observability.NewTraceID(), ch, strings.TrimSpace(*token), update)
+			if err != nil {
 				slog.Warn("telegram_poll_handle_update", "channel_id", ch.ID.String(), "err", err.Error())
 				lastErr = err
 				break
+			}
+			if task != nil {
+				passiveTasks = append(passiveTasks, *task)
 			}
 			if candidate := update.UpdateID + 1; candidate > nextOffset {
 				nextOffset = candidate
@@ -248,6 +253,61 @@ func pollTelegramDesktopOnce(
 		}
 		if nextOffset > 0 {
 			offsets[ch.ID] = nextOffset
+		}
+
+		// 阶段二：串行预解析 thread IDs（按对话分组，通常只产生 1 个事务）
+		connector.resolvePassiveThreadIDs(ctx, passiveTasks)
+
+		// 阶段三：并发媒体下载，等待完成后单事务批量写入
+		if len(passiveTasks) > 0 {
+			type prepareResult struct {
+				prep *preparedPassiveMessage
+				err  error
+			}
+			results := make([]prepareResult, len(passiveTasks))
+			var wg sync.WaitGroup
+			for i, t := range passiveTasks {
+				if t.threadID == (uuid.UUID{}) {
+					continue // thread 解析失败，跳过
+				}
+				wg.Add(1)
+				go func(i int, t telegramPassiveTask) {
+					defer wg.Done()
+					content, cJSON, mJSON, err := buildTelegramStructuredMessageWithMedia(
+						ctx,
+						connector.telegramClient,
+						connector.attachmentStore,
+						t.token,
+						t.ch.AccountID,
+						t.threadID,
+						t.identity.UserID,
+						t.identity,
+						t.incoming,
+					)
+					if err != nil {
+						results[i] = prepareResult{err: err}
+						return
+					}
+					results[i] = prepareResult{prep: &preparedPassiveMessage{
+						task: t, content: content, contentJSON: cJSON, metadataJSON: mJSON,
+					}}
+				}(i, t)
+			}
+			wg.Wait()
+
+			var ready []preparedPassiveMessage
+			for _, r := range results {
+				if r.err != nil {
+					slog.Error("telegram_passive_prepare_failed", "err", r.err)
+					continue
+				}
+				if r.prep != nil {
+					ready = append(ready, *r.prep)
+				}
+			}
+			if err := connector.batchWritePassiveMessages(ctx, ready); err != nil {
+				slog.Error("telegram_batch_passive_write_failed", "count", len(ready), "err", err)
+			}
 		}
 	}
 	return lastErr

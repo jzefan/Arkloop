@@ -8,14 +8,60 @@ package sqlitepgx
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	_ "modernc.org/sqlite" // SQLite driver registration.
+	sqlite "modernc.org/sqlite"
 )
+
+// pragmaConnector 实现 driver.Connector，在每条新连接上执行 PRAGMA 初始化。
+type pragmaConnector struct {
+	dsn string
+	drv driver.Driver
+}
+
+func (c *pragmaConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.drv.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA synchronous=NORMAL",
+	} {
+		if err := sqliteExecPragma(ctx, conn, p); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("sqlitepgx: pragma %q: %w", p, err)
+		}
+	}
+	return conn, nil
+}
+
+func (c *pragmaConnector) Driver() driver.Driver { return c.drv }
+
+func sqliteExecPragma(ctx context.Context, conn driver.Conn, pragma string) error {
+	if ec, ok := conn.(driver.ExecerContext); ok {
+		_, err := ec.ExecContext(ctx, pragma, nil)
+		return err
+	}
+	stmt, err := conn.Prepare(pragma)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(nil)
+	return err
+}
+
+func openSQLiteDB(dsn string) (*sql.DB, error) {
+	return sql.OpenDB(&pragmaConnector{dsn: dsn, drv: &sqlite.Driver{}}), nil
+}
 
 // Pool wraps *sql.DB to satisfy the pgx-based data.Querier interface.
 type Pool struct {
@@ -49,25 +95,11 @@ func ConfigureDesktopSQLPool(db *sql.DB) {
 // Open opens a SQLite database with sensible defaults for an embedded
 // single-writer workload (WAL, foreign keys, busy timeout, etc.).
 func Open(dsn string) (*Pool, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := openSQLiteDB(dsn)
 	if err != nil {
 		return nil, err
 	}
-
 	ConfigureDesktopSQLPool(db)
-
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA synchronous=NORMAL",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
-
 	return &Pool{db: db}, nil
 }
 
