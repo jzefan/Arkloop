@@ -13,7 +13,7 @@ const ToolName = "telegram_heartbeat_command"
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolName,
 	Version:     "1",
-	Description: "管理当前 Telegram 频道的心跳设置",
+	Description: "Manage heartbeat settings for the current Telegram channel",
 	RiskLevel:   tools.RiskLevelMedium,
 	SideEffects: true,
 }
@@ -21,7 +21,7 @@ var AgentSpec = tools.AgentToolSpec{
 // Spec 是 LLM 工具 schema 定义（已废弃 LLM tool 方案，保留供编译）。
 var Spec = llm.ToolSpec{
 	Name:        ToolName,
-	Description: strPtr("管理当前 Telegram 频道的心跳设置"),
+	Description: strPtr("Manage heartbeat settings for the current Telegram channel"),
 	JSONSchema: map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
