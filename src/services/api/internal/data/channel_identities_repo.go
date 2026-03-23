@@ -144,3 +144,41 @@ func (r *ChannelIdentitiesRepository) UpdateUserID(ctx context.Context, id uuid.
 	}
 	return nil
 }
+
+// UpdateHeartbeatConfig 更新 channel identity 的 heartbeat 配置。
+func (r *ChannelIdentitiesRepository) UpdateHeartbeatConfig(ctx context.Context, id uuid.UUID, enabled bool, intervalMinutes int, model string) error {
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	tag, err := r.db.Exec(ctx,
+		`UPDATE channel_identities
+		    SET heartbeat_enabled = $2,
+		        heartbeat_interval_minutes = $3,
+		        heartbeat_model = $4,
+		        updated_at = now()
+		  WHERE id = $1`,
+		id, enabledInt, intervalMinutes, model,
+	)
+	if err != nil {
+		return fmt.Errorf("channel_identities.UpdateHeartbeatConfig: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("channel_identities.UpdateHeartbeatConfig: not found")
+	}
+	return nil
+}
+
+// GetHeartbeatConfig 返回 channel identity 的 heartbeat 配置。
+func (r *ChannelIdentitiesRepository) GetHeartbeatConfig(ctx context.Context, id uuid.UUID) (enabled bool, intervalMinutes int, model string, err error) {
+	var enabledInt int
+	err = r.db.QueryRow(ctx,
+		`SELECT heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model
+		   FROM channel_identities WHERE id = $1`,
+		id,
+	).Scan(&enabledInt, &intervalMinutes, &model)
+	if err != nil {
+		return false, 0, "", fmt.Errorf("channel_identities.GetHeartbeatConfig: %w", err)
+	}
+	return enabledInt != 0, intervalMinutes, model, nil
+}

@@ -193,7 +193,7 @@ type RunContext struct {
 	HeartbeatToolOutcome *HeartbeatDecisionOutcome
 }
 
-// HeartbeatDecisionOutcome は heartbeat_decision tool の呼び出し結果。
+// HeartbeatDecisionOutcome 保存 heartbeat_decision 工具的调用结果。
 type HeartbeatDecisionOutcome struct {
 	ReplySilent bool
 	Fragments   []string

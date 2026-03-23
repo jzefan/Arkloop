@@ -529,10 +529,11 @@ func repairScheduledTriggersSchema(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if hasSQLiteColumns(cols, "interval_min") {
+	// Correct schema has channel_identity_id; old schema had thread_id
+	if hasSQLiteColumns(cols, "channel_identity_id") {
 		return nil // schema already correct
 	}
-	// Wrong schema from old implementation; drop so migration 40 can recreate.
+	// Wrong schema from old implementation (has thread_id or wrong columns); drop so migration 40 can recreate.
 	_, err = db.ExecContext(ctx, `DROP TABLE scheduled_triggers`)
 	return err
 }
