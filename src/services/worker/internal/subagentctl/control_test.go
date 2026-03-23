@@ -71,7 +71,7 @@ func TestServiceSpawnAndWaitCompleted(t *testing.T) {
 	}
 	completeSubAgentRun(t, pool, snapshot.SubAgentID, *snapshot.CurrentRunID, "done")
 
-	resolved, err := service.Wait(context.Background(), WaitRequest{SubAgentID: snapshot.SubAgentID, Timeout: 2 * time.Second})
+	resolved, err := service.Wait(context.Background(), WaitRequest{SubAgentIDs: []uuid.UUID{snapshot.SubAgentID}, Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("wait: %v", err)
 	}

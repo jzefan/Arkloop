@@ -31,11 +31,11 @@ func NewSubAgentStateProjector(pool data.DB, rdb *redis.Client, jobQueue queue.J
 	}
 }
 
-func (p *SubAgentStateProjector) EnqueueRun(ctx context.Context, accountID uuid.UUID, runID uuid.UUID, traceID string, availableAt *time.Time) error {
+func (p *SubAgentStateProjector) EnqueueRun(ctx context.Context, accountID uuid.UUID, runID uuid.UUID, traceID string, availableAt *time.Time, payload map[string]any) error {
 	if p.jobQueue == nil {
 		return fmt.Errorf("sub-agent control job queue must not be nil")
 	}
-	_, err := p.jobQueue.EnqueueRun(ctx, accountID, runID, strings.TrimSpace(traceID), queue.RunExecuteJobType, map[string]any{}, availableAt)
+	_, err := p.jobQueue.EnqueueRun(ctx, accountID, runID, strings.TrimSpace(traceID), queue.RunExecuteJobType, payload, availableAt)
 	return err
 }
 

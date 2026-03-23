@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/events"
@@ -94,6 +95,9 @@ type RunContext struct {
 
 	// PipelineRC 由 agent.simple 注入；Lua 等路径为 nil。
 	PipelineRC *pipeline.RunContext
+
+	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录
+	RolloutRecorder *rollout.Recorder
 }
 
 type Loop struct {
@@ -116,6 +120,9 @@ func (l *Loop) Run(
 	yield func(events.RunEvent) error,
 ) error {
 	if runCtx.ReasoningIterations < 0 {
+		if runCtx.RolloutRecorder != nil {
+			appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
+		}
 		return yield(emitter.Emit("run.failed", reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON(), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 	}
 
@@ -128,6 +135,12 @@ func (l *Loop) Run(
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
 	}
+
+	// Rollout: 写入 RunMeta
+	if runCtx.RolloutRecorder != nil {
+		appendRollout(ctx, runCtx.RolloutRecorder, MakeRunMeta(runCtx))
+	}
+
 	for turnIndex := 1; ; turnIndex++ {
 		if cancelled(runCtx) {
 			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
@@ -140,7 +153,7 @@ func (l *Loop) Run(
 		}
 
 		turnRequest := copyRequest(request, compactToolResults(messages))
-		turn, err := l.runTurnWithRetry(ctx, runCtx, turnRequest, emitter, yield)
+		turn, err := l.runTurnWithRetry(ctx, runCtx, turnRequest, emitter, yield, turnIndex)
 		if err != nil {
 			return err
 		}
@@ -170,14 +183,23 @@ func (l *Loop) Run(
 		}
 
 		if turn.Terminal {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
 			return nil
 		}
 		if turn.Cancelled {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
+			}
 			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
 		pureContinuationTurn := isPureContinuationTurn(turn.ToolCalls)
 		if hasReasoningIterationLimit(runCtx.ReasoningIterations) && !pureContinuationTurn && reasoningTurnsUsed >= runCtx.ReasoningIterations {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
+			}
 			return yield(emitter.Emit("run.failed", completionTotals.Apply(reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON()), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 		}
 
@@ -194,6 +216,9 @@ func (l *Loop) Run(
 		}
 
 		if turn.CompletedDataJSON == nil {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
+			}
 			internal := llm.InternalStreamEndedError()
 			event := emitter.Emit("run.failed", completionTotals.Apply(internal.ToJSON()), nil, stringPtr(internal.ErrorClass))
 			return yield(event)
@@ -208,11 +233,17 @@ func (l *Loop) Run(
 		}
 
 		if msg, exceeded := costBudgetExceeded(completionTotals, runCtx.MaxCostMicros, runCtx.MaxTotalOutputTokens); exceeded {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
+			}
 			return yield(emitter.Emit("run.failed", completionTotals.Apply(costBudgetExceededError(msg)), nil, stringPtr(llm.ErrorClassBudgetExceeded)))
 		}
 
 		if len(turn.ToolCalls) == 0 {
 			reasoningTurnsUsed++
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
 			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 		}
 
@@ -221,10 +252,16 @@ func (l *Loop) Run(
 			if !pureContinuationTurn {
 				reasoningTurnsUsed++
 			}
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
 			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 		}
 
 		if cancelled(runCtx) {
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
+			}
 			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
 
@@ -301,6 +338,20 @@ func (l *Loop) Run(
 				if toolResult.Error != nil {
 					errorClass = stringPtr(toolResult.Error.ErrorClass)
 				}
+
+				// Rollout: 写入 ToolResult
+				if runCtx.RolloutRecorder != nil {
+					var outputJSON json.RawMessage
+					if toolResult.ResultJSON != nil {
+						outputJSON, _ = json.Marshal(toolResult.ResultJSON)
+					}
+					errMsg := ""
+					if toolResult.Error != nil {
+						errMsg = toolResult.Error.Message
+					}
+					appendRollout(ctx, runCtx.RolloutRecorder, MakeToolResult(toolResult.ToolCallID, outputJSON, errMsg))
+				}
+
 				if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
 					return err
 				}
@@ -407,6 +458,9 @@ func (l *Loop) Run(
 		reasoningUsedThisTurn := !pureContinuationTurn || continuationRejected
 		if reasoningUsedThisTurn && pureContinuationTurn && hasReasoningIterationLimit(runCtx.ReasoningIterations) {
 			if reasoningTurnsUsed >= runCtx.ReasoningIterations {
+				if runCtx.RolloutRecorder != nil {
+					appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
+				}
 				return yield(emitter.Emit("run.failed", completionTotals.Apply(reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON()), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 			}
 		}
@@ -424,6 +478,9 @@ func (l *Loop) Run(
 				if runCtx.UserPromptScanFunc != nil {
 					if err := runCtx.UserPromptScanFunc(ctx, injected, "interactive_checkin"); err != nil {
 						if errors.Is(err, security.ErrInputBlocked) {
+							if runCtx.RolloutRecorder != nil {
+								appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
+							}
 							return nil
 						}
 						return err
@@ -511,6 +568,12 @@ func (l *Loop) executeToolCall(
 	call llm.ToolCall,
 	emitter events.Emitter,
 ) tools.ExecutionResult {
+	// Rollout: 写入 ToolCall
+	if runCtx.RolloutRecorder != nil {
+		inputJSON, _ := json.Marshal(call.ArgumentsJSON)
+		appendRollout(ctx, runCtx.RolloutRecorder, MakeToolCall(call.ToolCallID, call.ToolName, inputJSON))
+	}
+
 	execCtx := tools.ExecutionContext{
 		RunID:                            runCtx.RunID,
 		TraceID:                          runCtx.TraceID,
@@ -858,6 +921,7 @@ func (l *Loop) runTurnWithRetry(
 	turnRequest llm.Request,
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
+	turnIndex int,
 ) (turnResult, error) {
 	maxAttempts := runCtx.LlmRetryMaxAttempts
 	if maxAttempts <= 0 {
@@ -869,7 +933,7 @@ func (l *Loop) runTurnWithRetry(
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		turn, err := l.runSingleTurn(ctx, runCtx, turnRequest, emitter, yield)
+		turn, err := l.runSingleTurn(ctx, runCtx, turnRequest, emitter, yield, turnIndex)
 		if err != nil {
 			return turnResult{}, err
 		}
@@ -929,12 +993,18 @@ func (l *Loop) runSingleTurn(
 	request llm.Request,
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
+	turnIndex int,
 ) (turnResult, error) {
 	eventsOut := []events.RunEvent{}
 	toolCalls := []llm.ToolCall{}
 	toolResults := []llm.StreamToolResult{}
 	assistantChunks := []string{}
 	var completed *llm.StreamRunCompleted
+
+	// Rollout: 写入 TurnStart
+	if runCtx.RolloutRecorder != nil {
+		appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnStart(turnIndex, request.Model))
+	}
 
 	cancelledEarly := false
 	stopErr := fmt.Errorf("stop")
@@ -1003,6 +1073,14 @@ func (l *Loop) runSingleTurn(
 			return stopErr
 		case llm.StreamRunCompleted:
 			completed = &typed
+			// Rollout: 写入 AssistantMessage
+			if runCtx.RolloutRecorder != nil {
+				var tcJSON json.RawMessage
+				if len(toolCalls) > 0 {
+					tcJSON, _ = json.Marshal(toolCalls)
+				}
+				appendRollout(ctx, runCtx.RolloutRecorder, MakeAssistantMessage(strings.Join(assistantChunks, ""), tcJSON))
+			}
 			return stopErr
 		default:
 			return fmt.Errorf("unknown LLM gateway event type: %T", item)
@@ -1013,12 +1091,18 @@ func (l *Loop) runSingleTurn(
 	}
 
 	if cancelledEarly {
+		if runCtx.RolloutRecorder != nil {
+			appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
+		}
 		return turnResult{Events: eventsOut, Cancelled: true}, nil
 	}
 
 	if len(eventsOut) > 0 {
 		last := eventsOut[len(eventsOut)-1]
 		if last.Type == "run.failed" {
+			if runCtx.RolloutRecorder != nil {
+				appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
+			}
 			return turnResult{Events: eventsOut, Terminal: true}, nil
 		}
 	}
@@ -1026,6 +1110,11 @@ func (l *Loop) runSingleTurn(
 	var completedJSON map[string]any
 	if completed != nil {
 		completedJSON = completed.ToDataJSON()
+	}
+
+	// Rollout: 写入 TurnEnd
+	if runCtx.RolloutRecorder != nil {
+		appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
 	}
 
 	return turnResult{

@@ -92,6 +92,7 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 	primaryEventType string,
 	primaryPayload map[string]any,
 	errorClass *string,
+	reconstructedMessages []ContextSnapshotMessage,
 ) (uuid.UUID, error) {
 	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.ParentRunID)
 	if err != nil {
@@ -124,6 +125,12 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 		}
 		payload["message_id"] = messageID.String()
 		payload["input_bytes"] = len([]byte(trimmedInput))
+	}
+	// 注入从 rollout 重建的历史消息
+	if len(reconstructedMessages) > 0 {
+		if err := f.copySnapshotMessages(ctx, tx, subAgent.AccountID, threadID, reconstructedMessages); err != nil {
+			return uuid.Nil, fmt.Errorf("copy reconstructed messages: %w", err)
+		}
 	}
 	return f.createQueuedRun(ctx, tx, *ownerRun, subAgent, threadID, snapshot, forcedRunID, primaryEventType, payload, errorClass)
 }
