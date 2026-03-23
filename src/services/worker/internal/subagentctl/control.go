@@ -3,6 +3,7 @@ package subagentctl
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -147,6 +148,9 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	if err := s.projector.EnqueueRun(ctx, s.parentRun.AccountID, childRunID, s.traceID, availableAt); err != nil {
 		_ = s.projector.MarkRunFailed(context.Background(), childRunID, "failed to enqueue child run job")
 		return StatusSnapshot{}, fmt.Errorf("enqueue child run: %w", err)
+	}
+	if s.rdb != nil {
+		go s.startCompletionWatcher(record.ID, childRunID, record.ParentThreadID, s.parentRun.AccountID, record.Nickname)
 	}
 	return s.GetStatus(ctx, record.ID)
 }
@@ -605,6 +609,60 @@ func (s *Service) appendLifecycleEvent(ctx context.Context, subAgentID uuid.UUID
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// startCompletionWatcher 订阅子代理 run 的 Redis done 事件，收到后向父线程注入系统消息。
+// 不阻塞调用方，不影响子代理生命周期。
+func (s *Service) startCompletionWatcher(subAgentID, childRunID, parentThreadID, accountID uuid.UUID, nickname *string) {
+	bg := context.Background()
+	ch := fmt.Sprintf("run.child.%s.done", childRunID.String())
+	sub := s.rdb.Subscribe(bg, ch)
+	defer sub.Close()
+
+	msgCh := sub.Channel()
+	for {
+		select {
+		case <-bg.Done():
+			return
+		case msg, ok := <-msgCh:
+			if !ok {
+				return
+			}
+			// msg.Payload 格式: "completed\n<output>" 或 "failed\n<error>"
+			payload := msg.Payload
+			status := "unknown"
+			if i := strings.IndexByte(payload, '\n'); i >= 0 {
+				status = strings.TrimSpace(payload[:i])
+			}
+			s.injectCompletionMessage(bg, subAgentID, parentThreadID, accountID, nickname, status)
+			return
+		}
+	}
+}
+
+func (s *Service) injectCompletionMessage(ctx context.Context, subAgentID, parentThreadID, accountID uuid.UUID, nickname *string, status string) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		slog.Warn("completion_watcher: begin tx failed", "err", err, "sub_agent_id", subAgentID)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	nick := ""
+	if nickname != nil {
+		nick = *nickname
+	}
+	content := fmt.Sprintf("Sub-agent %s (%s) completed with status: %s", nick, subAgentID.String(), status)
+	_, err = data.MessagesRepository{}.InsertThreadMessage(ctx, tx, accountID, parentThreadID, "system", content, nil, nil)
+	if err != nil {
+		slog.Warn("completion_watcher: inject message failed", "err", err, "sub_agent_id", subAgentID)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("completion_watcher: commit failed", "err", err, "sub_agent_id", subAgentID)
+		return
+	}
+	slog.Info("completion_watcher: injected notification", "sub_agent_id", subAgentID, "status", status)
 }
 
 func waitResolved(status string) bool {
