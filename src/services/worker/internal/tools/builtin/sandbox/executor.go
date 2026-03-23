@@ -121,6 +121,7 @@ type execCommandArgs struct {
 	Command        string
 	TimeoutMs      int
 	YieldTimeMs    int
+	Background     bool
 	Env            map[string]string
 }
 
@@ -976,12 +977,15 @@ func parseExecCommandArgs(args map[string]any) (execCommandArgs, *tools.Executio
 		Command:        readStringArg(args, "command"),
 		TimeoutMs:      resolveTimeoutMs(args),
 		YieldTimeMs:    readIntArg(args, "yield_time_ms"),
+		Background:     readBoolArg(args, "background"),
 		Env:            readMapStringArg(args, "env"),
 	}
 	if strings.TrimSpace(request.Command) == "" {
 		return execCommandArgs{}, sandboxArgsError("parameter command is required")
 	}
-	if request.YieldTimeMs <= 0 {
+	if request.Background {
+		request.YieldTimeMs = 1
+	} else if request.YieldTimeMs <= 0 {
 		request.YieldTimeMs = min(request.TimeoutMs, 30_000)
 		if request.YieldTimeMs <= 0 {
 			request.YieldTimeMs = 30_000
@@ -1133,6 +1137,11 @@ func readIntArg(args map[string]any, key string) int {
 		}
 	}
 	return 0
+}
+
+func readBoolArg(args map[string]any, key string) bool {
+	v, _ := args[key].(bool)
+	return v
 }
 
 func resolveTier(toolName string, budget map[string]any) string {
