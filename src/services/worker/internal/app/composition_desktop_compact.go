@@ -34,7 +34,7 @@ func resolveDesktopContextCompact(ctx context.Context, db data.DesktopDB) (pipel
 		MaxUserTextBytes:            desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_user_text_bytes", scope, 0),
 		MaxTotalTextBytes:           desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_total_text_bytes", scope, 0),
 		PersistEnabled:              desktopResolveBool(ctx, resolver, registry, "context.compact.persist_enabled", scope, false),
-		PersistTriggerApproxTokens:  desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_trigger_approx_tokens", scope, 120000),
+		PersistTriggerApproxTokens:  desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_trigger_approx_tokens", scope, 0),
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.fallback_context_window_tokens", scope, 200000),
 		PersistKeepLastMessages:     desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_keep_last_messages", scope, 40),
