@@ -101,6 +101,7 @@ var registry = []ToolMeta{
 			"Reuse the session_ref returned by the first call; do not issue a new exec_command to poll a busy session — use write_stdin instead. " +
 			"The shell keeps its state across calls. When you only need to change directories, prefer the cwd parameter instead of prefixing the command with cd &&. " +
 			"If the result shows running=true or only control sequences, continue with write_stdin. " +
+			"Do not use for file operations — use read_file/write_file/edit/grep instead. " +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
 			"Two distinct reference formats — use the correct one:\n" +
 			"  • /tmp/output/ files appear in result.artifacts → reference as artifact:<key>\n" +
@@ -307,7 +308,7 @@ var registry = []ToolMeta{
 			"Use to delegate a self-contained subtask to a specific internal persona (e.g. research, specialized analysis). " +
 			"Returns a handle (sub_agent_id) immediately; use wait_agent to retrieve the result. " +
 			"IMPORTANT: spawn_agent and wait_agent are always used together — if either is missing from your tool list, load BOTH in one search_tools call: queries=[\"spawn_agent\", \"wait_agent\"]. " +
-			"To run tasks in parallel: call spawn_agent N times in the same turn (one per subtask), then call wait_agent N times in the next turn to collect all results simultaneously. " +
+			"To run tasks in parallel: call spawn_agent N times in the same turn (one per subtask), then call wait_agent once with all ids to return the first to complete. " +
 			"persona_id must be one of the registered personas in this project — an invalid ID will fail. " +
 			"Do NOT confuse with acp_agent, which delegates to an external sandbox agent.",
 	},
@@ -323,7 +324,7 @@ var registry = []ToolMeta{
 		Group:          GroupOrchestration,
 		Label:          "Wait agent",
 		ShortDesc:      "block until a sub-agent completes and return its result",
-		LLMDescription: "block until a sub-agent reaches a terminal state and return its status snapshot, including output when available.",
+		LLMDescription: "block until one or more sub-agents reach a terminal state. Pass multiple ids to wait in parallel and return the first to complete.",
 	},
 	{
 		Name:           "resume_agent",

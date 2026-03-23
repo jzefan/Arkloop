@@ -129,16 +129,6 @@ func buildSkillPromptBlock(skills []skillstore.ResolvedSkill, layout skillstore.
 	for _, item := range autoSkills {
 		sb.WriteString("- ")
 		sb.WriteString(strings.TrimSpace(item.SkillKey))
-		sb.WriteString("@")
-		sb.WriteString(strings.TrimSpace(item.Version))
-		sb.WriteString(" -> ")
-		sb.WriteString(strings.TrimSpace(item.MountPath))
-		instructionPath := strings.TrimSpace(item.InstructionPath)
-		if instructionPath == "" {
-			instructionPath = skillstore.InstructionPathDefault
-		}
-		sb.WriteString("/")
-		sb.WriteString(instructionPath)
 		sb.WriteString("\n")
 	}
 	sb.WriteString("</skills>")

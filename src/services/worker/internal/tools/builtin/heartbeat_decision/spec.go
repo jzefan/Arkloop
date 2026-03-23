@@ -11,7 +11,7 @@ const ToolName = "heartbeat_decision"
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolName,
 	Version:     "1",
-	Description: "仅在心跳 run 中使用：上报本次是否静默，以及需要持久化的记忆片段。",
+	Description: "Use only in heartbeat runs: report whether this turn is silent and any memory fragments to persist.",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: true,
 }
@@ -19,7 +19,7 @@ var AgentSpec = tools.AgentToolSpec{
 // Spec 是 heartbeat_decision 工具的 LLM schema 定义。
 var Spec = llm.ToolSpec{
 	Name:        ToolName,
-	Description: strPtr("仅在心跳 run 中使用：上报本次是否静默，以及需要持久化的记忆片段。"),
+	Description: strPtr("Use only in heartbeat runs: report whether this turn is silent and any memory fragments to persist."),
 	JSONSchema: map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,

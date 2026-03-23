@@ -27,7 +27,8 @@ var actions = []string{
 var AgentSpec = tools.AgentToolSpec{
 	Name:        toolName,
 	Version:     "1",
-	Description: "Unified platform management tool",
+	Description: "Manage Arkloop platform resources: get/set settings, list/create agents and personas, " +
+		"manage skills, browse marketplace. Use for configuration and resource lifecycle operations.",
 	SideEffects: true,
 	RiskLevel:   tools.RiskLevelHigh,
 }
