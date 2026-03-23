@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -64,7 +65,7 @@ func (a *Application) RunDesktop(ctx context.Context) error {
 	// With the compose.yaml port mapping (127.0.0.1:19002), sandbox-docker
 	// is reachable at this address if it is running.
 	desktop.SetSandboxAddr("127.0.0.1:19002")
-	fmt.Fprintf(os.Stderr, "[DEBUG] bridge desktop: sandbox addr set to %q\n", desktop.GetSandboxAddr())
+	slog.Debug("bridge desktop: sandbox addr set", "addr", desktop.GetSandboxAddr())
 	mux.HandleFunc("GET /v1/execution-mode", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"mode": desktop.GetExecutionMode()})
 	})
