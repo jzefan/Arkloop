@@ -820,7 +820,9 @@ export const en: LocaleStrings = {
     chatCompactExecutionModeTerminal: "Terminal: commands run in local shell",
     chatCompactExecutionModeSandbox: "Sandbox: commands run in isolated VM",
     chatCompactBannerRunning: "Compressing context",
-    chatCompactBannerDone: "Context updated",
+    chatCompactBannerDone: "Context compressed",
+    chatCompactBannerTrim: "{n} messages trimmed",
+    chatCompactBannerLlmFailed: "Compression failed",
     // Memory settings tab
     memory: "Memory",
     memorySettingsTitle: "Memory",

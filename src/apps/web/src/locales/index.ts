@@ -743,6 +743,8 @@ export interface LocaleStrings {
     chatCompactLoading: string;
     chatCompactBannerRunning: string;
     chatCompactBannerDone: string;
+    chatCompactBannerTrim: string;
+    chatCompactBannerLlmFailed: string;
     chatCompactExecutionModeLabel: string;
     chatCompactExecutionModeTerminal: string;
     chatCompactExecutionModeSandbox: string;

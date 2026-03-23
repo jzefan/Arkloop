@@ -68,6 +68,7 @@ func NewContextCompactMiddleware(
 		msgs := rc.Messages
 		ids := rc.ThreadMessageIDs
 		persistSplit := 0
+		persistFailed := false
 
 		if cfg.PersistEnabled && pool != nil && rc.Gateway != nil && len(msgs) > 1 {
 			window := 0
@@ -114,9 +115,34 @@ func NewContextCompactMiddleware(
 						}); err != nil {
 							slog.WarnContext(ctx, "context_compact", "phase", "run_event_started", "err", err.Error(), "run_id", rc.Run.ID.String())
 						}
+
+						// Acquire file lock BEFORE LLM call to prevent concurrent compacts on Desktop.
+						// For PostgreSQL, advisory lock inside tx provides DB-level protection,
+						// but file lock ensures LLM call (expensive) is not duplicated.
+						var fileLockCleanup func()
+						var fileLockErr error
+						if pool != nil {
+							fileLockCleanup, fileLockErr = CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
+							if fileLockErr != nil {
+								slog.WarnContext(ctx, "context_compact", "phase", "file_lock", "err", fileLockErr.Error(), "run_id", rc.Run.ID.String())
+							}
+							if fileLockCleanup != nil {
+								defer fileLockCleanup()
+							}
+						}
+
 						summary, sumErr := runContextCompactLLM(ctx, gw, model, msgs[:split], enc)
 						if sumErr != nil {
 							slog.WarnContext(ctx, "context_compact", "phase", "llm", "err", sumErr.Error(), "run_id", rc.Run.ID.String())
+							persistFailed = true
+							_ = appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, map[string]any{
+								"op":                     "persist",
+								"phase":                  "llm_failed",
+								"persist_split":          split,
+								"llm_error":              sumErr.Error(),
+								"thread_tokens_tiktoken": histTok,
+								"trigger_tokens":         trigger,
+							})
 						} else if strings.TrimSpace(summary) != "" {
 							tx, txErr := pool.BeginTx(ctx, pgx.TxOptions{})
 							if txErr != nil {
@@ -124,23 +150,27 @@ func NewContextCompactMiddleware(
 							} else {
 								if lockErr := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); lockErr != nil {
 									_ = tx.Rollback(ctx)
+									persistFailed = true
 									slog.WarnContext(ctx, "context_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
 								} else {
 									prefixIDs := append([]uuid.UUID(nil), ids[:split]...)
 									still, chkErr := compactPrefixMessagesStillUncompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs)
 									if chkErr != nil {
 										_ = tx.Rollback(ctx)
+										persistFailed = true
 										slog.WarnContext(ctx, "context_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
 									} else if !still {
 										_ = tx.Rollback(ctx)
 									} else if err := messagesRepo.MarkThreadMessagesCompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs); err != nil {
 										_ = tx.Rollback(ctx)
+										persistFailed = true
 										slog.WarnContext(ctx, "context_compact", "phase", "mark_compacted", "err", err.Error(), "run_id", rc.Run.ID.String())
 									} else {
 										meta, _ := json.Marshal(map[string]string{"kind": "compact_summary"})
 										summaryID, insErr := messagesRepo.InsertCompactSummaryMessage(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, strings.TrimSpace(summary), meta)
 										if insErr != nil {
 											_ = tx.Rollback(ctx)
+											persistFailed = true
 											slog.WarnContext(ctx, "context_compact", "phase", "insert_summary", "err", insErr.Error(), "run_id", rc.Run.ID.String())
 										} else if eventsRepo != nil {
 											ev := rc.Emitter.Emit("run.context_compact", map[string]any{
@@ -159,8 +189,10 @@ func NewContextCompactMiddleware(
 											}, nil, nil)
 											if _, evErr := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, ev); evErr != nil {
 												_ = tx.Rollback(ctx)
+												persistFailed = true
 												slog.WarnContext(ctx, "context_compact", "phase", "run_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
 											} else if err := tx.Commit(ctx); err != nil {
+												persistFailed = true
 												slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
 											} else {
 												persistSplit = split
@@ -177,6 +209,7 @@ func NewContextCompactMiddleware(
 												rc.ThreadMessageIDs = ids
 											}
 										} else if err := tx.Commit(ctx); err != nil {
+											persistFailed = true
 											slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
 										} else {
 											persistSplit = split
@@ -205,6 +238,7 @@ func NewContextCompactMiddleware(
 			beforeTrim := len(rc.Messages)
 			beforeTrimTok := HistoryThreadPromptTokens(enc, rc.Messages)
 			out, outIDs, dropped := CompactThreadMessages(rc.Messages, rc.ThreadMessageIDs, cfg, enc)
+			trimmedIDs := rc.ThreadMessageIDs[:dropped]
 			rc.Messages = out
 			rc.ThreadMessageIDs = outIDs
 			if dropped > 0 || len(out) != beforeTrim {
@@ -235,6 +269,26 @@ func NewContextCompactMiddleware(
 						} else if err := tx.Commit(ctx); err != nil {
 							_ = tx.Rollback(ctx)
 							slog.WarnContext(ctx, "context_compact", "phase", "tx_commit_trim", "err", err.Error(), "run_id", rc.Run.ID.String())
+						}
+						// Mark trimmed prefix IDs as compacted only when persist failed.
+						// When persist succeeded, rc.ThreadMessageIDs was already updated to
+						// replace original prefix with summaryID, so trimmedIDs may include
+						// summaryID (not a real compacted message) or tail messages that were
+						// never persisted. The original prefix messages were already marked
+						// compacted in the persist phase tx.
+						if persistFailed && len(trimmedIDs) > 0 {
+							tx2, tx2Err := pool.BeginTx(ctx, pgx.TxOptions{})
+							if tx2Err != nil {
+								slog.WarnContext(ctx, "context_compact", "phase", "tx_begin_trim_mark", "err", tx2Err.Error(), "run_id", rc.Run.ID.String())
+							} else {
+								if markErr := messagesRepo.MarkThreadMessagesCompacted(ctx, tx2, rc.Run.AccountID, rc.Run.ThreadID, trimmedIDs); markErr != nil {
+									_ = tx2.Rollback(ctx)
+									slog.WarnContext(ctx, "context_compact", "phase", "mark_compacted_trim", "err", markErr.Error(), "run_id", rc.Run.ID.String())
+								} else if err := tx2.Commit(ctx); err != nil {
+									_ = tx2.Rollback(ctx)
+									slog.WarnContext(ctx, "context_compact", "phase", "tx_commit_trim_mark", "err", err.Error(), "run_id", rc.Run.ID.String())
+								}
+							}
 						}
 					}
 				}
