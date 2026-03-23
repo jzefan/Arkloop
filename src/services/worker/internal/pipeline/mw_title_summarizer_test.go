@@ -34,13 +34,13 @@ func TestTitleSummarizerMiddleware_NilConfigPassThrough(t *testing.T) {
 }
 
 func TestTitleSummarizerMiddleware_WithConfigCallsNextImmediately(t *testing.T) {
-	stubCfg, _ := llm.StubGatewayConfigFromEnv()
+	stubCfg, _ := llm.AuxGatewayConfigFromEnv()
 	stubCfg.Enabled = true
 	stubCfg.DeltaCount = 1
 	stubCfg.DeltaInterval = 0
-	stubGateway := llm.NewStubGateway(stubCfg)
+	auxGateway := llm.NewAuxGateway(stubCfg)
 
-	mw := pipeline.NewTitleSummarizerMiddleware(nil, nil, stubGateway, false, nil)
+	mw := pipeline.NewTitleSummarizerMiddleware(nil, nil, auxGateway, false, nil)
 
 	rc := &pipeline.RunContext{
 		Run: data.Run{

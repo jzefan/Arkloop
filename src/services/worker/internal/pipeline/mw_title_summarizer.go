@@ -43,7 +43,7 @@ func logTitleSummarizerDebug(ctx context.Context, step string, attrs ...slog.Att
 	slog.LogAttrs(ctx, slog.LevelInfo, "title_summarizer_debug", all...)
 }
 
-func NewTitleSummarizerMiddleware(db titleSummarizerDB, rdb *redis.Client, stubGateway llm.Gateway, emitDebugEvents bool, loaders ...*routing.ConfigLoader) RunMiddleware {
+func NewTitleSummarizerMiddleware(db titleSummarizerDB, rdb *redis.Client, auxGateway llm.Gateway, emitDebugEvents bool, loaders ...*routing.ConfigLoader) RunMiddleware {
 	var configLoader *routing.ConfigLoader
 	if len(loaders) > 0 {
 		configLoader = loaders[0]
@@ -102,7 +102,7 @@ func NewTitleSummarizerMiddleware(db titleSummarizerDB, rdb *redis.Client, stubG
 				slog.String("fallback_model", fallbackModel),
 				slog.Int("msg_count", len(messages)),
 			)
-			gateway, model := resolveTitleGateway(ctx, db, accountID, fallbackGateway, fallbackModel, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader, byok)
+			gateway, model := resolveTitleGateway(ctx, db, accountID, fallbackGateway, fallbackModel, auxGateway, emitDebugEvents, llmMaxResponseBytes, configLoader, byok)
 			if gateway == nil {
 				logTitleSummarizerDebug(ctx, "async_title_skip",
 					slog.String("reason", "nil_gateway"),
@@ -129,7 +129,7 @@ func resolveTitleGateway(
 	accountID *uuid.UUID,
 	fallbackGateway llm.Gateway,
 	fallbackModel string,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	llmMaxResponseBytes int,
 	configLoader *routing.ConfigLoader,
@@ -137,7 +137,7 @@ func resolveTitleGateway(
 ) (llm.Gateway, string) {
 	// account-level override takes precedence over platform setting
 	if accountID != nil {
-		if gw, model, ok := resolveAccountToolGateway(ctx, pool, *accountID, stubGateway, emitDebugEvents, llmMaxResponseBytes, configLoader, byokEnabled); ok {
+		if gw, model, ok := resolveAccountToolGateway(ctx, pool, *accountID, auxGateway, emitDebugEvents, llmMaxResponseBytes, configLoader, byokEnabled); ok {
 			logTitleSummarizerDebug(ctx, "resolve_gateway",
 				slog.String("source", "account_tool"),
 				slog.String("model", model),
@@ -197,7 +197,7 @@ func resolveTitleGateway(
 		return fallbackGateway, fallbackModel
 	}
 
-	gw, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, llmMaxResponseBytes)
+	gw, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		slog.Warn("title_summarizer: build gateway failed", "err", err.Error())
 		logTitleSummarizerDebug(ctx, "resolve_gateway",
@@ -454,7 +454,7 @@ func resolveAccountToolGateway(
 	ctx context.Context,
 	pool CompactPersistDB,
 	accountID uuid.UUID,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	llmMaxResponseBytes int,
 	configLoader *routing.ConfigLoader,
@@ -491,7 +491,7 @@ func resolveAccountToolGateway(
 		return nil, "", false
 	}
 
-	gw, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, llmMaxResponseBytes)
+	gw, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		slog.Warn("title_summarizer: tool profile build gateway failed", "err", err.Error())
 		return nil, "", false

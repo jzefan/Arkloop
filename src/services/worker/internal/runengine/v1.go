@@ -67,7 +67,7 @@ type EngineV1Deps struct {
 	DBPool          *pgxpool.Pool
 	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
 	RunControlHub   *pipeline.RunControlHub
-	StubGateway     llm.Gateway
+	AuxGateway     llm.Gateway
 	EmitDebugEvents bool
 	RunLimiterRDB   *redis.Client
 
@@ -108,8 +108,8 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	if deps.Router == nil {
 		return nil, fmt.Errorf("router must not be nil")
 	}
-	if deps.StubGateway == nil {
-		return nil, fmt.Errorf("stub gateway must not be nil")
+	if deps.AuxGateway == nil {
+		return nil, fmt.Errorf("aux gateway must not be nil")
 	}
 	if deps.ToolRegistry == nil {
 		return nil, fmt.Errorf("tool registry must not be nil")
@@ -532,19 +532,19 @@ func buildRoutingLayer(
 	releaseSlot func(ctx context.Context, run data.Run),
 ) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
-		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
-		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
-		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.AuxGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
+		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 	}
 }
 
 func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
-		pipeline.NewLLMHeartbeatPrepareMiddleware(),
+		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
 		pipeline.NewPlatformMiddleware(deps.PlatformToolExecutor),
 		pipeline.NewToolBuildMiddleware(),
-		pipeline.NewResultSummarizerMiddleware(deps.DBPool, deps.StubGateway, deps.EmitDebugEvents, 0, deps.RoutingConfigLoader),
+		pipeline.NewResultSummarizerMiddleware(deps.DBPool, deps.AuxGateway, deps.EmitDebugEvents, 0, deps.RoutingConfigLoader),
 	}
 }
 

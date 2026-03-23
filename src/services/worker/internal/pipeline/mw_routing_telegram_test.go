@@ -25,7 +25,7 @@ func TestRoutingUsesInputModelOverride(t *testing.T) {
 	mw := pipeline.NewRoutingMiddleware(
 		routing.NewProviderRouter(cfg),
 		nil,
-		llm.NewStubGateway(llm.StubGatewayConfig{}),
+		llm.NewAuxGateway(llm.AuxGatewayConfig{}),
 		false,
 		data.RunsRepository{},
 		data.RunEventsRepository{},
