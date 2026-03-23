@@ -12,8 +12,8 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/mdlayher/vsock v1.2.1
 	golang.org/x/sync v0.19.0
-	golang.org/x/sys v0.41.0
-	golang.org/x/term v0.40.0
+	golang.org/x/sys v0.42.0
+	golang.org/x/term v0.41.0
 )
 
 require (
