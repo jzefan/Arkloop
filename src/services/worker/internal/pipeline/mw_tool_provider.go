@@ -5,9 +5,13 @@ import (
 	"log/slog"
 	"strings"
 
+	sharedent "arkloop/services/shared/entitlement"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
+	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
+	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
 	webfetch "arkloop/services/worker/internal/tools/builtin/web_fetch"
 	websearch "arkloop/services/worker/internal/tools/builtin/web_search"
 )
@@ -51,6 +55,7 @@ func (e notConfiguredExecutor) Execute(
 func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if cache == nil || rc == nil || rc.Pool == nil {
+			injectSpawnAgentTools(ctx, rc)
 			return next(ctx, rc)
 		}
 
@@ -70,6 +75,7 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 		}
 
 		if len(platformProviders) == 0 && len(userProviders) == 0 {
+			injectSpawnAgentTools(ctx, rc)
 			return next(ctx, rc)
 		}
 
@@ -120,6 +126,7 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 			apply(cfg, true)
 		}
 
+		injectSpawnAgentTools(ctx, rc)
 		return next(ctx, rc)
 	}
 }
@@ -207,4 +214,71 @@ func buildProviderExecutor(cfg toolprovider.ActiveProviderConfig) tools.Executor
 	}
 
 	return nil
+}
+
+// injectSpawnAgentTools 在 SubAgentControl 可用时，将 spawn_agent 系列工具注入到 per-run 工具集。
+func injectSpawnAgentTools(ctx context.Context, rc *RunContext) {
+	if rc == nil || rc.SubAgentControl == nil {
+		return
+	}
+
+	personaKeys := loadPersonaKeys(ctx, rc)
+	var entResolver *sharedent.Resolver
+	if rc.Pool != nil {
+		entResolver = sharedent.NewResolver(rc.Pool, rc.BroadcastRDB)
+	}
+	executor := &spawnagent.ToolExecutor{
+		Control:             rc.SubAgentControl,
+		PersonaKeys:         personaKeys,
+		EntitlementResolver: entResolver,
+		AccountID:           rc.Run.AccountID,
+	}
+	specs := []tools.AgentToolSpec{
+		spawnagent.AgentSpec,
+		spawnagent.SendInputSpec,
+		spawnagent.WaitAgentSpec,
+		spawnagent.ResumeAgentSpec,
+		spawnagent.CloseAgentSpec,
+		spawnagent.InterruptAgentSpec,
+	}
+	llmSpecs := []llm.ToolSpec{
+		spawnagent.LlmSpecWithPersonas(personaKeys),
+		spawnagent.SendInputLlmSpec,
+		spawnagent.WaitAgentLlmSpec,
+		spawnagent.ResumeAgentLlmSpec,
+		spawnagent.CloseAgentLlmSpec,
+		spawnagent.InterruptAgentLlmSpec,
+	}
+	for _, spec := range specs {
+		rc.ToolExecutors[spec.Name] = executor
+		rc.AllowlistSet[spec.Name] = struct{}{}
+	}
+	rc.ToolSpecs = append(rc.ToolSpecs, llmSpecs...)
+	rc.ToolRegistry = ForkRegistry(rc.ToolRegistry, specs)
+}
+
+// loadPersonaKeys 从 DB 加载当前 account 可用的 persona ID 列表
+func loadPersonaKeys(ctx context.Context, rc *RunContext) []string {
+	if rc.Pool == nil {
+		return nil
+	}
+	defs, err := personas.LoadFromDB(ctx, rc.Pool, rc.Run.ProjectID)
+	if err != nil {
+		slog.WarnContext(ctx, "spawn_agent: failed to load persona keys", "error", err)
+		return nil
+	}
+	keys := make([]string, len(defs))
+	for i, d := range defs {
+		keys[i] = d.ID
+	}
+	return keys
+}
+
+// NewSpawnAgentMiddleware 当 SubAgentControl 可用时，将 sub-agent 工具动态注入。
+// 用于不走 NewToolProviderMiddleware 的场景（如 desktop 模式）。
+func NewSpawnAgentMiddleware() RunMiddleware {
+	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		injectSpawnAgentTools(ctx, rc)
+		return next(ctx, rc)
+	}
 }
