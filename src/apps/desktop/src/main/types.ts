@@ -46,6 +46,11 @@ export type MemoryConfig = {
   openviking?: OpenVikingDesktopConfig
 }
 
+export type VoiceConfig = {
+  enabled: boolean
+  language?: string
+}
+
 export type LocalConfig = {
   port: number
   portMode: LocalPortMode
@@ -66,6 +71,7 @@ export type AppConfig = {
   onboarding_completed: boolean
   connectors: ConnectorsConfig
   memory: MemoryConfig
+  voice?: VoiceConfig
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

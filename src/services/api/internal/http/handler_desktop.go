@@ -272,6 +272,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		PersonaSyncTrigger:           cfg.PersonaSyncTrigger,
 		EffectiveToolCatalogCache:    effectiveToolCatalogCache,
 		ArtifactStoreAvailable:       cfg.ArtifactStore != nil,
+		Logger:                       cfg.Logger,
 	})
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{

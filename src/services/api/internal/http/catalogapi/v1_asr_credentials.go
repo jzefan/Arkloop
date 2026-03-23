@@ -25,6 +25,13 @@ type createAsrCredentialRequest struct {
 	Scope     string  `json:"scope"` // "user" | "platform"; platform requires platform_admin
 }
 
+type updateAsrCredentialRequest struct {
+	Name      *string `json:"name"`
+	BaseURL   *string `json:"base_url"`
+	Model     *string `json:"model"`
+	IsDefault *bool   `json:"is_default"`
+}
+
 type asrCredentialResponse struct {
 	ID        string  `json:"id"`
 	AccountID     *string `json:"account_id"` // null for platform scope
@@ -99,11 +106,14 @@ func asrCredentialEntry(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid credential id", traceID, nil)
 			return
 		}
-		if r.Method != nethttp.MethodDelete {
+		switch r.Method {
+		case nethttp.MethodPut:
+			updateAsrCredential(w, r, traceID, credID, authService, membershipRepo, credRepo)
+		case nethttp.MethodDelete:
+			deleteAsrCredential(w, r, traceID, credID, authService, membershipRepo, credRepo)
+		default:
 			httpkit.WriteMethodNotAllowed(w, r)
-			return
 		}
-		deleteAsrCredential(w, r, traceID, credID, authService, membershipRepo, credRepo)
 	}
 }
 
@@ -233,6 +243,86 @@ func createAsrCredential(
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toAsrCredentialResponse(cred))
+}
+
+func updateAsrCredential(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	credID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	credRepo *data.AsrCredentialsRepository,
+) {
+	if authService == nil {
+		httpkit.WriteAuthNotConfigured(w, traceID)
+		return
+	}
+	if credRepo == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+		return
+	}
+
+	actor, ok := httpkit.AuthenticateActor(w, r, traceID, authService)
+	if !ok {
+		return
+	}
+
+	isPlatformAdmin := actor.HasPermission(auth.PermPlatformAdmin)
+
+	existing, err := credRepo.GetByID(r.Context(), "platform", nil, credID)
+	if err == nil && existing == nil {
+		existing, err = credRepo.GetByID(r.Context(), "user", &actor.UserID, credID)
+	}
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if existing == nil || (existing.OwnerKind == "platform" && !isPlatformAdmin) {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "asr_credentials.not_found", "credential not found", traceID, nil)
+		return
+	}
+
+	var req updateAsrCredentialRequest
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+		return
+	}
+
+	if req.Name != nil {
+		*req.Name = strings.TrimSpace(*req.Name)
+		if *req.Name == "" {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "name cannot be empty", traceID, nil)
+			return
+		}
+	}
+	if req.Model != nil {
+		*req.Model = strings.TrimSpace(*req.Model)
+		if *req.Model == "" {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model cannot be empty", traceID, nil)
+			return
+		}
+	}
+	if req.BaseURL != nil {
+		normalized, err := normalizeOptionalBaseURL(req.BaseURL)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "base_url is invalid", traceID, nil)
+			return
+		}
+		req.BaseURL = normalized
+	}
+
+	if err := credRepo.Update(r.Context(), existing.OwnerKind, existing.OwnerUserID, credID, req.Name, req.BaseURL, req.Model, req.IsDefault); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+
+	updated, err := credRepo.GetByID(r.Context(), existing.OwnerKind, existing.OwnerUserID, credID)
+	if err != nil || updated == nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toAsrCredentialResponse(*updated))
 }
 
 func listAsrCredentials(

@@ -44,6 +44,11 @@ export type MemoryConfig = {
   openviking?: OpenVikingDesktopConfig
 }
 
+export type VoiceConfig = {
+  enabled: boolean
+  language?: string
+}
+
 export type MemoryEntry = {
   id: string
   scope: string
@@ -62,6 +67,7 @@ export type AppConfig = {
   onboarding_completed: boolean
   connectors: ConnectorsConfig
   memory: MemoryConfig
+  voice?: VoiceConfig
 }
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'

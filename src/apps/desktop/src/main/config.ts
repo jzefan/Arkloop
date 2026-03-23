@@ -15,6 +15,7 @@ import type {
   OpenVikingDesktopConfig,
   SearchConnectorConfig,
   SearchProvider,
+  VoiceConfig,
 } from './types'
 
 const CONFIG_DIR = path.join(os.homedir(), '.arkloop')
@@ -123,6 +124,12 @@ function normalizeMemory(raw: unknown): MemoryConfig {
   }
 }
 
+function normalizeVoice(raw: unknown): VoiceConfig | undefined {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<VoiceConfig> : {}
+  if (typeof r.enabled !== 'boolean') return undefined
+  return { enabled: r.enabled, language: typeof r.language === 'string' ? r.language : undefined }
+}
+
 export function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
   const parsed = config ?? {}
   return {
@@ -145,6 +152,7 @@ export function normalizeConfig(config: Partial<AppConfig> | null | undefined): 
       : DEFAULT_CONFIG.onboarding_completed,
     connectors: normalizeConnectors(parsed.connectors),
     memory: normalizeMemory(parsed.memory),
+    voice: normalizeVoice(parsed.voice),
   }
 }
 

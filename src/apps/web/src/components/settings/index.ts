@@ -20,3 +20,4 @@ export { ModulesSettings } from "./ModulesSettings";
 export { DeveloperSettings } from "./DeveloperSettings";
 export { RunsSettings } from "./RunsSettings";
 export { DesktopPromptInjectionSettings } from "./DesktopPromptInjectionSettings";
+export { VoiceSettings } from "./VoiceSettings";
