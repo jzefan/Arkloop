@@ -38,7 +38,7 @@ func NewContextCompactMiddleware(
 	pool CompactPersistDB,
 	messagesRepo data.MessagesRepository,
 	eventsRepo CompactRunEventAppender,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	loaders ...*routing.ConfigLoader,
 ) RunMiddleware {
@@ -96,7 +96,7 @@ func NewContextCompactMiddleware(
 			if effectiveHist >= trigger && len(ids) == len(msgs) {
 				split := stabilizeCompactStart(msgs, len(msgs)-tailKeep, 0)
 				if split > 0 {
-					gw, model := resolveCompactionGateway(ctx, pool, rc, stubGateway, emitDebugEvents, configLoader)
+					gw, model := resolveCompactionGateway(ctx, pool, rc, auxGateway, emitDebugEvents, configLoader)
 					if gw == nil {
 						slog.WarnContext(ctx, "context_compact", "phase", "gateway_nil", "run_id", rc.Run.ID.String())
 					} else {
@@ -276,7 +276,7 @@ func resolveCompactionGateway(
 	ctx context.Context,
 	pool CompactPersistDB,
 	rc *RunContext,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	configLoader *routing.ConfigLoader,
 ) (llm.Gateway, string) {
@@ -287,7 +287,7 @@ func resolveCompactionGateway(
 	}
 	accountID := &rc.Run.AccountID
 	if accountID != nil && pool != nil {
-		if gw, model, ok := resolveAccountToolGateway(ctx, pool, *accountID, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes, configLoader, rc.RoutingByokEnabled); ok {
+		if gw, model, ok := resolveAccountToolGateway(ctx, pool, *accountID, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes, configLoader, rc.RoutingByokEnabled); ok {
 			fallbackGateway = gw
 			fallbackModel = model
 		}
@@ -318,7 +318,7 @@ func resolveCompactionGateway(
 		}
 		return fallbackGateway, fallbackModel
 	}
-	gw, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+	gw, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 	if err != nil {
 		slog.WarnContext(ctx, "context_compact", "phase", "gateway_build", "err", err.Error())
 		return fallbackGateway, fallbackModel

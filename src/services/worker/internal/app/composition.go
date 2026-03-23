@@ -85,11 +85,11 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	router := routing.NewProviderRouter(routingCfg)
 	routingLoader := routing.NewConfigLoader(pool, routingCfg)
 
-	stubCfg, err := llm.StubGatewayConfigFromEnv()
+	auxCfg, err := llm.AuxGatewayConfigFromEnv()
 	if err != nil {
 		return nil, err
 	}
-	stubGateway := llm.NewStubGateway(stubCfg)
+	auxGateway := llm.NewAuxGateway(auxCfg)
 
 	toolRegistry := tools.NewRegistry()
 	for _, spec := range builtin.AgentSpecs() {
@@ -280,8 +280,8 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		DBPool:                       pool,
 		DirectDBPool:                 directPool,
 		RunControlHub:                runControlHub,
-		StubGateway:                  stubGateway,
-		EmitDebugEvents:              stubCfg.EmitDebugEvents,
+		AuxGateway:                  auxGateway,
+		EmitDebugEvents:              auxCfg.EmitDebugEvents,
 		ConfigResolver:               configResolver,
 		ToolRegistry:                 toolRegistry,
 		ToolExecutors:                executors,

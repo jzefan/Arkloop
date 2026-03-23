@@ -72,8 +72,8 @@ func (d *desktopTelegramTokenLoader) BotToken(ctx context.Context, channelID uui
 type DesktopEngine struct {
 	db                     data.DesktopDB
 	bus                    eventbus.EventBus
-	stubRouter             *routing.ProviderRouter
-	stubGateway            llm.Gateway
+	auxRouter             *routing.ProviderRouter
+	auxGateway            llm.Gateway
 	emitDebugEvents        bool
 	toolRegistry           *tools.Registry
 	toolExecutors          map[string]tools.Executor
@@ -96,13 +96,13 @@ type DesktopEngine struct {
 func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.EventBus, execRegistry pipeline.AgentExecutorBuilder, jobQueue queue.JobQueue) (*DesktopEngine, error) {
 	// Router is loaded dynamically per-run in desktopRouting middleware
 	// so that credentials configured after startup are picked up immediately.
-	stubRouter := routing.NewProviderRouter(routing.DefaultRoutingConfig())
+	auxRouter := routing.NewProviderRouter(routing.DefaultRoutingConfig())
 
-	stubCfg, err := llm.StubGatewayConfigFromEnv()
+	auxCfg, err := llm.AuxGatewayConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("stub gateway config: %w", err)
 	}
-	stubGateway := llm.NewStubGateway(stubCfg)
+	auxGateway := llm.NewAuxGateway(auxCfg)
 
 	toolRegistry := tools.NewRegistry()
 	for _, spec := range builtin.AgentSpecs() {
@@ -275,9 +275,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	return &DesktopEngine{
 		db:                     db,
 		bus:                    bus,
-		stubRouter:             stubRouter,
-		stubGateway:            stubGateway,
-		emitDebugEvents:        stubCfg.EmitDebugEvents,
+		auxRouter:             auxRouter,
+		auxGateway:            auxGateway,
+		emitDebugEvents:        auxCfg.EmitDebugEvents,
 		toolRegistry:           toolRegistry,
 		toolExecutors:          executors,
 		allLlmSpecs:            allLlmSpecs,
@@ -347,7 +347,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		EventBus: e.bus,
 		TraceID:  traceID,
 		Emitter:  emitter,
-		Router:   e.stubRouter,
+		Router:   e.auxRouter,
 		Runtime:  e.runtimeSnapshot,
 
 		ExecutorBuilder:     e.executorRegistry,
@@ -427,10 +427,10 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			ExternalDirs:   desktopExternalSkillDirs(e.db),
 		}),
 		memMiddleware,
-		desktopRouting(e.stubRouter, e.stubGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
-		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.stubGateway, e.emitDebugEvents, e.routingLoader),
-		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.stubGateway, e.emitDebugEvents, e.routingLoader),
-		pipeline.NewLLMHeartbeatPrepareMiddleware(),
+		desktopRouting(e.auxRouter, e.auxGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
+		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
+		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),
+		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewToolBuildMiddleware(),
 		desktopChannelDelivery(e.db),
 	}
@@ -1182,7 +1182,7 @@ func toDesktopPersonaProfile(def *personas.Definition) *sharedexec.PersonaProfil
 // desktopRouting selects the LLM provider route from env config.
 func desktopRouting(
 	fallbackRouter *routing.ProviderRouter,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	db data.DesktopDB,
 	runsRepo data.DesktopRunsRepository,
@@ -1245,7 +1245,7 @@ func desktopRouting(
 				"internal.error", "route decision is empty", nil)
 		}
 
-		gateway, err := desktopGatewayFromRoute(*decision.Selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+		gateway, err := desktopGatewayFromRoute(*decision.Selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 		if err != nil {
 			return desktopWriteFailure(ctx, db, rc.Run, rc.Emitter, runsRepo, eventsRepo,
 				"internal.error", "gateway initialization failed", nil)
@@ -1260,7 +1260,7 @@ func desktopRouting(
 			if d.Selected == nil {
 				return nil, nil, fmt.Errorf("route not found: %s", cleaned)
 			}
-			gw, gwErr := desktopGatewayFromRoute(*d.Selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			gw, gwErr := desktopGatewayFromRoute(*d.Selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if gwErr != nil {
 				return nil, nil, gwErr
 			}

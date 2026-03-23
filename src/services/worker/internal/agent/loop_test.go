@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestAgentLoopRunsStubGateway(t *testing.T) {
-	gateway := llm.NewStubGateway(llm.StubGatewayConfig{
+func TestAgentLoopRunsAuxGateway(t *testing.T) {
+	gateway := llm.NewAuxGateway(llm.AuxGatewayConfig{
 		Enabled:         true,
 		DeltaCount:      2,
 		DeltaInterval:   0,

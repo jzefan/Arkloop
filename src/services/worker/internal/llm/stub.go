@@ -27,19 +27,19 @@ const (
 	falsyValues               = "0,false,no,n,off"
 )
 
-type StubGatewayConfig struct {
+type AuxGatewayConfig struct {
 	Enabled           bool
 	DeltaCount        int
 	DeltaInterval     time.Duration
 	EmitDebugEvents   bool
 }
 
-func StubGatewayConfigFromEnv() (StubGatewayConfig, error) {
+func AuxGatewayConfigFromEnv() (AuxGatewayConfig, error) {
 	enabled := defaultStubEnabled
 	if raw := strings.TrimSpace(os.Getenv(stubEnabledEnv)); raw != "" {
 		value, err := parseBool(raw)
 		if err != nil {
-			return StubGatewayConfig{}, fmt.Errorf("%s: %w", stubEnabledEnv, err)
+			return AuxGatewayConfig{}, fmt.Errorf("%s: %w", stubEnabledEnv, err)
 		}
 		enabled = value
 	}
@@ -48,7 +48,7 @@ func StubGatewayConfigFromEnv() (StubGatewayConfig, error) {
 	if raw := strings.TrimSpace(os.Getenv(stubDeltaCountEnv)); raw != "" {
 		value, err := parsePositiveInt(raw)
 		if err != nil {
-			return StubGatewayConfig{}, fmt.Errorf("%s: %w", stubDeltaCountEnv, err)
+			return AuxGatewayConfig{}, fmt.Errorf("%s: %w", stubDeltaCountEnv, err)
 		}
 		deltaCount = value
 	}
@@ -57,7 +57,7 @@ func StubGatewayConfigFromEnv() (StubGatewayConfig, error) {
 	if raw := strings.TrimSpace(os.Getenv(stubDeltaIntervalSeconds)); raw != "" {
 		value, err := parseNonNegativeFloat(raw)
 		if err != nil {
-			return StubGatewayConfig{}, fmt.Errorf("%s: %w", stubDeltaIntervalSeconds, err)
+			return AuxGatewayConfig{}, fmt.Errorf("%s: %w", stubDeltaIntervalSeconds, err)
 		}
 		intervalSeconds = value
 	}
@@ -66,12 +66,12 @@ func StubGatewayConfigFromEnv() (StubGatewayConfig, error) {
 	if raw := strings.TrimSpace(os.Getenv(llmDebugEventsEnv)); raw != "" {
 		value, err := parseBool(raw)
 		if err != nil {
-			return StubGatewayConfig{}, fmt.Errorf("%s: %w", llmDebugEventsEnv, err)
+			return AuxGatewayConfig{}, fmt.Errorf("%s: %w", llmDebugEventsEnv, err)
 		}
 		emitDebugEvents = value
 	}
 
-	return StubGatewayConfig{
+	return AuxGatewayConfig{
 		Enabled:         enabled,
 		DeltaCount:      deltaCount,
 		DeltaInterval:   time.Duration(intervalSeconds * float64(time.Second)),
@@ -79,20 +79,20 @@ func StubGatewayConfigFromEnv() (StubGatewayConfig, error) {
 	}, nil
 }
 
-type StubGateway struct {
-	cfg StubGatewayConfig
+type AuxGateway struct {
+	cfg AuxGatewayConfig
 }
 
-func NewStubGateway(cfg StubGatewayConfig) *StubGateway {
-	return &StubGateway{cfg: cfg}
+func NewAuxGateway(cfg AuxGatewayConfig) *AuxGateway {
+	return &AuxGateway{cfg: cfg}
 }
 
-func (g *StubGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
+func (g *AuxGateway) Stream(ctx context.Context, request Request, yield func(StreamEvent) error) error {
 	if !g.cfg.Enabled {
 		failed := StreamRunFailed{
 			Error: GatewayError{
 				ErrorClass: ErrorClassProviderNonRetryable,
-				Message:    "stub gateway is disabled",
+				Message:    "aux gateway is disabled",
 			},
 		}
 		return yield(failed)

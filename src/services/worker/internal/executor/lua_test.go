@@ -871,7 +871,7 @@ context.set_output(tostring(#parsed) .. ":" .. parsed[1].role)
 // --- agent.generate tests ---
 
 func TestLuaExecutor_AgentGenerate_Basic(t *testing.T) {
-	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 1})
+	gw := llm.NewAuxGateway(llm.AuxGatewayConfig{Enabled: true, DeltaCount: 1})
 	rc := buildLuaRC(gw)
 	evs := runLuaScript(t, `
 local out, err = agent.generate("system", "user input")
@@ -911,7 +911,7 @@ end
 }
 
 func TestLuaExecutor_AgentGenerate_MaxTokens(t *testing.T) {
-	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 1})
+	gw := llm.NewAuxGateway(llm.AuxGatewayConfig{Enabled: true, DeltaCount: 1})
 	rc := buildLuaRC(gw)
 	evs := runLuaScript(t, `
 local out, err = agent.generate("sys", "msg", {max_tokens = 256})
@@ -928,7 +928,7 @@ context.set_output(out)
 // --- agent.stream tests ---
 
 func TestLuaExecutor_AgentStream_StringMessage(t *testing.T) {
-	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 3})
+	gw := llm.NewAuxGateway(llm.AuxGatewayConfig{Enabled: true, DeltaCount: 3})
 	rc := buildLuaRC(gw)
 	evs := runLuaScript(t, `
 local out, err = agent.stream("system prompt", "user query")
@@ -951,7 +951,7 @@ if err then error(err) end
 }
 
 func TestLuaExecutor_AgentStream_MessagesTable(t *testing.T) {
-	gw := llm.NewStubGateway(llm.StubGatewayConfig{Enabled: true, DeltaCount: 2})
+	gw := llm.NewAuxGateway(llm.AuxGatewayConfig{Enabled: true, DeltaCount: 2})
 	rc := buildLuaRC(gw)
 	evs := runLuaScript(t, `
 local msgs = {

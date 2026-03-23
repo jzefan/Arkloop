@@ -12,9 +12,9 @@ import (
 	"arkloop/services/worker/internal/routing"
 )
 
-type stubGateway struct{}
+type auxGateway struct{}
 
-func (s stubGateway) Stream(_ context.Context, _ llm.Request, _ func(llm.StreamEvent) error) error {
+func (s auxGateway) Stream(_ context.Context, _ llm.Request, _ func(llm.StreamEvent) error) error {
 	return nil
 }
 
@@ -30,10 +30,10 @@ func buildStubRouterConfig() routing.ProviderRoutingConfig {
 	}
 }
 
-func TestRoutingMiddleware_StubGatewaySelected(t *testing.T) {
+func TestRoutingMiddleware_AuxGatewaySelected(t *testing.T) {
 	cfg := buildStubRouterConfig()
 	router := routing.NewProviderRouter(cfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -78,7 +78,7 @@ func TestRoutingMiddleware_StubGatewaySelected(t *testing.T) {
 func TestRoutingMiddleware_NilDbPoolUsesStaticRouter(t *testing.T) {
 	cfg := buildStubRouterConfig()
 	router := routing.NewProviderRouter(cfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -108,7 +108,7 @@ func TestRoutingMiddleware_NilDbPoolUsesStaticRouter(t *testing.T) {
 func TestRoutingMiddleware_EmptyRouterNoSelectedRoute(t *testing.T) {
 	emptyCfg := routing.ProviderRoutingConfig{}
 	router := routing.NewProviderRouter(emptyCfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -149,7 +149,7 @@ func TestRoutingMiddleware_UnknownProviderKind(t *testing.T) {
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)
@@ -177,7 +177,7 @@ func TestRoutingMiddleware_UnknownProviderKind(t *testing.T) {
 func TestRoutingMiddleware_ResolveGatewayForRouteID_EmptyFallbackCurrent(t *testing.T) {
 	cfg := buildStubRouterConfig()
 	router := routing.NewProviderRouter(cfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -210,7 +210,7 @@ func TestRoutingMiddleware_ResolveGatewayForRouteID_EmptyFallbackCurrent(t *test
 func TestRoutingMiddleware_ResolveGatewayForRouteID_ValidRoute(t *testing.T) {
 	cfg := buildStubRouterConfig()
 	router := routing.NewProviderRouter(cfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -245,7 +245,7 @@ func TestRoutingMiddleware_ResolveGatewayForRouteID_ValidRoute(t *testing.T) {
 func TestRoutingMiddleware_ResolveGatewayForRouteID_NotFound(t *testing.T) {
 	cfg := buildStubRouterConfig()
 	router := routing.NewProviderRouter(cfg)
-	stub := stubGateway{}
+	stub := auxGateway{}
 
 	mw := pipeline.NewRoutingMiddleware(
 		router, nil, stub, false,
@@ -292,7 +292,7 @@ func TestRoutingMiddleware_OpenAIGateway_WithEnvApiKey(t *testing.T) {
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)
@@ -333,7 +333,7 @@ func TestRoutingMiddleware_AnthropicGateway_WithDirectApiKey(t *testing.T) {
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)
@@ -374,7 +374,7 @@ func TestRoutingMiddleware_MissingApiKey_Panics(t *testing.T) {
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)
@@ -404,7 +404,7 @@ func TestRoutingMiddleware_ResolveGatewayForAgentName_NilDbPool(t *testing.T) {
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)
@@ -432,7 +432,7 @@ func TestRoutingMiddleware_ResolveGatewayForAgentName_EmptyFallbackCurrent(t *te
 	router := routing.NewProviderRouter(cfg)
 
 	mw := pipeline.NewRoutingMiddleware(
-		router, nil, stubGateway{}, false,
+		router, nil, auxGateway{}, false,
 		data.RunsRepository{}, data.RunEventsRepository{},
 		nil, nil,
 	)

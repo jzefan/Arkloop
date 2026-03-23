@@ -72,7 +72,7 @@ func TestEngineV1InjectsPersonaSystemPromptAndBudgets(t *testing.T) {
 
 	engine, err := runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
-		StubGateway:            gateway,
+		AuxGateway:            gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
 		ToolExecutors:          builtin.Executors(nil, nil, nil),
@@ -144,7 +144,7 @@ func TestEngineV1AppliesClawPersonaPromptAndToolAllowlist(t *testing.T) {
 
 	engine, err := runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
-		StubGateway:            gateway,
+		AuxGateway:            gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
 		ToolExecutors:          builtin.Executors(nil, nil, nil),

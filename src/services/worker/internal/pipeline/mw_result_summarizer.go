@@ -22,7 +22,7 @@ const (
 // 注入 ResultSummarizer（Layer 2 LLM 压缩）。
 func NewResultSummarizerMiddleware(
 	pool *pgxpool.Pool,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	llmMaxResponseBytes int,
 	loaders ...*routing.ConfigLoader,
@@ -51,7 +51,7 @@ func NewResultSummarizerMiddleware(
 		gateway, resolvedModel := resolveTitleGateway(
 			ctx, pool, accountID,
 			fallbackGateway, fallbackModel,
-			stubGateway, emitDebugEvents,
+			auxGateway, emitDebugEvents,
 			llmMaxResponseBytes, configLoader,
 			rc.RoutingByokEnabled,
 		)

@@ -25,7 +25,7 @@ func (e *RouteNotFoundError) Error() string {
 func NewRoutingMiddleware(
 	staticRouter *routing.ProviderRouter,
 	configLoader *routing.ConfigLoader,
-	stubGateway llm.Gateway,
+	auxGateway llm.Gateway,
 	emitDebugEvents bool,
 	runsRepo data.RunsRepository,
 	eventsRepo data.RunEventsRepository,
@@ -77,7 +77,7 @@ func NewRoutingMiddleware(
 				return nil, nil, fmt.Errorf("route not found: %s", cleaned)
 			}
 
-			gw, gwErr := gatewayFromSelectedRoute(*routeDecision.Selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			gw, gwErr := gatewayFromSelectedRoute(*routeDecision.Selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if gwErr != nil {
 				return nil, nil, gwErr
 			}
@@ -100,7 +100,7 @@ func NewRoutingMiddleware(
 			if selected == nil {
 				return nil, nil, fmt.Errorf("route not found for selector: %s", cleanedSelector)
 			}
-			gw, gwErr := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			gw, gwErr := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if gwErr != nil {
 				return nil, nil, gwErr
 			}
@@ -198,7 +198,7 @@ func NewRoutingMiddleware(
 			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB, rc.EventBus)
 		}
 
-		gateway, err := gatewayFromSelectedRoute(*selected, stubGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+		gateway, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
 		if err != nil {
 			failed := rc.Emitter.Emit(
 				"run.failed",
@@ -272,12 +272,12 @@ func denyByokIfNeeded(cred routing.ProviderCredential, byokEnabled bool) *routin
 	return nil
 }
 
-func gatewayFromSelectedRoute(selected routing.SelectedProviderRoute, stubGateway llm.Gateway, emitDebugEvents bool, llmMaxResponseBytes int) (llm.Gateway, error) {
+func gatewayFromSelectedRoute(selected routing.SelectedProviderRoute, auxGateway llm.Gateway, emitDebugEvents bool, llmMaxResponseBytes int) (llm.Gateway, error) {
 	credential := selected.Credential
 	advancedJSON := mergeAdvancedJSON(credential.AdvancedJSON, selected.Route.AdvancedJSON)
 	switch credential.ProviderKind {
 	case routing.ProviderKindStub:
-		return stubGateway, nil
+		return auxGateway, nil
 	case routing.ProviderKindOpenAI:
 		apiKey, err := resolveAPIKey(credential)
 		if err != nil {

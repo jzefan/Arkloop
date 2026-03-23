@@ -41,7 +41,7 @@ func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipel
 }
 
 func TestSimpleExecutor_EmitsExpectedEvents(t *testing.T) {
-	gateway := llm.NewStubGateway(llm.StubGatewayConfig{
+	gateway := llm.NewAuxGateway(llm.AuxGatewayConfig{
 		Enabled:    true,
 		DeltaCount: 2,
 	})

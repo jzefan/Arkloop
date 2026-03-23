@@ -14,7 +14,7 @@ func buildRoutingMW(staticRouter *routing.ProviderRouter) pipeline.RunMiddleware
 	return pipeline.NewRoutingMiddleware(
 		staticRouter,
 		nil,
-		llm.NewStubGateway(llm.StubGatewayConfig{}),
+		llm.NewAuxGateway(llm.AuxGatewayConfig{}),
 		false,
 		data.RunsRepository{},
 		data.RunEventsRepository{},
