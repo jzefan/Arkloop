@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import { useParams, useLocation, useOutletContext, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, Check, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronDown, Glasses, Loader2, Pencil, Share2, Star, Trash2, X, AlertCircle } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { codeExecutionAccentColor } from '../codeExecutionStatus'
 import { ChatInput, type Attachment } from './ChatInput'
@@ -440,7 +440,7 @@ export function ChatPage() {
   const [sharingMessageId, setSharingMessageId] = useState<string | null>(null)
   const [sharedMessageId, setSharedMessageId] = useState<string | null>(null)
   const [pendingIncognito, setPendingIncognito] = useState(false)
-  const [contextCompactBar, setContextCompactBar] = useState<'running' | 'done' | null>(null)
+  const [contextCompactBar, setContextCompactBar] = useState<{ type: 'persist'; status: 'running' | 'done' | 'llm_failed' } | { type: 'trim'; status: 'done'; dropped: number } | null>(null)
   const contextCompactHideTimerRef = useRef<number | null>(null)
 
   const clearContextCompactHideTimer = useCallback(() => {
@@ -1338,18 +1338,42 @@ export function ChatPage() {
       }
 
       if (event.type === 'run.context_compact') {
-        const obj = event.data as { phase?: unknown }
+        const obj = event.data as { phase?: unknown; op?: unknown; dropped_prefix?: unknown }
+        const op = typeof obj.op === 'string' ? obj.op : undefined
         const phase = typeof obj.phase === 'string' ? obj.phase : undefined
-        if (phase === 'started') {
-          clearContextCompactHideTimer()
-          setContextCompactBar('running')
-        } else if (phase === 'completed' || phase === undefined) {
-          clearContextCompactHideTimer()
-          setContextCompactBar('done')
-          contextCompactHideTimerRef.current = window.setTimeout(() => {
-            setContextCompactBar(null)
-            contextCompactHideTimerRef.current = null
-          }, 2800)
+
+        if (op === 'persist') {
+          if (phase === 'started') {
+            clearContextCompactHideTimer()
+            setContextCompactBar({ type: 'persist', status: 'running' })
+          } else if (phase === 'completed' || phase === undefined) {
+            clearContextCompactHideTimer()
+            setContextCompactBar({ type: 'persist', status: 'done' })
+            contextCompactHideTimerRef.current = window.setTimeout(() => {
+              setContextCompactBar(null)
+              contextCompactHideTimerRef.current = null
+            }, 2800)
+          } else if (phase === 'llm_failed') {
+            // LLM summarization failed - show brief warning then clear
+            clearContextCompactHideTimer()
+            setContextCompactBar({ type: 'persist', status: 'llm_failed' })
+            contextCompactHideTimerRef.current = window.setTimeout(() => {
+              setContextCompactBar(null)
+              contextCompactHideTimerRef.current = null
+            }, 4000)
+          }
+        } else if (op === 'trim') {
+          if (phase === 'completed') {
+            const dropped = typeof obj.dropped_prefix === 'number' ? obj.dropped_prefix : 0
+            if (dropped > 0) {
+              clearContextCompactHideTimer()
+              setContextCompactBar({ type: 'trim', status: 'done', dropped })
+              contextCompactHideTimerRef.current = window.setTimeout(() => {
+                setContextCompactBar(null)
+                contextCompactHideTimerRef.current = null
+              }, 1500)
+            }
+          }
         }
         continue
       }
@@ -2679,6 +2703,8 @@ export function ChatPage() {
                   variant={contextCompactBar}
                   runningLabel={t.desktopSettings.chatCompactBannerRunning}
                   doneLabel={t.desktopSettings.chatCompactBannerDone}
+                  trimLabel={t.desktopSettings.chatCompactBannerTrim}
+                  llmFailedLabel={t.desktopSettings.chatCompactBannerLlmFailed}
                 />
               )}
               {messages.map((msg, idx) => {
@@ -3557,10 +3583,14 @@ function ContextCompactBar({
   variant,
   runningLabel,
   doneLabel,
+  trimLabel,
+  llmFailedLabel,
 }: {
-  variant: 'running' | 'done'
+  variant: { type: 'persist'; status: 'running' | 'done' | 'llm_failed' } | { type: 'trim'; status: 'done'; dropped: number }
   runningLabel: string
   doneLabel: string
+  trimLabel: string
+  llmFailedLabel: string
 }) {
   return (
     <motion.div
@@ -3572,12 +3602,20 @@ function ContextCompactBar({
       <div className="flex items-center gap-3 py-1">
         <div className="h-px flex-1 bg-[var(--c-border-subtle)]" />
         <span className="flex items-center gap-1.5 text-xs text-[var(--c-text-muted)]">
-          {variant === 'running' ? (
+          {variant.type === 'persist' && variant.status === 'running' ? (
             <Loader2 size={12} strokeWidth={1.5} className="shrink-0 animate-spin opacity-80" />
+          ) : variant.type === 'persist' && variant.status === 'llm_failed' ? (
+            <AlertCircle size={12} strokeWidth={1.5} className="shrink-0 opacity-80 text-[var(--c-status-warning)]" />
           ) : (
             <Check size={12} strokeWidth={1.5} className="shrink-0 opacity-80" />
           )}
-          {variant === 'running' ? runningLabel : doneLabel}
+          {variant.type === 'persist'
+            ? variant.status === 'running'
+              ? runningLabel
+              : variant.status === 'llm_failed'
+                ? llmFailedLabel
+                : doneLabel
+            : trimLabel.replace('{n}', String(variant.dropped))}
         </span>
         <div className="h-px flex-1 bg-[var(--c-border-subtle)]" />
       </div>
