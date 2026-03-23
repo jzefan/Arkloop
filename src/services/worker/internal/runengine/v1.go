@@ -202,7 +202,6 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	//   InputLoader     — 在 Entitlement 前：Entitlement 需要 Messages 判断空输入
 	//   Entitlement     — 在 Routing 前：配额检查不依赖模型路由
 	//   MCPDiscovery    — 在 ToolBuild 前：发现的 MCP tools 需进入 allowlist
-	//   SpawnAgent      — 在 PersonaResolution 前：注入 spawn_agent tool 到 allowlist
 	//   ToolProvider    — 在 PersonaResolution 前：provider override 需先于 persona 合并
 	//   PersonaResolution — 在 Memory/Routing 前：SystemPrompt、AgentConfig 由此确定
 	//   ChannelContext  — 在 HeartbeatSchedule 前：后者依赖 ChannelContext.ChannelID
@@ -211,43 +210,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	//   Routing         — 在 ContextCompact/TitleSummarizer 前：后两者依赖 Gateway
 	//   ToolBuild       — 必须最后：依赖前面所有 mw 对 ToolRegistry/Specs 的修改
 	//   ChannelDelivery — 必须最后：包裹 handler，在 run 结束后执行投递
-	middlewares := []pipeline.RunMiddleware{
-		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, deps.RunControlHub),
-		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, deps.MessageAttachmentStore),
-		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
-		pipeline.NewMCPDiscoveryMiddleware(
-			deps.MCPDiscoveryCache,
-			deps.ToolExecutors,
-			deps.AllLlmToolSpecs,
-			baseAllowlistSet,
-			deps.ToolRegistry,
-		),
-		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
-		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
-		pipeline.NewChannelContextMiddleware(deps.DBPool),
-		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
-		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(),
-		pipeline.NewChannelTelegramToolsMiddleware(deps.ChannelTelegramLoader, nil),
-		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
-		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
-			Resolve: func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
-				return data.NewSkillsRepository(deps.DBPool).ResolveEnabledSkills(ctx, accountID, profileRef, workspaceRef)
-			},
-		}),
-		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
-		pipeline.NewTrustSourceMiddleware(cfgResolver),
-		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),
-		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
-		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
-		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
-		pipeline.NewLLMHeartbeatPrepareMiddleware(),
-		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
-		pipeline.NewPlatformMiddleware(deps.PlatformToolExecutor),
-		pipeline.NewToolBuildMiddleware(),
-		pipeline.NewResultSummarizerMiddleware(deps.DBPool, deps.StubGateway, deps.EmitDebugEvents, 0, deps.RoutingConfigLoader),
-		pipeline.NewChannelDeliveryMiddleware(deps.DBPool),
-	}
+	middlewares := buildPipeline(deps, runsRepo, eventsRepo, messagesRepo, resolver, cfgResolver, releaseSlot, compositeScanner, injectionAuditor, baseAllowlistSet)
 
 	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, deps.JobQueue, usageRepo, creditsRepo, resolver)
 
@@ -468,6 +431,127 @@ func resolveString(ctx context.Context, resolver sharedconfig.Resolver, registry
 		return fallback
 	}
 	return raw
+}
+
+// buildPipeline 按分组组装完整中间件管道，各 layer 间顺序是硬约束。
+func buildPipeline(
+	deps EngineV1Deps,
+	runsRepo data.RunsRepository,
+	eventsRepo data.RunEventsRepository,
+	messagesRepo data.MessagesRepository,
+	resolver *sharedent.Resolver,
+	cfgResolver sharedconfig.Resolver,
+	releaseSlot func(ctx context.Context, run data.Run),
+	compositeScanner *security.CompositeScanner,
+	injectionAuditor *security.SecurityAuditor,
+	baseAllowlistSet map[string]struct{},
+) []pipeline.RunMiddleware {
+	var mws []pipeline.RunMiddleware
+	mws = append(mws, buildBaseLayer(runsRepo, eventsRepo, messagesRepo, deps.RunControlHub, deps.MessageAttachmentStore, resolver, releaseSlot)...)
+	mws = append(mws, buildAgentConfigLayer(deps, runsRepo, eventsRepo, baseAllowlistSet, releaseSlot)...)
+	mws = append(mws, buildChannelLayer(deps)...)
+	mws = append(mws, buildCapabilityLayer(deps, cfgResolver, compositeScanner, injectionAuditor, eventsRepo)...)
+	mws = append(mws, buildRoutingLayer(deps, runsRepo, eventsRepo, messagesRepo, resolver, releaseSlot)...)
+	mws = append(mws, buildToolFinalizeLayer(deps)...)
+	mws = append(mws, buildDeliveryLayer(deps)...)
+	return mws
+}
+
+func buildBaseLayer(
+	runsRepo data.RunsRepository,
+	eventsRepo data.RunEventsRepository,
+	messagesRepo data.MessagesRepository,
+	runControlHub *pipeline.RunControlHub,
+	attachmentStore pipeline.MessageAttachmentStore,
+	resolver *sharedent.Resolver,
+	releaseSlot func(ctx context.Context, run data.Run),
+) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, runControlHub),
+		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, attachmentStore),
+		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
+	}
+}
+
+func buildAgentConfigLayer(
+	deps EngineV1Deps,
+	runsRepo data.RunsRepository,
+	eventsRepo data.RunEventsRepository,
+	baseAllowlistSet map[string]struct{},
+	releaseSlot func(ctx context.Context, run data.Run),
+) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewMCPDiscoveryMiddleware(
+			deps.MCPDiscoveryCache,
+			deps.ToolExecutors,
+			deps.AllLlmToolSpecs,
+			baseAllowlistSet,
+			deps.ToolRegistry,
+		),
+		pipeline.NewToolProviderMiddleware(deps.ToolProviderCache),
+		pipeline.NewPersonaResolutionMiddleware(deps.PersonaRegistryGetter, deps.DBPool, runsRepo, eventsRepo, releaseSlot),
+	}
+}
+
+func buildChannelLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewChannelContextMiddleware(deps.DBPool),
+		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
+		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
+		pipeline.NewChannelGroupContextTrimMiddleware(),
+		pipeline.NewChannelTelegramToolsMiddleware(deps.ChannelTelegramLoader, nil),
+	}
+}
+
+func buildCapabilityLayer(
+	deps EngineV1Deps,
+	cfgResolver sharedconfig.Resolver,
+	compositeScanner *security.CompositeScanner,
+	injectionAuditor *security.SecurityAuditor,
+	eventsRepo data.RunEventsRepository,
+) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewSubAgentContextMiddleware(subagentctl.NewSnapshotStorage()),
+		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
+			Resolve: func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
+				return data.NewSkillsRepository(deps.DBPool).ResolveEnabledSkills(ctx, accountID, profileRef, workspaceRef)
+			},
+		}),
+		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
+		pipeline.NewTrustSourceMiddleware(cfgResolver),
+		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),
+	}
+}
+
+func buildRoutingLayer(
+	deps EngineV1Deps,
+	runsRepo data.RunsRepository,
+	eventsRepo data.RunEventsRepository,
+	messagesRepo data.MessagesRepository,
+	resolver *sharedent.Resolver,
+	releaseSlot func(ctx context.Context, run data.Run),
+) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.StubGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
+		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.StubGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+	}
+}
+
+func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewLLMHeartbeatPrepareMiddleware(),
+		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
+		pipeline.NewPlatformMiddleware(deps.PlatformToolExecutor),
+		pipeline.NewToolBuildMiddleware(),
+		pipeline.NewResultSummarizerMiddleware(deps.DBPool, deps.StubGateway, deps.EmitDebugEvents, 0, deps.RoutingConfigLoader),
+	}
+}
+
+func buildDeliveryLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
+	return []pipeline.RunMiddleware{
+		pipeline.NewChannelDeliveryMiddleware(deps.DBPool),
+	}
 }
 
 func resolveNonNegativeInt(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort int) int {
