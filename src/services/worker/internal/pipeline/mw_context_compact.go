@@ -23,8 +23,7 @@ const (
 	settingContextCompactionModel     = "context.compaction.model"
 	contextCompactStreamTimeout       = 60 * time.Second
 	contextCompactMaxOut              = 2048
-	defaultPersistTriggerApproxTokens = 120000
-	defaultPersistKeepLastMessages    = 40
+	defaultPersistKeepLastMessages = 40
 	// 发往压缩摘要 LLM 的用户块上限（tiktoken 用 HistoryThreadPromptTokens；单条超大时再按 rune 截断）。
 	contextCompactMaxLLMInputTokens = 120000
 	contextCompactMaxLLMInputRunes  = 400000
@@ -344,9 +343,6 @@ func compactPersistTriggerTokens(cfg ContextCompactSettings, windowFromRoute int
 		return trigger, window
 	}
 	trigger = cfg.PersistTriggerApproxTokens
-	if trigger <= 0 {
-		trigger = defaultPersistTriggerApproxTokens
-	}
 	return trigger, window
 }
 

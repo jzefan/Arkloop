@@ -39,10 +39,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	defaultPersistTriggerApproxTokensWorker = 120000
-	defaultPersistKeepLastMessagesWorker    = 40
-)
+const defaultPersistKeepLastMessagesWorker = 40
 
 type EngineV1 struct {
 	middlewares           []pipeline.RunMiddleware
@@ -340,7 +337,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		MaxUserTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
 		MaxTotalTextBytes:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
 		PersistEnabled:             resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
-		PersistTriggerApproxTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, defaultPersistTriggerApproxTokensWorker),
+		PersistTriggerApproxTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, 0),
 		PersistTriggerContextPct:   persistPct,
 		FallbackContextWindowTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 200000),
 		PersistKeepLastMessages:    resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
