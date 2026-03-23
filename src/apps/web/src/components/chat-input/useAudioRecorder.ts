@@ -1,17 +1,20 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { transcribeAudio } from '../../api'
 import { BAR_COUNT } from './AttachmentCard'
+import { getDesktopApi, isDesktop } from '@arkloop/shared/desktop'
 
 export function useAudioRecorder({
   accessTokenRef,
   valueRef,
   onChangeRef,
   onAsrErrorRef,
+  onVoiceNotConfiguredRef,
 }: {
   accessTokenRef: React.RefObject<string | undefined>
   valueRef: React.RefObject<string>
   onChangeRef: React.RefObject<(val: string) => void>
   onAsrErrorRef: React.RefObject<((err: unknown) => void) | undefined>
+  onVoiceNotConfiguredRef: React.RefObject<(() => void) | undefined>
 }) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -20,6 +23,7 @@ export function useAudioRecorder({
   const animFrameRef = useRef<number>(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const discardRef = useRef(false)
+  const langRef = useRef<string | undefined>(undefined)
 
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -35,6 +39,19 @@ export function useAudioRecorder({
 
   const startRecording = useCallback(async () => {
     if (isRecording || isTranscribing || !accessTokenRef.current) return
+
+    // Desktop: check voice is enabled before recording
+    if (isDesktop()) {
+      const api = getDesktopApi()
+      if (api) {
+        const cfg = await api.config.get()
+        if (!cfg.voice?.enabled) {
+          onVoiceNotConfiguredRef.current?.()
+          return
+        }
+        langRef.current = cfg.voice?.language || undefined
+      }
+    }
 
     let stream: MediaStream
     try {
@@ -99,7 +116,7 @@ export function useAudioRecorder({
       const token = accessTokenRef.current
       if (!token || audioChunksRef.current.length === 0) return
 
-      const lang = navigator.language?.split('-')[0] ?? undefined
+      const lang = langRef.current || navigator.language?.split('-')[0] || undefined
 
       const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
       setIsTranscribing(true)
@@ -119,7 +136,7 @@ export function useAudioRecorder({
 
     recorder.start()
     setIsRecording(true)
-  }, [isRecording, isTranscribing, accessTokenRef, valueRef, onChangeRef, onAsrErrorRef])
+  }, [isRecording, isTranscribing, accessTokenRef, valueRef, onChangeRef, onAsrErrorRef, onVoiceNotConfiguredRef])
 
   const stopAndTranscribe = useCallback(() => {
     discardRef.current = false

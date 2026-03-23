@@ -106,10 +106,12 @@ export function ChatInput({
   const onChangeRef = useRef(onChange)
   const accessTokenRef = useRef(accessToken)
   const onAsrErrorRef = useRef(onAsrError)
+  const onVoiceNotConfiguredRef = useRef<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
   useEffect(() => { valueRef.current = value }, [value])
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
   useEffect(() => { accessTokenRef.current = accessToken }, [accessToken])
   useEffect(() => { onAsrErrorRef.current = onAsrError }, [onAsrError])
+  useEffect(() => { onVoiceNotConfiguredRef.current = () => onOpenSettings?.('voice' as never) }, [onOpenSettings])
 
   const { t } = useLocale()
 
@@ -122,7 +124,7 @@ export function ChatInput({
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
 
   const { isRecording, isTranscribing, recordingSeconds, waveformBars, startRecording, stopAndTranscribe, cancelRecording } =
-    useAudioRecorder({ accessTokenRef, valueRef, onChangeRef, onAsrErrorRef })
+    useAudioRecorder({ accessTokenRef, valueRef, onChangeRef, onAsrErrorRef, onVoiceNotConfiguredRef })
 
   const { isFileDragging, handleAttachTransfer, pasteProcessingRef, lastPasteRef } =
     useAttachments({ onAttachFiles, textareaRef })

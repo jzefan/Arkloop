@@ -19,6 +19,7 @@ import {
   MessageSquare,
   ShieldAlert,
   Plug,
+  Mic,
 } from "lucide-react";
 import type { MeResponse } from "../api";
 import { useLocale } from "../contexts/LocaleContext";
@@ -40,6 +41,7 @@ import {
   DeveloperSettings,
   DesktopPromptInjectionSettings,
   ConnectorsSettings,
+  VoiceSettings,
 } from "./settings";
 
 export type DesktopSettingsKey =
@@ -56,6 +58,7 @@ export type DesktopSettingsKey =
   | "memory"
   | "connection"
   | "chat"
+  | "voice"
   | "promptInjection"
   | "modules"
   | "extensions"
@@ -82,6 +85,7 @@ const MAIN_NAV: NavItem[] = [
 const DESKTOP_NAV: NavItem[] = [
   { key: "connection", icon: Wifi },
   { key: "chat", icon: MessageSquare },
+  { key: "voice", icon: Mic },
   { key: "promptInjection", icon: ShieldAlert },
   { key: "memory", icon: Brain },
   { key: "modules", icon: Package },
@@ -175,6 +179,8 @@ export function DesktopSettings({
         return <ConnectionSettings />;
       case "chat":
         return <ChatSettings accessToken={accessToken} />;
+      case "voice":
+        return <VoiceSettings accessToken={accessToken} />;
       case "promptInjection":
         return <DesktopPromptInjectionSettings accessToken={accessToken} />;
       case "modules":

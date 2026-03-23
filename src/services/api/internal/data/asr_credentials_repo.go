@@ -31,6 +31,8 @@ IsDefault   bool
 RevokedAt   *time.Time
 CreatedAt   time.Time
 UpdatedAt   time.Time
+// APIKeyLegacy 是 SQLite migration 遗留字段（secret_id 为 nil 时的明文 fallback）
+APIKeyLegacy *string
 }
 
 type AsrCredentialsRepository struct {
@@ -48,13 +50,13 @@ func (r *AsrCredentialsRepository) WithTx(tx pgx.Tx) *AsrCredentialsRepository {
 return &AsrCredentialsRepository{db: tx}
 }
 
-const asrCredCols = `id, owner_kind, owner_user_id, provider, name, secret_id, key_prefix, base_url, model, is_default, revoked_at, created_at, updated_at`
+const asrCredCols = `id, owner_kind, owner_user_id, provider, name, secret_id, key_prefix, base_url, model, is_default, revoked_at, created_at, updated_at, api_key_legacy`
 
 func scanAsrCredential(row interface{ Scan(dest ...any) error }) (AsrCredential, error) {
 var c AsrCredential
 err := row.Scan(
 &c.ID, &c.OwnerKind, &c.OwnerUserID, &c.Provider, &c.Name, &c.SecretID, &c.KeyPrefix,
-&c.BaseURL, &c.Model, &c.IsDefault, &c.RevokedAt, &c.CreatedAt, &c.UpdatedAt,
+&c.BaseURL, &c.Model, &c.IsDefault, &c.RevokedAt, &c.CreatedAt, &c.UpdatedAt, &c.APIKeyLegacy,
 )
 return c, err
 }
@@ -138,15 +140,9 @@ ctx = context.Background()
 }
 c, err := scanAsrCredential(r.db.QueryRow(
 ctx,
-`(SELECT `+asrCredCols+`
-  FROM asr_credentials
-  WHERE owner_kind = 'user' AND owner_user_id = $1 AND is_default = true AND revoked_at IS NULL
-  LIMIT 1)
- UNION ALL
- (SELECT `+asrCredCols+`
-  FROM asr_credentials
-  WHERE owner_kind = 'platform' AND is_default = true AND revoked_at IS NULL
-  LIMIT 1)
+`SELECT `+asrCredCols+`
+ FROM asr_credentials
+ WHERE owner_kind = 'user' AND owner_user_id = $1 AND is_default = 1 AND revoked_at IS NULL
  LIMIT 1`,
 ownerUserID,
 ))
@@ -223,6 +219,59 @@ ctx = context.Background()
 }
 query := `DELETE FROM asr_credentials WHERE id = $1`
 args := []any{id}
+query, args = appendOwnerKindFilter(query, args, ownerKind, ownerUserID)
+_, err := r.db.Exec(ctx, query, args...)
+return err
+}
+
+func (r *AsrCredentialsRepository) Update(
+ctx context.Context,
+ownerKind string,
+ownerUserID *uuid.UUID,
+id uuid.UUID,
+name *string,
+baseURL *string,
+model *string,
+isDefault *bool,
+) error {
+if ctx == nil {
+ctx = context.Background()
+}
+setClauses := []string{}
+args := []any{}
+argIdx := 1
+
+if name != nil {
+setClauses = append(setClauses, fmt.Sprintf("name = $%d", argIdx))
+args = append(args, *name)
+argIdx++
+}
+if baseURL != nil {
+setClauses = append(setClauses, fmt.Sprintf("base_url = $%d", argIdx))
+args = append(args, *baseURL)
+argIdx++
+}
+if model != nil {
+setClauses = append(setClauses, fmt.Sprintf("model = $%d", argIdx))
+args = append(args, *model)
+argIdx++
+}
+if isDefault != nil {
+setClauses = append(setClauses, fmt.Sprintf("is_default = $%d", argIdx))
+args = append(args, *isDefault)
+argIdx++
+}
+
+if len(setClauses) == 0 {
+return nil
+}
+
+args = append(args, id)
+query := fmt.Sprintf(
+"UPDATE asr_credentials SET %s, updated_at = datetime('now') WHERE id = $%d",
+strings.Join(setClauses, ", "),
+argIdx,
+)
 query, args = appendOwnerKindFilter(query, args, ownerKind, ownerUserID)
 _, err := r.db.Exec(ctx, query, args...)
 return err

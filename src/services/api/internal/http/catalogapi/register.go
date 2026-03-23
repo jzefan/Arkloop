@@ -6,6 +6,7 @@ import (
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/observability"
 	repopersonas "arkloop/services/api/internal/personas"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,6 +40,7 @@ type Deps struct {
 	PersonaSyncTrigger           personaSyncTrigger
 	EffectiveToolCatalogCache    *EffectiveToolCatalogCache
 	ArtifactStoreAvailable       bool
+	Logger                       *observability.JSONLogger
 }
 
 type personaSyncTrigger interface {
@@ -50,7 +52,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/llm-providers/", llmProviderEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials", asrCredentialsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials/", asrCredentialEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo))
-	mux.HandleFunc("/v1/asr/transcribe", asrTranscribeEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo))
+	mux.HandleFunc("/v1/asr/transcribe", asrTranscribeEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo, deps.Logger))
 	mux.HandleFunc("/v1/mcp-configs", mcpConfigsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.MCPConfigsRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/mcp-configs/", mcpConfigEntry(deps.AuthService, deps.AccountMembershipRepo, deps.MCPConfigsRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/tool-catalog/effective", toolCatalogEffectiveEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ToolDescriptionOverridesRepo, deps.Pool, deps.EffectiveToolCatalogCache, deps.ArtifactStoreAvailable, deps.ProjectRepo))
