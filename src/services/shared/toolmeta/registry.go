@@ -295,10 +295,65 @@ var registry = []ToolMeta{
 		Group:     GroupOrchestration,
 		Label:     "ACP agent",
 		ShortDesc: "delegate a task to an external ACP coding agent",
-		LLMDescription: "delegate a task to an external ACP-compatible coding agent running inside the sandbox (e.g. opencode). " +
+		LLMDescription: "[Deprecated: use spawn_acp + wait_acp instead. acp_agent blocks synchronously and cannot be interrupted.] " +
+			"delegate a task to an external ACP-compatible coding agent running inside the sandbox (e.g. opencode). " +
 			"The agent operates autonomously with its own LLM, tools, and workspace. " +
 			"Use for code-heavy tasks: implementation, debugging, refactoring, test execution. " +
 			"This tool connects to an external agent process in the sandbox — it does NOT create an Arkloop sub-agent.",
+	},
+	{
+		Name:      "spawn_acp",
+		Group:     GroupOrchestration,
+		Label:     "Spawn ACP agent",
+		ShortDesc: "start an ACP coding agent asynchronously and return a handle",
+		LLMDescription: "start an ACP-compatible coding agent asynchronously. " +
+			"Returns a handle_id immediately without blocking. " +
+			"Use wait_acp to retrieve the result when ready. " +
+			"After wait_acp returns completed, the agent session remains alive — use send_acp to continue the conversation. " +
+			"spawn_acp and wait_acp are always used together — load both in one search_tools call. " +
+			"To run multiple ACP tasks in parallel: call spawn_acp N times, then wait_acp for each. " +
+			"Use interrupt_acp to cancel the current turn without closing the session. " +
+			"Use close_acp to terminate the process when no further interaction is needed.",
+	},
+	{
+		Name:      "send_acp",
+		Group:     GroupOrchestration,
+		Label:     "Send ACP input",
+		ShortDesc: "send a follow-up prompt to a running ACP agent session",
+		LLMDescription: "send a new prompt to an existing ACP agent session. " +
+			"The session must be in idle state (previous turn completed). " +
+			"Use wait_acp after send_acp to get the result. " +
+			"The ACP agent retains its full conversation context across turns.",
+	},
+	{
+		Name:      "wait_acp",
+		Group:     GroupOrchestration,
+		Label:     "Wait ACP agent",
+		ShortDesc: "block until a spawned ACP agent completes and return its output",
+		LLMDescription: "block until a spawned ACP agent's current turn reaches a terminal state (completed, failed, or interrupted). " +
+			"Returns the agent output on success. " +
+			"Set timeout_seconds to avoid blocking indefinitely; on timeout status=running and timeout=true are returned. " +
+			"Pass one handle_id per call.",
+	},
+	{
+		Name:      "interrupt_acp",
+		Group:     GroupOrchestration,
+		Label:     "Interrupt ACP agent",
+		ShortDesc: "cancel the current turn of a running ACP agent without closing the session",
+		LLMDescription: "cancel the current turn of a running ACP agent. " +
+			"The session remains alive after interruption — use send_acp to start a new turn or close_acp to terminate the process. " +
+			"Returns status=interrupting; follow with wait_acp to confirm the turn has stopped. " +
+			"Has no effect if the agent is not in running state.",
+	},
+	{
+		Name:      "close_acp",
+		Group:     GroupOrchestration,
+		Label:     "Close ACP agent",
+		ShortDesc: "close an ACP agent session and terminate the process",
+		LLMDescription: "close an ACP agent session and terminate the underlying process. " +
+			"Call when no further interaction with this agent is needed. " +
+			"Cannot close while a turn is active — call interrupt_acp first, then wait_acp, then close_acp. " +
+			"After close_acp, the handle_id is no longer valid.",
 	},
 	{
 		Name:      "spawn_agent",
