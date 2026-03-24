@@ -126,8 +126,13 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 
 	executors := builtin.Executors(nil, nil, nil)
-	if exec, ok := executors[acptool.AgentSpec.Name].(acptool.ToolExecutor); ok {
-		executors[acptool.AgentSpec.Name] = acptool.DesktopExecutorWithInject(exec, db)
+	for _, name := range []string{
+		acptool.AgentSpec.Name,
+		acptool.SpawnACPAgentSpec.Name,
+	} {
+		if exec, ok := executors[name].(acptool.ToolExecutor); ok {
+			executors[name] = acptool.DesktopExecutorWithInject(exec, db)
+		}
 	}
 
 	sandboxAddr := desktop.GetSandboxAddr()

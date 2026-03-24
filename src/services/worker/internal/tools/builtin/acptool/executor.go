@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"arkloop/services/shared/acptoken"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/acp"
@@ -24,6 +26,8 @@ const envLLMProxyBaseURL = "ARKLOOP_ACP_LLM_PROXY_URL"
 // runtimeHandleRegistry caches reusable ACP runtime handles inside this worker process.
 // It is run-scoped and memory-only; it is not the source of truth for ACP sessions.
 var runtimeHandleRegistry = acp.NewRegistry()
+
+var globalACPHandleStore = newACPHandleStore()
 
 type ToolExecutor struct {
 	ConfigResolver  sharedconfig.Resolver
@@ -51,6 +55,31 @@ func (e ToolExecutor) Execute(
 	toolCallID string,
 ) tools.ExecutionResult {
 	started := time.Now()
+	switch toolName {
+	case "acp_agent":
+		return e.executeACPAgent(ctx, args, execCtx, toolCallID, started)
+	case "spawn_acp":
+		return e.executeSpawnACP(ctx, args, execCtx, started)
+	case "send_acp":
+		return e.executeSendACP(args, started)
+	case "wait_acp":
+		return e.executeWaitACP(ctx, args, execCtx, started)
+	case "interrupt_acp":
+		return e.executeInterruptACP(args, started)
+	case "close_acp":
+		return e.executeCloseACP(args, started)
+	default:
+		return errResult("tool.unknown", "unknown tool: "+toolName, started)
+	}
+}
+
+func (e ToolExecutor) executeACPAgent(
+	ctx context.Context,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	toolCallID string,
+	started time.Time,
+) tools.ExecutionResult {
 	rt := execCtx.RuntimeSnapshot
 
 	task, ok := args["task"].(string)
@@ -137,6 +166,450 @@ func (e ToolExecutor) Execute(
 
 	// Fresh session
 	return e.runFresh(ctx, host, cfg, runtimeSessionKey, task, emitter, started)
+}
+
+func (e ToolExecutor) executeSpawnACP(
+	ctx context.Context,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	started time.Time,
+) tools.ExecutionResult {
+	rt := execCtx.RuntimeSnapshot
+
+	task, ok := args["task"].(string)
+	if !ok || strings.TrimSpace(task) == "" {
+		return errResult("tool.args_invalid", "task parameter is required", started)
+	}
+	task = strings.TrimSpace(task)
+
+	if _, hasLegacyAgent := args["agent"]; hasLegacyAgent {
+		return errResult("tool.args_invalid", "agent parameter has been removed, use provider", started)
+	}
+
+	providerArg := ""
+	if rawProvider, ok := args["provider"].(string); ok {
+		providerArg = strings.TrimSpace(rawProvider)
+	}
+
+	invocation, err := acp.ResolveProviderInvocation(
+		providerArg,
+		execCtx.ActiveToolProviderConfigsByGroup,
+		rt,
+		execCtx.WorkDir,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "no ACP host available") {
+			return errResult("tool.acp_unavailable", err.Error(), started)
+		}
+		return errResult("tool.args_invalid", err.Error(), started)
+	}
+
+	accountID := ""
+	if execCtx.AccountID != nil {
+		accountID = execCtx.AccountID.String()
+	}
+
+	env := copyStringMap(invocation.Env)
+	maybeInjectLocalOpenCodeConfigHome(invocation.Provider, execCtx.ActiveToolProviderConfigsByGroup, execCtx.RunID, env)
+	if e.InjectDesktopDelegateEnv != nil {
+		if terr := e.InjectDesktopDelegateEnv(ctx, execCtx, invocation, env); terr != nil {
+			return errResult(terr.ErrorClass, terr.Message, started)
+		}
+	}
+	profileName := ""
+	if rawProfile, ok := args["profile"].(string); ok {
+		profileName = strings.TrimSpace(rawProfile)
+	}
+	if err := e.injectProviderEnv(ctx, execCtx.RunID.String(), accountID, profileName, invocation.Provider, env); err != nil {
+		return errResult(err.ErrorClass, err.Message, started)
+	}
+
+	cmd := append([]string{invocation.Provider.Command}, invocation.Provider.Args...)
+	cmd = append(cmd, "--cwd", invocation.Cwd)
+
+	handleID := uuid.New().String()
+
+	cfg := acp.BridgeConfig{
+		RuntimeSessionKey:    "spawn-acp|" + handleID,
+		AccountID:            accountID,
+		Command:              cmd,
+		Cwd:                  invocation.Cwd,
+		Env:                  env,
+		KillGraceMs:          5000,
+		CleanupDelayMs:       300000,
+		StandardCancelCalibrated: true,
+	}
+
+	host, err := acp.ResolveProcessHost(invocation.Provider, rt)
+	if err != nil {
+		return errResult("tool.acp_unavailable", err.Error(), started)
+	}
+
+	goroutineCtx, goroutineCancel := context.WithCancel(context.Background())
+	entry := globalACPHandleStore.create(handleID, goroutineCtx, goroutineCancel)
+
+	go func() {
+		bridge := acp.NewBridge(host, cfg)
+
+		turnCtx, turnCancel := context.WithCancel(goroutineCtx)
+		entry.mu.Lock()
+		entry.turnCancel = turnCancel
+		entry.bridge = bridge
+		entry.mu.Unlock()
+
+		err := bridge.EnsureAndRunTurn(turnCtx, task, events.Emitter{}, func(ev events.RunEvent) error {
+			entry.evMu.Lock()
+			entry.cachedEvents = append(entry.cachedEvents, ev)
+			entry.evMu.Unlock()
+			if ev.Type == "message.delta" {
+				if delta, ok := ev.DataJSON["content_delta"].(string); ok {
+					entry.mu.Lock()
+					entry.output += delta
+					entry.mu.Unlock()
+				}
+			}
+			return nil
+		})
+		turnCancel()
+
+		if goroutineCtx.Err() != nil {
+			// close_acp 触发，清理 bridge，进程关闭
+			entry.bridgeMu.Lock()
+			b := entry.bridge
+			entry.bridge = nil
+			entry.bridgeMu.Unlock()
+			if b != nil {
+				b.Close()
+			}
+			globalACPHandleStore.setClosed(handleID)
+			return
+		}
+
+		if err != nil {
+			if turnCtx.Err() != nil {
+				// interrupt_acp 触发的 turn 取消
+				// 检查进程是否还活着（StandardCancelCalibrated 路径下进程可能仍存活）
+				checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				aliveErr := bridge.CheckRuntimeAlive(checkCtx)
+				checkCancel()
+				if aliveErr == nil {
+					// session 存活，转为 idle 可继续
+					entry.bridgeMu.Lock()
+					entry.bridge = bridge
+					entry.bridgeMu.Unlock()
+					globalACPHandleStore.setIdle(handleID)
+				} else {
+					// 进程已退，清理
+					entry.bridgeMu.Lock()
+					entry.bridge = nil
+					entry.bridgeMu.Unlock()
+					bridge.Close()
+					globalACPHandleStore.setInterrupted(handleID)
+				}
+			} else {
+				// 正常执行失败，进程不可复用
+				entry.bridgeMu.Lock()
+				entry.bridge = nil
+				entry.bridgeMu.Unlock()
+				bridge.Close()
+				globalACPHandleStore.setFailed(handleID, err.Error())
+			}
+			return
+		}
+
+		// turn 成功完成，保活 bridge，转为 idle 等待下一个 send_acp
+		entry.bridgeMu.Lock()
+		entry.bridge = bridge
+		entry.bridgeMu.Unlock()
+		globalACPHandleStore.setIdle(handleID)
+	}()
+
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"handle_id": handleID, "status": "running"},
+		DurationMs: int(time.Since(started) / time.Millisecond),
+	}
+}
+
+func (e ToolExecutor) executeSendACP(args map[string]any, started time.Time) tools.ExecutionResult {
+	handleID, ok := args["handle_id"].(string)
+	if !ok || strings.TrimSpace(handleID) == "" {
+		return errResult("tool.args_invalid", "handle_id parameter is required", started)
+	}
+	input, ok := args["input"].(string)
+	if !ok || strings.TrimSpace(input) == "" {
+		return errResult("tool.args_invalid", "input parameter is required", started)
+	}
+
+	entry := globalACPHandleStore.get(handleID)
+	if entry == nil {
+		return errResult("tool.acp_handle_not_found", "handle not found: "+handleID, started)
+	}
+
+	entry.bridgeMu.Lock()
+	bridge := entry.bridge
+	entry.bridgeMu.Unlock()
+	if bridge == nil {
+		return errResult("tool.acp_session_closed", "session is closed, cannot send input", started)
+	}
+
+	entry.mu.Lock()
+	status := entry.status
+	goroutineCtx := entry.goroutineCtx
+	entry.mu.Unlock()
+
+	if status != acpStatusIdle {
+		return errResult("tool.acp_not_idle", fmt.Sprintf("session status is %s, expected idle", status), started)
+	}
+
+	turnCtx, turnCancel := context.WithCancel(goroutineCtx)
+	entry.resetTurn(turnCancel)
+
+	go func() {
+		err := bridge.EnsureAndRunTurn(turnCtx, input, events.Emitter{}, func(ev events.RunEvent) error {
+			entry.evMu.Lock()
+			entry.cachedEvents = append(entry.cachedEvents, ev)
+			entry.evMu.Unlock()
+			if ev.Type == "message.delta" {
+				if delta, ok := ev.DataJSON["content_delta"].(string); ok {
+					entry.mu.Lock()
+					entry.output += delta
+					entry.mu.Unlock()
+				}
+			}
+			return nil
+		})
+		turnCancel()
+
+		if goroutineCtx.Err() != nil {
+			// close_acp 触发，关闭进程
+			entry.bridgeMu.Lock()
+			b := entry.bridge
+			entry.bridge = nil
+			entry.bridgeMu.Unlock()
+			if b != nil {
+				b.Close()
+			}
+			globalACPHandleStore.setClosed(handleID)
+			return
+		}
+
+		if err != nil {
+			if turnCtx.Err() != nil {
+				// interrupt_acp 触发
+				checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				aliveErr := bridge.CheckRuntimeAlive(checkCtx)
+				checkCancel()
+				if aliveErr == nil {
+					entry.bridgeMu.Lock()
+					entry.bridge = bridge
+					entry.bridgeMu.Unlock()
+					globalACPHandleStore.setIdle(handleID)
+				} else {
+					entry.bridgeMu.Lock()
+					entry.bridge = nil
+					entry.bridgeMu.Unlock()
+					bridge.Close()
+					globalACPHandleStore.setInterrupted(handleID)
+				}
+			} else {
+				entry.bridgeMu.Lock()
+				entry.bridge = nil
+				entry.bridgeMu.Unlock()
+				bridge.Close()
+				globalACPHandleStore.setFailed(handleID, err.Error())
+			}
+			return
+		}
+
+		entry.bridgeMu.Lock()
+		entry.bridge = bridge
+		entry.bridgeMu.Unlock()
+		globalACPHandleStore.setIdle(handleID)
+	}()
+
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"handle_id": handleID, "status": "running"},
+		DurationMs: int(time.Since(started) / time.Millisecond),
+	}
+}
+
+func (e ToolExecutor) executeWaitACP(
+	ctx context.Context,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	started time.Time,
+) tools.ExecutionResult {
+	handleID, ok := args["handle_id"].(string)
+	if !ok || strings.TrimSpace(handleID) == "" {
+		return errResult("tool.args_invalid", "handle_id parameter is required", started)
+	}
+
+	var timeoutDuration time.Duration
+	switch v := args["timeout_seconds"].(type) {
+	case float64:
+		if v >= 1 {
+			timeoutDuration = time.Duration(v) * time.Second
+		}
+	case int:
+		if v >= 1 {
+			timeoutDuration = time.Duration(v) * time.Second
+		}
+	}
+
+	entry := globalACPHandleStore.get(handleID)
+	if entry == nil {
+		return errResult("tool.acp_handle_not_found", "handle not found: "+handleID, started)
+	}
+
+	var deadlineCh <-chan time.Time
+	if timeoutDuration > 0 {
+		deadlineCh = time.After(timeoutDuration)
+	}
+
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		entry.mu.Lock()
+		status := entry.status
+		output := entry.output
+		errMsg := entry.errMsg
+		entry.mu.Unlock()
+
+		switch status {
+		case acpStatusIdle:
+			// turn 已完成，session 保活；对 LLM 呈现为 completed
+			entry.evMu.Lock()
+			cached := make([]events.RunEvent, len(entry.cachedEvents))
+			copy(cached, entry.cachedEvents)
+			entry.evMu.Unlock()
+			for _, ev := range cached {
+				execCtx.Emitter.Emit(ev.Type, ev.DataJSON, ev.ToolName, ev.ErrorClass)
+			}
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "completed", "output": output},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		case acpStatusCompleted:
+			entry.evMu.Lock()
+			cached := make([]events.RunEvent, len(entry.cachedEvents))
+			copy(cached, entry.cachedEvents)
+			entry.evMu.Unlock()
+			for _, ev := range cached {
+				execCtx.Emitter.Emit(ev.Type, ev.DataJSON, ev.ToolName, ev.ErrorClass)
+			}
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "completed", "output": output},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		case acpStatusFailed:
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "failed", "error": errMsg},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		case acpStatusInterrupted:
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "interrupted"},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		case acpStatusClosed:
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "closed"},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		}
+
+		select {
+		case <-entry.doneCh:
+			// next loop will read terminal status
+		case <-ticker.C:
+		case <-ctx.Done():
+			return errResult("tool.cancelled", "wait_acp cancelled", started)
+		case <-deadlineCh:
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"handle_id": handleID, "status": "running", "timeout": true},
+				DurationMs: int(time.Since(started) / time.Millisecond),
+			}
+		}
+	}
+}
+
+func (e ToolExecutor) executeInterruptACP(args map[string]any, started time.Time) tools.ExecutionResult {
+	handleID, ok := args["handle_id"].(string)
+	if !ok || strings.TrimSpace(handleID) == "" {
+		return errResult("tool.args_invalid", "handle_id parameter is required", started)
+	}
+
+	entry := globalACPHandleStore.get(handleID)
+	if entry == nil {
+		return errResult("tool.acp_handle_not_found", "handle not found: "+handleID, started)
+	}
+
+	entry.mu.Lock()
+	status := entry.status
+	turnCancel := entry.turnCancel
+	entry.mu.Unlock()
+
+	if status != acpStatusRunning {
+		return tools.ExecutionResult{
+			ResultJSON: map[string]any{
+				"handle_id": handleID,
+				"status":    string(status),
+				"note":      "not in running state",
+			},
+			DurationMs: int(time.Since(started) / time.Millisecond),
+		}
+	}
+
+	if turnCancel != nil {
+		turnCancel()
+	}
+
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"handle_id": handleID, "status": "interrupting"},
+		DurationMs: int(time.Since(started) / time.Millisecond),
+	}
+}
+
+func (e ToolExecutor) executeCloseACP(args map[string]any, started time.Time) tools.ExecutionResult {
+	handleID, ok := args["handle_id"].(string)
+	if !ok || strings.TrimSpace(handleID) == "" {
+		return errResult("tool.args_invalid", "handle_id parameter is required", started)
+	}
+
+	entry := globalACPHandleStore.get(handleID)
+	if entry == nil {
+		return errResult("tool.acp_handle_not_found", "handle not found: "+handleID, started)
+	}
+
+	entry.mu.Lock()
+	status := entry.status
+	goroutineCancel := entry.goroutineCancel
+	entry.mu.Unlock()
+
+	if status == acpStatusRunning {
+		return errResult("tool.acp_close_while_running",
+			"close not allowed while a turn is active, call interrupt_acp first", started)
+	}
+
+	// 触发进程级 cancel
+	goroutineCancel()
+
+	// 若进程是 idle 状态（无 goroutine 在跑），直接关 bridge
+	entry.bridgeMu.Lock()
+	bridge := entry.bridge
+	entry.bridge = nil
+	entry.bridgeMu.Unlock()
+	if bridge != nil {
+		bridge.Close()
+	}
+
+	globalACPHandleStore.setClosed(handleID)
+
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"handle_id": handleID, "status": "closed"},
+		DurationMs: int(time.Since(started) / time.Millisecond),
+	}
 }
 
 func (e ToolExecutor) tryReuse(
