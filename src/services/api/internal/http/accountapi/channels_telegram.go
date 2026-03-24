@@ -1486,6 +1486,20 @@ func (c telegramConnector) HandleUpdateForPoll(
 		return nil, err
 	}
 
+	// 群消息额外 upsert 群自身的 identity（heartbeat 配置挂在群上）
+	if isTelegramGroupLikeChatType(incoming.ChatType) {
+		if _, err := c.channelIdentitiesRepo.WithTx(tx).Upsert(
+			ctx,
+			incoming.ChannelType,
+			incoming.PlatformChatID,
+			nil,
+			nil,
+			nil,
+		); err != nil {
+			return nil, err
+		}
+	}
+
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
 		if handled, replyText, err := handleTelegramCommand(
