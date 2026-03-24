@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -97,6 +98,7 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 	if channelType == "" {
 		channelType = "telegram"
 	}
+	slog.DebugContext(ctx, "heartbeat_command: looking up group identity", "channel_type", channelType, "chat_id", chatID)
 	identityID, _, err := getGroupIdentityID(ctx, e.db, channelType, chatID)
 	if err != nil {
 		return tools.ExecutionResult{
@@ -104,6 +106,7 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 			DurationMs: ms(),
 		}
 	}
+	slog.DebugContext(ctx, "heartbeat_command: group identity resolved", "identity_id", identityID, "found", identityID != uuid.Nil)
 	if identityID == uuid.Nil {
 		return tools.ExecutionResult{
 			Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "group channel identity not found"},
@@ -220,6 +223,7 @@ func (e *Executor) setEnabled(ctx context.Context, identityID uuid.UUID, enabled
 	if interval == 0 {
 		interval = runkind.DefaultHeartbeatIntervalMinutes
 	}
+	slog.DebugContext(ctx, "heartbeat_command: setEnabled", "identity_id", identityID, "enabled", enabled, "interval", interval)
 	_, err := e.db.Exec(ctx,
 		`UPDATE channel_identities
 		 SET heartbeat_enabled = $1, heartbeat_interval_minutes = $2
