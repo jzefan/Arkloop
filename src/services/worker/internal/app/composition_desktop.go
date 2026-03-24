@@ -114,13 +114,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	useVM := isolationMode == "vm" && desktop.GetSandboxAddr() != ""
 	skillLayout := desktopSkillLayoutResolver(useVM)
 
-	// Always register both shell tool specs; DynamicShellExecutor chooses at runtime
+	// DynamicShellExecutor chooses local or sandbox at runtime; specs are identical, register once
 	for _, spec := range localshell.AgentSpecs() {
-		if err := toolRegistry.Register(spec); err != nil {
-			slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
-		}
-	}
-	for _, spec := range sandboxshell.AgentSpecs() {
 		if err := toolRegistry.Register(spec); err != nil {
 			slog.WarnContext(ctx, "desktop: skip tool registration", "name", spec.Name, "err", err)
 		}
