@@ -34,6 +34,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
+	"arkloop/services/worker/internal/runtime"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
@@ -42,7 +43,6 @@ import (
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	"arkloop/services/worker/internal/tools/localshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
-	"arkloop/services/worker/internal/runtime"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -71,8 +71,8 @@ func (d *desktopTelegramTokenLoader) BotToken(ctx context.Context, channelID uui
 type DesktopEngine struct {
 	db                     data.DesktopDB
 	bus                    eventbus.EventBus
-	auxRouter             *routing.ProviderRouter
-	auxGateway            llm.Gateway
+	auxRouter              *routing.ProviderRouter
+	auxGateway             llm.Gateway
 	emitDebugEvents        bool
 	toolRegistry           *tools.Registry
 	toolExecutors          map[string]tools.Executor
@@ -278,8 +278,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	return &DesktopEngine{
 		db:                     db,
 		bus:                    bus,
-		auxRouter:             auxRouter,
-		auxGateway:            auxGateway,
+		auxRouter:              auxRouter,
+		auxGateway:             auxGateway,
 		emitDebugEvents:        auxCfg.EmitDebugEvents,
 		toolRegistry:           toolRegistry,
 		toolExecutors:          executors,
@@ -1417,17 +1417,19 @@ func desktopAgentLoop(
 			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
 		}
 		if w.completed {
-			messagesRepo := data.MessagesRepository{}
-			if err := w.ensureTx(ctx); err != nil {
-				return err
+			if !rc.HeartbeatSilent {
+				messagesRepo := data.MessagesRepository{}
+				if err := w.ensureTx(ctx); err != nil {
+					return err
+				}
+				content := strings.Join(w.assistantDeltas, "")
+				_, err := messagesRepo.InsertAssistantMessage(ctx, w.tx, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID, content, false)
+				if err != nil {
+					slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
+				}
+				rc.FinalAssistantOutput = content
+				rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
 			}
-			content := strings.Join(w.assistantDeltas, "")
-			_, err := messagesRepo.InsertAssistantMessage(ctx, w.tx, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID, content, false)
-			if err != nil {
-				slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
-			}
-			rc.FinalAssistantOutput = content
-			rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
 		}
 		rc.RunToolCallCount = w.toolCallCount
 		rc.RunIterationCount = w.iterationCount
@@ -1721,6 +1723,9 @@ func desktopExtractDelta(dataJSON map[string]any) string {
 		return ""
 	}
 	delta, _ := dataJSON["content_delta"].(string)
+	if strings.TrimSpace(delta) == "<end_turn>" {
+		return ""
+	}
 	return delta
 }
 

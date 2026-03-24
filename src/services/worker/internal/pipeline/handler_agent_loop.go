@@ -145,24 +145,10 @@ func NewAgentLoopHandler(
 			rc.ChannelTerminalNotice = writer.TerminalUserMessage()
 		}
 		if writer.Completed() {
-			skipHeartbeatInsert := false
-			if rc.HeartbeatRun {
-				out := rc.HeartbeatToolOutcome
-				if out != nil && out.ReplySilent {
-					skipHeartbeatInsert = true
-				} else if out == nil && AssistantTextIsHeartbeatACK(writer.AssistantOutput()) {
-					skipHeartbeatInsert = true
-				}
-			}
-			if !skipHeartbeatInsert {
+			if !shouldSuppressHeartbeatOutput(rc, writer.AssistantOutput()) {
 				if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
 					return err
 				}
-			}
-			if skipHeartbeatInsert {
-				rc.FinalAssistantOutput = ""
-				rc.TelegramStreamDeliveryRemainder = ""
-			} else {
 				rc.FinalAssistantOutput = writer.AssistantOutput()
 				rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
 			}
@@ -577,7 +563,21 @@ func extractAssistantDelta(dataJSON map[string]any) string {
 	if delta == "" {
 		return ""
 	}
+	// 过滤 MiniMax 等模型在工具调用后输出的终止 token
+	if strings.TrimSpace(delta) == "<end_turn>" {
+		return ""
+	}
 	return delta
+}
+
+func shouldSuppressHeartbeatOutput(rc *RunContext, output string) bool {
+	if rc == nil || !rc.HeartbeatRun {
+		return false
+	}
+	if rc.HeartbeatToolOutcome != nil {
+		return rc.HeartbeatToolOutcome.ReplySilent
+	}
+	return AssistantTextIsHeartbeatACK(output)
 }
 
 func (w *eventWriter) accumUsage(dataJSON map[string]any) {

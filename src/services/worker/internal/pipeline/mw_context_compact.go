@@ -22,14 +22,88 @@ import (
 const (
 	settingContextCompactionModel     = "context.compaction.model"
 	contextCompactStreamTimeout       = 60 * time.Second
-	contextCompactMaxOut              = 2048
+	contextCompactMaxOut              = 4096
 	defaultPersistKeepLastMessages = 40
 	// 发往压缩摘要 LLM 的用户块上限（tiktoken 用 HistoryThreadPromptTokens；单条超大时再按 rune 截断）。
 	contextCompactMaxLLMInputTokens = 120000
 	contextCompactMaxLLMInputRunes  = 400000
 )
 
-const contextCompactSystemPrompt = `You compress prior conversation turns for model context. Keep: decisions, constraints, file paths, errors, open tasks. Omit small talk. Reply with summary prose only, no preamble.`
+const contextCompactSystemPrompt = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
+
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`
+
+const contextCompactInitialPrompt = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`
+
+const contextCompactUpdatePrompt = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new progress, decisions, and context from the new messages
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE exact file paths, function names, and error messages
+- If something is no longer relevant, you may remove it
+
+Use this EXACT format:
+
+## Goal
+[Preserve existing goals, add new ones if the task expanded]
+
+## Constraints & Preferences
+- [Preserve existing, add new ones discovered]
+
+## Progress
+### Done
+- [x] [Include previously done items AND newly completed items]
+
+### In Progress
+- [ ] [Current work - update based on progress]
+
+### Blocked
+- [Current blockers - remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve all previous, add new)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`
 
 var errContextCompactStreamDone = errors.New("context_compact_stream_done")
 
@@ -131,48 +205,56 @@ func NewContextCompactMiddleware(
 							}
 						}
 
-						summary, sumErr := runContextCompactLLM(ctx, gw, model, msgs[:split], enc)
-						if sumErr != nil {
-							slog.WarnContext(ctx, "context_compact", "phase", "llm", "err", sumErr.Error(), "run_id", rc.Run.ID.String())
-							persistFailed = true
-							_ = appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, map[string]any{
-								"op":                     "persist",
-								"phase":                  "llm_failed",
-								"persist_split":          split,
-								"llm_error":              sumErr.Error(),
-								"thread_tokens_tiktoken": histTok,
-								"trigger_tokens":         trigger,
-							})
-						} else if strings.TrimSpace(summary) != "" {
-							tx, txErr := pool.BeginTx(ctx, pgx.TxOptions{})
-							if txErr != nil {
-								slog.WarnContext(ctx, "context_compact", "phase", "tx_begin", "err", txErr.Error(), "run_id", rc.Run.ID.String())
+						// compact_summary 消息是线程的第一条，role=system，可以直接判断而不依赖内容特征。
+					// 普通对话消息 role 只会是 user/assistant/tool，不会是 system。
+					var previousSummary string
+					if len(msgs) > 0 && msgs[0].Role == "system" {
+						previousSummary = strings.TrimSpace(messageText(msgs[0]))
+					}
+					summary, sumErr := runContextCompactLLM(ctx, gw, model, msgs[:split], enc, previousSummary)
+					if sumErr != nil {
+						slog.WarnContext(ctx, "context_compact", "phase", "llm", "err", sumErr.Error(), "run_id", rc.Run.ID.String())
+						persistFailed = true
+						_ = appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, map[string]any{
+							"op":                     "persist",
+							"phase":                  "llm_failed",
+							"persist_split":          split,
+							"llm_error":              sumErr.Error(),
+							"thread_tokens_tiktoken": histTok,
+							"trigger_tokens":         trigger,
+						})
+					} else if strings.TrimSpace(summary) != "" {
+						tx, txErr := pool.BeginTx(ctx, pgx.TxOptions{})
+						if txErr != nil {
+							slog.WarnContext(ctx, "context_compact", "phase", "tx_begin", "err", txErr.Error(), "run_id", rc.Run.ID.String())
+						} else {
+							if lockErr := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); lockErr != nil {
+								_ = tx.Rollback(ctx)
+								persistFailed = true
+								slog.WarnContext(ctx, "context_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
 							} else {
-								if lockErr := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); lockErr != nil {
+								prefixIDs := append([]uuid.UUID(nil), ids[:split]...)
+								still, chkErr := compactPrefixMessagesStillUncompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs)
+								if chkErr != nil {
 									_ = tx.Rollback(ctx)
 									persistFailed = true
-									slog.WarnContext(ctx, "context_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
+									slog.WarnContext(ctx, "context_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
+								} else if !still {
+									_ = tx.Rollback(ctx)
+								} else if err := messagesRepo.MarkThreadMessagesCompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs); err != nil {
+									_ = tx.Rollback(ctx)
+									persistFailed = true
+									slog.WarnContext(ctx, "context_compact", "phase", "mark_compacted", "err", err.Error(), "run_id", rc.Run.ID.String())
 								} else {
-									prefixIDs := append([]uuid.UUID(nil), ids[:split]...)
-									still, chkErr := compactPrefixMessagesStillUncompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs)
-									if chkErr != nil {
+									meta, _ := json.Marshal(map[string]string{"kind": "compact_summary"})
+									summaryID, insErr := messagesRepo.InsertCompactSummaryMessage(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, strings.TrimSpace(summary), meta)
+									if insErr != nil {
 										_ = tx.Rollback(ctx)
 										persistFailed = true
-										slog.WarnContext(ctx, "context_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
-									} else if !still {
-										_ = tx.Rollback(ctx)
-									} else if err := messagesRepo.MarkThreadMessagesCompacted(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, prefixIDs); err != nil {
-										_ = tx.Rollback(ctx)
-										persistFailed = true
-										slog.WarnContext(ctx, "context_compact", "phase", "mark_compacted", "err", err.Error(), "run_id", rc.Run.ID.String())
+										slog.WarnContext(ctx, "context_compact", "phase", "insert_summary", "err", insErr.Error(), "run_id", rc.Run.ID.String())
 									} else {
-										meta, _ := json.Marshal(map[string]string{"kind": "compact_summary"})
-										summaryID, insErr := messagesRepo.InsertCompactSummaryMessage(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, strings.TrimSpace(summary), meta)
-										if insErr != nil {
-											_ = tx.Rollback(ctx)
-											persistFailed = true
-											slog.WarnContext(ctx, "context_compact", "phase", "insert_summary", "err", insErr.Error(), "run_id", rc.Run.ID.String())
-										} else if eventsRepo != nil {
+										evOk := true
+										if eventsRepo != nil {
 											ev := rc.Emitter.Emit("run.context_compact", map[string]any{
 												"op":                      "persist",
 												"phase":                   "completed",
@@ -190,8 +272,12 @@ func NewContextCompactMiddleware(
 											if _, evErr := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, ev); evErr != nil {
 												_ = tx.Rollback(ctx)
 												persistFailed = true
+												evOk = false
 												slog.WarnContext(ctx, "context_compact", "phase", "run_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-											} else if err := tx.Commit(ctx); err != nil {
+											}
+										}
+										if evOk {
+											if err := tx.Commit(ctx); err != nil {
 												persistFailed = true
 												slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
 											} else {
@@ -202,33 +288,17 @@ func NewContextCompactMiddleware(
 												}
 												tail := make([]llm.Message, len(msgs)-split)
 												copy(tail, msgs[split:])
-												tailIDs := append([]uuid.UUID{summaryID}, ids[split:]...)
 												msgs = append([]llm.Message{summaryMsg}, tail...)
-												ids = tailIDs
+												ids = append([]uuid.UUID{summaryID}, ids[split:]...)
 												rc.Messages = msgs
 												rc.ThreadMessageIDs = ids
 											}
-										} else if err := tx.Commit(ctx); err != nil {
-											persistFailed = true
-											slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
-										} else {
-											persistSplit = split
-											summaryMsg := llm.Message{
-												Role:    "system",
-												Content: []llm.TextPart{{Text: strings.TrimSpace(summary)}},
-											}
-											tail := make([]llm.Message, len(msgs)-split)
-											copy(tail, msgs[split:])
-											tailIDs := append([]uuid.UUID{summaryID}, ids[split:]...)
-											msgs = append([]llm.Message{summaryMsg}, tail...)
-											ids = tailIDs
-											rc.Messages = msgs
-											rc.ThreadMessageIDs = ids
 										}
 									}
 								}
 							}
 						}
+					}
 					}
 				}
 			}
@@ -400,32 +470,40 @@ func compactPersistTriggerTokens(cfg ContextCompactSettings, windowFromRoute int
 	return trigger, window
 }
 
-func runContextCompactLLM(ctx context.Context, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken) (string, error) {
+func runContextCompactLLM(ctx context.Context, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken, previousSummary string) (string, error) {
 	if gateway == nil || strings.TrimSpace(model) == "" {
 		return "", fmt.Errorf("gateway or model missing")
 	}
 	prefix = TrimPrefixMessagesForCompactLLM(enc, prefix, contextCompactMaxLLMInputTokens)
-	var sb strings.Builder
-	for _, m := range prefix {
-		sb.WriteString(m.Role)
-		sb.WriteString(":\n")
-		sb.WriteString(messageText(m))
-		sb.WriteString("\n\n")
-	}
-	userBlock := strings.TrimSpace(sb.String())
-	if userBlock == "" {
+	conversationText := serializeMessagesForCompact(prefix)
+	if strings.TrimSpace(conversationText) == "" {
 		return "", nil
 	}
-	runes := []rune(userBlock)
+	runes := []rune(conversationText)
 	if len(runes) > contextCompactMaxLLMInputRunes {
-		userBlock = string(runes[len(runes)-contextCompactMaxLLMInputRunes:])
+		conversationText = string(runes[len(runes)-contextCompactMaxLLMInputRunes:])
 	}
+
+	// 按 pi 的结构组装：<conversation> 块 + 可选 <previous-summary> 块 + 格式指令
+	var userBlock strings.Builder
+	userBlock.WriteString("<conversation>\n")
+	userBlock.WriteString(conversationText)
+	userBlock.WriteString("\n</conversation>\n\n")
+	if previousSummary != "" {
+		userBlock.WriteString("<previous-summary>\n")
+		userBlock.WriteString(previousSummary)
+		userBlock.WriteString("\n</previous-summary>\n\n")
+		userBlock.WriteString(contextCompactUpdatePrompt)
+	} else {
+		userBlock.WriteString(contextCompactInitialPrompt)
+	}
+
 	maxTok := contextCompactMaxOut
 	req := llm.Request{
 		Model: model,
 		Messages: []llm.Message{
 			{Role: "system", Content: []llm.TextPart{{Text: contextCompactSystemPrompt}}},
-			{Role: "user", Content: []llm.TextPart{{Text: userBlock}}},
+			{Role: "user", Content: []llm.TextPart{{Text: userBlock.String()}}},
 		},
 		MaxOutputTokens: &maxTok,
 	}
@@ -509,4 +587,61 @@ func appendContextCompactRunEvent(
 	}
 	committed = true
 	return nil
+}
+
+// serializeMessagesForCompact 将消息列表序列化为摘要 LLM 可读的纯文本。
+// system 消息（compact_summary）通过 previousSummary 路径单独传递，此处跳过。
+// tool result 只提取 result/error 核心内容，tool calls 展开参数，避免噪声。
+func serializeMessagesForCompact(msgs []llm.Message) string {
+	parts := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		switch m.Role {
+		case "user":
+			if text := strings.TrimSpace(messageText(m)); text != "" {
+				parts = append(parts, "[User]: "+text)
+			}
+		case "assistant":
+			if text := strings.TrimSpace(messageText(m)); text != "" {
+				parts = append(parts, "[Assistant]: "+text)
+			}
+			if len(m.ToolCalls) > 0 {
+				calls := make([]string, 0, len(m.ToolCalls))
+				for _, tc := range m.ToolCalls {
+					call := tc.ToolName
+					if len(tc.ArgumentsJSON) > 0 {
+						if args, err := json.Marshal(tc.ArgumentsJSON); err == nil {
+							call += "(" + string(args) + ")"
+						}
+					}
+					calls = append(calls, call)
+				}
+				parts = append(parts, "[Assistant tool calls]: "+strings.Join(calls, "; "))
+			}
+		case "tool":
+			// tool result Content 是 JSON envelope {tool_call_id, tool_name, result?, error?}
+			// 只取 tool_name + result/error，丢弃 tool_call_id 等无关字段
+			if text := strings.TrimSpace(messageText(m)); text != "" {
+				label := "[Tool result]"
+				content := text
+				var envelope map[string]any
+				if err := json.Unmarshal([]byte(text), &envelope); err == nil {
+					if name, _ := envelope["tool_name"].(string); name != "" {
+						label = "[Tool result: " + name + "]"
+					}
+					// 优先取 error，其次取 result
+					if errVal := envelope["error"]; errVal != nil {
+						if b, err := json.Marshal(errVal); err == nil {
+							content = string(b)
+						}
+					} else if resVal := envelope["result"]; resVal != nil {
+						if b, err := json.Marshal(resVal); err == nil {
+							content = string(b)
+						}
+					}
+				}
+				parts = append(parts, label+": "+content)
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }

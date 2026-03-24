@@ -4,6 +4,7 @@ package desktoprun
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -52,13 +53,20 @@ func desktopHeartbeatTick(
 		slog.InfoContext(ctx, "desktop_heartbeat_claimed", "count", len(rows))
 	}
 	for _, row := range rows {
-		runID, err := data.DesktopCreateHeartbeatRun(ctx, db, row, row.Model)
+		result, err := data.DesktopCreateHeartbeatRun(ctx, db, row, row.Model)
 		if err != nil {
-			slog.ErrorContext(ctx, "desktop_heartbeat_create_run_failed",
-				"channel_identity_id", row.ChannelIdentityID.String(),
-				"error", err,
-			)
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			if errors.Is(err, data.ErrHeartbeatIdentityGone) {
+				slog.WarnContext(ctx, "desktop_heartbeat_stale_trigger_removed",
+					"channel_identity_id", row.ChannelIdentityID.String(),
+				)
+				_ = repo.DeleteHeartbeat(ctx, db, row.ChannelIdentityID)
+			} else {
+				slog.ErrorContext(ctx, "desktop_heartbeat_create_run_failed",
+					"channel_identity_id", row.ChannelIdentityID.String(),
+					"error", err,
+				)
+				_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			}
 			continue
 		}
 
@@ -69,10 +77,19 @@ func desktopHeartbeatTick(
 			"heartbeat_reason":           "interval",
 			"persona_key":                row.PersonaKey,
 			"model":                      row.Model,
+			"channel_delivery": map[string]any{
+				"channel_id":                  result.ChannelID,
+				"channel_type":                result.ChannelType,
+				"sender_channel_identity_id":  result.IdentityID,
+				"conversation_type":           result.ConversationType,
+				"conversation_ref": map[string]any{
+					"target": result.PlatformChatID,
+				},
+			},
 		}
-		if _, err := q.EnqueueRun(ctx, row.AccountID, runID, "", queue.RunExecuteJobType, payload, nil); err != nil {
+		if _, err := q.EnqueueRun(ctx, row.AccountID, result.RunID, "", queue.RunExecuteJobType, payload, nil); err != nil {
 			slog.ErrorContext(ctx, "desktop_heartbeat_enqueue_failed",
-				"run_id", runID.String(),
+				"run_id", result.RunID.String(),
 				"error", err,
 			)
 			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
