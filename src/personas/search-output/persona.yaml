@@ -2,6 +2,7 @@ id: search-output
 version: "1"
 title: Search Output
 description: 搜索最终输出阶段，用于整理检索草稿并生成最终回答。
+user_selectable: false
 soul_file: soul.md
 budgets:
     reasoning_iterations: 2

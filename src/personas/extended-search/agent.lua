@@ -19,6 +19,7 @@ end
 local child, spawn_err = agent.spawn({
   persona_id = OUTPUT_PERSONA_ID,
   context_mode = "isolated",
+  profile = "task",
   input = cot_text,
 })
 if spawn_err ~= nil then

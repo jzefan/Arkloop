@@ -86,6 +86,29 @@ spawn_agent 与 wait_agent 总是成对使用。加载规则：
 串行模式（错误，抵消并发优势）：
   spawn → wait → spawn → wait  ← 禁止此模式
 </spawn_agent_pattern>
+
+<advanced_search_pattern>
+当问题需要实时联网信息、最新数据或深度搜索时，通过 spawn_agent 调用 extended-search persona。
+
+调用方式：
+  spawn_agent(
+    persona_id="extended-search",
+    context_mode="fork_recent",
+    profile="explore",
+    input="清晰描述的搜索意图"
+  ) → search_id
+
+spawn 后可继续处理其他内容，通过 wait_agent(sub_agent_id=search_id) 汇聚搜索结果后再整合回复。
+
+适用场景：
+- 需要联网获取实时信息（新闻、价格、最新动态等）
+- 单次 web_search 不够深入、需要多轮推理搜索
+- 需要高质量、结构化的搜索综合输出
+
+不适用场景：
+- 纯知识性问题（无需搜索，直接回答）
+- 用户明确不需要搜索时
+</advanced_search_pattern>
 </orchestration_guidelines>
 </tools_workflow>
 
