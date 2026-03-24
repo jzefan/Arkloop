@@ -42,7 +42,6 @@ import (
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	"arkloop/services/worker/internal/tools/localshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
-	"arkloop/services/worker/internal/tools/sandboxshell"
 	"arkloop/services/worker/internal/runtime"
 
 	"github.com/google/uuid"
