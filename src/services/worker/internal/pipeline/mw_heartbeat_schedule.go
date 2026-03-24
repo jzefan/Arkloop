@@ -56,7 +56,18 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 			return nil
 		}
 		if cfg == nil || !cfg.Enabled {
-			slog.DebugContext(ctx, "heartbeat_schedule: channel heartbeat disabled", "identity_id", identityID)
+			slog.DebugContext(ctx, "heartbeat_schedule: channel heartbeat disabled",
+				"identity_id", identityID,
+				"cfg_nil", cfg == nil,
+				"enabled", func() bool {
+					if cfg == nil {
+						return false
+					}
+					return cfg.Enabled
+				}(),
+				"platform_chat_id", platformChatID,
+				"channel_type", channelType,
+			)
 			return nil
 		}
 
