@@ -41,13 +41,13 @@ async function main() {
 
   console.log('building desktop sidecar...')
   mkdirSync(resolve(desktopBin, '..'), { recursive: true })
-  await runStep('go', ['build', '-tags', 'desktop', '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
+  await runStep('go', ['build', '-tags', 'desktop', '-ldflags', '-extldflags=-Wl,-no_warn_duplicate_libraries', '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
     cwd: workspaceRoot,
   })
 
   // Start Vite directly with sidecar proxy target, overriding .env.local
   console.log('starting vite dev server...')
-  const vite = spawn('npx', ['vite'], {
+  const vite = spawn('pnpm', ['exec', 'vite'], {
     cwd: webRoot,
     stdio: 'inherit',
     env: {
