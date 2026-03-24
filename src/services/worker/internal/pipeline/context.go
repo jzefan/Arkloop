@@ -170,6 +170,9 @@ type RunContext struct {
 	WaitForInput func(ctx context.Context) (string, bool)
 	// CheckInAt 判断当前迭代 iter 是否为 check-in 边界，仅当 WaitForInput 非 nil 时有效。
 	CheckInAt func(iter int) bool
+	// PollSteeringInput 非阻塞轮询用户 steering 消息，由 CancelGuardMiddleware 注入。
+	// 返回 (text, true) 表示有新消息；返回 ("", false) 表示无新消息。nil 时不触发。
+	PollSteeringInput func(ctx context.Context) (string, bool)
 
 	// -- Sub-agent 控制面（由 EngineV1.Execute 注入，nil 时表示未启用）--
 	SubAgentControl subagentctl.Control
@@ -191,6 +194,7 @@ type RunContext struct {
 
 	// -- Heartbeat --
 	HeartbeatRun         bool
+	HeartbeatSilent      bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
 	HeartbeatToolOutcome *HeartbeatDecisionOutcome
 
 	// -- Rollout --
@@ -213,6 +217,7 @@ func (rc *RunContext) SetHeartbeatDecisionOutcome(replySilent bool, fragments []
 		ReplySilent: replySilent,
 		Fragments:   fragments,
 	}
+	rc.HeartbeatSilent = replySilent
 }
 
 // IsHeartbeatRun implements tools/builtin/heartbeat_decision.PipelineBinding.

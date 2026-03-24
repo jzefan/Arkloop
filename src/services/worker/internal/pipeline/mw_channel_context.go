@@ -78,7 +78,7 @@ func parseChannelContext(payload map[string]any) (*ChannelContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	inboundMessageRef, err := parseMessageRef(payload, "inbound_message_ref", "platform_message_id")
+	inboundMessageRef, err := parseOptionalInboundMessageRef(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +165,21 @@ func parseOptionalMessageRef(payload map[string]any, structuredKey string, fallb
 		return &ChannelMessageRef{MessageID: trimmed}, nil
 	}
 	return nil, nil
+}
+
+// parseOptionalInboundMessageRef 解析入站消息引用，不存在时返回零值（heartbeat run 没有真实入站消息）。
+func parseOptionalInboundMessageRef(payload map[string]any) (ChannelMessageRef, error) {
+	if raw, ok := payload["inbound_message_ref"].(map[string]any); ok && len(raw) > 0 {
+		messageID, err := requiredStringMapValue(raw, "message_id")
+		if err != nil {
+			return ChannelMessageRef{}, err
+		}
+		return ChannelMessageRef{MessageID: messageID}, nil
+	}
+	if mid, ok := payload["platform_message_id"].(string); ok && strings.TrimSpace(mid) != "" {
+		return ChannelMessageRef{MessageID: strings.TrimSpace(mid)}, nil
+	}
+	return ChannelMessageRef{}, nil
 }
 
 func requiredUUIDValue(values map[string]any, key string) (uuid.UUID, error) {

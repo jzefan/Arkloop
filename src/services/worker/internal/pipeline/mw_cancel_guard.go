@@ -99,6 +99,15 @@ func NewCancelGuardMiddleware(
 			}
 		}
 
+		rc.PollSteeringInput = func(ctx context.Context) (string, bool) {
+			content, seq, ok := fetchLatestInput(ctx, pool, run.ID, lastSeq)
+			if ok {
+				lastSeq = seq
+				return content, true
+			}
+			return "", false
+		}
+
 		// 确保 Pipeline 结束后释放 LISTEN 连接
 		defer func() {
 			cancelExec()

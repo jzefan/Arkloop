@@ -81,6 +81,9 @@ type RunContext struct {
 	// 返回 ("", false) 表示超时或取消；返回 (text, true) 表示收到用户输入。
 	WaitForInput func(ctx context.Context) (string, bool)
 
+	// PollSteeringInput 非阻塞轮询用户 steering 消息（工具执行后检查）。nil 时不触发。
+	PollSteeringInput func(ctx context.Context) (string, bool)
+
 	// UserPromptScanFunc 对运行中追加的人类输入执行 prompt injection 检测。
 	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
 
@@ -353,6 +356,19 @@ func (l *Loop) Run(
 				}
 
 				if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
+					return err
+				}
+			}
+		}
+
+		// 工具执行完成后，检查是否有 steering 消息
+		if runCtx.PollSteeringInput != nil {
+			if text, ok := runCtx.PollSteeringInput(ctx); ok && text != "" {
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: []llm.TextPart{{Text: text}},
+				})
+				if err := yield(emitter.Emit("run.steering_injected", map[string]any{"content": text}, nil, nil)); err != nil {
 					return err
 				}
 			}

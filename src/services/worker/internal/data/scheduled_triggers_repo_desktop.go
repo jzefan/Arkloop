@@ -15,6 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrHeartbeatIdentityGone 表示 scheduled_triggers 中的 channel_identity 已不存在，应删除该触发器。
+var ErrHeartbeatIdentityGone = errors.New("channel_identity not found, heartbeat trigger is stale")
+
 // ScheduledTriggerRow 是 scheduled_triggers 表的一行。
 type ScheduledTriggerRow struct {
 	ID                uuid.UUID
@@ -149,6 +152,16 @@ func (ScheduledTriggersRepository) PostponeHeartbeat(
 	return err
 }
 
+// HeartbeatRunResult 是 DesktopCreateHeartbeatRun 的返回值，包含 run ID 和 channel delivery 上下文。
+type HeartbeatRunResult struct {
+	RunID             uuid.UUID
+	ChannelID         string // channel_group_threads.channel_id
+	ChannelType       string // channel_identities.channel_type
+	PlatformChatID    string // 群的 platform_chat_id（即 platform_subject_id）
+	IdentityID        string // scheduled_triggers.channel_identity_id
+	ConversationType  string // "supergroup" | "group" | "private"
+}
+
 // DesktopCreateHeartbeatRun 在 SQLite 中创建心跳 run。
 // 通过 channel_identity_id 查 platform_subject_id，
 // 再从 channel_group_threads（群会话）或 channel_dm_threads（私聊）找到 thread_id。
@@ -157,47 +170,53 @@ func DesktopCreateHeartbeatRun(
 	db DesktopDB,
 	row ScheduledTriggerRow,
 	model string,
-) (uuid.UUID, error) {
-	// 从 channel_identities 取 platform_subject_id
-	var platformSubjectID string
+) (HeartbeatRunResult, error) {
+	// 从 channel_identities 取 platform_subject_id 和 channel_type
+	var platformSubjectID, channelType string
 	err := db.QueryRow(ctx,
-		`SELECT platform_subject_id FROM channel_identities WHERE id = $1`,
+		`SELECT platform_subject_id, channel_type FROM channel_identities WHERE id = $1`,
 		row.ChannelIdentityID.String(),
-	).Scan(&platformSubjectID)
+	).Scan(&platformSubjectID, &channelType)
 	if err != nil {
 		if isNoRows(err) {
-			return uuid.Nil, fmt.Errorf("channel_identity not found: %s", row.ChannelIdentityID)
+			return HeartbeatRunResult{}, ErrHeartbeatIdentityGone
 		}
-		return uuid.Nil, fmt.Errorf("query channel_identity: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("query channel_identity: %w", err)
 	}
 
-	// 先查 channel_group_threads（群会话）
-	var threadIDStr string
+	// 先查 channel_group_threads（群会话），同时取 channel_id
+	var threadIDStr, channelID, conversationType string
 	err = db.QueryRow(ctx,
-		`SELECT thread_id FROM channel_group_threads WHERE platform_chat_id = $1 LIMIT 1`,
+		`SELECT thread_id, channel_id FROM channel_group_threads WHERE platform_chat_id = $1 LIMIT 1`,
 		platformSubjectID,
-	).Scan(&threadIDStr)
+	).Scan(&threadIDStr, &channelID)
 	if err != nil && !isNoRows(err) {
-		return uuid.Nil, fmt.Errorf("query channel_group_threads: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("query channel_group_threads: %w", err)
+	}
+	if !isNoRows(err) && strings.TrimSpace(threadIDStr) != "" {
+		conversationType = "supergroup"
 	}
 
 	// fallback：查 channel_dm_threads（私聊）
 	if isNoRows(err) || strings.TrimSpace(threadIDStr) == "" {
+		var dmChannelID string
 		err = db.QueryRow(ctx,
-			`SELECT thread_id FROM channel_dm_threads WHERE channel_identity_id = $1 LIMIT 1`,
+			`SELECT thread_id, channel_id FROM channel_dm_threads WHERE channel_identity_id = $1 LIMIT 1`,
 			row.ChannelIdentityID.String(),
-		).Scan(&threadIDStr)
+		).Scan(&threadIDStr, &dmChannelID)
 		if err != nil {
 			if isNoRows(err) {
-				return uuid.Nil, fmt.Errorf("no thread found for channel_identity_id: %s", row.ChannelIdentityID)
+				return HeartbeatRunResult{}, fmt.Errorf("no thread found for channel_identity_id: %s", row.ChannelIdentityID)
 			}
-			return uuid.Nil, fmt.Errorf("query channel_dm_threads: %w", err)
+			return HeartbeatRunResult{}, fmt.Errorf("query channel_dm_threads: %w", err)
 		}
+		channelID = dmChannelID
+		conversationType = "private"
 	}
 
 	threadID, err := uuid.Parse(threadIDStr)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("parse thread_id: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("parse thread_id: %w", err)
 	}
 
 	// 从 threads 取 created_by_user_id
@@ -208,14 +227,14 @@ func DesktopCreateHeartbeatRun(
 	).Scan(&createdByUserID)
 	if err != nil {
 		if isNoRows(err) {
-			return uuid.Nil, fmt.Errorf("thread not found: %s", threadID)
+			return HeartbeatRunResult{}, fmt.Errorf("thread not found: %s", threadID)
 		}
-		return uuid.Nil, fmt.Errorf("query thread: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("query thread: %w", err)
 	}
 
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("begin tx: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -225,7 +244,7 @@ func DesktopCreateHeartbeatRun(
 		 VALUES ($1, $2, $3, $4, 'running')`,
 		runID, row.AccountID, threadID, createdByUserID,
 	); err != nil {
-		return uuid.Nil, fmt.Errorf("insert heartbeat run: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("insert heartbeat run: %w", err)
 	}
 
 	repo := DesktopRunEventsRepository{}
@@ -233,13 +252,20 @@ func DesktopCreateHeartbeatRun(
 		map[string]any{"persona_id": row.PersonaKey, "model": model},
 		nil, nil,
 	); err != nil {
-		return uuid.Nil, fmt.Errorf("append run.started: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("append run.started: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, fmt.Errorf("commit heartbeat run: %w", err)
+		return HeartbeatRunResult{}, fmt.Errorf("commit heartbeat run: %w", err)
 	}
-	return runID, nil
+	return HeartbeatRunResult{
+		RunID:            runID,
+		ChannelID:        channelID,
+		ChannelType:      channelType,
+		PlatformChatID:   platformSubjectID,
+		IdentityID:       row.ChannelIdentityID.String(),
+		ConversationType: conversationType,
+	}, nil
 }
 
 func isNoRows(err error) bool {
