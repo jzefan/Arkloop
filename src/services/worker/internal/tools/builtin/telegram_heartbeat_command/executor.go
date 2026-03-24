@@ -4,6 +4,7 @@ package telegram_heartbeat_command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -70,13 +71,6 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 			DurationMs: ms(),
 		}
 	}
-	identityID := rc.ChannelContext.SenderChannelIdentityID
-	if identityID == uuid.Nil {
-		return tools.ExecutionResult{
-			Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "sender channel identity not available"},
-			DurationMs: ms(),
-		}
-	}
 
 	action, _ := args["action"].(string)
 	action = strings.TrimSpace(strings.ToLower(action))
@@ -94,6 +88,25 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 	if chatID == "" {
 		return tools.ExecutionResult{
 			Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "missing telegram chat in run context"},
+			DurationMs: ms(),
+		}
+	}
+
+	// 用群的 platform_chat_id 查群 identity（heartbeat 配置挂在群上）
+	channelType := strings.TrimSpace(surface.ChannelType)
+	if channelType == "" {
+		channelType = "telegram"
+	}
+	identityID, _, err := getGroupIdentityID(ctx, e.db, channelType, chatID)
+	if err != nil {
+		return tools.ExecutionResult{
+			Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "failed to get group identity: " + err.Error()},
+			DurationMs: ms(),
+		}
+	}
+	if identityID == uuid.Nil {
+		return tools.ExecutionResult{
+			Error:      &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "group channel identity not found"},
 			DurationMs: ms(),
 		}
 	}
@@ -247,6 +260,26 @@ func (e *Executor) setModel(ctx context.Context, identityID uuid.UUID, model str
 		modelDisplay = model
 	}
 	return fmt.Sprintf("Heartbeat model set to %s", modelDisplay), nil
+}
+
+// getGroupIdentityID 通过 channel_type + platform_subject_id 查群的 channel_identities.id。
+func getGroupIdentityID(ctx context.Context, db DB, channelType, platformChatID string) (uuid.UUID, bool, error) {
+	var idStr string
+	err := db.QueryRow(ctx,
+		`SELECT id FROM channel_identities WHERE channel_type = $1 AND platform_subject_id = $2`,
+		channelType, platformChatID,
+	).Scan(&idStr)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, fmt.Errorf("get group identity: %w", err)
+	}
+	id, parseErr := uuid.Parse(idStr)
+	if parseErr != nil {
+		return uuid.Nil, false, fmt.Errorf("parse group identity id: %w", parseErr)
+	}
+	return id, true, nil
 }
 
 // ChannelContextGetter is a subset of pipeline.RunContext needed to get ChannelContext.
