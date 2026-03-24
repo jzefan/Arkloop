@@ -21,13 +21,21 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 			return err
 		}
 		if rc.HeartbeatRun {
+			slog.DebugContext(ctx, "heartbeat_schedule: skip heartbeat run")
 			return nil
 		}
 		def := rc.PersonaDefinition
 		if def == nil || !def.HeartbeatEnabled {
+			slog.DebugContext(ctx, "heartbeat_schedule: persona heartbeat disabled", "persona", func() string {
+				if def == nil {
+					return "<nil>"
+				}
+				return def.ID
+			}())
 			return nil
 		}
 		if rc.ChannelContext == nil || !IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType) {
+			slog.DebugContext(ctx, "heartbeat_schedule: not a telegram group conversation")
 			return nil
 		}
 
@@ -48,6 +56,7 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 			return nil
 		}
 		if cfg == nil || !cfg.Enabled {
+			slog.DebugContext(ctx, "heartbeat_schedule: channel heartbeat disabled", "identity_id", identityID)
 			return nil
 		}
 

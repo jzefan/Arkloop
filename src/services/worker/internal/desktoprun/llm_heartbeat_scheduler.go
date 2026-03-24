@@ -20,8 +20,10 @@ func startDesktopLLMHeartbeatScheduler(
 	q queue.JobQueue,
 ) {
 	if db == nil || q == nil {
+		slog.WarnContext(ctx, "desktop_heartbeat_scheduler: db or queue is nil, skipping")
 		return
 	}
+	slog.InfoContext(ctx, "desktop_heartbeat_scheduler: started", "interval", desktopHeartbeatTickInterval)
 	ticker := time.NewTicker(desktopHeartbeatTickInterval)
 	defer ticker.Stop()
 	for {
@@ -45,6 +47,7 @@ func desktopHeartbeatTick(
 		slog.ErrorContext(ctx, "desktop_heartbeat_claim_failed", "error", err)
 		return
 	}
+	slog.DebugContext(ctx, "desktop_heartbeat_tick", "due_count", len(rows))
 	if len(rows) > 0 {
 		slog.InfoContext(ctx, "desktop_heartbeat_claimed", "count", len(rows))
 	}
