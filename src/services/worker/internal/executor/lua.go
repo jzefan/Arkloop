@@ -609,6 +609,7 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		"role":         {},
 		"nickname":     {},
 		"inherit":      {},
+		"profile":      {},
 	}); err != nil {
 		return subagentctl.SpawnRequest{}, err
 	}
@@ -639,6 +640,19 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 	if err != nil {
 		return subagentctl.SpawnRequest{}, err
 	}
+	var spawnProfile string
+	if raw := tbl.RawGetString("profile"); raw != lua.LNil {
+		profileStr, err := luaRequiredString(raw, "agent.spawn: profile")
+		if err != nil {
+			return subagentctl.SpawnRequest{}, err
+		}
+		switch profileStr {
+		case "explore", "task", "strong":
+			spawnProfile = profileStr
+		default:
+			return subagentctl.SpawnRequest{}, fmt.Errorf("agent.spawn: profile must be one of: explore, task, strong")
+		}
+	}
 	return subagentctl.SpawnRequest{
 		PersonaID:   personaID,
 		Role:        role,
@@ -646,6 +660,7 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		ContextMode: contextMode,
 		Inherit:     inherit,
 		Input:       input,
+		Profile:     spawnProfile,
 		ParentContext: subagentctl.SpawnParentContext{
 			ToolAllowlist: append([]string(nil), sortedToolNames(rt.rc.AllowlistSet)...),
 			ToolDenylist:  append([]string(nil), rt.rc.ToolDenylist...),
