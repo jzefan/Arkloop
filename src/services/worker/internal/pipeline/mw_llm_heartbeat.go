@@ -111,6 +111,11 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		}
 		rc.AllowlistSet[heartbeattool.ToolName] = struct{}{}
 
+		// heartbeat_decision 必须在 core 层，否则被 splitToolSpecs 踢到 searchable 层 LLM 看不到
+		if rc.PersonaDefinition != nil && len(rc.PersonaDefinition.CoreTools) > 0 {
+			rc.PersonaDefinition.CoreTools = append(rc.PersonaDefinition.CoreTools, heartbeattool.ToolName)
+		}
+
 		if rc.ToolRegistry != nil {
 			if _, ok := rc.ToolRegistry.Get(heartbeattool.ToolName); !ok {
 				if err := rc.ToolRegistry.Register(heartbeattool.AgentSpec); err != nil {
