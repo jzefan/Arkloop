@@ -3,9 +3,10 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 ---
 
 <BaseLayout title="Arkloop Developers" description="Arkloop developer portal -- AI agents, without the clutter." locale="en" pathname="/en" alternatePath="/">
-  <div class="landing-shell">
+  <div class="landing-split">
 
-    <section class="landing-hero">
+    <!-- Left: SVG type specimen -->
+    <div class="split-left">
       <div class="type-specimen" aria-label="Arkloop">
         <svg class="type-svg" viewBox="0 0 526 210" fill="none" xmlns="http://www.w3.org/2000/svg">
           <g transform="translate(6, 0)">
@@ -39,7 +40,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
           <line x1="382" y1="130" x2="388" y2="130" stroke="var(--dimension-line)" stroke-width="0.5" />
           <text x="394" y="118" fill="var(--guide-label)" font-size="6.5" font-family="ui-monospace, monospace">30</text>
 
-          <!-- === loop === -->
+          <!-- loop guidelines -->
           <line x1="202" y1="130" x2="520" y2="130" stroke="var(--guide-line)" stroke-width="0.5" stroke-dasharray="3 4" />
           <text x="516" y="127" fill="var(--guide-label)" font-size="7" font-family="ui-monospace, monospace" text-anchor="end">ascender</text>
           <line x1="202" y1="147" x2="520" y2="147" stroke="var(--guide-line)" stroke-width="0.6" stroke-dasharray="2 3" />
@@ -58,100 +59,89 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
           <circle cx="227" cy="130" r="2" fill="var(--guide-dot)" />
           <circle cx="227" cy="190" r="2" fill="var(--guide-dot)" />
 
+          <!-- o1 -->
           <circle cx="307" cy="168" r="23" stroke="var(--construct-line)" stroke-width="0.7" stroke-dasharray="3 3" />
           <circle cx="307" cy="168" r="2" fill="var(--guide-dot)" />
           <line x1="307" y1="142" x2="307" y2="194" stroke="var(--construct-line)" stroke-width="0.4" />
           <line x1="281" y1="168" x2="333" y2="168" stroke="var(--construct-line)" stroke-width="0.4" />
-
-          <circle cx="375" cy="168" r="23" stroke="var(--construct-line)" stroke-width="0.7" stroke-dasharray="3 3" />
-          <circle cx="375" cy="168" r="2" fill="var(--guide-dot)" />
-
-          <circle cx="447" cy="168" r="23" stroke="var(--construct-line)" stroke-width="0.7" stroke-dasharray="3 3" />
-          <circle cx="447" cy="168" r="2" fill="var(--guide-dot)" />
-          <circle cx="422" cy="208" r="2" fill="var(--guide-dot)" />
 
           <line x1="210" y1="108" x2="250" y2="108" stroke="var(--dimension-line)" stroke-width="0.5" />
           <line x1="210" y1="106" x2="210" y2="111" stroke="var(--dimension-line)" stroke-width="0.5" />
           <line x1="250" y1="106" x2="250" y2="111" stroke="var(--dimension-line)" stroke-width="0.5" />
           <text x="230" y="117" fill="var(--guide-label)" font-size="6" font-family="ui-monospace, monospace" text-anchor="middle">40</text>
 
-          <!-- === 文字 === -->
           <text x="95" y="100" fill="var(--text-strong)" font-size="120" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-weight="600" letter-spacing="-0.04em">Ark</text>
           <text x="217" y="190" fill="var(--text-strong)" font-size="82" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-weight="400" letter-spacing="-0.03em">loop</text>
           </g>
         </svg>
       </div>
+    </div>
 
-      <p class="landing-tagline">AI agents, without the clutter.</p>
-      <p class="landing-desc">Multi-model routing, sandboxed execution, persistent memory, prompt injection protection. All behind a clean interface that stays out of your way.</p>
-      <div class="landing-actions">
-        <a class="landing-btn-primary" href="/en/docs/guide">Get started</a>
-        <a class="landing-btn-secondary" href="/en/api">API reference</a>
+    <!-- Right: content -->
+    <div class="split-right">
+      <h1 class="hero-title">Arkloop: Your Unified AI Agent Platform</h1>
+      <p class="hero-desc">Build, deploy, and manage powerful AI agents. Clean, secure, and developer-first.</p>
+
+      <div class="cta-block">
+        <a class="btn-download" href="https://github.com/qqqqqf-q/Arkloop/releases">Download for Desktop</a>
+        <a class="link-docs" href="/en/docs/guide">Quick Start &amp; Documentation</a>
       </div>
-    </section>
 
-    <section class="landing-capabilities">
-      <div class="cap-grid">
-        <div class="cap-item">
-          <span class="cap-label">01</span>
-          <h3 class="cap-title">Agent Loop</h3>
-          <p class="cap-desc">Multi-step autonomous execution with planning, reasoning, and tool orchestration. Persistent memory across conversations.</p>
+      <div class="feat-grid">
+        <!-- Agent Loop -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+          <h3 class="feat-title">Agent Loop</h3>
+          <p class="feat-desc">Multi-step autonomous execution with planning, reasoning, and tool orchestration. Persistent memory across sessions.</p>
         </div>
-        <div class="cap-item">
-          <span class="cap-label">02</span>
-          <h3 class="cap-title">Multi-Model</h3>
-          <p class="cap-desc">OpenAI, Anthropic, and any compatible provider. Priority-based routing with rate limit handling.</p>
+        <!-- Multi-Model -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/>
+            <line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/>
+          </svg>
+          <h3 class="feat-title">Multi-Model</h3>
+          <p class="feat-desc">OpenAI, Anthropic, and any compatible interface. Priority routing with automatic rate-limit handling.</p>
         </div>
-        <div class="cap-item">
-          <span class="cap-label">03</span>
-          <h3 class="cap-title">Sandbox</h3>
-          <p class="cap-desc">Firecracker microVMs or Docker containers. Code execution with strict resource limits.</p>
+        <!-- Sandbox -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="9"/>
+          </svg>
+          <h3 class="feat-title">Sandbox</h3>
+          <p class="feat-desc">Firecracker microVMs or Docker isolation. Code execution with strict resource limits.</p>
         </div>
-        <div class="cap-item">
-          <span class="cap-label">04</span>
-          <h3 class="cap-title">Security</h3>
-          <p class="cap-desc">Semantic-level prompt injection scanning. Detect and block attacks to protect agent runtime.</p>
+        <!-- Security -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <h3 class="feat-title">Security</h3>
+          <p class="feat-desc">Semantic-level prompt injection scanning. Detects and blocks attacks to protect agent execution.</p>
         </div>
-        <div class="cap-item">
-          <span class="cap-label">05</span>
-          <h3 class="cap-title">Channels</h3>
-          <p class="cap-desc">Connect agents to Telegram with full media handling and group context support.</p>
+        <!-- Channels -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 015.19 12.7 19.79 19.79 0 012.12 4.07 2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+          </svg>
+          <h3 class="feat-title">Channels</h3>
+          <p class="feat-desc">Connect agents to Telegram with full media handling and group context support.</p>
         </div>
-        <div class="cap-item">
-          <span class="cap-label">06</span>
-          <h3 class="cap-title">REST + SSE</h3>
-          <p class="cap-desc">40+ endpoints covering threads, runs, personas, and providers. Cursor-based continuation.</p>
+        <!-- REST + SSE -->
+        <div class="feat-item">
+          <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/>
+            <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+          </svg>
+          <h3 class="feat-title">REST + SSE</h3>
+          <p class="feat-desc">40+ endpoints covering threads, runs, personas, and model providers. Cursor-based resumption.</p>
         </div>
       </div>
-    </section>
-
-    <section class="landing-nav-cards">
-      <a class="nav-card" href="/en/docs/guide">
-        <span class="nav-card-label">Guide</span>
-        <span class="nav-card-title">Deployment & Configuration</span>
-        <span class="nav-card-arrow">&rarr;</span>
-      </a>
-      <a class="nav-card" href="/en/api">
-        <span class="nav-card-label">API</span>
-        <span class="nav-card-title">Reference</span>
-        <span class="nav-card-arrow">&rarr;</span>
-      </a>
-      <a class="nav-card" href="/research">
-        <span class="nav-card-label">Research</span>
-        <span class="nav-card-title">Technical Articles</span>
-        <span class="nav-card-arrow">&rarr;</span>
-      </a>
-    </section>
-
-    <footer class="landing-footer">
-      <p class="landing-footer-text">
-        <a href="https://github.com/qqqqqf/Arkloop">GitHub</a>
-        <span class="landing-footer-sep">/</span>
-        <a href="https://github.com/qqqqqf/Arkloop/releases">Releases</a>
-        <span class="landing-footer-sep">/</span>
-        <a href="https://github.com/qqqqqf/Arkloop/issues">Issues</a>
-      </p>
-    </footer>
+    </div>
 
   </div>
 </BaseLayout>
@@ -173,34 +163,148 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     --dimension-line: rgba(0, 0, 0, 0.18);
   }
 
-  .landing-shell { max-width: 960px; margin: 0 auto; }
-  .landing-hero { display: grid; gap: 20px; justify-items: center; text-align: center; padding: 8vh 0 7vh; }
-  .type-specimen { width: 100%; max-width: 526px; padding: 0 16px; }
-  .type-svg { width: 100%; height: auto; }
-  .landing-tagline { margin: 0; font-size: 1.05rem; font-weight: 500; color: var(--text-primary); letter-spacing: -0.02em; }
-  .landing-desc { max-width: 480px; margin: 0; font-size: 0.88rem; line-height: 1.7; color: var(--text-secondary); }
-  .landing-actions { display: flex; gap: 10px; margin-top: 8px; }
-  .landing-btn-primary, .landing-btn-secondary { display: inline-flex; align-items: center; padding: 10px 20px; border-radius: 10px; font-size: 0.88rem; font-weight: 600; }
-  .landing-btn-primary { background: var(--accent); color: var(--accent-contrast); border: 1px solid transparent; }
-  .landing-btn-primary:hover { opacity: 0.9; }
-  .landing-btn-secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-primary); }
-  .landing-btn-secondary:hover { background: var(--bg-surface-soft); }
-  .landing-capabilities { padding: 0 0 6vh; }
-  .cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--border-primary); border-radius: 14px; overflow: hidden; background: var(--border-primary); }
-  .cap-item { display: grid; gap: 6px; padding: 24px 20px; background: var(--bg-surface); }
-  .cap-label { font-size: 0.68rem; font-family: ui-monospace, monospace; color: var(--text-muted); letter-spacing: 0.06em; }
-  .cap-title { margin: 0; font-size: 0.94rem; font-weight: 600; color: var(--text-strong); letter-spacing: -0.02em; }
-  .cap-desc { margin: 0; font-size: 0.8rem; line-height: 1.65; color: var(--text-secondary); }
-  .landing-nav-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-bottom: 6vh; }
-  .nav-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 16px 18px; border: 1px solid var(--border-primary); border-radius: 12px; background: var(--bg-surface); transition: background-color 140ms ease, border-color 140ms ease; }
-  .nav-card:hover { background: var(--bg-surface-soft); border-color: var(--border-strong); }
-  .nav-card-label { font-size: 0.68rem; font-family: ui-monospace, monospace; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
-  .nav-card-title { font-size: 0.88rem; font-weight: 500; color: var(--text-primary); }
-  .nav-card-arrow { color: var(--text-muted); font-size: 0.9rem; }
-  .landing-footer { padding: 4vh 0; border-top: 1px solid var(--border-primary); text-align: center; }
-  .landing-footer-text { margin: 0; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .landing-footer-text a:hover { color: var(--text-primary); }
-  .landing-footer-sep { color: var(--border-primary); user-select: none; }
-  @media (max-width: 720px) { .landing-hero { padding: 5vh 0 4vh; } .landing-tagline { font-size: 0.92rem; } .cap-grid, .landing-nav-cards { grid-template-columns: 1fr; } }
-  @media (max-width: 960px) and (min-width: 721px) { .cap-grid { grid-template-columns: repeat(2, 1fr); } .landing-nav-cards { grid-template-columns: 1fr; } }
+  .landing-split {
+    display: flex;
+    min-height: calc(100vh - 60px);
+  }
+
+  .split-left {
+    flex: 0 0 44%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--border-primary);
+    background: var(--bg-surface-soft);
+    padding: 40px 32px;
+  }
+
+  .type-specimen {
+    width: 100%;
+    max-width: 480px;
+  }
+
+  .type-svg {
+    width: 100%;
+    height: auto;
+  }
+
+  .split-right {
+    flex: 0 0 56%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 48px 56px;
+    gap: 20px;
+  }
+
+  .hero-title {
+    margin: 0;
+    font-size: clamp(1.8rem, 3vw, 2.8rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--text-strong);
+    line-height: 1.15;
+  }
+
+  .hero-desc {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+
+  .cta-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .btn-download {
+    display: block;
+    width: 100%;
+    max-width: 400px;
+    padding: 15px 24px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-size: 1rem;
+    font-weight: 700;
+    border-radius: 12px;
+    text-align: center;
+    transition: opacity 140ms ease;
+  }
+
+  .btn-download:hover {
+    opacity: 0.88;
+  }
+
+  .link-docs {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    align-self: center;
+    max-width: 400px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .link-docs:hover {
+    color: var(--text-primary);
+  }
+
+  .feat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px 24px;
+    margin-top: 4px;
+  }
+
+  .feat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .feat-icon {
+    width: 24px;
+    height: 24px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  .feat-title {
+    margin: 0;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-strong);
+  }
+
+  .feat-desc {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 767px) {
+    .landing-split {
+      flex-direction: column;
+    }
+
+    .split-left {
+      flex: none;
+      border-right: none;
+      border-bottom: 1px solid var(--border-primary);
+      padding: 32px 24px;
+    }
+
+    .split-right {
+      flex: none;
+      padding: 32px 24px;
+    }
+
+    .feat-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
 </style>

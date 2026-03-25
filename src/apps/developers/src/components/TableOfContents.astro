@@ -43,20 +43,46 @@ const visibleHeadings = headings.filter((heading) => heading.depth >= 2 && headi
 
     if (!headings.length) return;
 
-    const update = () => {
-      let active = headings[0];
-      for (const h of headings) {
-        if (h.el.getBoundingClientRect().top <= 100) {
-          active = h;
-        }
-      }
+    let activeLink = null;
+    const setActive = (link) => {
+      if (activeLink === link) return;
       tocLinks.forEach((l) => l.classList.remove('toc-link-active'));
-      if (active) active.link.classList.add('toc-link-active');
+      if (link) link.classList.add('toc-link-active');
+      activeLink = link;
     };
 
+    setActive(headings[0].link);
+
     const scrollRoot = document.querySelector('[data-docs-scroll-root]');
-    const scroller = scrollRoot instanceof HTMLElement ? scrollRoot : window;
-    scroller.addEventListener('scroll', update, { passive: true });
-    update();
+    const root = scrollRoot instanceof HTMLElement ? scrollRoot : null;
+    const visibleSet = new Set();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            visibleSet.add(entry.target);
+          } else {
+            visibleSet.delete(entry.target);
+          }
+        });
+        let found = null;
+        for (const { el, link } of headings) {
+          if (visibleSet.has(el)) { found = link; break; }
+        }
+        if (!found) {
+          const rootTop = root ? root.getBoundingClientRect().top : 0;
+          let last = headings[0].link;
+          for (const { el, link } of headings) {
+            if (el.getBoundingClientRect().top - rootTop < 80) last = link;
+          }
+          found = last;
+        }
+        setActive(found);
+      },
+      { root, rootMargin: '-60px 0px -60% 0px', threshold: 0 }
+    );
+
+    headings.forEach(({ el }) => observer.observe(el));
   })();
 </script>
