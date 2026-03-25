@@ -266,21 +266,32 @@ func (h *Handler) moduleUpgrade(w http.ResponseWriter, r *http.Request) {
 		relayLogs(op, stopOp)
 		op.AppendLog("Service stopped")
 
-		// 3. 以 force-recreate 重启服务
-		op.AppendLog(fmt.Sprintf("Recreating service %s...", def.ComposeService))
-		installOp, err := h.compose.Install(opCtx, def.ComposeService, def.ComposeProfile)
-		if err != nil {
-			op.AppendLog("ERROR recreating service: " + err.Error())
+		// 3. 重启服务
+		// 使用 docker-compose override 文件来指定新镜像，避免修改 compose.yaml
+		op.AppendLog(fmt.Sprintf("Starting service %s with new image...", def.ComposeService))
+		projectDir := h.compose.ProjectDir()
+		overrideContent := fmt.Sprintf("services:\n  %s:\n    image: %s\n", def.ComposeService, req.Image)
+		overrideFile := filepath.Join(projectDir, "compose.override.yaml")
+		if err := os.WriteFile(overrideFile, []byte(overrideContent), 0644); err != nil {
+			op.AppendLog("ERROR: failed to write override file: " + err.Error())
 			opErr = err
 			return
 		}
-		if waitErr := installOp.Wait(); waitErr != nil {
-			relayLogs(op, installOp)
-			op.AppendLog("ERROR: recreate failed: " + waitErr.Error())
-			opErr = waitErr
+		defer os.Remove(overrideFile)
+
+		args := []string{"compose", "-f", "compose.yaml", "-f", "compose.override.yaml", "up", "-d"}
+		if def.ComposeProfile != "" {
+			args = append(args, "--profile", def.ComposeProfile)
+		}
+		args = append(args, def.ComposeService)
+		upCmd := exec.CommandContext(opCtx, "docker", args...)
+		upCmd.Dir = projectDir
+		if out, err := upCmd.CombinedOutput(); err != nil {
+			op.AppendLog(string(out))
+			op.AppendLog("ERROR: docker compose up failed: " + err.Error())
+			opErr = err
 			return
 		}
-		relayLogs(op, installOp)
 		op.AppendLog("Module upgraded successfully")
 	}()
 
