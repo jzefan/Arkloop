@@ -1787,7 +1787,8 @@ func (rt *luaRuntime) memorySearch(L *lua.LState) int {
 	limit := L.OptInt(3, 5)
 
 	ident := rt.memoryIdentity()
-	hits, err := rt.rc.MemoryProvider.Find(rt.ctx, ident, scope, query, limit)
+	_ = scope
+	hits, err := rt.rc.MemoryProvider.Find(rt.ctx, ident, memory.SelfURI(ident.UserID.String()), query, limit)
 	if err != nil {
 		L.Push(lua.LString("[]"))
 		L.Push(lua.LString(err.Error()))

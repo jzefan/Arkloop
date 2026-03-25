@@ -68,6 +68,8 @@ func (e *SimpleExecutor) Execute(
 		Model:                            rc.SelectedRoute.Route.Model,
 		MemoryScope:                      "same_user",
 		TraceID:                          rc.TraceID,
+		PeerMemoryURI:                    rc.PeerMemoryURI,
+		SpaceMemoryURI:                   rc.SpaceMemoryURI,
 		InputJSON:                        rc.InputJSON,
 		ReasoningIterations:              rc.ReasoningIterations,
 		ToolContinuationBudget:           rc.ToolContinuationBudget,

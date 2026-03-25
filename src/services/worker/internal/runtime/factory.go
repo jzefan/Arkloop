@@ -75,6 +75,7 @@ func (f *MemoryProviderFactory) Resolve(snapshot sharedtoolruntime.RuntimeSnapsh
 
 type MemorySnapshotAppender interface {
 	AppendMemoryLine(ctx context.Context, pool *pgxpool.Pool, accountID, userID uuid.UUID, agentID, line string) error
+	Invalidate(ctx context.Context, pool *pgxpool.Pool, accountID, userID uuid.UUID, agentID string) error
 }
 
 type MemoryExecutorFactory struct {

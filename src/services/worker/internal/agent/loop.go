@@ -63,6 +63,8 @@ type RunContext struct {
 	ToolExecutor                     *tools.DispatchingExecutor
 	ToolSpecs                        []llm.ToolSpec
 	PendingMemoryWrites              *memory.PendingWriteBuffer
+	PeerMemoryURI                    string
+	SpaceMemoryURI                   string
 	Runtime                          *sharedtoolruntime.RuntimeSnapshot
 	CancelSignal                     func() bool
 
@@ -627,6 +629,8 @@ func (l *Loop) executeToolCall(
 		RouteID:                          runCtx.RouteID,
 		Model:                            runCtx.Model,
 		MemoryScope:                      runCtx.MemoryScope,
+		PeerMemoryURI:                    runCtx.PeerMemoryURI,
+		SpaceMemoryURI:                   runCtx.SpaceMemoryURI,
 		AgentID:                          runCtx.AgentID,
 		TimeoutMs:                        runCtx.ToolTimeoutMs,
 		Budget:                           copyMap(runCtx.ToolBudget),

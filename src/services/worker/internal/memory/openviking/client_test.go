@@ -66,7 +66,8 @@ func TestClient_Find_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "root-key")
-	hits, err := c.Find(context.Background(), newIdent(), memory.MemoryScopeUser, "programming language", 5)
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	hits, err := c.Find(context.Background(), newIdent(), targetURI, "programming language", 5)
 	if err != nil {
 		t.Fatalf("Find failed: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestClient_Find_Success(t *testing.T) {
 	}
 
 	// 验证 request body 中 target_uri 含 userID
-	wantTargetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	wantTargetURI := targetURI
 	if gotBody["target_uri"] != wantTargetURI {
 		t.Fatalf("unexpected target_uri: %v", gotBody["target_uri"])
 	}
@@ -99,7 +100,8 @@ func TestClient_Find_AgentScope(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "")
-	_, err := c.Find(context.Background(), newIdent(), memory.MemoryScopeAgent, "retry patterns", 3)
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	_, err := c.Find(context.Background(), newIdent(), targetURI, "retry patterns", 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +127,8 @@ func TestClient_Find_MergesMemoriesResourcesSkills(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "")
-	hits, err := c.Find(context.Background(), newIdent(), memory.MemoryScopeUser, "q", 10)
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	hits, err := c.Find(context.Background(), newIdent(), targetURI, "q", 10)
 	if err != nil {
 		t.Fatalf("Find failed: %v", err)
 	}
@@ -300,8 +303,9 @@ func TestClient_Retry_5xx(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "")
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
 	// Find 使用 doJSONWithRetry，会重试 maxReadRetries 次
-	_, err := c.Find(context.Background(), newIdent(), memory.MemoryScopeUser, "q", 5)
+	_, err := c.Find(context.Background(), newIdent(), targetURI, "q", 5)
 	if err == nil {
 		t.Fatal("expected error after all retries")
 	}
@@ -322,7 +326,8 @@ func TestClient_Retry_4xx_NoRetry(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "")
-	_, err := c.Find(context.Background(), newIdent(), memory.MemoryScopeUser, "q", 5)
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	_, err := c.Find(context.Background(), newIdent(), targetURI, "q", 5)
 	if err == nil {
 		t.Fatal("expected error on 400")
 	}
@@ -350,7 +355,8 @@ func TestClient_Retry_CtxCancel_Stops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消
 
-	_, err := c.Find(ctx, newIdent(), memory.MemoryScopeUser, "q", 5)
+	targetURI := "viking://user/" + fixedUserID.String() + "/memories/"
+	_, err := c.Find(ctx, newIdent(), targetURI, "q", 5)
 	if err == nil {
 		t.Fatal("expected error when context cancelled")
 	}
@@ -379,7 +385,8 @@ func TestClient_IdentityHeaders(t *testing.T) {
 		AgentID:   "my-agent",
 	}
 	c := newClient(srv.URL, "root-key-123")
-	_, err := c.Find(context.Background(), ident, memory.MemoryScopeUser, "q", 5)
+	targetURI := "viking://user/" + ident.UserID.String() + "/memories/"
+	_, err := c.Find(context.Background(), ident, targetURI, "q", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

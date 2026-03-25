@@ -36,20 +36,17 @@ func sanitizeAgentID(id string) string {
 	return reInvalidAgentID.ReplaceAllString(id, "_")
 }
 
-// scopeURI 返回 Find 操作所需的完整 target_uri。
-// OpenViking 的 Find 端点不走 header 路由，必须在 URI 中包含身份信息。
-func scopeURI(scope memory.MemoryScope, ident memory.MemoryIdentity) string {
-	_ = scope
-	return fmt.Sprintf("viking://user/%s/memories/", ident.UserID.String())
-}
-
 // setIdentityHeaders 附加 ROOT key 路线所需的多租户 header。
 func setIdentityHeaders(req *http.Request, rootAPIKey string, ident memory.MemoryIdentity) {
 	if rootAPIKey != "" {
 		req.Header.Set("X-API-Key", rootAPIKey)
 	}
 	req.Header.Set("X-OpenViking-Account", ident.AccountID.String())
-	req.Header.Set("X-OpenViking-User", ident.UserID.String())
+	userID := ident.UserID.String()
+	if ident.ExternalUserID != "" {
+		userID = ident.ExternalUserID
+	}
+	req.Header.Set("X-OpenViking-User", userID)
 	req.Header.Set("X-OpenViking-Agent", sanitizeAgentID(ident.AgentID))
 }
 
@@ -190,22 +187,17 @@ type findResponse struct {
 }
 
 type matchedContext struct {
-	URI         string           `json:"uri"`
-	Abstract    string           `json:"abstract"`
-	Score       float64          `json:"score"`
-	MatchReason string           `json:"match_reason"`
-	Relations   []relatedContext `json:"relations"`
+	URI         string   `json:"uri"`
+	Abstract    string   `json:"abstract"`
+	Score       float64  `json:"score"`
+	MatchReason string   `json:"match_reason"`
+	Relations   []string `json:"relations"`
 }
 
-type relatedContext struct {
-	URI      string `json:"uri"`
-	Abstract string `json:"abstract"`
-}
-
+// apiResponse 是 OpenViking 标准响应包装。
 type apiResponse struct {
-	Status string          `json:"status"`
 	Result json.RawMessage `json:"result"`
-	Error  *apiError       `json:"error"`
+	Error  *apiError       `json:"error,omitempty"`
 }
 
 type apiError struct {
@@ -213,15 +205,26 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, scope memory.MemoryScope, query string, limit int) ([]memory.MemoryHit, error) {
-	req := findRequest{
+// Find 实现 MemoryProvider.Find，经由 OpenViking /api/v1/search/find。
+func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, targetURI string, query string, limit int) ([]memory.MemoryHit, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, errors.New("openviking find: query is empty")
+	}
+	if limit <= 0 {
+		limit = 16
+	}
+
+	body := findRequest{
 		Query:     query,
-		TargetURI: scopeURI(scope, ident),
+		TargetURI: strings.TrimSpace(targetURI),
 		Limit:     limit,
+	}
+	if body.TargetURI == "" {
+		body.TargetURI = fmt.Sprintf("viking://user/%s/memories/", ident.UserID.String())
 	}
 
 	var resp apiResponse
-	if err := c.doJSONWithRetry(ctx, http.MethodPost, "/api/v1/search/find", req, ident, &resp); err != nil {
+	if err := c.doJSONWithRetry(ctx, http.MethodPost, "/api/v1/search/find", body, ident, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {
@@ -230,7 +233,7 @@ func (c *client) Find(ctx context.Context, ident memory.MemoryIdentity, scope me
 
 	var fr findResponse
 	if err := json.Unmarshal(resp.Result, &fr); err != nil {
-		return nil, fmt.Errorf("unmarshal find result: %w", err)
+		return nil, fmt.Errorf("decode find result: %w", err)
 	}
 
 	all := make([]matchedContext, 0, len(fr.Memories)+len(fr.Resources)+len(fr.Skills))

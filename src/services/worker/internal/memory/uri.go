@@ -28,3 +28,17 @@ func BuildURI(scope MemoryScope, category MemoryCategory, key string) string {
 		return fmt.Sprintf("viking://user/memories/%s/%s", string(category), key)
 	}
 }
+
+func SelfURI(userID string) string {
+	return fmt.Sprintf("viking://user/%s/memories/", userID)
+}
+
+func PeerExternalURI(id string) string {
+	safe := sanitizeKey(strings.ReplaceAll(id, "-", ""))
+	return fmt.Sprintf("viking://user/tg_%s/memories/", safe)
+}
+
+func SpaceURI(chatID string) string {
+	safe := sanitizeKey(strings.TrimSpace(chatID))
+	return fmt.Sprintf("viking://user/tgchat_%s/memories/", safe)
+}

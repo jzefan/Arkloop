@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	datarepo "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/tools"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -73,7 +74,7 @@ func (e *ToolExecutor) Execute(
 
 	switch toolName {
 	case "memory_search":
-		return e.search(ctx, args, ident, started)
+		return e.search(ctx, args, ident, execCtx, started)
 	case "memory_read":
 		return e.read(ctx, args, ident, started)
 	case "memory_write":
@@ -91,16 +92,15 @@ func (e *ToolExecutor) Execute(
 	}
 }
 
-func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
 	query, ok := args["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
 		return argError("query must be a non-empty string", started)
 	}
 
-	scope := parseScope(args)
 	limit := parseLimit(args, defaultSearchLimit)
 
-	hits, err := e.provider.Find(ctx, ident, scope, query, limit)
+	hits, err := e.provider.Find(ctx, ident, resolveTargetURI(args, ident, execCtx), query, limit)
 	if err != nil {
 		return providerError("search", err, started)
 	}
@@ -235,6 +235,24 @@ func buildIdentity(execCtx tools.ExecutionContext) (memory.MemoryIdentity, error
 		UserID:    *execCtx.UserID,
 		AgentID:   "user_" + execCtx.UserID.String(),
 	}, nil
+}
+
+func resolveTargetURI(args map[string]any, ident memory.MemoryIdentity, execCtx tools.ExecutionContext) string {
+	ns := "self"
+	if raw, ok := args["namespace"].(string); ok && raw != "" {
+		ns = raw
+	}
+	switch ns {
+	case "peer":
+		if execCtx.PeerMemoryURI != "" {
+			return execCtx.PeerMemoryURI
+		}
+	case "space":
+		if execCtx.SpaceMemoryURI != "" {
+			return execCtx.SpaceMemoryURI
+		}
+	}
+	return memory.SelfURI(ident.UserID.String())
 }
 
 func parseScope(args map[string]any) memory.MemoryScope {
