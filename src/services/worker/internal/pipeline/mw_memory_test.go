@@ -32,7 +32,7 @@ type memMock struct {
 	contentCalled bool
 	writeCalled   bool
 	writeCount    int
-	writeScopes   []memory.MemoryScope
+	writeTargets  []string
 	writeEntries  []memory.MemoryEntry
 
 	appendCalled    bool
@@ -52,7 +52,7 @@ func newMemMock() *memMock {
 	}
 }
 
-func (m *memMock) Find(_ context.Context, _ memory.MemoryIdentity, _ memory.MemoryScope, _ string, _ int) ([]memory.MemoryHit, error) {
+func (m *memMock) Find(_ context.Context, _ memory.MemoryIdentity, _ string, _ string, _ int) ([]memory.MemoryHit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.findCalled = true
@@ -84,11 +84,11 @@ func (m *memMock) CommitSession(_ context.Context, _ memory.MemoryIdentity, sess
 	return nil
 }
 
-func (m *memMock) Write(_ context.Context, _ memory.MemoryIdentity, scope memory.MemoryScope, entry memory.MemoryEntry) error {
+func (m *memMock) Write(_ context.Context, _ memory.MemoryIdentity, _ memory.MemoryScope, entry memory.MemoryEntry) error {
 	m.mu.Lock()
 	m.writeCalled = true
 	m.writeCount++
-	m.writeScopes = append(m.writeScopes, scope)
+	m.writeTargets = append(m.writeTargets, "self")
 	m.writeEntries = append(m.writeEntries, entry)
 	m.mu.Unlock()
 	m.writeDone <- struct{}{}
@@ -113,9 +113,9 @@ func buildMemRC(userID *uuid.UUID, userMsg string, assistantOutput string) *pipe
 	}
 	return &pipeline.RunContext{
 		Run: data.Run{
-			ID:       uuid.New(),
-			AccountID:    uuid.New(),
-			ThreadID: uuid.New(),
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
 		},
 		UserID:               userID,
 		Messages:             msgs,
@@ -235,7 +235,6 @@ func TestMemoryMiddleware_FlushesPendingWritesAfterRun(t *testing.T) {
 	mp.mu.Lock()
 	writeCalled := mp.writeCalled
 	writeCount := mp.writeCount
-	writeScope := mp.writeScopes[0]
 	writeEntry := mp.writeEntries[0]
 	mp.mu.Unlock()
 
@@ -244,9 +243,6 @@ func TestMemoryMiddleware_FlushesPendingWritesAfterRun(t *testing.T) {
 	}
 	if writeCount != 1 {
 		t.Fatalf("expected exactly 1 write, got %d", writeCount)
-	}
-	if writeScope != memory.MemoryScopeUser {
-		t.Fatalf("unexpected write scope: %s", writeScope)
 	}
 	if writeEntry.Content != "[user/preferences/language] user prefers Go" {
 		t.Fatalf("unexpected write entry: %q", writeEntry.Content)

@@ -159,6 +159,8 @@ type RunContext struct {
 	MemoryProvider memory.MemoryProvider
 	// -- 当前 run 内显式 memory_write 的待刷写缓冲区 --
 	PendingMemoryWrites *memory.PendingWriteBuffer
+	PeerMemoryURI       string
+	SpaceMemoryURI      string
 
 	// -- LLM 重试，由 EngineV1.Execute 注入 --
 	LlmRetryMaxAttempts int

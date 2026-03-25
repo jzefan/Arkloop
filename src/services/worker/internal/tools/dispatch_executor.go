@@ -40,6 +40,8 @@ type ExecutionContext struct {
 	MemoryScope                      string
 	AgentID                          string
 	TimeoutMs                        *int
+	PeerMemoryURI                    string
+	SpaceMemoryURI                   string
 	Budget                           map[string]any
 	PerToolSoftLimits                PerToolSoftLimits
 	Emitter                          events.Emitter

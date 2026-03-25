@@ -8,9 +8,10 @@ import (
 
 // MemoryIdentity 标识一次 memory 操作的调用方身份，用于多租户隔离。
 type MemoryIdentity struct {
-	AccountID   uuid.UUID
-	UserID  uuid.UUID
-	AgentID string // 默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]
+	AccountID     uuid.UUID
+	UserID        uuid.UUID
+	AgentID       string // 默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]
+	ExternalUserID string
 }
 
 // MemoryScope 控制检索/写入的命名空间。
@@ -74,7 +75,7 @@ const (
 // 后端不可用时实现应降级为"无记忆"，不影响 run 主流程。
 type MemoryProvider interface {
 	// Find 语义检索，返回 L0 摘要 + URI；必要时再按 URI 拉 L1/L2。
-	Find(ctx context.Context, ident MemoryIdentity, scope MemoryScope, query string, limit int) ([]MemoryHit, error)
+	Find(ctx context.Context, ident MemoryIdentity, targetURI string, query string, limit int) ([]MemoryHit, error)
 
 	// Content 读取分层内容（L0/L1/L2）。
 	Content(ctx context.Context, ident MemoryIdentity, uri string, layer MemoryLayer) (string, error)
@@ -97,4 +98,3 @@ type MemoryProvider interface {
 type DesktopLocalMemoryWriteURI interface {
 	WriteReturningURI(ctx context.Context, ident MemoryIdentity, scope MemoryScope, entry MemoryEntry) (uri string, err error)
 }
-

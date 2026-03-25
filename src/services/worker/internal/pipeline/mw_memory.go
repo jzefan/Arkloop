@@ -77,11 +77,13 @@ func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvi
 
 // injectFromCacheOrFind 优先从 PG 快照读取记忆，缓存缺失时降级到 OpenViking Find。
 func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, pool *pgxpool.Pool, ident memory.MemoryIdentity, query string) {
+	selfURI := memory.SelfURI(ident.UserID.String())
 	if pool != nil {
 		block, found, err := snapshotRepo.Get(ctx, pool, ident.AccountID, ident.UserID, ident.AgentID)
 		if err != nil {
 			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
 		} else if found && strings.TrimSpace(block) != "" {
+			block += buildNamespaceCatalog(rc, selfURI)
 			rc.SystemPrompt += block
 			return
 		}
@@ -89,32 +91,47 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 
 	findCtx, cancel := context.WithTimeout(ctx, memoryFindTimeout)
 	defer cancel()
-	block, hits := renderMemoryBlock(findCtx, provider, ident, memory.MemoryScopeUser, query)
-	if block != "" {
-		rc.SystemPrompt += block
+	selfBlock, selfHits := renderMemoryBlock(findCtx, provider, ident, selfURI, query)
+	if selfBlock != "" {
+		block := selfBlock
 		if pool != nil {
 			go func() {
 				// goroutine 超出请求生命周期，需要独立 context
 				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer uCancel()
-				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, block, hitsToCache(hits))
+				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, selfBlock, hitsToCache(selfHits))
 			}()
+		}
+
+		if rc.PeerMemoryURI != "" {
+			if peerBlock, _ := renderMemoryBlock(findCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
+				block += retagMemoryBlock(peerBlock, "peer")
+			}
+		}
+		if rc.SpaceMemoryURI != "" {
+			if spaceBlock, _ := renderMemoryBlock(findCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
+				block += retagMemoryBlock(spaceBlock, "space")
+			}
+		}
+		block += buildNamespaceCatalog(rc, selfURI)
+		if block != "" {
+			rc.SystemPrompt += block
 		}
 	}
 }
 
 // renderMemoryBlock 通过 OpenViking Find 构建 <memory> 块，返回空串表示无结果。
-func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, scope memory.MemoryScope, query string) (string, []memory.MemoryHit) {
-	lines, hits, err := findMemoryLines(ctx, provider, ident, scope, query)
+func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, targetURI string, query string) (string, []memory.MemoryHit) {
+	lines, hits, err := findMemoryLines(ctx, provider, ident, targetURI, query)
 	if err != nil {
-		slog.WarnContext(ctx, "memory: find failed", "scope", string(scope), "err", err.Error())
+		slog.WarnContext(ctx, "memory: find failed", "target_uri", targetURI, "err", err.Error())
 		return "", nil
 	}
 	return buildMemoryBlock(lines), hits
 }
 
-func findMemoryLines(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, scope memory.MemoryScope, query string) ([]string, []memory.MemoryHit, error) {
-	hits, err := provider.Find(ctx, ident, scope, query, memoryFindLimit)
+func findMemoryLines(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, targetURI string, query string) ([]string, []memory.MemoryHit, error) {
+	hits, err := provider.Find(ctx, ident, targetURI, query, memoryFindLimit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -164,12 +181,32 @@ func buildMemoryBlock(lines []string) string {
 	return block
 }
 
+func retagMemoryBlock(block, label string) string {
+	return strings.ReplaceAll(block, "\n- ", "\n- ["+label+"] ")
+}
+
+func buildNamespaceCatalog(rc *RunContext, selfURI string) string {
+	var sb strings.Builder
+	sb.WriteString("\n\n<memory_namespaces>\nself: ")
+	sb.WriteString(selfURI)
+	if rc.PeerMemoryURI != "" {
+		sb.WriteString("\npeer: ")
+		sb.WriteString(rc.PeerMemoryURI)
+	}
+	if rc.SpaceMemoryURI != "" {
+		sb.WriteString("\nspace: ")
+		sb.WriteString(rc.SpaceMemoryURI)
+	}
+	sb.WriteString("\n</memory_namespaces>")
+	return sb.String()
+}
+
 func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, pool *pgxpool.Pool, accountID, runID uuid.UUID, traceID string, costPerWrite float64) {
 	// 由 goroutine 调用，超出请求生命周期，需要独立 context
 	ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 	defer cancel()
 
-	successfulQueries := map[memory.MemoryScope][]string{}
+	successfulQueries := map[string][]string{}
 	successCount := 0
 	hadFailure := false
 	emitter := events.NewEmitter(traceID)
@@ -199,7 +236,7 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 		}, stringPtr("memory_write"), nil))
 		query := strings.TrimSpace(pendingWrite.Entry.Content)
 		if query != "" {
-			successfulQueries[pendingWrite.Scope] = append(successfulQueries[pendingWrite.Scope], query)
+			successfulQueries[string(pendingWrite.Scope)] = append(successfulQueries[string(pendingWrite.Scope)], query)
 		}
 	}
 
@@ -236,26 +273,25 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 	}
 }
 
-func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, successfulQueries map[memory.MemoryScope][]string) (string, []memory.MemoryHit, bool) {
+func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, successfulQueries map[string][]string) (string, []memory.MemoryHit, bool) {
 	if len(successfulQueries) == 0 {
 		return "", nil, false
 	}
 	allLines := make([]string, 0, memoryFindLimit*len(successfulQueries))
 	allHits := make([]memory.MemoryHit, 0, memoryFindLimit*len(successfulQueries))
-	for scope, queries := range successfulQueries {
+	for _, queries := range successfulQueries {
 		query := strings.TrimSpace(strings.Join(queries, "\n"))
 		if query == "" {
 			return "", nil, false
 		}
 		snapCtx, cancel := context.WithTimeout(ctx, snapshotFindTimeout)
-		lines, hits, err := findMemoryLines(snapCtx, provider, ident, scope, query)
+		lines, hits, err := findMemoryLines(snapCtx, provider, ident, memory.SelfURI(ident.UserID.String()), query)
 		cancel()
 		if err != nil {
 			slog.Warn("memory: snapshot rebuild find failed",
 				"account_id", ident.AccountID.String(),
 				"user_id", ident.UserID.String(),
 				"agent_id", ident.AgentID,
-				"scope", string(scope),
 				"err", err.Error(),
 			)
 			return "", nil, false
@@ -273,7 +309,7 @@ func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, i
 	return block, allHits, true
 }
 
-func refreshSnapshotFromQueries(ctx context.Context, pool *pgxpool.Pool, provider memory.MemoryProvider, ident memory.MemoryIdentity, queries map[memory.MemoryScope][]string) {
+func refreshSnapshotFromQueries(ctx context.Context, pool *pgxpool.Pool, provider memory.MemoryProvider, ident memory.MemoryIdentity, queries map[string][]string) {
 	if pool == nil {
 		return
 	}
@@ -411,8 +447,8 @@ func distillAfterRun(provider memory.MemoryProvider, pool *pgxpool.Pool, configR
 			userQuery := lastUserMessageText(rc.Messages)
 			if userQuery != "" {
 				snapCtx, snapCancel := context.WithTimeout(context.Background(), snapshotFindTimeout)
-				block, hits, ok := rebuildSnapshotBlock(snapCtx, provider, ident, map[memory.MemoryScope][]string{
-					memory.MemoryScopeUser: {userQuery},
+				block, hits, ok := rebuildSnapshotBlock(snapCtx, provider, ident, map[string][]string{
+					"user": {userQuery},
 				})
 				snapCancel()
 				if ok {
