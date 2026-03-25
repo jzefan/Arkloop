@@ -85,17 +85,33 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			interval = rc.PersonaDefinition.HeartbeatIntervalMinutes
 		}
 
+		// 统计上次 assistant 回复后新增的真实 user 消息数
+		lastAssistantIdx := -1
+		for i := len(rc.Messages) - 1; i >= 0; i-- {
+			if i < len(rc.ThreadMessageIDs) && rc.ThreadMessageIDs[i] != uuid.Nil && rc.Messages[i].Role == "assistant" {
+				lastAssistantIdx = i
+				break
+			}
+		}
+		newUserMessages := 0
+		for i := lastAssistantIdx + 1; i < len(rc.Messages); i++ {
+			if i < len(rc.ThreadMessageIDs) && rc.ThreadMessageIDs[i] != uuid.Nil && rc.Messages[i].Role == "user" {
+				newUserMessages++
+			}
+		}
+
 		var sb strings.Builder
 		sb.WriteString("** 系统心跳 **\n")
 		sb.WriteString(fmt.Sprintf("time_utc: %s\n", time.Now().UTC().Format(time.RFC3339)))
 		sb.WriteString(fmt.Sprintf("interval_minutes: %d\n", interval))
+		sb.WriteString(fmt.Sprintf("new_user_messages: %d\n", newUserMessages))
 		if rc.PersonaDefinition != nil && strings.TrimSpace(rc.PersonaDefinition.HeartbeatMD) != "" {
 			sb.WriteString("\n---\n")
 			sb.WriteString(strings.TrimSpace(rc.PersonaDefinition.HeartbeatMD))
 			sb.WriteString("\n---\n")
 		}
 		sb.WriteString("\n这是一次系统自动触发的 heartbeat 检查。\n")
-		sb.WriteString("如果没有需要用户关注的新事项，调用 `heartbeat_decision(reply_silent=true)`，不要输出占位文本。\n")
+		sb.WriteString("如果 new_user_messages 为 0 且没有需要主动通知用户的事项，调用 `heartbeat_decision(reply_silent=true)`，不要输出占位文本。\n")
 		sb.WriteString("如果有需要通知用户的事项，只输出最终要发给用户的正文，再调用 `heartbeat_decision(reply_silent=false)`。\n")
 		sb.WriteString("如有值得长期记住的事实，再填写 `memory_fragments`。\n")
 
