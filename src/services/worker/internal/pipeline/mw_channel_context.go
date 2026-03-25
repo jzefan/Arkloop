@@ -50,9 +50,7 @@ func NewChannelContextMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			}
 		}
 		rc.ChannelContext = channelCtx
-		if channelCtx.SenderUserID != nil && (rc.UserID == nil || *rc.UserID != *channelCtx.SenderUserID) {
-			rc.PeerMemoryURI = memory.SelfURI(channelCtx.SenderUserID.String())
-		} else if channelCtx.SenderUserID == nil && channelCtx.SenderChannelIdentityID != uuid.Nil {
+		if channelCtx.SenderUserID == nil && channelCtx.SenderChannelIdentityID != uuid.Nil {
 			rc.PeerMemoryURI = memory.PeerExternalURI(channelCtx.SenderChannelIdentityID.String())
 		}
 		if IsTelegramGroupLikeConversation(channelCtx.ConversationType) {
