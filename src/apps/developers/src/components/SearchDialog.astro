@@ -68,7 +68,7 @@
           initialized = true;
         }
       } catch {
-        root.innerHTML = '<div class="search-error">Search index is unavailable.</div>';
+        root.innerHTML = '<div class="search-error">Search index unavailable. Run <code>pnpm build</code> to generate it.</div>';
       } finally {
         loading = false;
       }
