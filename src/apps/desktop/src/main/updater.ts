@@ -259,11 +259,23 @@ export async function applyUpdate(
     const { downloadSidecar } = await import('./sidecar')
     await downloadSidecar(onProgress)
 
-    // 更新 versions.json 中的 sidecar 版本
+    // 从 sidecar.version.json 读取实际下载的版本
+    const versionFilePath = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
+    const actualVersion: string | null = await new Promise<string | null>((resolve) => {
+      try {
+        const fs = require('fs') as typeof import('fs')
+        const raw = fs.readFileSync(versionFilePath, 'utf-8')
+        const j = JSON.parse(raw) as { version?: string }
+        resolve(j.version ?? null)
+      } catch {
+        resolve(null)
+      }
+    })
+
     const local = loadLocalVersions()
     saveLocalVersions({
       ...local,
-      sidecar: { version: manifest.sidecar.version, updated_at: now },
+      sidecar: { version: actualVersion ?? manifest.sidecar.version, updated_at: now },
     })
     return
   }
