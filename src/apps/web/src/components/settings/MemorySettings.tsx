@@ -1011,8 +1011,6 @@ export function MemorySettings({ accessToken }: Props) {
       ) : (
         <SnapshotView snapshot={snapshot} />
       )}
-    </>
-  )}
   <ConfirmDialog open={confirmDeleteId !== null} onClose={() => setConfirmDeleteId(null)} onConfirm={() => void handleDelete(confirmDeleteId!)} message={ds.memoryDeleteConfirm} confirmLabel="Delete" />
   <ConfirmDialog open={confirmClearAll} onClose={() => setConfirmClearAll(false)} onConfirm={() => void handleClearAll()} message={ds.memoryClearAllConfirm} confirmLabel="Delete" />
     </div>
