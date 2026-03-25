@@ -76,7 +76,7 @@ export function registerIpcHandlers(
     return checkForUpdates()
   })
 
-  ipcMain.handle('arkloop:updater:apply', async (_event, { component }: { component: 'sidecar' | 'openviking' | 'opencli' | 'sandbox_kernel' | 'sandbox_rootfs' }) => {
+  ipcMain.handle('arkloop:updater:apply', async (_event, { component }: { component: 'sidecar' | 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs' }) => {
     const win = getWindow()
     await applyUpdate(component, (progress) => {
       if (win) win.webContents.send('arkloop:updater:progress', { component, ...progress })
