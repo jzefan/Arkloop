@@ -128,9 +128,18 @@ func buildSkillPromptBlock(skills []skillstore.ResolvedSkill, layout skillstore.
 	sb.WriteString(". Read the relevant SKILL.md before using a skill.\n")
 	for _, item := range autoSkills {
 		sb.WriteString("- ")
-		sb.WriteString(strings.TrimSpace(item.SkillKey))
+		sb.WriteString(formatSkillIdentifier(item))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("</skills>")
 	return sb.String()
+}
+
+func formatSkillIdentifier(skill skillstore.ResolvedSkill) string {
+	key := strings.TrimSpace(skill.SkillKey)
+	version := strings.TrimSpace(skill.Version)
+	if version == "" {
+		return key
+	}
+	return key + "@" + version
 }

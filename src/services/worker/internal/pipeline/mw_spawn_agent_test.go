@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"arkloop/services/shared/rollout"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/pipeline"
@@ -38,6 +39,10 @@ func (noopSubAgentControl) GetStatus(context.Context, uuid.UUID) (subagentctl.St
 }
 func (noopSubAgentControl) ListChildren(context.Context) ([]subagentctl.StatusSnapshot, error) {
 	return nil, nil
+}
+
+func (noopSubAgentControl) GetRolloutRecorder(uuid.UUID) (*rollout.Recorder, bool) {
+	return nil, false
 }
 
 func TestSpawnAgentMiddleware_NilSpawnPassThrough(t *testing.T) {

@@ -46,8 +46,8 @@ func TestParseChannelContextAllowsHeartbeatWithoutInboundMessage(t *testing.T) {
 	if got.InboundMessage.MessageID != "" {
 		t.Fatalf("expected empty inbound message id, got %q", got.InboundMessage.MessageID)
 	}
-	if got.SenderIdentityID != senderID {
-		t.Fatalf("unexpected sender identity id: %s", got.SenderIdentityID)
+	if got.SenderChannelIdentityID != senderID {
+		t.Fatalf("unexpected sender channel identity id: %s", got.SenderChannelIdentityID)
 	}
 }
 
