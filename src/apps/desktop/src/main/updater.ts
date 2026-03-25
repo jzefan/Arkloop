@@ -13,7 +13,6 @@ export type ComponentStatus = {
 export type UpdateStatus = {
   sidecar: ComponentStatus
   openviking: ComponentStatus
-  opencli?: ComponentStatus
   sandbox: { kernel: ComponentStatus; rootfs: ComponentStatus }
 }
 
@@ -64,20 +63,27 @@ export function loadLocalVersions(): LocalVersions {
     }
 
     return v
-  } catch {
-    // versions.json 不存在或解析失败时，尝试从旧文件迁移 sidecar 版本
-    try {
-      const legacyRaw = fs.readFileSync(LEGACY_SIDECAR_VERSION_FILE, 'utf-8')
-      const legacy = JSON.parse(legacyRaw) as { version?: string; downloadedAt?: string }
-      if (legacy.version) {
-        return {
-          sidecar: { version: legacy.version, updated_at: legacy.downloadedAt ?? new Date().toISOString() },
+  } catch (err) {
+    // 文件不存在时尝试旧文件迁移
+    const isFileNotFound = (e: unknown) =>
+      e instanceof Error && (e as NodeJS.ErrnoException).code === 'ENOENT'
+
+    if (isFileNotFound(err)) {
+      try {
+        const legacyRaw = fs.readFileSync(LEGACY_SIDECAR_VERSION_FILE, 'utf-8')
+        const legacy = JSON.parse(legacyRaw) as { version?: string; downloadedAt?: string }
+        if (legacy.version) {
+          return {
+            sidecar: { version: legacy.version, updated_at: legacy.downloadedAt ?? new Date().toISOString() },
+          }
         }
+      } catch {
+        // 无旧文件
       }
-    } catch {
-      // 无旧文件
+      return {}
     }
-    return {}
+
+    throw err
   }
 }
 
@@ -136,35 +142,12 @@ async function fetchManifest(): Promise<DesktopManifest> {
   return JSON.parse(manifestBody) as DesktopManifest
 }
 
-const OPENCLI_GITHUB_API = 'https://api.github.com/repos/nashsu/opencli-rs/releases/latest'
-
-async function fetchOpenCLILatestVersion(): Promise<string | null> {
-  try {
-    const res = await httpsGet(OPENCLI_GITHUB_API)
-    const body = await new Promise<string>((resolve, reject) => {
-      const chunks: Buffer[] = []
-      res.on('data', (c: Buffer) => chunks.push(c))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString()))
-      res.on('error', reject)
-    })
-    if (res.statusCode !== 200) return null
-    const data = JSON.parse(body) as { tag_name?: string }
-    return data.tag_name?.replace(/^v/, '') ?? null
-  } catch {
-    return null
-  }
-}
-
 export async function checkForUpdates(): Promise<UpdateStatus> {
-  const [manifest, opencliLatest] = await Promise.all([
-    fetchManifest(),
-    fetchOpenCLILatestVersion(),
-  ])
+  const manifest = await fetchManifest()
   const local = loadLocalVersions()
 
   const sidecarCurrent = local.sidecar?.version ?? null
   const ovCurrent = local.openviking?.version ?? null
-  const opencliCurrent = local.opencli?.version ?? null
   const kernelCurrent = local.sandbox?.kernel?.version ?? null
   const rootfsCurrent = local.sandbox?.rootfs?.version ?? null
 
@@ -178,11 +161,6 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
       current: ovCurrent,
       latest: manifest.openviking.version,
       available: !!(manifest.openviking.version && manifest.openviking.version !== ovCurrent),
-    },
-    opencli: {
-      current: opencliCurrent,
-      latest: opencliLatest,
-      available: !!(opencliLatest && opencliLatest !== opencliCurrent),
     },
     sandbox: {
       kernel: {
@@ -248,7 +226,7 @@ async function downloadFile(
 }
 
 export async function applyUpdate(
-  component: 'sidecar' | 'openviking' | 'opencli' | 'sandbox_kernel' | 'sandbox_rootfs',
+  component: 'sidecar' | 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs',
   onProgress?: (p: DownloadProgress) => void,
 ): Promise<void> {
   const manifest = await fetchManifest()
@@ -339,21 +317,6 @@ export async function applyUpdate(
     return
   }
 
-  if (component === 'opencli') {
-    const { downloadOpenCLI } = await import('./sidecar')
-    await downloadOpenCLI(onProgress)
-
-    const latestVersion = await fetchOpenCLILatestVersion()
-    if (latestVersion) {
-      const local = loadLocalVersions()
-      saveLocalVersions({
-        ...local,
-        opencli: { version: latestVersion, updated_at: now },
-      })
-    }
-    return
-  }
-
   if (component === 'sandbox_kernel') {
     const { version, filename } = manifest.sandbox.kernel
     const destPath = path.join(VM_DIR, filename)
@@ -391,4 +354,6 @@ export async function applyUpdate(
     })
     return
   }
+
+  throw new Error(`unknown component: ${component}`)
 }
