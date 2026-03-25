@@ -83,7 +83,23 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 		if err != nil {
 			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
 		} else if found && strings.TrimSpace(block) != "" {
-			block += buildNamespaceCatalog(rc, selfURI)
+			if rc.PeerMemoryURI != "" {
+				peerCtx, peerCancel := context.WithTimeout(ctx, memoryFindTimeout)
+				if peerBlock, _ := renderMemoryBlock(peerCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
+					block += retagMemoryBlock(peerBlock, "peer")
+				}
+				peerCancel()
+			}
+			if rc.SpaceMemoryURI != "" {
+				spaceCtx, spaceCancel := context.WithTimeout(ctx, memoryFindTimeout)
+				if spaceBlock, _ := renderMemoryBlock(spaceCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
+					block += retagMemoryBlock(spaceBlock, "space")
+				}
+				spaceCancel()
+			}
+			if rc.PeerMemoryURI != "" || rc.SpaceMemoryURI != "" {
+				block += buildNamespaceCatalog(rc, selfURI)
+			}
 			rc.SystemPrompt += block
 			return
 		}
@@ -92,8 +108,9 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 	findCtx, cancel := context.WithTimeout(ctx, memoryFindTimeout)
 	defer cancel()
 	selfBlock, selfHits := renderMemoryBlock(findCtx, provider, ident, selfURI, query)
+	var block string
 	if selfBlock != "" {
-		block := selfBlock
+		block = selfBlock
 		if pool != nil {
 			go func() {
 				// goroutine 超出请求生命周期，需要独立 context
@@ -102,21 +119,26 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, selfBlock, hitsToCache(selfHits))
 			}()
 		}
-
-		if rc.PeerMemoryURI != "" {
-			if peerBlock, _ := renderMemoryBlock(findCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
-				block += retagMemoryBlock(peerBlock, "peer")
-			}
+	}
+	if rc.PeerMemoryURI != "" {
+		peerCtx, peerCancel := context.WithTimeout(ctx, memoryFindTimeout)
+		if peerBlock, _ := renderMemoryBlock(peerCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
+			block += retagMemoryBlock(peerBlock, "peer")
 		}
-		if rc.SpaceMemoryURI != "" {
-			if spaceBlock, _ := renderMemoryBlock(findCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
-				block += retagMemoryBlock(spaceBlock, "space")
-			}
+		peerCancel()
+	}
+	if rc.SpaceMemoryURI != "" {
+		spaceCtx, spaceCancel := context.WithTimeout(ctx, memoryFindTimeout)
+		if spaceBlock, _ := renderMemoryBlock(spaceCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
+			block += retagMemoryBlock(spaceBlock, "space")
 		}
+		spaceCancel()
+	}
+	if rc.PeerMemoryURI != "" || rc.SpaceMemoryURI != "" {
 		block += buildNamespaceCatalog(rc, selfURI)
-		if block != "" {
-			rc.SystemPrompt += block
-		}
+	}
+	if block != "" {
+		rc.SystemPrompt += block
 	}
 }
 

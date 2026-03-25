@@ -165,6 +165,8 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 		return argError("content must be a non-empty string", started)
 	}
 
+	targetURI := resolveTargetURI(args, ident, execCtx)
+	writeIdent := identityForTargetURI(ident, targetURI)
 	scope := parseScope(args)
 	writable := buildWritableContent(scope, category, key, content)
 	entry := memory.MemoryEntry{Content: writable}
@@ -175,14 +177,14 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 
 	execCtx.PendingMemoryWrites.Append(memory.PendingWrite{
 		TaskID: taskID,
-		Ident:  ident,
+		Ident:  writeIdent,
 		Scope:  scope,
 		Entry:  entry,
 	})
 	queued := execCtx.Emitter.Emit("memory.write.queued", map[string]any{
 		"task_id":          taskID,
 		"scope":            string(scope),
-		"agent_id":         ident.AgentID,
+		"agent_id":         writeIdent.AgentID,
 		"snapshot_updated": true,
 	}, stringPtr("memory_write"), nil)
 
@@ -253,6 +255,18 @@ func resolveTargetURI(args map[string]any, ident memory.MemoryIdentity, execCtx 
 		}
 	}
 	return memory.SelfURI(ident.UserID.String())
+}
+
+func parseNamespaceArg(args map[string]any) string {
+	if raw, ok := args["namespace"].(string); ok && strings.TrimSpace(raw) != "" {
+		return strings.TrimSpace(raw)
+	}
+	return "self"
+}
+
+func identityForTargetURI(ident memory.MemoryIdentity, targetURI string) memory.MemoryIdentity {
+	// 当前仅 namespace 影响 URI，identity 仍然复用 user 级别 agentID
+	return ident
 }
 
 func parseScope(args map[string]any) memory.MemoryScope {
