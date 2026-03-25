@@ -571,14 +571,17 @@ func extractAssistantDelta(dataJSON map[string]any) string {
 }
 
 // ShouldSuppressHeartbeatOutput 判断 heartbeat 终态是否应跳过写 thread / 外发渠道。
+// 原则：只有明确 reply_silent=false 时才发，其他情况（true 或未调用工具）均 suppress。
 func ShouldSuppressHeartbeatOutput(rc *RunContext, output string) bool {
 	if rc == nil || !rc.HeartbeatRun {
 		return false
 	}
 	if rc.HeartbeatToolOutcome != nil {
-		return rc.HeartbeatToolOutcome.ReplySilent
+		// 明确 false 才发，true 或未设置均 suppress
+		return !rc.HeartbeatToolOutcome.ReplySilent
 	}
-	return AssistantTextIsHeartbeatACK(output)
+	// 未调用工具，suppress
+	return true
 }
 
 func (w *eventWriter) accumUsage(dataJSON map[string]any) {
