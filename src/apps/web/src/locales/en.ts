@@ -240,6 +240,7 @@ export const en: LocaleStrings = {
   noAccount: "No account? Register",
   hasAccount: "Have an account? Log in",
   requestFailed: "Request failed",
+  runInterrupted: "Run interrupted",
   profileTitle: "Profile",
   profileName: "Name",
   profileUsername: "Username",

@@ -172,6 +172,10 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 	if err != nil {
 		slog.WarnContext(ctx, "message attachments: store init failed", "err", err.Error())
 	}
+	rolloutStore, err := buildRolloutStore(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "rollout: store init failed", "err", err.Error())
+	}
 
 	runtimeManager := workerruntime.NewManager(runtimeSnapshotTTL, func(loadCtx context.Context) (sharedtoolruntime.RuntimeSnapshot, error) {
 		return sharedtoolruntime.BuildRuntimeSnapshot(loadCtx, sharedtoolruntime.SnapshotInput{
@@ -280,7 +284,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		DBPool:                       pool,
 		DirectDBPool:                 directPool,
 		RunControlHub:                runControlHub,
-		AuxGateway:                  auxGateway,
+		AuxGateway:                   auxGateway,
 		EmitDebugEvents:              auxCfg.EmitDebugEvents,
 		ConfigResolver:               configResolver,
 		ToolRegistry:                 toolRegistry,
@@ -301,6 +305,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		MemoryProviderFactory:        memoryProviderFactory,
 		RoutingConfigLoader:          routingLoader,
 		MessageAttachmentStore:       messageAttachmentStore,
+		RolloutBlobStore:             rolloutStore,
 		PlatformToolExecutor:         platformExec,
 		ChannelTelegramLoader:        chTelegram,
 	})
@@ -330,6 +335,25 @@ func buildMessageAttachmentStore(ctx context.Context) (objectstore.Store, error)
 		return nil, nil
 	}
 	return bucketOpener.Open(ctx, s3Bucket)
+}
+
+func buildRolloutStore(ctx context.Context) (objectstore.BlobStore, error) {
+	bucketOpener, err := buildStorageBucketOpenerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if bucketOpener == nil {
+		return nil, nil
+	}
+	store, err := bucketOpener.Open(ctx, objectstore.RolloutBucket)
+	if err != nil {
+		return nil, err
+	}
+	blobStore, ok := store.(objectstore.BlobStore)
+	if !ok {
+		return nil, fmt.Errorf("rollout store does not implement blob store")
+	}
+	return blobStore, nil
 }
 
 func buildStorageBucketOpenerFromEnv() (objectstore.BucketOpener, error) {

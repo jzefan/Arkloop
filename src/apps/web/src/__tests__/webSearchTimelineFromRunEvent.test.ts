@@ -107,4 +107,29 @@ describe('applyRunEventToWebSearchSteps', () => {
     )
     expect(afterHostComplete.every((s) => s.status === 'done')).toBe(true)
   })
+
+  it('run.interrupted 也会把主会话搜索步骤收口为 done', () => {
+    const active = applyRunEventToWebSearchSteps([], {
+      type: 'tool.call',
+      seq: 1,
+      ts: '',
+      event_id: 'e1',
+      run_id: 'r',
+      data: {
+        tool_name: 'web_search',
+        tool_call_id: 'host',
+        arguments: { query: 'resume me' },
+      },
+    })
+    const interrupted = applyRunEventToWebSearchSteps(active, {
+      type: 'run.interrupted',
+      seq: 2,
+      ts: '',
+      event_id: 'e2',
+      run_id: 'r',
+      data: {},
+    })
+    expect(interrupted).toHaveLength(1)
+    expect(interrupted[0]?.status).toBe('done')
+  })
 })

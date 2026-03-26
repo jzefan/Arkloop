@@ -40,6 +40,7 @@ export interface LocaleStrings {
   suggestionSuccess: string;
   comingSoon: string;
   requestFailed: string;
+  runInterrupted: string;
   logout: string;
   language: string;
   appearance: string;

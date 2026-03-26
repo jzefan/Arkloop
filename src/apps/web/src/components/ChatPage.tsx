@@ -656,7 +656,31 @@ export function ChatPage() {
   const applySearchSteps = useCallback((getter: () => MessageSearchStepRef[]) => {
     pendingSearchStepsRef.current = getter()
   }, [])
+  const pendingMessageRef = useRef<string | null>(null)
+  const clearQueuedDraft = useCallback(() => {
+    pendingMessageRef.current = null
+    setQueuedDraft(null)
+  }, [])
+  const restoreQueuedDraftToInput = useCallback(() => {
+    const pending = pendingMessageRef.current
+    pendingMessageRef.current = null
+    setQueuedDraft(null)
+    if (!pending) return
+    setDraft((prev) => prev.trim() ? prev : pending)
+  }, [])
+  const clearLiveRunTransientState = useCallback(() => {
+    streamingArtifactsRef.current = []
+    setStreamingArtifacts([])
+    currentRunSourcesRef.current = []
+    currentRunArtifactsRef.current = []
+    currentRunCodeExecutionsRef.current = []
+    currentRunBrowserActionsRef.current = []
+    currentRunSubAgentsRef.current = []
+    currentRunFileOpsRef.current = []
+    currentRunWebFetchesRef.current = []
+  }, [])
   const clearLiveRunSecurityArtifacts = useCallback(() => {
+    clearLiveRunTransientState()
     resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
     setPendingThinking(false)
@@ -672,7 +696,7 @@ export function ChatPage() {
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
-  }, [resetAssistantTurnLive, resetSearchSteps])
+  }, [clearLiveRunTransientState, resetAssistantTurnLive, resetSearchSteps])
 
   /** run 结束后等 refreshMessages 落盘再清；避免「流式 DOM 拆掉、助手消息尚未进列表」的一帧空洞 */
   const clearDeferredLiveRunUi = useCallback(() => {
@@ -702,7 +726,6 @@ export function ChatPage() {
   const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
   const messageSyncVersionRef = useRef(0)
-  const pendingMessageRef = useRef<string | null>(null)
   // 仅在当前 run 的 SSE 确认进入过连接态后，才允许触发终端兜底。
   const sseTerminalFallbackRunIdRef = useRef<string | null>(null)
   const sseTerminalFallbackArmedRef = useRef(false)
@@ -983,6 +1006,9 @@ export function ChatPage() {
 
         loadedItems = items
         setMessages(items)
+        if (latest?.status === 'interrupted') {
+          setError({ message: t.runInterrupted })
+        }
 
         // 加载各消息缓存的 web 来源
         const sourcesMap = new Map<string, WebSource[]>()
@@ -1311,6 +1337,44 @@ export function ChatPage() {
   // 处理 SSE 事件
   useEffect(() => {
     if (!activeRunId) return
+    const resetTerminalRunState = (options?: {
+      restoreQueuedDraft?: boolean
+      preserveSearchSteps?: boolean
+    }) => {
+      injectionBlockedRunIdRef.current = null
+      sse.disconnect()
+      setActiveRunId(null)
+      setPendingThinking(false)
+      setTopLevelCodeExecutions([])
+      setTopLevelSubAgents([])
+      setTopLevelFileOps([])
+      setTopLevelWebFetches([])
+      if (options?.restoreQueuedDraft) {
+        restoreQueuedDraftToInput()
+      } else {
+        clearQueuedDraft()
+      }
+      streamingArtifactsRef.current = []
+      setStreamingArtifacts([])
+      setSegments([])
+      resetAssistantTurnLive()
+      activeSegmentIdRef.current = null
+      currentRunSourcesRef.current = []
+      currentRunArtifactsRef.current = []
+      currentRunCodeExecutionsRef.current = []
+      currentRunBrowserActionsRef.current = []
+      currentRunSubAgentsRef.current = []
+      currentRunFileOpsRef.current = []
+      currentRunWebFetchesRef.current = []
+      if (!options?.preserveSearchSteps) {
+        resetSearchSteps()
+      }
+      pendingSearchStepsRef.current = null
+      setAwaitingInput(false)
+      setPendingUserInput(null)
+      setCheckInDraft('')
+      if (threadId) onRunEnded(threadId)
+    }
     const { fresh, nextProcessedCount } = selectFreshRunEvents({
       events: sse.events,
       activeRunId,
@@ -1727,10 +1791,10 @@ export function ChatPage() {
         injectionBlockedRunIdRef.current = event.run_id
         sseTerminalFallbackArmedRef.current = false
         sseTerminalFallbackRunIdRef.current = null
+        restoreQueuedDraftToInput()
         sse.disconnect()
         setActiveRunId(null)
         setCancelSubmitting(false)
-        setQueuedDraft(null)
         setError(null)
         clearLiveRunSecurityArtifacts()
         setInjectionBlocked(getInjectionBlockMessage(event))
@@ -1855,27 +1919,7 @@ export function ChatPage() {
       if (event.type === 'run.cancelled') {
         if (isACPDelegateEventData(event.data)) continue
         const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
-        injectionBlockedRunIdRef.current = null
-        sse.disconnect()
-        setActiveRunId(null)
-        setPendingThinking(false)
-        setTopLevelCodeExecutions([])
-        setTopLevelSubAgents([])
-        setTopLevelFileOps([])
-        setTopLevelWebFetches([])
-        setSegments([])
-        resetAssistantTurnLive()
-        activeSegmentIdRef.current = null
-        currentRunCodeExecutionsRef.current = []
-        currentRunBrowserActionsRef.current = []
-        currentRunSubAgentsRef.current = []
-        currentRunFileOpsRef.current = []
-        currentRunWebFetchesRef.current = []
-        resetSearchSteps()
-        setAwaitingInput(false)
-        setPendingUserInput(null)
-        setCheckInDraft('')
-        if (threadId) onRunEnded(threadId)
+        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true })
         if (!blockedByInjection) {
           const data = event.data as { trace_id?: unknown }
           const traceId = typeof data?.trace_id === 'string' ? data.trace_id : undefined
@@ -1886,27 +1930,7 @@ export function ChatPage() {
 
       if (event.type === 'run.failed') {
         if (isACPDelegateEventData(event.data)) continue
-        injectionBlockedRunIdRef.current = null
-        sse.disconnect()
-        setActiveRunId(null)
-        setPendingThinking(false)
-        setTopLevelCodeExecutions([])
-        setTopLevelSubAgents([])
-        setTopLevelFileOps([])
-        setTopLevelWebFetches([])
-        setSegments([])
-        resetAssistantTurnLive()
-        activeSegmentIdRef.current = null
-        currentRunCodeExecutionsRef.current = []
-        currentRunBrowserActionsRef.current = []
-        currentRunSubAgentsRef.current = []
-        currentRunFileOpsRef.current = []
-        currentRunWebFetchesRef.current = []
-        resetSearchSteps()
-        setAwaitingInput(false)
-        setPendingUserInput(null)
-        setCheckInDraft('')
-        if (threadId) onRunEnded(threadId)
+        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true })
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
         const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
@@ -1923,9 +1947,27 @@ export function ChatPage() {
             details,
           })
         }
+        continue
+      }
+
+      if (event.type === 'run.interrupted') {
+        if (isACPDelegateEventData(event.data)) continue
+        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true })
+        const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
+        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
+        const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
+          ? obj.details as Record<string, unknown>
+          : undefined
+
+        setError({
+          message: typeof obj?.message === 'string' ? obj.message : t.runInterrupted,
+          code: typeof obj?.code === 'string' ? obj.code : errorClass,
+          details,
+        })
+        continue
       }
     }
-  }, [activeRunId, clearContextCompactHideTimer, clearDeferredLiveRunUi, clearLiveRunSecurityArtifacts, refreshMessages, refreshCredits, resetSearchSteps, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, clearContextCompactHideTimer, clearDeferredLiveRunUi, clearLiveRunSecurityArtifacts, clearQueuedDraft, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {

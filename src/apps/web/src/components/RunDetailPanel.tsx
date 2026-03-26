@@ -21,6 +21,7 @@ function statusColor(status: string): string {
     case 'running': return 'var(--c-status-warning-text)'
     case 'completed': return 'var(--c-status-success-text)'
     case 'failed': return 'var(--c-status-error-text)'
+    case 'interrupted': return 'var(--c-status-error-text)'
     default: return 'var(--c-text-muted)'
   }
 }
@@ -299,7 +300,12 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
                   )}
                   {detail?.created_at && <MetaRow label="Created" value={formatTime(detail.created_at)} />}
                   {detail?.completed_at && <MetaRow label="Completed" value={formatTime(detail.completed_at)} />}
-                  {detail?.failed_at && <MetaRow label="Failed at" value={formatTime(detail.failed_at)} />}
+                  {detail?.failed_at && (
+                    <MetaRow
+                      label={detail.status === 'interrupted' ? 'Interrupted at' : 'Failed at'}
+                      value={formatTime(detail.failed_at)}
+                    />
+                  )}
                   {!detail && !loading && (
                     <p className="text-xs text-[var(--c-text-muted)]">
                       Overview unavailable (admin access required).

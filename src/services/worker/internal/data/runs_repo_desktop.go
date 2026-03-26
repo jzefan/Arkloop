@@ -18,15 +18,17 @@ func (DesktopRunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.U
 	var run Run
 	err := tx.QueryRow(ctx,
 		`SELECT r.id, r.account_id, r.thread_id,
-		        t.project_id, r.parent_run_id,
-		        r.created_by_user_id, r.profile_ref, r.workspace_ref
+		        t.project_id, r.status, r.parent_run_id, r.resume_from_run_id,
+		        r.created_by_user_id, r.profile_ref, r.workspace_ref, r.created_at,
+		        r.status_updated_at, r.failed_at
 		   FROM runs r
 		   LEFT JOIN threads t ON t.id = r.thread_id
 		  WHERE r.id = $1
 		  LIMIT 1`,
 		runID,
 	).Scan(&run.ID, &run.AccountID, &run.ThreadID, &run.ProjectID,
-		&run.ParentRunID, &run.CreatedByUserID, &run.ProfileRef, &run.WorkspaceRef)
+		&run.Status, &run.ParentRunID, &run.ResumeFromRunID, &run.CreatedByUserID, &run.ProfileRef, &run.WorkspaceRef, &run.CreatedAt,
+		&run.StatusUpdatedAt, &run.FailedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -103,7 +105,7 @@ func (DesktopRunsRepository) UpdateRunTerminalStatus(
 		 SET status              = $2,
 		     status_updated_at   = datetime('now'),
 		     completed_at        = CASE WHEN $2 = 'completed' THEN datetime('now') ELSE completed_at END,
-		     failed_at           = CASE WHEN $2 = 'failed'    THEN datetime('now') ELSE failed_at    END,
+		     failed_at           = CASE WHEN $2 IN ('failed', 'interrupted') THEN datetime('now') ELSE failed_at END,
 		     duration_ms         = CAST((julianday('now') - julianday(created_at)) * 86400000 AS INTEGER),
 		     total_input_tokens  = $3,
 		     total_output_tokens = $4,

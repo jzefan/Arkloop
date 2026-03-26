@@ -100,6 +100,7 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 	terminal, err := eventsRepo.GetLatestEventType(ctx, tx, payload.RunID, []string{
 		"run.completed",
 		"run.failed",
+		"run.interrupted",
 		"run.cancelled",
 	})
 	if err != nil {

@@ -25,6 +25,7 @@ import (
 
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
+	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/rollout"
@@ -213,6 +214,38 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 		if _, ok := specNames[toolName]; !ok {
 			t.Fatalf("expected tool spec %s in desktop llm specs", toolName)
 		}
+	}
+}
+
+func TestComposeDesktopEngineInitializesRolloutStore(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	db, err := sqlitepgx.Open(filepath.Join(dataDir, "desktop.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	engine, err := ComposeDesktopEngine(ctx, db, eventbus.NewLocalEventBus(), executor.DefaultExecutorRegistry(), nil)
+	if err != nil {
+		t.Fatalf("compose desktop engine: %v", err)
+	}
+	if engine.rolloutStore == nil {
+		t.Fatal("expected desktop rollout store to be initialized")
+	}
+
+	if err := engine.rolloutStore.Put(ctx, "run/test.jsonl", []byte("ok")); err != nil {
+		t.Fatalf("write rollout file: %v", err)
+	}
+	expectedPath := filepath.Join(desktop.StorageRoot(dataDir), objectstore.RolloutBucket, "objects", "run", "test.jsonl")
+	content, err := os.ReadFile(expectedPath)
+	if err != nil {
+		t.Fatalf("read rollout file: %v", err)
+	}
+	if string(content) != "ok" {
+		t.Fatalf("unexpected rollout file content: %q", string(content))
 	}
 }
 
@@ -582,7 +615,7 @@ func TestResolveDesktopRunBindingsIgnoresWorkDirForWorkspaceAndSkills(t *testing
 		t.Fatalf("expected identical skill sets, got first=%#v second=%#v", firstItems, secondItems)
 	}
 
-	loader := desktopInputLoader(db, data.DesktopRunEventsRepository{}, nil)
+	loader := desktopInputLoader(db, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}, nil, nil)
 	firstRC := &pipeline.RunContext{Run: first, ThreadMessageHistoryLimit: 10}
 	if err := loader(ctx, firstRC, func(_ context.Context, rc *pipeline.RunContext) error {
 		if rc.WorkDir != "/tmp/work-a" {

@@ -114,7 +114,8 @@ export function applyRunEventToWebSearchSteps(
   if (
     event.type === 'run.completed' ||
     event.type === 'run.failed' ||
-    event.type === 'run.cancelled'
+    event.type === 'run.cancelled' ||
+    event.type === 'run.interrupted'
   ) {
     if (isACPDelegateEventData(event.data)) return steps
     return steps.map((s) =>

@@ -13,7 +13,7 @@ import (
 
 // TerminalStatusUpdate 携带终态写入所需的所有字段，供 R30 的 eventWriter 使用。
 type TerminalStatusUpdate struct {
-	// Status 必须是 'completed'、'failed' 或 'cancelled' 之一
+	// Status 必须是 'completed'、'failed'、'interrupted' 或 'cancelled' 之一
 	Status            string
 	TotalInputTokens  int64
 	TotalOutputTokens int64
@@ -25,11 +25,15 @@ type Run struct {
 	AccountID       uuid.UUID
 	ThreadID        uuid.UUID
 	ProjectID       *uuid.UUID
+	Status          string
 	ParentRunID     *uuid.UUID // nil 表示顶级 Run，非 nil 表示子 Run
+	ResumeFromRunID *uuid.UUID
 	CreatedByUserID *uuid.UUID // nil 表示系统触发或用户已删除，Memory 层按此隔离
 	ProfileRef      *string
 	WorkspaceRef    *string
 	CreatedAt       time.Time
+	StatusUpdatedAt *time.Time
+	FailedAt        *time.Time
 }
 
 type RunLineage struct {
@@ -77,17 +81,21 @@ func (RunsRepository) GetRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*
 		        r.account_id,
 		        r.thread_id,
 		        t.project_id,
+		        r.status,
 		        r.parent_run_id,
+		        r.resume_from_run_id,
 		        r.created_by_user_id,
 		        r.profile_ref,
 		        r.workspace_ref,
-		        r.created_at
+		        r.created_at,
+		        r.status_updated_at,
+		        r.failed_at
 		   FROM runs r
 		   LEFT JOIN threads t ON t.id = r.thread_id
 		  WHERE r.id = $1
 		  LIMIT 1`,
 		runID,
-	).Scan(&run.ID, &run.AccountID, &run.ThreadID, &run.ProjectID, &run.ParentRunID, &run.CreatedByUserID, &run.ProfileRef, &run.WorkspaceRef, &run.CreatedAt)
+	).Scan(&run.ID, &run.AccountID, &run.ThreadID, &run.ProjectID, &run.Status, &run.ParentRunID, &run.ResumeFromRunID, &run.CreatedByUserID, &run.ProfileRef, &run.WorkspaceRef, &run.CreatedAt, &run.StatusUpdatedAt, &run.FailedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -222,7 +230,7 @@ func (RunsRepository) UpdateRunTerminalStatus(
 		 SET status              = $2,
 		     status_updated_at   = now(),
 		     completed_at        = CASE WHEN $2 = 'completed' THEN now() ELSE completed_at END,
-		     failed_at           = CASE WHEN $2 = 'failed'    THEN now() ELSE failed_at    END,
+		     failed_at           = CASE WHEN $2 IN ('failed', 'interrupted') THEN now() ELSE failed_at END,
 		     duration_ms         = EXTRACT(EPOCH FROM (now() - created_at)) * 1000,
 		     total_input_tokens  = $3,
 		     total_output_tokens = $4,
