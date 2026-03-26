@@ -203,6 +203,17 @@ func TestAnthropicGateway_Stream_ToolUse(t *testing.T) {
 	}
 }
 
+func TestNewAnthropicGateway_NormalizesMiniMaxBaseURL(t *testing.T) {
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: "https://api.minimaxi.com/anthropic",
+	})
+
+	if gateway.cfg.BaseURL != "https://api.minimaxi.com/anthropic/v1" {
+		t.Fatalf("unexpected base url: %q", gateway.cfg.BaseURL)
+	}
+}
+
 func TestAnthropicGateway_Stream_DebugChunk_NotTruncated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -244,7 +255,7 @@ func TestAnthropicGateway_Stream_DebugChunk_Truncated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		payload, _ := json.Marshal(map[string]any{
-			"type": "content_block_start",
+			"type":  "content_block_start",
 			"index": 0,
 			"content_block": map[string]any{
 				"type": "text",
