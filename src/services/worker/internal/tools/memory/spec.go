@@ -25,7 +25,6 @@ var SearchLlmSpec = llm.ToolSpec{
 		"type": "object",
 		"properties": map[string]any{
 			"query": map[string]any{"type": "string"},
-			"namespace": map[string]any{"type": "string", "enum": []string{"self", "peer", "space"}},
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 		},
 		"required":             []string{"query"},
@@ -79,7 +78,6 @@ var WriteLlmSpec = llm.ToolSpec{
 			},
 			"key":     map[string]any{"type": "string", "pattern": `^[a-zA-Z0-9_\-\.]+$`},
 			"content": map[string]any{"type": "string"},
-			"namespace": map[string]any{"type": "string", "enum": []string{"self", "peer", "space"}},
 		},
 		"required":             []string{"category", "key", "content"},
 		"additionalProperties": false,
