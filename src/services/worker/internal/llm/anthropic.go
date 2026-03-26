@@ -80,6 +80,7 @@ func NewAnthropicGateway(cfg AnthropicGatewayConfig) *AnthropicGateway {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
+	baseURL = sharedoutbound.NormalizeAnthropicCompatibleBaseURL(baseURL)
 	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(baseURL)
 	if baseURLErr == nil {
 		baseURL = normalizedBaseURL
@@ -692,12 +693,12 @@ func parseAnthropicUsage(body []byte) *Usage {
 }
 
 type anthropicStreamEvent struct {
-	Type         string                     `json:"type"`
-	Index        *int                       `json:"index"`
-	ContentBlock *anthropicStreamBlock      `json:"content_block"`
-	Delta        *anthropicStreamDelta      `json:"delta"`
-	Message      *anthropicStreamMessage    `json:"message"`
-	Usage        map[string]any             `json:"usage"`
+	Type         string                  `json:"type"`
+	Index        *int                    `json:"index"`
+	ContentBlock *anthropicStreamBlock   `json:"content_block"`
+	Delta        *anthropicStreamDelta   `json:"delta"`
+	Message      *anthropicStreamMessage `json:"message"`
+	Usage        map[string]any          `json:"usage"`
 }
 
 type anthropicStreamMessage struct {

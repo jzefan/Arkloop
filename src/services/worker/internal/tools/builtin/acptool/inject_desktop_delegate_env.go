@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	sharedoutbound "arkloop/services/shared/outboundurl"
 	"arkloop/services/worker/internal/acp"
 	workerCrypto "arkloop/services/worker/internal/crypto"
 	"arkloop/services/worker/internal/data"
@@ -98,6 +99,9 @@ func applyCredentialModelToEnv(ctx context.Context, db data.DesktopDB, credID uu
 	switch pv {
 	case "anthropic":
 		env["ANTHROPIC_API_KEY"] = key
+		if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+			env["ANTHROPIC_BASE_URL"] = sharedoutbound.NormalizeAnthropicCompatibleBaseURL(*baseURL)
+		}
 	case "openai", "deepseek":
 		env["OPENAI_API_KEY"] = key
 		if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
