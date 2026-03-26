@@ -1,261 +1,52 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Check,
-  ChevronDown,
-  Eye,
-  EyeOff,
-  Link2,
-  Loader2,
-  Plus,
-  Radio,
-  X,
-} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import {
   type ChannelIdentityResponse,
   type ChannelResponse,
   type LlmProvider,
   type Persona,
-  createChannel,
-  createChannelBindCode,
-  isApiError,
   listChannelPersonas,
   listChannels,
   listLlmProviders,
   listMyChannelIdentities,
-  unbindChannelIdentity,
-  updateChannel,
-  verifyChannel,
 } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { DEFAULT_PERSONA_KEY } from '../../storage'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
-import { SettingsPillToggle } from './_SettingsPillToggle'
-
-type ModelOption = { value: string; label: string }
-
-function ModelDropdown({
-  value,
-  options,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  value: string
-  options: ModelOption[]
-  placeholder: string
-  disabled: boolean
-  onChange: (v: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  const currentLabel = options.find((o) => o.value === value)?.label ?? (value || placeholder)
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current?.contains(e.target as Node) || btnRef.current?.contains(e.target as Node)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div className="relative">
-      <button
-        ref={btnRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-secondary)' }}
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDown size={13} className="ml-2 shrink-0" />
-      </button>
-
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            width: '100%',
-            boxShadow: 'var(--c-dropdown-shadow)',
-            maxHeight: '220px',
-            overflowY: 'auto',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => { onChange(''); setOpen(false) }}
-            className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-            style={{ borderRadius: '8px', fontWeight: !value ? 600 : 400, color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)' }}
-          >
-            {placeholder}
-          </button>
-          {options.map(({ value: v, label }) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => { onChange(v); setOpen(false) }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{ borderRadius: '8px', fontWeight: value === v ? 600 : 400, color: value === v ? 'var(--c-text-heading)' : 'var(--c-text-secondary)' }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+import { DesktopDiscordSettingsPanel } from './DesktopDiscordSettingsPanel'
+import { DesktopTelegramSettingsPanel } from './DesktopTelegramSettingsPanel'
+import { TabBar } from '@arkloop/shared/components/prompt-injection'
 
 type Props = {
   accessToken: string
 }
 
-const inputCls =
-  'w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:border-[var(--c-border)] transition-colors'
-const secondaryButtonCls =
-  'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50'
-const primaryButtonCls =
-  'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:opacity-50'
-
-function readAllowedUserIDs(channel: ChannelResponse | null): string[] {
-  const raw = channel?.config_json?.allowed_user_ids
-  if (!Array.isArray(raw)) return []
-  const seen = new Set<string>()
-  const values: string[] = []
-  for (const item of raw) {
-    if (typeof item !== 'string') continue
-    const cleaned = item.trim()
-    if (!cleaned || seen.has(cleaned)) continue
-    seen.add(cleaned)
-    values.push(cleaned)
-  }
-  return values
-}
-
-function parseAllowedUserIDs(input: string): string[] {
-  return input
-    .split(/[\n,\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function mergeAllowedUserIDs(existing: string[], pendingInput: string): string[] {
-  const seen = new Set<string>()
-  const merged: string[] = []
-
-  for (const item of [...existing, ...parseAllowedUserIDs(pendingInput)]) {
-    if (!item || seen.has(item)) continue
-    seen.add(item)
-    merged.push(item)
-  }
-
-  return merged
-}
-
-function sameItems(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((item, index) => item === b[index])
-}
-
-function defaultPersonaID(personas: Persona[]): string {
-  const preferred = personas.find((persona) => persona.persona_key === DEFAULT_PERSONA_KEY)
-  return preferred?.id ?? personas[0]?.id ?? ''
-}
-
-function resolvePersonaID(personas: Persona[], storedPersonaID?: string | null): string {
-  const cleaned = storedPersonaID?.trim()
-  if (cleaned) return cleaned
-  return defaultPersonaID(personas)
-}
-
-function StatusBadge({
-  active,
-  label,
-}: {
-  active: boolean
-  label: string
-}) {
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-      style={{
-        background: active ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))' : 'var(--c-bg-deep)',
-        color: active ? 'var(--c-status-success, #22c55e)' : 'var(--c-text-muted)',
-      }}
-    >
-      <span
-        className="inline-block h-1.5 w-1.5 rounded-full"
-        style={{ background: active ? 'currentColor' : 'var(--c-text-muted)' }}
-      />
-      {label}
-    </span>
-  )
-}
+type IntegrationTab = 'telegram' | 'discord'
 
 export function DesktopChannelsSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const ct = t.channels
-  const ds = t.desktopSettings
-
+  const [activeTab, setActiveTab] = useState<IntegrationTab>('telegram')
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
-
-  const [telegramChannel, setTelegramChannel] = useState<ChannelResponse | null>(null)
+  const [channels, setChannels] = useState<ChannelResponse[]>([])
   const [personas, setPersonas] = useState<Persona[]>([])
   const [identities, setIdentities] = useState<ChannelIdentityResponse[]>([])
   const [providers, setProviders] = useState<LlmProvider[]>([])
 
-  const [enabled, setEnabled] = useState(false)
-  const [personaID, setPersonaID] = useState('')
-  const [allowedUserIDs, setAllowedUserIDs] = useState<string[]>([])
-  const [allowedUserInput, setAllowedUserInput] = useState('')
-
-  const [tokenDraft, setTokenDraft] = useState('')
-  const [showToken, setShowToken] = useState(false)
-  const [defaultModel, setDefaultModel] = useState('')
-
-  const [verifying, setVerifying] = useState(false)
-  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
-
-  const [bindCode, setBindCode] = useState<string | null>(null)
-  const [generatingCode, setGeneratingCode] = useState(false)
-
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [channels, linkedIdentities, allPersonas] = await Promise.all([
+      const [allChannels, linkedIdentities, allPersonas] = await Promise.all([
         listChannels(accessToken),
         listMyChannelIdentities(accessToken).catch(() => [] as ChannelIdentityResponse[]),
         listChannelPersonas(accessToken).catch(() => [] as Persona[]),
       ])
-      const channel = channels.find((item) => item.channel_type === 'telegram') ?? null
-      setTelegramChannel(channel)
+      setChannels(allChannels)
+      setIdentities(linkedIdentities)
       setPersonas(allPersonas)
-      setIdentities(linkedIdentities.filter((item) => item.channel_type === 'telegram'))
-      setEnabled(channel?.is_active ?? false)
-      setPersonaID(resolvePersonaID(allPersonas, channel?.persona_id))
-      setAllowedUserIDs(readAllowedUserIDs(channel))
-      setDefaultModel((channel?.config_json?.default_model as string | undefined) ?? '')
-      setTokenDraft('')
-      setAllowedUserInput('')
-      setError('')
-    } catch {
-      setError(ct.loadFailed)
     } finally {
       setLoading(false)
     }
-  }, [accessToken, ct.loadFailed])
+  }, [accessToken])
 
   useEffect(() => {
     void load()
@@ -265,469 +56,56 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
     listLlmProviders(accessToken).then(setProviders).catch(() => {})
   }, [accessToken])
 
-  const modelOptions: ModelOption[] = providers.flatMap((p) =>
-    p.models.filter((m) => m.show_in_picker).map((m) => ({
-      value: `${p.name}^${m.model}`,
-      label: `${p.name} / ${m.model}`,
-    })),
+  const telegramChannel = useMemo(
+    () => channels.find((channel) => channel.channel_type === 'telegram') ?? null,
+    [channels],
+  )
+  const discordChannel = useMemo(
+    () => channels.find((channel) => channel.channel_type === 'discord') ?? null,
+    [channels],
+  )
+  const telegramIdentities = useMemo(
+    () => identities.filter((identity) => identity.channel_type === 'telegram'),
+    [identities],
+  )
+  const discordIdentities = useMemo(
+    () => identities.filter((identity) => identity.channel_type === 'discord'),
+    [identities],
   )
 
-  const persistedAllowedUserIDs = useMemo(
-    () => readAllowedUserIDs(telegramChannel),
-    [telegramChannel],
-  )
-  const effectiveAllowedUserIDs = useMemo(
-    () => mergeAllowedUserIDs(allowedUserIDs, allowedUserInput),
-    [allowedUserIDs, allowedUserInput],
-  )
-  const effectivePersonaID = useMemo(
-    () => resolvePersonaID(personas, telegramChannel?.persona_id),
-    [personas, telegramChannel?.persona_id],
-  )
-
-  const persistedDefaultModel = (telegramChannel?.config_json?.default_model as string | undefined) ?? ''
-
-  const dirty = useMemo(() => {
-    if (loading) return false
-    if ((telegramChannel?.is_active ?? false) !== enabled) return true
-    if (effectivePersonaID !== personaID) return true
-    if (!sameItems(persistedAllowedUserIDs, effectiveAllowedUserIDs)) return true
-    if (defaultModel !== persistedDefaultModel) return true
-    return tokenDraft.trim().length > 0
-  }, [
-    defaultModel,
-    effectiveAllowedUserIDs,
-    effectivePersonaID,
-    enabled,
-    loading,
-    persistedAllowedUserIDs,
-    persistedDefaultModel,
-    personaID,
-    telegramChannel,
-    tokenDraft,
-  ])
-
-  const canSave = dirty && (telegramChannel !== null || tokenDraft.trim().length > 0)
-  const tokenConfigured = telegramChannel?.has_credentials === true
-
-  const handleAddAllowedUsers = () => {
-    const nextIDs = mergeAllowedUserIDs(allowedUserIDs, allowedUserInput)
-    if (nextIDs.length === allowedUserIDs.length) return
-    setAllowedUserIDs(nextIDs)
-    setAllowedUserInput('')
-    setSaved(false)
-  }
-
-  const handleRemoveAllowedUser = (value: string) => {
-    setAllowedUserIDs((current) => current.filter((item) => item !== value))
-    setSaved(false)
-  }
-
-  const handleSave = async () => {
-    const nextAllowedUserIDs = mergeAllowedUserIDs(allowedUserIDs, allowedUserInput)
-
-    if (enabled && !personaID) {
-      setError(ct.personaRequired)
-      return
-    }
-
-    setSaving(true)
-    setError('')
-    try {
-      const base =
-        telegramChannel?.config_json !== null &&
-        telegramChannel?.config_json !== undefined &&
-        typeof telegramChannel.config_json === 'object' &&
-        !Array.isArray(telegramChannel.config_json)
-          ? { ...(telegramChannel.config_json as Record<string, unknown>) }
-          : {}
-      const configJSON: Record<string, unknown> = { ...base, allowed_user_ids: nextAllowedUserIDs }
-      if (defaultModel.trim()) configJSON.default_model = defaultModel.trim()
-      else delete configJSON.default_model
-
-      if (telegramChannel == null) {
-        const created = await createChannel(accessToken, {
-          channel_type: 'telegram',
-          bot_token: tokenDraft.trim(),
-          persona_id: personaID || undefined,
-          config_json: configJSON,
-        })
-        if (enabled) {
-          await updateChannel(accessToken, created.id, { is_active: true })
-        }
-      } else {
-        await updateChannel(accessToken, telegramChannel.id, {
-          bot_token: tokenDraft.trim() || undefined,
-          persona_id: personaID || null,
-          is_active: enabled,
-          config_json: configJSON,
-        })
-      }
-
-      setAllowedUserIDs(nextAllowedUserIDs)
-      setAllowedUserInput('')
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
-      await load()
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        setError(ds.connectorSaveTimeout)
-      } else {
-        setError(isApiError(err) ? err.message : ct.saveFailed)
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleVerify = async () => {
-    if (!telegramChannel) return
-    setVerifying(true)
-    setVerifyResult(null)
-    try {
-      const res = await verifyChannel(accessToken, telegramChannel.id)
-      if (res.ok) {
-        setVerifyResult({ ok: true, message: res.bot_username ? `@${res.bot_username}` : ds.connectorVerifyOk })
-      } else {
-        setVerifyResult({ ok: false, message: res.error ?? ds.connectorVerifyFail })
-      }
-    } catch (err) {
-      const msg = err instanceof Error && err.name === 'AbortError'
-        ? ds.connectorSaveTimeout
-        : isApiError(err) ? err.message : ds.connectorVerifyFail
-      setVerifyResult({ ok: false, message: msg })
-    } finally {
-      setVerifying(false)
-    }
-  }
-
-  const handleGenerateBindCode = async () => {
-    setGeneratingCode(true)
-    setError('')
-    try {
-      const result = await createChannelBindCode(accessToken, 'telegram')
-      setBindCode(result.token)
-    } catch {
-      setError(ct.loadFailed)
-    } finally {
-      setGeneratingCode(false)
-    }
-  }
-
-  const handleUnbind = async (identityID: string) => {
-    if (!confirm(ct.unbindConfirm)) return
-    try {
-      await unbindChannelIdentity(accessToken, identityID)
-      await load()
-    } catch {
-      setError(ct.unbindFailed)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-6">
-        <SettingsSectionHeader title={ct.telegram} />
-        <div className="flex items-center justify-center py-20 text-[var(--c-text-muted)]">
-          <Loader2 size={20} className="animate-spin" />
-        </div>
-      </div>
-    )
-  }
+  const tabItems: { key: IntegrationTab; label: string }[] = [
+    { key: 'telegram', label: ct.telegram },
+    { key: 'discord', label: ct.discord },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
-      <SettingsSectionHeader title={ct.telegram} />
+      <SettingsSectionHeader title={ct.title} description={ct.subtitle} />
+      <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
 
-      {error && (
-        <div
-          className="rounded-xl px-4 py-3 text-sm"
-          style={{
-            border: '0.5px solid color-mix(in srgb, var(--c-status-error, #ef4444) 24%, transparent)',
-            background: 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
-            color: 'var(--c-status-error-text, #ef4444)',
-          }}
-        >
-          {error}
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-[var(--c-text-muted)]">
+          <Loader2 size={20} className="animate-spin" />
         </div>
+      ) : activeTab === 'telegram' ? (
+        <DesktopTelegramSettingsPanel
+          accessToken={accessToken}
+          channel={telegramChannel}
+          personas={personas}
+          identities={telegramIdentities}
+          providers={providers}
+          reload={load}
+        />
+      ) : (
+        <DesktopDiscordSettingsPanel
+          accessToken={accessToken}
+          channel={discordChannel}
+          personas={personas}
+          identities={discordIdentities}
+          providers={providers}
+          reload={load}
+        />
       )}
-
-      <div
-        className="rounded-2xl p-5"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-      >
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--c-bg-deep)] text-[var(--c-text-secondary)]">
-                  <Radio size={18} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.telegram}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <StatusBadge
-                      active={enabled}
-                      label={enabled ? ct.active : ct.inactive}
-                    />
-                    <StatusBadge
-                      active={tokenConfigured}
-                      label={tokenConfigured ? ds.connectorConfigured : ds.connectorNotConfigured}
-                    />
-                    {verifyResult && (
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                        style={{
-                          background: verifyResult.ok
-                            ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))'
-                            : 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
-                          color: verifyResult.ok
-                            ? 'var(--c-status-success, #22c55e)'
-                            : 'var(--c-status-error, #ef4444)',
-                        }}
-                      >
-                        {verifyResult.message}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <SettingsPillToggle
-              checked={enabled}
-              onChange={(next) => {
-                setEnabled(next)
-                setSaved(false)
-              }}
-            />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
-                {ct.botToken}
-              </label>
-              <div className="relative">
-                <input
-                  type={showToken ? 'text' : 'password'}
-                  value={tokenDraft}
-                  onChange={(e) => {
-                    setTokenDraft(e.target.value)
-                    setSaved(false)
-                  }}
-                  placeholder={tokenConfigured && !tokenDraft ? ct.tokenAlreadyConfigured : ct.botTokenPlaceholder}
-                  className={inputCls}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToken((current) => !current)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
-                >
-                  {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
-                {ct.allowedUsers}
-              </label>
-              {allowedUserIDs.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {allowedUserIDs.map((item) => (
-                    <span
-                      key={item}
-                      className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs text-[var(--c-text-primary)]"
-                      style={{ background: 'var(--c-bg-deep)' }}
-                    >
-                      {item}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveAllowedUser(item)}
-                        className="text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-primary)]"
-                        aria-label={ct.delete}
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={allowedUserInput}
-                  onChange={(e) => setAllowedUserInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      handleAddAllowedUsers()
-                    }
-                  }}
-                  placeholder={ct.allowedUsersPlaceholder}
-                  className={inputCls}
-                />
-                <button
-                  type="button"
-                  onClick={handleAddAllowedUsers}
-                  className={`${secondaryButtonCls} shrink-0`}
-                  style={{
-                    border: '0.5px solid var(--c-border-subtle)',
-                    background: 'var(--c-bg-page)',
-                  }}
-                >
-                  <Plus size={14} />
-                  {t.skills.add}
-                </button>
-              </div>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
-                {ct.persona}
-              </label>
-              <select
-                value={personaID}
-                onChange={(e) => {
-                  setPersonaID(e.target.value)
-                  setSaved(false)
-                }}
-                className={inputCls}
-              >
-                {personas.length === 0 && (
-                  <option value="">{ct.personaDefault}</option>
-                )}
-                {personas.map((persona) => (
-                  <option key={persona.id} value={persona.id}>
-                    {persona.display_name || persona.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
-                {ds.connectorDefaultModel}
-              </label>
-              <ModelDropdown
-                value={defaultModel}
-                options={modelOptions}
-                placeholder={ds.connectorDefaultModelPlaceholder}
-                disabled={saving}
-                onChange={(v) => { setDefaultModel(v); setSaved(false) }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div
-        className="rounded-2xl p-5"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-      >
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.bindingsTitle}</div>
-              {bindCode && (
-                <div className="mt-2">
-                  <code className="rounded-md bg-[var(--c-bg-deep)] px-2 py-1 font-mono text-sm text-[var(--c-text-heading)] select-all">
-                    /bind {bindCode}
-                  </code>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void handleGenerateBindCode()}
-              disabled={generatingCode}
-              className={`${secondaryButtonCls} shrink-0`}
-              style={{
-                border: '0.5px solid var(--c-border-subtle)',
-                background: 'var(--c-bg-page)',
-              }}
-            >
-              {generatingCode ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-              {generatingCode ? ct.generating : bindCode ? ds.connectorRegenerateCode : ct.generateCode}
-            </button>
-          </div>
-
-          {identities.length === 0 ? (
-            <p className="text-sm text-[var(--c-text-muted)]">{ct.bindingsEmpty}</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {identities.map((identity) => (
-                <div
-                  key={identity.id}
-                  className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-[var(--c-text-heading)]">
-                      {identity.display_name || identity.platform_subject_id}
-                    </div>
-                    <div className="truncate text-xs text-[var(--c-text-muted)]">
-                      {identity.platform_subject_id}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span
-                      className="rounded-md px-2 py-0.5 text-[11px] font-medium text-[var(--c-text-secondary)]"
-                      style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)' }}
-                    >
-                      {ct.bindingBotAdmin}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void handleUnbind(identity.id)}
-                      className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                    >
-                      {ct.unbind}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 border-t border-[var(--c-border-subtle)] pt-4">
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={saving || !canSave}
-          className={primaryButtonCls}
-          style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
-        >
-          {saving && <Loader2 size={13} className="animate-spin" />}
-          {!saving && saved && <Check size={13} />}
-          {saving ? ct.saving : ct.save}
-        </button>
-        {tokenConfigured && (
-          <button
-            type="button"
-            onClick={() => void handleVerify()}
-            disabled={verifying || saving}
-            className={secondaryButtonCls}
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            {verifying && <Loader2 size={13} className="animate-spin" />}
-            {verifying ? ds.connectorVerifying : ds.connectorVerify}
-          </button>
-        )}
-        {saved && !dirty && (
-          <span
-            className="inline-flex items-center gap-1 text-xs"
-            style={{ color: 'var(--c-status-success, #22c55e)' }}
-          >
-            <Check size={11} />
-            {ds.connectorSaved}
-          </span>
-        )}
-      </div>
     </div>
   )
 }

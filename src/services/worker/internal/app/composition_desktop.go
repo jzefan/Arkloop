@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -644,8 +645,9 @@ type desktopChannelIdentityRecord struct {
 }
 
 type desktopDeliveryChannelRecord struct {
-	Token      string
-	ConfigJSON []byte
+	ChannelType string
+	Token       string
+	ConfigJSON  []byte
 }
 
 func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
@@ -681,23 +683,27 @@ func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
 
 func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+	discordClient := &http.Client{Timeout: 10 * time.Second}
 
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 		var preloaded *desktopDeliveryChannelRecord
 		var ux pipeline.TelegramChannelUX
-		if db != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" {
+		channelType := desktopNormalizedChannelType(rc)
+		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord") {
 			ch, prefetchErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "desktop channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
 			} else if ch != nil {
 				preloaded = ch
-				ux = pipeline.ParseTelegramChannelUX(ch.ConfigJSON)
+				if channelType == "telegram" {
+					ux = pipeline.ParseTelegramChannelUX(ch.ConfigJSON)
+				}
 			}
 		}
 
 		streamMidCount := 0
 		var streamFlush func(context.Context, string) error
-		if preloaded != nil && db != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" &&
+		if preloaded != nil && db != nil && rc != nil && rc.ChannelContext != nil && channelType == "telegram" &&
 			!rc.HeartbeatRun &&
 			strings.TrimSpace(preloaded.Token) != "" {
 			sender := pipeline.NewTelegramChannelSenderWithClient(client, preloaded.Token, 50*time.Millisecond)
@@ -735,7 +741,8 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
-		if db == nil || rc.ChannelContext.ChannelType != "telegram" {
+		channelType = desktopNormalizedChannelType(rc)
+		if db == nil || (channelType != "telegram" && channelType != "discord") {
 			return err
 		}
 		if pipeline.ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
@@ -777,44 +784,116 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
-
-		uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
-
-		var finalRecordErr error
-		if output != "" {
-			sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
-			messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
-				ChannelType:  rc.ChannelContext.ChannelType,
-				Conversation: rc.ChannelContext.Conversation,
-				ReplyTo:      nil,
-			}, output)
-			if sendErr != nil {
-				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, sendErr)
-				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+		switch channelType {
+		case "telegram":
+			uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
+			if finalRecordErr := deliverDesktopTelegramChannelOutput(ctx, db, rc, client, channel, output); finalRecordErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
 			}
-			finalRecordErr = recordDesktopChannelDelivery(
-				ctx,
-				db,
-				rc.Run.ID,
-				rc.Run.ThreadID,
-				rc.ChannelContext.ChannelID,
-				rc.ChannelContext.Conversation.Target,
-				nil,
-				rc.ChannelContext.Conversation.ThreadID,
-				messageIDs,
-			)
-			if finalRecordErr != nil {
-				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
-				slog.WarnContext(ctx, "desktop telegram channel delivery record failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+			if strings.TrimSpace(uxSend.ReactionEmoji) != "" {
+				pipeline.MaybeTelegramInboundReaction(ctx, client, channel.Token, rc, uxSend.ReactionEmoji)
 			}
-		}
-
-		if finalRecordErr == nil && strings.TrimSpace(uxSend.ReactionEmoji) != "" {
-			pipeline.MaybeTelegramInboundReaction(ctx, client, channel.Token, rc, uxSend.ReactionEmoji)
+		case "discord":
+			if finalRecordErr := deliverDesktopDiscordChannelOutput(ctx, db, rc, discordClient, channel, output); finalRecordErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "desktop discord channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+				return err
+			}
 		}
 		return err
 	}
+}
+
+func desktopNormalizedChannelType(rc *pipeline.RunContext) string {
+	if rc == nil || rc.ChannelContext == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(rc.ChannelContext.ChannelType))
+}
+
+func deliverDesktopTelegramChannelOutput(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	client *telegrambot.Client,
+	channel *desktopDeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+	messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      nil,
+	}, output)
+	if err != nil {
+		return err
+	}
+	return recordDesktopChannelDelivery(
+		ctx,
+		db,
+		rc.Run.ID,
+		rc.Run.ThreadID,
+		rc.ChannelContext.ChannelID,
+		rc.ChannelContext.ChannelType,
+		rc.ChannelContext.Conversation.Target,
+		nil,
+		rc.ChannelContext.Conversation.ThreadID,
+		messageIDs,
+	)
+}
+
+func deliverDesktopDiscordChannelOutput(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	client pipeline.DiscordHTTPDoer,
+	channel *desktopDeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	replyTo := desktopDiscordReplyReference(rc)
+	sender := pipeline.NewDiscordChannelSenderWithClient(client, os.Getenv("ARKLOOP_DISCORD_API_BASE_URL"), channel.Token, 50*time.Millisecond)
+	messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+	}, output)
+	if err != nil {
+		return err
+	}
+	return recordDesktopChannelDelivery(
+		ctx,
+		db,
+		rc.Run.ID,
+		rc.Run.ThreadID,
+		rc.ChannelContext.ChannelID,
+		rc.ChannelContext.ChannelType,
+		rc.ChannelContext.Conversation.Target,
+		replyTo,
+		rc.ChannelContext.Conversation.ThreadID,
+		messageIDs,
+	)
+}
+
+func desktopDiscordReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
 }
 
 func loadDesktopChannelIdentity(ctx context.Context, db data.DesktopDB, identityID uuid.UUID) (*desktopChannelIdentityRecord, error) {
@@ -843,19 +922,20 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 		return nil, fmt.Errorf("db must not be nil")
 	}
 	var (
+		channelType    string
 		encryptedValue *string
 		keyVersion     *int
 		configRaw      []byte
 	)
 	err := db.QueryRow(
 		ctx,
-		`SELECT s.encrypted_value, s.key_version, COALESCE(c.config_json, '{}')
+		`SELECT c.channel_type, s.encrypted_value, s.key_version, COALESCE(c.config_json, '{}')
 		   FROM channels c
 		   LEFT JOIN secrets s ON s.id = c.credentials_id
 		  WHERE c.id = $1
 		    AND c.is_active = 1`,
 		channelID,
-	).Scan(&encryptedValue, &keyVersion, &configRaw)
+	).Scan(&channelType, &encryptedValue, &keyVersion, &configRaw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -863,7 +943,7 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 		return nil, fmt.Errorf("desktop channel lookup: %w", err)
 	}
 	if encryptedValue == nil || strings.TrimSpace(*encryptedValue) == "" || keyVersion == nil {
-		return nil, fmt.Errorf("desktop channel lookup: missing telegram token")
+		return nil, fmt.Errorf("desktop channel lookup: missing channel token")
 	}
 	keyRing, err := loadDesktopKeyRing()
 	if err != nil {
@@ -873,7 +953,7 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 	if err != nil {
 		return nil, fmt.Errorf("desktop channel lookup: decrypt token: %w", err)
 	}
-	return &desktopDeliveryChannelRecord{Token: token, ConfigJSON: configRaw}, nil
+	return &desktopDeliveryChannelRecord{ChannelType: channelType, Token: token, ConfigJSON: configRaw}, nil
 }
 
 func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err error) {
@@ -901,6 +981,7 @@ func recordDesktopChannelDelivery(
 	runID uuid.UUID,
 	threadID uuid.UUID,
 	channelID uuid.UUID,
+	channelType string,
 	platformChatID string,
 	replyTo *pipeline.ChannelMessageRef,
 	platformThreadID *string,
@@ -939,7 +1020,7 @@ func recordDesktopChannelDelivery(
 		}
 		if err := ledgerRepo.Record(ctx, tx, data.ChannelMessageLedgerRecordInput{
 			ChannelID:               channelID,
-			ChannelType:             "telegram",
+			ChannelType:             channelType,
 			Direction:               data.ChannelMessageDirectionOutbound,
 			ThreadID:                threadRef,
 			RunID:                   runRef,
