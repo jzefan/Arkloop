@@ -10,6 +10,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 )
@@ -28,6 +29,7 @@ func effectiveCatalogPoolReady(pool data.DB) bool {
 func buildEffectiveBuiltinToolNameSet(
 	ctx context.Context,
 	pool data.DB,
+	userID uuid.UUID,
 	artifactStoreAvailable bool,
 ) map[string]struct{} {
 	var configStore sharedconfig.Store
@@ -47,7 +49,15 @@ func buildEffectiveBuiltinToolNameSet(
 		ArtifactStoreAvailable: artifactStoreAvailable,
 		LoadPlatformProviders: func(loadCtx context.Context) ([]sharedtoolruntime.ProviderConfig, error) {
 			if pgxPool, ok := pool.(*pgxpool.Pool); ok && pgxPool != nil {
-				return sharedtoolruntime.LoadPlatformProviders(loadCtx, pgxPool, decryptPlatformProviderSecret)
+				platformProviders, err := sharedtoolruntime.LoadPlatformProviders(loadCtx, pgxPool, decryptPlatformProviderSecret)
+				if err != nil {
+					return nil, err
+				}
+				userProviders, err := sharedtoolruntime.LoadUserProviders(loadCtx, pgxPool, userID, decryptPlatformProviderSecret)
+				if err != nil {
+					return nil, err
+				}
+				return append(platformProviders, userProviders...), nil
 			}
 			return nil, nil
 		},

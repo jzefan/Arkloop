@@ -94,7 +94,7 @@ func NewToolProviderMiddleware(cache *toolprovider.Cache) RunMiddleware {
 				return
 			}
 
-			exec := buildProviderExecutor(cfg)
+			exec := BuildProviderExecutor(cfg)
 
 			_, exists := rc.ActiveToolProviderByGroup[groupName]
 			if exists && override {
@@ -153,7 +153,8 @@ func copyJSONMap(src map[string]any) map[string]any {
 	return out
 }
 
-func buildProviderExecutor(cfg toolprovider.ActiveProviderConfig) tools.Executor {
+// BuildProviderExecutor constructs the executor for a configured tool provider.
+func BuildProviderExecutor(cfg toolprovider.ActiveProviderConfig) tools.Executor {
 	groupName := strings.TrimSpace(cfg.GroupName)
 	providerName := strings.TrimSpace(cfg.ProviderName)
 

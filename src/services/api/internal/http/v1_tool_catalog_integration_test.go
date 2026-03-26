@@ -448,7 +448,7 @@ func TestEffectiveToolCatalogIncludesConditionalAndMCPTools(t *testing.T) {
 func TestBuildEffectiveToolCatalogOmitsStoredArtifactsWithoutArtifactStore(t *testing.T) {
 	t.Setenv("ARKLOOP_S3_ENDPOINT", "http://seaweedfs.internal")
 
-	catalog, err := buildEffectiveToolCatalog(context.Background(), uuid.Nil, uuid.Nil, nil, nil, nil, false)
+	catalog, err := buildEffectiveToolCatalog(context.Background(), uuid.Nil, uuid.Nil, uuid.Nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("build effective tool catalog: %v", err)
 	}

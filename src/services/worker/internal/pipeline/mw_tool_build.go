@@ -39,7 +39,7 @@ func NewToolBuildMiddleware() RunMiddleware {
 		if err != nil {
 			return err
 		}
-		resolvedAllowlist = filterAllowlistByRuntime(resolvedAllowlist, rc.Runtime)
+		resolvedAllowlist = filterAllowlistByRuntime(resolvedAllowlist, rc.Runtime, rc.ToolRegistry, rc.ActiveToolProviderByGroup)
 
 		// When core_tools is configured, search_tools must be available regardless
 		// of whether it was in the original allowlist (DB persona might not include it).
@@ -194,7 +194,7 @@ func filterNotConfiguredExecutors(allowlistSet map[string]struct{}, executors ma
 	return out
 }
 
-func filterAllowlistByRuntime(allowlistSet map[string]struct{}, snapshot *sharedtoolruntime.RuntimeSnapshot) map[string]struct{} {
+func filterAllowlistByRuntime(allowlistSet map[string]struct{}, snapshot *sharedtoolruntime.RuntimeSnapshot, registry *tools.Registry, activeByGroup map[string]string) map[string]struct{} {
 	out := CopyStringSet(allowlistSet)
 	if snapshot == nil {
 		return out
@@ -206,7 +206,17 @@ func filterAllowlistByRuntime(allowlistSet map[string]struct{}, snapshot *shared
 		if snapshot.BuiltinAvailable(name) {
 			continue
 		}
+		group := ResolveToolGroupName(registry, name)
+		if group != "" {
+			if _, ok := activeByGroup[group]; ok {
+				continue
+			}
+		}
 		delete(out, name)
 	}
 	return out
+}
+
+func FilterAllowlistByRuntime(allowlistSet map[string]struct{}, snapshot *sharedtoolruntime.RuntimeSnapshot, registry *tools.Registry, activeByGroup map[string]string) map[string]struct{} {
+	return filterAllowlistByRuntime(allowlistSet, snapshot, registry, activeByGroup)
 }

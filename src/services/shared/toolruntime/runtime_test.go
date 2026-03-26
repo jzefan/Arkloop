@@ -154,7 +154,11 @@ func TestResolveBuiltinAddsWebToolsFromPlatformProviders(t *testing.T) {
 		PlatformProviders: []ProviderConfig{
 			{GroupName: "web_search", ProviderName: "web_search.searxng"},
 			{GroupName: "web_fetch", ProviderName: "web_fetch.jina"},
-			{GroupName: "image_understanding", ProviderName: "image_understanding.minimax"},
+			{
+				GroupName:    "image_understanding",
+				ProviderName: "image_understanding.minimax",
+				APIKeyValue:  strPtr("api-key"),
+			},
 		},
 	})
 	if _, ok := resolved.ToolNameSet()["web_search"]; !ok {
@@ -242,4 +246,36 @@ func TestResolveBuiltinAddsACPFromProviderConfig(t *testing.T) {
 	if resolved.ACPHostKind != "local" {
 		t.Fatalf("unexpected ACP host kind: %q", resolved.ACPHostKind)
 	}
+}
+
+func TestResolveBuiltinSkipsImageUnderstandingWithoutAPIKey(t *testing.T) {
+	resolved := ResolveBuiltin(ResolveInput{
+		PlatformProviders: []ProviderConfig{
+			{
+				GroupName:    "image_understanding",
+				ProviderName: "image_understanding.minimax",
+			},
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["understand_image"]; ok {
+		t.Fatal("understand_image should be absent without API key")
+	}
+
+	apiKey := "key"
+	resolved = ResolveBuiltin(ResolveInput{
+		PlatformProviders: []ProviderConfig{
+			{
+				GroupName:    "image_understanding",
+				ProviderName: "image_understanding.minimax",
+				APIKeyValue:  &apiKey,
+			},
+		},
+	})
+	if _, ok := resolved.ToolNameSet()["understand_image"]; !ok {
+		t.Fatal("understand_image should be present when image_understanding provider has API key")
+	}
+}
+
+func strPtr(value string) *string {
+	return &value
 }

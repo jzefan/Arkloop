@@ -40,6 +40,7 @@ import (
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	understandimage "arkloop/services/worker/internal/tools/builtin/understand_image"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -214,6 +215,83 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 		if _, ok := specNames[toolName]; !ok {
 			t.Fatalf("expected tool spec %s in desktop llm specs", toolName)
 		}
+	}
+}
+
+func TestDesktopToolProviderBindingsInjectsImageUnderstandingExecutor(t *testing.T) {
+	ctx := context.Background()
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop-tool-provider.db"))
+	if err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlitePool.Close()
+	})
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	keyBytes := [32]byte{}
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 7)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes[:]))
+
+	accountID := uuid.MustParse("00000000-0000-4000-8000-000000000101")
+	userID := uuid.MustParse("00000000-0000-4000-8000-000000000102")
+	secretID := uuid.MustParse("00000000-0000-4000-8000-000000000103")
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO users (id, username, email, status) VALUES ($1, 'desktop-tool-user', 'desktop-tool@test', 'active')`,
+			args: []any{userID},
+		},
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status, owner_user_id) VALUES ($1, 'desktop-tool-account', 'Desktop Tool Account', 'personal', 'active', $2)`,
+			args: []any{accountID, userID},
+		},
+		{
+			sql:  `INSERT INTO secrets (id, account_id, name, encrypted_value, key_version) VALUES ($1, $2, 'desktop-image-understanding', $3, 1)`,
+			args: []any{secretID, accountID, encryptDesktopChannelToken(t, keyBytes, "minimax-test-key")},
+		},
+		{
+			sql: `INSERT INTO tool_provider_configs (
+				account_id, owner_kind, owner_user_id, group_name, provider_name, is_active, secret_id
+			) VALUES ($1, 'user', $2, 'image_understanding', $3, 1, $4)`,
+			args: []any{accountID.String(), userID.String(), understandimage.ProviderNameMiniMax, secretID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed desktop tool provider: %v", err)
+		}
+	}
+
+	rc := &pipeline.RunContext{
+		Run: data.Run{
+			ID:              uuid.New(),
+			AccountID:       accountID,
+			ThreadID:        uuid.New(),
+			CreatedByUserID: &userID,
+		},
+		ToolExecutors: map[string]tools.Executor{},
+	}
+
+	mw := desktopToolProviderBindings(db)
+	err = mw(ctx, rc, func(_ context.Context, rc *pipeline.RunContext) error {
+		if got := rc.ActiveToolProviderByGroup["image_understanding"]; got != understandimage.ProviderNameMiniMax {
+			t.Fatalf("unexpected active provider: %q", got)
+		}
+		if rc.ActiveToolProviderConfigsByGroup["image_understanding"].ProviderName != understandimage.ProviderNameMiniMax {
+			t.Fatalf("unexpected runtime config: %+v", rc.ActiveToolProviderConfigsByGroup["image_understanding"])
+		}
+		if rc.ToolExecutors[understandimage.ProviderNameMiniMax] == nil {
+			t.Fatal("expected image understanding executor to be injected")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("desktopToolProviderBindings: %v", err)
 	}
 }
 

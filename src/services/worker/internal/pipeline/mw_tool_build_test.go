@@ -12,6 +12,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	understandimage "arkloop/services/worker/internal/tools/builtin/understand_image"
 
 	"github.com/google/uuid"
 )
@@ -241,4 +242,80 @@ func TestToolBuildMiddleware_FiltersUnavailableRuntimeManagedTools(t *testing.T)
 	if err := h(context.Background(), rc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestToolBuildMiddleware_KeepsUserProviderTool(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(understandimage.AgentSpec); err != nil {
+		t.Fatalf("register understand_image: %v", err)
+	}
+	if err := registry.Register(understandimage.AgentSpecMiniMax); err != nil {
+		t.Fatalf("register understand_image minimax: %v", err)
+	}
+
+	executors := map[string]tools.Executor{
+		understandimage.AgentSpec.Name:        understandimage.NewToolExecutorWithProvider(&stubImageProvider{}),
+		understandimage.AgentSpecMiniMax.Name: understandimage.NewToolExecutorWithProvider(&stubImageProvider{}),
+	}
+
+	rc := &pipeline.RunContext{
+		Run: data.Run{
+			ID: uuid.New(),
+		},
+		Emitter:                   events.NewEmitter("test"),
+		ToolRegistry:              registry,
+		ToolExecutors:             executors,
+		AllowlistSet:              map[string]struct{}{"understand_image": {}},
+		ActiveToolProviderByGroup: map[string]string{"understand_image": "image_understanding.minimax"},
+		ToolSpecs: []llm.ToolSpec{
+			understandimage.LlmSpec,
+		},
+		Runtime: &sharedtoolruntime.RuntimeSnapshot{},
+	}
+
+	resolved, err := pipeline.ResolveProviderAllowlist(rc.AllowlistSet, rc.ToolRegistry, rc.ActiveToolProviderByGroup)
+	if err != nil {
+		t.Fatalf("resolve provider allowlist: %v", err)
+	}
+	filtered := pipeline.FilterAllowlistByRuntime(resolved, rc.Runtime, rc.ToolRegistry, rc.ActiveToolProviderByGroup)
+	if len(filtered) == 0 {
+		t.Fatalf("allowlist filtered to empty: %v", filtered)
+	}
+
+	mw := pipeline.NewToolBuildMiddleware()
+	var reached bool
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
+		reached = true
+		if rc.ToolExecutor == nil {
+			t.Fatal("ToolExecutor not set")
+		}
+		if len(rc.FinalSpecs) != 1 {
+			t.Fatalf("expected 1 final spec, got %d", len(rc.FinalSpecs))
+		}
+		if rc.FinalSpecs[0].Name != "understand_image" {
+			t.Fatalf("expected understand_image spec, got %s", rc.FinalSpecs[0].Name)
+		}
+		return nil
+	})
+
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reached {
+		t.Fatal("terminal handler not reached")
+	}
+}
+
+type stubImageProvider struct{}
+
+func (stubImageProvider) DescribeImage(_ context.Context, req understandimage.DescribeImageRequest) (understandimage.DescribeImageResponse, error) {
+	return understandimage.DescribeImageResponse{
+		Text:     "stub",
+		Provider: "stub",
+		Model:    "stub",
+	}, nil
+}
+
+func (stubImageProvider) Name() string {
+	return "stub"
 }
