@@ -51,7 +51,7 @@ func toolCatalogEffectiveEntry(
 			projectID = project.ID
 		}
 
-		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.AccountID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
+		catalog, err := buildEffectiveToolCatalog(r.Context(), actor.AccountID, actor.UserID, projectID, overridesRepo, pool, mcpCache, artifactStoreAvailable)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -63,13 +63,14 @@ func toolCatalogEffectiveEntry(
 func buildEffectiveToolCatalog(
 	ctx context.Context,
 	accountID uuid.UUID,
+	userID uuid.UUID,
 	projectID uuid.UUID,
 	overridesRepo *data.ToolDescriptionOverridesRepository,
 	pool data.DB,
 	mcpCache *effectiveToolCatalogCache,
 	artifactStoreAvailable bool,
 ) (toolCatalogResponse, error) {
-	available := buildEffectiveBuiltinToolNameSet(ctx, pool, artifactStoreAvailable)
+	available := buildEffectiveBuiltinToolNameSet(ctx, pool, userID, artifactStoreAvailable)
 	platformByName, projectByName := loadEffectiveToolDescriptionOverrides(ctx, overridesRepo, projectID)
 	platformDisabledByName, projectDisabledByName := loadEffectiveToolDisabledOverrides(ctx, overridesRepo, projectID)
 	mcpTools := []toolCatalogItem{}

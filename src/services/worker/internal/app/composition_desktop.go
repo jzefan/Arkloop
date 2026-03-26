@@ -523,15 +523,19 @@ func desktopToolProviderBindings(db data.DesktopDB) pipeline.RunMiddleware {
 			if g == "" || pn == "" {
 				return
 			}
+			exec := pipeline.BuildProviderExecutor(cfg)
 			_, exists := rc.ActiveToolProviderByGroup[g]
-			if !exists {
-				rc.ActiveToolProviderByGroup[g] = pn
-				rc.ActiveToolProviderConfigsByGroup[g] = toolprovider.ToRuntimeProviderConfig(cfg)
-				return
+			if exists && override {
+				if nc, ok := exec.(tools.NotConfiguredChecker); ok && nc.IsNotConfigured() {
+					return
+				}
 			}
-			if override {
+			if !exists || override {
 				rc.ActiveToolProviderByGroup[g] = pn
 				rc.ActiveToolProviderConfigsByGroup[g] = toolprovider.ToRuntimeProviderConfig(cfg)
+			}
+			if exec != nil {
+				rc.ToolExecutors[pn] = exec
 			}
 		}
 		for _, cfg := range platformCfgs {

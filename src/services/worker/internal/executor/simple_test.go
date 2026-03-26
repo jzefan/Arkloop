@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -13,12 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
-func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipeline.ResolvedAgentConfig) *pipeline.RunContext {
+func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipeline.ResolvedAgentConfig, advance map[string]any) *pipeline.RunContext {
 	return &pipeline.RunContext{
 		Run: data.Run{
-			ID:       uuid.New(),
-			AccountID:    uuid.New(),
-			ThreadID: uuid.New(),
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
 		},
 		TraceID:      "test-trace",
 		Gateway:      gateway,
@@ -27,8 +28,9 @@ func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipel
 		AgentConfig:  agentConfig,
 		SelectedRoute: &routing.SelectedProviderRoute{
 			Route: routing.ProviderRouteRule{
-				ID:    "default",
-				Model: "stub",
+				ID:           "default",
+				Model:        "stub",
+				AdvancedJSON: advance,
 			},
 		},
 		ReasoningIterations:    5,
@@ -48,7 +50,7 @@ func TestSimpleExecutor_EmitsExpectedEvents(t *testing.T) {
 
 	ex := &SimpleExecutor{}
 	emitter := events.NewEmitter("trace")
-	rc := buildMinimalRC(gateway, "", nil)
+	rc := buildMinimalRC(gateway, "", nil, nil)
 
 	var got []events.RunEvent
 	err := ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error {
@@ -86,7 +88,7 @@ func TestSimpleExecutor_SystemPromptInjected(t *testing.T) {
 
 	ex := &SimpleExecutor{}
 	emitter := events.NewEmitter("trace")
-	rc := buildMinimalRC(gateway, "you are a helpful assistant", nil)
+	rc := buildMinimalRC(gateway, "you are a helpful assistant", nil, nil)
 
 	_ = ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error { return nil })
 
@@ -116,7 +118,7 @@ func TestSimpleExecutor_SystemPromptCacheControl(t *testing.T) {
 	ex := &SimpleExecutor{}
 	emitter := events.NewEmitter("trace")
 	agentConfig := &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"}
-	rc := buildMinimalRC(gateway, "cached prompt", agentConfig)
+	rc := buildMinimalRC(gateway, "cached prompt", agentConfig, nil)
 
 	_ = ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error { return nil })
 
@@ -140,7 +142,7 @@ func TestSimpleExecutor_NoSystemPromptWhenEmpty(t *testing.T) {
 	ex := &SimpleExecutor{}
 	emitter := events.NewEmitter("trace")
 	userMsg := llm.Message{Role: "user", Content: []llm.TextPart{{Text: "hello"}}}
-	rc := buildMinimalRC(gateway, "   ", nil)
+	rc := buildMinimalRC(gateway, "   ", nil, nil)
 	rc.Messages = []llm.Message{userMsg}
 
 	_ = ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error { return nil })
@@ -169,6 +171,37 @@ func TestNewSimpleExecutor_Factory(t *testing.T) {
 	if ex2 == nil {
 		t.Fatal("factory returned nil")
 	}
+}
+
+func TestSimpleExecutor_ImageFilter(t *testing.T) {
+	gateway := &captureRequestGateway{
+		onCapture: func(req llm.Request) {
+			if len(req.Messages) != 1 {
+				t.Fatalf("expected 1 message")
+			}
+			if req.Messages[0].Content[0].Kind() != messagecontent.PartTypeText {
+				t.Fatalf("expected image part downgraded to text")
+			}
+		},
+	}
+
+	advance := map[string]any{
+		"available_catalog": map[string]any{
+			"input_modalities": []string{"text"},
+		},
+	}
+	rc := buildMinimalRC(gateway, "", nil, advance)
+	rc.Messages = []llm.Message{
+		{
+			Role: "user",
+			Content: []llm.ContentPart{
+				{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Filename: "photo.jpg"}},
+			},
+		},
+	}
+
+	ex := &SimpleExecutor{}
+	_ = ex.Execute(context.Background(), rc, events.NewEmitter("trace"), func(ev events.RunEvent) error { return nil })
 }
 
 // captureRequestGateway 记录首次 Stream 调用的 Request，随后返回 run.completed。

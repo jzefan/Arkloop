@@ -80,6 +80,7 @@ func (e *InteractiveExecutor) Execute(
 			},
 		}, messages...)
 	}
+	messages = applyImageFilter(rc.SelectedRoute, messages)
 
 	agentRequest := llm.Request{
 		Model:           rc.SelectedRoute.Route.Model,

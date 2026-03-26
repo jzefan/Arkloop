@@ -13,8 +13,8 @@ import (
 // multiTurnGateway 第一次 Stream 返回一个工具调用，第二次返回 run.completed。
 // 可选地，在第二次调用时检查 messages 内容（用于验证注入）。
 type multiTurnGateway struct {
-	callCount     int
-	onSecondCall  func(req llm.Request)
+	callCount    int
+	onSecondCall func(req llm.Request)
 }
 
 func (g *multiTurnGateway) Stream(_ context.Context, req llm.Request, yield func(llm.StreamEvent) error) error {
@@ -100,7 +100,7 @@ func TestInteractiveExecutor_CheckIn_InjectsMessage(t *testing.T) {
 	ex := &InteractiveExecutor{checkInEvery: 1, maxWaitSeconds: 5}
 	emitter := events.NewEmitter("trace")
 
-	rc := buildMinimalRC(gw, "", nil)
+	rc := buildMinimalRC(gw, "", nil, nil)
 	rc.ToolExecutor = buildMinimalToolExecutor()
 	rc.WaitForInput = func(_ context.Context) (string, bool) {
 		return "user check-in message", true
@@ -149,7 +149,7 @@ func TestInteractiveExecutor_NoCheckInBeforeThreshold(t *testing.T) {
 	ex := &InteractiveExecutor{checkInEvery: 5, maxWaitSeconds: 5}
 	emitter := events.NewEmitter("trace")
 
-	rc := buildMinimalRC(gw, "", nil)
+	rc := buildMinimalRC(gw, "", nil, nil)
 	rc.ToolExecutor = buildMinimalToolExecutor()
 	rc.WaitForInput = func(_ context.Context) (string, bool) {
 		t.Fatal("WaitForInput should not be called when iter=1 and check_in_every=5")
@@ -178,7 +178,7 @@ func TestInteractiveExecutor_SkipsWhenNoWaitForInput(t *testing.T) {
 	ex := &InteractiveExecutor{checkInEvery: 1, maxWaitSeconds: 5}
 	emitter := events.NewEmitter("trace")
 
-	rc := buildMinimalRC(gw, "", nil)
+	rc := buildMinimalRC(gw, "", nil, nil)
 	rc.ToolExecutor = buildMinimalToolExecutor()
 	// WaitForInput 保持 nil（默认值）
 

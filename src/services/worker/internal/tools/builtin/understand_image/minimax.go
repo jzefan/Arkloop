@@ -102,8 +102,8 @@ func (p *MiniMaxProvider) DescribeImage(ctx context.Context, req DescribeImageRe
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return DescribeImageResponse{}, ProviderError{
-			Message: buildMiniMaxTraceMessage("minimax image understanding returned invalid JSON", traceID),
-			TraceID: traceID,
+			Message:  buildMiniMaxTraceMessage("minimax image understanding returned invalid JSON", traceID),
+			TraceID:  traceID,
 			Provider: p.Name(),
 		}
 	}
@@ -113,8 +113,8 @@ func (p *MiniMaxProvider) DescribeImage(ctx context.Context, req DescribeImageRe
 			message = message + ": " + statusMsg
 		}
 		return DescribeImageResponse{}, ProviderError{
-			Message: messageWithTrace(message, traceID),
-			TraceID: traceID,
+			Message:  messageWithTrace(message, traceID),
+			TraceID:  traceID,
 			Provider: p.Name(),
 		}
 	}
@@ -122,8 +122,8 @@ func (p *MiniMaxProvider) DescribeImage(ctx context.Context, req DescribeImageRe
 	content := strings.TrimSpace(payload.Content)
 	if content == "" {
 		return DescribeImageResponse{}, ProviderError{
-			Message: buildMiniMaxTraceMessage("minimax image understanding returned empty content", traceID),
-			TraceID: traceID,
+			Message:  buildMiniMaxTraceMessage("minimax image understanding returned empty content", traceID),
+			TraceID:  traceID,
 			Provider: p.Name(),
 		}
 	}

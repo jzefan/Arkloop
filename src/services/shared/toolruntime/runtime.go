@@ -341,9 +341,15 @@ func copyJSONMap(src map[string]any) map[string]any {
 
 func findProvider(providers []ProviderConfig, groupName string) *ProviderConfig {
 	for i := range providers {
-		if strings.TrimSpace(providers[i].GroupName) == groupName {
-			return &providers[i]
+		if strings.TrimSpace(providers[i].GroupName) != groupName {
+			continue
 		}
+		if groupName == "image_understanding" {
+			if providers[i].APIKeyValue == nil || strings.TrimSpace(*providers[i].APIKeyValue) == "" {
+				continue
+			}
+		}
+		return &providers[i]
 	}
 	return nil
 }
