@@ -67,6 +67,14 @@ func heartbeatIntervalMinutes(input, job map[string]any) int {
 	return runkind.DefaultHeartbeatIntervalMinutes
 }
 
+// IsHeartbeatRunContext reports whether the run payload marks this turn as heartbeat.
+func IsHeartbeatRunContext(rc *RunContext) bool {
+	if rc == nil {
+		return false
+	}
+	return rc.HeartbeatRun || isHeartbeatRun(rc.InputJSON, rc.JobPayload)
+}
+
 // NewHeartbeatPrepareMiddleware 为心跳 run 注入合成 user 消息，并在 next 返回后将
 // heartbeat_decision 工具报告的 memory_fragments 提交到 MemoryProvider。
 // 非心跳 run 直接透传。

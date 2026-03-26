@@ -720,7 +720,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		}
 
 		var stopTyping context.CancelFunc
-		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && !rc.HeartbeatRun {
+		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && !pipeline.IsHeartbeatRunContext(rc) {
 			stopTyping = pipeline.StartTelegramTypingRefresh(ctx, client, preloaded.Token, rc.ChannelContext.Conversation.Target)
 		}
 
