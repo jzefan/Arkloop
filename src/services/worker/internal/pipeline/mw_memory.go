@@ -78,28 +78,12 @@ func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvi
 // injectFromCacheOrFind 优先从 PG 快照读取记忆，缓存缺失时降级到 OpenViking Find。
 func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.MemoryProvider, pool *pgxpool.Pool, ident memory.MemoryIdentity, query string) {
 	selfURI := memory.SelfURI(ident.UserID.String())
+
 	if pool != nil {
 		block, found, err := snapshotRepo.Get(ctx, pool, ident.AccountID, ident.UserID, ident.AgentID)
 		if err != nil {
 			slog.WarnContext(ctx, "memory: snapshot read failed, falling back to find", "err", err.Error())
 		} else if found && strings.TrimSpace(block) != "" {
-			if rc.PeerMemoryURI != "" {
-				peerCtx, peerCancel := context.WithTimeout(ctx, memoryFindTimeout)
-				if peerBlock, _ := renderMemoryBlock(peerCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
-					block += retagMemoryBlock(peerBlock, "peer")
-				}
-				peerCancel()
-			}
-			if rc.SpaceMemoryURI != "" {
-				spaceCtx, spaceCancel := context.WithTimeout(ctx, memoryFindTimeout)
-				if spaceBlock, _ := renderMemoryBlock(spaceCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
-					block += retagMemoryBlock(spaceBlock, "space")
-				}
-				spaceCancel()
-			}
-			if rc.PeerMemoryURI != "" || rc.SpaceMemoryURI != "" {
-				block += buildNamespaceCatalog(rc, selfURI)
-			}
 			rc.SystemPrompt += block
 			return
 		}
@@ -108,37 +92,17 @@ func injectFromCacheOrFind(ctx context.Context, rc *RunContext, provider memory.
 	findCtx, cancel := context.WithTimeout(ctx, memoryFindTimeout)
 	defer cancel()
 	selfBlock, selfHits := renderMemoryBlock(findCtx, provider, ident, selfURI, query)
-	var block string
-	if selfBlock != "" {
-		block = selfBlock
-		if pool != nil {
-			go func() {
-				// goroutine 超出请求生命周期，需要独立 context
-				uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer uCancel()
-				_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, selfBlock, hitsToCache(selfHits))
-			}()
-		}
+	if selfBlock == "" {
+		return
 	}
-	if rc.PeerMemoryURI != "" {
-		peerCtx, peerCancel := context.WithTimeout(ctx, memoryFindTimeout)
-		if peerBlock, _ := renderMemoryBlock(peerCtx, provider, ident, rc.PeerMemoryURI, query); peerBlock != "" {
-			block += retagMemoryBlock(peerBlock, "peer")
-		}
-		peerCancel()
-	}
-	if rc.SpaceMemoryURI != "" {
-		spaceCtx, spaceCancel := context.WithTimeout(ctx, memoryFindTimeout)
-		if spaceBlock, _ := renderMemoryBlock(spaceCtx, provider, ident, rc.SpaceMemoryURI, query); spaceBlock != "" {
-			block += retagMemoryBlock(spaceBlock, "space")
-		}
-		spaceCancel()
-	}
-	if rc.PeerMemoryURI != "" || rc.SpaceMemoryURI != "" {
-		block += buildNamespaceCatalog(rc, selfURI)
-	}
-	if block != "" {
-		rc.SystemPrompt += block
+	rc.SystemPrompt += selfBlock
+
+	if pool != nil {
+		go func() {
+			uCtx, uCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer uCancel()
+			_ = snapshotRepo.UpsertWithHits(uCtx, pool, ident.AccountID, ident.UserID, ident.AgentID, selfBlock, hitsToCache(selfHits))
+		}()
 	}
 }
 
@@ -201,26 +165,6 @@ func buildMemoryBlock(lines []string) string {
 		return ""
 	}
 	return block
-}
-
-func retagMemoryBlock(block, label string) string {
-	return strings.ReplaceAll(block, "\n- ", "\n- ["+label+"] ")
-}
-
-func buildNamespaceCatalog(rc *RunContext, selfURI string) string {
-	var sb strings.Builder
-	sb.WriteString("\n\n<memory_namespaces>\nself: ")
-	sb.WriteString(selfURI)
-	if rc.PeerMemoryURI != "" {
-		sb.WriteString("\npeer: ")
-		sb.WriteString(rc.PeerMemoryURI)
-	}
-	if rc.SpaceMemoryURI != "" {
-		sb.WriteString("\nspace: ")
-		sb.WriteString(rc.SpaceMemoryURI)
-	}
-	sb.WriteString("\n</memory_namespaces>")
-	return sb.String()
 }
 
 func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, pool *pgxpool.Pool, accountID, runID uuid.UUID, traceID string, costPerWrite float64) {
