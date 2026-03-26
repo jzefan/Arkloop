@@ -156,7 +156,8 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   if (
     event.type === 'run.completed' ||
     event.type === 'run.failed' ||
-    event.type === 'run.cancelled'
+    event.type === 'run.cancelled' ||
+    event.type === 'run.interrupted'
   ) {
     dispatch({ type: 'complete' })
   }

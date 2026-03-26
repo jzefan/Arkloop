@@ -240,6 +240,7 @@ export const zh: LocaleStrings = {
   noAccount: "没有账号？注册",
   hasAccount: "已有账号？登录",
   requestFailed: "请求失败",
+  runInterrupted: "运行已中断",
   profileTitle: "个人资料",
   profileName: "名称",
   profileUsername: "用户名",

@@ -214,7 +214,7 @@ func (h *desktopHandler) Handle(ctx context.Context, lease queue.JobLease) error
 	}
 
 	terminal, err := eventsRepo.GetLatestEventType(ctx, tx, runID, []string{
-		"run.completed", "run.failed", "run.cancelled",
+		"run.completed", "run.failed", "run.interrupted", "run.cancelled",
 	})
 	if err != nil {
 		return fmt.Errorf("check terminal: %w", err)

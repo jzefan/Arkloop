@@ -18,14 +18,15 @@ import (
 )
 
 var validWebhookEvents = map[string]struct{}{
-	"run.completed": {},
-	"run.failed":    {},
-	"run.cancelled": {},
+	"run.completed":   {},
+	"run.failed":      {},
+	"run.cancelled":   {},
+	"run.interrupted": {},
 }
 
 type webhookEndpointResponse struct {
 	ID        string   `json:"id"`
-	AccountID     string   `json:"account_id"`
+	AccountID string   `json:"account_id"`
 	URL       string   `json:"url"`
 	Events    []string `json:"events"`
 	Enabled   bool     `json:"enabled"`
@@ -381,7 +382,7 @@ func toWebhookEndpointResponse(ep data.WebhookEndpoint) webhookEndpointResponse 
 	}
 	return webhookEndpointResponse{
 		ID:        ep.ID.String(),
-		AccountID:     ep.AccountID.String(),
+		AccountID: ep.AccountID.String(),
 		URL:       ep.URL,
 		Events:    events,
 		Enabled:   ep.Enabled,

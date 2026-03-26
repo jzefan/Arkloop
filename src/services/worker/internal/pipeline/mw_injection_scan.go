@@ -507,7 +507,7 @@ func cancelRunForSpeculativeInjectionBlock(
 		return fmt.Errorf("speculative injection cancel lock run: %w", err)
 	}
 
-	terminalType, err := eventsRepo.GetLatestEventType(ctx, tx, rc.Run.ID, []string{"run.completed", "run.failed", "run.cancelled"})
+	terminalType, err := eventsRepo.GetLatestEventType(ctx, tx, rc.Run.ID, []string{"run.completed", "run.failed", "run.cancelled", "run.interrupted"})
 	if err != nil {
 		return fmt.Errorf("speculative injection cancel read terminal state: %w", err)
 	}

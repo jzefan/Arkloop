@@ -20,7 +20,7 @@ import (
 
 var (
 	cancelEventTypes   = []string{"run.cancel_requested", "run.cancelled"}
-	terminalEventTypes = []string{"run.completed", "run.failed", "run.cancelled"}
+	terminalEventTypes = []string{"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
 )
 
 // NewCancelGuardMiddleware 检查 run 是否已取消或终态，
@@ -268,9 +268,10 @@ func truncateChildRunPayload(raw string) string {
 
 // TerminalStatuses 映射终态事件类型到 runs.status 值。
 var TerminalStatuses = map[string]string{
-	"run.completed": "completed",
-	"run.failed":    "failed",
-	"run.cancelled": "cancelled",
+	"run.completed":   "completed",
+	"run.failed":      "failed",
+	"run.interrupted": "interrupted",
+	"run.cancelled":   "cancelled",
 }
 
 // fetchLatestInput 查询 run_events 中 seq > sinceSeq 的最新 run.input_provided 事件。

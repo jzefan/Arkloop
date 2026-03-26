@@ -2,9 +2,11 @@ package rollout
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
+	"fmt"
+	"io"
 
 	"arkloop/services/shared/objectstore"
 
@@ -28,44 +30,106 @@ func (r *Reader) ReadRollout(ctx context.Context, runID uuid.UUID) ([]RolloutIte
 		return nil, err
 	}
 	var items []RolloutItem
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(string(scanner.Bytes()))
-		if line == "" {
+	reader := bufio.NewReader(bytes.NewReader(data))
+	lineNum := 0
+	for {
+		chunk, readErr := reader.ReadBytes('\n')
+		if len(chunk) == 0 && readErr == io.EOF {
+			break
+		}
+		if readErr != nil && readErr != io.EOF {
+			return nil, fmt.Errorf("read rollout %s: %w", runID, readErr)
+		}
+		lineNum++
+		line := bytes.TrimSpace(chunk)
+		if len(line) == 0 {
+			if readErr == io.EOF {
+				break
+			}
 			continue
 		}
 		var item RolloutItem
-		if err := json.Unmarshal([]byte(line), &item); err != nil {
-			continue
+		if err := json.Unmarshal(line, &item); err != nil {
+			return nil, fmt.Errorf("parse rollout line %d: %w", lineNum, err)
 		}
 		items = append(items, item)
+		if readErr == io.EOF {
+			break
+		}
 	}
 	return items, nil
 }
 
-// Reconstruct 反向扫描 RolloutItem 列表，重建断点状态和消息序列。
-// 从尾到头扫描，找到 run_end 和最后一个 assistant_message，构造 ReconstructedState。
+// Reconstruct 顺序扫描 RolloutItem 列表，重建 assistant/tool 回放序列和未完成 tool call。
 func (r *Reader) Reconstruct(items []RolloutItem) *ReconstructedState {
 	state := &ReconstructedState{}
-	// 反向遍历
-	for i := len(items) - 1; i >= 0; i-- {
-		item := items[i]
+	pending := map[string]ToolCall{}
+	pendingOrder := make([]string, 0)
+	toolNames := map[string]string{}
+	currentTurnIndex := 0
+
+	for _, item := range items {
 		switch item.Type {
 		case "run_end":
 			var payload RunEnd
 			if json.Unmarshal(item.Payload, &payload) == nil {
 				state.FinalStatus = payload.FinalStatus
 			}
+		case "turn_start":
+			var payload TurnStart
+			if json.Unmarshal(item.Payload, &payload) == nil {
+				currentTurnIndex = payload.TurnIndex
+			}
 		case "assistant_message":
-			state.Messages = append([]json.RawMessage{item.Payload}, state.Messages...)
+			var payload AssistantMessage
+			if json.Unmarshal(item.Payload, &payload) != nil {
+				continue
+			}
+			state.Messages = append(state.Messages, item.Payload)
+			state.ReplayMessages = append(state.ReplayMessages, ReplayMessage{
+				Role:      "assistant",
+				Assistant: &payload,
+			})
 		case "tool_call":
-			if state.Breakpoint == nil {
-				var tc ToolCall
-				if json.Unmarshal(item.Payload, &tc) == nil {
-					state.Breakpoint = &Breakpoint{LastToolCall: tc.CallID}
-				}
+			var payload ToolCall
+			if json.Unmarshal(item.Payload, &payload) != nil {
+				continue
+			}
+			pending[payload.CallID] = payload
+			toolNames[payload.CallID] = payload.Name
+			pendingOrder = append(pendingOrder, payload.CallID)
+		case "tool_result":
+			var payload ToolResult
+			if json.Unmarshal(item.Payload, &payload) != nil {
+				continue
+			}
+			delete(pending, payload.CallID)
+			state.ReplayMessages = append(state.ReplayMessages, ReplayMessage{
+				Role: "tool",
+				Tool: &ReplayToolResult{
+					CallID: payload.CallID,
+					Name:   toolNames[payload.CallID],
+					Output: payload.Output,
+					Error:  payload.Error,
+				},
+			})
+		case "turn_end":
+			var payload TurnEnd
+			if json.Unmarshal(item.Payload, &payload) == nil {
+				currentTurnIndex = payload.TurnIndex
 			}
 		}
+	}
+
+	for _, callID := range pendingOrder {
+		call, ok := pending[callID]
+		if !ok {
+			continue
+		}
+		state.PendingToolCalls = append(state.PendingToolCalls, call)
+	}
+	if len(state.PendingToolCalls) > 0 {
+		state.Breakpoint = &Breakpoint{TurnIndex: currentTurnIndex}
 	}
 	return state
 }

@@ -55,13 +55,28 @@ type RunEnd struct {
 	OutputRef   string `json:"output_ref,omitempty"`
 }
 
+type ReplayToolResult struct {
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Synthetic bool            `json:"synthetic,omitempty"`
+}
+
+type ReplayMessage struct {
+	Role      string            `json:"role"`
+	Assistant *AssistantMessage `json:"assistant,omitempty"`
+	Tool      *ReplayToolResult `json:"tool,omitempty"`
+}
+
 type ReconstructedState struct {
-	Messages    []json.RawMessage // 重建的 assistant message 序列
-	Breakpoint  *Breakpoint       // 断点位置
-	FinalStatus string
+	Messages         []json.RawMessage // 兼容旧调用方：仅 assistant message 序列
+	ReplayMessages   []ReplayMessage
+	PendingToolCalls []ToolCall
+	Breakpoint       *Breakpoint
+	FinalStatus      string
 }
 
 type Breakpoint struct {
-	TurnIndex    int    `json:"turn_index"`
-	LastToolCall string `json:"last_tool_call_id,omitempty"`
+	TurnIndex int `json:"turn_index"`
 }

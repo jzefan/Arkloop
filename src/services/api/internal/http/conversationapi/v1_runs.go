@@ -51,7 +51,7 @@ const (
 	searchHybridOutputModelsKey = "search_hybrid_output_models"
 )
 
-var runTerminalEventTypes = []string{"run.completed", "run.failed", "run.cancelled"}
+var runTerminalEventTypes = []string{"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
 
 type createRunRequest struct {
 	RouteID        *string `json:"route_id"`
@@ -283,7 +283,7 @@ func createThreadRun(
 			return
 		}
 
-		run, _, err := runRepo.CreateRootRunWithClaim(
+		run, _, err := runRepo.CreateRootRunWithClaimFrom(
 			r.Context(),
 			thread.AccountID,
 			thread.ID,
@@ -1266,6 +1266,8 @@ func deriveRunStatus(terminalEventType string) string {
 		return "failed"
 	case "run.cancelled":
 		return "cancelled"
+	case "run.interrupted":
+		return "interrupted"
 	default:
 		return "running"
 	}

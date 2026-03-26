@@ -230,9 +230,7 @@ func (l *Loop) Run(
 		}
 
 		if turn.Terminal {
-			if runCtx.RolloutRecorder != nil {
-				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
-			}
+			recordRunEnd(ctx, runCtx.RolloutRecorder, terminalStatusFromTurn(turn, "failed"))
 			return nil
 		}
 		if turn.Cancelled {
@@ -580,6 +578,11 @@ func applyTerminalTotals(turn turnResult, totals *completionTotals) turnResult {
 	last := turn.Events[len(turn.Events)-1]
 	switch last.Type {
 	case "run.failed":
+		merged := *totals
+		merged.Add(last.DataJSON)
+		last.DataJSON = merged.Apply(last.DataJSON)
+		turn.Events[len(turn.Events)-1] = last
+	case "run.interrupted":
 		merged := *totals
 		merged.Add(last.DataJSON)
 		last.DataJSON = merged.Apply(last.DataJSON)
@@ -1045,6 +1048,10 @@ func (l *Loop) runTurnWithRetry(
 			return turnResult{}, err
 		}
 
+		if turn.Terminal && attempt >= maxAttempts && isRetryableTurn(turn) {
+			turn = markTurnInterrupted(turn)
+		}
+
 		// 非终态、或已用完重试次数，直接返回
 		if !turn.Terminal || attempt >= maxAttempts || !isRetryableTurn(turn) {
 			return turn, nil
@@ -1083,6 +1090,42 @@ func isRetryableTurn(turn turnResult) bool {
 	return last.Type == "run.failed" &&
 		last.ErrorClass != nil &&
 		*last.ErrorClass == llm.ErrorClassProviderRetryable
+}
+
+func markTurnInterrupted(turn turnResult) turnResult {
+	if len(turn.Events) == 0 {
+		return turn
+	}
+	last := turn.Events[len(turn.Events)-1]
+	if last.Type != "run.failed" {
+		return turn
+	}
+	last.Type = "run.interrupted"
+	turn.Events[len(turn.Events)-1] = last
+	return turn
+}
+
+func terminalStatusFromTurn(turn turnResult, fallback string) string {
+	if len(turn.Events) == 0 {
+		return fallback
+	}
+	switch turn.Events[len(turn.Events)-1].Type {
+	case "run.interrupted":
+		return "interrupted"
+	case "run.failed":
+		return "failed"
+	case "run.cancelled":
+		return "cancelled"
+	default:
+		return fallback
+	}
+}
+
+func recordRunEnd(ctx context.Context, recorder *rollout.Recorder, status string) {
+	if recorder == nil {
+		return
+	}
+	appendRolloutSync(ctx, recorder, MakeRunEnd(status))
 }
 
 // retryBackoffMs 计算指数退避等待时长，最大 30s。

@@ -22,6 +22,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/telegrambot"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/data"
@@ -89,6 +90,7 @@ type DesktopEngine struct {
 	jobQueue               queue.JobQueue
 	routingLoader          *routing.ConfigLoader
 	messageAttachmentStore objectstore.Store
+	rolloutStore           objectstore.BlobStore
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -217,6 +219,12 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	} else {
 		messageAttachmentStore = mas
 	}
+	var rolloutStore objectstore.BlobStore
+	if rs, err := openDesktopRolloutStore(ctx); err != nil {
+		slog.WarnContext(ctx, "desktop: rollout store init failed", "err", err.Error())
+	} else {
+		rolloutStore = rs
+	}
 
 	// Use localshell specs for LLM; DynamicShellExecutor routes to correct backend at runtime
 	shellLlmSpecs := localshell.LlmSpecs()
@@ -296,6 +304,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		jobQueue:               jobQueue,
 		routingLoader:          routingLoader,
 		messageAttachmentStore: messageAttachmentStore,
+		rolloutStore:           rolloutStore,
 	}, nil
 }
 
@@ -374,6 +383,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		WorkspaceRef: derefStr(run.WorkspaceRef),
 		JobPayload:   cloneDesktopMap(jobPayload),
 	}
+	if e.rolloutStore != nil {
+		recorder := rollout.NewRecorder(e.rolloutStore, run.ID)
+		recorder.Start(ctx)
+		rc.RolloutRecorder = recorder
+		defer recorder.Close(context.Background())
+	}
 	if !e.useVM {
 		defer func() {
 			if err := cleanupDesktopSkillRuntime(run.ID); err != nil {
@@ -383,7 +398,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 
 	if e.jobQueue != nil && subAgentsEnabled {
-		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{}, nil)
+		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{}, e.rolloutStore)
 	}
 
 	// pipeline 限制规范化
@@ -412,7 +427,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	middlewares := []pipeline.RunMiddleware{
 		desktopCancelGuard(),
-		desktopInputLoader(e.db, eventsRepo, e.messageAttachmentStore),
+		desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore),
 		pipeline.NewHeartbeatScheduleMiddleware(e.db),
 		desktopToolInit(e.toolExecutors, e.allLlmSpecs, e.baseAllowlist, e.toolRegistry),
 		desktopToolProviderBindings(e.db),
@@ -545,78 +560,29 @@ func desktopCancelGuard() pipeline.RunMiddleware {
 // desktopInputLoader loads run input and thread messages from SQLite.
 func desktopInputLoader(
 	db data.DesktopDB,
+	runsRepo data.DesktopRunsRepository,
 	eventsRepo data.DesktopRunEventsRepository,
 	attachmentStore pipeline.MessageAttachmentStore,
+	rolloutStore objectstore.BlobStore,
 ) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 		messageLimit := rc.ThreadMessageHistoryLimit
 		if messageLimit <= 0 {
 			messageLimit = 200
 		}
-
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		loaded, err := pipeline.LoadRunInputs(ctx, db, rc.Run, runsRepo, eventsRepo, data.MessagesRepository{}, attachmentStore, rolloutStore, messageLimit)
 		if err != nil {
-			return err
-		}
-
-		_, dataJSON, err := eventsRepo.FirstEventData(ctx, tx, rc.Run.ID)
-		if err != nil {
-			tx.Rollback(ctx)
-			return err
-		}
-
-		inputJSON := map[string]any{
-			"account_id": rc.Run.AccountID.String(),
-			"thread_id":  rc.Run.ThreadID.String(),
-		}
-		if dataJSON != nil {
-			for _, key := range []string{"route_id", "persona_id", "role", "output_route_id", "model", "work_dir"} {
-				if v, ok := dataJSON[key].(string); ok && strings.TrimSpace(v) != "" {
-					inputJSON[key] = strings.TrimSpace(v)
-				}
+			if pipeline.IsResumeUnavailableError(err) {
+				return desktopWriteFailure(ctx, db, rc.Run, rc.Emitter, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}, pipeline.ResumeUnavailableErrorClass, "resume context is unavailable", nil)
 			}
-		}
-
-		messagesRepo := data.MessagesRepository{}
-		messages, err := messagesRepo.ListByThread(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, messageLimit)
-		if err != nil {
-			tx.Rollback(ctx)
 			return err
 		}
-
-		// Release the read-only tx before calling next. With MaxOpenConns(1)
-		// the single SQLite connection must be free for downstream middleware.
-		tx.Rollback(ctx)
-
-		rc.InputJSON = inputJSON
-		if wd, ok := inputJSON["work_dir"].(string); ok && strings.TrimSpace(wd) != "" {
+		rc.InputJSON = loaded.InputJSON
+		if wd, ok := loaded.InputJSON["work_dir"].(string); ok && strings.TrimSpace(wd) != "" {
 			rc.WorkDir = strings.TrimSpace(wd)
 		}
-		llmMessages := make([]llm.Message, 0, len(messages))
-		ids := make([]uuid.UUID, 0, len(messages))
-		for _, msg := range messages {
-			if strings.TrimSpace(msg.Role) == "" {
-				continue
-			}
-			parts, err := pipeline.BuildMessageParts(ctx, attachmentStore, msg)
-			if err != nil {
-				return err
-			}
-			llmMessages = append(llmMessages, llm.Message{
-				Role:    msg.Role,
-				Content: parts,
-			})
-			ids = append(ids, msg.ID)
-		}
-		rc.Messages = llmMessages
-		rc.ThreadMessageIDs = ids
-
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "user" && strings.TrimSpace(messages[i].Content) != "" {
-				inputJSON["last_user_message"] = strings.TrimSpace(messages[i].Content)
-				break
-			}
-		}
+		rc.Messages = loaded.Messages
+		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
 
 		return next(ctx, rc)
 	}
@@ -1352,9 +1318,10 @@ func resolveDesktopAPIKey(cred routing.ProviderCredential) (string, error) {
 // --------------- desktop agent loop ---------------
 
 var desktopTerminalStatuses = map[string]string{
-	"run.completed": "completed",
-	"run.failed":    "failed",
-	"run.cancelled": "cancelled",
+	"run.completed":   "completed",
+	"run.failed":      "failed",
+	"run.interrupted": "interrupted",
+	"run.cancelled":   "cancelled",
 }
 
 func desktopAgentLoop(

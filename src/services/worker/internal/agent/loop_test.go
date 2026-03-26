@@ -645,6 +645,60 @@ func TestAgentLoopSearchToolTurnDoesNotInjectAssistantText(t *testing.T) {
 	}
 }
 
+func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
+	loop := NewLoop(&retryableFailureGateway{}, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			LlmRetryMaxAttempts: 2,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	retryCount := 0
+	interruptedCount := 0
+	for _, ev := range got {
+		if ev.Type == "run.llm.retry" {
+			retryCount++
+		}
+		if ev.Type == "run.interrupted" {
+			interruptedCount++
+			if ev.ErrorClass == nil || *ev.ErrorClass != llm.ErrorClassProviderRetryable {
+				t.Fatalf("unexpected interrupted error class: %#v", ev.ErrorClass)
+			}
+		}
+		if ev.Type == "run.failed" {
+			t.Fatalf("unexpected run.failed event: %#v", ev)
+		}
+	}
+	if retryCount != 1 {
+		t.Fatalf("expected 1 run.llm.retry, got %d", retryCount)
+	}
+	if interruptedCount != 1 {
+		t.Fatalf("expected 1 run.interrupted, got %d", interruptedCount)
+	}
+	if got[len(got)-1].Type != "run.interrupted" {
+		t.Fatalf("expected final event run.interrupted, got %s", got[len(got)-1].Type)
+	}
+}
+
 func TestAgentLoopDedupToolResultMessageInjection(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
@@ -1209,6 +1263,22 @@ func (g *multiToolCallGateway) Stream(ctx context.Context, request llm.Request, 
 
 type usageScriptedGateway struct {
 	calls int
+}
+
+type retryableFailureGateway struct {
+	calls int
+}
+
+func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	return yield(llm.StreamRunFailed{
+		Error: llm.GatewayError{
+			ErrorClass: llm.ErrorClassProviderRetryable,
+			Message:    "provider overloaded",
+		},
+	})
 }
 
 func (g *usageScriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {

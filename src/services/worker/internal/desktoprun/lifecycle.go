@@ -30,9 +30,10 @@ const (
 )
 
 var desktopTerminalEventStatus = map[string]string{
-	"run.completed": "completed",
-	"run.failed":    "failed",
-	"run.cancelled": "cancelled",
+	"run.completed":   "completed",
+	"run.failed":      "failed",
+	"run.interrupted": "interrupted",
+	"run.cancelled":   "cancelled",
 }
 
 type lifecycleManager struct {

@@ -15,6 +15,7 @@ import (
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/plugin"
+	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/runlimit"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -56,7 +57,7 @@ type EngineV1 struct {
 	llmRetryBaseDelayMs   int
 	configResolver        sharedconfig.Resolver
 	releaseSlot           func(ctx context.Context, run data.Run)
-	rolloutBlobStore     objectstore.BlobStore
+	rolloutBlobStore      objectstore.BlobStore
 }
 
 type ExecuteInput struct {
@@ -69,7 +70,7 @@ type EngineV1Deps struct {
 	DBPool          *pgxpool.Pool
 	DirectDBPool    *pgxpool.Pool // LISTEN/NOTIFY 专用直连，不走 PgBouncer；nil 时 Execute 内回落 DBPool
 	RunControlHub   *pipeline.RunControlHub
-	AuxGateway     llm.Gateway
+	AuxGateway      llm.Gateway
 	EmitDebugEvents bool
 	RunLimiterRDB   *redis.Client
 
@@ -98,7 +99,7 @@ type EngineV1Deps struct {
 	MemoryProviderFactory  *workerruntime.MemoryProviderFactory
 	RoutingConfigLoader    *routing.ConfigLoader
 	MessageAttachmentStore pipeline.MessageAttachmentStore
-	RolloutBlobStore      objectstore.BlobStore // 用于创建 RolloutRecorder，非 desktop 模式下可选
+	RolloutBlobStore       objectstore.BlobStore // 用于创建 RolloutRecorder，非 desktop 模式下可选
 
 	// PlatformToolExecutor: platform_manage 的执行器，nil 时跳过注入
 	PlatformToolExecutor tools.Executor
@@ -231,7 +232,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		llmRetryBaseDelayMs:   deps.LlmRetryBaseDelayMs,
 		configResolver:        cfgResolver,
 		releaseSlot:           releaseSlot,
-		rolloutBlobStore:     deps.RolloutBlobStore,
+		rolloutBlobStore:      deps.RolloutBlobStore,
 	}, nil
 }
 
@@ -286,6 +287,12 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		LlmRetryMaxAttempts: e.llmRetryMaxAttempts,
 		LlmRetryBaseDelayMs: e.llmRetryBaseDelayMs,
 	}
+	if e.rolloutBlobStore != nil {
+		recorder := rollout.NewRecorder(e.rolloutBlobStore, run.ID)
+		recorder.Start(ctx)
+		rc.RolloutRecorder = recorder
+		defer recorder.Close(context.Background())
+	}
 
 	registry := sharedconfig.DefaultRegistry()
 	platformScope := sharedconfig.Scope{}
@@ -295,17 +302,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		persistPct = 100
 	}
 	rc.ContextCompact = pipeline.ContextCompactSettings{
-		Enabled:                    resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
-		MaxMessages:                resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
-		MaxUserMessageTokens:       resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_message_tokens", platformScope, 0),
-		MaxTotalTextTokens:         resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_tokens", platformScope, 0),
-		MaxUserTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
-		MaxTotalTextBytes:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
-		PersistEnabled:             resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
-		PersistTriggerApproxTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, 0),
-		PersistTriggerContextPct:   persistPct,
+		Enabled:                     resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
+		MaxMessages:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
+		MaxUserMessageTokens:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_message_tokens", platformScope, 0),
+		MaxTotalTextTokens:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_tokens", platformScope, 0),
+		MaxUserTextBytes:            resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
+		MaxTotalTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
+		PersistEnabled:              resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
+		PersistTriggerApproxTokens:  resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, 0),
+		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 200000),
-		PersistKeepLastMessages:    resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
+		PersistKeepLastMessages:     resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
 	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
 	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", platformScope, 32)
@@ -361,6 +368,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 //  1. resolver.Resolve（运行时动态配置，来自数据库）
 //  2. registry.Default（编译时静态默认值，来自 DefaultRegistry）
 //  3. lastResort（调用方硬编码兜底）
+//
 // resolver 或 registry 为 nil 时跳过对应层直接降级。
 func resolvePositiveInt(ctx context.Context, resolver sharedconfig.Resolver, registry *sharedconfig.Registry, key string, scope sharedconfig.Scope, lastResort int) int {
 	fallback := lastResort
@@ -451,7 +459,7 @@ func buildPipeline(
 	baseAllowlistSet map[string]struct{},
 ) []pipeline.RunMiddleware {
 	var mws []pipeline.RunMiddleware
-	mws = append(mws, buildBaseLayer(runsRepo, eventsRepo, messagesRepo, deps.RunControlHub, deps.MessageAttachmentStore, resolver, releaseSlot)...)
+	mws = append(mws, buildBaseLayer(runsRepo, eventsRepo, messagesRepo, deps.RunControlHub, deps.MessageAttachmentStore, deps.RolloutBlobStore, resolver, releaseSlot)...)
 	mws = append(mws, buildAgentConfigLayer(deps, runsRepo, eventsRepo, baseAllowlistSet, releaseSlot)...)
 	mws = append(mws, buildChannelLayer(deps)...)
 	mws = append(mws, buildCapabilityLayer(deps, cfgResolver, compositeScanner, injectionAuditor, eventsRepo)...)
@@ -467,12 +475,13 @@ func buildBaseLayer(
 	messagesRepo data.MessagesRepository,
 	runControlHub *pipeline.RunControlHub,
 	attachmentStore pipeline.MessageAttachmentStore,
+	rolloutStore objectstore.BlobStore,
 	resolver *sharedent.Resolver,
 	releaseSlot func(ctx context.Context, run data.Run),
 ) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, runControlHub),
-		pipeline.NewInputLoaderMiddleware(eventsRepo, messagesRepo, attachmentStore),
+		pipeline.NewInputLoaderMiddleware(runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 	}
 }

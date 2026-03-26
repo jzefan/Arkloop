@@ -11,6 +11,7 @@ import {
   listRunEvents,
   listStarredThreadIds,
   listThreadRuns,
+  createRun,
 } from '../api'
 import {
   writeMessageWidgets,
@@ -87,7 +88,27 @@ vi.mock('../storage', async () => {
 })
 
 vi.mock('../components/ChatInput', () => ({
-  ChatInput: () => <div>chat-input</div>,
+  ChatInput: ({
+    value,
+    onChange,
+    onSubmit,
+    isStreaming,
+  }: {
+    value: string
+    onChange: (value: string) => void
+    onSubmit: (e: { preventDefault: () => void }, personaKey: string, modelOverride?: string) => void
+    isStreaming?: boolean
+  }) => (
+    <form onSubmit={(event) => onSubmit(event, 'default')}>
+      <input
+        aria-label="chat-input"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <button type="submit">send</button>
+      <div>{isStreaming ? 'streaming' : 'idle'}</div>
+    </form>
+  ),
 }))
 
 vi.mock('../components/MessageBubble', () => ({
@@ -99,7 +120,13 @@ vi.mock('../components/ExecutionCard', () => ({
 }))
 
 vi.mock('../components/CopTimeline', () => ({
-  CopTimeline: () => <div />,
+  CopTimeline: ({ steps }: { steps?: Array<{ id: string; label: string; status?: string }> }) => (
+    <div>
+      {steps?.map((step) => (
+        <span key={step.id}>{step.label}</span>
+      ))}
+    </div>
+  ),
 }))
 
 vi.mock('../components/ShareModal', () => ({
@@ -142,6 +169,7 @@ describe('ChatPage loading state', () => {
   const mockedListRunEvents = vi.mocked(listRunEvents)
   const mockedListStarredThreadIds = vi.mocked(listStarredThreadIds)
   const mockedListThreadRuns = vi.mocked(listThreadRuns)
+  const mockedCreateRun = vi.mocked(createRun)
   const mockedWriteMessageWidgets = vi.mocked(writeMessageWidgets)
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
@@ -169,6 +197,7 @@ describe('ChatPage loading state', () => {
     mockedListRunEvents.mockResolvedValue([])
     mockedListStarredThreadIds.mockResolvedValue([])
     mockedListThreadRuns.mockResolvedValue([])
+    mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
   })
 
   afterEach(() => {
@@ -226,6 +255,173 @@ describe('ChatPage loading state', () => {
     expect(mockedListThreadRuns).toHaveBeenCalledWith('token', 'thread-1', 1)
     expect(container.textContent).not.toContain('加载中...')
     expect(container.textContent).toContain('hello')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('重新进入 thread 时若最新 run 为 interrupted 应显示中断提示', async () => {
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-1',
+        status: 'interrupted',
+        created_at: '2026-03-10T00:00:05Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+    })
+
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).toMatch(/Run interrupted|运行已中断/)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('run.interrupted 后应把排队输入还原到输入框', async () => {
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-1',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const input = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+    const form = container.querySelector('form')
+    if (!input || !form) {
+      throw new Error('chat input mock not rendered')
+    }
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      valueSetter?.call(input, 'continue from here')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await flushMicrotasks()
+    })
+
+    sseMock.state = 'connected'
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-1',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'tool.call',
+        data: {
+          tool_name: 'web_search',
+          tool_call_id: 'search-1',
+          arguments: { query: 'resume me' },
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-1',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.interrupted',
+        data: {},
+      },
+    ]
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const restoredInput = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+    if (!restoredInput) {
+      throw new Error('restored chat input not rendered')
+    }
+    expect(restoredInput.value).toBe('continue from here')
 
     act(() => {
       root.unmount()

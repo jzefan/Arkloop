@@ -834,7 +834,7 @@ export async function createRun(
 
 export type ThreadRunResponse = {
   run_id: string
-  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   created_at: string
 }
 

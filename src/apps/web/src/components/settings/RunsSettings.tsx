@@ -19,6 +19,7 @@ function statusColor(status: string): string {
     case 'running': return 'var(--c-status-warning-text)'
     case 'completed': return 'var(--c-status-success-text)'
     case 'failed': return 'var(--c-status-error-text)'
+    case 'interrupted': return 'var(--c-status-error-text)'
     default: return 'var(--c-text-muted)'
   }
 }
