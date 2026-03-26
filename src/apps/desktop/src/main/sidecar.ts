@@ -621,7 +621,7 @@ function buildConnectorsEnv(): Record<string, string> {
   return env
 }
 
-function buildMemoryEnv(): Record<string, string> {
+function buildMemoryEnv(projectDir: string | null): Record<string, string> {
   const env: Record<string, string> = {}
   const cfg = memoryConfig
   if (!cfg) return env
@@ -632,6 +632,21 @@ function buildMemoryEnv(): Record<string, string> {
     env.ARKLOOP_OPENVIKING_BASE_URL = 'http://localhost:19010'
     if (cfg.openviking?.rootApiKey) {
       env.ARKLOOP_OPENVIKING_ROOT_API_KEY = cfg.openviking.rootApiKey
+    } else {
+      // Fallback: read root_api_key directly from ov.conf (source of truth).
+      const ovConfPath = projectDir
+        ? path.join(projectDir, 'config', 'openviking', 'ov.conf')
+        : null
+      if (ovConfPath) {
+        try {
+          const ovData = JSON.parse(fs.readFileSync(ovConfPath, 'utf-8'))
+          if (ovData?.server?.root_api_key) {
+            env.ARKLOOP_OPENVIKING_ROOT_API_KEY = String(ovData.server.root_api_key)
+          }
+        } catch {
+          // ov.conf not present or unreadable; env var will be used as last resort.
+        }
+      }
     }
   }
   return env
@@ -1128,7 +1143,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ...buildWorkspaceEnv(projectDir),
       ...buildBridgeEnv(bridgePort, projectDir),
       ...buildConnectorsEnv(),
-      ...buildMemoryEnv(),
+      ...buildMemoryEnv(projectDir),
       ARKLOOP_DESKTOP_TITLE_DEBUG: desktopTitleDebugFlag(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
