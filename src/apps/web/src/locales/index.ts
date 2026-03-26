@@ -504,6 +504,11 @@ export interface LocaleStrings {
     tokenAlreadyConfigured: string
     allowedUsers: string
     allowedUsersPlaceholder: string
+    accessControl: string
+    allowedServerIds: string
+    allowedServerIdsPlaceholder: string
+    allowedChannelIds: string
+    allowedChannelIdsPlaceholder: string
     persona: string
     personaDefault: string
     webhookUrl: string

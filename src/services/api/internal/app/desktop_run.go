@@ -30,6 +30,7 @@ import (
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/shared/desktop"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/eventbus"
 	sharedlog "arkloop/services/shared/log"
 	"arkloop/services/shared/objectstore"
@@ -270,6 +271,10 @@ func RunDesktop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("init channel receipts repo: %w", err)
 	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel ledger repo: %w", err)
+	}
 	planRepo, err := data.NewPlanRepository(pgxPool)
 	if err != nil {
 		return fmt.Errorf("init plan repo: %w", err)
@@ -402,6 +407,7 @@ func RunDesktop(ctx context.Context) error {
 
 	// ---- HTTP handler ----
 
+	discordClient := discordbot.NewClient("", nil)
 	handler := apihttp.NewHandler(apihttp.HandlerConfig{
 		Logger:               logger,
 		SchemaRepository:     nil,
@@ -484,6 +490,7 @@ func RunDesktop(ctx context.Context) error {
 		MessageAttachmentStore: messageAttachmentStore,
 		EnvironmentStore:       environmentStore,
 		SkillStore:             skillStore,
+		DiscordBotClient:       discordClient,
 
 		RunLimiter: nil,
 
@@ -528,6 +535,25 @@ func RunDesktop(ctx context.Context) error {
 		MessageAttachmentStore:  messageAttachmentStore,
 		TelegramMode:            "polling",
 		Bus:                     desktopBus,
+	})
+	accountapi.StartDiscordIngressRunner(ctx, accountapi.DiscordIngressRunnerDeps{
+		ChannelsRepo:          channelsRepo,
+		ChannelIdentitiesRepo: channelIdentitiesRepo,
+		ChannelBindCodesRepo:  channelBindCodesRepo,
+		ChannelDMThreadsRepo:  channelDMThreadsRepo,
+		ChannelReceiptsRepo:   channelReceiptsRepo,
+		ChannelLedgerRepo:     channelLedgerRepo,
+		SecretsRepo:           secretsRepo,
+		PersonasRepo:          personasRepo,
+		ThreadRepo:            threadRepo,
+		MessageRepo:           messageRepo,
+		RunEventRepo:          runEventRepo,
+		JobRepo:               jobRepo,
+		CreditsRepo:           creditsRepo,
+		Pool:                  pgxPool,
+		EntitlementService:    entitlementService,
+		DiscordClient:         discordClient,
+		Bus:                   desktopBus,
 	})
 
 	// ---- HTTP server ----

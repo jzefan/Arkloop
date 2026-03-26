@@ -1707,6 +1707,9 @@ export async function deleteChannel(accessToken: string, id: string): Promise<vo
 export type ChannelVerifyResponse = {
   ok: boolean
   bot_username?: string
+  bot_user_id?: string
+  application_name?: string
+  application_id?: string
   error?: string
 }
 

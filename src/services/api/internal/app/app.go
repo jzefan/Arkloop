@@ -21,6 +21,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	apihttp "arkloop/services/api/internal/http"
+	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/jobs"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/personas"
@@ -29,6 +30,7 @@ import (
 	"arkloop/services/api/internal/skillseed"
 	"arkloop/services/shared/acptoken"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/objectstore"
 	sharedredis "arkloop/services/shared/redis"
 
@@ -248,6 +250,7 @@ func (a *Application) Run(ctx context.Context) error {
 		channelDMThreadsRepo         *data.ChannelDMThreadsRepository
 		channelGroupThreadsRepo      *data.ChannelGroupThreadsRepository
 		channelReceiptsRepo          *data.ChannelMessageReceiptsRepository
+		channelLedgerRepo            *data.ChannelMessageLedgerRepository
 		plansRepo                    *data.PlanRepository
 		subscriptionsRepo            *data.SubscriptionRepository
 		entitlementsRepo             *data.EntitlementsRepository
@@ -425,6 +428,10 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		channelReceiptsRepo, err = data.NewChannelMessageReceiptsRepository(pool)
+		if err != nil {
+			return err
+		}
+		channelLedgerRepo, err = data.NewChannelMessageLedgerRepository(pool)
 		if err != nil {
 			return err
 		}
@@ -669,6 +676,30 @@ func (a *Application) Run(ctx context.Context) error {
 			go skillSeeder.Run(ctx)
 		}
 	}
+	discordClient := discordbot.NewClient("", nil)
+	if channelsRepo != nil && channelIdentitiesRepo != nil && channelBindCodesRepo != nil &&
+		channelDMThreadsRepo != nil && channelReceiptsRepo != nil && secretsRepo != nil &&
+		personasRepo != nil && threadRepo != nil && messageRepo != nil &&
+		runEventRepo != nil && jobRepo != nil && creditsRepo != nil && pool != nil {
+		accountapi.StartDiscordIngressRunner(ctx, accountapi.DiscordIngressRunnerDeps{
+			ChannelsRepo:          channelsRepo,
+			ChannelIdentitiesRepo: channelIdentitiesRepo,
+			ChannelBindCodesRepo:  channelBindCodesRepo,
+			ChannelDMThreadsRepo:  channelDMThreadsRepo,
+			ChannelReceiptsRepo:   channelReceiptsRepo,
+			ChannelLedgerRepo:     channelLedgerRepo,
+			SecretsRepo:           secretsRepo,
+			PersonasRepo:          personasRepo,
+			ThreadRepo:            threadRepo,
+			MessageRepo:           messageRepo,
+			RunEventRepo:          runEventRepo,
+			JobRepo:               jobRepo,
+			CreditsRepo:           creditsRepo,
+			Pool:                  pool,
+			EntitlementService:    entitlementSvc,
+			DiscordClient:         discordClient,
+		})
+	}
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
@@ -748,6 +779,7 @@ func (a *Application) Run(ctx context.Context) error {
 			SkillStore:                   skillStore,
 			EmailFrom:                    strings.TrimSpace(a.config.EmailFrom),
 			AppBaseURL:                   a.config.AppBaseURL,
+			DiscordBotClient:             discordClient,
 			TurnstileEnvSecretKey:        a.config.TurnstileSecretKey,
 			TurnstileEnvSiteKey:          a.config.TurnstileSiteKey,
 			TurnstileEnvAllowedHost:      a.config.TurnstileAllowedHost,

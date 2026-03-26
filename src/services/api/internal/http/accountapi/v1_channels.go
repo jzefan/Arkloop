@@ -16,6 +16,7 @@ import (
 	"arkloop/services/api/internal/data"
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/telegrambot"
 
 	"github.com/google/uuid"
@@ -66,12 +67,13 @@ func channelsEntry(
 	pool data.DB,
 	appBaseURL string,
 	telegramClient *telegrambot.Client,
+	discordClient *discordbot.Client,
 	telegramMode string,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.Method {
 		case nethttp.MethodPost:
-			createChannel(w, r, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, appBaseURL, telegramClient, telegramMode)
+			createChannel(w, r, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, appBaseURL, telegramClient, discordClient, telegramMode)
 		case nethttp.MethodGet:
 			listChannels(w, r, authService, membershipRepo, channelsRepo, apiKeysRepo)
 		default:
@@ -89,6 +91,7 @@ func channelEntry(
 	secretsRepo *data.SecretsRepository,
 	pool data.DB,
 	telegramClient *telegrambot.Client,
+	discordClient *discordbot.Client,
 	telegramMode string,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -114,7 +117,7 @@ func channelEntry(
 				httpkit.WriteMethodNotAllowed(w, r)
 				return
 			}
-			verifyChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, telegramClient)
+			verifyChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, telegramClient, discordClient)
 			return
 		}
 
@@ -128,7 +131,7 @@ func channelEntry(
 		case nethttp.MethodGet:
 			getChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo)
 		case nethttp.MethodPatch:
-			updateChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, telegramClient, telegramMode)
+			updateChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, personasRepo, apiKeysRepo, secretsRepo, pool, telegramClient, discordClient, telegramMode)
 		case nethttp.MethodDelete:
 			deleteChannel(w, r, traceID, channelID, authService, membershipRepo, channelsRepo, apiKeysRepo, secretsRepo, pool, telegramClient, telegramMode)
 		default:
@@ -149,6 +152,7 @@ func createChannel(
 	pool data.DB,
 	appBaseURL string,
 	telegramClient *telegrambot.Client,
+	discordClient *discordbot.Client,
 	telegramMode string,
 ) {
 	traceID := observability.TraceIDFromContext(r.Context())
@@ -273,6 +277,12 @@ func createChannel(
 			return
 		}
 	}
+	if req.ChannelType == "discord" && ch.IsActive {
+		if _, _, err := mustValidateDiscordActivation(r.Context(), actor.AccountID, personasRepo, ch.PersonaID); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -384,6 +394,7 @@ func updateChannel(
 	secretsRepo *data.SecretsRepository,
 	pool data.DB,
 	telegramClient *telegrambot.Client,
+	discordClient *discordbot.Client,
 	telegramMode string,
 ) {
 	if authService == nil {
@@ -464,6 +475,8 @@ func updateChannel(
 		var err error
 		if ch.ChannelType == "telegram" {
 			normalizedConfig, err = mergeTelegramChannelConfigJSONPatch(ch.ConfigJSON, *req.ConfigJSON)
+		} else if ch.ChannelType == "discord" {
+			normalizedConfig, err = mergeDiscordChannelConfigJSONPatch(ch.ConfigJSON, *req.ConfigJSON)
 		} else {
 			normalizedConfig, _, err = normalizeChannelConfigJSON(ch.ChannelType, *req.ConfigJSON)
 		}
@@ -475,6 +488,17 @@ func updateChannel(
 		desiredConfigJSON = normalizedConfig
 	}
 	if ch.ChannelType == "telegram" && desiredPersonaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if resolvedPersonaID != nil && *resolvedPersonaID != derefUUID(desiredPersonaID) {
+			desiredPersonaID = resolvedPersonaID
+			upd.PersonaID = &resolvedPersonaID
+		}
+	}
+	if ch.ChannelType == "discord" && desiredPersonaID != nil {
 		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -548,6 +572,16 @@ func updateChannel(
 			needsDeactivate = true
 		}
 	}
+	if ch.ChannelType == "discord" && desiredIsActive {
+		if _, _, err := mustValidateDiscordActivation(r.Context(), actor.AccountID, personasRepo, desiredPersonaID); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+		if nextToken == "" {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "discord channel requires bot_token before activation", traceID, nil)
+			return
+		}
+	}
 
 	updated, err := channelsRepo.WithTx(tx).Update(r.Context(), channelID, actor.AccountID, upd)
 	if err != nil {
@@ -580,6 +614,13 @@ func updateChannel(
 			_, _ = channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{IsActive: &trueVal})
 			httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.telegram_remote_failed", err.Error(), traceID, nil)
 			return
+		}
+	}
+	if ch.ChannelType == "discord" && desiredIsActive && discordClient != nil && nextToken != "" {
+		if info, infoErr := discordClient.VerifyBot(r.Context(), nextToken); infoErr == nil {
+			if merged, changed, mergeErr := mergeDiscordBotProfile(updated.ConfigJSON, info); mergeErr == nil && changed {
+				_, _ = channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{ConfigJSON: &merged})
+			}
 		}
 	}
 
@@ -776,9 +817,12 @@ func ensureProjectScopedChannelPersona(
 }
 
 type channelVerifyResponse struct {
-	OK          bool   `json:"ok"`
-	BotUsername string `json:"bot_username,omitempty"`
-	Error       string `json:"error,omitempty"`
+	OK              bool   `json:"ok"`
+	BotUsername     string `json:"bot_username,omitempty"`
+	BotUserID       string `json:"bot_user_id,omitempty"`
+	ApplicationID   string `json:"application_id,omitempty"`
+	ApplicationName string `json:"application_name,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 func verifyChannel(
@@ -792,6 +836,7 @@ func verifyChannel(
 	apiKeysRepo *data.APIKeysRepository,
 	secretsRepo *data.SecretsRepository,
 	telegramClient *telegrambot.Client,
+	discordClient *discordbot.Client,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
@@ -819,10 +864,6 @@ func verifyChannel(
 		httpkit.WriteError(w, nethttp.StatusNotFound, "channels.not_found", "channel not found", traceID, nil)
 		return
 	}
-	if ch.ChannelType != "telegram" {
-		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "verify only supported for telegram channels", traceID, nil)
-		return
-	}
 	if ch.CredentialsID == nil {
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "bot token not configured"})
 		return
@@ -834,29 +875,58 @@ func verifyChannel(
 		return
 	}
 
-	if telegramClient == nil {
-		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "telegram client not configured"})
-		return
-	}
-
 	verifyCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	info, err := telegramClient.GetMe(verifyCtx, strings.TrimSpace(*token))
-	if err != nil {
-		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: err.Error()})
-		return
-	}
-
-	username := ""
-	if info.Username != nil {
-		username = *info.Username
-	}
-	merged, changed, mergeErr := mergeTelegramBotProfileFromGetMe(ch.ConfigJSON, info)
-	if mergeErr == nil && changed {
-		if _, uerr := channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{ConfigJSON: &merged}); uerr != nil {
-			slog.Error("channels.telegram.verify_persist_config", "channel_id", channelID.String(), "err", uerr)
+	switch ch.ChannelType {
+	case "telegram":
+		if telegramClient == nil {
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "telegram client not configured"})
+			return
 		}
+		info, err := telegramClient.GetMe(verifyCtx, strings.TrimSpace(*token))
+		if err != nil {
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: err.Error()})
+			return
+		}
+		username := ""
+		if info.Username != nil {
+			username = *info.Username
+		}
+		merged, changed, mergeErr := mergeTelegramBotProfileFromGetMe(ch.ConfigJSON, info)
+		if mergeErr == nil && changed {
+			if _, uerr := channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{ConfigJSON: &merged}); uerr != nil {
+				slog.Error("channels.telegram.verify_persist_config", "channel_id", channelID.String(), "err", uerr)
+			}
+		}
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{
+			OK:          true,
+			BotUsername: username,
+		})
+	case "discord":
+		if discordClient == nil {
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: "discord client not configured"})
+			return
+		}
+		info, err := discordClient.VerifyBot(verifyCtx, strings.TrimSpace(*token))
+		if err != nil {
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: err.Error()})
+			return
+		}
+		merged, changed, mergeErr := mergeDiscordBotProfile(ch.ConfigJSON, info)
+		if mergeErr == nil && changed {
+			if _, uerr := channelsRepo.Update(r.Context(), channelID, actor.AccountID, data.ChannelUpdate{ConfigJSON: &merged}); uerr != nil {
+				slog.Error("channels.discord.verify_persist_config", "channel_id", channelID.String(), "err", uerr)
+			}
+		}
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{
+			OK:              true,
+			BotUsername:     info.BotUsername,
+			BotUserID:       info.BotUserID,
+			ApplicationID:   info.ApplicationID,
+			ApplicationName: info.ApplicationName,
+		})
+	default:
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "verify not supported for this channel type", traceID, nil)
 	}
-	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: true, BotUsername: username})
 }

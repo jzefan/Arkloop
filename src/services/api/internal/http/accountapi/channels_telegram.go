@@ -154,6 +154,11 @@ func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.R
 		raw = json.RawMessage(`{}`)
 	}
 
+	if channelType == "discord" {
+		normalized, _, err := normalizeDiscordChannelConfig(raw)
+		return normalized, nil, err
+	}
+
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil, nil, fmt.Errorf("config_json must be a valid JSON object")

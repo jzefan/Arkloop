@@ -26,6 +26,7 @@ import (
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/desktop"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
@@ -162,6 +163,7 @@ type HandlerConfig struct {
 	PersonaSyncTrigger interface{ Trigger() }
 
 	TelegramBotClient *telegrambot.Client
+	DiscordBotClient  *discordbot.Client
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
@@ -186,6 +188,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	telegramClient := cfg.TelegramBotClient
 	if telegramClient == nil {
 		telegramClient = telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+	}
+	discordClient := cfg.DiscordBotClient
+	if discordClient == nil {
+		discordClient = discordbot.NewClient("", nil)
 	}
 
 	effectiveToolCatalogCache := catalogapi.NewEffectiveToolCatalogCache(catalogapi.EffectiveToolCatalogTTL)
@@ -321,6 +327,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:             cfg.CreditsRepo,
 		PersonasRepo:            cfg.PersonasRepo,
 		TelegramBotClient:       telegramClient,
+		DiscordBotClient:        discordClient,
 		TelegramMode:            "polling",
 		AppBaseURL:              cfg.AppBaseURL,
 		EnvironmentStore:        cfg.EnvironmentStore,
