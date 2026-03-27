@@ -46,11 +46,19 @@ func NewInputLoaderMiddleware(
 			if err != nil {
 				return err
 			}
-			llmMessages = append(llmMessages, llm.Message{
+			message := llm.Message{
 				Role:         msg.Role,
 				Content:      parts,
 				OutputTokens: msg.OutputTokens,
-			})
+			}
+			if msg.Role == "assistant" && len(msg.ContentJSON) > 0 {
+				if assistantState, err := llm.AssistantMessageFromThreadContentJSON(msg.ContentJSON); err == nil && assistantState != nil {
+					assistantState.Role = msg.Role
+					assistantState.OutputTokens = msg.OutputTokens
+					message = *assistantState
+				}
+			}
+			llmMessages = append(llmMessages, message)
 			ids = append(ids, msg.ID)
 		}
 		rc.Messages = llmMessages
