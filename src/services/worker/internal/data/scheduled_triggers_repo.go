@@ -17,6 +17,7 @@ import (
 // ScheduledTriggerRow 是 scheduled_triggers 表的一行。
 type ScheduledTriggerRow struct {
 	ID                uuid.UUID
+	ChannelID         uuid.UUID
 	ChannelIdentityID uuid.UUID
 	PersonaKey        string
 	AccountID         uuid.UUID
@@ -40,11 +41,15 @@ func (ScheduledTriggersRepository) UpsertHeartbeat(
 	ctx context.Context,
 	db DB,
 	accountID uuid.UUID,
+	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	personaKey string,
 	model string,
 	intervalMin int,
 ) error {
+	if channelID == uuid.Nil {
+		return errors.New("channel_id must not be empty")
+	}
 	if channelIdentityID == uuid.Nil {
 		return errors.New("channel_identity_id must not be empty")
 	}
@@ -52,15 +57,15 @@ func (ScheduledTriggersRepository) UpsertHeartbeat(
 	nextFire := time.Now().UTC().Add(time.Duration(intervalMin) * time.Minute)
 	_, err := db.Exec(ctx, `
 		INSERT INTO scheduled_triggers
-		    (id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
-		ON CONFLICT (channel_identity_id) DO UPDATE
+		    (id, channel_id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (channel_id, channel_identity_id) DO UPDATE
 		    SET persona_key   = excluded.persona_key,
 		        account_id    = excluded.account_id,
 		        model         = excluded.model,
 		        interval_min  = excluded.interval_min,
 		        updated_at    = now()`,
-		channelIdentityID, personaKey, accountID, model, intervalMin, nextFire,
+		channelID, channelIdentityID, personaKey, accountID, model, intervalMin, nextFire,
 	)
 	return err
 }
@@ -69,20 +74,27 @@ func (ScheduledTriggersRepository) UpsertHeartbeat(
 func (ScheduledTriggersRepository) GetHeartbeat(
 	ctx context.Context,
 	db DB,
+	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 ) (*ScheduledTriggerRow, error) {
+	if channelID == uuid.Nil {
+		return nil, errors.New("channel_id must not be empty")
+	}
 	if channelIdentityID == uuid.Nil {
 		return nil, errors.New("channel_identity_id must not be empty")
 	}
 
 	var row ScheduledTriggerRow
 	err := db.QueryRow(ctx, `
-		SELECT id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at
+		SELECT id, channel_id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at
 		  FROM scheduled_triggers
-		 WHERE channel_identity_id = $1`,
+		 WHERE channel_id = $1
+		   AND channel_identity_id = $2`,
+		channelID,
 		channelIdentityID,
 	).Scan(
 		&row.ID,
+		&row.ChannelID,
 		&row.ChannelIdentityID,
 		&row.PersonaKey,
 		&row.AccountID,
@@ -103,9 +115,13 @@ func (ScheduledTriggersRepository) GetHeartbeat(
 func (ScheduledTriggersRepository) ResetHeartbeatNextFire(
 	ctx context.Context,
 	db DB,
+	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	intervalMin int,
 ) (time.Time, error) {
+	if channelID == uuid.Nil {
+		return time.Time{}, errors.New("channel_id must not be empty")
+	}
 	if channelIdentityID == uuid.Nil {
 		return time.Time{}, errors.New("channel_identity_id must not be empty")
 	}
@@ -116,8 +132,9 @@ func (ScheduledTriggersRepository) ResetHeartbeatNextFire(
 		   SET interval_min = $1,
 		       next_fire_at = $2,
 		       updated_at = now()
-		 WHERE channel_identity_id = $3`,
-		intervalMin, nextFire, channelIdentityID,
+		 WHERE channel_id = $3
+		   AND channel_identity_id = $4`,
+		intervalMin, nextFire, channelID, channelIdentityID,
 	)
 	if err != nil {
 		return time.Time{}, err
@@ -132,10 +149,15 @@ func (ScheduledTriggersRepository) ResetHeartbeatNextFire(
 func (ScheduledTriggersRepository) DeleteHeartbeat(
 	ctx context.Context,
 	db DB,
+	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 ) error {
+	if channelID == uuid.Nil {
+		return errors.New("channel_id must not be empty")
+	}
 	_, err := db.Exec(ctx,
-		`DELETE FROM scheduled_triggers WHERE channel_identity_id = $1`,
+		`DELETE FROM scheduled_triggers WHERE channel_id = $1 AND channel_identity_id = $2`,
+		channelID,
 		channelIdentityID,
 	)
 	return err
@@ -146,6 +168,29 @@ type HeartbeatIdentityConfig struct {
 	Enabled         bool
 	IntervalMinutes int
 	Model           string
+}
+
+func GetDMBindingHeartbeatConfig(ctx context.Context, db DB, channelID uuid.UUID, identityID uuid.UUID) (*HeartbeatIdentityConfig, error) {
+	var enabledInt, interval int
+	var model string
+	err := db.QueryRow(ctx,
+		`SELECT heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model
+		   FROM channel_identity_links
+		  WHERE channel_id = $1 AND channel_identity_id = $2`,
+		channelID,
+		identityID,
+	).Scan(&enabledInt, &interval, &model)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get dm binding heartbeat config: %w", err)
+	}
+	return &HeartbeatIdentityConfig{
+		Enabled:         enabledInt != 0,
+		IntervalMinutes: interval,
+		Model:           model,
+	}, nil
 }
 
 // GetGroupHeartbeatConfig 通过 channel_type + platform_subject_id 查群 identity 的 heartbeat 配置（cloud）。

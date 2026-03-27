@@ -146,6 +146,7 @@ func channelEntry(
 				authService,
 				membershipRepo,
 				channelsRepo,
+				personasRepo,
 				channelIdentityLinksRepo,
 				channelIdentitiesRepo,
 				channelDMThreadsRepo,
@@ -566,13 +567,27 @@ func updateChannel(
 	defer tx.Rollback(r.Context()) //nolint:errcheck
 
 	if req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "" {
-		secret, err := secretsRepo.WithTx(tx).Upsert(r.Context(), actor.UserID, data.ChannelSecretName(channelID), strings.TrimSpace(*req.BotToken))
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
+		var secretID *uuid.UUID
+		if ch.CredentialsID != nil && *ch.CredentialsID != uuid.Nil {
+			secret, secretErr := secretsRepo.WithTx(tx).UpdateByID(r.Context(), *ch.CredentialsID, strings.TrimSpace(*req.BotToken))
+			if secretErr != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			secretID = &secret.ID
+		} else {
+			secretOwnerID := actor.UserID
+			if ch.OwnerUserID != nil && *ch.OwnerUserID != uuid.Nil {
+				secretOwnerID = *ch.OwnerUserID
+			}
+			secret, secretErr := secretsRepo.WithTx(tx).Create(r.Context(), secretOwnerID, data.ChannelSecretName(channelID), strings.TrimSpace(*req.BotToken))
+			if secretErr != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			secretID = &secret.ID
 		}
-		cp := &secret.ID
-		upd.CredentialsID = &cp
+		upd.CredentialsID = &secretID
 	}
 
 	// Webhook mode requires activation/deactivation round-trips to Telegram.
@@ -727,7 +742,7 @@ func deleteChannel(
 	defer tx.Rollback(r.Context()) //nolint:errcheck
 
 	if ch.CredentialsID != nil && secretsRepo != nil {
-		if err := secretsRepo.WithTx(tx).Delete(r.Context(), actor.UserID, data.ChannelSecretName(channelID)); err != nil {
+		if err := secretsRepo.WithTx(tx).DeleteByID(r.Context(), *ch.CredentialsID); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}

@@ -76,7 +76,8 @@ ALTER TABLE tool_provider_configs RENAME TO tool_provider_configs_new_00034;
 
 CREATE TABLE tool_provider_configs (
     id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
-    org_id        TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    account_id    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    project_id    TEXT,
     group_name    TEXT NOT NULL,
     provider_name TEXT NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 0,
@@ -87,19 +88,20 @@ CREATE TABLE tool_provider_configs (
     scope         TEXT NOT NULL DEFAULT 'org',
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (org_id, provider_name)
+    UNIQUE (account_id, provider_name)
 );
 
 CREATE UNIQUE INDEX ix_tool_provider_configs_org_group_active
-    ON tool_provider_configs (org_id, group_name)
+    ON tool_provider_configs (account_id, group_name)
     WHERE is_active = 1;
 
 INSERT INTO tool_provider_configs (
-    id, org_id, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, scope, created_at, updated_at
+    id, account_id, project_id, group_name, provider_name, is_active, secret_id, key_prefix, base_url, config_json, scope, created_at, updated_at
 )
 SELECT
     id,
     account_id,
+    NULL,
     group_name,
     provider_name,
     is_active,

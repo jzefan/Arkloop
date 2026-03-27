@@ -31,7 +31,7 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 			slog.DebugContext(ctx, "heartbeat_schedule: no channel context")
 			return nil
 		}
-		identityID, cfg, targetKind, lookupKey := resolveHeartbeatIdentityConfig(ctx, db, rc)
+		channelID, identityID, cfg, targetKind, lookupKey := resolveHeartbeatIdentityConfig(ctx, db, rc)
 		if identityID == uuid.Nil && cfg == nil {
 			slog.DebugContext(ctx, "heartbeat_schedule: no heartbeat target", "conversation_type", strings.TrimSpace(rc.ChannelContext.ConversationType))
 			return nil
@@ -44,7 +44,7 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 		def := rc.PersonaDefinition
 		if def == nil || !def.HeartbeatEnabled {
 			if identityID != uuid.Nil {
-				if deleteErr := repo.DeleteHeartbeat(ctx, db, identityID); deleteErr != nil {
+				if deleteErr := repo.DeleteHeartbeat(ctx, db, channelID, identityID); deleteErr != nil {
 					slog.WarnContext(ctx, "heartbeat_schedule: delete persona-disabled trigger failed", "identity_id", identityID, "error", deleteErr)
 				} else {
 					notifyHeartbeatScheduler(ctx, rc)
@@ -62,7 +62,7 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 
 		if cfg == nil || !cfg.Enabled {
 			if identityID != uuid.Nil {
-				if deleteErr := repo.DeleteHeartbeat(ctx, db, identityID); deleteErr != nil {
+				if deleteErr := repo.DeleteHeartbeat(ctx, db, channelID, identityID); deleteErr != nil {
 					slog.WarnContext(ctx, "heartbeat_schedule: delete disabled trigger failed", "identity_id", identityID, "error", deleteErr)
 				} else {
 					notifyHeartbeatScheduler(ctx, rc)
@@ -100,14 +100,14 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 			model = strings.TrimSpace(*def.Model)
 		}
 
-		existing, getErr := repo.GetHeartbeat(ctx, db, identityID)
+		existing, getErr := repo.GetHeartbeat(ctx, db, channelID, identityID)
 		if getErr != nil {
 			slog.WarnContext(ctx, "heartbeat_schedule: get trigger failed", "identity_id", identityID, "error", getErr)
 			return nil
 		}
 
 		if existing == nil {
-			if upsertErr := repo.UpsertHeartbeat(ctx, db, rc.Run.AccountID, identityID, def.ID, model, iv); upsertErr != nil {
+			if upsertErr := repo.UpsertHeartbeat(ctx, db, rc.Run.AccountID, channelID, identityID, def.ID, model, iv); upsertErr != nil {
 				slog.WarnContext(ctx, "heartbeat_schedule: create trigger failed", "identity_id", identityID, "error", upsertErr)
 				return nil
 			}
@@ -121,12 +121,12 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 		personaChanged := strings.TrimSpace(existing.PersonaKey) != def.ID
 		accountChanged := existing.AccountID != rc.Run.AccountID
 		if intervalChanged || modelChanged || personaChanged || accountChanged {
-			if upsertErr := repo.UpsertHeartbeat(ctx, db, rc.Run.AccountID, identityID, def.ID, model, iv); upsertErr != nil {
+			if upsertErr := repo.UpsertHeartbeat(ctx, db, rc.Run.AccountID, channelID, identityID, def.ID, model, iv); upsertErr != nil {
 				slog.WarnContext(ctx, "heartbeat_schedule: update trigger metadata failed", "identity_id", identityID, "error", upsertErr)
 				return nil
 			}
 			if intervalChanged {
-				nextFire, resetErr := repo.ResetHeartbeatNextFire(ctx, db, identityID, iv)
+				nextFire, resetErr := repo.ResetHeartbeatNextFire(ctx, db, channelID, identityID, iv)
 				if resetErr != nil {
 					slog.WarnContext(ctx, "heartbeat_schedule: reschedule trigger failed", "identity_id", identityID, "error", resetErr)
 					return nil
@@ -143,9 +143,9 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 	}
 }
 
-func resolveHeartbeatIdentityConfig(ctx context.Context, db data.DB, rc *RunContext) (uuid.UUID, *data.HeartbeatIdentityConfig, string, string) {
+func resolveHeartbeatIdentityConfig(ctx context.Context, db data.DB, rc *RunContext) (uuid.UUID, uuid.UUID, *data.HeartbeatIdentityConfig, string, string) {
 	if rc == nil || rc.ChannelContext == nil || db == nil {
-		return uuid.Nil, nil, "", ""
+		return uuid.Nil, uuid.Nil, nil, "", ""
 	}
 	channelType := strings.TrimSpace(rc.ChannelContext.ChannelType)
 	if channelType == "" {
@@ -155,29 +155,30 @@ func resolveHeartbeatIdentityConfig(ctx context.Context, db data.DB, rc *RunCont
 		platformChatID := strings.TrimSpace(rc.ChannelContext.Conversation.Target)
 		if platformChatID == "" {
 			slog.WarnContext(ctx, "heartbeat_schedule: no platform_chat_id for group conversation")
-			return uuid.Nil, nil, "group", ""
+			return uuid.Nil, uuid.Nil, nil, "group", ""
 		}
 		identityID, cfg, err := data.GetGroupHeartbeatConfig(ctx, db, channelType, platformChatID)
 		if err != nil {
 			slog.WarnContext(ctx, "heartbeat_schedule: get group heartbeat config failed", "error", err)
-			return uuid.Nil, nil, "group", platformChatID
+			return uuid.Nil, uuid.Nil, nil, "group", platformChatID
 		}
-		return identityID, cfg, "group", platformChatID
+		return rc.ChannelContext.ChannelID, identityID, cfg, "group", platformChatID
 	}
 	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+		channelID := rc.ChannelContext.ChannelID
 		identityID := rc.ChannelContext.SenderChannelIdentityID
 		if identityID == uuid.Nil {
 			slog.WarnContext(ctx, "heartbeat_schedule: no sender identity for private conversation")
-			return uuid.Nil, nil, "direct", ""
+			return channelID, uuid.Nil, nil, "direct", ""
 		}
-		cfg, err := data.GetChannelIdentityHeartbeatConfig(ctx, db, identityID)
+		cfg, err := data.GetDMBindingHeartbeatConfig(ctx, db, channelID, identityID)
 		if err != nil {
 			slog.WarnContext(ctx, "heartbeat_schedule: get direct heartbeat config failed", "identity_id", identityID, "error", err)
-			return uuid.Nil, nil, "direct", identityID.String()
+			return channelID, uuid.Nil, nil, "direct", identityID.String()
 		}
-		return identityID, cfg, "direct", identityID.String()
+		return channelID, identityID, cfg, "direct", identityID.String()
 	}
-	return uuid.Nil, nil, "", ""
+	return uuid.Nil, uuid.Nil, nil, "", ""
 }
 
 func isPrivateChannelConversation(ct string) bool {

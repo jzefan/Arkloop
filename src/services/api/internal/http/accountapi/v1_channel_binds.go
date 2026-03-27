@@ -246,9 +246,9 @@ func unbindChannelIdentity(
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-	enabled, intervalMinutes, model, heartbeatErr := identitiesRepo.WithTx(tx).GetHeartbeatConfig(r.Context(), identityID)
-	if heartbeatErr == nil && enabled {
-		if err := identitiesRepo.WithTx(tx).UpdateHeartbeatConfig(r.Context(), identityID, false, intervalMinutes, model); err != nil {
+	triggerRepo := data.ScheduledTriggersRepository{}
+	for _, binding := range bindings {
+		if err := triggerRepo.DeleteHeartbeat(r.Context(), tx, binding.ChannelID, binding.ChannelIdentityID); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
