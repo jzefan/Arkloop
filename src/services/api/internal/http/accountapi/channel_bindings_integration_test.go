@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/shared/discordbot"
+	"github.com/google/uuid"
 )
 
 func TestChannelBindingsEndpointsSupportOwnerTransferAndHeartbeat(t *testing.T) {
@@ -98,19 +100,28 @@ func TestChannelBindingsEndpointsSupportOwnerTransferAndHeartbeat(t *testing.T) 
 		t.Fatalf("update heartbeat: %d %s", updateResp.Code, updateResp.Body.String())
 	}
 
-	adminIdentity, err := env.channelIdentitiesRepo.GetByChannelAndSubject(context.Background(), "discord", "u-admin")
+	var updatedAdminBinding channelBindingResponse
+	if err := json.Unmarshal(updateResp.Body.Bytes(), &updatedAdminBinding); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if !updatedAdminBinding.HeartbeatEnabled || updatedAdminBinding.HeartbeatIntervalMinutes != 12 {
+		t.Fatalf("unexpected heartbeat config in response: %#v", updatedAdminBinding)
+	}
+	if updatedAdminBinding.HeartbeatModel == nil || *updatedAdminBinding.HeartbeatModel != "gpt-5.4" {
+		t.Fatalf("unexpected heartbeat model in response: %#v", updatedAdminBinding)
+	}
+	trigger, err := (data.ScheduledTriggersRepository{}).GetHeartbeat(context.Background(), env.pool, channel.ID, uuid.MustParse(updatedAdminBinding.ChannelIdentityID))
 	if err != nil {
-		t.Fatalf("get admin identity: %v", err)
+		t.Fatalf("get heartbeat trigger: %v", err)
 	}
-	if adminIdentity == nil {
-		t.Fatal("admin identity missing")
+	if trigger == nil {
+		t.Fatal("expected heartbeat trigger to be created immediately")
 	}
-	enabled, interval, model, err := env.channelIdentitiesRepo.GetHeartbeatConfig(context.Background(), adminIdentity.ID)
-	if err != nil {
-		t.Fatalf("get heartbeat config: %v", err)
+	if trigger.PersonaKey != "discord-persona" {
+		t.Fatalf("unexpected heartbeat persona key: %q", trigger.PersonaKey)
 	}
-	if !enabled || interval != 12 || model != "gpt-5.4" {
-		t.Fatalf("unexpected heartbeat config: enabled=%v interval=%d model=%q", enabled, interval, model)
+	if trigger.Model != "gpt-5.4" || trigger.IntervalMin != 12 {
+		t.Fatalf("unexpected heartbeat trigger config: model=%q interval=%d", trigger.Model, trigger.IntervalMin)
 	}
 
 	makeOwnerResp := doJSONAccount(
@@ -187,6 +198,115 @@ func TestChannelBindingsOwnerDeleteBlocked(t *testing.T) {
 	)
 	if deleteResp.Code != nethttp.StatusConflict {
 		t.Fatalf("delete owner binding: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestChannelDeleteStillWorksAfterOwnerTransferAndAdminTokenRotation(t *testing.T) {
+	env := setupDiscordChannelsTestEnv(t, discordbot.NewClient("", nil))
+	channel := createActiveDiscordChannelWithConfig(t, env, "discord-secret-owner-token", map[string]any{})
+
+	ownerCode, err := env.channelBindCodesRepo.Create(context.Background(), env.userID, stringPtr("discord"), time.Hour)
+	if err != nil {
+		t.Fatalf("create owner bind code: %v", err)
+	}
+	if _, err := env.connector().HandleInteraction(
+		context.Background(),
+		"trace-secret-owner",
+		channel.ID,
+		"discord-secret-owner-token",
+		newDiscordInteractionCommand("bind", "", "dm-owner-secret", "u-owner-secret", "owner-secret", ownerCode.Token),
+	); err != nil {
+		t.Fatalf("owner bind interaction: %v", err)
+	}
+
+	userRepo, err := data.NewUserRepository(env.pool)
+	if err != nil {
+		t.Fatalf("user repo: %v", err)
+	}
+	membershipRepo, err := data.NewAccountMembershipRepository(env.pool)
+	if err != nil {
+		t.Fatalf("membership repo: %v", err)
+	}
+	secondUser, err := userRepo.Create(context.Background(), "discord-secret-admin", "discord-secret-admin@test.com", "zh")
+	if err != nil {
+		t.Fatalf("create second user: %v", err)
+	}
+	if _, err := membershipRepo.Create(context.Background(), env.accountID, secondUser.ID, auth.RoleAccountAdmin); err != nil {
+		t.Fatalf("create second membership: %v", err)
+	}
+	tokenService, err := auth.NewJwtAccessTokenService("test-secret-should-be-long-enough-32chars", 3600, 2592000)
+	if err != nil {
+		t.Fatalf("token service: %v", err)
+	}
+	secondAccessToken, err := tokenService.Issue(secondUser.ID, env.accountID, auth.RoleAccountAdmin, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("issue second token: %v", err)
+	}
+
+	adminCode, err := env.channelBindCodesRepo.Create(context.Background(), secondUser.ID, stringPtr("discord"), time.Hour)
+	if err != nil {
+		t.Fatalf("create admin bind code: %v", err)
+	}
+	if _, err := env.connector().HandleInteraction(
+		context.Background(),
+		"trace-secret-admin",
+		channel.ID,
+		"discord-secret-owner-token",
+		newDiscordInteractionCommand("bind", "", "dm-admin-secret", "u-admin-secret", "admin-secret", adminCode.Token),
+	); err != nil {
+		t.Fatalf("admin bind interaction: %v", err)
+	}
+
+	listResp := doJSONAccount(env.handler, nethttp.MethodGet, "/v1/channels/"+channel.ID.String()+"/bindings", nil, authHeader(env.accessToken))
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list bindings: %d %s", listResp.Code, listResp.Body.String())
+	}
+	var listBody []channelBindingResponse
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode bindings response: %v", err)
+	}
+	var adminBinding channelBindingResponse
+	for _, item := range listBody {
+		if item.PlatformSubjectID == "u-admin-secret" {
+			adminBinding = item
+			break
+		}
+	}
+	if adminBinding.BindingID == "" {
+		t.Fatalf("admin binding missing: %#v", listBody)
+	}
+
+	makeOwnerResp := doJSONAccount(
+		env.handler,
+		nethttp.MethodPatch,
+		"/v1/channels/"+channel.ID.String()+"/bindings/"+adminBinding.BindingID,
+		map[string]any{"make_owner": true},
+		authHeader(env.accessToken),
+	)
+	if makeOwnerResp.Code != nethttp.StatusOK {
+		t.Fatalf("make owner: %d %s", makeOwnerResp.Code, makeOwnerResp.Body.String())
+	}
+
+	updateResp := doJSONAccount(
+		env.handler,
+		nethttp.MethodPatch,
+		"/v1/channels/"+channel.ID.String(),
+		map[string]any{"bot_token": "discord-secret-rotated-token"},
+		authHeader(secondAccessToken),
+	)
+	if updateResp.Code != nethttp.StatusOK {
+		t.Fatalf("rotate token as second admin: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	deleteResp := doJSONAccount(
+		env.handler,
+		nethttp.MethodDelete,
+		"/v1/channels/"+channel.ID.String(),
+		nil,
+		authHeader(env.accessToken),
+	)
+	if deleteResp.Code != nethttp.StatusOK {
+		t.Fatalf("delete channel after owner transfer: %d %s", deleteResp.Code, deleteResp.Body.String())
 	}
 }
 

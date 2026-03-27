@@ -245,8 +245,45 @@ plainBytes, err := r.keyRing.Decrypt(s.EncryptedValue, s.KeyVersion)
 if err != nil {
 return nil, fmt.Errorf("secrets: decrypt %q: %w", s.Name, err)
 }
-plain := string(plainBytes)
-return &plain, nil
+	plain := string(plainBytes)
+	return &plain, nil
+}
+
+// UpdateByID 覆写指定 secret 的密文与 key_version，不依赖 owner 上下文。
+func (r *SecretsRepository) UpdateByID(ctx context.Context, id uuid.UUID, plaintext string) (Secret, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if id == uuid.Nil {
+		return Secret{}, fmt.Errorf("id must not be empty")
+	}
+	if plaintext == "" {
+		return Secret{}, fmt.Errorf("plaintext must not be empty")
+	}
+
+	encoded, keyVer, err := r.keyRing.Encrypt([]byte(plaintext))
+	if err != nil {
+		return Secret{}, fmt.Errorf("secrets: encrypt: %w", err)
+	}
+
+	var s Secret
+	err = r.db.QueryRow(
+		ctx,
+		`UPDATE secrets
+		    SET encrypted_value = $2,
+		        key_version = $3,
+		        updated_at = now()
+		  WHERE id = $1
+		RETURNING id, owner_kind, owner_user_id, name, encrypted_value, key_version, created_at, updated_at, rotated_at`,
+		id, encoded, keyVer,
+	).Scan(&s.ID, &s.OwnerKind, &s.OwnerUserID, &s.Name, &s.EncryptedValue, &s.KeyVersion, &s.CreatedAt, &s.UpdatedAt, &s.RotatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Secret{}, SecretNotFoundError{Name: id.String()}
+		}
+		return Secret{}, err
+	}
+	return s, nil
 }
 
 // DecryptByName 查库后解密，返回明文。找不到返回 nil, nil。
@@ -291,6 +328,29 @@ if tag.RowsAffected() == 0 {
 return SecretNotFoundError{Name: name}
 }
 return nil
+}
+
+// DeleteByID 物理删除指定 secret。找不到时返回 SecretNotFoundError。
+func (r *SecretsRepository) DeleteByID(ctx context.Context, id uuid.UUID) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if id == uuid.Nil {
+		return fmt.Errorf("id must not be empty")
+	}
+
+	tag, err := r.db.Exec(
+		ctx,
+		`DELETE FROM secrets WHERE id = $1`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return SecretNotFoundError{Name: id.String()}
+	}
+	return nil
 }
 
 // DeletePlatform 物理删除 platform secret。找不到时返回 SecretNotFoundError。

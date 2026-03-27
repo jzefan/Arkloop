@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"arkloop/services/shared/pgnotify"
+	"arkloop/services/shared/runkind"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -104,9 +107,9 @@ func (r *ChannelIdentityLinksRepository) GetBinding(
 		            WHEN ch.owner_user_id IS NOT NULL AND ci.user_id = ch.owner_user_id THEN TRUE
 		            ELSE FALSE
 		        END AS is_owner,
-		        COALESCE(ci.heartbeat_enabled, 0),
-		        COALESCE(ci.heartbeat_interval_minutes, 30),
-		        COALESCE(ci.heartbeat_model, ''),
+		        COALESCE(cil.heartbeat_enabled, 0),
+		        COALESCE(cil.heartbeat_interval_minutes, 30),
+		        COALESCE(cil.heartbeat_model, ''),
 		        cil.created_at,
 		        cil.updated_at
 		   FROM channel_identity_links cil
@@ -145,9 +148,9 @@ func (r *ChannelIdentityLinksRepository) ListBindings(
 		            WHEN ch.owner_user_id IS NOT NULL AND ci.user_id = ch.owner_user_id THEN TRUE
 		            ELSE FALSE
 		        END AS is_owner,
-		        COALESCE(ci.heartbeat_enabled, 0),
-		        COALESCE(ci.heartbeat_interval_minutes, 30),
-		        COALESCE(ci.heartbeat_model, ''),
+		        COALESCE(cil.heartbeat_enabled, 0),
+		        COALESCE(cil.heartbeat_interval_minutes, 30),
+		        COALESCE(cil.heartbeat_model, ''),
 		        cil.created_at,
 		        cil.updated_at
 		   FROM channel_identity_links cil
@@ -191,9 +194,9 @@ func (r *ChannelIdentityLinksRepository) ListBindingsByIdentity(
 		            WHEN ch.owner_user_id IS NOT NULL AND ci.user_id = ch.owner_user_id THEN TRUE
 		            ELSE FALSE
 		        END AS is_owner,
-		        COALESCE(ci.heartbeat_enabled, 0),
-		        COALESCE(ci.heartbeat_interval_minutes, 30),
-		        COALESCE(ci.heartbeat_model, ''),
+		        COALESCE(cil.heartbeat_enabled, 0),
+		        COALESCE(cil.heartbeat_interval_minutes, 30),
+		        COALESCE(cil.heartbeat_model, ''),
 		        cil.created_at,
 		        cil.updated_at
 		   FROM channel_identity_links cil
@@ -283,6 +286,45 @@ func (r *ChannelIdentityLinksRepository) DeleteByIdentity(
 	); err != nil {
 		return fmt.Errorf("channel_identity_links.DeleteByIdentity: %w", err)
 	}
+	return nil
+}
+
+func (r *ChannelIdentityLinksRepository) UpdateHeartbeatConfig(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	enabled bool,
+	intervalMinutes int,
+	model string,
+) error {
+	if bindingID == uuid.Nil {
+		return fmt.Errorf("channel_identity_links.UpdateHeartbeatConfig: binding id must not be empty")
+	}
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	if intervalMinutes <= 0 {
+		intervalMinutes = runkind.DefaultHeartbeatIntervalMinutes
+	}
+	tag, err := r.db.Exec(ctx,
+		`UPDATE channel_identity_links
+		    SET heartbeat_enabled = $2,
+		        heartbeat_interval_minutes = $3,
+		        heartbeat_model = $4,
+		        updated_at = now()
+		  WHERE id = $1`,
+		bindingID,
+		enabledInt,
+		intervalMinutes,
+		model,
+	)
+	if err != nil {
+		return fmt.Errorf("channel_identity_links.UpdateHeartbeatConfig: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("channel_identity_links.UpdateHeartbeatConfig: not found")
+	}
+	_, _ = r.db.Exec(ctx, "SELECT pg_notify($1, '')", pgnotify.ChannelHeartbeat)
 	return nil
 }
 

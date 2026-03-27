@@ -149,7 +149,7 @@ func desktopHeartbeatTick(
 				slog.WarnContext(ctx, "desktop_heartbeat_stale_trigger_removed",
 					"channel_identity_id", row.ChannelIdentityID.String(),
 				)
-				_ = repo.DeleteHeartbeat(ctx, db, row.ChannelIdentityID)
+				_ = repo.DeleteHeartbeat(ctx, db, row.ChannelID, row.ChannelIdentityID)
 			} else {
 				slog.ErrorContext(ctx, "desktop_heartbeat_thread_resolution_failed",
 					"channel_identity_id", row.ChannelIdentityID.String(),
@@ -182,7 +182,7 @@ func desktopHeartbeatTick(
 				slog.WarnContext(ctx, "desktop_heartbeat_stale_trigger_removed",
 					"channel_identity_id", row.ChannelIdentityID.String(),
 				)
-				_ = repo.DeleteHeartbeat(ctx, db, row.ChannelIdentityID)
+				_ = repo.DeleteHeartbeat(ctx, db, row.ChannelID, row.ChannelIdentityID)
 				continue
 			}
 			slog.ErrorContext(ctx, "desktop_heartbeat_create_run_failed",

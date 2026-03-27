@@ -27,23 +27,33 @@ func TestHeartbeatScheduleMiddlewareCreatesTriggerForDiscordPrivateIdentity(t *t
 	projectID := uuid.New()
 	threadID := uuid.New()
 	runID := uuid.New()
+	channelID := uuid.New()
 	senderIdentityID := uuid.New()
 
 	seedPipelineThread(t, pool, accountID, threadID, projectID)
 	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
 
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO channel_identities (id, channel_type, platform_subject_id, heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model, metadata)
-		 VALUES ($1, 'discord', 'user-42', 1, 17, 'discord-model', '{}'::jsonb)`,
+		`INSERT INTO channel_identities (id, channel_type, platform_subject_id, metadata)
+		 VALUES ($1, 'discord', 'user-42', '{}'::jsonb)`,
 		senderIdentityID,
 	); err != nil {
 		t.Fatalf("insert channel identity: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channel_identity_links (channel_id, channel_identity_id, heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model)
+		 VALUES ($1, $2, 1, 17, 'discord-model')`,
+		channelID,
+		senderIdentityID,
+	); err != nil {
+		t.Fatalf("insert channel identity link: %v", err)
 	}
 
 	rc := &RunContext{
 		Run:               data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
 		PersonaDefinition: &personas.Definition{ID: "discord-persona", HeartbeatEnabled: true},
 		ChannelContext: &ChannelContext{
+			ChannelID:               channelID,
 			ChannelType:             "discord",
 			ConversationType:        "private",
 			SenderChannelIdentityID: senderIdentityID,
@@ -57,7 +67,7 @@ func TestHeartbeatScheduleMiddlewareCreatesTriggerForDiscordPrivateIdentity(t *t
 	}
 
 	repo := data.ScheduledTriggersRepository{}
-	row, err := repo.GetHeartbeat(ctx, pool, senderIdentityID)
+	row, err := repo.GetHeartbeat(ctx, pool, channelID, senderIdentityID)
 	if err != nil {
 		t.Fatalf("get heartbeat: %v", err)
 	}
@@ -88,6 +98,7 @@ func TestHeartbeatScheduleMiddlewareKeepsTelegramGroupIdentityBehavior(t *testin
 	projectID := uuid.New()
 	threadID := uuid.New()
 	runID := uuid.New()
+	channelID := uuid.New()
 	groupIdentityID := uuid.New()
 	senderIdentityID := uuid.New()
 
@@ -109,6 +120,7 @@ func TestHeartbeatScheduleMiddlewareKeepsTelegramGroupIdentityBehavior(t *testin
 		Run:               data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
 		PersonaDefinition: &personas.Definition{ID: "telegram-persona", HeartbeatEnabled: true},
 		ChannelContext: &ChannelContext{
+			ChannelID:               channelID,
 			ChannelType:             "telegram",
 			ConversationType:        "supergroup",
 			SenderChannelIdentityID: senderIdentityID,
@@ -122,7 +134,7 @@ func TestHeartbeatScheduleMiddlewareKeepsTelegramGroupIdentityBehavior(t *testin
 	}
 
 	repo := data.ScheduledTriggersRepository{}
-	groupRow, err := repo.GetHeartbeat(ctx, pool, groupIdentityID)
+	groupRow, err := repo.GetHeartbeat(ctx, pool, channelID, groupIdentityID)
 	if err != nil {
 		t.Fatalf("get group heartbeat: %v", err)
 	}
@@ -132,7 +144,7 @@ func TestHeartbeatScheduleMiddlewareKeepsTelegramGroupIdentityBehavior(t *testin
 	if groupRow.Model != "group-model" {
 		t.Fatalf("unexpected group model: %q", groupRow.Model)
 	}
-	if senderRow, err := repo.GetHeartbeat(ctx, pool, senderIdentityID); err != nil {
+	if senderRow, err := repo.GetHeartbeat(ctx, pool, channelID, senderIdentityID); err != nil {
 		t.Fatalf("get sender heartbeat: %v", err)
 	} else if senderRow != nil {
 		t.Fatalf("expected no sender trigger, got %#v", senderRow)
