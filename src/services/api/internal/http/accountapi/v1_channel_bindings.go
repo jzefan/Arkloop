@@ -241,13 +241,20 @@ func deleteChannelBinding(
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-	if err := identitiesRepo.UpdateHeartbeatConfig(r.Context(), binding.ChannelIdentityID, false, binding.HeartbeatIntervalMinutes, binding.HeartbeatModel); err != nil {
-		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-		return
-	}
 	if err := linksRepo.DeleteBinding(r.Context(), accountID, channelID, bindingID); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
+	}
+	remaining, remainingErr := linksRepo.ListBindingsByIdentity(r.Context(), binding.ChannelIdentityID)
+	if remainingErr != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if len(remaining) == 0 && binding.HeartbeatEnabled {
+		if err := identitiesRepo.UpdateHeartbeatConfig(r.Context(), binding.ChannelIdentityID, false, binding.HeartbeatIntervalMinutes, binding.HeartbeatModel); err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
