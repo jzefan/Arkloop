@@ -246,6 +246,13 @@ func unbindChannelIdentity(
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
+	enabled, intervalMinutes, model, heartbeatErr := identitiesRepo.WithTx(tx).GetHeartbeatConfig(r.Context(), identityID)
+	if heartbeatErr == nil && enabled {
+		if err := identitiesRepo.WithTx(tx).UpdateHeartbeatConfig(r.Context(), identityID, false, intervalMinutes, model); err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+	}
 	if err := identitiesRepo.WithTx(tx).UpdateUserID(r.Context(), identityID, nil); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return

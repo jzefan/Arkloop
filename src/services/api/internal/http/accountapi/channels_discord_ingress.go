@@ -382,24 +382,22 @@ func (c discordConnector) HandleMessageCreate(
 	if err != nil {
 		return err
 	}
-	if identity.UserID != nil {
-		linked, linkErr := c.channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, ch.ID, identity.ID)
-		if linkErr != nil {
-			return linkErr
+	linked, linkErr := c.channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, ch.ID, identity.ID)
+	if linkErr != nil {
+		return linkErr
+	}
+	if !linked {
+		if err := tx.Commit(ctx); err != nil {
+			return err
 		}
-		if !linked {
-			if err := tx.Commit(ctx); err != nil {
-				return err
-			}
-			if c.discordClient != nil && strings.TrimSpace(token) != "" {
-				sendCtx, sendCancel := context.WithTimeout(ctx, 5*time.Second)
-				_, _ = c.discordClient.SendMessage(sendCtx, token, event.ChannelID, discordbot.CreateMessageRequest{
-					Content: "当前账号未关联此接入。请使用 /bind 重新关联。",
-				})
-				sendCancel()
-			}
-			return nil
+		if c.discordClient != nil && strings.TrimSpace(token) != "" {
+			sendCtx, sendCancel := context.WithTimeout(ctx, 5*time.Second)
+			_, _ = c.discordClient.SendMessage(sendCtx, token, event.ChannelID, discordbot.CreateMessageRequest{
+				Content: "当前账号未关联此接入。请使用 /bind 重新关联。",
+			})
+			sendCancel()
 		}
+		return nil
 	}
 	threadID, err := c.resolveDiscordDMThreadID(ctx, tx, *ch, persona.ID, derefUUID(persona.ProjectID), identity)
 	if err != nil {
@@ -686,7 +684,7 @@ func handleDiscordCommand(
 ) (*discordInteractionReply, error) {
 	data := evt.ApplicationCommandData()
 	commandName := strings.TrimSpace(data.Name)
-	if identity.UserID != nil && !discordLinkBootstrapAllowed(commandName) {
+	if !discordLinkBootstrapAllowed(commandName) {
 		linked, err := channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, channel.ID, identity.ID)
 		if err != nil {
 			return nil, err

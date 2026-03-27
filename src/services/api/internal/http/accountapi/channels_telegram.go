@@ -1484,7 +1484,7 @@ func allowTelegramPrivateChannelLink(
 	commandText string,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 ) (bool, error) {
-	if identity.UserID == nil || channelIdentityLinksRepo == nil || telegramLinkBootstrapAllowed(commandText) {
+	if channelIdentityLinksRepo == nil || telegramLinkBootstrapAllowed(commandText) {
 		return true, nil
 	}
 	return channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, channelID, identity.ID)
