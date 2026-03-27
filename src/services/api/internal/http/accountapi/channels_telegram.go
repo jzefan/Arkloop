@@ -717,6 +717,24 @@ func (c telegramConnector) HandleUpdate(
 
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
+		allowedPrivateLink, linkErr := allowTelegramPrivateChannelLink(ctx, tx, ch.ID, identity, trimmedCommandText, c.channelIdentityLinksRepo)
+		if linkErr != nil {
+			return linkErr
+		}
+		if !allowedPrivateLink {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   "当前账号未关联此接入。请使用 /bind 重新关联。",
+				})
+				sendCancel()
+			}
+			return nil
+		}
 		if handled, replyText, err := handleTelegramCommand(
 			ctx,
 			tx,
@@ -1458,6 +1476,32 @@ func bindTelegramIdentity(
 	return "绑定成功。", nil
 }
 
+func allowTelegramPrivateChannelLink(
+	ctx context.Context,
+	tx pgx.Tx,
+	channelID uuid.UUID,
+	identity data.ChannelIdentity,
+	commandText string,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
+) (bool, error) {
+	if identity.UserID == nil || channelIdentityLinksRepo == nil || telegramLinkBootstrapAllowed(commandText) {
+		return true, nil
+	}
+	return channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, channelID, identity.ID)
+}
+
+func telegramLinkBootstrapAllowed(commandText string) bool {
+	parts := strings.Fields(strings.TrimSpace(commandText))
+	if len(parts) == 0 {
+		return false
+	}
+	command := strings.TrimSpace(parts[0])
+	if command == "/help" || command == "/bind" {
+		return true
+	}
+	return command == "/start"
+}
+
 func renderTelegramInboundMessage(identity data.ChannelIdentity, text string, unixTS int64) string {
 	displayName := identity.PlatformSubjectID
 	if identity.DisplayName != nil && strings.TrimSpace(*identity.DisplayName) != "" {
@@ -1603,6 +1647,24 @@ func (c telegramConnector) HandleUpdateForPoll(
 
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
+		allowedPrivateLink, linkErr := allowTelegramPrivateChannelLink(ctx, tx, ch.ID, identity, trimmedCommandText, c.channelIdentityLinksRepo)
+		if linkErr != nil {
+			return nil, linkErr
+		}
+		if !allowedPrivateLink {
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   "当前账号未关联此接入。请使用 /bind 重新关联。",
+				})
+				sendCancel()
+			}
+			return nil, nil
+		}
 		if handled, replyText, err := handleTelegramCommand(
 			ctx,
 			tx,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MessageCircleMore } from 'lucide-react'
 import {
   type ChannelBindingResponse,
@@ -66,6 +66,18 @@ export function DesktopDiscordSettingsPanel({
   const [generatingCode, setGeneratingCode] = useState(false)
   const [bindings, setBindings] = useState<ChannelBindingResponse[]>([])
 
+  const refreshBindings = useCallback(async () => {
+    if (!channel?.id) {
+      setBindings([])
+      return
+    }
+    try {
+      setBindings(await listChannelBindings(accessToken, channel.id))
+    } catch {
+      setBindings([])
+    }
+  }, [accessToken, channel?.id])
+
   useEffect(() => {
     setEnabled(channel?.is_active ?? false)
     setPersonaID(resolvePersonaID(personas, channel?.persona_id))
@@ -79,22 +91,15 @@ export function DesktopDiscordSettingsPanel({
   }, [channel, personas])
 
   useEffect(() => {
+    void refreshBindings()
     if (!channel?.id) {
-      setBindings([])
       return
     }
-    let cancelled = false
-    listChannelBindings(accessToken, channel.id)
-      .then((items) => {
-        if (!cancelled) setBindings(items)
-      })
-      .catch(() => {
-        if (!cancelled) setBindings([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [accessToken, channel?.id])
+    const timer = window.setInterval(() => {
+      void refreshBindings()
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [channel?.id, refreshBindings])
 
   const modelOptions = useMemo(() => buildModelOptions(providers), [providers])
   const persistedAllowedServerIDs = useMemo(() => readStringArrayConfig(channel, 'allowed_server_ids'), [channel])
@@ -294,10 +299,9 @@ export function DesktopDiscordSettingsPanel({
       await updateChannelBinding(accessToken, channel.id, binding.binding_id, {
         heartbeat_enabled: next.enabled,
         heartbeat_interval_minutes: next.interval,
-        heartbeat_model: next.model || null,
+        heartbeat_model: next.model,
       })
-      const nextBindings = await listChannelBindings(accessToken, channel.id)
-      setBindings(nextBindings)
+      await refreshBindings()
     } catch {
       setError(ct.saveFailed)
     }

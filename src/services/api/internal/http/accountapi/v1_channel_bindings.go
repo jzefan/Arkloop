@@ -42,10 +42,11 @@ func handleChannelBindingsSubresource(
 	channelsRepo *data.ChannelsRepository,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	pool data.DB,
 ) bool {
-	if authService == nil || channelsRepo == nil || channelIdentityLinksRepo == nil || channelIdentitiesRepo == nil || pool == nil {
+	if authService == nil || channelsRepo == nil || channelIdentityLinksRepo == nil || channelIdentitiesRepo == nil || channelDMThreadsRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return true
 	}
@@ -88,9 +89,9 @@ func handleChannelBindingsSubresource(
 
 	switch r.Method {
 	case nethttp.MethodPatch:
-		updateChannelBinding(w, r, traceID, actor.AccountID, channelID, *bindingID, channelsRepo, channelIdentityLinksRepo, channelIdentitiesRepo, pool)
+		updateChannelBinding(w, r, traceID, actor.AccountID, channelID, *bindingID, membershipRepo, channelsRepo, channelIdentityLinksRepo, channelIdentitiesRepo, pool)
 	case nethttp.MethodDelete:
-		deleteChannelBinding(w, r, traceID, actor.AccountID, channelID, *bindingID, channelIdentityLinksRepo)
+		deleteChannelBinding(w, r, traceID, actor.AccountID, channelID, *bindingID, channelIdentityLinksRepo, channelIdentitiesRepo, channelDMThreadsRepo, pool)
 	default:
 		httpkit.WriteMethodNotAllowed(w, r)
 	}
@@ -104,6 +105,7 @@ func updateChannelBinding(
 	accountID uuid.UUID,
 	channelID uuid.UUID,
 	bindingID uuid.UUID,
+	membershipRepo *data.AccountMembershipRepository,
 	channelsRepo *data.ChannelsRepository,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
@@ -143,6 +145,15 @@ func updateChannelBinding(
 	if req.MakeOwner {
 		if binding.UserID == nil || *binding.UserID == uuid.Nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "binding user not available", traceID, nil)
+			return
+		}
+		membership, membershipErr := membershipRepo.WithTx(tx).GetByAccountAndUser(r.Context(), accountID, *binding.UserID)
+		if membershipErr != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if membership == nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "binding user is not a member of this account", traceID, nil)
 			return
 		}
 		nextOwner := binding.UserID
@@ -198,8 +209,22 @@ func deleteChannelBinding(
 	channelID uuid.UUID,
 	bindingID uuid.UUID,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
+	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
+	pool data.DB,
 ) {
-	binding, err := channelIdentityLinksRepo.GetBinding(r.Context(), accountID, channelID, bindingID)
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	defer tx.Rollback(r.Context()) //nolint:errcheck
+
+	linksRepo := channelIdentityLinksRepo.WithTx(tx)
+	identitiesRepo := channelIdentitiesRepo.WithTx(tx)
+	dmThreadsRepo := channelDMThreadsRepo.WithTx(tx)
+
+	binding, err := linksRepo.GetBinding(r.Context(), accountID, channelID, bindingID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
@@ -212,7 +237,19 @@ func deleteChannelBinding(
 		httpkit.WriteError(w, nethttp.StatusConflict, "channel_bindings.owner_unbind_blocked", "owner cannot be unlinked directly", traceID, nil)
 		return
 	}
-	if err := channelIdentityLinksRepo.DeleteBinding(r.Context(), accountID, channelID, bindingID); err != nil {
+	if err := dmThreadsRepo.DeleteByChannelIdentity(r.Context(), channelID, binding.ChannelIdentityID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if err := identitiesRepo.UpdateHeartbeatConfig(r.Context(), binding.ChannelIdentityID, false, binding.HeartbeatIntervalMinutes, binding.HeartbeatModel); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if err := linksRepo.DeleteBinding(r.Context(), accountID, channelID, bindingID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
