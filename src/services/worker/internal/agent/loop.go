@@ -213,12 +213,12 @@ func (l *Loop) Run(
 			return yield(emitter.Emit("run.failed", completionTotals.Apply(reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON()), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 		}
 
-		if turn.AssistantText != "" || len(turn.ToolCalls) > 0 {
-			assistantText := turn.AssistantText
+		if turn.AssistantText != "" || (turn.AssistantMessage != nil && len(turn.AssistantMessage.Content) > 0) || len(turn.ToolCalls) > 0 {
+			assistantMsg := turn.assistantHistoryMessage()
 			if runCtx.AgentID == "search" && len(turn.ToolCalls) > 0 {
-				assistantText = ""
+				assistantMsg.Content = nil
 			}
-			messages = append(messages, assistantMessage(assistantText, turn.ToolCalls))
+			messages = append(messages, assistantMsg)
 		}
 
 		for _, toolResult := range turn.ToolResults {
@@ -851,6 +851,7 @@ type turnResult struct {
 	Cancelled         bool
 	ToolCalls         []llm.ToolCall
 	ToolResults       []llm.StreamToolResult
+	AssistantMessage  *llm.Message
 	AssistantText     string
 	CompletedDataJSON map[string]any
 }
@@ -1059,6 +1060,7 @@ func (l *Loop) runSingleTurn(
 	toolCalls := []llm.ToolCall{}
 	toolResults := []llm.StreamToolResult{}
 	assistantChunks := []string{}
+	var assistantMessage *llm.Message
 	var completed *llm.StreamRunCompleted
 
 	// Rollout: 写入 TurnStart
@@ -1133,13 +1135,17 @@ func (l *Loop) runSingleTurn(
 			return stopErr
 		case llm.StreamRunCompleted:
 			completed = &typed
+			if typed.AssistantMessage != nil {
+				copy := *typed.AssistantMessage
+				assistantMessage = &copy
+			}
 			// Rollout: 写入 AssistantMessage
 			if runCtx.RolloutRecorder != nil {
 				var tcJSON json.RawMessage
 				if len(toolCalls) > 0 {
 					tcJSON, _ = json.Marshal(toolCalls)
 				}
-				appendRollout(ctx, runCtx.RolloutRecorder, MakeAssistantMessage(strings.Join(assistantChunks, ""), tcJSON))
+				appendRollout(ctx, runCtx.RolloutRecorder, MakeAssistantMessage(llm.VisibleMessageText(assistantMessageOrFallback(assistantMessage, assistantChunks)), tcJSON))
 			}
 			return stopErr
 		default:
@@ -1182,6 +1188,7 @@ func (l *Loop) runSingleTurn(
 		Terminal:          false,
 		ToolCalls:         toolCalls,
 		ToolResults:       toolResults,
+		AssistantMessage:  assistantMessage,
 		AssistantText:     strings.Join(assistantChunks, ""),
 		CompletedDataJSON: completedJSON,
 	}, nil
@@ -1286,6 +1293,27 @@ func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {
 		Content:   parts,
 		ToolCalls: append([]llm.ToolCall{}, toolCalls...),
 	}
+}
+
+func assistantMessageOrFallback(message *llm.Message, assistantChunks []string) llm.Message {
+	if message != nil {
+		return *message
+	}
+	content := strings.Join(assistantChunks, "")
+	if strings.TrimSpace(content) == "" {
+		return llm.Message{Role: "assistant"}
+	}
+	return llm.Message{
+		Role:    "assistant",
+		Content: []llm.TextPart{{Text: content}},
+	}
+}
+
+func (t turnResult) assistantHistoryMessage() llm.Message {
+	message := assistantMessageOrFallback(t.AssistantMessage, []string{t.AssistantText})
+	message.Role = "assistant"
+	message.ToolCalls = append([]llm.ToolCall{}, t.ToolCalls...)
+	return message
 }
 
 func toolResultMessage(result llm.StreamToolResult) llm.Message {
