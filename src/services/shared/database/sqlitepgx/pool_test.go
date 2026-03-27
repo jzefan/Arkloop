@@ -215,6 +215,7 @@ func TestRewriteSQL_TypeCast(t *testing.T) {
 		{"col::integer", "col"},
 		{"col::bigint", "col"},
 		{"col::boolean", "col"},
+		{"col::inet", "col"},
 	}
 	for _, tt := range tests {
 		got := rewriteSQL(tt.input)

@@ -10,7 +10,7 @@ import (
 )
 
 // typeCastRe matches PostgreSQL type casts like ::jsonb, ::text, ::uuid etc.
-var typeCastRe = regexp.MustCompile(`::(?:jsonb|json|text|integer|bigint|boolean|uuid)\b`)
+var typeCastRe = regexp.MustCompile(`::(?:jsonb|json|text|integer|bigint|boolean|uuid|inet)\b`)
 
 // platformSkillConflictRe matches the PostgreSQL partial-index ON CONFLICT
 // target used for platform skills: ON CONFLICT (account_id, skill_key, version)
