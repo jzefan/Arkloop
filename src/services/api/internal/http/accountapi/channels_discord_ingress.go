@@ -382,6 +382,25 @@ func (c discordConnector) HandleMessageCreate(
 	if err != nil {
 		return err
 	}
+	if identity.UserID != nil {
+		linked, linkErr := c.channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, ch.ID, identity.ID)
+		if linkErr != nil {
+			return linkErr
+		}
+		if !linked {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.discordClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, 5*time.Second)
+				_, _ = c.discordClient.SendMessage(sendCtx, token, event.ChannelID, discordbot.CreateMessageRequest{
+					Content: "当前账号未关联此接入。请使用 /bind 重新关联。",
+				})
+				sendCancel()
+			}
+			return nil
+		}
+	}
 	threadID, err := c.resolveDiscordDMThreadID(ctx, tx, *ch, persona.ID, derefUUID(persona.ProjectID), identity)
 	if err != nil {
 		return err
@@ -666,7 +685,17 @@ func handleDiscordCommand(
 	threadRepo *data.ThreadRepository,
 ) (*discordInteractionReply, error) {
 	data := evt.ApplicationCommandData()
-	switch strings.TrimSpace(data.Name) {
+	commandName := strings.TrimSpace(data.Name)
+	if identity.UserID != nil && !discordLinkBootstrapAllowed(commandName) {
+		linked, err := channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, channel.ID, identity.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !linked {
+			return &discordInteractionReply{Content: "当前账号未关联此接入。请使用 /bind 重新关联。", Ephemeral: true}, nil
+		}
+	}
+	switch commandName {
 	case "help":
 		return &discordInteractionReply{Content: "可用命令：/help /bind /new。私信可以直接聊天。", Ephemeral: true}, nil
 	case "bind":
@@ -692,6 +721,15 @@ func handleDiscordCommand(
 		return &discordInteractionReply{Content: "已开启新会话。", Ephemeral: true}, nil
 	default:
 		return &discordInteractionReply{Content: "暂不支持这个命令。", Ephemeral: true}, nil
+	}
+}
+
+func discordLinkBootstrapAllowed(commandName string) bool {
+	switch strings.ToLower(strings.TrimSpace(commandName)) {
+	case "bind", "help":
+		return true
+	default:
+		return false
 	}
 }
 

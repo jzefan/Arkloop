@@ -161,6 +161,18 @@ func TestScheduledTriggersRepositoryResolveHeartbeatThreadUsesDMBindingForDiscor
 	); err != nil {
 		t.Fatalf("insert channel dm thread: %v", err)
 	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO channel_message_ledger (
+			channel_id, channel_type, direction, thread_id, run_id,
+			platform_conversation_id, platform_message_id, platform_parent_message_id, platform_thread_id,
+			sender_channel_identity_id, metadata_json
+		) VALUES ($1, 'discord', 'inbound', $2, NULL, 'dm-channel-1001', 'msg-1001', NULL, NULL, $3, '{}')`,
+		channelID.String(),
+		threadID.String(),
+		identityID.String(),
+	); err != nil {
+		t.Fatalf("insert channel message ledger: %v", err)
+	}
 
 	row := ScheduledTriggerRow{
 		ID:                uuid.New(),
@@ -185,7 +197,7 @@ func TestScheduledTriggersRepositoryResolveHeartbeatThreadUsesDMBindingForDiscor
 	if got.ChannelType != "discord" {
 		t.Fatalf("unexpected channel type: %q", got.ChannelType)
 	}
-	if got.PlatformChatID != "discord-user-1001" {
+	if got.PlatformChatID != "dm-channel-1001" {
 		t.Fatalf("unexpected platform chat id: %q", got.PlatformChatID)
 	}
 	if got.ConversationType != "private" {
@@ -254,6 +266,18 @@ func TestDesktopCreateHeartbeatRunUsesDiscordDMThreadContext(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert channel dm thread: %v", err)
 	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO channel_message_ledger (
+			channel_id, channel_type, direction, thread_id, run_id,
+			platform_conversation_id, platform_message_id, platform_parent_message_id, platform_thread_id,
+			sender_channel_identity_id, metadata_json
+		) VALUES ($1, 'discord', 'inbound', $2, NULL, 'dm-channel-2001', 'msg-2001', NULL, NULL, $3, '{}')`,
+		channelID.String(),
+		threadID.String(),
+		identityID.String(),
+	); err != nil {
+		t.Fatalf("insert channel message ledger: %v", err)
+	}
 
 	row := ScheduledTriggerRow{
 		ID:                uuid.New(),
@@ -275,7 +299,7 @@ func TestDesktopCreateHeartbeatRunUsesDiscordDMThreadContext(t *testing.T) {
 	if result.ChannelID != channelID.String() {
 		t.Fatalf("unexpected channel id: %q", result.ChannelID)
 	}
-	if result.PlatformChatID != "discord-user-2001" {
+	if result.PlatformChatID != "dm-channel-2001" {
 		t.Fatalf("unexpected platform chat id: %q", result.PlatformChatID)
 	}
 	if result.IdentityID != identityID.String() {

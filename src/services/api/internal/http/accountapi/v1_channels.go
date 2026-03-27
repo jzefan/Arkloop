@@ -88,6 +88,7 @@ func channelEntry(
 	channelsRepo *data.ChannelsRepository,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	personasRepo *data.PersonasRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	secretsRepo *data.SecretsRepository,
@@ -147,6 +148,7 @@ func channelEntry(
 				channelsRepo,
 				channelIdentityLinksRepo,
 				channelIdentitiesRepo,
+				channelDMThreadsRepo,
 				apiKeysRepo,
 				pool,
 			); handled {

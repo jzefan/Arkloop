@@ -409,6 +409,21 @@ SELECT cgt.thread_id, cgt.channel_id
 		}
 		channelID = dmChannelID
 		conversationTy = "private"
+		platformConversationID := strings.TrimSpace(platformSubjectID)
+		if err := db.QueryRow(ctx,
+			`SELECT platform_conversation_id
+			   FROM channel_message_ledger
+			  WHERE channel_id = $1
+			    AND sender_channel_identity_id = $2
+			    AND platform_conversation_id <> ''
+			  ORDER BY created_at DESC
+			  LIMIT 1`,
+			dmChannelID,
+			row.ChannelIdentityID.String(),
+		).Scan(&platformConversationID); err != nil && !isNoRows(err) {
+			return nil, fmt.Errorf("query channel_message_ledger: %w", err)
+		}
+		platformSubjectID = strings.TrimSpace(platformConversationID)
 	}
 
 	threadID, err := uuid.Parse(threadIDStr)

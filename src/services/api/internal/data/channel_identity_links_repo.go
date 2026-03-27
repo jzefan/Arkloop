@@ -175,6 +175,73 @@ func (r *ChannelIdentityLinksRepository) ListBindings(
 	return items, rows.Err()
 }
 
+func (r *ChannelIdentityLinksRepository) ListBindingsByIdentity(
+	ctx context.Context,
+	channelIdentityID uuid.UUID,
+) ([]ChannelBinding, error) {
+	rows, err := r.db.Query(
+		ctx,
+		`SELECT cil.id,
+		        cil.channel_id,
+		        ci.id,
+		        ci.user_id,
+		        ci.display_name,
+		        ci.platform_subject_id,
+		        CASE
+		            WHEN ch.owner_user_id IS NOT NULL AND ci.user_id = ch.owner_user_id THEN TRUE
+		            ELSE FALSE
+		        END AS is_owner,
+		        COALESCE(ci.heartbeat_enabled, 0),
+		        COALESCE(ci.heartbeat_interval_minutes, 30),
+		        COALESCE(ci.heartbeat_model, ''),
+		        cil.created_at,
+		        cil.updated_at
+		   FROM channel_identity_links cil
+		   JOIN channels ch ON ch.id = cil.channel_id
+		   JOIN channel_identities ci ON ci.id = cil.channel_identity_id
+		  WHERE cil.channel_identity_id = $1
+		  ORDER BY cil.created_at ASC`,
+		channelIdentityID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("channel_identity_links.ListBindingsByIdentity: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]ChannelBinding, 0)
+	for rows.Next() {
+		item, scanErr := scanChannelBinding(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("channel_identity_links.ListBindingsByIdentity scan: %w", scanErr)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *ChannelIdentityLinksRepository) HasLink(
+	ctx context.Context,
+	channelID uuid.UUID,
+	channelIdentityID uuid.UUID,
+) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT EXISTS(
+		     SELECT 1
+		       FROM channel_identity_links
+		      WHERE channel_id = $1
+		        AND channel_identity_id = $2
+		 )`,
+		channelID,
+		channelIdentityID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("channel_identity_links.HasLink: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *ChannelIdentityLinksRepository) DeleteBinding(
 	ctx context.Context,
 	accountID uuid.UUID,
@@ -201,6 +268,20 @@ func (r *ChannelIdentityLinksRepository) DeleteBinding(
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("channel_identity_links.DeleteBinding: not found")
+	}
+	return nil
+}
+
+func (r *ChannelIdentityLinksRepository) DeleteByIdentity(
+	ctx context.Context,
+	channelIdentityID uuid.UUID,
+) error {
+	if _, err := r.db.Exec(
+		ctx,
+		`DELETE FROM channel_identity_links WHERE channel_identity_id = $1`,
+		channelIdentityID,
+	); err != nil {
+		return fmt.Errorf("channel_identity_links.DeleteByIdentity: %w", err)
 	}
 	return nil
 }
