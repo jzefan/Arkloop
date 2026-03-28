@@ -7,6 +7,7 @@ import type { CodeExecution } from '../components/CodeExecutionCard'
 
 function renderTimeline(params: {
   isComplete: boolean
+  preserveExpanded?: boolean
   steps: { id: string; kind: 'planning' | 'searching' | 'reviewing' | 'finished'; label: string; status: 'active' | 'done'; queries?: string[]; seq?: number }[]
   sources: WebSource[]
   narratives?: Array<{ id: string; text: string; seq: number }>
@@ -24,6 +25,7 @@ function renderTimeline(params: {
         sources={params.sources}
         narratives={params.narratives}
         isComplete={params.isComplete}
+        preserveExpanded={params.preserveExpanded}
         codeExecutions={params.codeExecutions}
         subAgents={params.subAgents}
         fileOps={params.fileOps}
@@ -49,6 +51,33 @@ describe('CopTimeline', () => {
     expect(html).toContain('Reviewed 1 sources')
     expect(html).not.toContain('Plan step')
     expect(html).not.toContain('Search step')
+  })
+
+  it('handoff 保留态下即使 isComplete=true 也不应自动收起内容', () => {
+    const html = renderTimeline({
+      isComplete: true,
+      preserveExpanded: true,
+      steps: [
+        { id: 's1', kind: 'planning', label: 'Plan step', status: 'done' },
+      ],
+      sources: [],
+    })
+
+    expect(html).toContain('Plan step')
+    expect(html).not.toContain('1 steps completed')
+  })
+
+  it('已完成且仅包含 thinking 时应显示完成后的 thought 文案', () => {
+    const html = renderTimeline({
+      isComplete: true,
+      preserveExpanded: true,
+      steps: [],
+      sources: [],
+      thinkingRows: [{ id: 't1', markdown: 'hello', seq: 1, durationSec: 2 }],
+    })
+
+    expect(html).toContain('Thought for 2s')
+    expect(html).not.toContain('Thinking')
   })
 
   it('isComplete=false 时应默认展开内容', () => {

@@ -73,7 +73,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
       {
         type: 'cop',
         title: null,
-        items: [th('t1', 1)],
+        items: [th('t1', 1, 2)],
       },
       { type: 'text', content: 'visible' },
     ])
@@ -92,7 +92,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
       {
         type: 'cop',
         title: null,
-        items: [th('a', 1)],
+        items: [th('a', 1, 2)],
       },
       { type: 'text', content: 'hi' },
       {
@@ -104,7 +104,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
             call: { toolCallId: 'c1', toolName: 'read_file', arguments: {}, result: {}, errorClass: undefined },
             seq: 3,
           },
-          th('b', 5),
+          th('b', 5, 6),
         ],
       },
       { type: 'text', content: 'bye' },
@@ -122,7 +122,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
       {
         type: 'cop',
         title: null,
-        items: [th('plan', 1)],
+        items: [th('plan', 1, 2)],
       },
       { type: 'text', content: '我来查一下。' },
       {
@@ -337,7 +337,7 @@ describe('buildAssistantTurnFromRunEvents', () => {
     })
   })
 
-  it('空 timeline_title 后短正文进入当前 cop（不先 flush 成独立 text）', () => {
+  it('空 timeline_title 后短正文仍为独立 text 段', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'tool.call', {
         tool_name: 'timeline_title',
@@ -346,11 +346,19 @@ describe('buildAssistantTurnFromRunEvents', () => {
       }),
       ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: 'hi' }),
     ])
+    expect(turn.segments).toEqual([{ type: 'text', content: 'hi' }])
+  })
+
+  it('run events 重放时 open thinking 用最后事件时间收口，而不是当前时间', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'message.delta', { role: 'assistant', channel: 'thinking', content_delta: 'plan' }),
+      ev('r1', 2, 'run.completed', {}),
+    ])
     expect(turn.segments).toEqual([
       {
         type: 'cop',
         title: null,
-        items: [{ kind: 'assistant_text', content: 'hi', seq: 2 }],
+        items: [th('plan', 1, 2)],
       },
     ])
   })

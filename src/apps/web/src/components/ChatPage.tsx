@@ -167,26 +167,6 @@ function normalizeError(error: unknown): AppError {
   return { message: '请求失败' }
 }
 
-function stripThinkingFromAssistantTurn(turn: AssistantTurnUi): AssistantTurnUi {
-  const segments: AssistantTurnSegment[] = []
-  for (const segment of turn.segments) {
-    if (segment.type === 'text') {
-      if (segment.content !== '') {
-        segments.push(segment)
-      }
-      continue
-    }
-    const items = segment.items.filter((item) => item.kind !== 'thinking')
-    if (items.length === 0) {
-      continue
-    }
-    segments.push({ ...segment, items })
-  }
-  return {
-    segments,
-  }
-}
-
 function mergeVisibleSegmentsIntoAssistantTurn(
   turn: AssistantTurnUi,
   liveSegments: Array<{ mode: string; content: string }>,
@@ -207,10 +187,6 @@ function mergeVisibleSegmentsIntoAssistantTurn(
 
 function buildFrozenAssistantTurnFromRunEvents(events: MsgRunEvent[]): AssistantTurnUi {
   return buildAssistantTurnFromRunEvents(events)
-}
-
-function buildPersistedAssistantTurnFromRunEvents(events: MsgRunEvent[]): AssistantTurnUi {
-  return stripThinkingFromAssistantTurn(buildFrozenAssistantTurnFromRunEvents(events))
 }
 
 function interruptedErrorFromRunEvents(
@@ -467,43 +443,6 @@ function copInlineTextRowsForCop(
   return out
 }
 
-function textSegmentShouldRenderInsideFollowingCop(
-  segments: AssistantTurnSegment[],
-  segmentIndex: number,
-): boolean {
-  const segment = segments[segmentIndex]
-  if (segment?.type !== 'text') return false
-  if (segment.content === '') return false
-  return segments[segmentIndex + 1]?.type === 'cop'
-}
-
-function leadingTextRowForCop(
-  segments: AssistantTurnSegment[],
-  segmentIndex: number,
-): { id: string; text: string; seq: number } | null {
-  const previous = segments[segmentIndex - 1]
-  const current = segments[segmentIndex]
-  if (previous?.type !== 'text' || current?.type !== 'cop') return null
-  if (previous.content === '') return null
-  const firstItemSeq = current.items[0]?.seq
-  return {
-    id: `lead-${segmentIndex}`,
-    text: previous.content,
-    seq: firstItemSeq != null ? firstItemSeq - 0.5 : Number.MIN_SAFE_INTEGER,
-  }
-}
-
-function copInlineRowsWithLeadingText(
-  segments: AssistantTurnSegment[],
-  seg: CopSegment,
-  opts: { live: boolean; segmentIndex: number; lastSegmentIndex: number },
-): Array<{ id: string; text: string; live?: boolean; seq: number }> {
-  const rows = copInlineTextRowsForCop(seg, opts)
-  const leadingText = leadingTextRowForCop(segments, opts.segmentIndex)
-  if (!leadingText) return rows
-  return [{ ...leadingText, live: false }, ...rows]
-}
-
 function turnHasCopThinkingItems(turn: AssistantTurnUi): boolean {
   return turn.segments.some(
     (s) => s.type === 'cop' && s.items.some((i) => i.kind === 'thinking'),
@@ -536,6 +475,8 @@ export function ChatPage() {
   const [preserveLiveRunUi, setPreserveLiveRunUi] = useState(false)
   const [terminalRunDisplayId, setTerminalRunDisplayId] = useState<string | null>(null)
   const [terminalRunHandoffStatus, setTerminalRunHandoffStatus] = useState<'completed' | 'cancelled' | 'interrupted' | null>(null)
+  const [terminalRunAssistantMessageId, setTerminalRunAssistantMessageId] = useState<string | null>(null)
+  const [terminalRunHistoryExpanded, setTerminalRunHistoryExpanded] = useState(false)
   const seenFirstToolCallInRunRef = useRef(false)
   const [activeRunId, setActiveRunId] = useState<string | null>(
     locationState?.initialRunId ?? null,
@@ -760,6 +701,15 @@ export function ChatPage() {
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
   }, [])
+  const markTerminalRunHistory = useCallback((messageId: string | null) => {
+    if (messageId) {
+      setTerminalRunAssistantMessageId(messageId)
+      setTerminalRunHistoryExpanded(true)
+    } else {
+      setTerminalRunAssistantMessageId(null)
+      setTerminalRunHistoryExpanded(false)
+    }
+  }, [])
   const bumpAssistantTurnSnapshot = useCallback(() => {
     setLiveAssistantTurn(snapshotAssistantTurn(assistantTurnFoldStateRef.current))
   }, [])
@@ -815,6 +765,21 @@ export function ChatPage() {
     setPendingUserInput(null)
     setCheckInDraft('')
   }, [clearLiveRunTransientState, resetAssistantTurnLive, resetSearchSteps])
+  function releaseCompletedHandoffToHistory() {
+    assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
+    setPreserveLiveRunUi(false)
+    setLiveAssistantTurn(null)
+    setPendingThinking(false)
+    setSegments([])
+    activeSegmentIdRef.current = null
+    setTopLevelCodeExecutions([])
+    setTopLevelSubAgents([])
+    setTopLevelFileOps([])
+    setTopLevelWebFetches([])
+    clearLiveRunTransientState()
+    setTerminalRunDisplayId(null)
+    setTerminalRunHandoffStatus(null)
+  }
 
   type TerminalRunCache = {
     runSources: WebSource[]
@@ -850,7 +815,7 @@ export function ChatPage() {
       runSubAgents: [...currentRunSubAgentsRef.current],
       runFileOps: [...currentRunFileOpsRef.current],
       runWebFetches: [...currentRunWebFetchesRef.current],
-      runAssistantTurn: stripThinkingFromAssistantTurn(handoffAssistantTurn),
+      runAssistantTurn: handoffAssistantTurn,
       handoffAssistantTurn,
       pendingSearchSteps: pendingSearchStepsRef.current,
     }
@@ -1108,6 +1073,7 @@ export function ChatPage() {
     }
     const normalized = text.trim()
     if (!normalized) return
+    markTerminalRunHistory(null)
     if (activeRunId || sending) {
       pendingMessageRef.current = normalized
       setQueuedDraft(normalized)
@@ -1243,15 +1209,26 @@ export function ChatPage() {
           }
 
           const cachedRunEvents = readMsgRunEvents(msg.id)
+          let hydratedAssistantTurn: AssistantTurnUi | null = null
           if (cachedRunEvents) {
             runEventsMap.set(msg.id, cachedRunEvents)
             if (latest?.status === 'interrupted' && latest.run_id && msg.run_id === latest.run_id) {
               interruptedError = interruptedErrorFromRunEvents(cachedRunEvents, t.runInterrupted)
             }
+            const rebuiltTurn = buildAssistantTurnFromRunEvents(cachedRunEvents)
+            if (rebuiltTurn.segments.length > 0) {
+              hydratedAssistantTurn = rebuiltTurn
+              writeMessageAssistantTurn(msg.id, rebuiltTurn)
+            }
           }
-          const cachedTurn = readMessageAssistantTurn(msg.id)
-          if (cachedTurn) {
-            assistantTurnMap.set(msg.id, stripThinkingFromAssistantTurn(cachedTurn))
+          if (!hydratedAssistantTurn) {
+            const cachedTurn = readMessageAssistantTurn(msg.id)
+            if (cachedTurn) {
+              hydratedAssistantTurn = cachedTurn
+            }
+          }
+          if (hydratedAssistantTurn) {
+            assistantTurnMap.set(msg.id, hydratedAssistantTurn)
           }
         }
 
@@ -1328,7 +1305,7 @@ export function ChatPage() {
               }
             }
             if (lastAssistant && replayAssistantTurnNeeded) {
-              const replayTurn = stripThinkingFromAssistantTurn(buildAssistantTurnFromRunEvents(replayEvents))
+              const replayTurn = buildAssistantTurnFromRunEvents(replayEvents)
               if (replayTurn.segments.length > 0) {
                 assistantTurnMap.set(lastAssistant.id, replayTurn)
                 writeMessageAssistantTurn(lastAssistant.id, replayTurn)
@@ -1525,6 +1502,11 @@ export function ChatPage() {
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
   }, [activeRunId])
+
+  useEffect(() => {
+    if (!activeRunId) return
+    markTerminalRunHistory(null)
+  }, [activeRunId, markTerminalRunHistory])
 
   // 避免上一轮 run 的 closed/error 状态误触发当前 run 的终端兜底。
   useEffect(() => {
@@ -2069,7 +2051,26 @@ export function ChatPage() {
         setPreserveLiveRunUi(true)
         setTerminalRunDisplayId(completedRunId)
         setTerminalRunHandoffStatus('completed')
+        const runEventsForMessage = (sse.events as MsgRunEvent[]).filter((e) => {
+          if (e.run_id !== completedRunId || typeof e.seq !== 'number') {
+            return false
+          }
+          if (isTerminalRunEventType(e.type)) {
+            return e.seq <= event.seq
+          }
+          return e.seq <= visibleNonTerminalSeqCutoff
+        })
         const runCache = captureTerminalRunCache()
+        if (runEventsForMessage.length > 0) {
+          const frozenAssistantTurn = mergeVisibleSegmentsIntoAssistantTurn(
+            buildFrozenAssistantTurnFromRunEvents(runEventsForMessage),
+            segmentsRef.current,
+          )
+          if (frozenAssistantTurn.segments.length > 0) {
+            runCache.handoffAssistantTurn = frozenAssistantTurn
+            runCache.runAssistantTurn = frozenAssistantTurn
+          }
+        }
         setLiveAssistantTurn(runCache.handoffAssistantTurn.segments.length > 0 ? runCache.handoffAssistantTurn : null)
         sse.disconnect()
         setActiveRunId(null)
@@ -2084,15 +2085,6 @@ export function ChatPage() {
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
-        const runEventsForMessage = (sse.events as MsgRunEvent[]).filter((e) => {
-          if (e.run_id !== completedRunId || typeof e.seq !== 'number') {
-            return false
-          }
-          if (isTerminalRunEventType(e.type)) {
-            return e.seq <= event.seq
-          }
-          return e.seq <= visibleNonTerminalSeqCutoff
-        })
         void refreshMessages({ requiredCompletedRunId: completedRunId })
           .then((items) => {
             const completedAssistant = findAssistantMessageForRun(items, completedRunId)
@@ -2103,6 +2095,8 @@ export function ChatPage() {
                 ...runCache,
                 pendingSearchSteps,
               }, runEventsForMessage)
+              markTerminalRunHistory(completedAssistant.id)
+              releaseCompletedHandoffToHistory()
             }
             const pending = pendingMessageRef.current
             if (pending) {
@@ -2152,7 +2146,7 @@ export function ChatPage() {
         const runCache = captureTerminalRunCache()
         if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
           runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
-          runCache.runAssistantTurn = stripThinkingFromAssistantTurn(runCache.handoffAssistantTurn)
+          runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
         resetTerminalRunState({
           restoreQueuedDraft: true,
@@ -2167,10 +2161,7 @@ export function ChatPage() {
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
-                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage, {
-                  persistAssistantTurn: false,
-                  cacheAssistantTurn: true,
-                })
+                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
             })
         }
@@ -2221,7 +2212,7 @@ export function ChatPage() {
         const runCache = captureTerminalRunCache()
         if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
           runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
-          runCache.runAssistantTurn = stripThinkingFromAssistantTurn(runCache.handoffAssistantTurn)
+          runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
         resetTerminalRunState({
           restoreQueuedDraft: true,
@@ -2244,10 +2235,7 @@ export function ChatPage() {
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId!)
               if (assistant) {
-                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage, {
-                  persistAssistantTurn: false,
-                  cacheAssistantTurn: true,
-                })
+                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
             })
         }
@@ -2287,7 +2275,7 @@ export function ChatPage() {
     const terminalCache = captureTerminalRunCache()
     if (terminalCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
       terminalCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
-      terminalCache.runAssistantTurn = buildPersistedAssistantTurnFromRunEvents(runEventsForMessage)
+      terminalCache.runAssistantTurn = terminalCache.handoffAssistantTurn
     }
     setTerminalRunDisplayId(terminalRunId)
     setPreserveLiveRunUi(true)
@@ -2307,10 +2295,7 @@ export function ChatPage() {
       .then((items) => {
         const completedAssistant = findAssistantMessageForRun(items, terminalRunId)
         if (completedAssistant) {
-          persistRunDataToMessage(completedAssistant.id, terminalCache, runEventsForMessage, {
-            persistAssistantTurn: false,
-            cacheAssistantTurn: true,
-          })
+          persistRunDataToMessage(completedAssistant.id, terminalCache, runEventsForMessage)
         }
       })
   }, [activeRunId, sse.state, persistRunDataToMessage]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -2440,6 +2425,7 @@ export function ChatPage() {
   const handleSend = async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     if (sending || !threadId) return
+    markTerminalRunHistory(null)
 
     // streaming 期间排队，输出结束后自动发送
     if (isStreaming) {
@@ -2878,21 +2864,29 @@ export function ChatPage() {
     hasFileOps: boolean
     hasWebFetches: boolean
     hasThinking: boolean
+    handoffStatus?: 'completed' | 'cancelled' | 'interrupted' | null
   }): string | undefined => {
     const explicitTitle = params.title?.trim()
     if (explicitTitle) {
       return explicitTitle
     }
+    if (params.handoffStatus === 'completed') {
+      return undefined
+    }
+    const statusLabel =
+      params.handoffStatus === 'cancelled' || params.handoffStatus === 'interrupted'
+        ? t.connection.stopped
+        : undefined
     if (params.steps.length > 0) {
-      return params.steps[params.steps.length - 1]?.label || t.copTimelineLiveProgress
+      return statusLabel ?? params.steps[params.steps.length - 1]?.label ?? t.copTimelineLiveProgress
     }
     if (params.hasCodeExecutions || params.hasSubAgents || params.hasFileOps || params.hasWebFetches) {
-      return t.copTimelineLiveProgress
+      return statusLabel ?? t.copTimelineLiveProgress
     }
     if (params.hasThinking) {
       return t.copThinkingInlineTitle
     }
-    return undefined
+    return statusLabel
   }, [t])
 
   return (
@@ -3108,23 +3102,21 @@ export function ChatPage() {
                       )}
                       {historicalSegments.map((seg, si) =>
                         seg.type === 'text' ? (
-                          textSegmentShouldRenderInsideFollowingCop(historicalSegments, si)
-                            ? null
-                            : (
-                              <MarkdownRenderer
-                                key={`${msg.id}-at-${si}`}
-                                content={seg.content}
-                                webSources={resolvedSources}
-                                artifacts={messageArtifactsMap.get(msg.id)}
-                                accessToken={accessToken}
-                                runId={msg.run_id ?? undefined}
-                                onOpenDocument={openDocumentPanel}
-                                trimTrailingMargin={
-                                  historicalSegments[si + 1] == null ||
-                                  historicalSegments[si + 1]?.type === 'cop'
-                                }
-                              />
-                            )
+                          (
+                            <MarkdownRenderer
+                              key={`${msg.id}-at-${si}`}
+                              content={seg.content}
+                              webSources={resolvedSources}
+                              artifacts={messageArtifactsMap.get(msg.id)}
+                              accessToken={accessToken}
+                              runId={msg.run_id ?? undefined}
+                              onOpenDocument={openDocumentPanel}
+                              trimTrailingMargin={
+                                historicalSegments[si + 1] == null ||
+                                historicalSegments[si + 1]?.type === 'cop'
+                              }
+                            />
+                          )
                         ) : (
                           (() => {
                             const payload = copTimelinePayloadForSegment(seg, {
@@ -3144,7 +3136,7 @@ export function ChatPage() {
                                 })
                               : []
                             const copInlineHist = !isSearchThread
-                              ? copInlineRowsWithLeadingText(historicalSegments, seg, {
+                              ? copInlineTextRowsForCop(seg, {
                                   live: false,
                                   segmentIndex: si,
                                   lastSegmentIndex: historicalSegments.length - 1,
@@ -3167,6 +3159,7 @@ export function ChatPage() {
                                   hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
                                   hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
                                   hasThinking: thinkingRowsHist.length > 0 || copInlineHist.length > 0,
+                                  handoffStatus: terminalRunHandoffStatus,
                                 })
                               : seg.title?.trim() || undefined
                             const histTrail = historicalSegments[si + 1]
@@ -3185,6 +3178,7 @@ export function ChatPage() {
                                   fileOps={payload.fileOps}
                                   webFetches={payload.webFetches}
                                   headerOverride={timelineTitleOverride}
+                                  preserveExpanded={terminalRunHistoryExpanded && terminalRunAssistantMessageId === msg.id}
                                   thinkingRows={thinkingRowsHist.length > 0 ? thinkingRowsHist : undefined}
                                   copInlineTextRows={copInlineHist.length > 0 ? copInlineHist : undefined}
                                   trailingAssistantTextPresent={histTrailingText}
@@ -3343,40 +3337,30 @@ export function ChatPage() {
                   {liveAssistantTurn.segments.map((seg, si) => {
                     const lastSegIdx = liveAssistantTurn.segments.length - 1
                     const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
-                    const cancelFrozenOpen =
-                      preserveLiveRunUi &&
-                      !isStreaming &&
-                      terminalRunHandoffStatus === 'cancelled' &&
-                      si === lastSegIdx
+                    const preservingHandoffSegments = preserveLiveRunUi && !isStreaming
                     const mdTypewriterDone =
                       !liveRunUiActive ||
                       lastTurnSeg?.type !== 'text' ||
                       si !== lastSegIdx
                     const copClosedByFollowingSeg = si < lastSegIdx
-                    const copTimelineComplete =
-                      copClosedByFollowingSeg ||
-                      (!liveRunUiActive && !cancelFrozenOpen)
                     const copTimelineLive = liveRunUiActive && !copClosedByFollowingSeg
+                    const copTimelineComplete = !copTimelineLive
 
                     return seg.type === 'text' ? (
-                      textSegmentShouldRenderInsideFollowingCop(liveAssistantTurn.segments, si)
-                        ? null
-                        : (
-                          <LiveTurnMarkdown
-                            key={`live-at-${si}`}
-                            content={seg.content}
-                            typewriterDone={mdTypewriterDone}
-                            webSources={currentRunSourcesRef.current.length > 0 ? currentRunSourcesRef.current : undefined}
-                            artifacts={currentRunArtifactsRef.current.length > 0 ? currentRunArtifactsRef.current : undefined}
-                            accessToken={accessToken}
-                            runId={activeRunId ?? undefined}
-                            onOpenDocument={openDocumentPanel}
-                            trimTrailingMargin={
-                              liveAssistantTurn.segments[si + 1] == null ||
-                              liveAssistantTurn.segments[si + 1]?.type === 'cop'
-                            }
-                          />
-                        )
+                      <LiveTurnMarkdown
+                        key={`live-at-${si}`}
+                        content={seg.content}
+                        typewriterDone={mdTypewriterDone}
+                        webSources={currentRunSourcesRef.current.length > 0 ? currentRunSourcesRef.current : undefined}
+                        artifacts={currentRunArtifactsRef.current.length > 0 ? currentRunArtifactsRef.current : undefined}
+                        accessToken={accessToken}
+                        runId={activeRunId ?? undefined}
+                        onOpenDocument={openDocumentPanel}
+                        trimTrailingMargin={
+                          liveAssistantTurn.segments[si + 1] == null ||
+                          liveAssistantTurn.segments[si + 1]?.type === 'cop'
+                        }
+                      />
                     ) : (
                       (() => {
                         const payload = copTimelinePayloadForSegment(seg, {
@@ -3397,7 +3381,7 @@ export function ChatPage() {
                             })
                           : []
                         const copInlineLive = !isSearchThread
-                          ? copInlineRowsWithLeadingText(liveAssistantTurn.segments, seg, {
+                          ? copInlineTextRowsForCop(seg, {
                               live: liveRunUiActive,
                               segmentIndex: si,
                               lastSegmentIndex: lastSegIdx,
@@ -3413,7 +3397,7 @@ export function ChatPage() {
                           return null
                         }
                         const timelineTitleOverride =
-                          preserveLiveRunUi && !isStreaming && !copTimelineComplete
+                          preservingHandoffSegments
                             ? currentRunCopHeaderOverride({
                                 title: seg.title,
                                 steps: payload.steps,
@@ -3422,6 +3406,7 @@ export function ChatPage() {
                                 hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
                                 hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
                                 hasThinking: thinkingRowsLive.length > 0 || copInlineLive.length > 0,
+                                handoffStatus: terminalRunHandoffStatus,
                               })
                             : seg.title?.trim() || undefined
                         const trailSeg = si + 1 <= lastSegIdx ? liveAssistantTurn.segments[si + 1] : undefined
@@ -3440,14 +3425,15 @@ export function ChatPage() {
                               fileOps={payload.fileOps}
                               webFetches={payload.webFetches}
                               headerOverride={timelineTitleOverride}
-                                  thinkingRows={thinkingRowsLive.length > 0 ? thinkingRowsLive : undefined}
-                                  copInlineTextRows={copInlineLive.length > 0 ? copInlineLive : undefined}
-                                  shimmer={copTimelineLive}
-                                  live={copTimelineLive}
-                                  thinkingStartedAt={copThinkingStartedAtMs}
-                                  trailingAssistantTextPresent={trailingAssistantTextPresent}
-                                  accessToken={accessToken}
-                                  baseUrl={baseUrl}
+                              thinkingRows={thinkingRowsLive.length > 0 ? thinkingRowsLive : undefined}
+                              copInlineTextRows={copInlineLive.length > 0 ? copInlineLive : undefined}
+                              shimmer={copTimelineLive}
+                              live={copTimelineLive}
+                              preserveExpanded={preservingHandoffSegments}
+                              thinkingStartedAt={copThinkingStartedAtMs}
+                              trailingAssistantTextPresent={trailingAssistantTextPresent}
+                              accessToken={accessToken}
+                              baseUrl={baseUrl}
                             />
                             {liveWidgets.map((entry) => (
                               <WidgetBlock
