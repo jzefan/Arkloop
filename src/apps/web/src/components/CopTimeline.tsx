@@ -53,6 +53,7 @@ type Props = {
   headerOverride?: string
   shimmer?: boolean
   live?: boolean
+  preserveExpanded?: boolean
   accessToken?: string
   baseUrl?: string
   /** 与 tool 同序交错的多段 thinking（seq 与工具池子对齐排序） */
@@ -686,7 +687,7 @@ export function CopTimelineUnifiedRow({
   )
 }
 
-export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, accessToken, baseUrl, thinkingRows, copInlineTextRows, assistantThinking, thinkingStartedAt, trailingAssistantTextPresent }: Props) {
+export function CopTimeline({ steps, sources, narratives, isComplete, codeExecutions, onOpenCodeExecution, activeCodeExecutionId, subAgents, fileOps, webFetches, headerOverride, shimmer, live, preserveExpanded, accessToken, baseUrl, thinkingRows, copInlineTextRows, assistantThinking, thinkingStartedAt, trailingAssistantTextPresent }: Props) {
   const { t } = useLocale()
   const thinkingRowList = thinkingRows ?? []
   const copInlineList = copInlineTextRows ?? []
@@ -708,6 +709,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
 
   /** 流式中展开；仅 thinking 无工具：后无正文时默认展开，已有正文段则默认收起 */
   const [collapsed, setCollapsed] = useState(() => {
+    if (preserveExpanded) return false
     if (!isComplete) return false
     if (thinkingRowList.some((r) => r.live) || legacyThinkingLive) return false
     if (hasThinkingOnly) {
@@ -721,6 +723,10 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
 
   const prevCompleteRef = useRef<boolean | undefined>(undefined)
   useEffect(() => {
+    if (preserveExpanded) {
+      prevCompleteRef.current = isComplete
+      return
+    }
     if (userToggledCollapsedRef.current) {
       prevCompleteRef.current = isComplete
       return
@@ -733,12 +739,13 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
       setCollapsed(true)
     }
     prevCompleteRef.current = isComplete
-  }, [isComplete])
+  }, [isComplete, preserveExpanded])
 
   useEffect(() => {
+    if (preserveExpanded) return
     if (userToggledCollapsedRef.current) return
     if (trailingAssistantTextPresent) setCollapsed(true)
-  }, [trailingAssistantTextPresent])
+  }, [trailingAssistantTextPresent, preserveExpanded])
 
   const aggregatedDurationSec = useMemo(() => {
     let sum = 0

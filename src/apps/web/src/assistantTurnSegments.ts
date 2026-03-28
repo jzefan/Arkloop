@@ -27,14 +27,10 @@ export type AssistantTurnFoldState = {
   currentCop: { type: 'cop'; title: string | null; items: CopBlockItem[] } | null
   /** 为 true 时下一次 thinking 必须新开一项（不拼进上一段 thinking） */
   thinkingMustBreakBeforeNext: boolean
+  lastEventTimeMs: number | null
 }
 
 const TIMELINE_TITLE_TOOL = 'timeline_title'
-
-/**
- * 无 tool 的 open cop 内可累计的可见短正文上限（thinking 之后的主通道正文已 flush 成 text，不进此项）。
- */
-const MAX_COP_INLINE_ASSISTANT_CHARS = 512
 
 export function copSegmentCalls(segment: { type: 'cop'; items: CopBlockItem[] }): TurnToolCallRef[] {
   return segment.items.filter((i): i is Extract<CopBlockItem, { kind: 'call' }> => i.kind === 'call').map((i) => i.call)
@@ -99,7 +95,7 @@ function extractResultPayload(event: RunEvent): unknown {
 }
 
 function copIsEmpty(cop: { title: string | null; items: CopBlockItem[] }): boolean {
-  return cop.title == null && cop.items.length === 0
+  return cop.items.length === 0
 }
 
 function cloneTurnToolCall(c: TurnToolCallRef): TurnToolCallRef {
@@ -138,17 +134,18 @@ function cloneSegment(s: AssistantTurnSegment): AssistantTurnSegment {
 }
 
 /** 结束 run 时收尾并取出不可变快照，清空 fold state。 */
-export function drainAssistantTurnForPersist(state: AssistantTurnFoldState): AssistantTurnUi {
-  finalizeAssistantTurnFoldState(state)
+export function drainAssistantTurnForPersist(state: AssistantTurnFoldState, endMs?: number): AssistantTurnUi {
+  finalizeAssistantTurnFoldState(state, endMs)
   const turn: AssistantTurnUi = { segments: state.segments.map(cloneSegment) }
   state.segments = []
   state.currentCop = null
   state.thinkingMustBreakBeforeNext = false
+  state.lastEventTimeMs = null
   return turn
 }
 
 export function createEmptyAssistantTurnFoldState(): AssistantTurnFoldState {
-  return { segments: [], currentCop: null, thinkingMustBreakBeforeNext: false }
+  return { segments: [], currentCop: null, thinkingMustBreakBeforeNext: false, lastEventTimeMs: null }
 }
 
 /** segment 可见正文、run 段起止等与 tool 同类：后续 thinking 不得并回上一块 */
@@ -181,11 +178,12 @@ export function snapshotAssistantTurn(state: AssistantTurnFoldState): AssistantT
 export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: RunEvent): void {
   const { segments } = state
   let { currentCop } = state
+  const eventTs = runEventTimeMs(event)
 
-  const flushCop = () => {
+  const flushCop = (endMs: number) => {
     if (currentCop == null) return
     if (!copIsEmpty(currentCop)) {
-      sealOpenThinkingInCop(currentCop.items, Date.now())
+      sealOpenThinkingInCop(currentCop.items, endMs)
       segments.push({
         type: 'cop',
         title: currentCop.title,
@@ -202,7 +200,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       if (last?.type === 'text') last.content += delta
       return
     }
-    flushCop()
+    flushCop(eventTs)
     const last = segments[segments.length - 1]
     if (last?.type === 'text') {
       last.content += delta
@@ -226,7 +224,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       if (errorClass) item.call.errorClass = errorClass
       return
     }
-    const ts = runEventTimeMs(event)
     currentCop.items.push({
       kind: 'call',
       call: {
@@ -238,7 +235,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       },
       seq: event.seq,
     })
-    sealThinkingBeforeLatestCall(currentCop.items, ts)
+    sealThinkingBeforeLatestCall(currentCop.items, eventTs)
   }
 
   if (event.type === 'message.delta') {
@@ -258,15 +255,14 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       const items = currentCop!.items
       const last = items[items.length - 1]
       const forceNew = state.thinkingMustBreakBeforeNext
-      const ts = runEventTimeMs(event)
       if (forceNew) {
         state.thinkingMustBreakBeforeNext = false
       }
       if (!forceNew && last?.kind === 'thinking') {
         last.content += delta
-        if (last.startedAtMs == null) last.startedAtMs = ts
+        if (last.startedAtMs == null) last.startedAtMs = eventTs
       } else {
-        items.push({ kind: 'thinking', content: delta, seq: event.seq, startedAtMs: ts })
+        items.push({ kind: 'thinking', content: delta, seq: event.seq, startedAtMs: eventTs })
       }
       state.currentCop = currentCop
       return
@@ -277,7 +273,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
     if (delta.trim() === '') {
       if (currentCop != null && !hasCallsInOpenCop) {
         const lastItem = currentCop.items[currentCop.items.length - 1]
-        if (lastItem?.kind === 'thinking' || lastItem?.kind === 'assistant_text') {
+        if (lastItem?.kind === 'thinking') {
           lastItem.content += delta
           state.currentCop = currentCop
           return
@@ -290,23 +286,9 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
 
     if (currentCop != null && !hasCallsInOpenCop) {
       const lastCopItem = currentCop.items[currentCop.items.length - 1]
-      // thinking 之后的主通道正文应是独立 text 段，不要并进 COP 时间轴（否则整段回复挂在「Thought」下面）
+      // 主通道正文始终是独立 text 段；thinking / timeline_title 只决定前一段何时收口。
       if (lastCopItem?.kind === 'thinking') {
         appendAssistantDelta(delta)
-        state.currentCop = currentCop
-        return
-      }
-      const inlineUsed = currentCop.items
-        .filter((i): i is Extract<CopBlockItem, { kind: 'assistant_text' }> => i.kind === 'assistant_text')
-        .reduce((n, i) => n + i.content.length, 0)
-      if (inlineUsed + delta.length <= MAX_COP_INLINE_ASSISTANT_CHARS) {
-        const items = currentCop.items
-        const last = items[items.length - 1]
-        if (last?.kind === 'assistant_text') {
-          last.content += delta
-        } else {
-          items.push({ kind: 'assistant_text', content: delta, seq: event.seq })
-        }
         state.currentCop = currentCop
         return
       }
@@ -332,7 +314,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       return
     }
     ensureCop()
-    const ts = runEventTimeMs(event)
     currentCop!.items.push({
       kind: 'call',
       call: {
@@ -342,7 +323,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       },
       seq: event.seq,
     })
-    sealThinkingBeforeLatestCall(currentCop!.items, ts)
+    sealThinkingBeforeLatestCall(currentCop!.items, eventTs)
     state.thinkingMustBreakBeforeNext = true
     state.currentCop = currentCop
     return
@@ -367,10 +348,11 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
 }
 
 /** run 结束时关闭未决 cop（仍在同一 state 上操作，再 snapshot）。 */
-export function finalizeAssistantTurnFoldState(state: AssistantTurnFoldState): void {
+export function finalizeAssistantTurnFoldState(state: AssistantTurnFoldState, endMs?: number): void {
   if (state.currentCop == null) return
   if (!copIsEmpty(state.currentCop)) {
-    sealOpenThinkingInCop(state.currentCop.items, Date.now())
+    const target = endMs ?? state.lastEventTimeMs ?? Date.now()
+    sealOpenThinkingInCop(state.currentCop.items, target)
     state.segments.push({
       type: 'cop',
       title: state.currentCop.title,
@@ -383,10 +365,15 @@ export function finalizeAssistantTurnFoldState(state: AssistantTurnFoldState): v
 /** 从一次 run 的事件流构建 assistant turn（重放时按 seq 排序）。 */
 export function buildAssistantTurnFromRunEvents(events: readonly RunEvent[]): AssistantTurnUi {
   const state = createEmptyAssistantTurnFoldState()
-  for (const event of sortRunEvents(events)) {
+  const orderedEvents = sortRunEvents(events)
+  for (const event of orderedEvents) {
     foldAssistantTurnEvent(state, event)
   }
-  finalizeAssistantTurnFoldState(state)
+  const finalEndMs =
+    orderedEvents.length > 0
+      ? runEventTimeMs(orderedEvents[orderedEvents.length - 1]!)
+      : undefined
+  finalizeAssistantTurnFoldState(state, finalEndMs)
   return { segments: state.segments.map(cloneSegment) }
 }
 

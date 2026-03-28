@@ -726,10 +726,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it.each([
-    ['run.completed', 'run-completed-structure'],
-    ['run.interrupted', 'run-interrupt-structure'],
-  ] as const)('%s 后当前 run 应继续保留 handoff 结构而不是落入 compact summary', async (terminalType, runId) => {
+  it('run.completed 后应把显示权交回历史消息，同时保留展开结构', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
         {
@@ -756,7 +753,7 @@ describe('ChatPage loading state', () => {
           id: 'msg-2',
           role: 'assistant',
           content: '我要先再继续',
-          run_id: runId,
+          run_id: 'run-completed-structure',
           account_id: 'acc-1',
           thread_id: 'thread-1',
           created_by_user_id: 'user-1',
@@ -765,7 +762,7 @@ describe('ChatPage loading state', () => {
       ])
     mockedListThreadRuns.mockResolvedValue([
       {
-        run_id: runId,
+        run_id: 'run-completed-structure',
         status: 'running',
         created_at: '2026-03-10T00:00:00Z',
       },
@@ -817,7 +814,7 @@ describe('ChatPage loading state', () => {
     sseMock.events = [
       {
         event_id: 'evt-1',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 1,
         ts: '2026-03-10T00:00:00Z',
         type: 'message.delta',
@@ -828,7 +825,7 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-2',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 2,
         ts: '2026-03-10T00:00:00Z',
         type: 'tool.call',
@@ -842,7 +839,7 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-3',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 3,
         ts: '2026-03-10T00:00:00Z',
         type: 'tool.result',
@@ -856,7 +853,7 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-4',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 4,
         ts: '2026-03-10T00:00:00Z',
         type: 'message.delta',
@@ -867,7 +864,7 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-5',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 5,
         ts: '2026-03-10T00:00:00Z',
         type: 'tool.call',
@@ -881,7 +878,7 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-6',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 6,
         ts: '2026-03-10T00:00:00Z',
         type: 'tool.result',
@@ -895,10 +892,205 @@ describe('ChatPage loading state', () => {
       },
       {
         event_id: 'evt-7',
-        run_id: runId,
+        run_id: 'run-completed-structure',
         seq: 7,
         ts: '2026-03-10T00:00:01Z',
-        type: terminalType,
+        type: 'run.completed',
+        data: {},
+      },
+    ]
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('我要先')
+    expect(text).toContain('再继续')
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
+    expect(countMatches(text, '1 steps completed')).toBe(1)
+    expect(text.indexOf('我要先')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('pwd')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('再继续')).toBeGreaterThan(text.indexOf('pwd'))
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('run.interrupted 后当前 run 应继续保留 handoff 结构而不是落入 compact summary', async () => {
+    mockedListMessages
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+        {
+          id: 'msg-2',
+          role: 'assistant',
+          content: '我要先再继续',
+          run_id: 'run-interrupt-structure',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:01Z',
+        },
+      ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-interrupt-structure',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    sseMock.state = 'connected'
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-interrupt-structure',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '我要先',
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-interrupt-structure',
+        seq: 2,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'tool.call',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call-pwd',
+          arguments: {
+            command: 'pwd',
+          },
+        },
+      },
+      {
+        event_id: 'evt-3',
+        run_id: 'run-interrupt-structure',
+        seq: 3,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call-pwd',
+          result: {
+            output: '/workspace',
+          },
+        },
+      },
+      {
+        event_id: 'evt-4',
+        run_id: 'run-interrupt-structure',
+        seq: 4,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '再继续',
+        },
+      },
+      {
+        event_id: 'evt-5',
+        run_id: 'run-interrupt-structure',
+        seq: 5,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'tool.call',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call-ls',
+          arguments: {
+            command: 'ls',
+          },
+        },
+      },
+      {
+        event_id: 'evt-6',
+        run_id: 'run-interrupt-structure',
+        seq: 6,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call-ls',
+          result: {
+            output: 'a\nb',
+          },
+        },
+      },
+      {
+        event_id: 'evt-7',
+        run_id: 'run-interrupt-structure',
+        seq: 7,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.interrupted',
         data: {},
       },
     ]
@@ -925,7 +1117,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('assistant 前导文本应并入紧邻 exec cop，而不是单独挂在工具块上方', async () => {
+  it('assistant 前导文本应保持独立正文段，不再并入紧邻 exec cop', async () => {
     const runId = 'run-inline-intro'
     mockedListMessages.mockResolvedValue([
       {
@@ -1037,10 +1229,11 @@ describe('ChatPage loading state', () => {
     })
 
     const text = container.textContent ?? ''
-    expect(text).toContain('cop-inline:我来帮你看看这个文件夹的内容。')
+    expect(text).toContain('我来帮你看看这个文件夹的内容。')
     expect(text).toContain('ls -la ~/Documents/mirrorflow')
+    expect(text).not.toContain('cop-inline:我来帮你看看这个文件夹的内容。')
     expect(countMatches(text, '我来帮你看看这个文件夹的内容。')).toBe(1)
-    expect(text.indexOf('cop-inline:我来帮你看看这个文件夹的内容。')).toBeLessThan(text.indexOf('ls -la ~/Documents/mirrorflow'))
+    expect(text.indexOf('我来帮你看看这个文件夹的内容。')).toBeLessThan(text.indexOf('ls -la ~/Documents/mirrorflow'))
 
     act(() => {
       root.unmount()
@@ -1048,7 +1241,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.cancelled 后应保留 handoff 的展开态与 thinking，且不写入 assistant turn 持久化', async () => {
+  it('run.cancelled 后应保留 handoff 的展开态与 thinking，并写入 assistant turn 持久化', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
         {
@@ -1245,10 +1438,13 @@ describe('ChatPage loading state', () => {
     expect(text).toContain('thinking:先想一下')
     expect(text).toContain('我要先')
     expect(text).toContain('再继续')
-    expect(countMatches(text, 'In process')).toBe(1)
-    expect(text.lastIndexOf('In process')).toBeGreaterThan(text.indexOf('pwd'))
-    expect(text.lastIndexOf('In process')).toBeLessThan(text.indexOf('再继续'))
-    expect(mockedWriteMessageAssistantTurn).not.toHaveBeenCalled()
+    expect(text).not.toContain('In process')
+    expect(mockedWriteMessageAssistantTurn).toHaveBeenCalledWith(
+      'msg-2',
+      expect.objectContaining({
+        segments: expect.any(Array),
+      }),
+    )
 
     act(() => {
       root.unmount()
