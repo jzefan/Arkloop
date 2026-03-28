@@ -128,6 +128,7 @@ func (e *InteractiveExecutor) Execute(
 		LlmRetryMaxAttempts:              rc.LlmRetryMaxAttempts,
 		LlmRetryBaseDelayMs:              rc.LlmRetryBaseDelayMs,
 		WaitForInput:                     rc.WaitForInput,
+		PollSteeringInput:                rc.PollSteeringInput,
 		UserPromptScanFunc:               rc.UserPromptScanFunc,
 		ToolOutputScanFunc:               rc.ToolOutputScanFunc,
 		Channel:                          rc.ChannelToolSurface,
