@@ -84,6 +84,9 @@ func TestNewChannelTelegramGroupUserMergeMiddleware_mergesThreeUsersAfterAssista
 	if len(rc.ThreadMessageIDs) != 2 || rc.ThreadMessageIDs[1] != id3 {
 		t.Fatalf("expected last tail id preserved, got %#v", rc.ThreadMessageIDs)
 	}
+	if got := len(rc.Messages[1].Content); got != 1 {
+		t.Fatalf("expected merged burst to collapse to 1 text part, got %d", got)
+	}
 	var got strings.Builder
 	for _, p := range rc.Messages[1].Content {
 		got.WriteString(llm.PartPromptText(p))
@@ -92,6 +95,74 @@ func TestNewChannelTelegramGroupUserMergeMiddleware_mergesThreeUsersAfterAssista
 	for _, want := range []string{"one", "two", "three"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("merged text missing %q: %q", want, s)
+		}
+	}
+}
+
+func TestNewChannelTelegramGroupUserMergeMiddleware_compactsTelegramEnvelopeBurst(t *testing.T) {
+	mw := NewChannelTelegramGroupUserMergeMiddleware()
+	msgs := []llm.Message{
+		{Role: "assistant", Content: []llm.ContentPart{{Type: "text", Text: "bot"}}},
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "A ck"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "3e4496b5-9544-4669-b4a7-790b11224c3e"
+platform-username: "kilockok"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:00Z"
+---
+[Telegram in Arkloop] xhelogo`}}},
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "A ck"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "3e4496b5-9544-4669-b4a7-790b11224c3e"
+platform-username: "kilockok"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:05Z"
+---
+[Telegram in Arkloop] 怎么那么像`}}},
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "清凤"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "509cb603-ae05-43f1-be4b-a8728a68e16f"
+platform-username: "chiffoncha"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:16Z"
+---
+[Telegram in Arkloop] 哈`}}},
+	}
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	rc := tgGroupRC(msgs, ids)
+
+	_ = mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil })
+
+	if len(rc.Messages) != 2 {
+		t.Fatalf("expected assistant + 1 merged user, got %d", len(rc.Messages))
+	}
+	if got := len(rc.Messages[1].Content); got != 1 {
+		t.Fatalf("expected compacted envelope burst to be 1 text part, got %d", got)
+	}
+	text := llm.PartPromptText(rc.Messages[1].Content[0])
+	if strings.Count(text, `conversation-title: "Arkloop"`) != 1 {
+		t.Fatalf("expected single public conversation title header, got %q", text)
+	}
+	for _, forbidden := range []string{`platform-username:`, `sender-ref:`, `[Telegram in Arkloop]`} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("expected compacted burst to omit %q, got %q", forbidden, text)
+		}
+	}
+	for _, want := range []string{
+		`channel: "telegram"`,
+		`conversation-type: "supergroup"`,
+		`[13:31:00] A ck: xhelogo`,
+		`[13:31:05] A ck: 怎么那么像`,
+		`[13:31:16] 清凤: 哈`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected compacted burst to contain %q, got %q", want, text)
 		}
 	}
 }
