@@ -16,6 +16,7 @@ import (
 	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	"github.com/google/uuid"
 )
 
@@ -142,6 +143,75 @@ func TestAgentLoopExecutesToolCalls(t *testing.T) {
 	}
 	if !seenCompleted {
 		t.Fatalf("expected run.completed")
+	}
+}
+
+func TestAgentLoopHeartbeatDecisionEndsRunWithoutSecondLlmTurn(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(heartbeattool.AgentSpec); err != nil {
+		t.Fatalf("register heartbeat_decision failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{heartbeattool.ToolName})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(heartbeattool.ToolName, heartbeattool.New()); err != nil {
+		t.Fatalf("bind heartbeat_decision failed: %v", err)
+	}
+
+	gateway := &heartbeatDecisionGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+	pipelineRC := &pipeline.RunContext{HeartbeatRun: true}
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{"run_kind": "heartbeat"},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          pipelineRC,
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("expected heartbeat to stop after first llm call, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "tool.result")
+	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type != "message.delta" {
+			continue
+		}
+		if text, _ := ev.DataJSON["content_delta"].(string); text == "重复发送" {
+			t.Fatalf("unexpected second-turn assistant output: %#v", got)
+		}
+	}
+}
+
+func TestAssistantControlTokenFilterStripsSplitEndTurn(t *testing.T) {
+	filter := assistantControlTokenFilter{}
+
+	if got := filter.Push("<end"); got != "" {
+		t.Fatalf("expected no visible output for partial token, got %q", got)
+	}
+	if got := filter.Push("_turn>\n真正内容"); got != "\n真正内容" {
+		t.Fatalf("unexpected cleaned output: %q", got)
+	}
+	if got := filter.Flush(); got != "" {
+		t.Fatalf("expected empty tail, got %q", got)
 	}
 }
 
@@ -1167,7 +1237,7 @@ func TestAgentLoopToolRoundDrainsSteeringBeforeNextTurn(t *testing.T) {
 				scanned = append(scanned, phase+":"+text)
 				return nil
 			},
-			CancelSignal:        func() bool { return false },
+			CancelSignal: func() bool { return false },
 		},
 		llm.Request{Model: "stub"},
 		emitter,
@@ -1304,6 +1374,10 @@ type scriptedGateway struct {
 	calls int
 }
 
+type heartbeatDecisionGateway struct {
+	calls int
+}
+
 func (g *scriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	_ = ctx
 	_ = request
@@ -1323,6 +1397,33 @@ func (g *scriptedGateway) Stream(ctx context.Context, request llm.Request, yield
 		return err
 	}
 	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *heartbeatDecisionGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.StreamMessageDelta{ContentDelta: "看到", Role: "assistant"}); err != nil {
+			return err
+		}
+		if err := yield(llm.StreamMessageDelta{ContentDelta: "了", Role: "assistant"}); err != nil {
+			return err
+		}
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "hb_1",
+			ToolName:      heartbeattool.ToolName,
+			ArgumentsJSON: map[string]any{"reply": false},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "重复发送", Role: "assistant"}); err != nil {
 		return err
 	}
 	return yield(llm.StreamRunCompleted{})
