@@ -302,23 +302,23 @@ func (l *Loop) Run(
 		}
 
 		if len(turn.ToolCalls) == 0 {
-				if runCtx.PollSteeringInput != nil {
-					drained, err := drainSteeringMessages(ctx, runCtx.PollSteeringInput, runCtx.UserPromptScanFunc, emitter, yield)
-					if err != nil {
-						if errors.Is(err, security.ErrInputBlocked) {
-							if runCtx.RolloutRecorder != nil {
-								appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
-							}
-							return nil
+			if runCtx.PollSteeringInput != nil {
+				drained, err := drainSteeringMessages(ctx, runCtx.PollSteeringInput, runCtx.UserPromptScanFunc, emitter, yield)
+				if err != nil {
+					if errors.Is(err, security.ErrInputBlocked) {
+						if runCtx.RolloutRecorder != nil {
+							appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
 						}
-						return err
+						return nil
 					}
-					if len(drained) > 0 {
-						messages = append(messages, drained...)
-						recordRuntimeUserMessages(runCtx.PipelineRC, drained)
-						continue
-					}
+					return err
 				}
+				if len(drained) > 0 {
+					messages = append(messages, drained...)
+					recordRuntimeUserMessages(runCtx.PipelineRC, drained)
+					continue
+				}
+			}
 			reasoningTurnsUsed++
 			if runCtx.RolloutRecorder != nil {
 				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
@@ -440,20 +440,20 @@ func (l *Loop) Run(
 		}
 
 		// 工具执行完成后，检查是否有 steering 消息
-			if runCtx.PollSteeringInput != nil {
-				drained, err := drainSteeringMessages(ctx, runCtx.PollSteeringInput, runCtx.UserPromptScanFunc, emitter, yield)
-				if err != nil {
-					if errors.Is(err, security.ErrInputBlocked) {
-						if runCtx.RolloutRecorder != nil {
-							appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
-						}
-						return nil
+		if runCtx.PollSteeringInput != nil {
+			drained, err := drainSteeringMessages(ctx, runCtx.PollSteeringInput, runCtx.UserPromptScanFunc, emitter, yield)
+			if err != nil {
+				if errors.Is(err, security.ErrInputBlocked) {
+					if runCtx.RolloutRecorder != nil {
+						appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("cancelled"))
 					}
-					return err
+					return nil
 				}
-				messages = append(messages, drained...)
-				recordRuntimeUserMessages(runCtx.PipelineRC, drained)
+				return err
 			}
+			messages = append(messages, drained...)
+			recordRuntimeUserMessages(runCtx.PipelineRC, drained)
+		}
 
 		// ask_user 拦截：不走 dispatcher，直接 yield 事件并阻塞等待用户输入
 		if askUserCall != nil {
@@ -546,6 +546,19 @@ func (l *Loop) Run(
 			if err := yield(emitter.Emit("tool.result", answerResult.ToDataJSON(), stringPtr(askUserToolName), askErrorClass)); err != nil {
 				return err
 			}
+		}
+
+		if heartbeatDecisionFinalized(runCtx) {
+			reasoningTurnsUsed++
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
+			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
+		} else if runCtx.PipelineRC != nil &&
+			runCtx.PipelineRC.HeartbeatToolOutcome != nil &&
+			runCtx.PipelineRC.HeartbeatToolOutcome.Reply &&
+			!runCtx.PipelineRC.HeartbeatReplyGranted {
+			runCtx.PipelineRC.HeartbeatReplyGranted = true
 		}
 
 		// search_tools dynamic activation: inject newly activated tool specs
@@ -1205,6 +1218,7 @@ func (l *Loop) runSingleTurn(
 	toolCalls := []llm.ToolCall{}
 	toolResults := []llm.StreamToolResult{}
 	assistantChunks := []string{}
+	visibleAssistantFilter := assistantControlTokenFilter{}
 	var completed *llm.StreamRunCompleted
 
 	// Rollout: 写入 TurnStart
@@ -1232,10 +1246,27 @@ func (l *Loop) runSingleTurn(
 		return nil
 	}
 
+	flushVisibleAssistantTail := func() error {
+		tail := visibleAssistantFilter.Flush()
+		if tail == "" {
+			return nil
+		}
+		assistantChunks = append(assistantChunks, tail)
+		return yieldOrStop(emitter.Emit("message.delta", llm.StreamMessageDelta{
+			ContentDelta: tail,
+			Role:         "assistant",
+		}.ToDataJSON(), nil, nil))
+	}
+
 	err := l.gateway.Stream(ctx, request, func(item llm.StreamEvent) error {
 		if cancelled(runCtx) {
 			cancelledEarly = true
 			return stopErr
+		}
+		if shouldFlushVisibleAssistantTail(item) {
+			if err := flushVisibleAssistantTail(); err != nil {
+				return err
+			}
 		}
 
 		switch typed := item.(type) {
@@ -1252,7 +1283,15 @@ func (l *Loop) runSingleTurn(
 			}
 			// thinking 内容不计入对话上下文
 			if typed.Channel == nil {
-				assistantChunks = append(assistantChunks, typed.ContentDelta)
+				cleaned := visibleAssistantFilter.Push(typed.ContentDelta)
+				if cleaned == "" {
+					return nil
+				}
+				assistantChunks = append(assistantChunks, cleaned)
+				return yieldOrStop(emitter.Emit("message.delta", llm.StreamMessageDelta{
+					ContentDelta: cleaned,
+					Role:         typed.Role,
+				}.ToDataJSON(), nil, nil))
 			}
 			return yieldOrStop(emitter.Emit("message.delta", typed.ToDataJSON(), nil, nil))
 		case llm.StreamLlmRequest:
@@ -1278,6 +1317,9 @@ func (l *Loop) runSingleTurn(
 			eventsOut = append(eventsOut, emitter.Emit("run.failed", typed.ToDataJSON(), nil, errorClass))
 			return stopErr
 		case llm.StreamRunCompleted:
+			if err := flushVisibleAssistantTail(); err != nil {
+				return err
+			}
 			completed = &typed
 			// Rollout: 写入 AssistantMessage
 			if runCtx.RolloutRecorder != nil {
@@ -1471,6 +1513,79 @@ func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {
 		Content:   parts,
 		ToolCalls: append([]llm.ToolCall{}, toolCalls...),
 	}
+}
+
+const assistantReservedControlToken = "<end_turn>"
+
+type assistantControlTokenFilter struct {
+	pending string
+}
+
+func (f *assistantControlTokenFilter) Push(chunk string) string {
+	if chunk == "" {
+		return ""
+	}
+	combined := f.pending + chunk
+	f.pending = ""
+	if combined == "" {
+		return ""
+	}
+	if suffix := trailingAssistantControlPrefix(combined); suffix != "" {
+		f.pending = suffix
+		combined = strings.TrimSuffix(combined, suffix)
+	}
+	if combined == "" {
+		return ""
+	}
+	cleaned := strings.ReplaceAll(combined, assistantReservedControlToken, "")
+	if strings.TrimSpace(cleaned) == "" && strings.Contains(combined, assistantReservedControlToken) {
+		return ""
+	}
+	return cleaned
+}
+
+func (f *assistantControlTokenFilter) Flush() string {
+	tail := f.pending
+	f.pending = ""
+	return tail
+}
+
+func trailingAssistantControlPrefix(text string) string {
+	maxSuffix := len(assistantReservedControlToken) - 1
+	if len(text) < maxSuffix {
+		maxSuffix = len(text)
+	}
+	for size := maxSuffix; size > 0; size-- {
+		suffix := text[len(text)-size:]
+		if strings.HasPrefix(assistantReservedControlToken, suffix) {
+			return suffix
+		}
+	}
+	return ""
+}
+
+func shouldFlushVisibleAssistantTail(item llm.StreamEvent) bool {
+	switch item.(type) {
+	case llm.StreamMessageDelta, llm.StreamLlmRequest, llm.StreamLlmResponseChunk, llm.StreamSegmentStart, llm.StreamSegmentEnd:
+		return false
+	default:
+		return true
+	}
+}
+
+func heartbeatDecisionFinalized(runCtx RunContext) bool {
+	if runCtx.PipelineRC == nil || !pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) {
+		return false
+	}
+	outcome := runCtx.PipelineRC.HeartbeatToolOutcome
+	if outcome == nil {
+		return false
+	}
+	if !outcome.Reply {
+		return true // reply=false：立即结束
+	}
+	// reply=true：已给过一轮输出机会后结束
+	return runCtx.PipelineRC.HeartbeatReplyGranted
 }
 
 func toolResultMessage(result llm.StreamToolResult) llm.Message {
