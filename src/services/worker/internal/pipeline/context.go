@@ -52,6 +52,10 @@ type RunContext struct {
 	// -- 初始化时写入 --
 	Run          data.Run
 	Pool         *pgxpool.Pool
+	// MemoryServiceDB 供 memory run_events / usage 与快照刷新；桌面为 SQLite，服务端可与 Pool 相同。
+	MemoryServiceDB data.MemoryMiddlewareDB
+	// MemorySnapshotStore 由 Execute 注入，与 NewMemoryMiddleware 共用同一快照语义。
+	MemorySnapshotStore MemorySnapshotStore
 	DirectPool   *pgxpool.Pool     // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
 	BroadcastRDB *redis.Client     // 跨实例 SSE 广播，nil 时仅走 pg_notify
 	EventBus     eventbus.EventBus // 进程内 SSE 通知（Desktop 模式替代 pg_notify + Redis）

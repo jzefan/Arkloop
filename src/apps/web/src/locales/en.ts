@@ -473,6 +473,7 @@ export const en: LocaleStrings = {
     invalidJson: "Provider options must be a JSON object",
     invalidNumber: "Context window and max output tokens must be positive integers",
     availableFetchFailed: "Failed to load available models",
+    noModelsAvailable: "This provider does not support automatic model listing. Add models manually.",
     visionBridgeHint: "Vision routing needs a configured image connector; adjust it in Connectors settings.",
   },
   agentSettings: {

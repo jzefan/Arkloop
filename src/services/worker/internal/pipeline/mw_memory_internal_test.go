@@ -142,13 +142,13 @@ func waitForSnapshotBlock(t *testing.T, pool *pgxpool.Pool, ident memory.MemoryI
 	t.Helper()
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		block, found, err := snapshotRepo.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
+		block, found, err := data.MemorySnapshotRepository{}.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
 		if err == nil && found && block == want {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	block, _, _ := snapshotRepo.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
+	block, _, _ := data.MemorySnapshotRepository{}.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
 	t.Fatalf("snapshot block not updated, got %q want %q", block, want)
 }
 
@@ -194,19 +194,21 @@ func TestScheduleSnapshotRefreshPreservesOldSnapshotOnMiss(t *testing.T) {
 	withShortSnapshotRefresh(t)
 	pool, run, ident := setupMemoryRun(t, "memory_snapshot_preserve_old")
 	oldBlock := "\n\n<memory>\n- old memory\n</memory>"
-	if err := snapshotRepo.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, oldBlock); err != nil {
+	repo := data.MemorySnapshotRepository{}
+	if err := repo.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, oldBlock); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
 
 	provider := newRefreshProviderStub()
 	provider.findSeq = [][]memory.MemoryHit{{}, {}, {}}
 
-	scheduleSnapshotRefresh(provider, pool, run.ID, "trace-preserve", ident, "", map[string][]string{
+	snap := NewPgxMemorySnapshotStore(pool)
+	scheduleSnapshotRefresh(provider, snap, pool, run.ID, "trace-preserve", ident, "", map[string][]string{
 		string(memory.MemoryScopeUser): {"fresh query"},
 	}, "", "write")
 
 	time.Sleep(200 * time.Millisecond)
-	block, found, err := snapshotRepo.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
+	block, found, err := data.MemorySnapshotRepository{}.Get(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID)
 	if err != nil {
 		t.Fatalf("load snapshot: %v", err)
 	}
@@ -218,7 +220,8 @@ func TestScheduleSnapshotRefreshPreservesOldSnapshotOnMiss(t *testing.T) {
 func TestScheduleSnapshotRefreshUpdatesSnapshotWhenHitAppears(t *testing.T) {
 	withShortSnapshotRefresh(t)
 	pool, run, ident := setupMemoryRun(t, "memory_snapshot_updates_later")
-	if err := snapshotRepo.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, "\n\n<memory>\n- old\n</memory>"); err != nil {
+	repoSeed := data.MemorySnapshotRepository{}
+	if err := repoSeed.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, "\n\n<memory>\n- old\n</memory>"); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
 
@@ -228,7 +231,8 @@ func TestScheduleSnapshotRefreshUpdatesSnapshotWhenHitAppears(t *testing.T) {
 		{{URI: "viking://user/memories/new", Abstract: "new memory", Score: 0.9, IsLeaf: true}},
 	}
 
-	scheduleSnapshotRefresh(provider, pool, run.ID, "trace-update", ident, "", map[string][]string{
+	snap := NewPgxMemorySnapshotStore(pool)
+	scheduleSnapshotRefresh(provider, snap, pool, run.ID, "trace-update", ident, "", map[string][]string{
 		string(memory.MemoryScopeUser): {"new memory"},
 	}, "", "write")
 
@@ -248,7 +252,7 @@ func TestDistillAfterRunEmitsEventsAndPendingSnapshot(t *testing.T) {
 		RunToolCallCount:     3,
 	}
 
-	distillAfterRun(provider, pool, nil, rc, ident, []memory.MemoryMessage{
+	distillAfterRun(provider, NewPgxMemorySnapshotStore(pool), pool, nil, rc, ident, []memory.MemoryMessage{
 		{Role: "user", Content: "first prompt"},
 	})
 
@@ -269,7 +273,7 @@ func TestDistillAfterRunEmitsSkippedWhenNoIncrementalMessages(t *testing.T) {
 		RunToolCallCount:     3,
 	}
 
-	distillAfterRun(provider, pool, nil, rc, ident, nil)
+	distillAfterRun(provider, NewPgxMemorySnapshotStore(pool), pool, nil, rc, ident, nil)
 
 	waitForEventTypes(t, pool, run.ID, eventTypeMemoryDistillSkipped)
 	var reason string
@@ -299,7 +303,7 @@ func TestDistillAfterRunSkipsHeartbeatRuns(t *testing.T) {
 		RunToolCallCount:     3,
 	}
 
-	distillAfterRun(provider, pool, nil, rc, ident, []memory.MemoryMessage{
+	distillAfterRun(provider, NewPgxMemorySnapshotStore(pool), pool, nil, rc, ident, []memory.MemoryMessage{
 		{Role: "user", Content: "heartbeat payload"},
 	})
 
@@ -337,6 +341,8 @@ func TestHeartbeatFragmentsCommitRunsAsyncAndEmitsEvents(t *testing.T) {
 	rc := &RunContext{
 		Run:                  run,
 		Pool:                 pool,
+		MemoryServiceDB:      pool,
+		MemorySnapshotStore:  NewPgxMemorySnapshotStore(pool),
 		TraceID:              "trace-heartbeat",
 		UserID:               &userID,
 		MemoryProvider:       provider,
@@ -372,7 +378,8 @@ func TestHeartbeatFragmentsCommitRunsAsyncAndEmitsEvents(t *testing.T) {
 func TestScheduleSnapshotRefreshKeepsRetryingAfterTransientErrors(t *testing.T) {
 	withShortSnapshotRefresh(t)
 	pool, run, ident := setupMemoryRun(t, "memory_snapshot_retry_errors")
-	if err := snapshotRepo.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, "\n\n<memory>\n- old\n</memory>"); err != nil {
+	repoRetry := data.MemorySnapshotRepository{}
+	if err := repoRetry.Upsert(context.Background(), pool, ident.AccountID, ident.UserID, ident.AgentID, "\n\n<memory>\n- old\n</memory>"); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
 
@@ -383,7 +390,8 @@ func TestScheduleSnapshotRefreshKeepsRetryingAfterTransientErrors(t *testing.T) 
 		{{URI: "viking://user/memories/recovered", Abstract: "recovered memory", Score: 0.8, IsLeaf: true}},
 	}
 
-	scheduleSnapshotRefresh(provider, pool, run.ID, "trace-retry", ident, "", map[string][]string{
+	snap := NewPgxMemorySnapshotStore(pool)
+	scheduleSnapshotRefresh(provider, snap, pool, run.ID, "trace-retry", ident, "", map[string][]string{
 		string(memory.MemoryScopeUser): {"recovered memory"},
 	}, "", "write")
 

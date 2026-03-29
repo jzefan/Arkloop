@@ -486,6 +486,7 @@ export interface LocaleStrings {
     invalidJson: string
     invalidNumber: string
     availableFetchFailed: string
+    noModelsAvailable: string
     visionBridgeHint: string
   }
   // agent settings

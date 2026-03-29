@@ -198,7 +198,11 @@ func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
 		{Role: "assistant", Content: "Noted."},
 	}
 	sessionID := rc.Run.ThreadID.String()
-	appendAsyncRunEvent(context.Background(), rc.Pool, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatStarted, map[string]any{
+	mdb := rc.MemoryServiceDB
+	if mdb == nil {
+		mdb = rc.Pool
+	}
+	appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatStarted, map[string]any{
 		"kind":          "heartbeat",
 		"session_id":    sessionID,
 		"message_count": 1,
@@ -213,7 +217,7 @@ func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
 				"session_id", sessionID,
 				"err", err.Error(),
 			)
-			appendAsyncRunEvent(context.Background(), rc.Pool, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatAppendFailed, map[string]any{
+			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatAppendFailed, map[string]any{
 				"kind":       "heartbeat",
 				"session_id": sessionID,
 				"message":    err.Error(),
@@ -226,19 +230,19 @@ func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
 				"session_id", sessionID,
 				"err", err.Error(),
 			)
-			appendAsyncRunEvent(context.Background(), rc.Pool, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitFailed, map[string]any{
+			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitFailed, map[string]any{
 				"kind":       "heartbeat",
 				"session_id": sessionID,
 				"message":    err.Error(),
 			}, nil, nil))
 			return
 		}
-		appendAsyncRunEvent(context.Background(), rc.Pool, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitted, map[string]any{
+		appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitted, map[string]any{
 			"kind":       "heartbeat",
 			"session_id": sessionID,
 		}, nil, nil))
-		if rc.Pool != nil && strings.TrimSpace(body) != "" {
-			scheduleSnapshotRefresh(rc.MemoryProvider, rc.Pool, rc.Run.ID, rc.TraceID, ident, sessionID, map[string][]string{
+		if rc.MemorySnapshotStore != nil && mdb != nil && strings.TrimSpace(body) != "" {
+			scheduleSnapshotRefresh(rc.MemoryProvider, rc.MemorySnapshotStore, mdb, rc.Run.ID, rc.TraceID, ident, sessionID, map[string][]string{
 				string(memory.MemoryScopeUser): {body},
 			}, "memory.heartbeat", "heartbeat")
 		}

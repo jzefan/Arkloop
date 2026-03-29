@@ -44,7 +44,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDesktopSubAgentSchemaAvailable(t *testing.T) {
@@ -1359,28 +1358,6 @@ func TestDesktopChannelContextOverridesUserIDFromPayload(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatalf("desktop channel context failed: %v", err)
-	}
-}
-
-func TestDesktopSnapshotPoolReturnsNilForSQLitePool(t *testing.T) {
-	ctx := context.Background()
-
-	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
-	if err != nil {
-		t.Fatalf("auto migrate sqlite: %v", err)
-	}
-	defer sqlitePool.Close()
-
-	db := sqlitepgx.New(sqlitePool.Unwrap())
-	if got := desktopSnapshotPool(db); got != nil {
-		t.Fatalf("expected nil pgx pool for sqlite db, got %#v", got)
-	}
-}
-
-func TestDesktopSnapshotPoolReturnsNativePool(t *testing.T) {
-	pool := new(pgxpool.Pool)
-	if got := desktopSnapshotPool(pool); got != pool {
-		t.Fatalf("expected native pool passthrough")
 	}
 }
 

@@ -53,7 +53,7 @@ func listUpstreamModels(ctx context.Context, provider data.LlmCredential, apiKey
 	case "anthropic":
 		return listAnthropicModels(ctx, provider, apiKey)
 	default:
-		return nil, &UpstreamListModelsError{Kind: "unsupported_provider", Err: fmt.Errorf("unsupported provider: %s", provider.Provider)}
+		return []AvailableModel{}, nil
 	}
 }
 

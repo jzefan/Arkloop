@@ -2,6 +2,8 @@ package openviking
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -155,9 +157,19 @@ func RenderConfig(configPath string, params ConfigureParams) ([]byte, error) {
 	}
 
 	// --- Server ---
-	srv["root_api_key"] = nil
 	if params.RootAPIKey != nil && strings.TrimSpace(*params.RootAPIKey) != "" {
 		srv["root_api_key"] = strings.TrimSpace(*params.RootAPIKey)
+	} else {
+		// 保留现有 conf 中已有的 key；否则生成随机 key
+		existing, _ := srv["root_api_key"].(string)
+		if existing == "" {
+			buf := make([]byte, 32)
+			if _, err := rand.Read(buf); err != nil {
+				return nil, fmt.Errorf("generate root_api_key: %w", err)
+			}
+			existing = hex.EncodeToString(buf)
+		}
+		srv["root_api_key"] = existing
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")

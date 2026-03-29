@@ -17,6 +17,7 @@ export function SettingsModelDropdown({
   onChange: (v: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
@@ -44,11 +45,14 @@ export function SettingsModelDropdown({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         style={{
-          border: '0.5px solid var(--c-border-subtle)',
-          background: 'var(--c-bg-page)',
+          border: `0.5px solid ${hovered && !disabled ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+          background: hovered && !disabled ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
           color: 'var(--c-text-secondary)',
+          transition: 'border-color 0.15s, background-color 0.15s',
         }}
       >
         <span className="truncate">{currentLabel}</span>

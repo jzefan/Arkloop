@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -12,8 +13,32 @@ type Props = {
   onNavigate?: (key: DesktopSettingsKey) => void
 }
 
-const devPanelBtn =
-  'inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-40'
+type PanelBtnProps = {
+  onClick: () => void
+  disabled?: boolean
+  children: ReactNode
+}
+
+function PanelButton({ onClick, disabled, children }: PanelBtnProps) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+      style={{
+        border: `0.5px solid ${hovered && !disabled ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+        background: hovered && !disabled ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
+        transition: 'border-color 0.15s, background-color 0.15s',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
 
 export function DeveloperSettings({ accessToken, onNavigate }: Props) {
   const { t } = useLocale()
@@ -105,15 +130,12 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.runsHistoryDesc}
             </div>
           </div>
-          <button
-            type="button"
+          <PanelButton
             onClick={() => setRunsOpen(true)}
             disabled={!accessToken}
-            className={devPanelBtn}
-            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
           >
             {ds.runsHistoryOpen}
-          </button>
+          </PanelButton>
         </div>
 
         {/* Design Tokens */}
@@ -130,14 +152,9 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
                 All CSS variables resolved for the current theme.
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('design-tokens')}
-              className={devPanelBtn}
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-            >
+            <PanelButton onClick={() => onNavigate('design-tokens')}>
               查看
-            </button>
+            </PanelButton>
           </div>
         )}
 
@@ -154,14 +171,9 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.resetOnboardingDesc}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleResetOnboarding}
-            className={devPanelBtn}
-            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-          >
+          <PanelButton onClick={handleResetOnboarding}>
             {resetDone ? '✓' : ds.resetOnboardingBtn}
-          </button>
+          </PanelButton>
         </div>
 
         {/* App version */}

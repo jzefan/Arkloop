@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useAppearance } from '../../contexts/AppearanceContext'
 import type { FontFamily, CodeFontFamily, FontSize } from '../../themes/types'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -37,6 +38,7 @@ function SystemFontPicker({
   onSelect: (font: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const [query, setQuery] = useState('')
   const [fonts, setFonts] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
@@ -91,13 +93,16 @@ function SystemFontPicker({
       <button
         type="button"
         onClick={handleOpen}
-        className="flex h-9 items-center justify-between gap-2 rounded-lg px-3 text-sm transition-colors"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className="flex h-9 items-center justify-between gap-2 rounded-lg px-3 text-sm"
         style={{
           width: '240px',
-          border: '0.5px solid var(--c-border-subtle)',
-          background: 'var(--c-bg-page)',
+          border: `0.5px solid ${hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+          background: hovered ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
           color: value ? 'var(--c-text-heading)' : 'var(--c-text-tertiary)',
           fontFamily: value ? `'${value}', system-ui, sans-serif` : undefined,
+          transition: 'border-color 0.15s, background-color 0.15s',
         }}
       >
         <span className="truncate">{value ?? 'System font...'}</span>
@@ -158,6 +163,44 @@ function SystemFontPicker({
   )
 }
 
+// 字体/代码字体的选项按钮，统一 active/hover/静止 描边行为
+function FontOptionButton({
+  active,
+  onClick,
+  style,
+  className,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  style?: CSSProperties
+  className?: string
+  children: ReactNode
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={className}
+      style={{
+        border: `0.5px solid ${active || hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+        outline: active ? '1.5px solid var(--c-accent)' : 'none',
+        outlineOffset: '-1px',
+        background: active ? 'var(--c-bg-deep)' : hovered ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
+        color: active ? 'var(--c-text-heading)' : hovered ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+        fontWeight: active ? 500 : 400,
+        transition: 'border-color 0.15s, background-color 0.15s, outline-color 0.15s',
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
 export function FontSettings() {
   const { t } = useLocale()
   const {
@@ -184,21 +227,15 @@ export function FontSettings() {
           {BODY_FONTS.map(({ value, label, fontFamily: ff }) => {
             const active = fontFamily === value
             return (
-              <button
+              <FontOptionButton
                 key={value}
-                type="button"
+                active={active}
                 onClick={() => setFontFamily(value)}
-                className="rounded-lg px-3 py-2 text-sm transition-colors"
-                style={{
-                  border: `0.5px solid ${active ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-                  background: active ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-                  color: active ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-                  fontWeight: active ? 500 : 400,
-                  fontFamily: ff,
-                }}
+                className="rounded-lg px-3 py-2 text-sm"
+                style={{ fontFamily: ff }}
               >
                 {label}
-              </button>
+              </FontOptionButton>
             )
           })}
         </div>
@@ -216,21 +253,15 @@ export function FontSettings() {
           {CODE_FONTS.map(({ value, label, fontFamily: ff }) => {
             const active = codeFontFamily === value
             return (
-              <button
+              <FontOptionButton
                 key={value}
-                type="button"
+                active={active}
                 onClick={() => setCodeFontFamily(value)}
-                className="rounded-lg px-3 py-2 text-xs transition-colors"
-                style={{
-                  border: `0.5px solid ${active ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-                  background: active ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-                  color: active ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-                  fontWeight: active ? 500 : 400,
-                  fontFamily: ff,          // each button uses its own font
-                }}
+                className="rounded-lg px-3 py-2 text-xs"
+                style={{ fontFamily: ff }}
               >
                 {label}
-              </button>
+              </FontOptionButton>
             )
           })}
         </div>

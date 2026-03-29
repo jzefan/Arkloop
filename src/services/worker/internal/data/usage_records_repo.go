@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // UsageRecordsRepository 在 Worker 侧写入 usage_records，与 RunsRepository 风格一致（零值可用）。
@@ -52,14 +51,17 @@ func (UsageRecordsRepository) Insert(
 // costUSD <= 0 时跳过写入。
 func (UsageRecordsRepository) InsertMemoryUsage(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	db MemoryMiddlewareDB,
 	accountID, runID uuid.UUID,
 	costUSD float64,
 ) error {
 	if costUSD <= 0 {
 		return nil
 	}
-	tag, err := pool.Exec(
+	if db == nil {
+		return nil
+	}
+	tag, err := db.Exec(
 		ctx,
 		`INSERT INTO usage_records (account_id, run_id, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cached_tokens, cost_usd, usage_type)
 		 VALUES ($1, $2, 'memory/openviking', 0, 0, 0, 0, 0, $3, 'memory')
