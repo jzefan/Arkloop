@@ -84,6 +84,63 @@ time: "2026-03-19T10:19:42Z"
     ])
   })
 
+  it('extracts compacted telegram group burst input', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_group_1',
+          provider_kind: 'openai',
+          api_mode: 'chat_completions',
+          payload: {
+            messages: [
+              { role: 'system', content: '你是Arkloop' },
+              { role: 'assistant', content: '在的，有什么事吗？' },
+              {
+                role: 'user',
+                content: `---
+channel: "telegram"
+conversation-type: "supergroup"
+conversation-title: "Arkloop"
+---
+[13:31:00] A ck: xhelogo
+[13:31:05] A ck: 怎么那么像
+[13:31:16] 清凤: 哈`,
+              },
+            ],
+          },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '我看到了你们刚才的几条群消息。',
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_group_1',
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.userInput).toBe(`[13:31:00] A ck: xhelogo
+[13:31:05] A ck: 怎么那么像
+[13:31:16] 清凤: 哈`)
+    expect(turns[0]?.inputMeta).toEqual({
+      channel: 'telegram',
+      'conversation-type': 'supergroup',
+      'conversation-title': 'Arkloop',
+    })
+    expect(turns[0]?.assistantText).toBe('我看到了你们刚才的几条群消息。')
+  })
+
   it('keeps assistant preface, tool call, tool result and final output in one turn', () => {
     const turns = buildTurns([
       makeEvent({
