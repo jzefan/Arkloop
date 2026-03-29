@@ -169,7 +169,21 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 	if active, err := r.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return Run{}, RunEvent{}, err
 	} else if active != nil {
-		return Run{}, RunEvent{}, ErrThreadBusy
+		// heartbeat run 不阻塞 normal run，只有 heartbeat vs heartbeat 才互斥
+		incomingKind := runKindFromData(startedData)
+		if !strings.EqualFold(incomingKind, runkind.Heartbeat) {
+			activeData, err := r.firstEventData(ctx, active)
+			if err != nil {
+				return Run{}, RunEvent{}, err
+			}
+			if strings.EqualFold(runKindFromData(activeData), runkind.Heartbeat) {
+				// active 是 heartbeat，incoming 是 normal，放行
+			} else {
+				return Run{}, RunEvent{}, ErrThreadBusy
+			}
+		} else {
+			return Run{}, RunEvent{}, ErrThreadBusy
+		}
 	}
 	startedData, latestThreadMessage, err := r.withThreadTailMessage(ctx, threadID, startedData)
 	if err != nil {
