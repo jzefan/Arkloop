@@ -24,6 +24,7 @@ export function LanguageContent({
   label: string
 }) {
   const [open, setOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const currentLabel = LOCALE_OPTIONS.find(o => o.value === locale)?.label ?? locale
@@ -49,8 +50,14 @@ export function LanguageContent({
           ref={btnRef}
           type="button"
           onClick={() => setOpen(v => !v)}
-          className="flex h-9 w-[240px] items-center justify-between rounded-lg px-3 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-          style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          className="flex h-9 w-[240px] items-center justify-between rounded-lg px-3 text-sm text-[var(--c-text-secondary)]"
+          style={{
+            border: `0.5px solid ${hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+            background: hovered ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
+            transition: 'border-color 0.15s, background-color 0.15s',
+          }}
         >
           <span>{currentLabel}</span>
           <ChevronDown size={13} />
@@ -200,6 +207,7 @@ function SystemPreview() {
 export function ThemeModePicker() {
   const { t } = useLocale()
   const { theme, setTheme } = useTheme()
+  const [hoveredValue, setHoveredValue] = useState<Theme | null>(null)
 
   const options: { value: Theme; label: string; Preview: () => React.JSX.Element }[] = [
     { value: 'light',  label: t.themeLight,  Preview: LightPreview  },
@@ -213,11 +221,14 @@ export function ThemeModePicker() {
       <div className="flex gap-3">
         {options.map(({ value, label, Preview }) => {
           const active = theme === value
+          const hovered = hoveredValue === value
           return (
             <button
               key={value}
               type="button"
               onClick={() => setTheme(value)}
+              onMouseEnter={() => setHoveredValue(value)}
+              onMouseLeave={() => setHoveredValue(null)}
               className="flex flex-col items-center gap-2"
             >
               <div
@@ -227,10 +238,13 @@ export function ThemeModePicker() {
                   borderRadius: 10,
                   overflow: 'hidden',
                   border: active
-                    ? '2px solid #3B82F6'
-                    : '1px solid var(--c-border-subtle)',
-                  boxShadow: active ? '0 0 0 3px rgba(59,130,246,0.15)' : 'none',
-                  transition: 'border-color 0.15s, box-shadow 0.15s',
+                    ? '0.5px solid var(--c-border-mid)'
+                    : hovered
+                      ? '0.5px solid var(--c-border-mid)'
+                      : '0.5px solid var(--c-border-subtle)',
+                  outline: active ? '1.5px solid var(--c-accent)' : 'none',
+                  outlineOffset: '-1px',
+                  transition: 'border-color 0.15s, outline-color 0.15s',
                   flexShrink: 0,
                 }}
               >

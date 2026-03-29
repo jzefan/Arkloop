@@ -269,6 +269,8 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	rc := &pipeline.RunContext{
 		Run:                 run,
 		Pool:                pool,
+		MemoryServiceDB:     pool,
+		MemorySnapshotStore: pipeline.NewPgxMemorySnapshotStore(pool),
 		DirectPool:          directPool,
 		BroadcastRDB:        e.broadcastRDB,
 		TraceID:             traceID,
@@ -497,6 +499,7 @@ func buildAgentConfigLayer(
 	return []pipeline.RunMiddleware{
 		pipeline.NewMCPDiscoveryMiddleware(
 			deps.MCPDiscoveryCache,
+			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return deps.DBPool },
 			deps.ToolExecutors,
 			deps.AllLlmToolSpecs,
 			baseAllowlistSet,
@@ -531,7 +534,7 @@ func buildCapabilityLayer(
 				return data.NewSkillsRepository(deps.DBPool).ResolveEnabledSkills(ctx, accountID, profileRef, workspaceRef)
 			},
 		}),
-		pipeline.NewMemoryMiddleware(nil, deps.DBPool, deps.ConfigResolver),
+		pipeline.NewMemoryMiddleware(nil, pipeline.NewPgxMemorySnapshotStore(deps.DBPool), deps.DBPool, deps.ConfigResolver),
 		pipeline.NewTrustSourceMiddleware(cfgResolver),
 		pipeline.NewInjectionScanMiddleware(compositeScanner, injectionAuditor, cfgResolver, eventsRepo),
 	}

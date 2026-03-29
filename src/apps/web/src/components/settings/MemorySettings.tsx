@@ -112,9 +112,6 @@ function actionLabel(action: ModuleAction, ds: LocaleStrings['desktopSettings'])
   }
 }
 
-import { settingsInputCls } from './_SettingsInput'
-
-const inputCls = settingsInputCls('md')
 
 // ---------------------------------------------------------------------------
 // ModeCard — exact same pattern as ConnectionSettingsContent.tsx
@@ -365,7 +362,6 @@ function buildOpenVikingModelOptions(
 }
 
 function buildOpenVikingConfigureParams(
-  ov: OpenVikingDesktopConfig,
   vlm: NonNullable<Awaited<ReturnType<typeof resolveOpenVikingConfig>>['vlm']>,
   embedding: NonNullable<Awaited<ReturnType<typeof resolveOpenVikingConfig>>['embedding']>,
 ): Record<string, unknown> {
@@ -381,7 +377,6 @@ function buildOpenVikingConfigureParams(
     vlm_api_key: vlm.api_key,
     vlm_api_base: vlm.api_base,
     vlm_extra_headers: vlm.extra_headers ?? {},
-    root_api_key: ov.rootApiKey ?? null,
   }
 }
 
@@ -456,18 +451,6 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryOpenvikingRootApiKey}</label>
-        <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryOpenvikingRootApiKeyDesc}</p>
-        <input
-          type="password"
-          value={ov.rootApiKey ?? ''}
-          onChange={(e) => onChange({ ...ov, rootApiKey: e.target.value || undefined })}
-          className={inputCls}
-          placeholder="optional"
-        />
-      </div>
-
       <div>
         <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">{ds.memoryToolModel}</label>
         <p className="mb-1 text-xs text-[var(--c-text-muted)]">{ds.memoryToolModelDesc}</p>
@@ -738,7 +721,7 @@ export function MemorySettings({ accessToken }: Props) {
           throw new Error(ds.memoryConfigureError)
         }
 
-        const params = buildOpenVikingConfigureParams(ovDraft, resolved.vlm, resolved.embedding)
+        const params = buildOpenVikingConfigureParams(resolved.vlm, resolved.embedding)
         const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
         await new Promise<void>((resolve, reject) => {
           let done = false

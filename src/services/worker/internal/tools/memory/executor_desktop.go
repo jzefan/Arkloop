@@ -11,6 +11,7 @@ import (
 	datarepo "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -63,7 +64,7 @@ func (e *ToolExecutor) Execute(
 	case "memory_write":
 		return e.write(ctx, args, ident, execCtx, started)
 	case "memory_forget":
-		return e.forget(ctx, args, ident, started)
+		return e.forget(ctx, args, ident, execCtx, started)
 	default:
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
@@ -178,7 +179,7 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 	}
 }
 
-func (e *ToolExecutor) forget(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+func (e *ToolExecutor) forget(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
 	uri, ok := args["uri"].(string)
 	if !ok || strings.TrimSpace(uri) == "" {
 		return argError("uri must be a non-empty string", started)
@@ -187,10 +188,8 @@ func (e *ToolExecutor) forget(ctx context.Context, args map[string]any, ident me
 	if err := e.provider.Delete(ctx, ident, uri); err != nil {
 		return providerError("forget", err, started)
 	}
-	if _, ok := e.provider.(memory.DesktopLocalMemoryWriteURI); !ok && e.db != nil && e.snapshots != nil {
-		if err := e.snapshots.Invalidate(ctx, e.db, ident.AccountID, ident.UserID, ident.AgentID); err != nil {
-			return snapshotError(err, started)
-		}
+	if _, local := e.provider.(memory.DesktopLocalMemoryWriteURI); !local && e.db != nil {
+		pipeline.ForgetSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident)
 	}
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{"status": "ok"},

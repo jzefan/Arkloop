@@ -46,7 +46,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type desktopTelegramTokenLoader struct {
@@ -353,9 +352,11 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	eventsRepo := data.DesktopRunEventsRepository{}
 
 	rc := &pipeline.RunContext{
-		Run:      run,
-		Pool:     nil,
-		EventBus: e.bus,
+		Run:                 run,
+		Pool:                nil,
+		MemoryServiceDB:     e.db,
+		MemorySnapshotStore: pipeline.NewDesktopMemorySnapshotStore(e.db),
+		EventBus:            e.bus,
 		TraceID:  traceID,
 		Emitter:  emitter,
 		Router:   e.auxRouter,
@@ -418,7 +419,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	var memMiddleware pipeline.RunMiddleware
 	if e.useOV {
-		memMiddleware = pipeline.NewMemoryMiddleware(e.memProvider, desktopSnapshotPool(e.db), nil)
+		memMiddleware = pipeline.NewMemoryMiddleware(
+			e.memProvider,
+			pipeline.NewDesktopMemorySnapshotStore(e.db),
+			e.db,
+			nil,
+		)
 	} else {
 		// Local SQLite: lightweight snapshot injection
 		memMiddleware = desktopMemoryInjection(e.db)
@@ -470,11 +476,6 @@ func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.
 		return run, fmt.Errorf("desktop db must not be nil")
 	}
 	return environmentbindings.ResolveAndPersistRun(ctx, db, run)
-}
-
-func desktopSnapshotPool(db data.DesktopDB) *pgxpool.Pool {
-	pool, _ := db.(*pgxpool.Pool)
-	return pool
 }
 
 // --------------- desktop middleware ---------------

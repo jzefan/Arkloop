@@ -467,6 +467,7 @@ export const zh: LocaleStrings = {
     invalidJson: "Provider 选项必须是 JSON 对象",
     invalidNumber: "上下文窗口和最大输出 Token 必须是正整数",
     availableFetchFailed: "加载可用模型失败",
+    noModelsAvailable: "该供应商不支持自动获取模型列表，请手动添加模型",
     visionBridgeHint: "视觉能力依赖已配置的图片桥接连接器，请前往连接器设置。",
   },
   agentSettings: {

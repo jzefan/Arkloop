@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useAppearance } from '../../contexts/AppearanceContext'
 import { BUILTIN_PRESETS } from '../../themes/presets'
 import type { ThemePreset, ThemeDefinition } from '../../themes/types'
@@ -14,7 +15,7 @@ type PresetCardProps = {
 }
 
 function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
-  // Use dark preview colors for swatch
+  const [hovered, setHovered] = useState(false)
   const bg = dark['--c-bg-page'] ?? '#1e1d1c'
   const sidebar = dark['--c-bg-sidebar'] ?? '#242422'
   const accent = dark['--c-accent'] ?? '#faf9f6'
@@ -24,13 +25,16 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
     <button
       type="button"
       onClick={onClick}
-      className="relative flex flex-col overflow-hidden rounded-xl transition-all"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="relative flex flex-col overflow-hidden rounded-xl"
       style={{
-        border: `0.5px solid ${active ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-        outline: active ? '1.5px solid var(--c-accent)' : 'none',
+        border: `0.5px solid ${active || hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+        outline: active ? '1.5px solid var(--c-select-ring)' : 'none',
         outlineOffset: '-1px',
         width: '120px',
         background: 'var(--c-bg-page)',
+        transition: 'border-color 0.15s',
       }}
     >
       {/* Mini preview */}
@@ -38,9 +42,7 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
         className="flex w-full"
         style={{ height: '60px', background: bg, position: 'relative', overflow: 'hidden' }}
       >
-        {/* Sidebar strip */}
         <div style={{ width: '28px', height: '100%', background: sidebar }} />
-        {/* Content area */}
         <div className="flex flex-1 flex-col gap-1 p-2">
           <div style={{ height: '5px', width: '80%', background: text, borderRadius: '2px', opacity: 0.7 }} />
           <div style={{ height: '5px', width: '60%', background: text, borderRadius: '2px', opacity: 0.4 }} />
@@ -58,9 +60,9 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
         {active && (
           <div
             className="absolute right-1 top-1 flex items-center justify-center rounded-full"
-            style={{ width: '16px', height: '16px', background: accent }}
+            style={{ width: '16px', height: '16px', background: 'var(--c-select-ring)' }}
           >
-            <Check size={10} style={{ color: bg }} strokeWidth={3} />
+            <Check size={10} style={{ color: '#fff' }} strokeWidth={3} />
           </div>
         )}
       </div>

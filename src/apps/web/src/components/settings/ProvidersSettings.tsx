@@ -37,16 +37,9 @@ const VENDOR_PRESETS = [
 
 type VendorPresetKey = (typeof VENDOR_PRESETS)[number]['key']
 
-const OPENVIKING_BACKEND_PRESETS = [
-  { key: 'openai', labelKey: 'openVikingBackendOpenAI' },
-  { key: 'azure', labelKey: 'openVikingBackendAzure' },
-  { key: 'volcengine', labelKey: 'openVikingBackendVolcengine' },
-  { key: 'litellm', labelKey: 'openVikingBackendLiteLLM' },
-] as const
-
-type OpenVikingBackendKey = (typeof OPENVIKING_BACKEND_PRESETS)[number]['key']
-
 const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
+
+type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'litellm'
 
 function vendorLabel(
   key: string,
@@ -88,20 +81,6 @@ function mergeProviderAdvancedJSON(
   const next = { ...(current ?? {}) }
   next[OPENVIKING_BACKEND_ADVANCED_KEY] = backend
   return next
-}
-
-function openVikingBackendLabel(
-  key: OpenVikingBackendKey,
-  p: {
-    openVikingBackendOpenAI: string
-    openVikingBackendAzure: string
-    openVikingBackendVolcengine: string
-    openVikingBackendLiteLLM: string
-  },
-): string {
-  const preset = OPENVIKING_BACKEND_PRESETS.find((item) => item.key === key)
-  if (!preset) return key
-  return p[preset.labelKey]
 }
 
 import { settingsInputCls } from './_SettingsInput'
@@ -165,71 +144,6 @@ function VendorDropdown({
             >
               <span>{vendorLabel(v.key, p)}</span>
               {value === v.key && <Check size={13} className="shrink-0" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function OpenVikingBackendDropdown({
-  value,
-  onChange,
-  p,
-}: {
-  value: OpenVikingBackendKey
-  onChange: (v: OpenVikingBackendKey) => void
-  p: ReturnType<typeof useLocale>['t']['adminProviders']
-}) {
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current?.contains(e.target as Node) || btnRef.current?.contains(e.target as Node)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div className="relative">
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="flex w-full items-center justify-between rounded-md bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-        style={{ border: '1px solid var(--c-border-subtle)' }}
-      >
-        <span className="truncate">{openVikingBackendLabel(value, p)}</span>
-        <ChevronDown size={13} className="ml-2 shrink-0 text-[var(--c-text-muted)]" />
-      </button>
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50 min-w-full"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            boxShadow: 'var(--c-dropdown-shadow)',
-          }}
-        >
-          {OPENVIKING_BACKEND_PRESETS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => { onChange(item.key); setOpen(false) }}
-              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-              style={{ color: value === item.key ? 'var(--c-text-heading)' : 'var(--c-text-secondary)', fontWeight: value === item.key ? 500 : 400 }}
-            >
-              <span>{openVikingBackendLabel(item.key, p)}</span>
-              {value === item.key && <Check size={13} className="shrink-0" />}
             </button>
           ))}
         </div>
@@ -357,19 +271,8 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
   const [preset, setPreset] = useState<VendorPresetKey>('openai_responses')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
-  const [openVikingBackend, setOpenVikingBackend] = useState<OpenVikingBackendKey>('openai')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-
-  useEffect(() => {
-    const selected = VENDOR_PRESETS.find((vv) => vv.key === preset)
-    if (!selected) return
-    setOpenVikingBackend((current) => (
-      current === defaultOpenVikingBackendForVendor('openai')
-      || current === defaultOpenVikingBackendForVendor('anthropic')
-      || current === defaultOpenVikingBackendForVendor('gemini')
-    ) ? defaultOpenVikingBackendForVendor(selected.provider) : current)
-  }, [preset])
 
   const handleSave = async () => {
     if (!name.trim() || !apiKey.trim()) return
@@ -383,7 +286,7 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
         api_key: apiKey.trim(),
         base_url: baseUrl.trim() || undefined,
         openai_api_mode: v.openai_api_mode,
-        advanced_json: mergeProviderAdvancedJSON({}, openVikingBackend),
+        advanced_json: mergeProviderAdvancedJSON({}, defaultOpenVikingBackendForVendor(v.provider)),
       })
       onCreated()
     } catch (e) {
@@ -438,11 +341,6 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
           <div>
             <label className={fieldLabelCls}>{p.vendor}</label>
             <VendorDropdown value={preset} onChange={setPreset} p={p} />
-          </div>
-          <div className="col-span-2">
-            <label className={fieldLabelCls}>{p.openVikingBackend}</label>
-            <OpenVikingBackendDropdown value={openVikingBackend} onChange={setOpenVikingBackend} p={p} />
-            <p className="mt-1 text-xs text-[var(--c-text-muted)]">{p.openVikingBackendHint}</p>
           </div>
           <div className="col-span-2">
             <label className={fieldLabelCls}>{p.apiKey}</label>
@@ -509,7 +407,6 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
   const [formName, setFormName] = useState(provider.name)
   const [formApiKey, setFormApiKey] = useState('')
   const [formBaseUrl, setFormBaseUrl] = useState(provider.base_url ?? '')
-  const [formOpenVikingBackend, setFormOpenVikingBackend] = useState<OpenVikingBackendKey>(readOpenVikingBackend(provider))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -526,7 +423,7 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
         base_url: formBaseUrl.trim() || null,
         provider: selected?.provider,
         openai_api_mode: selected?.openai_api_mode ?? null,
-        advanced_json: mergeProviderAdvancedJSON(provider.advanced_json, formOpenVikingBackend),
+        advanced_json: mergeProviderAdvancedJSON(provider.advanced_json, readOpenVikingBackend(provider)),
       })
       setFormApiKey('')
       onUpdated()
@@ -559,10 +456,6 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
         </LabelField>
         <LabelField label={p.providerName}>
           <input value={formName} onChange={(e) => setFormName(e.target.value)} className={INPUT_CLS} />
-        </LabelField>
-        <LabelField label={p.openVikingBackend}>
-          <OpenVikingBackendDropdown value={formOpenVikingBackend} onChange={setFormOpenVikingBackend} p={p} />
-          <p className="mt-1 text-xs text-[var(--c-text-muted)]">{p.openVikingBackendHint}</p>
         </LabelField>
         <LabelField label={p.apiKey}>
           <input type="password" value={formApiKey} onChange={(e) => setFormApiKey(e.target.value)} placeholder={provider.key_prefix ? `${provider.key_prefix}${'*'.repeat(40)}` : p.apiKeyPlaceholder} className={INPUT_CLS} />
@@ -779,6 +672,9 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
 
       {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
       {availableError && <p className="mt-2 text-xs text-red-400">{availableError}</p>}
+      {!loadingAvailable && !availableError && available !== null && available.length === 0 && (
+        <p className="mt-2 text-xs text-[var(--c-text-muted)]">{t.models.noModelsAvailable}</p>
+      )}
 
       {provider.models.length > 0 && (
         <div className="mt-3">
