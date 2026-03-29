@@ -78,7 +78,6 @@ import {
   retryThread,
   editMessage,
   forkThread,
-  getThread,
   listMessages,
   listRunEvents,
   listThreadRuns,
@@ -142,6 +141,7 @@ import {
 
 const sidePanelWidth = 360
 const documentPanelWidth = 560
+const completedRunSseTailMs = 8000
 
 const TERMINAL_RUN_EVENT_TYPES = new Set([
   'run.completed',
@@ -566,6 +566,7 @@ export function ChatPage() {
   const [pendingThinking, setPendingThinking] = useState(false)
   /** 本轮首条 thinking 到达时刻，供 COP 标题「思考 N 秒」 */
   const [copThinkingStartedAtMs, setCopThinkingStartedAtMs] = useState<number | undefined>(undefined)
+  const [completedTitleTailRunId, setCompletedTitleTailRunId] = useState<string | null>(null)
   // segment 外的顶层代码执行（Ultra/Pro 模式，无 segment 包裹）
   const [topLevelCodeExecutions, setTopLevelCodeExecutions] = useState<CodeExecution[]>([])
 
@@ -729,6 +730,24 @@ export function ChatPage() {
     setPreserveLiveRunUi(false)
     setQueuedDraft(null)
   }, [])
+  const clearCompletedTitleTail = useCallback(() => {
+    if (completedTitleTailTimerRef.current !== null) {
+      window.clearTimeout(completedTitleTailTimerRef.current)
+      completedTitleTailTimerRef.current = null
+    }
+    setCompletedTitleTailRunId(null)
+  }, [])
+  const armCompletedTitleTail = useCallback((runId: string) => {
+    if (!runId) return
+    if (completedTitleTailTimerRef.current !== null) {
+      window.clearTimeout(completedTitleTailTimerRef.current)
+    }
+    setCompletedTitleTailRunId(runId)
+    completedTitleTailTimerRef.current = window.setTimeout(() => {
+      completedTitleTailTimerRef.current = null
+      setCompletedTitleTailRunId((current) => (current === runId ? null : current))
+    }, completedRunSseTailMs)
+  }, [])
   const restoreQueuedDraftToInput = useCallback(() => {
     const pending = pendingMessageRef.current
     pendingMessageRef.current = null
@@ -766,6 +785,7 @@ export function ChatPage() {
     setCheckInDraft('')
   }, [clearLiveRunTransientState, resetAssistantTurnLive, resetSearchSteps])
   function releaseCompletedHandoffToHistory() {
+    forceInstantBottomScrollRef.current = true
     assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
     setPreserveLiveRunUi(false)
     setLiveAssistantTurn(null)
@@ -896,6 +916,8 @@ export function ChatPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const copCodeExecScrollRef = useRef<HTMLDivElement>(null)
   const lastUserMsgRef = useRef<HTMLDivElement>(null)
+  const forceInstantBottomScrollRef = useRef(false)
+  const completedTitleTailTimerRef = useRef<number | null>(null)
   const documentPanelScrollFrameRef = useRef<number | null>(null)
   const wasLoadingRef = useRef(false)
   const processedEventCountRef = useRef(0)
@@ -999,6 +1021,9 @@ export function ChatPage() {
       if (documentPanelScrollFrameRef.current !== null) {
         cancelAnimationFrame(documentPanelScrollFrameRef.current)
       }
+      if (completedTitleTailTimerRef.current !== null) {
+        window.clearTimeout(completedTitleTailTimerRef.current)
+      }
     }
   }, [])
 
@@ -1023,16 +1048,21 @@ export function ChatPage() {
     }
   }, [activeRunId, clearContextCompactHideTimer])
 
-  const sse = useSSE({ runId: activeRunId ?? '', accessToken, baseUrl })
+  const sseRunId = activeRunId ?? completedTitleTailRunId ?? ''
+  const sse = useSSE({ runId: sseRunId, accessToken, baseUrl })
   const disconnectSSE = sse.disconnect
 
   const isStreaming = activeRunId != null
   const liveRunUiVisible = isStreaming || preserveLiveRunUi
   const liveRunUiActive = isStreaming || (preserveLiveRunUi && terminalRunHandoffStatus !== 'cancelled')
+  const showPendingThinkingShell =
+    pendingThinking &&
+    !liveTurnHasThinkingSegment(liveAssistantTurn) &&
+    (sending || activeRunId != null)
 
   useEffect(() => {
-    if (!activeRunId) setCopThinkingStartedAtMs(undefined)
-  }, [activeRunId])
+    if (!activeRunId && !pendingThinking) setCopThinkingStartedAtMs(undefined)
+  }, [activeRunId, pendingThinking])
 
   useEffect(() => {
     if (!activeRunId || !liveAssistantTurn) return
@@ -1383,6 +1413,7 @@ export function ChatPage() {
   // 切换 thread 时清理 SSE 和排队消息，并重置 pendingIncognito
   useEffect(() => {
     setActiveRunId(null)
+    clearCompletedTitleTail()
     resetAssistantTurnLive()
     seenFirstToolCallInRunRef.current = false
     setInjectionBlocked(null)
@@ -1430,7 +1461,7 @@ export function ChatPage() {
     // activeRunId effect 在新 run 启动时负责归零。
     setPendingIncognito(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, resetAssistantTurnLive])
+  }, [threadId, clearCompletedTitleTail, resetAssistantTurnLive])
 
   // 同步 pendingIncognito 到 AppLayout（用于 Sidebar 无痕 UI）
   useEffect(() => {
@@ -1462,6 +1493,7 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    clearCompletedTitleTail()
     freezeCutoffRef.current = null
     injectionBlockedRunIdRef.current = null
     setPreserveLiveRunUi(false)
@@ -1490,9 +1522,15 @@ export function ChatPage() {
     streamingArtifactsRef.current = []
     setStreamingArtifacts([])
     setCancelSubmitting(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive])
+
+  useEffect(() => {
+    if (!sseRunId) return
+    sse.connect()
     return () => { sse.disconnect() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, baseUrl, resetAssistantTurnLive])
+  }, [sseRunId, baseUrl])
 
   useEffect(() => {
     if (!activeRunId) {
@@ -1529,7 +1567,7 @@ export function ChatPage() {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return
-      if (!activeRunId) return
+      if (!sseRunId) return
       const s = sse.state
       if (s === 'closed' || s === 'error' || s === 'idle') {
         sse.reconnect()
@@ -1537,11 +1575,11 @@ export function ChatPage() {
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [activeRunId, sse.state, sse.reconnect]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, sse.state, sse.reconnect]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 处理 SSE 事件
   useEffect(() => {
-    if (!activeRunId) return
+    if (!sseRunId) return
     const resetTerminalRunState = (options?: {
       restoreQueuedDraft?: boolean
       preserveSearchSteps?: boolean
@@ -1549,6 +1587,7 @@ export function ChatPage() {
     }) => {
       freezeCutoffRef.current = null
       injectionBlockedRunIdRef.current = null
+      clearCompletedTitleTail()
       sse.disconnect()
       setActiveRunId(null)
       setCancelSubmitting(false)
@@ -1599,7 +1638,7 @@ export function ChatPage() {
     }
     const { fresh, nextProcessedCount } = selectFreshRunEvents({
       events: sse.events,
-      activeRunId,
+      activeRunId: sseRunId,
       processedCount: processedEventCountRef.current,
     })
     processedEventCountRef.current = nextProcessedCount
@@ -2000,6 +2039,9 @@ export function ChatPage() {
         const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
         const title = typeof obj.title === 'string' ? obj.title : ''
         if (tid && title) onThreadTitleUpdated(tid, title)
+        if (event.run_id && event.run_id === completedTitleTailRunId) {
+          clearCompletedTitleTail()
+        }
         continue
       }
 
@@ -2072,7 +2114,7 @@ export function ChatPage() {
           }
         }
         setLiveAssistantTurn(runCache.handoffAssistantTurn.segments.length > 0 ? runCache.handoffAssistantTurn : null)
-        sse.disconnect()
+        armCompletedTitleTail(completedRunId)
         setActiveRunId(null)
         setCancelSubmitting(false)
         setPendingThinking(false)
@@ -2104,24 +2146,6 @@ export function ChatPage() {
               void sendMessageRef.current(pending)
             }
           })
-        // 标题 summarizer 在 worker 内异步跑，超时约 30s；SSE 在 run.completed 已断，只能靠轮询对齐侧栏
-        if (threadId) {
-          const tid = threadId
-          const pollTitle = (remaining: number) => {
-            if (remaining <= 0) return
-            setTimeout(() => {
-              void getThread(accessToken, tid).then((resp) => {
-                const next = (resp.title ?? '').trim()
-                const cur = (threadsRef.current.find((th) => th.id === tid)?.title ?? '').trim()
-                if (next && next !== cur) onThreadTitleUpdated(tid, next)
-                if (remaining > 1) pollTitle(remaining - 1)
-              }).catch(() => {
-                if (remaining > 1) pollTitle(remaining - 1)
-              })
-            }, 2000)
-          }
-          pollTitle(16)
-        }
         continue
       }
 
@@ -2242,7 +2266,7 @@ export function ChatPage() {
         continue
       }
     }
-  }, [activeRunId, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -2318,9 +2342,11 @@ export function ChatPage() {
     if (!isAtBottomRef.current) return
     const liveHandoffPaint =
       liveAssistantTurn != null && liveAssistantTurn.segments.length > 0
+    const forceInstant = forceInstantBottomScrollRef.current
     bottomRef.current?.scrollIntoView({
-      behavior: liveRunUiVisible || liveHandoffPaint ? 'instant' : 'smooth',
+      behavior: forceInstant || liveRunUiVisible || liveHandoffPaint ? 'instant' : 'smooth',
     })
+    if (forceInstant) forceInstantBottomScrollRef.current = false
   }, [messages, liveAssistantTurn, liveRunUiVisible])
 
   // COP 代码执行列表：新 item 添加时自动滚动到底部
@@ -2443,6 +2469,7 @@ export function ChatPage() {
 
     setSending(true)
     setPendingThinking(true)
+    setCopThinkingStartedAtMs(Date.now())
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
@@ -2532,6 +2559,8 @@ export function ChatPage() {
         scrollToBottom()
       }
     } catch (err) {
+      setPendingThinking(false)
+      setCopThinkingStartedAtMs(undefined)
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
         return
@@ -2884,10 +2913,11 @@ export function ChatPage() {
       return statusLabel ?? t.copTimelineLiveProgress
     }
     if (params.hasThinking) {
-      return t.copThinkingInlineTitle
+      return statusLabel ? undefined : t.copThinkingInlineTitle
     }
     return statusLabel
   }, [t])
+  const liveSegments = liveAssistantTurn?.segments ?? []
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -3317,10 +3347,10 @@ export function ChatPage() {
               })}
 
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
-              {liveAssistantTurn && liveAssistantTurn.segments.length > 0 && (
+              {(showPendingThinkingShell || liveSegments.length > 0) && (
                 <div data-testid={preserveLiveRunUi ? 'current-run-handoff' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
                   {/* pending thinking shimmer: Enter 后 thinking 内容到达前显示 */}
-                  {pendingThinking && !liveTurnHasThinkingSegment(liveAssistantTurn) && (
+                  {showPendingThinkingShell && (
                     <CopTimeline
                       key="pending-thinking"
                       steps={[]}
@@ -3334,9 +3364,9 @@ export function ChatPage() {
                       baseUrl={baseUrl}
                     />
                   )}
-                  {liveAssistantTurn.segments.map((seg, si) => {
-                    const lastSegIdx = liveAssistantTurn.segments.length - 1
-                    const lastTurnSeg = liveAssistantTurn.segments[lastSegIdx]
+                  {liveSegments.map((seg, si) => {
+                    const lastSegIdx = liveSegments.length - 1
+                    const lastTurnSeg = liveSegments[lastSegIdx]
                     const preservingHandoffSegments = preserveLiveRunUi && !isStreaming
                     const mdTypewriterDone =
                       !liveRunUiActive ||
@@ -3357,8 +3387,8 @@ export function ChatPage() {
                         runId={activeRunId ?? undefined}
                         onOpenDocument={openDocumentPanel}
                         trimTrailingMargin={
-                          liveAssistantTurn.segments[si + 1] == null ||
-                          liveAssistantTurn.segments[si + 1]?.type === 'cop'
+                          liveSegments[si + 1] == null ||
+                          liveSegments[si + 1]?.type === 'cop'
                         }
                       />
                     ) : (
@@ -3409,7 +3439,7 @@ export function ChatPage() {
                                 handoffStatus: terminalRunHandoffStatus,
                               })
                             : seg.title?.trim() || undefined
-                        const trailSeg = si + 1 <= lastSegIdx ? liveAssistantTurn.segments[si + 1] : undefined
+                        const trailSeg = si + 1 <= lastSegIdx ? liveSegments[si + 1] : undefined
                         const trailingAssistantTextPresent =
                           trailSeg?.type === 'text' && trailSeg.content.length > 0
                         return (
