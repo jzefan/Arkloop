@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/pgnotify"
 	"github.com/jackc/pgx/v5"
 
@@ -154,6 +155,10 @@ func NewInjectionScanMiddleware(
 			return next(ctx, rc)
 		}
 
+		if regexEnabled && len(rc.InjectionScanUserTexts) > 0 && composite != nil {
+			maybeStripHistoricRegexInjectionFromMergedUser(ctx, rc, composite)
+		}
+
 		emitRunEvent(ctx, rc, eventsRepo, "security.scan.started", map[string]any{
 			"input_phase":                   "initial",
 			"regex_enabled":                 regexEnabled,
@@ -164,7 +169,7 @@ func NewInjectionScanMiddleware(
 			"tool_output_semantic_enabled":  toolOutputSemanticEnabled,
 		})
 
-		userTexts := collectUserPromptTexts(rc.Messages)
+		userTexts := injectionScanTextsForRun(rc, rc.Messages)
 		regexMatches := scanUserPromptRegex(ctx, rc, composite, regexEnabled, userTexts)
 		if len(regexMatches) > 0 {
 			security.ScanTotal.WithLabelValues("detected").Inc()
@@ -408,32 +413,177 @@ func resolveUserPromptSemanticMode(semanticEnabled bool, provider string) string
 	return userPromptSemanticModeSync
 }
 
+func userMessageScanTextVariants(msg llm.Message) []string {
+	if !strings.EqualFold(strings.TrimSpace(msg.Role), "user") {
+		return nil
+	}
+	partTexts := make([]string, 0, len(msg.Content))
+	for _, part := range msg.Content {
+		text := strings.TrimSpace(partPromptScanText(part))
+		if text != "" {
+			partTexts = append(partTexts, text)
+		}
+	}
+	if len(partTexts) == 0 {
+		return nil
+	}
+	texts := make([]string, 0, len(partTexts)+1)
+	combined := strings.TrimSpace(strings.Join(partTexts, "\n\n"))
+	if combined != "" {
+		texts = append(texts, combined)
+	}
+	texts = append(texts, partTexts...)
+	return uniqueTrimmedTexts(texts)
+}
+
 func collectUserPromptTexts(messages []llm.Message) []string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "user" {
+		if !strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
 			continue
 		}
-
-		partTexts := make([]string, 0, len(messages[i].Content))
-		for _, part := range messages[i].Content {
-			text := strings.TrimSpace(partPromptScanText(part))
-			if text != "" {
-				partTexts = append(partTexts, text)
-			}
-		}
-		if len(partTexts) == 0 {
-			return nil
-		}
-
-		texts := make([]string, 0, len(partTexts)+1)
-		combined := strings.TrimSpace(strings.Join(partTexts, "\n\n"))
-		if combined != "" {
-			texts = append(texts, combined)
-		}
-		texts = append(texts, partTexts...)
-		return uniqueTrimmedTexts(texts)
+		return userMessageScanTextVariants(messages[i])
 	}
 	return nil
+}
+
+func injectionScanTextsForRun(rc *RunContext, messages []llm.Message) []string {
+	if rc != nil && len(rc.InjectionScanUserTexts) > 0 {
+		return rc.InjectionScanUserTexts
+	}
+	return collectUserPromptTexts(messages)
+}
+
+func lastUserMessageIndex(messages []llm.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
+			return i
+		}
+	}
+	return -1
+}
+
+func maybeStripHistoricRegexInjectionFromMergedUser(ctx context.Context, rc *RunContext, composite *security.CompositeScanner) {
+	if rc == nil || len(rc.InjectionScanUserTexts) == 0 || composite == nil {
+		return
+	}
+	idx := lastUserMessageIndex(rc.Messages)
+	if idx < 0 {
+		return
+	}
+	text, ok := singleTextMessage(rc.Messages[idx])
+	if !ok || strings.TrimSpace(text) == "" {
+		return
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "---\n") {
+		if newText, changed := stripHistoricRegexInjectionTelegramCompact(text, ctx, rc, composite); changed {
+			rc.Messages[idx] = llm.Message{
+				Role:    "user",
+				Content: []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: newText}},
+			}
+		}
+		return
+	}
+	if !strings.Contains(text, "\n\n") {
+		return
+	}
+	paras := strings.Split(text, "\n\n")
+	if len(paras) <= 1 {
+		return
+	}
+	kept := make([]string, 0, len(paras))
+	for i, p := range paras {
+		if i == len(paras)-1 {
+			kept = append(kept, p)
+			continue
+		}
+		pt := strings.TrimSpace(p)
+		if pt == "" {
+			continue
+		}
+		if len(scanUserPromptRegex(ctx, rc, composite, true, []string{pt})) > 0 {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(kept) == len(paras) {
+		return
+	}
+	newText := strings.Join(kept, "\n\n")
+	rc.Messages[idx] = llm.Message{
+		Role:    "user",
+		Content: []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: newText}},
+	}
+}
+
+func splitTelegramPublicMetaAndBody(text string) (header, body string, ok bool) {
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	if !strings.HasPrefix(normalized, "---\n") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(normalized, "---\n")
+	parts := strings.SplitN(rest, "\n---\n", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func splitTelegramCompactBurstSegments(body string) []string {
+	lines := strings.Split(body, "\n")
+	var segments []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		segments = append(segments, strings.TrimRight(b.String(), "\n"))
+		b.Reset()
+	}
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		isNewSpeaker := t != "" && strings.HasPrefix(t, "[") && strings.Contains(t, "] ") && !strings.HasPrefix(line, "  ")
+		if isNewSpeaker {
+			flush()
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+	}
+	flush()
+	return segments
+}
+
+func stripHistoricRegexInjectionTelegramCompact(text string, ctx context.Context, rc *RunContext, composite *security.CompositeScanner) (string, bool) {
+	header, body, ok := splitTelegramPublicMetaAndBody(text)
+	if !ok {
+		return text, false
+	}
+	segments := splitTelegramCompactBurstSegments(body)
+	if len(segments) < 2 {
+		return text, false
+	}
+	kept := make([]string, 0, len(segments))
+	for i, seg := range segments {
+		if i == len(segments)-1 {
+			kept = append(kept, seg)
+			continue
+		}
+		check := strings.TrimSpace(seg)
+		if check == "" {
+			continue
+		}
+		if len(scanUserPromptRegex(ctx, rc, composite, true, []string{check})) > 0 {
+			continue
+		}
+		kept = append(kept, seg)
+	}
+	if len(kept) == len(segments) {
+		return text, false
+	}
+	newBody := strings.Join(kept, "\n")
+	out := "---\n" + header + "\n---\n" + newBody
+	return out, true
 }
 
 func scanUserPromptRegex(

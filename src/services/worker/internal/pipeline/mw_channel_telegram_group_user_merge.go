@@ -27,16 +27,19 @@ func NewChannelTelegramGroupUserMergeMiddleware() RunMiddleware {
 		if !IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType) {
 			return next(ctx, rc)
 		}
-		msgs, ids := mergeTelegramGroupTrailingUserBurst(rc.Messages, rc.ThreadMessageIDs)
+		msgs, ids, lastTailScan := mergeTelegramGroupTrailingUserBurst(rc.Messages, rc.ThreadMessageIDs)
 		rc.Messages = msgs
 		rc.ThreadMessageIDs = ids
+		if len(lastTailScan) > 0 {
+			rc.InjectionScanUserTexts = lastTailScan
+		}
 		return next(ctx, rc)
 	}
 }
 
-func mergeTelegramGroupTrailingUserBurst(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uuid.UUID) {
+func mergeTelegramGroupTrailingUserBurst(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uuid.UUID, []string) {
 	if len(msgs) != len(ids) || len(msgs) < 2 {
-		return msgs, ids
+		return msgs, ids, nil
 	}
 	lastAsst := -1
 	for i := range msgs {
@@ -48,16 +51,17 @@ func mergeTelegramGroupTrailingUserBurst(msgs []llm.Message, ids []uuid.UUID) ([
 	tail := msgs[tailStart:]
 	tailIDs := ids[tailStart:]
 	if len(tail) < 2 {
-		return msgs, ids
+		return msgs, ids, nil
 	}
 	for _, m := range tail {
 		if !strings.EqualFold(strings.TrimSpace(m.Role), "user") {
-			return msgs, ids
+			return msgs, ids, nil
 		}
 		if len(m.ToolCalls) > 0 {
-			return msgs, ids
+			return msgs, ids, nil
 		}
 	}
+	lastTailScan := userMessageScanTextVariants(tail[len(tail)-1])
 	mergedContent := mergeUserBurstContent(tail)
 	merged := llm.Message{
 		Role:    "user",
@@ -69,7 +73,7 @@ func mergeTelegramGroupTrailingUserBurst(msgs []llm.Message, ids []uuid.UUID) ([
 	outIDs := make([]uuid.UUID, 0, len(ids)-len(tail)+1)
 	outIDs = append(outIDs, ids[:tailStart]...)
 	outIDs = append(outIDs, tailIDs[len(tailIDs)-1])
-	return outMsgs, outIDs
+	return outMsgs, outIDs, lastTailScan
 }
 
 func mergeUserBurstContent(tail []llm.Message) []llm.ContentPart {

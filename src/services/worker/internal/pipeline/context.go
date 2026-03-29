@@ -213,6 +213,9 @@ type RunContext struct {
 	TitleSummarizer *personas.TitleSummarizerConfig
 
 	// -- InjectionScanMiddleware 写入 --
+	// InjectionScanUserTexts 由 Telegram 群组合并 burst 时写入：仅最后一条物理 user 的扫描文本。
+	// 注入拦截/语义判定只应对「本轮触发输入」生效，避免合并后的历史消息里残留的测试 payload 误杀后续 run。
+	InjectionScanUserTexts []string
 	// UserPromptScanFunc 对运行中新增的人类输入执行同样的 prompt injection 检测。
 	// phase 例如 "ask_user" / "interactive_checkin"。
 	UserPromptScanFunc func(ctx context.Context, text string, phase string) error
