@@ -213,9 +213,10 @@ type RunContext struct {
 	ReleaseSlot func()
 
 	// -- Heartbeat --
-	HeartbeatRun         bool
-	HeartbeatSilent      bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
-	HeartbeatToolOutcome *HeartbeatDecisionOutcome
+	HeartbeatRun          bool
+	HeartbeatSilent       bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
+	HeartbeatToolOutcome  *HeartbeatDecisionOutcome
+	HeartbeatReplyGranted bool // reply=true 后已给过一轮输出机会，防止无限循环
 
 	// -- Rollout --
 	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录
@@ -226,20 +227,20 @@ type RunContext struct {
 
 // HeartbeatDecisionOutcome 保存 heartbeat_decision 工具的调用结果。
 type HeartbeatDecisionOutcome struct {
-	ReplySilent bool
-	Fragments   []string
+	Reply     bool
+	Fragments []string
 }
 
 // SetHeartbeatDecisionOutcome implements tools/builtin/heartbeat_decision.PipelineBinding.
-func (rc *RunContext) SetHeartbeatDecisionOutcome(replySilent bool, fragments []string) {
+func (rc *RunContext) SetHeartbeatDecisionOutcome(reply bool, fragments []string) {
 	if rc == nil {
 		return
 	}
 	rc.HeartbeatToolOutcome = &HeartbeatDecisionOutcome{
-		ReplySilent: replySilent,
-		Fragments:   fragments,
+		Reply:     reply,
+		Fragments: fragments,
 	}
-	rc.HeartbeatSilent = replySilent
+	rc.HeartbeatSilent = !reply
 }
 
 // IsHeartbeatRun implements tools/builtin/heartbeat_decision.PipelineBinding.
