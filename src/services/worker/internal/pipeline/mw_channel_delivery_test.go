@@ -415,7 +415,7 @@ func TestChannelDeliveryMiddlewareSuppressesSilentHeartbeat(t *testing.T) {
 		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
 		HeartbeatRun:         true,
 		FinalAssistantOutput: "（静默心跳，没有需要跟进的事项）",
-		HeartbeatToolOutcome: &HeartbeatDecisionOutcome{ReplySilent: true},
+		HeartbeatToolOutcome: &HeartbeatDecisionOutcome{Reply: false},
 		ChannelContext: &ChannelContext{
 			ChannelID:   channelID,
 			ChannelType: "telegram",

@@ -135,7 +135,7 @@ func TestShouldSuppressHeartbeatOutput(t *testing.T) {
 			rc: &RunContext{
 				HeartbeatRun: true,
 				HeartbeatToolOutcome: &HeartbeatDecisionOutcome{
-					ReplySilent: true,
+					Reply: false,
 				},
 			},
 			output: "hello",
@@ -146,7 +146,7 @@ func TestShouldSuppressHeartbeatOutput(t *testing.T) {
 			rc: &RunContext{
 				HeartbeatRun: true,
 				HeartbeatToolOutcome: &HeartbeatDecisionOutcome{
-					ReplySilent: false,
+					Reply: true,
 				},
 			},
 			output: "hello",
@@ -177,22 +177,22 @@ func TestShouldSuppressHeartbeatOutput(t *testing.T) {
 			want:   true,
 		},
 		{
-			name: "reply_silent=false but no substantive content suppresses",
+			name: "reply=true but no substantive content suppresses",
 			rc: &RunContext{
 				HeartbeatRun: true,
 				HeartbeatToolOutcome: &HeartbeatDecisionOutcome{
-					ReplySilent: false,
+					Reply: true,
 				},
 			},
 			output: "[No substantive content to send]",
 			want:   true,
 		},
 		{
-			name: "reply_silent=false with real text keeps output",
+			name: "reply=true with real text keeps output",
 			rc: &RunContext{
 				HeartbeatRun: true,
 				HeartbeatToolOutcome: &HeartbeatDecisionOutcome{
-					ReplySilent: false,
+					Reply: true,
 				},
 			},
 			output: "请关注今天 18:00 的发布窗口。",
