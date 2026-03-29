@@ -377,3 +377,47 @@ func recordChannelDeliverySuccess(
 	}
 	return tx.Commit(ctx)
 }
+
+// TryDeliverTelegramInjectionBlockNotice 在 Pipeline 于注入拦截处提前返回、未执行 ChannelDelivery 时，仍向 Telegram 投递拦截说明。
+func TryDeliverTelegramInjectionBlockNotice(ctx context.Context, pool *pgxpool.Pool, rc *RunContext, notice string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	text := strings.TrimSpace(notice)
+	if pool == nil || rc == nil || rc.ChannelContext == nil || text == "" {
+		return
+	}
+	if rc.ChannelContext.ChannelType != "telegram" {
+		return
+	}
+	repo := data.ChannelDeliveryRepository{}
+	ledgerRepo := data.ChannelMessageLedgerRepository{}
+	channel, err := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
+	if err != nil || channel == nil || strings.TrimSpace(channel.Token) == "" {
+		return
+	}
+	tgClient := optsTelegramClientOrDefault()
+	sender := NewTelegramChannelSenderWithClient(tgClient, channel.Token, resolveSegmentDelay())
+	messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      nil,
+	}, text)
+	if sendErr != nil {
+		recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
+		slog.WarnContext(ctx, "telegram injection block notice failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+		return
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, repo, ledgerRepo, rc, nil, messageIDs); err != nil {
+		recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, err)
+		slog.WarnContext(ctx, "telegram injection block notice record failed", "run_id", rc.Run.ID, "err", err.Error())
+	}
+	uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
+	if strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
+		MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
+	}
+}
+
+func optsTelegramClientOrDefault() *telegrambot.Client {
+	return telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+}

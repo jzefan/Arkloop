@@ -133,9 +133,9 @@ export function DesktopSettings({
         key={key}
         onClick={() => handleTabChange(key)}
         className={[
-          "flex h-[38px] items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-medium transition-colors",
+          "flex h-[38px] items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-medium transition-all duration-[120ms] active:scale-[0.96]",
           activeKey === key
-            ? "bg-[var(--c-bg-deep)] text-[var(--c-text-heading)]"
+            ? "bg-[var(--c-bg-deep)] text-[var(--c-text-heading)] rounded-[10px]"
             : "text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]",
         ].join(" ")}
       >

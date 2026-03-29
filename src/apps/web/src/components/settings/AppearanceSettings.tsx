@@ -149,9 +149,9 @@ export function ThemeContent({
 
 // Mini preview renders ─────────────────────────────────────────────────────
 
-function LightPreview() {
+function LightPreview({ hovered }: { hovered?: boolean }) {
   return (
-    <div className="flex h-full w-full" style={{ background: '#F5F5F4' }}>
+    <div className="relative flex h-full w-full" style={{ background: '#F5F5F4' }}>
       <div style={{ width: 22, flexShrink: 0, background: '#EBEBEB' }} />
       <div className="flex flex-1 flex-col gap-1.5 p-2">
         <div style={{ height: 5, width: '70%', background: '#C8C8C6', borderRadius: 2 }} />
@@ -159,11 +159,22 @@ function LightPreview() {
         <div style={{ height: 5, width: '65%', background: '#C8C8C6', borderRadius: 2 }} />
         <div style={{ marginTop: 'auto', height: 9, background: '#E0E0DE', borderRadius: 4 }} />
       </div>
+      {/* 静止时略压暗，hover 时褪去 */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.15)',
+          opacity: hovered ? 0 : 1,
+          transition: 'opacity 0.2s',
+          pointerEvents: 'none',
+        }}
+      />
     </div>
   )
 }
 
-function DarkPreview() {
+function DarkPreview(_: { hovered: boolean }) {
   return (
     <div className="flex h-full w-full" style={{ background: '#1E1D1C' }}>
       <div style={{ width: 22, flexShrink: 0, background: '#141413' }} />
@@ -177,7 +188,7 @@ function DarkPreview() {
   )
 }
 
-function SystemPreview() {
+function SystemPreview(_: { hovered: boolean }) {
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* light half */}
@@ -209,7 +220,7 @@ export function ThemeModePicker() {
   const { theme, setTheme } = useTheme()
   const [hoveredValue, setHoveredValue] = useState<Theme | null>(null)
 
-  const options: { value: Theme; label: string; Preview: () => React.JSX.Element }[] = [
+  const options: { value: Theme; label: string; Preview: (props: { hovered: boolean }) => React.JSX.Element }[] = [
     { value: 'light',  label: t.themeLight,  Preview: LightPreview  },
     { value: 'dark',   label: t.themeDark,   Preview: DarkPreview   },
     { value: 'system', label: t.themeSystem, Preview: SystemPreview },
@@ -248,7 +259,7 @@ export function ThemeModePicker() {
                   flexShrink: 0,
                 }}
               >
-                <Preview />
+                <Preview hovered={hovered} />
               </div>
               <span
                 className="text-xs"
