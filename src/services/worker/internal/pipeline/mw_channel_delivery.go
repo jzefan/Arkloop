@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -20,7 +21,9 @@ import (
 
 // ChannelDeliveryMiddlewareOptions overrides Telegram HTTP client (tests inject httptest base URL).
 type ChannelDeliveryMiddlewareOptions struct {
-	Telegram *telegrambot.Client
+	Telegram       *telegrambot.Client
+	Discord        DiscordHTTPDoer
+	DiscordAPIBase string
 }
 
 // NewChannelDeliveryMiddleware posts assistant output to Telegram and records deliveries.
@@ -36,23 +39,34 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 	if tgClient == nil {
 		tgClient = telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
 	}
+	discordClient := opts.Discord
+	if discordClient == nil {
+		discordClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	discordAPIBase := strings.TrimSpace(opts.DiscordAPIBase)
+	if discordAPIBase == "" {
+		discordAPIBase = strings.TrimSpace(os.Getenv("ARKLOOP_DISCORD_API_BASE_URL"))
+	}
 
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		var preloaded *data.DeliveryChannelRecord
 		var ux TelegramChannelUX
-		if pool != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" {
+		channelType := normalizedChannelTypeFromContext(rc)
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
 			} else if ch != nil {
 				preloaded = ch
-				ux = ParseTelegramChannelUX(ch.ConfigJSON)
+				if channelType == "telegram" {
+					ux = ParseTelegramChannelUX(ch.ConfigJSON)
+				}
 			}
 		}
 
 		streamMidCount := 0
 		var streamFlush func(context.Context, string) error
-		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && rc.ChannelContext.ChannelType == "telegram" &&
+		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && channelType == "telegram" &&
 			!rc.HeartbeatRun &&
 			tgClient != nil && strings.TrimSpace(preloaded.Token) != "" {
 			sender := NewTelegramChannelSenderWithClient(tgClient, preloaded.Token, resolveSegmentDelay())
@@ -90,7 +104,8 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		if err != nil || rc == nil || rc.ChannelContext == nil {
 			return err
 		}
-		if pool == nil || rc.ChannelContext.ChannelType != "telegram" {
+		channelType = normalizedChannelTypeFromContext(rc)
+		if pool == nil || (channelType != "telegram" && channelType != "discord") {
 			return err
 		}
 		if ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
@@ -133,34 +148,107 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
-
-		uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
-
-		var finalRecordErr error
-		if output != "" {
-			sender := NewTelegramChannelSenderWithClient(tgClient, channel.Token, resolveSegmentDelay())
-			messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
-				ChannelType:  rc.ChannelContext.ChannelType,
-				Conversation: rc.ChannelContext.Conversation,
-				ReplyTo:      nil,
-			}, output)
-			if sendErr != nil {
-				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, sendErr)
-				slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", sendErr.Error())
+		switch channelType {
+		case "telegram":
+			uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
+			if finalRecordErr := deliverTelegramChannelOutput(ctx, pool, repo, ledgerRepo, rc, tgClient, channel, output); finalRecordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
 			}
-			finalRecordErr = recordChannelDeliverySuccess(ctx, pool, repo, ledgerRepo, rc, nil, messageIDs)
-			if finalRecordErr != nil {
-				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
-				slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+			if strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
+				MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
 			}
-		}
-
-		if finalRecordErr == nil && strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
-			MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
+		case "discord":
+			if finalRecordErr := deliverDiscordChannelOutput(ctx, pool, repo, ledgerRepo, rc, discordClient, discordAPIBase, channel, output); finalRecordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "discord channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+				return err
+			}
 		}
 		return err
 	}
+}
+
+func normalizedChannelTypeFromContext(rc *RunContext) string {
+	if rc == nil || rc.ChannelContext == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(rc.ChannelContext.ChannelType))
+}
+
+func deliverTelegramChannelOutput(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	client *telegrambot.Client,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      nil,
+	}, output)
+	if err != nil {
+		return err
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, nil, messageIDs); err != nil {
+		slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+		return err
+	}
+	return nil
+}
+
+func deliverDiscordChannelOutput(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	client DiscordHTTPDoer,
+	baseURL string,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	replyTo := discordReplyReference(rc)
+	sender := NewDiscordChannelSenderWithClient(client, baseURL, channel.Token, resolveSegmentDelay())
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+	}, output)
+	if err != nil {
+		return err
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
+		slog.WarnContext(ctx, "discord channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+		return err
+	}
+	return nil
+}
+
+func discordReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
 }
 
 // StartTelegramTypingRefresh sends Telegram typing actions until cancel (about every 4s, first immediately).

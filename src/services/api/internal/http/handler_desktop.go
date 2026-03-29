@@ -26,6 +26,7 @@ import (
 	repopersonas "arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/desktop"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
@@ -115,6 +116,7 @@ type HandlerConfig struct {
 	WebhookRepo                  *data.WebhookEndpointRepository
 	ChannelsRepo                 *data.ChannelsRepository
 	ChannelIdentitiesRepo        *data.ChannelIdentitiesRepository
+	ChannelIdentityLinksRepo     *data.ChannelIdentityLinksRepository
 	ChannelBindCodesRepo         *data.ChannelBindCodesRepository
 	ChannelDMThreadsRepo         *data.ChannelDMThreadsRepository
 	ChannelGroupThreadsRepo      *data.ChannelGroupThreadsRepository
@@ -165,6 +167,7 @@ type HandlerConfig struct {
 	PersonaSyncTrigger interface{ Trigger() }
 
 	TelegramBotClient *telegrambot.Client
+	DiscordBotClient  *discordbot.Client
 }
 
 func NewHandler(cfg HandlerConfig) nethttp.Handler {
@@ -189,6 +192,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	telegramClient := cfg.TelegramBotClient
 	if telegramClient == nil {
 		telegramClient = telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+	}
+	discordClient := cfg.DiscordBotClient
+	if discordClient == nil {
+		discordClient = discordbot.NewClient("", nil)
 	}
 
 	effectiveToolCatalogCache := catalogapi.NewEffectiveToolCatalogCache(catalogapi.EffectiveToolCatalogTTL)
@@ -317,6 +324,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		LlmRoutesRepo:           cfg.LlmRoutesRepo,
 		ChannelsRepo:            cfg.ChannelsRepo,
 		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
+		ChannelIdentityLinksRepo: cfg.ChannelIdentityLinksRepo,
 		ChannelBindCodesRepo:    cfg.ChannelBindCodesRepo,
 		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
 		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
@@ -327,6 +335,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:             cfg.CreditsRepo,
 		PersonasRepo:            cfg.PersonasRepo,
 		TelegramBotClient:       telegramClient,
+		DiscordBotClient:        discordClient,
 		TelegramMode:            "polling",
 		AppBaseURL:              cfg.AppBaseURL,
 		EnvironmentStore:        cfg.EnvironmentStore,

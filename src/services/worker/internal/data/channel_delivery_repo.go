@@ -77,7 +77,7 @@ func (ChannelDeliveryRepository) GetChannel(ctx context.Context, pool *pgxpool.P
 		return nil, fmt.Errorf("channel_delivery.GetChannel: %w", err)
 	}
 	if encryptedValue == nil || *encryptedValue == "" || keyVersion == nil {
-		return nil, fmt.Errorf("channel_delivery.GetChannel: missing telegram token")
+		return nil, fmt.Errorf("channel_delivery.GetChannel: missing channel token")
 	}
 	plaintext, err := workercrypto.DecryptWithKeyVersion(*encryptedValue, *keyVersion)
 	if err != nil {

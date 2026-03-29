@@ -523,6 +523,11 @@ export interface LocaleStrings {
     tokenAlreadyConfigured: string
     allowedUsers: string
     allowedUsersPlaceholder: string
+    accessControl: string
+    allowedServerIds: string
+    allowedServerIdsPlaceholder: string
+    allowedChannelIds: string
+    allowedChannelIdsPlaceholder: string
     persona: string
     personaDefault: string
     webhookUrl: string
@@ -556,6 +561,13 @@ export interface LocaleStrings {
     unbindConfirm: string
     unbindFailed: string
     bindingBotAdmin: string
+    bindingOwner: string
+    bindingAdmin: string
+    setOwner: string
+    heartbeatEnabled: string
+    heartbeatInterval: string
+    heartbeatModel: string
+    ownerUnbindBlocked: string
   }
   // model picker (chat input)
   modelPicker: {

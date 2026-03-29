@@ -156,6 +156,11 @@ func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.R
 		raw = json.RawMessage(`{}`)
 	}
 
+	if channelType == "discord" {
+		normalized, _, err := normalizeDiscordChannelConfig(raw)
+		return normalized, nil, err
+	}
+
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil, nil, fmt.Errorf("config_json must be a valid JSON object")
@@ -426,6 +431,7 @@ func syncTelegramHeartbeatTrigger(
 	ctx context.Context,
 	tx pgx.Tx,
 	accountID uuid.UUID,
+	channelID uuid.UUID,
 	personaID *uuid.UUID,
 	identityID uuid.UUID,
 	fallbackModel string,
@@ -449,7 +455,7 @@ func syncTelegramHeartbeatTrigger(
 	enabled := enabledInt != 0
 	repo := data.ScheduledTriggersRepository{}
 	if !enabled {
-		return repo.DeleteHeartbeat(ctx, tx, identityID)
+		return repo.DeleteHeartbeat(ctx, tx, channelID, identityID)
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -472,6 +478,7 @@ func syncTelegramHeartbeatTrigger(
 		ctx,
 		tx,
 		accountID,
+		channelID,
 		identityID,
 		persona.PersonaKey,
 		model,
@@ -498,6 +505,7 @@ func syncTelegramChannelHeartbeatTriggers(
 			ctx,
 			tx,
 			accountID,
+			channelID,
 			personaID,
 			identityID,
 			defaultModel,
@@ -517,7 +525,7 @@ func deleteTelegramChannelHeartbeatTriggers(ctx context.Context, tx pgx.Tx, chan
 	}
 	repo := data.ScheduledTriggersRepository{}
 	for _, identityID := range identityIDs {
-		if err := repo.DeleteHeartbeat(ctx, tx, identityID); err != nil {
+		if err := repo.DeleteHeartbeat(ctx, tx, channelID, identityID); err != nil {
 			return err
 		}
 	}
@@ -798,6 +806,7 @@ func disableTelegramActivationRemote(
 type telegramConnector struct {
 	channelsRepo            *data.ChannelsRepository
 	channelIdentitiesRepo   *data.ChannelIdentitiesRepository
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository
 	channelBindCodesRepo    *data.ChannelBindCodesRepository
 	channelDMThreadsRepo    *data.ChannelDMThreadsRepository
 	channelGroupThreadsRepo *data.ChannelGroupThreadsRepository
@@ -1049,6 +1058,24 @@ func (c telegramConnector) HandleUpdate(
 
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
+		allowedPrivateLink, linkErr := allowTelegramPrivateChannelLink(ctx, tx, ch.ID, identity, trimmedCommandText, c.channelIdentityLinksRepo)
+		if linkErr != nil {
+			return linkErr
+		}
+		if !allowedPrivateLink {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   "当前账号未关联此接入。请使用 /bind 重新关联。",
+				})
+				sendCancel()
+			}
+			return nil
+		}
 		if handled, replyText, err := handleTelegramCommand(
 			ctx,
 			tx,
@@ -1057,6 +1084,7 @@ func (c telegramConnector) HandleUpdate(
 			trimmedCommandText,
 			c.channelBindCodesRepo,
 			c.channelIdentitiesRepo,
+			c.channelIdentityLinksRepo,
 			c.channelDMThreadsRepo,
 			c.threadRepo,
 			c.runEventRepo.WithTx(tx),
@@ -1124,6 +1152,7 @@ func (c telegramConnector) HandleUpdate(
 			replyText, err := handleTelegramHeartbeatCommand(
 				ctx,
 				tx,
+				ch.ID,
 				ch.AccountID,
 				ch.PersonaID,
 				cfg.DefaultModel,
@@ -1334,6 +1363,7 @@ func (c telegramConnector) HandleUpdate(
 func telegramWebhookEntry(
 	channelsRepo *data.ChannelsRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelBindCodesRepo *data.ChannelBindCodesRepository,
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	channelGroupThreadsRepo *data.ChannelGroupThreadsRepository,
@@ -1365,6 +1395,7 @@ func telegramWebhookEntry(
 	connector := telegramConnector{
 		channelsRepo:            channelsRepo,
 		channelIdentitiesRepo:   channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
 		channelBindCodesRepo:    channelBindCodesRepo,
 		channelDMThreadsRepo:    channelDMThreadsRepo,
 		channelGroupThreadsRepo: channelGroupThreadsRepo,
@@ -1397,7 +1428,7 @@ func telegramWebhookEntry(
 			httpkit.WriteMethodNotAllowed(w, r)
 			return
 		}
-		if channelsRepo == nil || channelIdentitiesRepo == nil || channelBindCodesRepo == nil || channelDMThreadsRepo == nil || channelReceiptsRepo == nil ||
+		if channelsRepo == nil || channelIdentitiesRepo == nil || channelIdentityLinksRepo == nil || channelBindCodesRepo == nil || channelDMThreadsRepo == nil || channelReceiptsRepo == nil ||
 			secretsRepo == nil || personasRepo == nil || usersRepo == nil || accountRepo == nil || membershipRepo == nil ||
 			projectRepo == nil || threadRepo == nil || messageRepo == nil || runEventRepo == nil || jobRepo == nil || creditsRepo == nil || pool == nil {
 			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
@@ -1665,6 +1696,7 @@ func handleTelegramCommand(
 	text string,
 	channelBindCodesRepo *data.ChannelBindCodesRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	threadRepo *data.ThreadRepository,
 	runEventRepo *data.RunEventRepository,
@@ -1683,7 +1715,7 @@ func handleTelegramCommand(
 		return true, "/start — 查看连接状态\n/bind <code> — 绑定你的账号\n/new — 开启新会话\n/stop — 停止当前任务\n/help — 显示此帮助", nil
 	case command == "/start":
 		if len(parts) > 1 && strings.HasPrefix(parts[1], "bind_") {
-			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo)
+			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelIdentityLinksRepo, channelDMThreadsRepo, threadRepo)
 			return true, replyText, err
 		}
 		return true, "已连接 Arkloop\n\n使用 /bind <code> 绑定账号\n私聊直接发消息开始对话，/new 开启新会话\n群内 @bot 触发对话，管理员可用 /new 重置会话", nil
@@ -1691,7 +1723,7 @@ func handleTelegramCommand(
 		if len(parts) < 2 {
 			return true, "用法：/bind <code>", nil
 		}
-		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelDMThreadsRepo, threadRepo)
+		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelIdentityLinksRepo, channelDMThreadsRepo, threadRepo)
 		return true, replyText, err
 	case command == "/new":
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
@@ -1734,6 +1766,7 @@ func handleTelegramCommand(
 func handleTelegramHeartbeatCommand(
 	ctx context.Context,
 	tx pgx.Tx,
+	channelID uuid.UUID,
 	accountID uuid.UUID,
 	personaID *uuid.UUID,
 	defaultModel string,
@@ -1778,7 +1811,7 @@ func handleTelegramHeartbeatCommand(
 		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, true, intervalMin, model); err != nil {
 			return "", err
 		}
-		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
+		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, channelID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("心跳已开启（间隔 %d 分钟）。", intervalMin), nil
@@ -1786,7 +1819,7 @@ func handleTelegramHeartbeatCommand(
 		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, false, intervalMin, model); err != nil {
 			return "", err
 		}
-		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
+		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, channelID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
 			return "", err
 		}
 		return "心跳已关闭。", nil
@@ -1804,7 +1837,7 @@ func handleTelegramHeartbeatCommand(
 		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, enabled, n, model); err != nil {
 			return "", err
 		}
-		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
+		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, channelID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("心跳间隔已设为 %d 分钟。", n), nil
@@ -1819,7 +1852,7 @@ func handleTelegramHeartbeatCommand(
 		if err := channelIdentitiesRepo.WithTx(tx).UpdateHeartbeatConfig(ctx, identity.ID, enabled, intervalMin, newModel); err != nil {
 			return "", err
 		}
-		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
+		if err := syncTelegramHeartbeatTrigger(ctx, tx, accountID, channelID, personaID, identity.ID, defaultModel, allowUserScoped, personasRepo); err != nil {
 			return "", err
 		}
 		if newModel == "" {
@@ -1839,6 +1872,7 @@ func bindTelegramIdentity(
 	code string,
 	channelBindCodesRepo *data.ChannelBindCodesRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	threadRepo *data.ThreadRepository,
 ) (string, error) {
@@ -1860,6 +1894,11 @@ func bindTelegramIdentity(
 		if _, err := channelBindCodesRepo.WithTx(tx).ConsumeForChannel(ctx, code, identity.ID, channel.ChannelType); err != nil {
 			return "", err
 		}
+		if channelIdentityLinksRepo != nil {
+			if _, err := channelIdentityLinksRepo.WithTx(tx).Upsert(ctx, channel.ID, identity.ID); err != nil {
+				return "", err
+			}
+		}
 		return "账号已绑定。", nil
 	}
 
@@ -1873,6 +1912,11 @@ func bindTelegramIdentity(
 	if err := channelIdentitiesRepo.WithTx(tx).UpdateUserID(ctx, identity.ID, &consumed.IssuedByUserID); err != nil {
 		return "", err
 	}
+	if channelIdentityLinksRepo != nil {
+		if _, err := channelIdentityLinksRepo.WithTx(tx).Upsert(ctx, channel.ID, identity.ID); err != nil {
+			return "", err
+		}
+	}
 	threadMappings, err := channelDMThreadsRepo.WithTx(tx).ListByChannelIdentity(ctx, channel.ID, identity.ID)
 	if err != nil {
 		return "", err
@@ -1883,6 +1927,32 @@ func bindTelegramIdentity(
 		}
 	}
 	return "绑定成功。", nil
+}
+
+func allowTelegramPrivateChannelLink(
+	ctx context.Context,
+	tx pgx.Tx,
+	channelID uuid.UUID,
+	identity data.ChannelIdentity,
+	commandText string,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
+) (bool, error) {
+	if channelIdentityLinksRepo == nil || telegramLinkBootstrapAllowed(commandText) {
+		return true, nil
+	}
+	return channelIdentityLinksRepo.WithTx(tx).HasLink(ctx, channelID, identity.ID)
+}
+
+func telegramLinkBootstrapAllowed(commandText string) bool {
+	parts := strings.Fields(strings.TrimSpace(commandText))
+	if len(parts) == 0 {
+		return false
+	}
+	command := strings.TrimSpace(parts[0])
+	if command == "/help" || command == "/bind" {
+		return true
+	}
+	return command == "/start"
 }
 
 func renderTelegramInboundMessage(identity data.ChannelIdentity, text string, unixTS int64) string {
@@ -2026,7 +2096,7 @@ func (c telegramConnector) HandleUpdateForPoll(
 
 	// 群消息额外 upsert 群自身的 identity（heartbeat 配置挂在群上）
 	var groupIdentity *data.ChannelIdentity
-	if isTelegramGroupLikeChatType(incoming.ChatType) {
+	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) {
 		gi, err := c.channelIdentitiesRepo.WithTx(tx).Upsert(
 			ctx,
 			incoming.ChannelType,
@@ -2043,6 +2113,24 @@ func (c telegramConnector) HandleUpdateForPoll(
 
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
+		allowedPrivateLink, linkErr := allowTelegramPrivateChannelLink(ctx, tx, ch.ID, identity, trimmedCommandText, c.channelIdentityLinksRepo)
+		if linkErr != nil {
+			return linkErr
+		}
+		if !allowedPrivateLink {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+					ChatID: incoming.PlatformChatID,
+					Text:   "当前账号未关联此接入。请使用 /bind 重新关联。",
+				})
+				sendCancel()
+			}
+			return nil
+		}
 		if handled, replyText, err := handleTelegramCommand(
 			ctx,
 			tx,
@@ -2051,6 +2139,7 @@ func (c telegramConnector) HandleUpdateForPoll(
 			trimmedCommandText,
 			c.channelBindCodesRepo,
 			c.channelIdentitiesRepo,
+			c.channelIdentityLinksRepo,
 			c.channelDMThreadsRepo,
 			c.threadRepo,
 			c.runEventRepo.WithTx(tx),
@@ -2124,6 +2213,7 @@ func (c telegramConnector) HandleUpdateForPoll(
 			replyText, err := handleTelegramHeartbeatCommand(
 				ctx,
 				tx,
+				ch.ID,
 				ch.AccountID,
 				ch.PersonaID,
 				cfg.DefaultModel,

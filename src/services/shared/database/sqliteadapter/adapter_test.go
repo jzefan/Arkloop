@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"arkloop/services/shared/database"
+	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -321,6 +323,176 @@ func TestAutoMigrateRepairsLegacyChannelOwnerColumn(t *testing.T) {
 	}
 	if !hasSQLiteColumns(channelColumns, "owner_user_id") {
 		t.Fatalf("repaired channels table missing owner_user_id: %v", channelColumns)
+	}
+}
+
+func TestAutoMigrateUpgradesChannelHeartbeatScope(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "desktop.db")
+
+	pool, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`CREATE TABLE goose_db_version (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version_id BIGINT NOT NULL,
+			is_applied BOOLEAN NOT NULL,
+			tstamp DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE channel_identities (
+			id TEXT PRIMARY KEY,
+			channel_type TEXT NOT NULL,
+			platform_subject_id TEXT NOT NULL,
+			heartbeat_enabled INTEGER NOT NULL DEFAULT 0,
+			heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30,
+			heartbeat_model TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE channels (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE personas (
+			id TEXT PRIMARY KEY,
+			account_id TEXT,
+			persona_key TEXT
+		)`,
+		`CREATE TABLE threads (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			deleted_at TEXT
+		)`,
+		`CREATE TABLE channel_dm_threads (
+			channel_id TEXT NOT NULL,
+			channel_identity_id TEXT NOT NULL,
+			thread_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE channel_group_threads (
+			channel_id TEXT NOT NULL,
+			platform_chat_id TEXT NOT NULL,
+			persona_id TEXT,
+			thread_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE channel_identity_links (
+			id TEXT PRIMARY KEY,
+			channel_id TEXT NOT NULL,
+			channel_identity_id TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE (channel_id, channel_identity_id)
+		)`,
+		`CREATE TABLE scheduled_triggers (
+			id TEXT PRIMARY KEY,
+			channel_identity_id TEXT NOT NULL UNIQUE,
+			persona_key TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			interval_min INTEGER NOT NULL DEFAULT 30,
+			next_fire_at TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("prepare legacy sqlite schema: %v", err)
+		}
+	}
+	for v := int64(0); v <= 44; v++ {
+		if _, err := pool.Exec(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, v); err != nil {
+			t.Fatalf("seed sqlite goose version %d: %v", v, err)
+		}
+	}
+
+	accountID := uuid.NewString()
+	dmChannelID := uuid.NewString()
+	groupChannelID := uuid.NewString()
+	dmIdentityID := uuid.NewString()
+	groupIdentityID := uuid.NewString()
+	dmThreadID := uuid.NewString()
+	groupThreadID := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	for _, stmt := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO channels (id, account_id) VALUES (?, ?), (?, ?)`, []any{dmChannelID, accountID, groupChannelID, accountID}},
+		{`INSERT INTO threads (id, account_id, deleted_at) VALUES (?, ?, NULL), (?, ?, NULL)`, []any{dmThreadID, accountID, groupThreadID, accountID}},
+		{`INSERT INTO channel_identities (id, channel_type, platform_subject_id, heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model)
+		   VALUES (?, 'discord', 'user-42', 1, 17, 'discord-model'),
+		          (?, 'telegram', 'chat-1001', 1, 9, 'group-model')`, []any{dmIdentityID, groupIdentityID}},
+		{`INSERT INTO channel_identity_links (id, channel_id, channel_identity_id) VALUES (?, ?, ?)`, []any{uuid.NewString(), dmChannelID, dmIdentityID}},
+		{`INSERT INTO channel_dm_threads (channel_id, channel_identity_id, thread_id) VALUES (?, ?, ?)`, []any{dmChannelID, dmIdentityID, dmThreadID}},
+		{`INSERT INTO channel_group_threads (channel_id, platform_chat_id, persona_id, thread_id) VALUES (?, 'chat-1001', NULL, ?)`, []any{groupChannelID, groupThreadID}},
+		{`INSERT INTO scheduled_triggers (id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at, created_at, updated_at)
+		   VALUES (?, ?, 'discord-persona', ?, 'discord-model', 17, ?, ?, ?),
+		          (?, ?, 'group-persona', ?, 'group-model', 9, ?, ?, ?)`,
+			[]any{uuid.NewString(), dmIdentityID, accountID, now, now, now, uuid.NewString(), groupIdentityID, accountID, now, now, now}},
+	} {
+		if _, err := pool.Exec(ctx, stmt.query, stmt.args...); err != nil {
+			t.Fatalf("seed legacy sqlite data: %v", err)
+		}
+	}
+
+	if err := pool.Close(); err != nil {
+		t.Fatalf("close sqlite before reopen: %v", err)
+	}
+
+	upgradedPool, err := AutoMigrate(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("upgrade sqlite auto migrate: %v", err)
+	}
+	defer upgradedPool.Close()
+
+	linkColumns, err := sqliteTableColumns(ctx, upgradedPool.Unwrap(), "channel_identity_links")
+	if err != nil {
+		t.Fatalf("load upgraded link columns: %v", err)
+	}
+	if !hasSQLiteColumns(linkColumns, "heartbeat_enabled", "heartbeat_interval_minutes", "heartbeat_model") {
+		t.Fatalf("upgraded link columns missing heartbeat fields: %v", linkColumns)
+	}
+
+	var (
+		enabled  int
+		interval int
+		model    string
+	)
+	if err := upgradedPool.QueryRow(ctx, `
+		SELECT heartbeat_enabled, heartbeat_interval_minutes, heartbeat_model
+		  FROM channel_identity_links
+		 WHERE channel_id = ? AND channel_identity_id = ?`,
+		dmChannelID,
+		dmIdentityID,
+	).Scan(&enabled, &interval, &model); err != nil {
+		t.Fatalf("read upgraded sqlite binding heartbeat config: %v", err)
+	}
+	if enabled != 1 || interval != 17 || model != "discord-model" {
+		t.Fatalf("unexpected upgraded sqlite binding heartbeat config: enabled=%d interval=%d model=%q", enabled, interval, model)
+	}
+
+	scheduledColumns, err := sqliteTableColumns(ctx, upgradedPool.Unwrap(), "scheduled_triggers")
+	if err != nil {
+		t.Fatalf("load upgraded scheduled_triggers columns: %v", err)
+	}
+	if !hasSQLiteColumns(scheduledColumns, "channel_id", "channel_identity_id") {
+		t.Fatalf("upgraded scheduled_triggers missing channel_id: %v", scheduledColumns)
+	}
+
+	var migratedDMChannelID string
+	if err := upgradedPool.QueryRow(ctx, `
+		SELECT channel_id
+		  FROM scheduled_triggers
+		 WHERE channel_identity_id = ? AND persona_key = 'discord-persona'`,
+		dmIdentityID,
+	).Scan(&migratedDMChannelID); err != nil {
+		t.Fatalf("read upgraded sqlite dm trigger: %v", err)
+	}
+	if migratedDMChannelID != dmChannelID {
+		t.Fatalf("sqlite dm trigger channel_id = %q, want %q", migratedDMChannelID, dmChannelID)
 	}
 }
 

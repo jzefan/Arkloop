@@ -178,13 +178,13 @@ func formatNextFire(next *time.Time) any {
 }
 
 func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow) {
-	th, err := s.triggers.GetThreadByHeartbeatTrigger(ctx, s.pool, row)
+	ctxData, err := s.triggers.ResolveHeartbeatThread(ctx, s.pool, row)
 	if err != nil {
 		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
-	if th == nil || th.DeletedAt != nil {
-		_ = s.triggers.DeleteHeartbeat(ctx, s.pool, row.ChannelIdentityID)
+	if ctxData == nil {
+		_ = s.triggers.DeleteHeartbeat(ctx, s.pool, row.ChannelID, row.ChannelIdentityID)
 		return
 	}
 
@@ -201,9 +201,9 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 
 	run, _, err := runRepoTx.CreateRootRunWithClaim(
 		ctx,
-		th.AccountID,
-		th.ID,
-		th.CreatedByUserID,
+		ctxData.AccountID,
+		ctxData.ThreadID,
+		ctxData.CreatedByUserID,
 		"run.started",
 		map[string]any{"persona_id": row.PersonaKey, "model": row.Model, "run_kind": runkind.Heartbeat},
 	)
@@ -222,11 +222,11 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 	}
 
 	if s.runLimiter != nil {
-		if !s.runLimiter.TryAcquire(ctx, th.AccountID) {
+		if !s.runLimiter.TryAcquire(ctx, ctxData.AccountID) {
 			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 45*time.Second)
 			return
 		}
-		defer s.runLimiter.Release(context.Background(), th.AccountID)
+		defer s.runLimiter.Release(context.Background(), ctxData.AccountID)
 	}
 
 	traceID := observability.NewTraceID()
@@ -237,10 +237,19 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 		"heartbeat_reason":           "interval",
 		"persona_key":                row.PersonaKey,
 		"model":                      row.Model,
+		"channel_delivery": map[string]any{
+			"channel_id":                 ctxData.ChannelID.String(),
+			"channel_type":               ctxData.ChannelType,
+			"sender_channel_identity_id": ctxData.IdentityID.String(),
+			"conversation_type":          ctxData.ConversationType,
+			"conversation_ref": map[string]any{
+				"target": ctxData.PlatformChatID,
+			},
+		},
 	}
 	if _, err := jobRepoTx.EnqueueRun(
 		ctx,
-		th.AccountID,
+		ctxData.AccountID,
 		run.ID,
 		traceID,
 		data.RunExecuteJobType,

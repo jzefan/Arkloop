@@ -68,6 +68,19 @@ func TestSplitTelegramMessagePreservesUTF8Boundaries(t *testing.T) {
 	}
 }
 
+func TestSplitDiscordMessagePrefersParagraphBoundary(t *testing.T) {
+	segments := splitDiscordMessage("alpha paragraph.\n\nbeta gamma delta", 20)
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(segments))
+	}
+	if segments[0] != "alpha paragraph." {
+		t.Fatalf("unexpected first segment: %q", segments[0])
+	}
+	if segments[1] != "beta gamma delta" {
+		t.Fatalf("unexpected second segment: %q", segments[1])
+	}
+}
+
 func TestRecordChannelDeliveryFailureAppendsRunEvent(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery")
 	pool, err := pgxpool.New(context.Background(), db.DSN)
@@ -240,6 +253,132 @@ func TestChannelDeliveryMiddlewarePersistsDeliveryAndLedger(t *testing.T) {
 	}
 	if failureCount != 0 {
 		t.Fatalf("expected no failure events, got %d", failureCount)
+	}
+}
+
+func TestChannelDeliveryMiddlewarePersistsDiscordDeliveryAndReplyReference(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_discord_delivery_success")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 11)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var sent struct {
+		Content          string `json:"content"`
+		MessageReference *struct {
+			MessageID string `json:"message_id"`
+		} `json:"message_reference"`
+	}
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.URL.Path != "/channels/9001/messages" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bot discord-token" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"701"}`))
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_DISCORD_API_BASE_URL", server.URL)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`,
+		secretID,
+		encryptChannelToken(t, keyBytes, "discord-token"),
+	); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channels (id, channel_type, credentials_id, is_active) VALUES ($1, 'discord', $2, TRUE)`,
+		channelID,
+		secretID,
+	); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	rc := &RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "discord delivery text",
+		ChannelContext: &ChannelContext{
+			ChannelID:   channelID,
+			ChannelType: "discord",
+			Conversation: ChannelConversationRef{
+				Target: "9001",
+			},
+			TriggerMessage: &ChannelMessageRef{MessageID: "55"},
+		},
+	}
+
+	mw := NewChannelDeliveryMiddleware(pool)
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+
+	var (
+		deliveryCount int
+		ledgerCount   int
+		parentID      *string
+		ledgerType    string
+	)
+	if err := pool.QueryRow(ctx,
+		`SELECT
+			(SELECT COUNT(*) FROM channel_message_deliveries),
+			(SELECT COUNT(*) FROM channel_message_ledger),
+			(SELECT platform_parent_message_id FROM channel_message_ledger LIMIT 1),
+			(SELECT channel_type FROM channel_message_ledger LIMIT 1)`,
+	).Scan(&deliveryCount, &ledgerCount, &parentID, &ledgerType); err != nil {
+		t.Fatalf("load delivery rows: %v", err)
+	}
+	if deliveryCount != 1 || ledgerCount != 1 {
+		t.Fatalf("expected one delivery and one ledger row, got deliveries=%d ledger=%d", deliveryCount, ledgerCount)
+	}
+	if parentID == nil || *parentID != "55" {
+		t.Fatalf("unexpected platform_parent_message_id: %#v", parentID)
+	}
+	if ledgerType != "discord" {
+		t.Fatalf("unexpected channel_type: %q", ledgerType)
+	}
+	if sent.Content != "discord delivery text" {
+		t.Fatalf("unexpected discord content: %q", sent.Content)
+	}
+	if sent.MessageReference == nil || sent.MessageReference.MessageID != "55" {
+		t.Fatalf("unexpected discord message reference: %#v", sent.MessageReference)
 	}
 }
 
