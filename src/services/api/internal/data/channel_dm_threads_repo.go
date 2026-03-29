@@ -182,3 +182,23 @@ func (r *ChannelDMThreadsRepository) DeleteByBinding(
 	}
 	return nil
 }
+
+func (r *ChannelDMThreadsRepository) DeleteByChannelIdentity(
+	ctx context.Context,
+	channelID uuid.UUID,
+	channelIdentityID uuid.UUID,
+) error {
+	if channelID == uuid.Nil || channelIdentityID == uuid.Nil {
+		return fmt.Errorf("channel_dm_threads: ids must not be empty")
+	}
+	if _, err := r.db.Exec(
+		ctx,
+		`DELETE FROM channel_dm_threads
+		 WHERE channel_id = $1 AND channel_identity_id = $2`,
+		channelID,
+		channelIdentityID,
+	); err != nil {
+		return fmt.Errorf("channel_dm_threads.DeleteByChannelIdentity: %w", err)
+	}
+	return nil
+}

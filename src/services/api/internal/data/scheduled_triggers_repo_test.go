@@ -36,18 +36,19 @@ func setupScheduledTriggersRepo(t *testing.T) (*ScheduledTriggersRepository, *pg
 
 func TestScheduledTriggersRepositoryUpsertHeartbeatKeepsNextFireAt(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
+	channelID := uuid.New()
 	identity := uuid.New()
 	account := uuid.New()
 
-	if err := repo.UpsertHeartbeat(ctx, pool, account, identity, "persona", "model", 1); err != nil {
+	if err := repo.UpsertHeartbeat(ctx, pool, account, channelID, identity, "persona", "model", 1); err != nil {
 		t.Fatalf("upsert heartbeat: %v", err)
 	}
-	first := readNextFireAt(t, ctx, pool, identity)
+	first := readNextFireAt(t, ctx, pool, channelID, identity)
 
-	if err := repo.UpsertHeartbeat(ctx, pool, account, identity, "persona", "model", 1); err != nil {
+	if err := repo.UpsertHeartbeat(ctx, pool, account, channelID, identity, "persona", "model", 1); err != nil {
 		t.Fatalf("second upsert heartbeat: %v", err)
 	}
-	second := readNextFireAt(t, ctx, pool, identity)
+	second := readNextFireAt(t, ctx, pool, channelID, identity)
 
 	if !second.Equal(first) {
 		t.Fatalf("expected next_fire_at to stay fixed, first=%s second=%s", first, second)
@@ -56,20 +57,21 @@ func TestScheduledTriggersRepositoryUpsertHeartbeatKeepsNextFireAt(t *testing.T)
 
 func TestScheduledTriggersRepositoryResetHeartbeatNextFire(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
+	channelID := uuid.New()
 	identity := uuid.New()
 	account := uuid.New()
 
-	if err := repo.UpsertHeartbeat(ctx, pool, account, identity, "persona", "model", 5); err != nil {
+	if err := repo.UpsertHeartbeat(ctx, pool, account, channelID, identity, "persona", "model", 5); err != nil {
 		t.Fatalf("upsert heartbeat: %v", err)
 	}
 
 	nowBefore := time.Now().UTC()
-	reset, err := repo.ResetHeartbeatNextFire(ctx, pool, identity, 1)
+	reset, err := repo.ResetHeartbeatNextFire(ctx, pool, channelID, identity, 1)
 	if err != nil {
 		t.Fatalf("reset heartbeat next fire: %v", err)
 	}
 
-	if !reset.Equal(readNextFireAt(t, ctx, pool, identity)) {
+	if !reset.Equal(readNextFireAt(t, ctx, pool, channelID, identity)) {
 		t.Fatalf("reset result mismatch stored value, got=%s", reset)
 	}
 
@@ -84,20 +86,21 @@ func TestScheduledTriggersRepositoryResetHeartbeatNextFire(t *testing.T) {
 
 func TestScheduledTriggersRepositoryRescheduleHeartbeatNextFireAt(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
+	channelID := uuid.New()
 	identity := uuid.New()
 	account := uuid.New()
 
-	if err := repo.UpsertHeartbeat(ctx, pool, account, identity, "persona", "model", 2); err != nil {
+	if err := repo.UpsertHeartbeat(ctx, pool, account, channelID, identity, "persona", "model", 2); err != nil {
 		t.Fatalf("upsert heartbeat: %v", err)
 	}
-	id := readTriggerID(t, ctx, pool, identity)
+	id := readTriggerID(t, ctx, pool, channelID, identity)
 	target := time.Now().UTC().Add(5 * time.Minute)
 
 	if err := repo.RescheduleHeartbeatNextFireAt(ctx, pool, id, target); err != nil {
 		t.Fatalf("reschedule heartbeat next fire: %v", err)
 	}
 
-	got := readNextFireAt(t, ctx, pool, identity)
+	got := readNextFireAt(t, ctx, pool, channelID, identity)
 	if d := got.Sub(target); d < -time.Millisecond || d > time.Millisecond {
 		t.Fatalf("unexpected next_fire_at after reschedule, got=%s want=%s", got, target)
 	}
@@ -106,13 +109,14 @@ func TestScheduledTriggersRepositoryRescheduleHeartbeatNextFireAt(t *testing.T) 
 func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedule(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
 	triggerID := uuid.New()
+	channelID := uuid.New()
 	account := uuid.New()
 	identity := uuid.New()
 	now := time.Now().UTC()
 	originalNextFire := now.Add(-20 * time.Second)
 	intervalMin := 1
 
-	insertScheduledTrigger(t, ctx, pool, triggerID, identity, "persona", account, "model", intervalMin, originalNextFire)
+	insertScheduledTrigger(t, ctx, pool, triggerID, channelID, identity, "persona", account, "model", intervalMin, originalNextFire)
 
 	callNow := time.Now().UTC()
 	rows, err := repo.ClaimDueHeartbeats(ctx, pool, 1)
@@ -136,6 +140,8 @@ func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedu
 
 func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
+	channelA := uuid.New()
+	channelB := uuid.New()
 	identityA := uuid.New()
 	identityB := uuid.New()
 	account := uuid.New()
@@ -143,8 +149,8 @@ func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
 	earliest := now.Add(30 * time.Second)
 	later := now.Add(2 * time.Minute)
 
-	insertScheduledTrigger(t, ctx, pool, uuid.New(), identityA, "persona-a", account, "model", 1, earliest)
-	insertScheduledTrigger(t, ctx, pool, uuid.New(), identityB, "persona-b", account, "model", 1, later)
+	insertScheduledTrigger(t, ctx, pool, uuid.New(), channelA, identityA, "persona-a", account, "model", 1, earliest)
+	insertScheduledTrigger(t, ctx, pool, uuid.New(), channelB, identityB, "persona-b", account, "model", 1, later)
 
 	got, err := repo.GetEarliestHeartbeatDue(ctx, pool)
 	if err != nil {
@@ -158,25 +164,26 @@ func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
 	}
 }
 
-func insertScheduledTrigger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id uuid.UUID, identity uuid.UUID, persona string, account uuid.UUID, model string, interval int, nextFire time.Time) {
+func insertScheduledTrigger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id uuid.UUID, channelID uuid.UUID, identity uuid.UUID, persona string, account uuid.UUID, model string, interval int, nextFire time.Time) {
 	t.Helper()
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO scheduled_triggers
-		    (id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
-		id, identity, persona, account, model, interval, nextFire,
+		    (id, channel_id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`,
+		id, channelID, identity, persona, account, model, interval, nextFire,
 	); err != nil {
 		t.Fatalf("insert scheduled trigger: %v", err)
 	}
 }
 
-func readNextFireAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, identity uuid.UUID) time.Time {
+func readNextFireAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, channelID uuid.UUID, identity uuid.UUID) time.Time {
 	t.Helper()
 
 	var next time.Time
 	if err := pool.QueryRow(ctx,
-		`SELECT next_fire_at FROM scheduled_triggers WHERE channel_identity_id = $1`,
+		`SELECT next_fire_at FROM scheduled_triggers WHERE channel_id = $1 AND channel_identity_id = $2`,
+		channelID,
 		identity,
 	).Scan(&next); err != nil {
 		t.Fatalf("read next_fire_at: %v", err)
@@ -184,12 +191,13 @@ func readNextFireAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ident
 	return next
 }
 
-func readTriggerID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, identity uuid.UUID) uuid.UUID {
+func readTriggerID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, channelID uuid.UUID, identity uuid.UUID) uuid.UUID {
 	t.Helper()
 
 	var id uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`SELECT id FROM scheduled_triggers WHERE channel_identity_id = $1`,
+		`SELECT id FROM scheduled_triggers WHERE channel_id = $1 AND channel_identity_id = $2`,
+		channelID,
 		identity,
 	).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

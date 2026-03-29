@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Tab } from './types'
 
-export function TabBar({ tabs, active, onChange }: {
-  tabs: { key: Tab; label: string }[]
-  active: Tab
-  onChange: (t: Tab) => void
+export function TabBar<T extends string>({ tabs, active, onChange }: {
+  tabs: { key: T; label: string }[]
+  active: T
+  onChange: (t: T) => void
 }) {
   const barRef = useRef<HTMLDivElement>(null)
   const [indicator, setIndicator] = useState({ left: 0, width: 0 })

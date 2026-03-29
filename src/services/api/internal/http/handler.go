@@ -27,6 +27,7 @@ import (
 	"arkloop/services/api/internal/personas"
 	"arkloop/services/shared/acptoken"
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
 
@@ -96,6 +97,7 @@ type HandlerConfig struct {
 	WebhookRepo                  *data.WebhookEndpointRepository
 	ChannelsRepo                 *data.ChannelsRepository
 	ChannelIdentitiesRepo        *data.ChannelIdentitiesRepository
+	ChannelIdentityLinksRepo     *data.ChannelIdentityLinksRepository
 	ChannelBindCodesRepo         *data.ChannelBindCodesRepository
 	ChannelDMThreadsRepo         *data.ChannelDMThreadsRepository
 	ChannelGroupThreadsRepo      *data.ChannelGroupThreadsRepository
@@ -138,6 +140,7 @@ type HandlerConfig struct {
 	AppBaseURL string
 
 	TelegramBotClient *telegrambot.Client
+	DiscordBotClient  *discordbot.Client
 
 	TurnstileEnvSecretKey   string
 	TurnstileEnvSiteKey     string
@@ -206,6 +209,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	telegramClient := cfg.TelegramBotClient
 	if telegramClient == nil {
 		telegramClient = telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+	}
+	discordClient := cfg.DiscordBotClient
+	if discordClient == nil {
+		discordClient = discordbot.NewClient("", nil)
 	}
 
 	gatewayRedis := cfg.GatewayRedisClient
@@ -337,6 +344,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		LlmRoutesRepo:           cfg.LlmRoutesRepo,
 		ChannelsRepo:            cfg.ChannelsRepo,
 		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
+		ChannelIdentityLinksRepo: cfg.ChannelIdentityLinksRepo,
 		ChannelBindCodesRepo:    cfg.ChannelBindCodesRepo,
 		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
 		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
@@ -347,6 +355,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		CreditsRepo:             cfg.CreditsRepo,
 		PersonasRepo:            cfg.PersonasRepo,
 		TelegramBotClient:       telegramClient,
+		DiscordBotClient:        discordClient,
 		TelegramMode:            "webhook",
 		AppBaseURL:              cfg.AppBaseURL,
 		EnvironmentStore:        cfg.EnvironmentStore,

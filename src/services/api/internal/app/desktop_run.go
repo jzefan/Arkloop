@@ -29,6 +29,7 @@ import (
 	"arkloop/services/shared/database/sqliteadapter"
 	"arkloop/services/shared/database/sqlitepgx"
 	"arkloop/services/shared/desktop"
+	"arkloop/services/shared/discordbot"
 	sharedenvironmentref "arkloop/services/shared/environmentref"
 	"arkloop/services/shared/eventbus"
 	sharedlog "arkloop/services/shared/log"
@@ -262,6 +263,10 @@ func RunDesktop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("init channel identities repo: %w", err)
 	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel identity links repo: %w", err)
+	}
 	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(pgxPool)
 	if err != nil {
 		return fmt.Errorf("init channel bind codes repo: %w", err)
@@ -277,6 +282,10 @@ func RunDesktop(ctx context.Context) error {
 	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(pgxPool)
 	if err != nil {
 		return fmt.Errorf("init channel receipts repo: %w", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(pgxPool)
+	if err != nil {
+		return fmt.Errorf("init channel ledger repo: %w", err)
 	}
 	planRepo, err := data.NewPlanRepository(pgxPool)
 	if err != nil {
@@ -423,6 +432,7 @@ func RunDesktop(ctx context.Context) error {
 	}
 	mcpDiscoveryService.StartWatcher(ctx, auth.DesktopAccountID, profileRef, 3*time.Second)
 
+	discordClient := discordbot.NewClient("", nil)
 	handler := apihttp.NewHandler(apihttp.HandlerConfig{
 		Logger:               logger,
 		SchemaRepository:     nil,
@@ -471,6 +481,7 @@ func RunDesktop(ctx context.Context) error {
 		WebhookRepo:                  webhookRepo,
 		ChannelsRepo:                 channelsRepo,
 		ChannelIdentitiesRepo:        channelIdentitiesRepo,
+		ChannelIdentityLinksRepo:     channelIdentityLinksRepo,
 		ChannelBindCodesRepo:         channelBindCodesRepo,
 		ChannelDMThreadsRepo:         channelDMThreadsRepo,
 		ChannelGroupThreadsRepo:      channelGroupThreadsRepo,
@@ -508,6 +519,7 @@ func RunDesktop(ctx context.Context) error {
 		EnvironmentStore:       environmentStore,
 		SkillStore:             skillStore,
 		MCPDiscoveryService:    mcpDiscoveryService,
+		DiscordBotClient:       discordClient,
 
 		RunLimiter: nil,
 
@@ -532,6 +544,7 @@ func RunDesktop(ctx context.Context) error {
 	accountapi.StartTelegramDesktopPoller(ctx, accountapi.TelegramDesktopPollerDeps{
 		ChannelsRepo:            channelsRepo,
 		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
 		ChannelBindCodesRepo:    channelBindCodesRepo,
 		ChannelDMThreadsRepo:    channelDMThreadsRepo,
 		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
@@ -552,6 +565,26 @@ func RunDesktop(ctx context.Context) error {
 		MessageAttachmentStore:  messageAttachmentStore,
 		TelegramMode:            "polling",
 		Bus:                     desktopBus,
+	})
+	accountapi.StartDiscordIngressRunner(ctx, accountapi.DiscordIngressRunnerDeps{
+		ChannelsRepo:          channelsRepo,
+		ChannelIdentitiesRepo: channelIdentitiesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
+		ChannelBindCodesRepo:  channelBindCodesRepo,
+		ChannelDMThreadsRepo:  channelDMThreadsRepo,
+		ChannelReceiptsRepo:   channelReceiptsRepo,
+		ChannelLedgerRepo:     channelLedgerRepo,
+		SecretsRepo:           secretsRepo,
+		PersonasRepo:          personasRepo,
+		ThreadRepo:            threadRepo,
+		MessageRepo:           messageRepo,
+		RunEventRepo:          runEventRepo,
+		JobRepo:               jobRepo,
+		CreditsRepo:           creditsRepo,
+		Pool:                  pgxPool,
+		EntitlementService:    entitlementService,
+		DiscordClient:         discordClient,
+		Bus:                   desktopBus,
 	})
 
 	// ---- HTTP server ----

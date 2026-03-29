@@ -12,6 +12,7 @@ import (
 	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const bindCodeTTL = 24 * time.Hour
@@ -74,7 +75,9 @@ func channelIdentityEntry(
 	authService *auth.Service,
 	membershipRepo *data.AccountMembershipRepository,
 	identitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	pool data.DB,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -94,7 +97,7 @@ func channelIdentityEntry(
 
 		switch r.Method {
 		case nethttp.MethodDelete:
-			unbindChannelIdentity(w, r, traceID, identityID, authService, membershipRepo, identitiesRepo, apiKeysRepo)
+			unbindChannelIdentity(w, r, traceID, identityID, authService, membershipRepo, identitiesRepo, channelIdentityLinksRepo, apiKeysRepo, pool)
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
 		}
@@ -192,13 +195,15 @@ func unbindChannelIdentity(
 	authService *auth.Service,
 	membershipRepo *data.AccountMembershipRepository,
 	identitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
 	apiKeysRepo *data.APIKeysRepository,
+	pool data.DB,
 ) {
 	if authService == nil {
 		httpkit.WriteAuthNotConfigured(w, traceID)
 		return
 	}
-	if identitiesRepo == nil {
+	if identitiesRepo == nil || channelIdentityLinksRepo == nil || pool == nil {
 		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
 		return
 	}
@@ -218,7 +223,41 @@ func unbindChannelIdentity(
 		return
 	}
 
-	if err := identitiesRepo.UpdateUserID(r.Context(), identityID, nil); err != nil {
+	bindings, err := channelIdentityLinksRepo.ListBindingsByIdentity(r.Context(), identityID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	for _, binding := range bindings {
+		if binding.IsOwner {
+			httpkit.WriteError(w, nethttp.StatusConflict, "channel_bindings.owner_unbind_blocked", "owner cannot be unlinked directly", traceID, nil)
+			return
+		}
+	}
+
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	defer tx.Rollback(r.Context()) //nolint:errcheck
+
+	if err := channelIdentityLinksRepo.WithTx(tx).DeleteByIdentity(r.Context(), identityID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	triggerRepo := data.ScheduledTriggersRepository{}
+	for _, binding := range bindings {
+		if err := triggerRepo.DeleteHeartbeat(r.Context(), tx, binding.ChannelID, binding.ChannelIdentityID); err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+	}
+	if err := identitiesRepo.WithTx(tx).UpdateUserID(r.Context(), identityID, nil); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}

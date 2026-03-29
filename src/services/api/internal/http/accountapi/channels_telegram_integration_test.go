@@ -107,6 +107,10 @@ func setupTelegramChannelsTestEnvWithAttachmentStore(
 	if err != nil {
 		t.Fatalf("channel identities repo: %v", err)
 	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
 	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(pool)
 	if err != nil {
 		t.Fatalf("bind repo: %v", err)
@@ -227,6 +231,7 @@ func setupTelegramChannelsTestEnvWithAttachmentStore(
 		SecretsRepo:             secretsRepo,
 		ChannelsRepo:            channelsRepo,
 		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
 		ChannelBindCodesRepo:    channelBindCodesRepo,
 		ChannelDMThreadsRepo:    channelDMThreadsRepo,
 		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
