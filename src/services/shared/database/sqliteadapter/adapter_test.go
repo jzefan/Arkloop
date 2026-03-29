@@ -396,6 +396,50 @@ func TestAutoMigrateUpgradesChannelHeartbeatScope(t *testing.T) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		// Stubs so migrations 00048+ (MCP installs) can run on this minimal legacy DB.
+		`CREATE TABLE users (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE accounts (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE secrets (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			owner_kind TEXT NOT NULL DEFAULT 'platform',
+			owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+			name TEXT NOT NULL,
+			encrypted_value TEXT NOT NULL,
+			key_version INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			rotated_at TEXT
+		)`,
+		`CREATE TABLE workspace_registries (
+			workspace_ref TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE profile_registries (
+			profile_ref TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			default_workspace_ref TEXT,
+			owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+		)`,
+		`CREATE TABLE account_memberships (
+			account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE (account_id, user_id)
+		)`,
+		`CREATE TABLE mcp_configs (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			name TEXT NOT NULL DEFAULT '',
+			transport TEXT NOT NULL DEFAULT 'stdio',
+			url TEXT,
+			command TEXT,
+			args_json TEXT,
+			env_json TEXT,
+			cwd TEXT,
+			call_timeout_ms INTEGER,
+			auth_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL
+		)`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			t.Fatalf("prepare legacy sqlite schema: %v", err)
