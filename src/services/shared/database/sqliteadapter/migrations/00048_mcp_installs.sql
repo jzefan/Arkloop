@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE profile_mcp_installs (
+CREATE TABLE IF NOT EXISTS profile_mcp_installs (
     id                     TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     install_key            TEXT NOT NULL,
     account_id             TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -21,10 +21,10 @@ CREATE TABLE profile_mcp_installs (
     UNIQUE (account_id, profile_ref, install_key)
 );
 
-CREATE INDEX idx_profile_mcp_installs_account_profile
+CREATE INDEX IF NOT EXISTS idx_profile_mcp_installs_account_profile
     ON profile_mcp_installs (account_id, profile_ref);
 
-CREATE TABLE workspace_mcp_enablements (
+CREATE TABLE IF NOT EXISTS workspace_mcp_enablements (
     workspace_ref       TEXT NOT NULL REFERENCES workspace_registries(workspace_ref) ON DELETE CASCADE,
     account_id          TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     install_id          TEXT NOT NULL REFERENCES profile_mcp_installs(id) ON DELETE CASCADE,
@@ -37,7 +37,7 @@ CREATE TABLE workspace_mcp_enablements (
     PRIMARY KEY (workspace_ref, install_id)
 );
 
-CREATE INDEX idx_workspace_mcp_enablements_workspace
+CREATE INDEX IF NOT EXISTS idx_workspace_mcp_enablements_workspace
     ON workspace_mcp_enablements (account_id, workspace_ref, enabled);
 
 INSERT INTO profile_mcp_installs (
