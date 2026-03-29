@@ -22,6 +22,111 @@ const (
 	injectionBlockedMessage                   = "message blocked: injection detected"
 )
 
+func formatInjectionBlockUserMessage(data map[string]any) string {
+	if len(data) == 0 {
+		return injectionBlockedMessage
+	}
+	parts := []string{"已拦截：检测到提示注入"}
+	if raw, ok := data["patterns"]; ok {
+		var lines []string
+		appendPatternLine := func(m map[string]any) {
+			if m == nil {
+				return
+			}
+			cat, _ := m["category"].(string)
+			pid, _ := m["pattern_id"].(string)
+			sev, _ := m["severity"].(string)
+			switch {
+			case cat != "" && pid != "":
+				lines = append(lines, cat+" / "+pid)
+			case cat != "":
+				lines = append(lines, cat)
+			case pid != "":
+				lines = append(lines, pid)
+			case sev != "":
+				lines = append(lines, sev)
+			}
+		}
+		switch items := raw.(type) {
+		case []map[string]any:
+			for _, m := range items {
+				appendPatternLine(m)
+			}
+		case []any:
+			for _, it := range items {
+				m, _ := it.(map[string]any)
+				appendPatternLine(m)
+			}
+		}
+		if len(lines) > 0 {
+			parts = append(parts, "规则匹配："+strings.Join(lines, "，"))
+		}
+	}
+	if sem, ok := data["semantic"].(map[string]any); ok {
+		lbl, _ := sem["label"].(string)
+		if sc, ok := floatFromAny(sem["score"]); ok && lbl != "" {
+			parts = append(parts, fmt.Sprintf("语义判定：%s（%.2f）", lbl, sc))
+		} else if lbl != "" {
+			parts = append(parts, "语义判定："+lbl)
+		}
+	}
+	if se, _ := data["semantic_error"].(string); strings.TrimSpace(se) != "" {
+		parts = append(parts, "扫描降级："+strings.TrimSpace(se))
+	}
+	if len(parts) == 1 {
+		return injectionBlockedMessage
+	}
+	return strings.Join(parts, "；")
+}
+
+func floatFromAny(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	default:
+		return 0, false
+	}
+}
+
+func injectionBlockedFailureDetails(data map[string]any) map[string]any {
+	if len(data) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	if v, ok := data["input_phase"]; ok {
+		out["input_phase"] = v
+	}
+	if v, ok := data["detection_count"]; ok {
+		out["detection_count"] = v
+	}
+	if v, ok := data["patterns"]; ok {
+		out["patterns"] = v
+	}
+	if v, ok := data["semantic"]; ok {
+		out["semantic"] = v
+	}
+	if v, ok := data["semantic_error"]; ok {
+		out["semantic_error"] = v
+	}
+	if v, ok := data["injection"]; ok {
+		out["injection"] = v
+	}
+	return out
+}
+
+func applyInjectionBlockUserFacingMessage(detectionData map[string]any) (userMsg string, blockedPayload map[string]any) {
+	userMsg = formatInjectionBlockUserMessage(detectionData)
+	blockedPayload = withBlockedMessage(detectionData)
+	blockedPayload["message"] = userMsg
+	return userMsg, blockedPayload
+}
+
 // NewInjectionScanMiddleware 在 Pipeline 中执行注入扫描。
 // composite 为 nil 时整个 middleware 为 no-op。
 func NewInjectionScanMiddleware(
@@ -128,12 +233,15 @@ func NewInjectionScanMiddleware(
 
 // blockRun 拦截注入请求：写入 blocked 事件 + run.failed，更新 run 状态。
 func blockRun(ctx context.Context, rc *RunContext, eventsRepo data.RunEventStore, detectionData map[string]any) error {
-	blockedData := withBlockedMessage(detectionData)
+	userMsg, blockedData := applyInjectionBlockUserFacingMessage(detectionData)
 	emitRunEvent(ctx, rc, eventsRepo, "security.injection.blocked", blockedData)
 
 	failedData := map[string]any{
 		"error_class": "security.injection_blocked",
-		"message":     injectionBlockedMessage,
+		"message":     userMsg,
+	}
+	if details := injectionBlockedFailureDetails(detectionData); len(details) > 0 {
+		failedData["details"] = details
 	}
 	failedEvent := rc.Emitter.Emit("run.failed", failedData, nil, StringPtr("security.injection_blocked"))
 
@@ -165,6 +273,9 @@ func blockRun(ctx context.Context, rc *RunContext, eventsRepo data.RunEventStore
 		return fmt.Errorf("injection block commit: %w", err)
 	}
 	notifyRunEventSubscribers(ctx, rc)
+
+	rc.ChannelTerminalNotice = userMsg
+	TryDeliverTelegramInjectionBlockNotice(ctx, rc.Pool, rc, userMsg)
 
 	slog.WarnContext(ctx, "run blocked: injection detected", "run_id", rc.Run.ID)
 	return nil
@@ -506,7 +617,8 @@ func cancelRunForSpeculativeInjectionBlock(
 	eventsRepo data.RunEventStore,
 	detectionData map[string]any,
 ) error {
-	emitRunEvent(ctx, rc, eventsRepo, "security.injection.blocked", withBlockedMessage(detectionData))
+	userMsg, blockedPayload := applyInjectionBlockUserFacingMessage(detectionData)
+	emitRunEvent(ctx, rc, eventsRepo, "security.injection.blocked", blockedPayload)
 
 	db := runEventDB(rc)
 	if db == nil {
@@ -546,7 +658,7 @@ func cancelRunForSpeculativeInjectionBlock(
 		cancelRequested := rc.Emitter.Emit("run.cancel_requested", map[string]any{
 			"trace_id": rc.TraceID,
 			"reason":   "security_injection_blocked",
-			"message":  injectionBlockedMessage,
+			"message":  userMsg,
 		}, nil, nil)
 		if _, err := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, cancelRequested); err != nil {
 			return fmt.Errorf("speculative injection cancel append event: %w", err)
@@ -564,6 +676,7 @@ func cancelRunForSpeculativeInjectionBlock(
 	}
 
 	notifyRunEventSubscribers(ctx, rc)
+	rc.ChannelTerminalNotice = userMsg
 	if rc.Pool != nil {
 		_, _ = rc.Pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, rc.Run.ID.String())
 	}

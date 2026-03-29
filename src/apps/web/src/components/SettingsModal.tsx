@@ -110,7 +110,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
                 key={key}
                 onClick={() => handleTabChange(key)}
                 className={[
-                  'flex h-8 items-center gap-2 rounded-md px-2 text-sm transition-colors',
+                  'flex h-8 items-center gap-2 rounded-md px-2 text-sm transition-[colors,transform] duration-100 active:scale-95',
                   activeKey === key
                     ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-heading)]'
                     : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]',

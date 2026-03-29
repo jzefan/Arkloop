@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 type Props = {
   checked: boolean
   onChange: (next: boolean) => void
@@ -6,9 +8,14 @@ type Props = {
 
 /** 与 MemorySettings 等一致的胶囊开关 */
 export function SettingsPillToggle({ checked, onChange, disabled }: Props) {
+  const [hovered, setHovered] = useState(false)
+  const showRing = hovered && !disabled
+
   return (
     <label
-      className={`group relative inline-flex shrink-0 items-center ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+      className={`relative inline-flex shrink-0 items-center ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <input
         type="checkbox"
@@ -17,25 +24,15 @@ export function SettingsPillToggle({ checked, onChange, disabled }: Props) {
         onChange={(e) => onChange(e.target.checked)}
         className="peer sr-only"
       />
-      {/*
-        轨道：1.1x（22px × 40px）
-        基础描边：1px solid border-subtle（静止可见）
-        激活：border-mid + 内侧 accent outline（跟随主色）
-        hover：border-mid + accent outline（描边从小撑开）
-      */}
       <span
-        className={[
-          'h-[22px] w-10 rounded-full transition-[background-color,border-color,outline-color,box-shadow] duration-200',
-          !disabled && 'group-hover:shadow-[0_0_0_2px_var(--c-accent)]',
-        ].filter(Boolean).join(' ')}
+        className="h-5 w-9 rounded-full transition-[background-color,box-shadow] duration-200"
         style={{
           background: checked ? 'var(--c-btn-bg)' : 'var(--c-border-mid)',
-          border: `1px solid ${checked ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
+          boxShadow: showRing ? '0 0 0 1.5px var(--c-accent)' : '0 0 0 0px var(--c-accent)',
         }}
       />
-      {/* 圆点：18px，translate 18px（40 - 18 - 2*2 = 18） */}
       <span
-        className="absolute left-[2px] top-[2px] h-[18px] w-[18px] rounded-full transition-transform duration-200 peer-checked:translate-x-[18px]"
+        className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform duration-200 peer-checked:translate-x-4"
         style={{ background: checked ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
       />
     </label>

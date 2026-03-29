@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
@@ -19,10 +20,13 @@ import (
 )
 
 const (
-	memoryFindLimit    = 5
-	memoryHighScoreL1  = 0.85 // 高分命中时额外拉 L1
-	memoryFindTimeout  = 5 * time.Second
-	memoryFlushTimeout = 120 * time.Second
+	// memorySnapshotFindLimit：后台刷新快照时 OpenViking Find 的 Top-K，越大快照越长（更多 L0 条目）。
+	memorySnapshotFindLimit = 100
+	memoryHighScoreL1         = 0.85 // 高分且非叶子时拉 L1 overview 拼进该条 bullet
+	// memorySnapshotL1MaxRunes：单条命中附加的 L1 上限，避免单条记忆把 system 撑爆。
+	memorySnapshotL1MaxRunes = 2000
+	memoryFindTimeout        = 5 * time.Second
+	memoryFlushTimeout       = 120 * time.Second
 	// snapshotFindTimeout 用于刷写后的最佳努力快照重建。
 	snapshotFindTimeout = 15 * time.Second
 )
@@ -119,7 +123,7 @@ func renderMemoryBlock(ctx context.Context, provider memory.MemoryProvider, iden
 }
 
 func findMemoryLines(ctx context.Context, provider memory.MemoryProvider, ident memory.MemoryIdentity, targetURI string, query string) ([]string, []memory.MemoryHit, error) {
-	hits, err := provider.Find(ctx, ident, targetURI, query, memoryFindLimit)
+	hits, err := provider.Find(ctx, ident, targetURI, query, memorySnapshotFindLimit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,14 +140,45 @@ func findMemoryLines(ctx context.Context, provider memory.MemoryProvider, ident 
 		line := strings.TrimSpace(hit.Abstract)
 		if hit.Score >= memoryHighScoreL1 && !hit.IsLeaf {
 			overview, ovErr := provider.Content(ctx, ident, hit.URI, memory.MemoryLayerOverview)
-			if ovErr == nil && strings.TrimSpace(overview) != "" {
-				firstLine := strings.SplitN(strings.TrimSpace(overview), "\n", 2)[0]
-				line += "\n  " + firstLine
+			if ovErr == nil {
+				overview = clipRunes(strings.TrimSpace(overview), memorySnapshotL1MaxRunes)
+				if overview != "" {
+					line += "\n  " + indentContinuationLines(overview)
+				}
 			}
 		}
 		lines = append(lines, line)
 	}
 	return lines, hits, nil
+}
+
+func clipRunes(s string, max int) string {
+	if max <= 0 || s == "" {
+		return s
+	}
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max]) + "…"
+}
+
+// indentContinuationLines：首行随 bullet，后续行加两级空格，避免多行 L1 在列表里顶格乱掉。
+func indentContinuationLines(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "\n")
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(parts[0]))
+	for i := 1; i < len(parts); i++ {
+		if t := strings.TrimSpace(parts[i]); t != "" {
+			b.WriteString("\n  ")
+			b.WriteString(t)
+		}
+	}
+	return b.String()
 }
 
 func buildMemoryBlock(lines []string) string {
@@ -232,8 +267,8 @@ func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, i
 	if len(successfulQueries) == 0 {
 		return "", nil, false
 	}
-	allLines := make([]string, 0, memoryFindLimit*len(successfulQueries))
-	allHits := make([]memory.MemoryHit, 0, memoryFindLimit*len(successfulQueries))
+	allLines := make([]string, 0, memorySnapshotFindLimit*len(successfulQueries))
+	allHits := make([]memory.MemoryHit, 0, memorySnapshotFindLimit*len(successfulQueries))
 	for _, queries := range successfulQueries {
 		query := strings.TrimSpace(strings.Join(queries, "\n"))
 		if query == "" {

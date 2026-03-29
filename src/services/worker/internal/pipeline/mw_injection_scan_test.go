@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"testing"
 
 	"arkloop/services/shared/messagecontent"
@@ -137,5 +138,33 @@ func TestWithBlockedMessageSetsDefault(t *testing.T) {
 	blocked := withBlockedMessage(map[string]any{"injection": true})
 	if blocked["message"] != injectionBlockedMessage {
 		t.Fatalf("expected default blocked message, got %#v", blocked["message"])
+	}
+}
+
+func TestFormatInjectionBlockUserMessageRegexAndSemantic(t *testing.T) {
+	data := buildInjectionEventData(
+		[]security.ScanResult{{
+			PatternID: "structural_injection",
+			Category:  "structural_injection",
+			Severity:  "high",
+		}},
+		&security.SemanticResult{Label: "INJECTION", Score: 0.91, IsInjection: true},
+		"",
+		"",
+		true,
+	)
+	got := formatInjectionBlockUserMessage(data)
+	if !strings.Contains(got, "已拦截") || !strings.Contains(got, "structural_injection") || !strings.Contains(got, "0.91") {
+		t.Fatalf("unexpected formatted message: %q", got)
+	}
+	_, payload := applyInjectionBlockUserFacingMessage(data)
+	if payload["message"] != got {
+		t.Fatalf("blocked payload message mismatch: %#v vs %q", payload["message"], got)
+	}
+}
+
+func TestFormatInjectionBlockUserMessageFallback(t *testing.T) {
+	if got := formatInjectionBlockUserMessage(map[string]any{"injection": true}); got != injectionBlockedMessage {
+		t.Fatalf("expected fallback, got %q", got)
 	}
 }
