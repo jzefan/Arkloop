@@ -40,7 +40,7 @@ type VendorPresetKey = (typeof VENDOR_PRESETS)[number]['key']
 
 const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
 
-type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'litellm'
+type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'openai_compatible'
 
 function vendorLabel(
   key: string,
@@ -63,14 +63,17 @@ function toVendorKey(provider: string, mode: string | null): VendorPresetKey {
 }
 
 function defaultOpenVikingBackendForVendor(provider: string): OpenVikingBackendKey {
-  if (provider === 'anthropic' || provider === 'gemini') return 'litellm'
+  if (provider === 'anthropic' || provider === 'gemini') return 'openai_compatible'
   return 'openai'
 }
 
 function readOpenVikingBackend(provider: LlmProvider): OpenVikingBackendKey {
   const raw = provider.advanced_json?.[OPENVIKING_BACKEND_ADVANCED_KEY]
-  if (raw === 'openai' || raw === 'azure' || raw === 'volcengine' || raw === 'litellm') {
+  if (raw === 'openai' || raw === 'azure' || raw === 'volcengine' || raw === 'openai_compatible') {
     return raw
+  }
+  if (raw === 'litellm') {
+    return 'openai_compatible'
   }
   return defaultOpenVikingBackendForVendor(provider.provider)
 }

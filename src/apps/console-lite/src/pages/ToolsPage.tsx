@@ -976,7 +976,7 @@ function MemoryConfigSection({
           <div>
             <label className={labelCls}>{tc.fieldVLMProvider}</label>
             <select className={inputCls} value={form['vlm.provider'] ?? 'litellm'} onChange={onChange('vlm.provider')}>
-              <option value="litellm">LiteLLM (Universal)</option>
+              <option value="litellm">OpenAI-compatible</option>
               <option value="openai">OpenAI</option>
               <option value="volcengine">Volcengine</option>
             </select>

@@ -143,7 +143,7 @@ func telegramMessageRepliesToBot(msg *telegramMessage, telegramBotUserID int64) 
 	if telegramBotUserID != 0 {
 		return msg.ReplyToMessage.From.ID == telegramBotUserID
 	}
-	return msg.ReplyToMessage.From.IsBot
+	return false
 }
 
 func collectTelegramInboundAttachments(msg *telegramMessage) []telegramInboundAttachment {

@@ -50,7 +50,6 @@ export function TurnView({ turn, index }: TurnViewProps) {
             Turn {index + 1}
           </span>
           {turn.model && <span className="font-medium text-[var(--c-text-secondary)]">{turn.model}</span>}
-          <span>{turn.providerKind}</span>
           {turn.apiMode && <span className="opacity-60">· {turn.apiMode}</span>}
         </div>
         {((turn.estimatedInputTokens != null && turn.estimatedInputTokens > 0) || turn.inputTokens != null) && (

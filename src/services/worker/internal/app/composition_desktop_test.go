@@ -674,13 +674,13 @@ func TestDesktopOpenVikingMemoryMiddlewareUsesPromptInjectionResolver(t *testing
 			AccountID: uuid.New(),
 			ThreadID:  uuid.New(),
 		},
-		UserID:                 &userID,
-		Emitter:                events.NewEmitter("desktop-memory"),
-		Messages:               []llm.Message{{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "remember this"}}}},
-		ThreadMessageIDs:       []uuid.UUID{uuid.New()},
-		FinalAssistantOutput:   "ack",
-		RunIterationCount:      3,
-		PendingMemoryWrites:    memory.NewPendingWriteBuffer(),
+		UserID:               &userID,
+		Emitter:              events.NewEmitter("desktop-memory"),
+		Messages:             []llm.Message{{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "remember this"}}}},
+		ThreadMessageIDs:     []uuid.UUID{uuid.New()},
+		FinalAssistantOutput: "ack",
+		RunIterationCount:    3,
+		PendingMemoryWrites:  memory.NewPendingWriteBuffer(),
 	}
 
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
@@ -2095,8 +2095,8 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read request body: %v", err)
 		}
-		if bytes.Contains(raw, []byte(`"reply_to_message_id"`)) {
-			t.Fatalf("unexpected reply_to_message_id in request: %s", string(raw))
+		if !bytes.Contains(raw, []byte(`"reply_to_message_id":"88"`)) {
+			t.Fatalf("expected reply_to_message_id in request: %s", string(raw))
 		}
 		if !bytes.Contains(raw, []byte(`"message_thread_id":"thread-42"`)) {
 			t.Fatalf("expected message_thread_id in request: %s", string(raw))
@@ -2197,7 +2197,7 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 	if deliveryCount != 1 {
 		t.Fatalf("expected one delivery row, got %d", deliveryCount)
 	}
-	if parentID != nil && *parentID != "" {
+	if parentID == nil || *parentID != "88" {
 		t.Fatalf("unexpected platform_parent_message_id: %q", *parentID)
 	}
 	if platformThread != threadRef {
@@ -3075,8 +3075,8 @@ func (g *desktopAskUserGateway) Stream(_ context.Context, req llm.Request, yield
 	g.calls++
 	if g.calls == 1 {
 		if err := yield(llm.ToolCall{
-			ToolCallID:    "call-ask-user",
-			ToolName:      "ask_user",
+			ToolCallID: "call-ask-user",
+			ToolName:   "ask_user",
 			ArgumentsJSON: map[string]any{
 				"message": "Pick a database",
 				"fields": []any{

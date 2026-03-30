@@ -274,7 +274,7 @@ export const en: LocaleStrings = {
       fieldVLMModel: 'Model',
       fieldVLMApiKey: 'API Key',
       fieldVLMApiBase: 'API Base URL',
-      fieldVLMProviderHint: 'LiteLLM supports 15+ backends including Claude, Gemini, Ollama, and more.',
+      fieldVLMProviderHint: 'OpenAI-compatible routing supports multiple upstream model services.',
       ovRestartWarning: '⚠ Applying configuration will restart the OpenViking service. Memory features will be briefly unavailable.',
       applyAndRestart: 'Save & Apply',
       toastOVConfigApplied: 'OpenViking configuration applied',

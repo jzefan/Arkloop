@@ -191,15 +191,16 @@ func deliverTelegramChannelOutput(
 		return nil
 	}
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
+	replyTo := telegramReplyReference(rc)
 	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
 		ChannelType:  rc.ChannelContext.ChannelType,
 		Conversation: rc.ChannelContext.Conversation,
-		ReplyTo:      nil,
+		ReplyTo:      replyTo,
 	}, output)
 	if err != nil {
 		return err
 	}
-	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, nil, messageIDs); err != nil {
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
 		slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
 		return err
 	}
@@ -239,6 +240,23 @@ func deliverDiscordChannelOutput(
 
 func discordReplyReference(rc *RunContext) *ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func telegramReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
 		return nil
 	}
 	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {

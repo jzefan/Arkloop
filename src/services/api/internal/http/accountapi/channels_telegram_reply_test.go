@@ -35,7 +35,7 @@ func TestTelegramMessageRepliesToBot_usesNumericBotID(t *testing.T) {
 	}
 }
 
-func TestTelegramMessageRepliesToBot_fallsBackWhenBotIDUnset(t *testing.T) {
+func TestTelegramMessageRepliesToBot_requiresBotIDWhenUnset(t *testing.T) {
 	raw := json.RawMessage(`{
 		"message_id": 1,
 		"date": 1,
@@ -54,8 +54,8 @@ func TestTelegramMessageRepliesToBot_fallsBackWhenBotIDUnset(t *testing.T) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		t.Fatal(err)
 	}
-	if !telegramMessageRepliesToBot(&msg, 0) {
-		t.Fatal("expected IsBot fallback when telegram_bot_user_id missing")
+	if telegramMessageRepliesToBot(&msg, 0) {
+		t.Fatal("reply should not count when telegram_bot_user_id is missing")
 	}
 }
 

@@ -214,7 +214,7 @@ func buildResolvedOpenVikingModel(
 		return ResolvedOpenVikingModel{}, UnsupportedOpenVikingProviderError{
 			Selector: selector,
 			Provider: credential.Provider,
-			Message:  fmt.Sprintf("selector %q has no OpenViking backend mapping; configure advanced_json.openviking_backend to one of openai, azure, volcengine, litellm", selector),
+			Message:  fmt.Sprintf("selector %q has no OpenViking backend mapping; configure advanced_json.openviking_backend to one of openai, azure, volcengine, openai_compatible", selector),
 		}
 	}
 	if credential.SecretID == nil {

@@ -973,7 +973,7 @@ function MemoryConfigSection({
             <select className={inputCls} value={form['vlm.provider'] ?? 'litellm'} onChange={onChange('vlm.provider')}>
               <option value="volcengine">Volcengine</option>
               <option value="openai">OpenAI</option>
-              <option value="litellm">LiteLLM (Universal)</option>
+              <option value="litellm">OpenAI-compatible</option>
             </select>
             <p className="mt-1 text-xs text-[var(--c-text-muted)]">
               {tc.fieldVLMProviderHint}

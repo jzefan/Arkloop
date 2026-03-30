@@ -221,30 +221,30 @@ func setupTelegramChannelsTestEnvWithAttachmentStore(
 
 	mux := nethttp.NewServeMux()
 	RegisterRoutes(mux, Deps{
-		AuthService:             authService,
-		AccountMembershipRepo:   membershipRepo,
-		ThreadRepo:              threadRepo,
-		ProjectRepo:             projectRepo,
-		APIKeysRepo:             nil,
-		Pool:                    pool,
-		AccountRepo:             accountRepo,
-		SecretsRepo:             secretsRepo,
-		ChannelsRepo:            channelsRepo,
-		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		AuthService:              authService,
+		AccountMembershipRepo:    membershipRepo,
+		ThreadRepo:               threadRepo,
+		ProjectRepo:              projectRepo,
+		APIKeysRepo:              nil,
+		Pool:                     pool,
+		AccountRepo:              accountRepo,
+		SecretsRepo:              secretsRepo,
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
 		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
-		ChannelBindCodesRepo:    channelBindCodesRepo,
-		ChannelDMThreadsRepo:    channelDMThreadsRepo,
-		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
-		ChannelReceiptsRepo:     channelReceiptsRepo,
-		UsersRepo:               userRepo,
-		MessageRepo:             messageRepo,
-		RunEventRepo:            runEventRepo,
-		JobRepo:                 jobRepo,
-		CreditsRepo:             creditsRepo,
-		PersonasRepo:            personasRepo,
-		AppBaseURL:              "https://app.example",
-		TelegramBotClient:       botClient,
-		MessageAttachmentStore:  attachmentStore,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		UsersRepo:                userRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		CreditsRepo:              creditsRepo,
+		PersonasRepo:             personasRepo,
+		AppBaseURL:               "https://app.example",
+		TelegramBotClient:        botClient,
+		MessageAttachmentStore:   attachmentStore,
 	})
 
 	return telegramChannelsTestEnv{
@@ -1272,6 +1272,74 @@ func TestTelegramWebhookGroupMessagePassiveAndActive(t *testing.T) {
 		if strings.Contains(content.Parts[0].Text, forbidden) {
 			t.Fatalf("expected group prompt header to omit transport metadata %q, got %s", forbidden, content.Parts[0].Text)
 		}
+	}
+}
+
+func TestTelegramWebhookReplyUsesParentAsTriggerMessage(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
+		"bot_username":         "arkloopbot",
+		"telegram_bot_user_id": 777002,
+	})
+
+	headers := authHeader(env.accessToken)
+	replyPayload := map[string]any{
+		"message": map[string]any{
+			"message_id": 14,
+			"date":       1710000002,
+			"text":       "继续说",
+			"chat": map[string]any{
+				"id":    -20001,
+				"type":  "supergroup",
+				"title": "Arkloop Group",
+			},
+			"from": map[string]any{
+				"id":         10001,
+				"is_bot":     false,
+				"first_name": "Alice",
+			},
+			"reply_to_message": map[string]any{
+				"message_id": 11,
+				"date":       1710000001,
+				"text":       "bot old message",
+				"chat": map[string]any{
+					"id":    -20001,
+					"type":  "supergroup",
+					"title": "Arkloop Group",
+				},
+				"from": map[string]any{
+					"id":         777002,
+					"is_bot":     true,
+					"first_name": "Arkloop",
+				},
+			},
+		},
+	}
+
+	resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", replyPayload, headers)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("reply webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+
+	var payloadJSON []byte
+	if err := env.pool.QueryRow(context.Background(), `SELECT payload_json::text::jsonb FROM jobs LIMIT 1`).Scan(&payloadJSON); err != nil {
+		t.Fatalf("query job payload: %v", err)
+	}
+	var jobEnvelope map[string]any
+	if err := json.Unmarshal(payloadJSON, &jobEnvelope); err != nil {
+		t.Fatalf("decode job payload: %v", err)
+	}
+	jobPayload, _ := jobEnvelope["payload"].(map[string]any)
+	delivery, _ := jobPayload["channel_delivery"].(map[string]any)
+	triggerRef, _ := delivery["trigger_message_ref"].(map[string]any)
+	if got := asString(triggerRef["message_id"]); got != "11" {
+		t.Fatalf("unexpected trigger_message_ref: %#v", delivery)
+	}
+	if got := asString(delivery["reply_to_message_id"]); got != "11" {
+		t.Fatalf("unexpected reply_to_message_id: %#v", delivery)
+	}
+	if got := asString(delivery["inbound_reply_to_message_id"]); got != "11" {
+		t.Fatalf("unexpected inbound_reply_to_message_id: %#v", delivery)
 	}
 }
 
