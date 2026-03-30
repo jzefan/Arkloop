@@ -77,7 +77,6 @@ beforeEach(() => {
   onUpdaterProgress.mockReturnValue(() => {})
   onAppUpdaterState.mockReturnValue(() => {})
   checkUpdater.mockResolvedValue({
-    sidecar: { current: '1.0.0', latest: '1.0.1', available: true },
     openviking: { current: '1.0.0', latest: '1.0.0', available: false },
     sandbox: {
       kernel: { current: '1.0.0', latest: '1.0.0', available: false },

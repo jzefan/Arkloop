@@ -248,10 +248,6 @@ jobs:
           if version != expected:
               raise SystemExit(f'manifest version mismatch: {version} != {expected}')
 
-          sidecar_version = require(manifest.get('sidecar', {}).get('version'), 'sidecar.version')
-          if sidecar_version != expected:
-              raise SystemExit(f'sidecar version mismatch: {sidecar_version} != {expected}')
-
           openviking = manifest.get('openviking', {})
           require(openviking.get('version'), 'openviking.version')
           require(openviking.get('image'), 'openviking.image')
