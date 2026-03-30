@@ -20,9 +20,56 @@ type DesktopManifest = {
   version: string
   sidecar: { version: string }
   openviking: { image: string; version: string }
-  sandbox: {
-    kernel: { version: string; filename: string }
-    rootfs: { version: string; filename: string }
+  sandbox?: {
+    kernel?: { version: string; filename: string }
+    rootfs?: { version: string; filename: string }
+  }
+}
+
+function assertNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`invalid desktop manifest: ${field}`)
+  }
+  return value
+}
+
+function parseDesktopManifest(raw: unknown): DesktopManifest {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('invalid desktop manifest: root object')
+  }
+
+  const manifest = raw as Record<string, unknown>
+  const sidecar = manifest.sidecar as Record<string, unknown> | undefined
+  const openviking = manifest.openviking as Record<string, unknown> | undefined
+  const sandbox = manifest.sandbox as Record<string, unknown> | undefined
+  const kernel = sandbox?.kernel as Record<string, unknown> | undefined
+  const rootfs = sandbox?.rootfs as Record<string, unknown> | undefined
+  const parsedSandbox: DesktopManifest['sandbox'] = {}
+
+  if (kernel?.version != null || kernel?.filename != null) {
+    parsedSandbox.kernel = {
+      version: assertNonEmptyString(kernel?.version, 'sandbox.kernel.version'),
+      filename: assertNonEmptyString(kernel?.filename, 'sandbox.kernel.filename'),
+    }
+  }
+
+  if (rootfs?.version != null || rootfs?.filename != null) {
+    parsedSandbox.rootfs = {
+      version: assertNonEmptyString(rootfs?.version, 'sandbox.rootfs.version'),
+      filename: assertNonEmptyString(rootfs?.filename, 'sandbox.rootfs.filename'),
+    }
+  }
+
+  return {
+    version: assertNonEmptyString(manifest.version, 'version'),
+    sidecar: {
+      version: assertNonEmptyString(sidecar?.version, 'sidecar.version'),
+    },
+    openviking: {
+      image: assertNonEmptyString(openviking?.image, 'openviking.image'),
+      version: assertNonEmptyString(openviking?.version, 'openviking.version'),
+    },
+    ...(parsedSandbox.kernel || parsedSandbox.rootfs ? { sandbox: parsedSandbox } : {}),
   }
 }
 
@@ -139,7 +186,7 @@ async function fetchManifest(): Promise<DesktopManifest> {
     throw new Error(`failed to fetch manifest: ${manifestRes.statusCode}`)
   }
 
-  return JSON.parse(manifestBody) as DesktopManifest
+  return parseDesktopManifest(JSON.parse(manifestBody))
 }
 
 export async function checkForUpdates(): Promise<UpdateStatus> {
@@ -150,6 +197,8 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   const ovCurrent = local.openviking?.version ?? null
   const kernelCurrent = local.sandbox?.kernel?.version ?? null
   const rootfsCurrent = local.sandbox?.rootfs?.version ?? null
+  const kernelLatest = manifest.sandbox?.kernel?.version ?? null
+  const rootfsLatest = manifest.sandbox?.rootfs?.version ?? null
 
   return {
     sidecar: {
@@ -165,13 +214,13 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
     sandbox: {
       kernel: {
         current: kernelCurrent,
-        latest: manifest.sandbox.kernel.version,
-        available: !!(manifest.sandbox.kernel.version && manifest.sandbox.kernel.version !== kernelCurrent),
+        latest: kernelLatest,
+        available: !!(kernelLatest && kernelLatest !== kernelCurrent),
       },
       rootfs: {
         current: rootfsCurrent,
-        latest: manifest.sandbox.rootfs.version,
-        available: !!(manifest.sandbox.rootfs.version && manifest.sandbox.rootfs.version !== rootfsCurrent),
+        latest: rootfsLatest,
+        available: !!(rootfsLatest && rootfsLatest !== rootfsCurrent),
       },
     },
   }
@@ -318,7 +367,11 @@ export async function applyUpdate(
   }
 
   if (component === 'sandbox_kernel') {
-    const { version, filename } = manifest.sandbox.kernel
+    const sandboxKernel = manifest.sandbox?.kernel
+    if (!sandboxKernel) {
+      throw new Error('sandbox kernel update not published')
+    }
+    const { version, filename } = sandboxKernel
     const destPath = path.join(VM_DIR, filename)
     await downloadFile(
       `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${filename}`,
@@ -337,7 +390,11 @@ export async function applyUpdate(
   }
 
   if (component === 'sandbox_rootfs') {
-    const { version, filename } = manifest.sandbox.rootfs
+    const sandboxRootfs = manifest.sandbox?.rootfs
+    if (!sandboxRootfs) {
+      throw new Error('sandbox rootfs update not published')
+    }
+    const { version, filename } = sandboxRootfs
     const destPath = path.join(VM_DIR, filename)
     await downloadFile(
       `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${filename}`,

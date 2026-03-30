@@ -11,6 +11,7 @@ import {
   type SidecarRuntime,
 } from './sidecar'
 import { checkForUpdates, applyUpdate } from './updater'
+import { getAppUpdaterState, checkForAppUpdates, downloadAppUpdate, installAppUpdate } from './app-updater'
 import { DEFAULT_CONFIG } from './types'
 import { getDesktopLogDir, getDesktopLogPaths } from './logging'
 import type { AppConfig, ApplyConfigUpdateOptions, ConnectorsConfig, MemoryConfig } from './types'
@@ -87,6 +88,23 @@ export function registerIpcHandlers(
     if (component === 'sidecar' || component === 'sandbox_kernel' || component === 'sandbox_rootfs') {
       await controller.restartLocalSidecar()
     }
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:app-updater:get-state', () => {
+    return getAppUpdaterState()
+  })
+
+  ipcMain.handle('arkloop:app-updater:check', async () => {
+    return checkForAppUpdates()
+  })
+
+  ipcMain.handle('arkloop:app-updater:download', async () => {
+    return downloadAppUpdate()
+  })
+
+  ipcMain.handle('arkloop:app-updater:install', () => {
+    installAppUpdate()
     return { ok: true }
   })
 

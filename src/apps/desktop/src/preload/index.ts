@@ -109,6 +109,15 @@ export type UpdaterComponentStatus = {
   available: boolean
 }
 
+export type AppUpdaterState = {
+  supported: boolean
+  phase: 'idle' | 'unsupported' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  currentVersion: string
+  latestVersion: string | null
+  progressPercent: number
+  error: string | null
+}
+
 export type UpdaterStatus = {
   sidecar: UpdaterComponentStatus
   openviking: UpdaterComponentStatus
@@ -129,6 +138,13 @@ export type ArkloopDesktopApi = {
     check: () => Promise<UpdaterStatus>
     apply: (opts: { component: UpdaterComponent }) => Promise<{ ok: boolean }>
     onProgress: (callback: (data: DownloadProgress & { component: UpdaterComponent }) => void) => () => void
+  }
+  appUpdater: {
+    getState: () => Promise<AppUpdaterState>
+    check: () => Promise<AppUpdaterState>
+    download: () => Promise<AppUpdaterState>
+    install: () => Promise<{ ok: boolean }>
+    onState: (callback: (state: AppUpdaterState) => void) => () => void
   }
   dialog: {
     openFolder: () => Promise<string | null>
@@ -259,6 +275,18 @@ const api: ArkloopDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, data: DownloadProgress & { component: UpdaterComponent }) => callback(data)
       ipcRenderer.on('arkloop:updater:progress', handler)
       return () => ipcRenderer.removeListener('arkloop:updater:progress', handler)
+    },
+  },
+
+  appUpdater: {
+    getState: () => ipcRenderer.invoke('arkloop:app-updater:get-state'),
+    check: () => ipcRenderer.invoke('arkloop:app-updater:check'),
+    download: () => ipcRenderer.invoke('arkloop:app-updater:download'),
+    install: () => ipcRenderer.invoke('arkloop:app-updater:install'),
+    onState: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AppUpdaterState) => callback(state)
+      ipcRenderer.on('arkloop:app-updater:state', handler)
+      return () => ipcRenderer.removeListener('arkloop:app-updater:state', handler)
     },
   },
 
