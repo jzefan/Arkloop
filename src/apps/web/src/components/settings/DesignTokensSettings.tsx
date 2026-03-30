@@ -4,7 +4,7 @@ import {
   Plus, Settings, Info, Globe, Search, Key,
   CheckCircle, XCircle,
 } from 'lucide-react'
-import { SettingsPillToggle } from './_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ const BTN_ICON = 'rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors 
 const LABEL_CLS_LG = settingsLabelCls('md')
 
 // ChatSettings
-const CARD_SHELL = 'overflow-hidden rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
+const CARD_SHELL = 'rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
 const RANGE_CLASS =
   'h-2 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-[var(--c-bg-deep)] ' +
   '[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full ' +
@@ -645,7 +645,7 @@ function TogglesPreview() {
   return (
     <PreviewSection title="Toggle Rows (ChatSettings · CARD_SHELL)">
       <div>
-        <span className={LABEL_CLS}>CARD_SHELL · overflow-hidden rounded-xl border-[0.5px] bg-[--c-bg-menu]</span>
+        <span className={LABEL_CLS}>CARD_SHELL · rounded-xl border-[0.5px] bg-[--c-bg-menu]</span>
         <div className={CARD_SHELL}>
           {/* Clickable row */}
           <div
@@ -660,7 +660,7 @@ function TogglesPreview() {
               <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">Automatically compress when context window fills up.</p>
             </div>
             <div className="shrink-0" onClick={e => e.stopPropagation()}>
-              <SettingsPillToggle checked={autoOn} onChange={setAutoOn} />
+              <PillToggle checked={autoOn} onChange={setAutoOn} />
             </div>
           </div>
 
@@ -702,7 +702,7 @@ function TogglesPreview() {
                 {vmMode ? 'Firecracker VM sandbox' : 'Local terminal execution'}
               </p>
             </div>
-            <SettingsPillToggle checked={vmMode} onChange={setVmMode} />
+            <PillToggle checked={vmMode} onChange={setVmMode} />
           </div>
 
           {/* Show run detail row — inline toggle (DeveloperSettings pattern) */}
@@ -711,7 +711,7 @@ function TogglesPreview() {
               <p className="text-sm font-medium text-[var(--c-text-heading)]">Show run detail button</p>
               <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">Add a debug button on AI messages.</p>
             </div>
-            <SettingsPillToggle checked={showDetail} onChange={setShowDetail} />
+            <PillToggle checked={showDetail} onChange={setShowDetail} />
           </div>
         </div>
       </div>

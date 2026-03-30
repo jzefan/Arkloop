@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
-import { Loader2 } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
+import { Button } from '../Button'
+import { PillToggle } from '../PillToggle'
 import type { Layer, PromptInjectionTexts } from './types'
 
 export interface LayerCardProps {
@@ -33,6 +34,9 @@ export function LayerCard({
 }: LayerCardProps) {
   const isSemantic = layer.id === 'semantic'
   const canToggle = !isSemantic || (semanticConfigured && semanticCanEnable)
+  const clickable = !isSemantic && canToggle
+  const interactable = clickable && !toggling
+  const [cardHovered, setCardHovered] = useState(false)
 
   const badge = () => {
     if (isSemantic) {
@@ -47,23 +51,26 @@ export function LayerCard({
         </span>
       )
     }
-    return (
-      <span
-        className={[
-          'rounded-md px-1.5 py-0.5 text-[10px] font-medium',
-          enabled
-            ? 'bg-[var(--c-status-success-bg)] text-[var(--c-status-success-text)]'
-            : 'bg-[var(--c-status-warning-bg)] text-[var(--c-status-warning-text)]',
-        ].join(' ')}
-      >
-        {enabled ? texts.statusEnabled : texts.statusDisabled}
-      </span>
-    )
+    return null
   }
 
   return (
     <div>
-      <div className="flex items-center justify-between rounded-lg border border-[var(--c-border-console)] bg-[var(--c-bg-card)] px-5 py-4">
+      <div
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        className={`flex items-center justify-between rounded-lg px-5 py-4 outline-none transition-colors ${clickable ? 'cursor-pointer hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)]' : ''}`}
+        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+        onMouseEnter={() => setCardHovered(true)}
+        onMouseLeave={() => setCardHovered(false)}
+        onClick={interactable ? onToggle : undefined}
+        onKeyDown={interactable ? (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        } : undefined}
+      >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-[var(--c-text-primary)]">
@@ -81,39 +88,23 @@ export function LayerCard({
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-3" onClick={interactable ? (e) => e.stopPropagation() : undefined}>
           {isSemantic && semanticConfigured && (
-            <button
-              onClick={onReconfigure}
-              className="rounded-md px-2 py-1 text-[10px] text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
-            >
+            <Button variant="ghost" size="sm" onClick={onReconfigure}>
               {texts.actionReconfigure}
-            </button>
+            </Button>
           )}
           {isSemantic && !semanticConfigured ? (
-            <button
-              onClick={onSetupToggle}
-              className="rounded-md border border-[var(--c-border-mid)] bg-[var(--c-bg-card)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-sub)]"
-            >
+            <Button variant="outline" size="sm" onClick={onSetupToggle}>
               {texts.actionConfigure}
-            </button>
+            </Button>
           ) : (
-            <button
-              onClick={onToggle}
-              disabled={toggling || !canToggle}
-              className={[
-                'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
-                enabled
-                  ? 'border-[var(--c-border-mid)] bg-[var(--c-bg-card)] text-[var(--c-text-primary)] hover:bg-[var(--c-bg-sub)]'
-                  : 'border-[var(--c-status-success-text)] text-[var(--c-status-success-text)] hover:bg-[var(--c-status-success-bg)]',
-                (toggling || !canToggle) ? 'opacity-50 cursor-not-allowed' : '',
-              ].join(' ')}
-            >
-              {toggling
-                ? <Loader2 size={12} className="inline animate-spin" />
-                : enabled ? texts.actionDisable : texts.actionEnable
-              }
-            </button>
+            <PillToggle
+              checked={enabled}
+              onChange={() => onToggle()}
+              disabled={!canToggle || toggling}
+              forceHover={clickable && cardHovered}
+            />
           )}
         </div>
       </div>

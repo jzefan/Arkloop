@@ -13,7 +13,7 @@ import {
   type CreateAsrCredentialRequest,
   type UpdateAsrCredentialRequest,
 } from '../../api'
-import { SettingsPillToggle } from './_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 
 type Props = {
   accessToken: string
@@ -494,6 +494,7 @@ export function VoiceSettings({ accessToken }: Props) {
   const toggleSavingRef = useRef(false)
   const voiceEnabledRef = useRef(false)
   const [configLoading, setConfigLoading] = useState(true)
+  const [voiceCardHovered, setVoiceCardHovered] = useState(false)
 
   const [credentials, setCredentials] = useState<AsrCredential[]>([])
   const [credsLoading, setCredsLoading] = useState(false)
@@ -598,16 +599,30 @@ export function VoiceSettings({ accessToken }: Props) {
       </div>
 
       {/* Enable toggle */}
-      <div className={sectionCls}>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.voiceEnableLabel}</p>
-            <p className="mt-0.5 text-xs text-[var(--c-text-secondary)]">{ds.voiceEnableDesc}</p>
-          </div>
-          <SettingsPillToggle
+      <div
+        role="button"
+        tabIndex={0}
+        className={`${sectionCls} flex cursor-pointer items-center justify-between outline-none transition-colors hover:bg-[var(--c-bg-deep)]/40 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)]`}
+        onMouseEnter={() => setVoiceCardHovered(true)}
+        onMouseLeave={() => setVoiceCardHovered(false)}
+        onClick={() => { if (!toggleSaving) void handleToggleVoice(!voiceEnabled) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            if (!toggleSaving) void handleToggleVoice(!voiceEnabled)
+          }
+        }}
+      >
+        <div>
+          <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.voiceEnableLabel}</p>
+          <p className="mt-0.5 text-xs text-[var(--c-text-secondary)]">{ds.voiceEnableDesc}</p>
+        </div>
+        <div onClick={(e) => e.stopPropagation()}>
+          <PillToggle
             checked={voiceEnabled}
             onChange={handleToggleVoice}
             disabled={toggleSaving}
+            forceHover={voiceCardHovered}
           />
         </div>
       </div>

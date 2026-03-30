@@ -146,7 +146,7 @@ func RegisterTrackB(r *Registry) error {
 		{
 			Key:         "context.compact.enabled",
 			Type:        TypeBool,
-			Default:     "false",
+			Default:     "true",
 			Description: "启用线程上下文预算裁切（在 Routing 之后）",
 			Sensitive:   false,
 			Scope:       ScopePlatform,
@@ -194,7 +194,7 @@ func RegisterTrackB(r *Registry) error {
 		{
 			Key:         "context.compact.persist_enabled",
 			Type:        TypeBool,
-			Default:     "false",
+			Default:     "true",
 			Description: "超阈值时将较早消息摘要并标记 compacted（需迁移 00134）",
 			Sensitive:   false,
 			Scope:       ScopePlatform,
@@ -210,7 +210,7 @@ func RegisterTrackB(r *Registry) error {
 		{
 			Key:         "context.compact.persist_trigger_context_pct",
 			Type:        TypeInt,
-			Default:     "0",
+			Default:     "80",
 			Description: "按路由 available_catalog.context_length（否则 fallback）的百分比触发 persist，0 表示只用 persist_trigger_approx_tokens",
 			Sensitive:   false,
 			Scope:       ScopePlatform,

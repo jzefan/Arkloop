@@ -147,9 +147,24 @@ export function ThemeContent({
   )
 }
 
+function useResolvedLight(): boolean {
+  const { theme } = useTheme()
+  const [systemLight, setSystemLight] = useState(
+    () => window.matchMedia('(prefers-color-scheme: light)').matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: light)')
+    const handler = (e: MediaQueryListEvent) => setSystemLight(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return theme === 'light' || (theme === 'system' && systemLight)
+}
+
 // Mini preview renders ─────────────────────────────────────────────────────
 
 function LightPreview({ hovered }: { hovered?: boolean }) {
+  const isLight = useResolvedLight()
   return (
     <div className="relative flex h-full w-full" style={{ background: '#F5F5F4' }}>
       <div style={{ width: 22, flexShrink: 0, background: '#EBEBEB' }} />
@@ -159,14 +174,14 @@ function LightPreview({ hovered }: { hovered?: boolean }) {
         <div style={{ height: 5, width: '65%', background: '#C8C8C6', borderRadius: 2 }} />
         <div style={{ marginTop: 'auto', height: 9, background: '#E0E0DE', borderRadius: 4 }} />
       </div>
-      {/* 静止时略压暗，hover 时褪去 */}
       <div
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'rgba(0,0,0,0.15)',
-          opacity: hovered ? 0 : 1,
-          transition: 'opacity 0.2s',
+          background: isLight
+            ? (hovered ? 'rgba(255,255,255,0.25)' : 'transparent')
+            : (hovered ? 'transparent' : 'rgba(0,0,0,0.15)'),
+          transition: 'background-color 0.2s',
           pointerEvents: 'none',
         }}
       />

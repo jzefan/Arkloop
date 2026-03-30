@@ -7,7 +7,7 @@ import { FormField } from '../../components/FormField'
 import { Modal } from '../../components/Modal'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Badge } from '../../components/Badge'
-import { useToast } from '@arkloop/shared'
+import { useToast, PillToggle } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -706,11 +706,7 @@ export function ProvidersPage() {
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             {/* show_in_picker toggle */}
-                            <label className="relative inline-flex shrink-0 cursor-pointer items-center" title={model.show_in_picker ? 'Hide from picker' : 'Show in picker'}>
-                              <input type="checkbox" checked={model.show_in_picker} onChange={() => void handleTogglePicker(model)} className="peer sr-only" />
-                              <span className="h-5 w-9 rounded-full transition-colors" style={{ background: model.show_in_picker ? 'var(--c-btn-bg)' : 'var(--c-border-mid, var(--c-border))' }} />
-                              <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4" style={{ background: model.show_in_picker ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }} />
-                            </label>
+                            <PillToggle checked={model.show_in_picker} onChange={() => void handleTogglePicker(model)} />
                             <button onClick={() => openEditModel(model)} className={BUTTON_PRIMARY_CLS}>
                               <Settings size={14} />
                             </button>
