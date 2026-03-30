@@ -837,6 +837,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     genericToolCount === 0 &&
     !headerOverride &&
     !hasAnyThinking &&
+    !thinkingHint &&
     copInlineList.length === 0
   ) {
     return null

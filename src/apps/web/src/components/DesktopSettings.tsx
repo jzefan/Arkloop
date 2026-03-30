@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { Suspense, lazy, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -19,29 +19,29 @@ import {
   ShieldAlert,
   Wrench,
   Mic,
+  Loader2,
 } from "lucide-react";
 import type { MeResponse } from "../api";
 import { useLocale } from "../contexts/LocaleContext";
-import {
-  GeneralSettings,
-  DesktopAppearanceSettings,
-  ProvidersSettings,
-  RoutingSettings,
-  PersonasSettings,
-  DesktopChannelsSettings,
-  SkillsSettings,
-  MCPSettings,
-  ToolsSettings,
-  MemorySettings,
-  ConnectionSettings,
-  ChatSettings,
-  ExtensionsSettings,
-  ModulesSettings,
-  DeveloperSettings,
-  DesktopPromptInjectionSettings,
-  VoiceSettings,
-  DesignTokensSettings,
-} from "./settings";
+
+const GeneralSettings = lazy(async () => ({ default: (await import("./settings/GeneralSettings")).GeneralSettings }));
+const DesktopAppearanceSettings = lazy(async () => ({ default: (await import("./settings/DesktopAppearanceSettings")).DesktopAppearanceSettings }));
+const ProvidersSettings = lazy(async () => ({ default: (await import("./settings/ProvidersSettings")).ProvidersSettings }));
+const RoutingSettings = lazy(async () => ({ default: (await import("./settings/RoutingSettings")).RoutingSettings }));
+const PersonasSettings = lazy(async () => ({ default: (await import("./settings/PersonasSettings")).PersonasSettings }));
+const DesktopChannelsSettings = lazy(async () => ({ default: (await import("./settings/DesktopChannelsSettings")).DesktopChannelsSettings }));
+const SkillsSettings = lazy(async () => ({ default: (await import("./settings/SkillsSettings")).SkillsSettings }));
+const MCPSettings = lazy(async () => ({ default: (await import("./settings/MCPSettings")).MCPSettings }));
+const ToolsSettings = lazy(async () => ({ default: (await import("./settings/ToolsSettings")).ToolsSettings }));
+const MemorySettings = lazy(async () => ({ default: (await import("./settings/MemorySettings")).MemorySettings }));
+const ConnectionSettings = lazy(async () => ({ default: (await import("./settings/ConnectionSettings")).ConnectionSettings }));
+const ChatSettings = lazy(async () => ({ default: (await import("./settings/ChatSettings")).ChatSettings }));
+const ExtensionsSettings = lazy(async () => ({ default: (await import("./settings/ExtensionsSettings")).ExtensionsSettings }));
+const ModulesSettings = lazy(async () => ({ default: (await import("./settings/ModulesSettings")).ModulesSettings }));
+const DeveloperSettings = lazy(async () => ({ default: (await import("./settings/DeveloperSettings")).DeveloperSettings }));
+const DesktopPromptInjectionSettings = lazy(async () => ({ default: (await import("./settings/DesktopPromptInjectionSettings")).DesktopPromptInjectionSettings }));
+const VoiceSettings = lazy(async () => ({ default: (await import("./settings/VoiceSettings")).VoiceSettings }));
+const DesignTokensSettings = lazy(async () => ({ default: (await import("./settings/DesignTokensSettings")).DesignTokensSettings }));
 
 export type DesktopSettingsKey =
   | "general"
@@ -90,6 +90,14 @@ const DESKTOP_NAV: NavItem[] = [
   { key: "extensions", icon: Blocks },
   { key: "developer", icon: Bug },
 ];
+
+function SettingsPaneFallback() {
+  return (
+    <div className="flex min-h-[240px] items-center justify-center">
+      <Loader2 size={18} className="animate-spin text-[var(--c-text-muted)]" />
+    </div>
+  );
+}
 
 type Props = {
   me: MeResponse | null;
@@ -249,7 +257,9 @@ export function DesktopSettings({
           className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6"
           onScroll={(e) => setScrolled((e.currentTarget as HTMLDivElement).scrollTop > 8)}
         >
-          {renderContent()}
+          <Suspense fallback={<SettingsPaneFallback />}>
+            {renderContent()}
+          </Suspense>
         </div>
       </div>
     </motion.div>

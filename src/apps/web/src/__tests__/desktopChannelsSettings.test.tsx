@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { Suspense, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -50,6 +50,23 @@ async function loadDesktopSettingsSubject() {
     ConnectorsSettings: () => <div>connectors</div>,
     VoiceSettings: () => <div>voice</div>,
   }))
+  vi.doMock('../components/settings/GeneralSettings', () => ({ GeneralSettings: () => <div>general</div> }))
+  vi.doMock('../components/settings/DesktopAppearanceSettings', () => ({ DesktopAppearanceSettings: () => <div>appearance</div> }))
+  vi.doMock('../components/settings/ProvidersSettings', () => ({ ProvidersSettings: () => <div>providers</div> }))
+  vi.doMock('../components/settings/RoutingSettings', () => ({ RoutingSettings: () => <div>routing</div> }))
+  vi.doMock('../components/settings/PersonasSettings', () => ({ PersonasSettings: () => <div>personas</div> }))
+  vi.doMock('../components/settings/DesktopChannelsSettings', () => ({ DesktopChannelsSettings: () => <div>integrations</div> }))
+  vi.doMock('../components/settings/SkillsSettings', () => ({ SkillsSettings: () => <div>skills</div> }))
+  vi.doMock('../components/settings/MCPSettings', () => ({ MCPSettings: () => <div>mcp</div> }))
+  vi.doMock('../components/settings/MemorySettings', () => ({ MemorySettings: () => <div>memory</div> }))
+  vi.doMock('../components/settings/ConnectionSettings', () => ({ ConnectionSettings: () => <div>connection</div> }))
+  vi.doMock('../components/settings/ChatSettings', () => ({ ChatSettings: () => <div>chat</div> }))
+  vi.doMock('../components/settings/ExtensionsSettings', () => ({ ExtensionsSettings: () => <div>extensions</div> }))
+  vi.doMock('../components/settings/ModulesSettings', () => ({ ModulesSettings: () => <div>modules</div> }))
+  vi.doMock('../components/settings/DeveloperSettings', () => ({ DeveloperSettings: () => <div>developer</div> }))
+  vi.doMock('../components/settings/DesktopPromptInjectionSettings', () => ({ DesktopPromptInjectionSettings: () => <div>prompt injection</div> }))
+  vi.doMock('../components/settings/VoiceSettings', () => ({ VoiceSettings: () => <div>voice</div> }))
+  vi.doMock('../components/settings/DesignTokensSettings', () => ({ DesignTokensSettings: () => <div>design tokens</div> }))
 
   const { DesktopSettings } = await import('../components/DesktopSettings')
   const { LocaleProvider } = await import('../contexts/LocaleContext')
@@ -105,6 +122,23 @@ afterEach(() => {
   vi.doUnmock('../api')
   vi.doUnmock('../storage')
   vi.doUnmock('../components/settings')
+  vi.doUnmock('../components/settings/GeneralSettings')
+  vi.doUnmock('../components/settings/DesktopAppearanceSettings')
+  vi.doUnmock('../components/settings/ProvidersSettings')
+  vi.doUnmock('../components/settings/RoutingSettings')
+  vi.doUnmock('../components/settings/PersonasSettings')
+  vi.doUnmock('../components/settings/DesktopChannelsSettings')
+  vi.doUnmock('../components/settings/SkillsSettings')
+  vi.doUnmock('../components/settings/MCPSettings')
+  vi.doUnmock('../components/settings/MemorySettings')
+  vi.doUnmock('../components/settings/ConnectionSettings')
+  vi.doUnmock('../components/settings/ChatSettings')
+  vi.doUnmock('../components/settings/ExtensionsSettings')
+  vi.doUnmock('../components/settings/ModulesSettings')
+  vi.doUnmock('../components/settings/DeveloperSettings')
+  vi.doUnmock('../components/settings/DesktopPromptInjectionSettings')
+  vi.doUnmock('../components/settings/VoiceSettings')
+  vi.doUnmock('../components/settings/DesignTokensSettings')
   vi.resetModules()
   vi.clearAllMocks()
   if (originalActEnvironment === undefined) {
@@ -121,16 +155,19 @@ describe('DesktopSettings', () => {
     await act(async () => {
       root!.render(
         <LocaleProvider>
-          <DesktopSettings
-            me={null}
-            accessToken="token"
-            initialSection="channels"
-            onClose={() => {}}
-            onLogout={() => {}}
-          />
+          <Suspense fallback={<div>loading</div>}>
+            <DesktopSettings
+              me={null}
+              accessToken="token"
+              initialSection="channels"
+              onClose={() => {}}
+              onLogout={() => {}}
+            />
+          </Suspense>
         </LocaleProvider>,
       )
     })
+    await flushEffects()
 
     expect(container.textContent).toContain('第三方接入')
   })

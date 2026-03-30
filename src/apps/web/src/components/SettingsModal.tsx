@@ -150,7 +150,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-6" style={{ scrollbarGutter: 'stable' }}>
             {activeKey === 'account' && !profileView && (
               <AccountContent
                 me={me}

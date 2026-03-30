@@ -533,9 +533,12 @@ func TestLlmProvidersAvailableModelsGeminiUsesModelsList(t *testing.T) {
 
 func TestLlmProvidersAvailableModelsOpenRouterIncludesEmbeddings(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
+	var modelsCalls int
+	var embeddingsCalls int
 	upstream := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch r.URL.Path {
 		case "/api/v1/models":
+			modelsCalls++
 			httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
 				"data": []map[string]any{
 					{
@@ -549,6 +552,7 @@ func TestLlmProvidersAvailableModelsOpenRouterIncludesEmbeddings(t *testing.T) {
 				},
 			})
 		case "/api/v1/embeddings/models":
+			embeddingsCalls++
 			httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
 				"data": []map[string]any{
 					{
@@ -595,6 +599,14 @@ func TestLlmProvidersAvailableModelsOpenRouterIncludesEmbeddings(t *testing.T) {
 	}
 	if !foundEmbedding {
 		t.Fatalf("expected embedding model in payload: %#v", payload)
+	}
+
+	secondResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers/"+provider.ID+"/available-models", nil, authHeader(env.adminToken))
+	if secondResp.Code != nethttp.StatusOK {
+		t.Fatalf("second available models: %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	if modelsCalls != 1 || embeddingsCalls != 1 {
+		t.Fatalf("expected upstream cached after first response, got models=%d embeddings=%d", modelsCalls, embeddingsCalls)
 	}
 }
 
