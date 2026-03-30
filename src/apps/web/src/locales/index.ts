@@ -506,11 +506,15 @@ export interface LocaleStrings {
       disabled: string
     }
     spawnProfileTitle: string
+    spawnProfileSubtitle: string
     spawnProfileFollowCurrentChat: string
     spawnProfilePlatformDefault: string
     spawnProfileExplore: string
+    spawnProfileExploreDesc: string
     spawnProfileTask: string
+    spawnProfileTaskDesc: string
     spawnProfileStrong: string
+    spawnProfileStrongDesc: string
     streamThinking: string
   }
   // channels
@@ -945,6 +949,18 @@ export interface LocaleStrings {
     toolModelPlatformDefault: string;
     toolModelSameAsChat: string;
     checkForUpdates: string;
+    appUpdateTitle: string;
+    appUpdateVersion: string;
+    appUpdateUnsupported: string;
+    appUpdateChecking: string;
+    appUpdateAvailable: string;
+    appUpdateLatest: string;
+    appUpdateDownloading: string;
+    appUpdateReady: string;
+    appUpdateError: string;
+    appUpdateDownload: string;
+    appUpdateInstall: string;
+    componentUpdateTitle: string;
   };
 
   // admin providers/models settings (ported from console-lite)

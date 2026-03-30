@@ -97,6 +97,15 @@ export type UpdaterComponentStatus = {
   available: boolean
 }
 
+export type AppUpdaterState = {
+  supported: boolean
+  phase: 'idle' | 'unsupported' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  currentVersion: string
+  latestVersion: string | null
+  progressPercent: number
+  error: string | null
+}
+
 export type UpdaterStatus = {
   sidecar: UpdaterComponentStatus
   openviking: UpdaterComponentStatus
@@ -117,6 +126,13 @@ export type ArkloopDesktopApi = {
     check: () => Promise<UpdaterStatus>
     apply: (opts: { component: UpdaterComponent }) => Promise<{ ok: boolean }>
     onProgress: (callback: (data: { phase: string; percent: number; bytesDownloaded: number; bytesTotal: number; error?: string; component: UpdaterComponent }) => void) => () => void
+  }
+  appUpdater?: {
+    getState: () => Promise<AppUpdaterState>
+    check: () => Promise<AppUpdaterState>
+    download: () => Promise<AppUpdaterState>
+    install: () => Promise<{ ok: boolean }>
+    onState: (callback: (state: AppUpdaterState) => void) => () => void
   }
   connectors?: {
     get: () => Promise<ConnectorsConfig>

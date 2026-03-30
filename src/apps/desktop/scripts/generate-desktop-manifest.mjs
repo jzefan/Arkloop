@@ -1,0 +1,80 @@
+import fs from 'fs'
+import path from 'path'
+import process from 'process'
+
+function readEnv(name) {
+  const value = process.env[name]?.trim()
+  if (!value) {
+    throw new Error(`missing required env: ${name}`)
+  }
+  return value
+}
+
+function readOptionalEnv(name) {
+  return process.env[name]?.trim() || null
+}
+
+function ensureFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`missing asset: ${filePath}`)
+  }
+}
+
+function buildManifest() {
+  const version = readEnv('ARKLOOP_RELEASE_VERSION').replace(/^v/, '')
+  const outputPath = readEnv('ARKLOOP_DESKTOP_MANIFEST_OUTPUT')
+  const releaseDir = path.resolve(readEnv('ARKLOOP_RELEASE_DIR'))
+
+  const openvikingImage = readEnv('ARKLOOP_OPENVIKING_IMAGE')
+  const openvikingVersion = readOptionalEnv('ARKLOOP_OPENVIKING_VERSION') || version
+  const sandboxKernelFilename = readOptionalEnv('ARKLOOP_SANDBOX_KERNEL_FILENAME')
+  const sandboxKernelVersion = readOptionalEnv('ARKLOOP_SANDBOX_KERNEL_VERSION')?.replace(/^v/, '') ?? null
+  const sandboxRootfsFilename = readOptionalEnv('ARKLOOP_SANDBOX_ROOTFS_FILENAME')
+  const sandboxRootfsVersion = readOptionalEnv('ARKLOOP_SANDBOX_ROOTFS_VERSION')?.replace(/^v/, '') ?? null
+
+  const sandbox = {}
+
+  if (sandboxKernelFilename || sandboxKernelVersion) {
+    if (!sandboxKernelFilename || !sandboxKernelVersion) {
+      throw new Error('sandbox kernel manifest fields must be provided together')
+    }
+    ensureFile(path.join(releaseDir, sandboxKernelFilename))
+    sandbox.kernel = {
+      version: sandboxKernelVersion,
+      filename: sandboxKernelFilename,
+    }
+  }
+
+  if (sandboxRootfsFilename || sandboxRootfsVersion) {
+    if (!sandboxRootfsFilename || !sandboxRootfsVersion) {
+      throw new Error('sandbox rootfs manifest fields must be provided together')
+    }
+    ensureFile(path.join(releaseDir, sandboxRootfsFilename))
+    sandbox.rootfs = {
+      version: sandboxRootfsVersion,
+      filename: sandboxRootfsFilename,
+    }
+  }
+
+  const manifest = {
+    version,
+    sidecar: {
+      version,
+    },
+    openviking: {
+      image: openvikingImage,
+      version: openvikingVersion,
+    },
+    ...(Object.keys(sandbox).length > 0 ? { sandbox } : {}),
+  }
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  fs.writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
+try {
+  buildManifest()
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exit(1)
+}
