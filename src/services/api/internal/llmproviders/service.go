@@ -119,11 +119,12 @@ func (e ProviderSecretMissingError) Error() string {
 }
 
 type Service struct {
-	pool        data.TxStarter
-	credentials *data.LlmCredentialsRepository
-	routes      *data.LlmRoutesRepository
-	secrets     *data.SecretsRepository
-	projects    *data.ProjectRepository
+	pool                 data.TxStarter
+	credentials          *data.LlmCredentialsRepository
+	routes               *data.LlmRoutesRepository
+	secrets              *data.SecretsRepository
+	projects             *data.ProjectRepository
+	availableModelsCache *availableModelsCache
 }
 
 func NewService(
@@ -134,11 +135,12 @@ func NewService(
 	projects *data.ProjectRepository,
 ) *Service {
 	return &Service{
-		pool:        pool,
-		credentials: credentials,
-		routes:      routes,
-		secrets:     secrets,
-		projects:    projects,
+		pool:                 pool,
+		credentials:          credentials,
+		routes:               routes,
+		secrets:              secrets,
+		projects:             projects,
+		availableModelsCache: newAvailableModelsCache(defaultAvailableModelsCacheTTL),
 	}
 }
 
@@ -232,6 +234,7 @@ func (s *Service) CreateProvider(ctx context.Context, accountID uuid.UUID, scope
 	if err := tx.Commit(ctx); err != nil {
 		return Provider{}, err
 	}
+	s.availableModelsCache.invalidateProvider(providerID)
 	return Provider{Credential: cred, Models: []data.LlmRoute{}}, nil
 }
 
@@ -293,6 +296,7 @@ func (s *Service) UpdateProvider(ctx context.Context, accountID, providerID uuid
 	if err := tx.Commit(ctx); err != nil {
 		return Provider{}, err
 	}
+	s.availableModelsCache.invalidateProvider(providerID)
 	return s.GetProvider(ctx, accountID, providerID, scope, userID)
 }
 
@@ -326,7 +330,11 @@ func (s *Service) DeleteProvider(ctx context.Context, accountID, providerID uuid
 			}
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.availableModelsCache.invalidateProvider(providerID)
+	return nil
 }
 
 func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UUID, scope string, userID *uuid.UUID, input CreateModelInput) (data.LlmRoute, error) {
@@ -405,6 +413,7 @@ func (s *Service) CreateModel(ctx context.Context, accountID, providerID uuid.UU
 	if stored == nil {
 		return data.LlmRoute{}, ModelNotFoundError{ID: created.ID}
 	}
+	s.availableModelsCache.invalidateProvider(providerID)
 	return *stored, nil
 }
 
@@ -526,6 +535,7 @@ func (s *Service) UpdateModel(ctx context.Context, accountID, providerID, modelI
 	if stored == nil {
 		return data.LlmRoute{}, ModelNotFoundError{ID: modelID}
 	}
+	s.availableModelsCache.invalidateProvider(providerID)
 	return *stored, nil
 }
 
@@ -564,7 +574,11 @@ func (s *Service) DeleteModel(ctx context.Context, accountID, providerID, modelI
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.availableModelsCache.invalidateProvider(providerID)
+	return nil
 }
 
 func (s *Service) ListAvailableModels(ctx context.Context, accountID, providerID uuid.UUID, scope string, userID *uuid.UUID) ([]AvailableModel, error) {
@@ -601,7 +615,10 @@ func (s *Service) ListAvailableModels(ctx context.Context, accountID, providerID
 		}
 		configured[strings.ToLower(modelID)] = struct{}{}
 	}
-	models, err := listUpstreamModels(ctx, *provider, strings.TrimSpace(*apiKey))
+	cacheKey := makeAvailableModelsCacheKey(accountID, providerID, scope, userID)
+	models, err := s.availableModelsCache.getOrLoad(ctx, cacheKey, func(ctx context.Context) ([]AvailableModel, error) {
+		return listUpstreamModels(ctx, *provider, strings.TrimSpace(*apiKey))
+	})
 	if err != nil {
 		return nil, err
 	}

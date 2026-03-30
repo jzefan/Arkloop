@@ -152,6 +152,7 @@ vi.mock('../components/CopTimeline', () => ({
     copInlineTextRows,
     thinkingRows,
     assistantThinking,
+    thinkingHint,
   }: {
     steps?: Array<{ id: string; label: string; status?: string }>
     codeExecutions?: Array<{ id: string; code: string }>
@@ -160,6 +161,7 @@ vi.mock('../components/CopTimeline', () => ({
     copInlineTextRows?: Array<{ id: string; text: string }>
     thinkingRows?: Array<{ id: string; markdown: string }>
     assistantThinking?: { markdown: string }
+    thinkingHint?: string
   }) => {
     const inlineEntries = copInlineTextRows?.map((row) => `cop-inline:${row.text}`) ?? []
     const thinkingEntries = thinkingRows?.map((row) => `thinking:${row.markdown}`) ?? []
@@ -174,6 +176,8 @@ vi.mock('../components/CopTimeline', () => ({
         ? (isComplete ? `${entries.length} steps completed` : 'In process')
         : hasThinking
           ? (isComplete ? 'Thought' : 'Thinking')
+          : thinkingHint
+            ? `${thinkingHint}...`
         : undefined)
 
     return (
@@ -681,6 +685,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
   })
 
   it('发送后在首个 SSE 事件前应立即显示 pending thinking 外壳', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -741,13 +746,111 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
     })
 
     const text = container.textContent ?? ''
-    expect(text).toContain('assistant-thinking:')
-    expect(text).toContain('Thinking')
+    expect(text).not.toContain('assistant-thinking:')
+    expect(text).not.toContain('Think')
+    expect(text).toContain('Finding the right words')
 
     act(() => {
       root.unmount()
     })
     container.remove()
+    mathRandomSpy.mockRestore()
+  })
+
+  it('首个 SSE 为正文时应立即移除 pending thinking 外壳', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+    })
+
+    const input = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+    const form = container.querySelector('form')
+    if (!input || !form) {
+      throw new Error('chat input mock not rendered')
+    }
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      valueSetter?.call(input, 'look now')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const firstText = container.textContent ?? ''
+    expect(firstText).not.toContain('assistant-thinking:')
+    expect(firstText).toContain('Finding the right words')
+
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-created',
+        type: 'message.delta',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        data: {
+          role: 'assistant',
+          content_delta: '我先看一下代码路径',
+        },
+      },
+    ]
+    sseMock.lastSeq = 1
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('assistant-thinking:')
+    expect(text).not.toContain('Finding the right words')
+    expect(text).not.toContain('Thinking')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+    mathRandomSpy.mockRestore()
   })
 
   it('run.cancelled 后会尝试刷新消息列表', async () => {

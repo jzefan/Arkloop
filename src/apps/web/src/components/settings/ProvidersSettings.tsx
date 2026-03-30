@@ -532,6 +532,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
   const [editingModel, setEditingModel] = useState<LlmProviderModel | null>(null)
+  const [hasLoadedAvailable, setHasLoadedAvailable] = useState(false)
 
   const loadAvailable = useCallback(async () => {
     setLoadingAvailable(true)
@@ -539,6 +540,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
     try {
       const res = await listAvailableModels(accessToken, provider.id)
       setAvailable(res.models)
+      setHasLoadedAvailable(true)
     } catch (e) {
       const message = isApiError(e) ? e.message : t.models.availableFetchFailed
       setAvailableError(message)
@@ -547,14 +549,30 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
     }
   }, [accessToken, provider.id, t.models.availableFetchFailed])
 
-  useEffect(() => { void loadAvailable() }, [loadAvailable])
+  const ensureAvailableLoaded = useCallback(async (): Promise<AvailableModel[]> => {
+    if (available !== null) return available
+    setLoadingAvailable(true)
+    setAvailableError('')
+    try {
+      const res = await listAvailableModels(accessToken, provider.id)
+      setAvailable(res.models)
+      setHasLoadedAvailable(true)
+      return res.models
+    } catch (e) {
+      const message = isApiError(e) ? e.message : t.models.availableFetchFailed
+      setAvailableError(message)
+      throw e
+    } finally {
+      setLoadingAvailable(false)
+    }
+  }, [accessToken, available, provider.id, t.models.availableFetchFailed])
 
   const handleImportAll = async () => {
-    if (!available) return
     setImporting(true)
     setErr('')
     try {
-      const unconfigured = available.filter((am) => !am.configured)
+      const source = await ensureAvailableLoaded()
+      const unconfigured = source.filter((am) => !am.configured)
       const byLowerId = new Map<string, AvailableModel>()
       for (const am of unconfigured) {
         const k = am.id.toLowerCase()
@@ -581,7 +599,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       const toEnable = created.filter((pm) => pm.model.toLowerCase().includes('gpt-4o-mini') && !embeddingIds.has(pm.model.toLowerCase()))
       await Promise.all(toEnable.map((pm) => patchProviderModel(accessToken, provider.id, pm.id, { show_in_picker: true })))
       onChanged()
-      void loadAvailable()
+      await loadAvailable()
     } catch (e) {
       setErr(isApiError(e) ? e.message : p.saveFailed)
     } finally {
@@ -619,7 +637,8 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
     }
     setDeletingAll(false)
     onChanged()
-    void loadAvailable()
+    setAvailable(null)
+    setHasLoadedAvailable(false)
   }
 
   const handleTogglePicker = async (modelId: string, current: boolean) => {
@@ -664,11 +683,15 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
               {p.deleteAll ?? 'Delete all'}
             </button>
           )}
-          {loadingAvailable && !available && <Loader2 size={12} className="animate-spin text-[var(--c-text-muted)]" />}
-          {unconfiguredCount > 0 && (
-            <button onClick={() => void handleImportAll()} disabled={importing} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] disabled:opacity-50">
+          {(loadingAvailable || importing) && !available && <Loader2 size={12} className="animate-spin text-[var(--c-text-muted)]" />}
+          {(unconfiguredCount > 0 || !hasLoadedAvailable) && (
+            <button onClick={() => void handleImportAll()} disabled={importing || loadingAvailable} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] disabled:opacity-50">
               <Download size={12} />
-              {importing ? (p.importing ?? '...') : `${p.importAll ?? 'Import all'} (${unconfiguredCount})`}
+              {loadingAvailable || importing
+                ? (p.importing ?? '...')
+                : unconfiguredCount > 0
+                  ? `${p.importAll ?? 'Import all'} (${unconfiguredCount})`
+                  : (p.importModels ?? 'Import models')}
             </button>
           )}
           <button onClick={() => { setAddingModel(true); setNewModel('') }} className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--c-btn-text)] transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]" style={{ background: 'var(--c-btn-bg)' }}>
@@ -686,7 +709,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
 
       {err && <p className="mt-2 text-xs text-[var(--c-status-error-text)]">{err}</p>}
       {availableError && <p className="mt-2 text-xs text-[var(--c-status-error-text)]">{availableError}</p>}
-      {!loadingAvailable && !availableError && available !== null && available.length === 0 && (
+      {hasLoadedAvailable && !loadingAvailable && !availableError && available !== null && available.length === 0 && (
         <p className="mt-2 text-xs text-[var(--c-text-muted)]">{t.models.noModelsAvailable}</p>
       )}
 

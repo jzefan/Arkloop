@@ -3338,6 +3338,117 @@ export function ChatPage() {
     return statusLabel
   }, [t])
   const liveSegments = liveAssistantTurn?.segments ?? []
+  const leadingLiveCop =
+    liveSegments[0]?.type === 'cop'
+      ? liveSegments[0]
+      : null
+  const trailingLiveSegments = leadingLiveCop ? liveSegments.slice(1) : liveSegments
+  const renderLiveCopSegment = (
+    seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
+    si: number,
+    key?: string,
+  ) => {
+    const lastSegIdx = liveSegments.length - 1
+    const preservingHandoffSegments = preserveLiveRunUi && !isStreaming
+    const copClosedByFollowingSeg = si < lastSegIdx
+    const copTimelineLive = liveRunUiActive && !copClosedByFollowingSeg
+    const copTimelineComplete = !copTimelineLive
+    const payload = copTimelinePayloadForSegment(seg, {
+      codeExecutions: dedupedTopLevelCodeExecutions,
+      fileOps: topLevelFileOps,
+      webFetches: topLevelWebFetches,
+      subAgents: topLevelSubAgents,
+      searchSteps,
+      sources: currentRunSourcesRef.current,
+    })
+    const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
+    const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
+    const thinkingRowsLive = !isSearchThread
+      ? thinkingRowsForCop(seg, {
+          live: liveRunUiActive,
+          segmentIndex: si,
+          lastSegmentIndex: lastSegIdx,
+        })
+      : []
+    const copInlineLive = !isSearchThread
+      ? copInlineTextRowsForCop(seg, {
+          live: liveRunUiActive,
+          segmentIndex: si,
+          lastSegmentIndex: lastSegIdx,
+        })
+      : []
+    if (
+      copSegmentCalls(seg).length === 0 &&
+      thinkingRowsLive.length === 0 &&
+      copInlineLive.length === 0 &&
+      liveWidgets.length === 0 &&
+      liveArts.length === 0
+    ) {
+      return null
+    }
+    const timelineTitleOverride =
+      preservingHandoffSegments
+        ? currentRunCopHeaderOverride({
+            title: seg.title,
+            steps: payload.steps,
+            hasCodeExecutions: !!(payload.codeExecutions && payload.codeExecutions.length > 0),
+            hasSubAgents: !!(payload.subAgents && payload.subAgents.length > 0),
+            hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
+            hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
+            hasGenericTools: !!(payload.genericTools && payload.genericTools.length > 0),
+            hasThinking: thinkingRowsLive.length > 0 || copInlineLive.length > 0,
+            handoffStatus: terminalRunHandoffStatus,
+          })
+        : seg.title?.trim() || undefined
+    const trailSeg = si + 1 <= lastSegIdx ? liveSegments[si + 1] : undefined
+    const trailingAssistantTextPresent =
+      trailSeg?.type === 'text' && trailSeg.content.length > 0
+    return (
+      <Fragment key={key}>
+        <CopTimeline
+          steps={payload.steps}
+          sources={payload.sources}
+          isComplete={copTimelineComplete}
+          codeExecutions={payload.codeExecutions}
+          onOpenCodeExecution={openCodePanel}
+          activeCodeExecutionId={codePanelExecution?.id}
+          subAgents={payload.subAgents}
+          fileOps={payload.fileOps}
+          webFetches={payload.webFetches}
+          genericTools={payload.genericTools}
+          headerOverride={timelineTitleOverride}
+          thinkingRows={thinkingRowsLive.length > 0 ? thinkingRowsLive : undefined}
+          copInlineTextRows={copInlineLive.length > 0 ? copInlineLive : undefined}
+          shimmer={copTimelineLive}
+          live={copTimelineLive}
+          preserveExpanded={preservingHandoffSegments}
+          thinkingStartedAt={copThinkingStartedAtMs}
+          trailingAssistantTextPresent={trailingAssistantTextPresent}
+          thinkingHint={thinkingHint}
+          accessToken={accessToken}
+          baseUrl={baseUrl}
+        />
+        {liveWidgets.map((entry) => (
+          <WidgetBlock
+            key={`live-w-${entry.toolCallId ?? entry.toolCallIndex}`}
+            html={entry.content ?? ''}
+            title={entry.title ?? 'Widget'}
+            complete={entry.complete}
+            loadingMessages={entry.loadingMessages}
+            onAction={handleArtifactAction}
+          />
+        ))}
+        {liveArts.map((entry) => (
+          <ArtifactStreamBlock
+            key={`live-art-${entry.toolCallId ?? entry.toolCallIndex}`}
+            entry={entry}
+            accessToken={accessToken}
+            onAction={handleArtifactAction}
+          />
+        ))}
+      </Fragment>
+    )
+  }
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--c-bg-page)]">
@@ -3567,33 +3678,33 @@ export function ChatPage() {
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
               {(showPendingThinkingShell || liveSegments.length > 0) && (
                 <div data-testid={preserveLiveRunUi ? 'current-run-handoff' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
-                  {/* pending thinking shimmer: Enter 后 thinking 内容到达前显示 */}
-                  {showPendingThinkingShell && (
-                    <CopTimeline
-                      key="pending-thinking"
-                      steps={[]}
-                      sources={[]}
-                      isComplete={false}
-                      live
-                      shimmer
-                      headerOverride={t.copThinkingInlineTitle}
-                      assistantThinking={{ markdown: '', live: true }}
-                      thinkingStartedAt={copThinkingStartedAtMs}
-                      accessToken={accessToken}
-                      baseUrl={baseUrl}
-                    />
+                  {(showPendingThinkingShell || leadingLiveCop) && (
+                    <Fragment>
+                      {leadingLiveCop
+                        ? renderLiveCopSegment(leadingLiveCop, 0)
+                        : (
+                          <CopTimeline
+                            steps={[]}
+                            sources={[]}
+                            isComplete={false}
+                            live
+                            shimmer
+                            thinkingHint={thinkingHint}
+                            thinkingStartedAt={copThinkingStartedAtMs}
+                            accessToken={accessToken}
+                            baseUrl={baseUrl}
+                          />
+                        )}
+                    </Fragment>
                   )}
-                  {liveSegments.map((seg, si) => {
+                  {trailingLiveSegments.map((seg, idx) => {
+                    const si = leadingLiveCop ? idx + 1 : idx
                     const lastSegIdx = liveSegments.length - 1
                     const lastTurnSeg = liveSegments[lastSegIdx]
-                    const preservingHandoffSegments = preserveLiveRunUi && !isStreaming
                     const mdTypewriterDone =
                       !liveRunUiActive ||
                       lastTurnSeg?.type !== 'text' ||
                       si !== lastSegIdx
-                    const copClosedByFollowingSeg = si < lastSegIdx
-                    const copTimelineLive = liveRunUiActive && !copClosedByFollowingSeg
-                    const copTimelineComplete = !copTimelineLive
 
                     return seg.type === 'text' ? (
                       <LiveTurnMarkdown
@@ -3611,103 +3722,7 @@ export function ChatPage() {
                         }
                       />
                     ) : (
-                      (() => {
-                        const payload = copTimelinePayloadForSegment(seg, {
-                          codeExecutions: dedupedTopLevelCodeExecutions,
-                          fileOps: topLevelFileOps,
-                          webFetches: topLevelWebFetches,
-                          subAgents: topLevelSubAgents,
-                          searchSteps,
-                          sources: currentRunSourcesRef.current,
-                        })
-                        const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
-                        const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
-                        const thinkingRowsLive = !isSearchThread
-                          ? thinkingRowsForCop(seg, {
-                              live: liveRunUiActive,
-                              segmentIndex: si,
-                              lastSegmentIndex: lastSegIdx,
-                            })
-                          : []
-                        const copInlineLive = !isSearchThread
-                          ? copInlineTextRowsForCop(seg, {
-                              live: liveRunUiActive,
-                              segmentIndex: si,
-                              lastSegmentIndex: lastSegIdx,
-                            })
-                          : []
-                        if (
-                          copSegmentCalls(seg).length === 0 &&
-                          thinkingRowsLive.length === 0 &&
-                          copInlineLive.length === 0 &&
-                          liveWidgets.length === 0 &&
-                          liveArts.length === 0
-                        ) {
-                          return null
-                        }
-                        const timelineTitleOverride =
-                          preservingHandoffSegments
-                            ? currentRunCopHeaderOverride({
-                                title: seg.title,
-                                steps: payload.steps,
-                                hasCodeExecutions: !!(payload.codeExecutions && payload.codeExecutions.length > 0),
-                                hasSubAgents: !!(payload.subAgents && payload.subAgents.length > 0),
-                                hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
-                                hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
-                                hasGenericTools: !!(payload.genericTools && payload.genericTools.length > 0),
-                                hasThinking: thinkingRowsLive.length > 0 || copInlineLive.length > 0,
-                                handoffStatus: terminalRunHandoffStatus,
-                              })
-                            : seg.title?.trim() || undefined
-                        const trailSeg = si + 1 <= lastSegIdx ? liveSegments[si + 1] : undefined
-                        const trailingAssistantTextPresent =
-                          trailSeg?.type === 'text' && trailSeg.content.length > 0
-                        return (
-                          <Fragment key={`live-acw-${si}`}>
-                            <CopTimeline
-                              steps={payload.steps}
-                              sources={payload.sources}
-                              isComplete={copTimelineComplete}
-                              codeExecutions={payload.codeExecutions}
-                              onOpenCodeExecution={openCodePanel}
-                              activeCodeExecutionId={codePanelExecution?.id}
-                              subAgents={payload.subAgents}
-                              fileOps={payload.fileOps}
-                              webFetches={payload.webFetches}
-                              genericTools={payload.genericTools}
-                              headerOverride={timelineTitleOverride}
-                              thinkingRows={thinkingRowsLive.length > 0 ? thinkingRowsLive : undefined}
-                              copInlineTextRows={copInlineLive.length > 0 ? copInlineLive : undefined}
-                              shimmer={copTimelineLive}
-                              live={copTimelineLive}
-                              preserveExpanded={preservingHandoffSegments}
-                              thinkingStartedAt={copThinkingStartedAtMs}
-                              trailingAssistantTextPresent={trailingAssistantTextPresent}
-                              thinkingHint={thinkingHint}
-                              accessToken={accessToken}
-                              baseUrl={baseUrl}
-                            />
-                            {liveWidgets.map((entry) => (
-                              <WidgetBlock
-                                key={`live-w-${entry.toolCallId ?? entry.toolCallIndex}`}
-                                html={entry.content ?? ''}
-                                title={entry.title ?? 'Widget'}
-                                complete={entry.complete}
-                                loadingMessages={entry.loadingMessages}
-                                onAction={handleArtifactAction}
-                              />
-                            ))}
-                            {liveArts.map((entry) => (
-                              <ArtifactStreamBlock
-                                key={`live-art-${entry.toolCallId ?? entry.toolCallIndex}`}
-                                entry={entry}
-                                accessToken={accessToken}
-                                onAction={handleArtifactAction}
-                              />
-                            ))}
-                          </Fragment>
-                        )
-                      })()
+                      renderLiveCopSegment(seg, si, `live-acw-${si}`)
                     )
                   })}
                 </div>
