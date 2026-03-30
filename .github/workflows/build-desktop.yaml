@@ -173,6 +173,7 @@ jobs:
           name: desktop-installer-${{ matrix.platform }}-${{ matrix.electron_arch }}
           path: |
             src/apps/desktop/release/*.dmg
+            src/apps/desktop/release/*.zip
             src/apps/desktop/release/*.AppImage
             src/apps/desktop/release/*.deb
             src/apps/desktop/release/*.exe

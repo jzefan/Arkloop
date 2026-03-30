@@ -420,12 +420,12 @@ export async function ensureOpenCLI(): Promise<void> {
 
 function resolveBinaryPath(): string {
   if (app.isPackaged) {
+    const downloaded = getSidecarPath()
+    if (fs.existsSync(downloaded)) return downloaded
+
     const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
     const bundledPath = path.join(process.resourcesPath, 'sidecar', bundledName)
     if (fs.existsSync(bundledPath)) return bundledPath
-
-    const downloaded = getSidecarPath()
-    if (fs.existsSync(downloaded)) return downloaded
     return bundledPath
   }
 
