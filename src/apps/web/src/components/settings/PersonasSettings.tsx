@@ -909,7 +909,7 @@ export function PersonasSettings({ accessToken }: Props) {
           <h3 className="text-base font-semibold text-[var(--c-text-heading)]">
             {a.title}
           </h3>
-          <p className="mt-1 text-sm text-[var(--c-text-secondary)]">
+          <p className="mt-1 text-xs text-[var(--c-text-muted)]">
             {a.subtitle}
           </p>
         </div>

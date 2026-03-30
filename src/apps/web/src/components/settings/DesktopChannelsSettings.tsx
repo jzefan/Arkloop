@@ -67,7 +67,7 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <SettingsSectionHeader title={ct.title} description={ct.subtitle} />
-      <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="w-fit" />
+      <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
 
       {loading ? (
         <div className="flex items-center justify-center py-20 text-[var(--c-text-muted)]">

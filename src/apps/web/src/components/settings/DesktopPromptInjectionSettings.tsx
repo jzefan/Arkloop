@@ -132,7 +132,7 @@ export function DesktopPromptInjectionSettings({ accessToken }: Props) {
     <div className="flex max-w-[900px] flex-col gap-6 pb-10">
       <SettingsSectionHeader title={ts.title} description={ts.description} />
 
-      <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="w-fit" />
+      <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
 
       {activeTab === 'layers' && (
         loading ? (

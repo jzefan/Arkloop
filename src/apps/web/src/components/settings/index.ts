@@ -12,6 +12,7 @@ export { SkillsSettings } from "./SkillsSettings";
 export { MCPSettings } from "./MCPSettings";
 export { ConnectorsSettings } from "./ConnectorsSettings";
 export { SearchFetchSettings } from "./SearchFetchSettings";
+export { ToolsSettings } from "./ToolsSettings";
 export { MemorySettings } from "./MemorySettings";
 export { ConnectionSettings } from "./ConnectionSettings";
 export { ChatSettings } from "./ChatSettings";
