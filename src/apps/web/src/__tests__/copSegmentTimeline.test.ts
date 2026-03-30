@@ -100,6 +100,22 @@ describe('copTimelinePayloadForSegment', () => {
     ])
   })
 
+  it('show_widget、create_artifact、browser 不进入 generic fallback', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          call('w1', 'show_widget', 1),
+          call('a1', 'create_artifact', 2),
+          call('b1', 'browser', 3),
+        ],
+      },
+      { sources: [] },
+    )
+    expect(r.genericTools).toBeUndefined()
+  })
+
   it('toolCallIdsInCopTimelines 汇总 COP 时间轴已占用的 id', () => {
     const ids = toolCallIdsInCopTimelines(
       {

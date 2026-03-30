@@ -167,6 +167,38 @@ function flushCopToSegments(
   }
 }
 
+function attachResultToItems(
+  items: CopBlockItem[],
+  toolCallId: string,
+  result: unknown,
+  errorClass?: string,
+): boolean {
+  for (const item of items) {
+    if (item.kind !== 'call') continue
+    if (item.call.toolCallId !== toolCallId) continue
+    item.call.result = result
+    if (errorClass) item.call.errorClass = errorClass
+    return true
+  }
+  return false
+}
+
+function attachResultToSegments(
+  segments: AssistantTurnSegment[],
+  toolCallId: string,
+  result: unknown,
+  errorClass?: string,
+): boolean {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const segment = segments[i]
+    if (segment?.type !== 'cop') continue
+    if (attachResultToItems(segment.items, toolCallId, result, errorClass)) {
+      return true
+    }
+  }
+  return false
+}
+
 /** 将当前 open cop 结束前推入 segments 的不可变快照（供 React state）。 */
 export function snapshotAssistantTurn(state: AssistantTurnFoldState): AssistantTurnUi {
   const segments = state.segments.map(cloneSegment)
@@ -215,16 +247,15 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
     }
   }
 
-    const attachResultToCop = (toolCallId: string, toolName: string, result: unknown, errorClass?: string) => {
-    if (!currentCop) return
-    for (const item of currentCop.items) {
-      if (item.kind !== 'call') continue
-      if (item.call.toolCallId !== toolCallId) continue
-      item.call.result = result
-      if (errorClass) item.call.errorClass = errorClass
+  const attachResultToCop = (toolCallId: string, toolName: string, result: unknown, errorClass?: string) => {
+    if (currentCop && attachResultToItems(currentCop.items, toolCallId, result, errorClass)) {
       return
     }
-    currentCop.items.push({
+    if (attachResultToSegments(segments, toolCallId, result, errorClass)) return
+    ensureCop()
+    const targetCop = currentCop
+    if (targetCop == null) return
+    targetCop.items.push({
       kind: 'call',
       call: {
         toolCallId,
@@ -235,7 +266,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       },
       seq: event.seq,
     })
-    sealThinkingBeforeLatestCall(currentCop.items, eventTs)
+    sealThinkingBeforeLatestCall(targetCop.items, eventTs)
   }
 
   if (event.type === 'message.delta') {
