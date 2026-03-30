@@ -20,7 +20,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { Modal } from '@arkloop/shared'
+import { Modal, PillToggle } from '@arkloop/shared'
 import {
   type InstalledSkill,
   type MarketSkill,
@@ -704,30 +704,24 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
                         </button>
                       ) : (
                         <>
-                          <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
-                            <input
-                              type="checkbox"
-                              checked={isEnabled}
-                              disabled={busy}
-                              onChange={async () => {
-                                setBusySkillId(`builtin:${skill.skill_key}@${skill.version}`)
-                                try {
-                                  const newStatus = isEnabled ? 'manual' : 'auto'
-                                  await setPlatformSkillOverride(accessToken, skill.skill_key, skill.version, newStatus)
-                                  const refreshed = await listPlatformSkills(accessToken)
-                                  setBuiltinSkills(refreshed)
-                                  await refreshInstalled()
-                                } catch {
-                                  setError(skillText.disableFailed)
-                                } finally {
-                                  setBusySkillId(null)
-                                }
-                              }}
-                              className="peer sr-only"
-                            />
-                            <span className="h-5 w-9 rounded-full transition-colors" style={{ background: isEnabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }} />
-                            <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4" style={{ background: isEnabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }} />
-                          </label>
+                          <PillToggle
+                            checked={isEnabled}
+                            disabled={busy}
+                            onChange={async () => {
+                              setBusySkillId(`builtin:${skill.skill_key}@${skill.version}`)
+                              try {
+                                const newStatus = isEnabled ? 'manual' : 'auto'
+                                await setPlatformSkillOverride(accessToken, skill.skill_key, skill.version, newStatus)
+                                const refreshed = await listPlatformSkills(accessToken)
+                                setBuiltinSkills(refreshed)
+                                await refreshInstalled()
+                              } catch {
+                                setError(skillText.disableFailed)
+                              } finally {
+                                setBusySkillId(null)
+                              }
+                            }}
+                          />
                           <button
                             type="button"
                             disabled={busy}
@@ -872,26 +866,16 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
                     )}
                   </div>
 
-                  <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
+                  <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
+                    <PillToggle
                       checked={enabled}
                       disabled={busy}
                       onChange={() => {
                         if (enabled) void handleDisable(item)
                         else void handleEnable(item)
                       }}
-                      className="peer sr-only"
                     />
-                    <span
-                      className="h-5 w-9 rounded-full transition-colors"
-                      style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }}
-                    />
-                    <span
-                      className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
-                      style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
-                    />
-                  </label>
+                  </div>
 
                   <div className="relative" ref={menuSkillId === item.id ? cardMenuRef : undefined} onClick={(e) => e.stopPropagation()}>
                     <button
@@ -1245,19 +1229,13 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
                   <span className="text-xs text-[var(--c-text-tertiary)]">
                     {platformAvailabilityLabel(item.platform_status) || (enabled ? skillText.enabledByDefault : skillText.disable)}
                   </span>
-                  <label className="relative inline-flex shrink-0 cursor-pointer items-center">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={() => {
-                        if (enabled) void handleDisable(item)
-                        else void handleEnable(item)
-                      }}
-                      className="peer sr-only"
-                    />
-                    <span className="h-5 w-9 rounded-full transition-colors" style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }} />
-                    <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4" style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }} />
-                  </label>
+                  <PillToggle
+                    checked={enabled}
+                    onChange={() => {
+                      if (enabled) void handleDisable(item)
+                      else void handleEnable(item)
+                    }}
+                  />
                 </div>
               </div>
             </div>

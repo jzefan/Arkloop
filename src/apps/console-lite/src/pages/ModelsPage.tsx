@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import type { LiteOutletContext } from '../layouts/LiteLayout'
 import { PageHeader } from '../components/PageHeader'
-import { useToast } from '@arkloop/shared'
+import { useToast, PillToggle } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { isApiError } from '../api/client'
 import {
@@ -642,25 +642,7 @@ function ModelsSection({
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 {/* show_in_picker toggle */}
-                <label
-                  className="relative inline-flex shrink-0 cursor-pointer items-center"
-                  title={pm.show_in_picker ? (tc.hideFromPicker ?? 'Hide from picker') : (tc.showInPicker ?? 'Show in picker')}
-                >
-                  <input
-                    type="checkbox"
-                    checked={pm.show_in_picker}
-                    onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)}
-                    className="peer sr-only"
-                  />
-                  <span
-                    className="h-5 w-9 rounded-full transition-colors"
-                    style={{ background: pm.show_in_picker ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }}
-                  />
-                  <span
-                    className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
-                    style={{ background: pm.show_in_picker ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
-                  />
-                </label>
+                <PillToggle checked={pm.show_in_picker} onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)} />
                 {/* Delete */}
                 <button
                   onClick={() => void handleDeleteModel(pm.id)}

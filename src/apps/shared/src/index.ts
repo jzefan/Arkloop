@@ -112,3 +112,7 @@ export { redactDataUrlsInString, jsonStringifyForDebugDisplay } from './debugPay
 
 export { Button } from './components/Button'
 export type { ButtonProps } from './components/Button'
+
+export { PillToggle } from './components/PillToggle'
+
+export { TabBar } from './components/prompt-injection/TabBar'

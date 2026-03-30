@@ -16,6 +16,7 @@ import {
   isApiError,
 } from '../api'
 import { routeAdvancedJsonFromAvailableCatalog } from '@arkloop/shared/llm/available-catalog-advanced-json'
+import { PillToggle } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { ModelOptionsModal } from './ModelOptionsModal'
 
@@ -629,25 +630,7 @@ function ModelsSection({
                 )}
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <label
-                  className="relative inline-flex shrink-0 cursor-pointer items-center"
-                  title={pm.show_in_picker ? m.hideFromPicker : m.showInPicker}
-                >
-                  <input
-                    type="checkbox"
-                    checked={pm.show_in_picker}
-                    onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)}
-                    className="peer sr-only"
-                  />
-                  <span
-                    className="h-5 w-9 rounded-full transition-colors"
-                    style={{ background: pm.show_in_picker ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }}
-                  />
-                  <span
-                    className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
-                    style={{ background: pm.show_in_picker ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
-                  />
-                </label>
+                <PillToggle checked={pm.show_in_picker} onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)} />
                 <button
                   onClick={() => setEditingModel(pm)}
                   className="rounded p-1.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"

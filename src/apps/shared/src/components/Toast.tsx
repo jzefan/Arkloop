@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { ToastContext, type ToastVariant } from './toast-context'
@@ -7,6 +7,7 @@ type Toast = {
   id: string
   message: string
   variant: ToastVariant
+  exiting?: boolean
 }
 
 const variantText: Record<ToastVariant, string> = {
@@ -17,7 +18,16 @@ const variantText: Record<ToastVariant, string> = {
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-4 py-2.5 shadow-lg">
+    <div
+      className={[
+        'flex items-center gap-2 rounded-lg px-4 py-2.5',
+        toast.exiting ? 'toast-exit' : 'toast-enter',
+      ].join(' ')}
+      style={{
+        border: '0.5px solid var(--c-border-subtle)',
+        background: 'var(--c-bg-menu)',
+      }}
+    >
       <span className={`flex-1 text-sm ${variantText[toast.variant]}`}>{toast.message}</span>
       <button
         onClick={onDismiss}
@@ -32,17 +42,21 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
 
+  const dismiss = useCallback((id: string) => {
+    // mark exiting first, then remove after animation
+    setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t))
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id))
+    }, 200)
+  }, [])
+
   const addToast = useCallback((message: string, variant: ToastVariant = 'neutral') => {
     const id = crypto.randomUUID()
     setToasts((prev) => [...prev, { id, message, variant }])
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id))
+      dismiss(id)
     }, 4000)
-  }, [])
-
-  const dismiss = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }, [])
+  }, [dismiss])
 
   return (
     <ToastContext.Provider value={{ addToast }}>

@@ -4,12 +4,12 @@ type Props = {
   checked: boolean
   onChange: (next: boolean) => void
   disabled?: boolean
+  forceHover?: boolean
 }
 
-/** 与 MemorySettings 等一致的胶囊开关 */
-export function SettingsPillToggle({ checked, onChange, disabled }: Props) {
+export function PillToggle({ checked, onChange, disabled, forceHover }: Props) {
   const [hovered, setHovered] = useState(false)
-  const showRing = hovered && !disabled
+  const showRing = (hovered || forceHover) && !disabled
 
   return (
     <label
@@ -25,15 +25,26 @@ export function SettingsPillToggle({ checked, onChange, disabled }: Props) {
         className="peer sr-only"
       />
       <span
-        className="h-5 w-9 rounded-full transition-[background-color,box-shadow] duration-200"
+        className="block rounded-full"
         style={{
+          width: 36,
+          height: 20,
           background: checked ? 'var(--c-btn-bg)' : 'var(--c-border-mid)',
           boxShadow: showRing ? '0 0 0 1.5px var(--c-accent)' : '0 0 0 0px var(--c-accent)',
+          transition: 'background-color 200ms, box-shadow 200ms',
         }}
       />
       <span
-        className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform duration-200 peer-checked:translate-x-4"
-        style={{ background: checked ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }}
+        className="absolute rounded-full"
+        style={{
+          width: 16,
+          height: 16,
+          top: 2,
+          left: 2,
+          background: checked ? 'var(--c-btn-text)' : 'var(--c-bg-page)',
+          transform: checked ? 'translateX(16px)' : 'translateX(0)',
+          transition: 'transform 200ms, background-color 200ms',
+        }}
       />
     </label>
   )

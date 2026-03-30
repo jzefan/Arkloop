@@ -138,7 +138,7 @@ export function SecurityPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <p className="mb-4 text-xs text-[var(--c-text-muted)]">{ts.description}</p>
 
-        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
+        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="w-fit" />
 
         {activeTab === 'layers' && (
           loading ? (

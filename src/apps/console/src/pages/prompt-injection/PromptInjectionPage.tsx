@@ -133,7 +133,7 @@ export function PromptInjectionPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <p className="mb-4 text-sm text-[var(--c-text-secondary)]">{tp.description}</p>
 
-        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} />
+        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="w-fit" />
 
         {activeTab === 'layers' && (
           loading ? (

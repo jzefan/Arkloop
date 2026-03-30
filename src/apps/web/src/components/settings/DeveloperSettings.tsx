@@ -5,7 +5,7 @@ import { getDesktopApi } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
 import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents } from '../../storage'
 import { RunsSettings } from './RunsSettings'
-import { SettingsPillToggle } from './_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
 
 type Props = {
@@ -108,7 +108,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.showRunEventsDesc}
             </div>
           </div>
-          <SettingsPillToggle
+          <PillToggle
             checked={showRunEvents}
             onChange={(next) => {
               setShowRunEvents(next)

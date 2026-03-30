@@ -1193,6 +1193,21 @@ button:not(:disabled) {
   }
 }
 
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+@keyframes toast-slide-out {
+  from { opacity: 1; transform: translateY(0)  scale(1); }
+  to   { opacity: 0; transform: translateY(4px) scale(0.96); }
+}
+.toast-enter {
+  animation: toast-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toast-exit {
+  animation: toast-slide-out 0.16s ease-in forwards;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .user-prompt-bubble-enter {
     animation-name: user-prompt-enter-light;

@@ -10,7 +10,7 @@ import {
   routeAdvancedJsonFromAvailableCatalog,
   stripAvailableCatalogFromAdvancedJson,
 } from '@arkloop/shared/llm/available-catalog-advanced-json'
-import { SettingsPillToggle } from './settings/_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 
 type Labels = {
   modelOptionsTitle: string
@@ -406,7 +406,7 @@ function CapabilityTile({
         <span className="text-sm font-medium">{label}</span>
       </div>
       <span onClick={(e) => e.stopPropagation()}>
-        <SettingsPillToggle checked={checked} onChange={onChange} />
+        <PillToggle checked={checked} onChange={onChange} />
       </span>
     </button>
   )

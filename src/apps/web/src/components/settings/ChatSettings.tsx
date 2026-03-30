@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { CheckCircle, XCircle } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { XCircle } from 'lucide-react'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
-  getPlatformSetting,
+  listPlatformSettings,
   updatePlatformSetting,
 } from '../../api-admin'
 import { bridgeClient } from '../../api-bridge'
-import { SettingsPillToggle } from './_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 import { useToast } from '@arkloop/shared'
 
 const EXEC_MODE_KEY = 'arkloop:desktop:execution_mode'
@@ -24,7 +24,7 @@ const KEY_TRIGGER_LEGACY = 'context.compact.persist_trigger_approx_tokens'
 const KEY_KEEP = 'context.compact.persist_keep_last_messages'
 
 const cardShell =
-  'overflow-hidden rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
+  'rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
 
 const rangeClass =
   'h-2 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-[var(--c-bg-deep)] ' +
@@ -51,6 +51,25 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return n
 }
 
+function readStoredExecutionMode(): 'local' | 'vm' | null {
+  try {
+    if (typeof localStorage?.getItem !== 'function') return null
+    const stored = localStorage.getItem(EXEC_MODE_KEY)
+    return stored === 'local' || stored === 'vm' ? stored : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredExecutionMode(mode: 'local' | 'vm') {
+  try {
+    if (typeof localStorage?.setItem !== 'function') return
+    localStorage.setItem(EXEC_MODE_KEY, mode)
+  } catch {
+    return
+  }
+}
+
 export function ChatSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const st = t.desktopSettings
@@ -62,46 +81,51 @@ export function ChatSettings({ accessToken }: Props) {
   const [autoOn, setAutoOn] = useState(false)
   const [thresholdPct, setThresholdPct] = useState(80)
   const [keepLast, setKeepLast] = useState(4)
+  const [compactCardHovered, setCompactCardHovered] = useState(false)
+  const [execCardHovered, setExecCardHovered] = useState(false)
 
   const [executionMode, setExecutionMode] = useState<'local' | 'vm'>('local')
   const [execModeLoading, setExecModeLoading] = useState(true)
   const [execModeError, setExecModeError] = useState('')
-  const [execSaveResult, setExecSaveResult] = useState<'ok' | 'error' | null>(null)
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const initializedRef = useRef(false)
+  const persistedRef = useRef({ autoOn: false, thresholdPct: 80, keepLast: DEFAULT_KEEP_LAST_MESSAGES })
 
   const load = useCallback(async () => {
     setLoadErr('')
     setLoading(true)
     try {
-      const [en, pe, pctRow, fbRow, trLeg, ke] = await Promise.all([
-        getPlatformSetting(accessToken, KEY_ENABLED),
-        getPlatformSetting(accessToken, KEY_PERSIST),
-        getPlatformSetting(accessToken, KEY_PCT),
-        getPlatformSetting(accessToken, KEY_FALLBACK),
-        getPlatformSetting(accessToken, KEY_TRIGGER_LEGACY),
-        getPlatformSetting(accessToken, KEY_KEEP),
-      ])
-      const enabled = parseBool(en?.value)
-      const persist = parseBool(pe?.value)
-      setAutoOn(enabled && persist)
+      const rows = await listPlatformSettings(accessToken)
+      const values = new Map(rows.map((row) => [row.key, row.value]))
+      const enabled = parseBool(values.get(KEY_ENABLED))
+      const persist = parseBool(values.get(KEY_PERSIST))
+      const nextAutoOn = enabled && persist
 
-      let pct = parsePositiveInt(pctRow?.value, 0)
+      let pct = parsePositiveInt(values.get(KEY_PCT), 0)
       if (pct > 100) pct = 100
       if (pct <= 0) {
-        const fb = parsePositiveInt(fbRow?.value, DEFAULT_FALLBACK_WINDOW)
-        const triggerTok = parsePositiveInt(trLeg?.value, 0)
+        const fb = parsePositiveInt(values.get(KEY_FALLBACK), DEFAULT_FALLBACK_WINDOW)
+        const triggerTok = parsePositiveInt(values.get(KEY_TRIGGER_LEGACY), 0)
         if (triggerTok > 0 && fb > 0) {
           pct = Math.min(100, Math.max(5, Math.round((triggerTok / fb) * 100)))
         } else {
           pct = 80
         }
       }
-      setThresholdPct(Math.min(100, Math.max(5, pct)))
+      const nextThresholdPct = Math.min(100, Math.max(5, pct))
 
-      const keep = parsePositiveInt(ke?.value, DEFAULT_KEEP_LAST_MESSAGES)
-      setKeepLast(Math.min(50, Math.max(2, keep)))
+      const keep = parsePositiveInt(values.get(KEY_KEEP), DEFAULT_KEEP_LAST_MESSAGES)
+      const nextKeepLast = Math.min(50, Math.max(2, keep))
+
+      persistedRef.current = {
+        autoOn: nextAutoOn,
+        thresholdPct: nextThresholdPct,
+        keepLast: nextKeepLast,
+      }
+      setAutoOn(nextAutoOn)
+      setThresholdPct(nextThresholdPct)
+      setKeepLast(nextKeepLast)
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : t.requestFailed)
     } finally {
@@ -114,28 +138,42 @@ export function ChatSettings({ accessToken }: Props) {
     void load()
   }, [load])
 
+  const normalizedState = useMemo(() => ({
+    autoOn,
+    thresholdPct: Math.min(100, Math.max(5, Math.round(thresholdPct))),
+    keepLast: Math.min(50, Math.max(2, Math.floor(keepLast))),
+  }), [autoOn, thresholdPct, keepLast])
+
   const handleSave = useCallback(async () => {
-    const keepClamped = Math.min(50, Math.max(2, Math.floor(keepLast)))
+    const keepClamped = normalizedState.keepLast
     if (keepClamped !== keepLast) setKeepLast(keepClamped)
 
-    const pctClamped = Math.min(100, Math.max(5, Math.round(thresholdPct)))
+    const pctClamped = normalizedState.thresholdPct
     if (pctClamped !== thresholdPct) setThresholdPct(pctClamped)
 
     try {
-      const enStr = autoOn ? 'true' : 'false'
+      const enStr = normalizedState.autoOn ? 'true' : 'false'
       const keepStr = String(keepClamped)
       await updatePlatformSetting(accessToken, KEY_ENABLED, enStr)
       await updatePlatformSetting(accessToken, KEY_PERSIST, enStr)
       await updatePlatformSetting(accessToken, KEY_PCT, String(pctClamped))
       await updatePlatformSetting(accessToken, KEY_KEEP, keepStr)
+      persistedRef.current = normalizedState
       addToast(st.chatCompactSaved, 'success')
     } catch (e) {
       addToast(e instanceof Error ? e.message : t.requestFailed, 'error')
     }
-  }, [accessToken, autoOn, keepLast, thresholdPct, t.requestFailed, st.chatCompactSaved, addToast])
+  }, [accessToken, addToast, keepLast, normalizedState, st.chatCompactSaved, t.requestFailed, thresholdPct])
 
   useEffect(() => {
     if (!initializedRef.current) return
+    if (
+      persistedRef.current.autoOn === normalizedState.autoOn &&
+      persistedRef.current.thresholdPct === normalizedState.thresholdPct &&
+      persistedRef.current.keepLast === normalizedState.keepLast
+    ) {
+      return
+    }
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     debounceTimerRef.current = setTimeout(() => {
       void handleSave()
@@ -143,20 +181,20 @@ export function ChatSettings({ accessToken }: Props) {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [autoOn, thresholdPct, keepLast, handleSave])
+  }, [handleSave, normalizedState])
 
   const loadExecutionMode = useCallback(async () => {
     setExecModeLoading(true)
     setExecModeError('')
     // Read from localStorage first (persists across restarts), then sync with bridge
-    const stored = localStorage.getItem(EXEC_MODE_KEY) as 'local' | 'vm' | null
-    if (stored === 'local' || stored === 'vm') {
+    const stored = readStoredExecutionMode()
+    if (stored) {
       setExecutionMode(stored)
     }
     try {
       const mode = await bridgeClient.getExecutionMode()
       setExecutionMode(mode)
-      localStorage.setItem(EXEC_MODE_KEY, mode)
+      writeStoredExecutionMode(mode)
     } catch (e) {
       if (!stored) {
         setExecModeError(e instanceof Error ? e.message : 'Failed to load execution mode')
@@ -173,18 +211,15 @@ export function ChatSettings({ accessToken }: Props) {
   const handleExecutionModeToggle = useCallback(async (vm: boolean) => {
     const newMode = vm ? 'vm' : 'local'
     setExecModeError('')
-    setExecSaveResult(null)
     setExecutionMode(newMode)
-    localStorage.setItem(EXEC_MODE_KEY, newMode)
+    writeStoredExecutionMode(newMode)
     try {
       await bridgeClient.setExecutionMode(newMode)
-      setExecSaveResult('ok')
-      window.setTimeout(() => setExecSaveResult(null), 3000)
+      addToast(st.chatCompactSaved, 'success')
     } catch (e) {
       setExecModeError(e instanceof Error ? e.message : 'Failed to set execution mode')
-      setExecSaveResult('error')
     }
-  }, [])
+  }, [addToast, st.chatCompactSaved])
 
   if (loading) {
     return (
@@ -207,6 +242,8 @@ export function ChatSettings({ accessToken }: Props) {
           role="button"
           tabIndex={0}
           className="flex cursor-pointer items-center justify-between gap-4 px-4 py-4 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--c-bg-page)]"
+          onMouseEnter={() => setCompactCardHovered(true)}
+          onMouseLeave={() => setCompactCardHovered(false)}
           onClick={() => setAutoOn((v) => !v)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -220,7 +257,7 @@ export function ChatSettings({ accessToken }: Props) {
             <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{st.chatCompactEnableDesc}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-            <SettingsPillToggle checked={autoOn} onChange={setAutoOn} />
+            <PillToggle checked={autoOn} onChange={setAutoOn} forceHover={compactCardHovered} />
           </div>
         </div>
 
@@ -278,35 +315,41 @@ export function ChatSettings({ accessToken }: Props) {
 
       {/* Execution Mode */}
       <div className={cardShell}>
-        <div className="flex items-center justify-between gap-4 px-4 py-4">
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex cursor-pointer items-center justify-between gap-4 px-4 py-4 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--c-bg-page)]"
+          onMouseEnter={() => setExecCardHovered(true)}
+          onMouseLeave={() => setExecCardHovered(false)}
+          onClick={() => { if (!execModeLoading) void handleExecutionModeToggle(executionMode !== 'vm') }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              if (!execModeLoading) void handleExecutionModeToggle(executionMode !== 'vm')
+            }
+          }}
+        >
           <div className="min-w-0 flex-1 pr-2">
             <p className="text-sm font-medium text-[var(--c-text-heading)]">{st.chatCompactExecutionModeLabel}</p>
             <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
               {executionMode === 'vm' ? st.chatCompactExecutionModeSandbox : st.chatCompactExecutionModeTerminal}
             </p>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {execModeLoading ? (
               <div className="h-6 w-12 animate-pulse rounded-full bg-[var(--c-bg-deep)]" />
             ) : (
-              <SettingsPillToggle
+              <PillToggle
                 checked={executionMode === 'vm'}
                 onChange={handleExecutionModeToggle}
+                forceHover={execCardHovered}
               />
             )}
           </div>
         </div>
-        {(execModeError || execSaveResult) ? (
+        {execModeError ? (
           <div className="border-t border-[var(--c-border-subtle)] flex items-center gap-2 px-4 py-2 text-xs">
-            {execSaveResult === 'ok' && (
-              <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} />{st.chatCompactSaved}</span>
-            )}
-            {execSaveResult === 'error' && (
-              <span className="flex items-center gap-1.5 text-red-400"><XCircle size={13} />{st.chatCompactSaveError}</span>
-            )}
-            {execModeError && !execSaveResult && (
-              <span className="text-[var(--c-status-error)]">{execModeError}</span>
-            )}
+            <span className="flex items-center gap-1.5 text-[var(--c-status-error)]"><XCircle size={13} />{execModeError}</span>
           </div>
         ) : null}
       </div>

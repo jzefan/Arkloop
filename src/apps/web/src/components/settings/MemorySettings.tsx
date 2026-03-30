@@ -9,7 +9,7 @@ import {
   HardDrive,
   Database,
 } from 'lucide-react'
-import { ConfirmDialog } from '@arkloop/shared'
+import { ConfirmDialog, PillToggle } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
@@ -831,17 +831,10 @@ export function MemorySettings({ accessToken }: Props) {
           <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryEnabled}</p>
           <p className="text-xs text-[var(--c-text-muted)]">{ds.memoryEnabledDesc}</p>
         </div>
-        {/* Toggle — same pattern as ModelConfigContent.tsx */}
-        <label className="relative inline-flex shrink-0 cursor-pointer items-center">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => { if (memConfig) void saveConfig({ ...memConfig, enabled: e.target.checked }) }}
-            className="peer sr-only"
-          />
-          <span className="h-5 w-9 rounded-full transition-colors" style={{ background: enabled ? 'var(--c-btn-bg)' : 'var(--c-border-mid)' }} />
-          <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4" style={{ background: enabled ? 'var(--c-btn-text)' : 'var(--c-bg-page)' }} />
-        </label>
+        <PillToggle
+          checked={enabled}
+          onChange={(next) => { if (memConfig) void saveConfig({ ...memConfig, enabled: next }) }}
+        />
       </div>
 
       {enabled && (
@@ -877,32 +870,14 @@ export function MemorySettings({ accessToken }: Props) {
                     <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryAutoSummarizeLabel}</p>
                     <p className="text-xs text-[var(--c-text-muted)]">{ds.memoryAutoSummarizeDesc}</p>
                   </div>
-                  <label
-                    className={`relative inline-flex shrink-0 items-center ${isLocal ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={memConfig.memoryCommitEachTurn !== false}
-                      disabled={isLocal}
-                      onChange={(e) => {
-                        if (isLocal) return
-                        void saveConfig({ ...memConfig, memoryCommitEachTurn: e.target.checked })
-                      }}
-                      className="peer sr-only"
-                    />
-                    <span
-                      className="h-5 w-9 rounded-full transition-colors"
-                      style={{
-                        background: memConfig.memoryCommitEachTurn !== false ? 'var(--c-btn-bg)' : 'var(--c-border-mid)',
-                      }}
-                    />
-                    <span
-                      className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full transition-transform peer-checked:translate-x-4"
-                      style={{
-                        background: memConfig.memoryCommitEachTurn !== false ? 'var(--c-btn-text)' : 'var(--c-bg-page)',
-                      }}
-                    />
-                  </label>
+                  <PillToggle
+                    checked={memConfig.memoryCommitEachTurn !== false}
+                    onChange={(next) => {
+                      if (isLocal) return
+                      void saveConfig({ ...memConfig, memoryCommitEachTurn: next })
+                    }}
+                    disabled={isLocal}
+                  />
                 </div>
                 {isLocal && (
                   <p className="text-[10px] text-[var(--c-text-muted)]">{localMemoryToggleNote}</p>

@@ -16,7 +16,7 @@ import {
   verifyChannel,
 } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { SettingsPillToggle } from './_SettingsPillToggle'
+import { PillToggle } from '@arkloop/shared'
 import {
   BindingsCard,
   buildModelOptions,
@@ -329,7 +329,7 @@ export function DesktopTelegramSettingsPanel({
               </div>
             </div>
 
-            <SettingsPillToggle checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
+            <PillToggle checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
