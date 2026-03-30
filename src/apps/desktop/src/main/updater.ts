@@ -11,14 +11,12 @@ export type ComponentStatus = {
 }
 
 export type UpdateStatus = {
-  sidecar: ComponentStatus
   openviking: ComponentStatus
   sandbox: { kernel: ComponentStatus; rootfs: ComponentStatus }
 }
 
 type DesktopManifest = {
   version: string
-  sidecar: { version: string }
   openviking: { image: string; version: string }
   sandbox?: {
     kernel?: { version: string; filename: string }
@@ -39,7 +37,6 @@ function parseDesktopManifest(raw: unknown): DesktopManifest {
   }
 
   const manifest = raw as Record<string, unknown>
-  const sidecar = manifest.sidecar as Record<string, unknown> | undefined
   const openviking = manifest.openviking as Record<string, unknown> | undefined
   const sandbox = manifest.sandbox as Record<string, unknown> | undefined
   const kernel = sandbox?.kernel as Record<string, unknown> | undefined
@@ -62,9 +59,6 @@ function parseDesktopManifest(raw: unknown): DesktopManifest {
 
   return {
     version: assertNonEmptyString(manifest.version, 'version'),
-    sidecar: {
-      version: assertNonEmptyString(sidecar?.version, 'sidecar.version'),
-    },
     openviking: {
       image: assertNonEmptyString(openviking?.image, 'openviking.image'),
       version: assertNonEmptyString(openviking?.version, 'openviking.version'),
@@ -74,7 +68,6 @@ function parseDesktopManifest(raw: unknown): DesktopManifest {
 }
 
 type LocalVersions = {
-  sidecar?: { version: string; updated_at: string }
   openviking?: { version: string; updated_at: string }
   opencli?: { version: string; updated_at: string }
   sandbox?: {
@@ -88,48 +81,12 @@ const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${GITHUB_REPO}/r
 const VERSIONS_FILE = path.join(os.homedir(), '.arkloop', 'versions.json')
 const VM_DIR = path.join(os.homedir(), '.arkloop', 'vm')
 
-// 旧 sidecar 版本文件，用于迁移
-const LEGACY_SIDECAR_VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
-
 export function loadLocalVersions(): LocalVersions {
   try {
     const raw = fs.readFileSync(VERSIONS_FILE, 'utf-8')
-    const v = JSON.parse(raw) as LocalVersions
-
-    // 迁移: 如果 versions.json 中无 sidecar 版本，尝试从旧文件读取
-    if (!v.sidecar) {
-      try {
-        const legacyRaw = fs.readFileSync(LEGACY_SIDECAR_VERSION_FILE, 'utf-8')
-        const legacy = JSON.parse(legacyRaw) as { version?: string; downloadedAt?: string }
-        if (legacy.version) {
-          v.sidecar = { version: legacy.version, updated_at: legacy.downloadedAt ?? new Date().toISOString() }
-        }
-      } catch {
-        // 旧文件不存在则跳过
-      }
-    }
-
-    return v
+    return JSON.parse(raw) as LocalVersions
   } catch (err) {
-    // 文件不存在时尝试旧文件迁移
-    const isFileNotFound = (e: unknown) =>
-      e instanceof Error && (e as NodeJS.ErrnoException).code === 'ENOENT'
-
-    if (isFileNotFound(err)) {
-      try {
-        const legacyRaw = fs.readFileSync(LEGACY_SIDECAR_VERSION_FILE, 'utf-8')
-        const legacy = JSON.parse(legacyRaw) as { version?: string; downloadedAt?: string }
-        if (legacy.version) {
-          return {
-            sidecar: { version: legacy.version, updated_at: legacy.downloadedAt ?? new Date().toISOString() },
-          }
-        }
-      } catch {
-        // 无旧文件
-      }
-      return {}
-    }
-
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw err
   }
 }
@@ -193,7 +150,6 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   const manifest = await fetchManifest()
   const local = loadLocalVersions()
 
-  const sidecarCurrent = local.sidecar?.version ?? null
   const ovCurrent = local.openviking?.version ?? null
   const kernelCurrent = local.sandbox?.kernel?.version ?? null
   const rootfsCurrent = local.sandbox?.rootfs?.version ?? null
@@ -201,11 +157,6 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   const rootfsLatest = manifest.sandbox?.rootfs?.version ?? null
 
   return {
-    sidecar: {
-      current: sidecarCurrent,
-      latest: manifest.sidecar.version,
-      available: !!(manifest.sidecar.version && manifest.sidecar.version !== sidecarCurrent),
-    },
     openviking: {
       current: ovCurrent,
       latest: manifest.openviking.version,
@@ -275,37 +226,11 @@ async function downloadFile(
 }
 
 export async function applyUpdate(
-  component: 'sidecar' | 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs',
+  component: 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs',
   onProgress?: (p: DownloadProgress) => void,
 ): Promise<void> {
   const manifest = await fetchManifest()
   const now = new Date().toISOString()
-
-  if (component === 'sidecar') {
-    // 延迟导入避免循环依赖
-    const { downloadSidecar } = await import('./sidecar')
-    await downloadSidecar(onProgress)
-
-    // 从 sidecar.version.json 读取实际下载的版本
-    const versionFilePath = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
-    const actualVersion: string | null = await new Promise<string | null>((resolve) => {
-      try {
-        const fs = require('fs') as typeof import('fs')
-        const raw = fs.readFileSync(versionFilePath, 'utf-8')
-        const j = JSON.parse(raw) as { version?: string }
-        resolve(j.version ?? null)
-      } catch {
-        resolve(null)
-      }
-    })
-
-    const local = loadLocalVersions()
-    saveLocalVersions({
-      ...local,
-      sidecar: { version: actualVersion ?? manifest.sidecar.version, updated_at: now },
-    })
-    return
-  }
 
   if (component === 'openviking') {
     const { getBridgeBaseUrl, waitForBridgeOperation } = await import('./sidecar')

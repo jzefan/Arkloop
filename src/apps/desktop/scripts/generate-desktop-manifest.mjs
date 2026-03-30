@@ -58,9 +58,6 @@ function buildManifest() {
 
   const manifest = {
     version,
-    sidecar: {
-      version,
-    },
     openviking: {
       image: openvikingImage,
       version: openvikingVersion,

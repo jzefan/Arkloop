@@ -119,12 +119,11 @@ export type AppUpdaterState = {
 }
 
 export type UpdaterStatus = {
-  sidecar: UpdaterComponentStatus
   openviking: UpdaterComponentStatus
   sandbox: { kernel: UpdaterComponentStatus; rootfs: UpdaterComponentStatus }
 }
 
-export type UpdaterComponent = 'sidecar' | 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs'
+export type UpdaterComponent = 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs'
 
 export type ArkloopDesktopApi = {
   isDesktop: true
