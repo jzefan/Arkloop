@@ -337,6 +337,38 @@ describe('buildAssistantTurnFromRunEvents', () => {
     })
   })
 
+  it('可见正文切段后，晚到 tool.result 仍回填到旧 cop', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'tool.call', { tool_name: 'fetch_url', tool_call_id: 'c1', arguments: { url: 'https://a.test' } }),
+      ev('r1', 2, 'message.delta', { role: 'assistant', content_delta: '先给你结论。' }),
+      ev('r1', 3, 'tool.result', {
+        tool_name: 'fetch_url',
+        tool_call_id: 'c1',
+        result: { title: 'A' },
+      }),
+    ])
+    expect(turn.segments).toEqual([
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          {
+            kind: 'call',
+            call: {
+              toolCallId: 'c1',
+              toolName: 'fetch_url',
+              arguments: { url: 'https://a.test' },
+              result: { title: 'A' },
+              errorClass: undefined,
+            },
+            seq: 1,
+          },
+        ],
+      },
+      { type: 'text', content: '先给你结论。' },
+    ])
+  })
+
   it('空 timeline_title 后短正文仍为独立 text 段', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'tool.call', {

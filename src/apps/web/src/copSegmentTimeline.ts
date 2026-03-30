@@ -32,6 +32,12 @@ const FILE_OP_TOOL_NAMES = new Set([
   'grep', 'glob', 'read_file', 'write_file', 'edit', 'edit_file',
   'search_tools', 'memory_write', 'memory_search', 'memory_read', 'memory_forget',
 ])
+const AUXILIARY_RENDERED_TOOL_NAMES = new Set([
+  'show_widget',
+  'create_artifact',
+  'document_write',
+  'browser',
+])
 
 function sortBySeq<T extends { seq?: number }>(items: T[]): T[] {
   return [...items].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
@@ -42,6 +48,7 @@ function isKnownTimelineTool(toolName: string): boolean {
     CODE_EXECUTION_TOOL_NAMES.has(toolName) ||
     SUB_AGENT_TOOL_NAMES.has(toolName) ||
     FILE_OP_TOOL_NAMES.has(toolName) ||
+    AUXILIARY_RENDERED_TOOL_NAMES.has(toolName) ||
     isWebSearchToolName(toolName) ||
     isWebFetchToolName(toolName)
   )

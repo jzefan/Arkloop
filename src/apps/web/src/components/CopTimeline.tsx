@@ -947,11 +947,6 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
         }}
       >
         <CopTimelineHeaderLabel text={headerLabel} live={!!live} shimmer={!!shimmer} />
-        {isComplete && sources.length > 0 && (
-          <span style={{ fontSize: '12px', color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-muted)', fontWeight: 400, transition: 'color 0.15s ease' }}>
-            {sources.length} sources
-          </span>
-        )}
         {(isComplete || live) && hasContent && (
           <motion.div
             animate={{ rotate: collapsed ? 0 : 90 }}
