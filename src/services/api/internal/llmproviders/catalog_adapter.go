@@ -71,29 +71,27 @@ func catalogAdapterForProtocol(kind ProtocolKind) (CatalogAdapter, error) {
 type openAICatalogAdapter struct{}
 
 func (openAICatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolConfig) ([]AvailableModel, error) {
-	modelsURL := strings.TrimRight(cfg.BaseURL, "/") + "/models"
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(modelsURL); err != nil {
-		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
-	}
-
-	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, modelsURL, nil)
+	models, err := listOpenAIModels(ctx, cfg)
 	if err != nil {
-		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
+		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	req.Header.Set("Accept", "application/json")
+	if isOpenRouterCatalogBaseURL(cfg.BaseURL) {
+		embeddingModels, err := listOpenRouterEmbeddingModels(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		models = mergeAvailableModels(models, embeddingModels)
+	}
+	sortAvailableModels(models)
+	return models, nil
+}
 
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
+func listOpenAIModels(ctx context.Context, cfg CatalogProtocolConfig) ([]AvailableModel, error) {
+	body, status, err := fetchCatalogJSON(ctx, strings.TrimRight(cfg.BaseURL, "/")+"/models", func(req *nethttp.Request) {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		req.Header.Set("Accept", "application/json")
+	})
 	if err != nil {
-		return nil, upstreamNetworkError(err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, availableModelsRespBytes))
-	if err != nil {
-		return nil, &UpstreamListModelsError{Kind: "network", Err: err}
-	}
-	if err := classifyCatalogStatus(resp.StatusCode, body); err != nil {
 		return nil, err
 	}
 
@@ -101,7 +99,7 @@ func (openAICatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolC
 		Data []openAIModelEntry `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, &UpstreamListModelsError{Kind: "invalid_response", StatusCode: resp.StatusCode, Err: err}
+		return nil, &UpstreamListModelsError{Kind: "invalid_response", StatusCode: status, Err: err}
 	}
 	models := make([]AvailableModel, 0, len(payload.Data))
 	for _, item := range payload.Data {
@@ -126,8 +124,115 @@ func (openAICatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolC
 		am.Type, am.InputModalities, am.OutputModalities = classifyOpenAIModel(id, item.Architecture)
 		models = append(models, am)
 	}
-	sortAvailableModels(models)
 	return models, nil
+}
+
+func listOpenRouterEmbeddingModels(ctx context.Context, cfg CatalogProtocolConfig) ([]AvailableModel, error) {
+	body, status, err := fetchCatalogJSON(ctx, strings.TrimRight(cfg.BaseURL, "/")+"/embeddings/models", func(req *nethttp.Request) {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		req.Header.Set("Accept", "application/json")
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Context int    `json:"context_length"`
+			TopProv struct {
+				MaxCompletionTokens int `json:"max_completion_tokens"`
+			} `json:"top_provider"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, &UpstreamListModelsError{Kind: "invalid_response", StatusCode: status, Err: err}
+	}
+
+	models := make([]AvailableModel, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = id
+		}
+		model := AvailableModel{
+			ID:               id,
+			Name:             name,
+			Type:             "embedding",
+			InputModalities:  []string{"text"},
+			OutputModalities: []string{"embedding"},
+		}
+		if item.Context > 0 {
+			cl := item.Context
+			model.ContextLength = &cl
+		}
+		if item.TopProv.MaxCompletionTokens > 0 {
+			mot := item.TopProv.MaxCompletionTokens
+			model.MaxOutputTokens = &mot
+		}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+func fetchCatalogJSON(ctx context.Context, url string, decorate func(*nethttp.Request)) ([]byte, int, error) {
+	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(url); err != nil {
+		return nil, 0, &UpstreamListModelsError{Kind: "request", Err: err}
+	}
+
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, &UpstreamListModelsError{Kind: "request", Err: err}
+	}
+	if decorate != nil {
+		decorate(req)
+	}
+
+	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
+	if err != nil {
+		return nil, 0, upstreamNetworkError(err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, availableModelsRespBytes))
+	if err != nil {
+		return nil, resp.StatusCode, &UpstreamListModelsError{Kind: "network", Err: err}
+	}
+	if err := classifyCatalogStatus(resp.StatusCode, body); err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+func mergeAvailableModels(base []AvailableModel, extra []AvailableModel) []AvailableModel {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]int, len(base))
+	for idx, model := range base {
+		seen[strings.ToLower(model.ID)] = idx
+	}
+	for _, model := range extra {
+		key := strings.ToLower(model.ID)
+		if idx, ok := seen[key]; ok {
+			if base[idx].Type == "" || base[idx].Type == "chat" {
+				base[idx] = model
+			}
+			continue
+		}
+		seen[key] = len(base)
+		base = append(base, model)
+	}
+	return base
+}
+
+func isOpenRouterCatalogBaseURL(baseURL string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(baseURL)), "openrouter.ai")
 }
 
 type anthropicCatalogAdapter struct{}

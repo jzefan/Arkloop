@@ -202,3 +202,67 @@ func TestListUpstreamModelsGeminiUsesModelsList(t *testing.T) {
 		t.Fatalf("unexpected embedding model: %#v", models[1])
 	}
 }
+
+func TestListUpstreamModelsOpenRouterIncludesEmbeddings(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch r.URL.Path {
+		case "/openrouter.ai/api/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "data": [
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      }
+    }
+  ]
+}`))
+		case "/openrouter.ai/api/v1/embeddings/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "data": [
+    {
+      "id": "openai/text-embedding-3-small",
+      "name": "text-embedding-3-small",
+      "context_length": 8192
+    }
+  ]
+}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	baseURL := server.URL + "/openrouter.ai/api/v1"
+	provider := data.LlmCredential{
+		ID:       uuid.New(),
+		Provider: "openai",
+		Name:     "openrouter",
+		BaseURL:  &baseURL,
+	}
+
+	models, err := listUpstreamModels(context.Background(), provider, "sk-openrouter")
+	if err != nil {
+		t.Fatalf("listUpstreamModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("unexpected models: %#v", models)
+	}
+	foundEmbedding := false
+	for _, model := range models {
+		if model.ID == "openai/text-embedding-3-small" {
+			foundEmbedding = true
+			if model.Type != "embedding" {
+				t.Fatalf("unexpected embedding model: %#v", model)
+			}
+		}
+	}
+	if !foundEmbedding {
+		t.Fatalf("missing embedding model: %#v", models)
+	}
+}

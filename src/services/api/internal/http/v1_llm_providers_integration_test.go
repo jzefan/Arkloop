@@ -531,6 +531,73 @@ func TestLlmProvidersAvailableModelsGeminiUsesModelsList(t *testing.T) {
 	}
 }
 
+func TestLlmProvidersAvailableModelsOpenRouterIncludesEmbeddings(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+	upstream := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch r.URL.Path {
+		case "/api/v1/models":
+			httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
+				"data": []map[string]any{
+					{
+						"id":   "openai/gpt-4o-mini",
+						"name": "GPT-4o mini",
+						"architecture": map[string]any{
+							"input_modalities":  []string{"text"},
+							"output_modalities": []string{"text"},
+						},
+					},
+				},
+			})
+		case "/api/v1/embeddings/models":
+			httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
+				"data": []map[string]any{
+					{
+						"id":             "openai/text-embedding-3-small",
+						"name":           "text-embedding-3-small",
+						"context_length": 8192,
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers", map[string]any{
+		"name":            "openrouter-import",
+		"provider":        "openai",
+		"api_key":         "sk-openrouter-123456",
+		"base_url":        upstream.URL + "/openrouter.ai/api/v1",
+		"openai_api_mode": "responses",
+	}, authHeader(env.adminToken))
+	if createProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+	}
+	provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+
+	resp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers/"+provider.ID+"/available-models", nil, authHeader(env.adminToken))
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("available models: %d %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeJSONBody[llmProviderAvailableModelsResponse](t, resp.Body.Bytes())
+	if len(payload.Models) != 2 {
+		t.Fatalf("unexpected openrouter models payload: %#v", payload)
+	}
+	foundEmbedding := false
+	for _, model := range payload.Models {
+		if model.ID == "openai/text-embedding-3-small" {
+			foundEmbedding = true
+			if model.Type != "embedding" {
+				t.Fatalf("expected embedding type, got %#v", model)
+			}
+		}
+	}
+	if !foundEmbedding {
+		t.Fatalf("expected embedding model in payload: %#v", payload)
+	}
+}
+
 func TestLlmProvidersDeleteRemovesSecret(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 
