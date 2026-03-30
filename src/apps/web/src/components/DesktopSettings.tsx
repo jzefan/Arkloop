@@ -12,13 +12,12 @@ import {
   Blocks,
   Bug,
   Package,
-  Globe,
   Brain,
   Palette,
   Route,
   MessageSquare,
   ShieldAlert,
-  Plug,
+  Wrench,
   Mic,
 } from "lucide-react";
 import type { MeResponse } from "../api";
@@ -32,7 +31,7 @@ import {
   DesktopChannelsSettings,
   SkillsSettings,
   MCPSettings,
-  SearchFetchSettings,
+  ToolsSettings,
   MemorySettings,
   ConnectionSettings,
   ChatSettings,
@@ -40,7 +39,6 @@ import {
   ModulesSettings,
   DeveloperSettings,
   DesktopPromptInjectionSettings,
-  ConnectorsSettings,
   VoiceSettings,
   DesignTokensSettings,
 } from "./settings";
@@ -54,8 +52,7 @@ export type DesktopSettingsKey =
   | "channels"
   | "skills"
   | "mcp"
-  | "connectors"
-  | "searchFetch"
+  | "tools"
   | "memory"
   | "connection"
   | "chat"
@@ -80,8 +77,7 @@ const MAIN_NAV: NavItem[] = [
   { key: "channels",   icon: Radio },
   { key: "skills",     icon: Puzzle },
   { key: "mcp",        icon: Server },
-  { key: "connectors", icon: Plug },
-  { key: "searchFetch",icon: Globe },
+  { key: "tools",      icon: Wrench },
 ];
 
 const DESKTOP_NAV: NavItem[] = [
@@ -171,10 +167,8 @@ export function DesktopSettings({
         );
       case "mcp":
         return <MCPSettings accessToken={accessToken} />;
-      case "connectors":
-        return <ConnectorsSettings accessToken={accessToken} />;
-      case "searchFetch":
-        return <SearchFetchSettings />;
+      case "tools":
+        return <ToolsSettings accessToken={accessToken} />;
       case "memory":
         return <MemorySettings accessToken={accessToken} />;
       case "connection":

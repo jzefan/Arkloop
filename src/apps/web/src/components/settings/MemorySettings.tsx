@@ -347,10 +347,12 @@ type OVSelectionField = {
 function buildOpenVikingModelOptions(
   providers: LlmProvider[],
   filter: (provider: LlmProvider, model: LlmProvider['models'][number]) => boolean,
+  options?: { requireShowInPicker?: boolean },
 ): ProviderModelOption[] {
+  const requireShowInPicker = options?.requireShowInPicker ?? true
   return providers.flatMap((provider) =>
     provider.models
-      .filter((model) => filter(provider, model))
+      .filter((model) => (!requireShowInPicker || model.show_in_picker) && filter(provider, model))
       .map((model) => ({
         value: `${provider.name}^${model.model}`,
         label: `${provider.name} / ${model.model}`,
@@ -444,6 +446,7 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
   const embeddingOptions = buildOpenVikingModelOptions(
     providers,
     (_provider, model) => model.tags.includes('embedding'),
+    { requireShowInPicker: false },
   )
 
   const currentVlm = resolveCurrentSelector(ov.vlmSelector, ov.vlmModel, vlmOptions)
@@ -611,6 +614,7 @@ export function MemorySettings({ accessToken }: Props) {
     const embeddingOptions = buildOpenVikingModelOptions(
       providers,
       (_provider, model) => model.tags.includes('embedding'),
+      { requireShowInPicker: false },
     )
 
     let next = draft
@@ -705,6 +709,7 @@ export function MemorySettings({ accessToken }: Props) {
         const embeddingOptions = buildOpenVikingModelOptions(
           providers,
           (_provider, model) => model.tags.includes('embedding'),
+          { requireShowInPicker: false },
         )
         const vlmSelector = resolveCurrentSelector(ovDraft.vlmSelector, ovDraft.vlmModel, vlmOptions)
         const embeddingSelector = resolveCurrentSelector(ovDraft.embeddingSelector, ovDraft.embeddingModel, embeddingOptions)
@@ -837,6 +842,8 @@ export function MemorySettings({ accessToken }: Props) {
         />
       </div>
 
+      <div className="border-t border-[var(--c-border-subtle)]" />
+
       {enabled && (
         <>
           {/* ── Memory System — ModeCard from ConnectionSettingsContent ── */}
@@ -922,6 +929,8 @@ export function MemorySettings({ accessToken }: Props) {
           )}
         </>
       )}
+
+      <div className="border-t border-[var(--c-border-subtle)]" />
 
       {/* ── Memory content ── */}
       <div className="flex items-center justify-between">

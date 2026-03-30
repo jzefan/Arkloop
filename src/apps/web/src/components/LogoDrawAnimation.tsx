@@ -61,7 +61,10 @@ export function LogoDrawAnimation({
   const [phase, setPhase] = useState<Phase>("drawing");
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     const t = (ms: number, fn: () => void) => {
@@ -84,7 +87,10 @@ export function LogoDrawAnimation({
       onCompleteRef.current();
     });
 
-    return () => timersRef.current.forEach(clearTimeout);
+    return () => {
+      const timers = [...timersRef.current];
+      timers.forEach(clearTimeout);
+    };
   }, []);
 
   const isFilling = phase !== "drawing";

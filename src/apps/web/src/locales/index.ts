@@ -23,7 +23,7 @@ export interface LocaleStrings {
     account: string;
     appearance: string;
     settings: string;
-    connectors: string;
+    tools: string;
     skills: string;
     credits: string;
     models: string;
@@ -677,6 +677,7 @@ export interface LocaleStrings {
     mcp: string;
     connectors: string;
     searchFetch: string;
+    tools: string;
     connection: string;
     chat: string;
     voice: string;
