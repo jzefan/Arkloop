@@ -166,7 +166,7 @@ export const zhCN: LocaleStrings = {
     fieldVLMModel: 'VLM 模型',
     fieldVLMApiKey: 'API Key',
     fieldVLMApiBase: 'API Base URL',
-    fieldVLMProviderHint: '推荐 litellm — 通过 OpenAI 兼容接口支持 15+ 后端',
+    fieldVLMProviderHint: '推荐使用 OpenAI 兼容接入，以连接多种上游模型服务',
     ovRestartWarning: '更改需要重启 OpenViking 容器',
     applyAndRestart: '保存并应用',
     toastOVConfigApplied: 'OpenViking 配置已应用并重启容器',

@@ -91,7 +91,7 @@ func openVikingResolveEntry(
 			resp.VLM = &resolvedOpenVikingModelResponse{
 				Selector:       resolved.Selector,
 				CredentialName: resolved.CredentialName,
-				Provider:       resolved.Provider,
+				Provider:       llmproviders.OpenVikingRenderedProvider(resolved.Provider),
 				Model:          resolved.Model,
 				APIBase:        resolved.APIBase,
 				APIKey:         resolved.APIKey,
@@ -115,7 +115,7 @@ func openVikingResolveEntry(
 				resolvedOpenVikingModelResponse: resolvedOpenVikingModelResponse{
 					Selector:       resolved.Selector,
 					CredentialName: resolved.CredentialName,
-					Provider:       resolved.Provider,
+					Provider:       llmproviders.OpenVikingRenderedProvider(resolved.Provider),
 					Model:          resolved.Model,
 					APIBase:        resolved.APIBase,
 					APIKey:         resolved.APIKey,

@@ -216,8 +216,22 @@ func NewRoutingMiddleware(
 			return nil
 		}
 
+		inputModel := ""
+		if rawModel, ok := rc.InputJSON["model"].(string); ok {
+			inputModel = strings.TrimSpace(rawModel)
+		}
+
 		rc.Gateway = gateway
 		rc.SelectedRoute = selected
+		slog.InfoContext(ctx, "routing_selected_model",
+			"run_id", rc.Run.ID.String(),
+			"thread_id", rc.Run.ThreadID.String(),
+			"input_model", inputModel,
+			"selected_route_id", selected.Route.ID,
+			"selected_model", selected.Route.Model,
+			"provider_kind", string(selected.Credential.ProviderKind),
+			"credential_name", selected.Credential.Name,
+		)
 		rc.ResolveGatewayForRouteID = resolveGatewayForRouteID
 		rc.ResolveGatewayForAgentName = resolveGatewayForAgentName
 

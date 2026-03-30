@@ -804,29 +804,29 @@ func disableTelegramActivationRemote(
 }
 
 type telegramConnector struct {
-	channelsRepo            *data.ChannelsRepository
-	channelIdentitiesRepo   *data.ChannelIdentitiesRepository
+	channelsRepo             *data.ChannelsRepository
+	channelIdentitiesRepo    *data.ChannelIdentitiesRepository
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository
-	channelBindCodesRepo    *data.ChannelBindCodesRepository
-	channelDMThreadsRepo    *data.ChannelDMThreadsRepository
-	channelGroupThreadsRepo *data.ChannelGroupThreadsRepository
-	channelReceiptsRepo     *data.ChannelMessageReceiptsRepository
-	channelLedgerRepo       *data.ChannelMessageLedgerRepository
-	personasRepo            *data.PersonasRepository
-	usersRepo               *data.UserRepository
-	accountRepo             *data.AccountRepository
-	membershipRepo          *data.AccountMembershipRepository
-	projectRepo             *data.ProjectRepository
-	threadRepo              *data.ThreadRepository
-	messageRepo             *data.MessageRepository
-	runEventRepo            *data.RunEventRepository
-	jobRepo                 *data.JobRepository
-	creditsRepo             *data.CreditsRepository
-	pool                    data.DB
-	entitlementSvc          *entitlement.Service
-	telegramClient          *telegrambot.Client
-	attachmentStore         MessageAttachmentPutStore
-	inputNotify             func(ctx context.Context, runID uuid.UUID)
+	channelBindCodesRepo     *data.ChannelBindCodesRepository
+	channelDMThreadsRepo     *data.ChannelDMThreadsRepository
+	channelGroupThreadsRepo  *data.ChannelGroupThreadsRepository
+	channelReceiptsRepo      *data.ChannelMessageReceiptsRepository
+	channelLedgerRepo        *data.ChannelMessageLedgerRepository
+	personasRepo             *data.PersonasRepository
+	usersRepo                *data.UserRepository
+	accountRepo              *data.AccountRepository
+	membershipRepo           *data.AccountMembershipRepository
+	projectRepo              *data.ProjectRepository
+	threadRepo               *data.ThreadRepository
+	messageRepo              *data.MessageRepository
+	runEventRepo             *data.RunEventRepository
+	jobRepo                  *data.JobRepository
+	creditsRepo              *data.CreditsRepository
+	pool                     data.DB
+	entitlementSvc           *entitlement.Service
+	telegramClient           *telegrambot.Client
+	attachmentStore          MessageAttachmentPutStore
+	inputNotify              func(ctx context.Context, runID uuid.UUID)
 }
 
 func (c telegramConnector) refreshTelegramBotProfile(ctx context.Context, token string, ch *data.Channel) {
@@ -1242,6 +1242,16 @@ func (c telegramConnector) HandleUpdate(
 	}
 
 	if !incoming.IsPrivate() && !incoming.ShouldCreateRun() {
+		slog.InfoContext(ctx, "telegram_inbound_processed",
+			"stage", "passive_persisted",
+			"channel_id", ch.ID.String(),
+			"account_id", ch.AccountID.String(),
+			"platform_chat_id", incoming.PlatformChatID,
+			"platform_message_id", incoming.PlatformMsgID,
+			"conversation_type", incoming.ChatType,
+			"mentions_bot", incoming.MentionsBot,
+			"is_reply_to_bot", incoming.IsReplyToBot,
+		)
 		if _, err := c.persistTelegramGroupPassiveMessageTx(ctx, tx, ch, token, *incoming, identity, persona); err != nil {
 			return err
 		}
@@ -1320,12 +1330,31 @@ func (c telegramConnector) HandleUpdate(
 			if err := tx.Commit(ctx); err != nil {
 				return err
 			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "delivered_to_existing_run",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+				"default_model", strings.TrimSpace(cfg.DefaultModel),
+			)
 			c.notifyActiveRunInput(ctx, activeRun.ID)
 			return nil
 		}
 	}
 
 	if !channelAgentTriggerConsume(ch.ID) {
+		slog.WarnContext(ctx, "telegram_inbound_processed",
+			"stage", "throttled_before_enqueue",
+			"channel_id", ch.ID.String(),
+			"account_id", ch.AccountID.String(),
+			"thread_id", threadID.String(),
+			"platform_chat_id", incoming.PlatformChatID,
+			"platform_message_id", incoming.PlatformMsgID,
+			"default_model", strings.TrimSpace(cfg.DefaultModel),
+		)
 		return tx.Commit(ctx)
 	}
 
@@ -1356,6 +1385,17 @@ func (c telegramConnector) HandleUpdate(
 	); err != nil {
 		return err
 	}
+
+	slog.InfoContext(ctx, "telegram_inbound_processed",
+		"stage", "new_run_enqueued",
+		"channel_id", ch.ID.String(),
+		"account_id", ch.AccountID.String(),
+		"run_id", run.ID.String(),
+		"thread_id", threadID.String(),
+		"platform_chat_id", incoming.PlatformChatID,
+		"platform_message_id", incoming.PlatformMsgID,
+		"default_model", strings.TrimSpace(cfg.DefaultModel),
+	)
 
 	return tx.Commit(ctx)
 }
@@ -1393,28 +1433,28 @@ func telegramWebhookEntry(
 		channelLedgerRepo = repo
 	}
 	connector := telegramConnector{
-		channelsRepo:            channelsRepo,
-		channelIdentitiesRepo:   channelIdentitiesRepo,
+		channelsRepo:             channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
 		channelIdentityLinksRepo: channelIdentityLinksRepo,
-		channelBindCodesRepo:    channelBindCodesRepo,
-		channelDMThreadsRepo:    channelDMThreadsRepo,
-		channelGroupThreadsRepo: channelGroupThreadsRepo,
-		channelReceiptsRepo:     channelReceiptsRepo,
-		channelLedgerRepo:       channelLedgerRepo,
-		personasRepo:            personasRepo,
-		usersRepo:               usersRepo,
-		accountRepo:             accountRepo,
-		membershipRepo:          membershipRepo,
-		projectRepo:             projectRepo,
-		threadRepo:              threadRepo,
-		messageRepo:             messageRepo,
-		runEventRepo:            runEventRepo,
-		jobRepo:                 jobRepo,
-		creditsRepo:             creditsRepo,
-		pool:                    pool,
-		entitlementSvc:          entitlementSvc,
-		telegramClient:          telegramClient,
-		attachmentStore:         messageAttachmentStore,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		usersRepo:                usersRepo,
+		accountRepo:              accountRepo,
+		membershipRepo:           membershipRepo,
+		projectRepo:              projectRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		creditsRepo:              creditsRepo,
+		pool:                     pool,
+		entitlementSvc:           entitlementSvc,
+		telegramClient:           telegramClient,
+		attachmentStore:          messageAttachmentStore,
 		inputNotify: func(ctx context.Context, runID uuid.UUID) {
 			if _, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, runID.String()); err != nil {
 				slog.Warn("telegram_active_run_notify_failed", "run_id", runID.String(), "error", err)
@@ -1585,6 +1625,10 @@ func buildTelegramChannelDeliveryPayload(
 	channelIdentityID uuid.UUID,
 	incoming telegramIncomingMessage,
 ) map[string]any {
+	triggerMessageID := incoming.PlatformMsgID
+	if incoming.ReplyToMsgID != nil && strings.TrimSpace(*incoming.ReplyToMsgID) != "" {
+		triggerMessageID = strings.TrimSpace(*incoming.ReplyToMsgID)
+	}
 	payload := map[string]any{
 		"channel_id":   channelID.String(),
 		"channel_type": "telegram",
@@ -1595,11 +1639,11 @@ func buildTelegramChannelDeliveryPayload(
 			"message_id": incoming.PlatformMsgID,
 		},
 		"trigger_message_ref": map[string]any{
-			"message_id": incoming.PlatformMsgID,
+			"message_id": triggerMessageID,
 		},
 		"platform_chat_id":           incoming.PlatformChatID,
 		"platform_message_id":        incoming.PlatformMsgID,
-		"reply_to_message_id":        incoming.PlatformMsgID,
+		"reply_to_message_id":        triggerMessageID,
 		"sender_channel_identity_id": channelIdentityID.String(),
 		"conversation_type":          incoming.ChatType,
 		"mentions_bot":               incoming.MentionsBot,
@@ -2303,6 +2347,16 @@ func (c telegramConnector) HandleUpdateForPoll(
 	}
 
 	if !incoming.IsPrivate() && !incoming.ShouldCreateRun() {
+		slog.InfoContext(ctx, "telegram_inbound_processed",
+			"stage", "passive_persisted",
+			"channel_id", ch.ID.String(),
+			"account_id", ch.AccountID.String(),
+			"platform_chat_id", incoming.PlatformChatID,
+			"platform_message_id", incoming.PlatformMsgID,
+			"conversation_type", incoming.ChatType,
+			"mentions_bot", incoming.MentionsBot,
+			"is_reply_to_bot", incoming.IsReplyToBot,
+		)
 		if _, err := c.persistTelegramGroupPassiveMessageTx(ctx, tx, ch, token, *incoming, identity, persona); err != nil {
 			return err
 		}
@@ -2382,12 +2436,31 @@ func (c telegramConnector) HandleUpdateForPoll(
 			if err := tx.Commit(ctx); err != nil {
 				return err
 			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "delivered_to_existing_run",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+				"default_model", strings.TrimSpace(cfg.DefaultModel),
+			)
 			c.notifyActiveRunInput(ctx, activeRun.ID)
 			return nil
 		}
 	}
 
 	if !channelAgentTriggerConsume(ch.ID) {
+		slog.WarnContext(ctx, "telegram_inbound_processed",
+			"stage", "throttled_before_enqueue",
+			"channel_id", ch.ID.String(),
+			"account_id", ch.AccountID.String(),
+			"thread_id", threadID.String(),
+			"platform_chat_id", incoming.PlatformChatID,
+			"platform_message_id", incoming.PlatformMsgID,
+			"default_model", strings.TrimSpace(cfg.DefaultModel),
+		)
 		return tx.Commit(ctx)
 	}
 
@@ -2418,6 +2491,17 @@ func (c telegramConnector) HandleUpdateForPoll(
 	); err != nil {
 		return err
 	}
+
+	slog.InfoContext(ctx, "telegram_inbound_processed",
+		"stage", "new_run_enqueued",
+		"channel_id", ch.ID.String(),
+		"account_id", ch.AccountID.String(),
+		"run_id", run.ID.String(),
+		"thread_id", threadID.String(),
+		"platform_chat_id", incoming.PlatformChatID,
+		"platform_message_id", incoming.PlatformMsgID,
+		"default_model", strings.TrimSpace(cfg.DefaultModel),
+	)
 
 	return tx.Commit(ctx)
 }

@@ -342,9 +342,9 @@ func validateOpenVikingAdvancedJSON(advancedJSON map[string]any) error {
 			return errors.New("advanced_json.openviking_backend must be a non-empty string")
 		}
 		switch strings.ToLower(strings.TrimSpace(backend)) {
-		case "openai", "azure", "volcengine", "litellm":
+		case "openai", "azure", "volcengine", "litellm", "openai_compatible":
 		default:
-			return errors.New("advanced_json.openviking_backend must be one of openai, azure, volcengine, litellm")
+			return errors.New("advanced_json.openviking_backend must be one of openai, azure, volcengine, openai_compatible")
 		}
 	}
 	if rawHeaders, ok := advancedJSON[openVikingExtraHeadersKey]; ok {

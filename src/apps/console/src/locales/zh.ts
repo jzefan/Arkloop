@@ -274,7 +274,7 @@ export const zh: LocaleStrings = {
       fieldVLMModel: '模型',
       fieldVLMApiKey: 'API Key',
       fieldVLMApiBase: 'API Base URL',
-      fieldVLMProviderHint: 'LiteLLM 支持 15+ 后端，包括 Claude、Gemini、Ollama 等。',
+      fieldVLMProviderHint: 'OpenAI 兼容接入支持多种上游模型服务。',
       ovRestartWarning: '⚠ 应用配置将重启 OpenViking 服务，记忆功能将短暂不可用。',
       applyAndRestart: '保存并应用',
       toastOVConfigApplied: 'OpenViking 配置已应用',

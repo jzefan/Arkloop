@@ -827,10 +827,11 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			strings.TrimSpace(preloaded.Token) != "" {
 			sender := pipeline.NewTelegramChannelSenderWithClient(client, preloaded.Token, 50*time.Millisecond)
 			streamFlush = func(ctx2 context.Context, text string) error {
+				replyTo := desktopTelegramReplyReference(rc)
 				ids, sendErr := sender.SendText(ctx2, pipeline.ChannelDeliveryTarget{
 					ChannelType:  rc.ChannelContext.ChannelType,
 					Conversation: rc.ChannelContext.Conversation,
-					ReplyTo:      nil,
+					ReplyTo:      replyTo,
 				}, text)
 				if sendErr != nil {
 					return sendErr
@@ -843,7 +844,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 					rc.ChannelContext.ChannelID,
 					rc.ChannelContext.ChannelType,
 					rc.ChannelContext.Conversation.Target,
-					nil,
+					replyTo,
 					rc.ChannelContext.Conversation.ThreadID,
 					ids,
 				); err != nil {
@@ -955,10 +956,11 @@ func deliverDesktopTelegramChannelOutput(
 		return nil
 	}
 	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+	replyTo := desktopTelegramReplyReference(rc)
 	messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
 		ChannelType:  rc.ChannelContext.ChannelType,
 		Conversation: rc.ChannelContext.Conversation,
-		ReplyTo:      nil,
+		ReplyTo:      replyTo,
 	}, output)
 	if err != nil {
 		return err
@@ -971,7 +973,7 @@ func deliverDesktopTelegramChannelOutput(
 		rc.ChannelContext.ChannelID,
 		rc.ChannelContext.ChannelType,
 		rc.ChannelContext.Conversation.Target,
-		nil,
+		replyTo,
 		rc.ChannelContext.Conversation.ThreadID,
 		messageIDs,
 	)
@@ -1014,6 +1016,23 @@ func deliverDesktopDiscordChannelOutput(
 
 func desktopDiscordReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func desktopTelegramReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
 		return nil
 	}
 	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
