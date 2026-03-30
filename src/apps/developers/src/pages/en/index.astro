@@ -5,11 +5,9 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 <BaseLayout title="Arkloop Developers" description="Arkloop developer portal -- AI agents, without the clutter." locale="en" pathname="/en" alternatePath="/">
   <div class="landing-wrap">
 
-    <!-- Hero Card -->
+    <!-- Hero -->
     <div class="landing-card">
-
-      <!-- Left: SVG type specimen -->
-      <div class="split-left">
+      <div class="hero-center">
         <div class="type-specimen" aria-label="Arkloop">
           <svg class="type-svg" viewBox="0 0 526 210" fill="none" xmlns="http://www.w3.org/2000/svg">
             <g transform="translate(6, 0)">
@@ -65,95 +63,47 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
             </g>
           </svg>
         </div>
-      </div>
 
-      <!-- Right: content -->
-      <div class="split-right">
         <h1 class="hero-title">Clean, powerful AI agents. Yours to own.</h1>
-        <p class="hero-desc">Multi-model routing, sandboxed execution, and persistent memory -- all behind a clean interface that stays out of your way. Available as a desktop app or self-hosted server.</p>
 
-        <div class="cta-block">
-          <a class="btn-download" id="btn-download-en" href="https://github.com/qqqqqf-q/Arkloop/releases">
-            Download for Desktop
-          </a>
-          <div class="btn-platform-row" id="btn-wrap-en">
-            <div class="btn-platform-trigger" id="platform-trigger-en" aria-expanded="false">
-              <svg class="platform-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <path d="M8 21h8M12 17v4"/>
-              </svg>
-              <span class="btn-platform-label" id="platform-label-en">Mac · Apple Silicon</span>
-              <svg class="btn-platform-chevron" viewBox="0 0 10 6" fill="none">
-                <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <div class="platform-dropdown" id="platform-dropdown-en" role="listbox" aria-label="Select platform">
-                <button class="platform-option" data-value="darwin-arm64" role="option">Mac · Apple Silicon</button>
-                <button class="platform-option" data-value="darwin-x64" role="option">Mac · Intel</button>
-                <button class="platform-option" data-value="win32-x64" role="option">Windows · x64</button>
-                <button class="platform-option" data-value="linux-x64" role="option">Linux · x64</button>
-              </div>
+        <div class="hero-actions">
+          <div class="dl-btn-wrap">
+            <button class="btn-hero-download" id="dl-main-en">
+              <span id="dl-main-label-en">Download</span>
+              <svg class="dl-chevron" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="dl-dropdown" id="dl-dropdown-en">
+              <a class="dl-option" data-platform="darwin-arm64" href="https://github.com/qqqqqf-q/Arkloop/releases">
+                <svg class="dl-opt-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                macOS (Apple Silicon)
+              </a>
+              <a class="dl-option" data-platform="darwin-x64" href="https://github.com/qqqqqf-q/Arkloop/releases">
+                <svg class="dl-opt-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                macOS (Intel)
+              </a>
+              <a class="dl-option" data-platform="win32-x64" href="https://github.com/qqqqqf-q/Arkloop/releases">
+                <svg class="dl-opt-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 12V6.75l6-1.32v6.57H3zM20 3v8.75h-8V4.38L20 3zM3 13h6v6.43l-6-1.33V13zm17 .25V22l-8-1.42V13.25h8z"/></svg>
+                Windows (x64)
+              </a>
+              <a class="dl-option" data-platform="linux-x64" href="https://github.com/qqqqqf-q/Arkloop/releases">
+                <svg class="dl-opt-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+                Linux (x64)
+              </a>
             </div>
           </div>
-          <a class="link-docs" href="/en/docs/guide">Quick Start &amp; Documentation</a>
-        </div>
-
-        <div class="feat-grid">
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-            </svg>
-            <h3 class="feat-title">Agent Loop</h3>
-            <p class="feat-desc">Multi-step autonomous execution with planning, reasoning, and tool orchestration. Persistent memory across sessions.</p>
-          </div>
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="2.5"/>
-              <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(0 12 12)"/>
-              <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
-              <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
-            </svg>
-            <h3 class="feat-title">Multi-Model</h3>
-            <p class="feat-desc">OpenAI, Anthropic, and any compatible interface. Priority routing with automatic rate-limit handling.</p>
-          </div>
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 2"/>
-              <line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="9"/>
-            </svg>
-            <h3 class="feat-title">Sandbox</h3>
-            <p class="feat-desc">Firecracker microVMs or Docker isolation. Code execution with strict resource limits.</p>
-          </div>
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              <path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <h3 class="feat-title">Security</h3>
-            <p class="feat-desc">Semantic-level prompt injection scanning. Detects and blocks attacks to protect agent execution.</p>
-          </div>
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M18 8a3 3 0 010 6"/>
-              <path d="M10 8H6a2 2 0 00-2 2v4a2 2 0 002 2h4l5 4V4l-5 4z"/>
-              <path d="M22 5a9 9 0 010 14"/>
-            </svg>
-            <h3 class="feat-title">Channels</h3>
-            <p class="feat-desc">Connect agents to Telegram with full media handling and group context support.</p>
-          </div>
-          <div class="feat-item">
-            <svg class="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/>
-              <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
-            </svg>
-            <h3 class="feat-title">REST + SSE</h3>
-            <p class="feat-desc">40+ endpoints covering threads, runs, personas, and model providers. Cursor-based resumption.</p>
-          </div>
+          <a class="btn-hero-secondary" href="https://github.com/qqqqqf-q/Arkloop" target="_blank" rel="noopener">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+            GitHub
+          </a>
+          <a class="btn-hero-secondary" href="https://t.me/Arkloop_io" target="_blank" rel="noopener">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L6.514 14.51l-2.948-.924c-.64-.203-.654-.64.136-.95l11.52-4.44c.534-.194 1.001.13.34.052z"/></svg>
+            Telegram
+          </a>
         </div>
       </div>
-
     </div>
 
-    <!-- Section 2: Contributing -->
+    <!-- Contributing -->
     <div class="contrib-card">
       <div class="contrib-left">
         <svg class="contrib-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -228,95 +178,40 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     'linux-x64':    ['linux-x64', 'linux-amd64', 'amd64.AppImage', 'linux-x86_64'],
   };
 
-  const PLATFORM_LABELS: Record<string, string> = {
-    'darwin-arm64': 'Mac · Apple Silicon',
-    'darwin-x64':   'Mac · Intel',
-    'win32-x64':    'Windows · x64',
-    'linux-x64':    'Linux · x64',
-  };
-
-  function detectPlatform(): string {
-    const ua = navigator.userAgent;
-    const platform = navigator.platform || '';
-    if (platform.startsWith('Mac') || ua.includes('Mac OS X')) {
-      const uad = (navigator as any).userAgentData;
-      if (uad && uad.getHighEntropyValues) {
-        uad.getHighEntropyValues(['architecture']).then((data: any) => {
-          if (data.architecture === 'arm') updatePlatform('darwin-arm64');
-          else updatePlatform('darwin-x64');
-        }).catch(() => updatePlatform('darwin-arm64'));
-        return 'darwin-arm64';
-      }
-      return 'darwin-arm64';
-    }
-    if (platform.startsWith('Win') || ua.includes('Windows')) return 'win32-x64';
-    if (ua.includes('Linux')) return 'linux-x64';
-    return 'darwin-arm64';
-  }
-
-  let releaseAssets: Array<{ name: string; browser_download_url: string }> = [];
-  let currentPlatform = detectPlatform();
-
-  function findAsset(platform: string) {
-    const patterns = PLATFORM_PATTERNS[platform] ?? [];
-    return releaseAssets.find(a =>
-      patterns.some(p => a.name.toLowerCase().includes(p.toLowerCase()))
-    );
-  }
-
-  function updatePlatform(platform: string) {
-    currentPlatform = platform;
-    const btn = document.getElementById('btn-download-en') as HTMLAnchorElement | null;
-    const label = document.getElementById('platform-label-en');
-    if (label) label.textContent = PLATFORM_LABELS[platform] ?? platform;
-    document.querySelectorAll('#platform-dropdown-en .platform-option').forEach(el => {
-      const opt = el as HTMLButtonElement;
-      opt.setAttribute('aria-selected', opt.dataset.value === platform ? 'true' : 'false');
-    });
-    if (btn) {
-      const asset = findAsset(platform);
-      btn.href = asset ? asset.browser_download_url : RELEASES_PAGE;
-    }
-  }
-
   async function initDownload() {
+    let assets: Array<{ name: string; browser_download_url: string }> = [];
+    let tag = '';
     try {
       const res = await fetch(RELEASES_API);
-      if (!res.ok) return;
-      const data = await res.json();
-      releaseAssets = data.assets ?? [];
-    } catch {
-      // network failure, fall back to releases page
-    }
-    updatePlatform(currentPlatform);
+      if (res.ok) {
+        const data = await res.json();
+        assets = data.assets ?? [];
+        tag = data.tag_name ?? '';
+      }
+    } catch {}
+
+    const labelEl = document.getElementById('dl-main-label-en');
+    if (labelEl) labelEl.textContent = tag ? `Download ${tag}` : 'Download';
+
+    document.querySelectorAll<HTMLAnchorElement>('a[data-platform]').forEach(link => {
+      const platform = link.dataset.platform!;
+      const patterns = PLATFORM_PATTERNS[platform] ?? [];
+      const asset = assets.find(a =>
+        patterns.some(p => a.name.toLowerCase().includes(p.toLowerCase()))
+      );
+      link.href = asset ? asset.browser_download_url : RELEASES_PAGE;
+    });
   }
 
-  const trigger = document.getElementById('platform-trigger-en');
-  const dropdown = document.getElementById('platform-dropdown-en');
-  const wrap = document.getElementById('btn-wrap-en');
-
-  if (trigger && dropdown) {
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = dropdown.classList.contains('open');
-      dropdown.classList.toggle('open', !isOpen);
-      trigger.setAttribute('aria-expanded', String(!isOpen));
+  const mainBtn = document.getElementById('dl-main-en');
+  const dropdown = document.getElementById('dl-dropdown-en');
+  if (mainBtn && dropdown) {
+    mainBtn.addEventListener('click', () => {
+      dropdown.classList.toggle('dl-dropdown-open');
     });
-
-    dropdown.querySelectorAll('.platform-option').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const val = (el as HTMLButtonElement).dataset.value;
-        if (val) updatePlatform(val);
-        dropdown.classList.remove('open');
-        trigger.setAttribute('aria-expanded', 'false');
-      });
-    });
-
     document.addEventListener('click', (e) => {
-      if (wrap && !wrap.contains(e.target as Node)) {
-        dropdown.classList.remove('open');
-        trigger.setAttribute('aria-expanded', 'false');
+      if (!mainBtn.contains(e.target as Node) && !dropdown.contains(e.target as Node)) {
+        dropdown.classList.remove('dl-dropdown-open');
       }
     });
   }
@@ -331,7 +226,6 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     --guide-label: rgba(255, 255, 255, 0.25);
     --construct-line: rgba(255, 255, 255, 0.15);
     --dimension-line: rgba(255, 255, 255, 0.18);
-    --split-left-bg: var(--bg-surface-soft);
     --card-bg: transparent;
   }
 
@@ -341,46 +235,86 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     --guide-label: rgba(0, 0, 0, 0.25);
     --construct-line: rgba(0, 0, 0, 0.15);
     --dimension-line: rgba(0, 0, 0, 0.18);
-    --split-left-bg: #F5F7F6;
     --card-bg: #F5F7F6;
-  }
-
-  @keyframes dropdown-slide-in {
-    from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
-    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
   }
 
   .landing-wrap {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 40px 24px 64px;
+    padding: 96px 24px 64px;
     gap: 20px;
   }
 
   .landing-card {
-    display: flex;
     width: 100%;
     max-width: 1080px;
     border: 1px solid var(--border-strong);
     border-radius: 16px;
-    overflow: hidden;
-    min-height: 520px;
   }
 
-  .split-left {
-    flex: 0 0 42%;
+  .hero-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 64px 48px 56px;
+    gap: 24px;
+  }
+
+  .hero-actions {
     display: flex;
     align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
     justify-content: center;
-    border-right: 1px solid var(--border-primary);
-    background: var(--split-left-bg);
-    padding: 40px 32px;
+  }
+
+  .btn-hero-download {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 24px;
+    background: var(--text-strong);
+    color: var(--bg-page);
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: opacity 140ms ease;
+  }
+
+  .btn-hero-download:hover {
+    opacity: 0.8;
+  }
+
+  .btn-hero-secondary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 18px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .btn-hero-secondary:hover {
+    background: var(--bg-surface-soft);
+    color: var(--text-strong);
+  }
+
+  :root[data-theme='light'] .btn-hero-secondary:hover {
+    background: #ebebeb;
   }
 
   .type-specimen {
     width: 100%;
-    max-width: 380px;
+    max-width: 560px;
   }
 
   .type-svg {
@@ -388,27 +322,13 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     height: auto;
   }
 
-  .split-right {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 40px 48px;
-    gap: 20px;
-    background: transparent;
-  }
-
-  :root[data-theme='light'] .split-right {
-    background: #ffffff;
-  }
-
   .hero-title {
     margin: 0;
-    font-size: clamp(2rem, 3vw, 3rem);
+    font-size: clamp(1.6rem, 2.8vw, 2.4rem);
     font-weight: 700;
     letter-spacing: -0.04em;
     color: var(--text-strong);
-    line-height: 1.12;
+    line-height: 1.15;
   }
 
   .hero-desc {
@@ -416,188 +336,76 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
     font-size: 0.9rem;
     line-height: 1.65;
     color: var(--text-secondary);
+    max-width: 520px;
   }
 
-  .cta-block {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-
-  .btn-download {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    padding: 13px 20px;
-    background: var(--accent);
-    color: var(--accent-contrast);
-    font-size: 0.95rem;
-    font-weight: 600;
-    border-radius: 10px;
-    white-space: nowrap;
-    transition: background 160ms ease;
-  }
-
-  :root:not([data-theme='light']) .btn-download:hover {
-    background: #eeeeee;
-    color: #111;
-  }
-
-  :root[data-theme='light'] .btn-download:hover {
-    background: #383838;
-  }
-
-  .btn-platform-row {
-    display: flex;
-    justify-content: center;
+  /* Download dropdown */
+  .dl-btn-wrap {
     position: relative;
-  }
-
-  .btn-platform-trigger {
     display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    font-weight: 500;
-    user-select: none;
-    transition: background 120ms ease, color 120ms ease;
-    position: relative;
   }
 
-  .btn-platform-trigger:hover {
-    background: var(--bg-surface-soft);
-    color: var(--text-strong);
+  .dl-chevron {
+    width: 10px;
+    height: 10px;
+    opacity: 0.7;
   }
 
-  :root[data-theme='light'] .btn-platform-trigger:hover {
-    background: #ebebeb;
-  }
-
-  .platform-icon {
-    width: 13px;
-    height: 13px;
-    opacity: 0.6;
-    flex-shrink: 0;
-  }
-
-  .btn-platform-label {
-    white-space: nowrap;
-  }
-
-  .btn-platform-chevron {
-    width: 9px;
-    height: 9px;
-    opacity: 0.5;
-    flex-shrink: 0;
-    transition: transform 160ms ease;
-  }
-
-  .btn-platform-trigger[aria-expanded='true'] .btn-platform-chevron {
-    transform: rotate(180deg);
-  }
-
-  .platform-dropdown {
+  .dl-dropdown {
     display: none;
     position: absolute;
+    top: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
-    top: calc(100% + 4px);
-    z-index: 100;
-    min-width: 180px;
-    border: 0.5px solid var(--border-strong);
-    border-radius: 10px;
-    padding: 4px;
+    min-width: 260px;
     background: var(--bg-surface, #1e1e1e);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+    z-index: 100;
   }
 
-  :root[data-theme='light'] .platform-dropdown {
+  :root[data-theme='light'] .dl-dropdown {
     background: #ffffff;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
   }
 
-  .platform-dropdown.open {
+  .dl-dropdown-open {
     display: block;
-    animation: dropdown-slide-in 0.08s ease-out;
+    animation: dl-slide-down 0.1s ease-out;
   }
 
-  .platform-option {
+  @keyframes dl-slide-down {
+    from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  .dl-option {
     display: flex;
-    width: 100%;
     align-items: center;
-    padding: 8px 12px;
-    font-size: 0.84rem;
-    border-radius: 7px;
-    color: var(--text-secondary);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    text-align: left;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    text-decoration: none;
     transition: background 100ms ease;
   }
 
-  .platform-option:hover {
+  .dl-option:hover {
     background: var(--bg-surface-soft);
   }
 
-  :root[data-theme='light'] .platform-option:hover {
-    background: #F5F7F6;
+  :root[data-theme='light'] .dl-option:hover {
+    background: #f0f0f0;
   }
 
-  .platform-option[aria-selected='true'] {
-    color: var(--text-strong);
-    font-weight: 600;
-  }
-
-  .link-docs {
-    font-size: 0.85rem;
-    color: #3b82f6;
-    text-decoration: none;
-    text-align: center;
-  }
-
-  .link-docs:hover {
-    color: #60a5fa;
-  }
-
-  .feat-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px 20px;
-    margin-top: 2px;
-  }
-
-  .feat-item {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .feat-icon {
-    width: 22px;
-    height: 22px;
-    color: var(--text-secondary);
+  .dl-opt-icon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
-  }
-
-  .feat-title {
-    margin: 0;
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--text-strong);
-  }
-
-  .feat-desc {
-    margin: 0;
-    font-size: 0.75rem;
     color: var(--text-secondary);
-    line-height: 1.6;
   }
 
   /* Contributing card */
@@ -772,61 +580,19 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 
   @media (max-width: 767px) {
     .landing-wrap {
-      padding: 16px 16px 48px;
+      padding: 88px 16px 48px;
     }
 
-    .landing-card {
-      flex-direction: column;
-      min-height: unset;
+    .hero-center {
+      padding: 40px 24px 40px;
     }
 
-    .split-left {
-      flex: none;
-      border-right: none;
-      border-bottom: 1px solid var(--border-primary);
-      padding: 28px 24px;
-    }
-
-    .split-right {
-      flex: none;
-      padding: 28px 24px;
-    }
-
-    .feat-grid {
-      grid-template-columns: repeat(2, 1fr);
+    .dl-dropdown {
+      min-width: 220px;
     }
 
     .section-grid {
       grid-template-columns: 1fr;
-    }
-
-    .btn-download-wrap {
-      flex-wrap: wrap;
-    }
-
-    .btn-download {
-      flex: none;
-      width: 100%;
-      border-radius: 10px 10px 0 0;
-    }
-
-    .btn-platform-divider {
-      display: none;
-    }
-
-    .btn-platform-trigger {
-      width: 100%;
-      justify-content: center;
-      padding: 10px 16px;
-      border-top: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 0 0 10px 10px;
-    }
-
-    .platform-dropdown {
-      right: 0;
-      left: 0;
-      width: 100%;
-      min-width: unset;
     }
   }
 </style>

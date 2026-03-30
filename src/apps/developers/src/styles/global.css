@@ -117,10 +117,18 @@
 
 .brand {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 9px;
   margin: 0;
   padding: 0;
+}
+
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .brand-name {
@@ -138,6 +146,28 @@
   color: var(--text-muted);
   line-height: 1.1;
 }
+
+/* 首页专用：浮动 pill 顶栏 */
+.topbar-home {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 48px);
+  max-width: 860px;
+  border-bottom: none;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-page) 85%, transparent);
+  z-index: 50;
+}
+
+.topbar-home .topbar-inner {
+  max-width: unset;
+  height: 52px;
+  padding: 0 20px;
+}
+
 
 .topnav {
   display: flex;
@@ -307,6 +337,11 @@
   position: relative;
 }
 
+@keyframes dropdown-slide-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .locale-dropdown {
   display: none;
   position: absolute;
@@ -324,6 +359,7 @@
 
 .locale-dropdown-open {
   display: grid;
+  animation: dropdown-slide-down 0.08s ease-out;
 }
 
 .locale-option {
