@@ -1168,3 +1168,52 @@ describe('search_tools summary', () => {
     expect(result).toBe('2 matches: web_search, web_fetch')
   })
 })
+
+describe('memory_search file result summary', () => {
+  it('lists abstracts from hits', () => {
+    expect(
+      fileOpOutputFromResult('memory_search', {
+        hits: [{ uri: 'a', abstract: '第一行摘要' }, { uri: 'b', abstract: '第二行' }],
+      }),
+    ).toBe('2 results\n第一行摘要\n第二行')
+  })
+
+  it('falls back to uri when abstract missing', () => {
+    expect(
+      fileOpOutputFromResult('memory_search', {
+        hits: [{ uri: 'local://memory/abc' }],
+      }),
+    ).toBe('1 result\nlocal://memory/abc')
+  })
+
+  it('still accepts legacy results key', () => {
+    expect(
+      fileOpOutputFromResult('memory_search', {
+        results: [{ abstract: 'legacy' }],
+      }),
+    ).toBe('1 result\nlegacy')
+  })
+
+  it('head only when legacy hit has no fields', () => {
+    expect(
+      fileOpOutputFromResult('memory_search', {
+        results: [{}],
+      }),
+    ).toBe('1 result')
+  })
+
+  it('reports no results when both missing or empty', () => {
+    expect(fileOpOutputFromResult('memory_search', {})).toBe('(no results)')
+    expect(fileOpOutputFromResult('memory_search', { hits: [] })).toBe('(no results)')
+  })
+
+  it('caps listed lines and shows remainder count', () => {
+    const hits = Array.from({ length: 45 }, (_, i) => ({ abstract: `h${i}` }))
+    const out = fileOpOutputFromResult('memory_search', { hits })
+    expect(out.startsWith('45 results\n')).toBe(true)
+    expect(out).toContain('h0')
+    expect(out).toContain('h39')
+    expect(out).not.toContain('h40')
+    expect(out.endsWith('\n… 5 more')).toBe(true)
+  })
+})

@@ -1082,6 +1082,38 @@ function fileOpLabel(toolName: string, args: Record<string, unknown>): string {
   }
 }
 
+function memorySearchHitsToOutput(list: unknown[]): string {
+  const trimAbstract = (s: string, max: number) =>
+    s.length > max ? s.slice(0, max) + '…' : s
+  const maxPerLine = 280
+  const maxLines = 40
+
+  const count = list.length
+  const head = `${count} result${count === 1 ? '' : 's'}`
+  const lines: string[] = []
+
+  for (const item of list.slice(0, maxLines)) {
+    if (item && typeof item === 'object') {
+      const o = item as Record<string, unknown>
+      const abs = typeof o.abstract === 'string' ? o.abstract.trim() : ''
+      if (abs) {
+        lines.push(trimAbstract(abs, maxPerLine))
+        continue
+      }
+      const uri = typeof o.uri === 'string' ? o.uri.trim() : ''
+      if (uri) lines.push(trimAbstract(uri, maxPerLine))
+    } else if (typeof item === 'string') {
+      const t = item.trim()
+      if (t) lines.push(trimAbstract(t, maxPerLine))
+    }
+  }
+
+  if (lines.length === 0) return head
+  const omitted = count - maxLines
+  const tail = omitted > 0 ? `\n… ${omitted} more` : ''
+  return `${head}\n${lines.join('\n')}${tail}`
+}
+
 export function fileOpOutputFromResult(toolName: string, result: unknown): string | undefined {
   if (!result || typeof result !== 'object') return undefined
   const r = result as Record<string, unknown>
@@ -1130,10 +1162,14 @@ export function fileOpOutputFromResult(toolName: string, result: unknown): strin
       return stored ? 'stored' : 'failed'
     }
     case 'memory_search': {
-      const results = Array.isArray(r.results) ? r.results as unknown[] : []
-      const count = results.length
+      const list = Array.isArray(r.hits)
+        ? (r.hits as unknown[])
+        : Array.isArray(r.results)
+          ? (r.results as unknown[])
+          : []
+      const count = list.length
       if (count === 0) return '(no results)'
-      return `${count} result${count === 1 ? '' : 's'}`
+      return memorySearchHitsToOutput(list)
     }
     case 'memory_read': {
       const content = typeof r.content === 'string' ? r.content.trim() : ''
