@@ -320,7 +320,7 @@ export function ModelOptionsModal({
                   <input
                     value={draft.maxOutputTokens}
                     onChange={(e) => setDraft((prev) => ({ ...prev, maxOutputTokens: e.target.value }))}
-                    placeholder="e.g. 4096"
+                    placeholder="e.g. 32768"
                     className="w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]"
                     inputMode="numeric"
                   />

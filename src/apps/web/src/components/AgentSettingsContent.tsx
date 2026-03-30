@@ -141,7 +141,7 @@ function PersonaRow({
 
   const budgets = (persona.budgets ?? {}) as Record<string, unknown>
   const temperature = typeof budgets.temperature === 'number' ? budgets.temperature : 1
-  const maxOutputTokens = typeof budgets.max_output_tokens === 'number' ? budgets.max_output_tokens : 4096
+  const maxOutputTokens = typeof budgets.max_output_tokens === 'number' ? budgets.max_output_tokens : 32768
 
   const handleChange = async (field: 'reasoning_mode', value: string) => {
     setSaving(true)
