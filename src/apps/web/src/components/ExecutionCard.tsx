@@ -34,6 +34,7 @@ function toolKindLabel(toolName: string): string {
   switch (toolName) {
     case 'grep': return 'grep'
     case 'glob': return 'glob'
+    case 'read':
     case 'read_file': return 'read'
     case 'write_file': return 'write'
     case 'edit':

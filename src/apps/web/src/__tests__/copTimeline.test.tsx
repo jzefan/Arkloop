@@ -24,8 +24,9 @@ function renderTimeline(params: {
   fileOps?: Array<{ id: string; toolName: string; label: string; status: 'running' | 'success' | 'failed'; seq?: number }>
   webFetches?: Array<{ id: string; url: string; title?: string; status: 'fetching' | 'done' | 'failed'; statusCode?: number; seq?: number }>
   genericTools?: Array<{ id: string; toolName: string; label: string; output?: string; status: 'running' | 'success' | 'failed'; errorMessage?: string; seq?: number }>
-  thinkingRows?: Array<{ id: string; markdown: string; live?: boolean; seq: number; durationSec?: number }>
+  thinkingRows?: Array<{ id: string; markdown: string; live?: boolean; seq: number; durationSec?: number; startedAtMs?: number }>
   thinkingStartedAt?: number
+  trailingAssistantTextPresent?: boolean
   thinkingHint?: string
   live?: boolean
   shimmer?: boolean
@@ -45,6 +46,7 @@ function renderTimeline(params: {
         genericTools={params.genericTools}
         thinkingRows={params.thinkingRows}
         thinkingStartedAt={params.thinkingStartedAt}
+        trailingAssistantTextPresent={params.trailingAssistantTextPresent}
         thinkingHint={params.thinkingHint}
         live={params.live}
         shimmer={params.shimmer}
@@ -73,6 +75,7 @@ async function renderTimelineDom(params: Parameters<typeof renderTimeline>[0]) {
           genericTools={params.genericTools}
           thinkingRows={params.thinkingRows}
           thinkingStartedAt={params.thinkingStartedAt}
+          trailingAssistantTextPresent={params.trailingAssistantTextPresent}
           thinkingHint={params.thinkingHint}
           live={params.live}
           shimmer={params.shimmer}
@@ -127,7 +130,7 @@ describe('CopTimeline', () => {
       preserveExpanded: true,
       steps: [],
       sources: [],
-      thinkingRows: [{ id: 't1', markdown: 'hello', seq: 1, durationSec: 2 }],
+      thinkingRows: [{ id: 't1', markdown: 'hello', seq: 1, durationSec: 2, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
     })
 
     expect(html).toContain('Thought for 2s')
@@ -232,7 +235,7 @@ describe('CopTimeline', () => {
       steps: [],
       sources: [],
       fileOps: [{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }],
-      thinkingRows: [{ id: 't1', markdown: 'done', live: false, seq: 1, durationSec: 8 }],
+      thinkingRows: [{ id: 't1', markdown: 'done', live: false, seq: 1, durationSec: 8, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
     })
     expect(html).toContain('Thought for 8s')
     expect(html).not.toContain('done')
@@ -262,7 +265,7 @@ describe('CopTimeline', () => {
       isComplete: false,
       steps: [],
       sources: [],
-      thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1 }],
+      thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:05Z').getTime() }],
       thinkingStartedAt: new Date('2026-03-10T00:00:05Z').getTime(),
       thinkingHint: 'Planning next moves',
     })
@@ -277,7 +280,7 @@ describe('CopTimeline', () => {
       isComplete: false,
       steps: [],
       sources: [],
-      thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1 }],
+      thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
       thinkingStartedAt: new Date('2026-03-10T00:00:00Z').getTime(),
       thinkingHint: 'Planning next moves',
     })
@@ -335,6 +338,7 @@ describe('CopTimeline', () => {
   it('仅 thinking 的 segment 展开后直接显示 think 正文', async () => {
     const { container, cleanup } = await renderTimelineDom({
       isComplete: true,
+      trailingAssistantTextPresent: true,
       steps: [],
       sources: [],
       thinkingRows: [{ id: 't1', markdown: 'solo think body', live: false, seq: 1, durationSec: 2 }],
@@ -572,7 +576,7 @@ describe('CopTimeline', () => {
       steps: [],
       sources: [],
       fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }],
-      thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 8 }],
+      thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 8, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
     })
 
     await act(async () => {
@@ -584,6 +588,102 @@ describe('CopTimeline', () => {
     expect(container.textContent).not.toContain('hidden think body')
     expect(container.querySelector('[data-testid="cop-thought-summary-row"]')).not.toBeNull()
     cleanup()
+  })
+
+  it('live mixed segment 一旦出现工具调用应默认展开，但继续隐藏 think 正文', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const { container, cleanup } = await renderTimelineDom({
+      isComplete: false,
+      live: true,
+      steps: [],
+      sources: [],
+      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'running', seq: 2 }],
+      thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
+      thinkingHint: 'Planning next moves',
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(container.textContent).toContain('search_tools "abc"')
+    expect(container.textContent).toContain('Thinking for 2s')
+    expect(container.textContent).not.toContain('hidden think body')
+    cleanup()
+  })
+
+  it('mixed segment 的 thought 摘要可展开查看对应 think 内容', async () => {
+    const { container, cleanup } = await renderTimelineDom({
+      isComplete: true,
+      preserveExpanded: true,
+      steps: [],
+      sources: [],
+      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }],
+      thinkingRows: [{ id: 't1', markdown: 'recover previous think', live: false, seq: 1, durationSec: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
+    })
+
+    const thoughtRow = container.querySelector('[data-testid="cop-thought-summary-row"]')
+    if (!(thoughtRow instanceof HTMLButtonElement)) {
+      throw new Error('thought summary button not found')
+    }
+
+    await act(async () => {
+      thoughtRow.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('recover previous think')
+    cleanup()
+  })
+
+  it('segment 关闭时若用户未手动切换，应立即自动收起（title 保留，body 收起）', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            fileOps={[{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'running', seq: 2 }]}
+            thinkingRows={[{ id: 't1', markdown: 'hidden think body', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }]}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(container.textContent).toContain('search_tools "abc"')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            steps={[]}
+            sources={[]}
+            fileOps={[{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }]}
+            thinkingRows={[{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 2, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }]}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Thought for 2s')
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
   })
 
   it('web_fetch 遇到 file 地址时不应渲染坏掉的 favicon', () => {

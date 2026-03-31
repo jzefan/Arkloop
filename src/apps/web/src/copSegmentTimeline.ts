@@ -29,7 +29,7 @@ const SUB_AGENT_TOOL_NAMES = new Set([
   'send_acp', 'wait_acp', 'close_acp', 'interrupt_acp',
 ])
 const FILE_OP_TOOL_NAMES = new Set([
-  'grep', 'glob', 'read_file', 'write_file', 'edit', 'edit_file',
+  'grep', 'glob', 'read_file', 'read', 'write_file', 'edit', 'edit_file',
   'search_tools', 'memory_write', 'memory_search', 'memory_read', 'memory_forget',
 ])
 const AUXILIARY_RENDERED_TOOL_NAMES = new Set([
@@ -44,6 +44,7 @@ function sortBySeq<T extends { seq?: number }>(items: T[]): T[] {
 }
 
 function isKnownTimelineTool(toolName: string): boolean {
+  if (toolName === 'read' || toolName.startsWith('read.')) return true
   return (
     CODE_EXECUTION_TOOL_NAMES.has(toolName) ||
     SUB_AGENT_TOOL_NAMES.has(toolName) ||

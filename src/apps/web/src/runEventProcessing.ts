@@ -1015,7 +1015,22 @@ export function buildMessageSubAgentsFromRunEvents(events: RunEvent[]): SubAgent
 
 // --- File operation processing ---
 
-const FILE_OP_TOOL_NAMES = new Set(['grep', 'glob', 'read_file', 'write_file', 'edit', 'edit_file', 'search_tools', 'memory_write', 'memory_search', 'memory_read', 'memory_forget'])
+const FILE_OP_TOOL_NAMES = new Set(['grep', 'glob', 'read_file', 'read', 'write_file', 'edit', 'edit_file', 'search_tools', 'memory_write', 'memory_search', 'memory_read', 'memory_forget'])
+
+function normalizeFileOpToolName(toolName: string): string {
+  if (toolName === 'read' || toolName.startsWith('read.')) return 'read_file'
+  return toolName
+}
+
+function pickReadFilePath(args: Record<string, unknown>): string {
+  const direct = typeof args.file_path === 'string' ? args.file_path : ''
+  if (direct) return direct
+  const source = args.source
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return ''
+  return typeof (source as { file_path?: unknown }).file_path === 'string'
+    ? (source as { file_path: string }).file_path
+    : ''
+}
 
 type FileOpToolCallPatch = {
   nextOps: FileOpRef[]
@@ -1028,6 +1043,7 @@ type FileOpToolResultPatch = {
 }
 
 function fileOpLabel(toolName: string, args: Record<string, unknown>): string {
+  toolName = normalizeFileOpToolName(toolName)
   const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max) + '…' : s
   const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() ?? p
 
@@ -1045,7 +1061,7 @@ function fileOpLabel(toolName: string, args: Record<string, unknown>): string {
       return path ? `${label} in ${truncate(basename(path), 24)}` : label
     }
     case 'read_file': {
-      const filePath = typeof args.file_path === 'string' ? args.file_path : ''
+      const filePath = pickReadFilePath(args)
       return filePath ? truncate(basename(filePath), 48) : 'read file'
     }
     case 'write_file': {
@@ -1123,6 +1139,7 @@ function memorySearchHitsToOutput(list: unknown[]): string {
 }
 
 export function fileOpOutputFromResult(toolName: string, result: unknown): string | undefined {
+  toolName = normalizeFileOpToolName(toolName)
   if (!result || typeof result !== 'object') return undefined
   const r = result as Record<string, unknown>
 
@@ -1270,8 +1287,9 @@ export function applyFileOpToolCall(
 ): FileOpToolCallPatch {
   if (event.type !== 'tool.call') return { nextOps: ops }
   if (isACPDelegateEventData(event.data)) return { nextOps: ops }
-  const toolName = pickToolName(event.data)
-  if (!FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
+  const rawToolName = pickToolName(event.data)
+  const toolName = normalizeFileOpToolName(rawToolName)
+  if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
   const args = event.data && typeof event.data === 'object'
     ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
@@ -1292,8 +1310,9 @@ export function applyFileOpToolResult(
 ): FileOpToolResultPatch {
   if (event.type !== 'tool.result') return { nextOps: ops }
   if (isACPDelegateEventData(event.data)) return { nextOps: ops }
-  const toolName = pickToolName(event.data)
-  if (!FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
+  const rawToolName = pickToolName(event.data)
+  const toolName = normalizeFileOpToolName(rawToolName)
+  if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
   const toolCallId = pickToolCallId(event)
   const data = event.data && typeof event.data === 'object'
