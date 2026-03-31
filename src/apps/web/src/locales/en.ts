@@ -1063,6 +1063,8 @@ export const en: LocaleStrings = {
     advancedUsageSpendDist: "Spend Distribution",
     advancedUsageTrend: "Consumption Trend",
     advancedUsageModelDist: "By Model",
+    advancedUsageTrendHourly: "Hourly",
+    advancedUsageTrendDaily: "Daily",
     advancedLogsAllSources: "All sources",
     advancedLogsMain: "Main",
     advancedLogsSidecar: "Sidecar",

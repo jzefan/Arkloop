@@ -1007,6 +1007,8 @@ export interface LocaleStrings {
     advancedUsageSpendDist: string;
     advancedUsageTrend: string;
     advancedUsageModelDist: string;
+    advancedUsageTrendHourly: string;
+    advancedUsageTrendDaily: string;
     advancedLogsAllSources: string;
     advancedLogsMain: string;
     advancedLogsSidecar: string;

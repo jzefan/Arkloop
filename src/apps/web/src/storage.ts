@@ -1009,6 +1009,23 @@ export function writeDeveloperShowRunEvents(value: boolean): void {
   } catch { /* ignore */ }
 }
 
+const DEVELOPER_MODE_KEY = 'arkloop:web:developer_mode'
+
+export function readDeveloperMode(): boolean {
+  if (!canUseLocalStorage()) return false
+  try {
+    return localStorage.getItem(DEVELOPER_MODE_KEY) === 'true'
+  } catch { return false }
+}
+
+export function writeDeveloperMode(value: boolean): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(DEVELOPER_MODE_KEY, value ? 'true' : 'false')
+    window.dispatchEvent(new CustomEvent('arkloop:developer_mode', { detail: value }))
+  } catch { /* ignore */ }
+}
+
 // -- Per-message run events (for inline debug display) --
 
 export type MsgRunEvent = {

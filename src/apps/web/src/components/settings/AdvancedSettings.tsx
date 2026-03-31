@@ -22,7 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Modal, useToast } from '@arkloop/shared'
+import { Modal, PillToggle, TabBar, useToast } from '@arkloop/shared'
 import type {
   DesktopAdvancedOverview,
   DesktopExportSection,
@@ -30,12 +30,13 @@ import type {
   DesktopLogLevel,
   DesktopLogQuery,
 } from '@arkloop/shared/desktop'
-import type { MeDailyUsageItem, MeModelUsageItem, MeUsageSummary } from '../../api'
-import { getMyDailyUsage, getMyUsage, getMyUsageByModel } from '../../api'
+import type { MeDailyUsageItem, MeHourlyUsageItem, MeModelUsageItem, MeUsageSummary } from '../../api'
+import { getMyDailyUsage, getMyHourlyUsage, getMyUsage, getMyUsageByModel } from '../../api'
 import { useAppearance } from '../../contexts/AppearanceContext'
 import { useLocale } from '../../contexts/LocaleContext'
 import { openExternal } from '../../openExternal'
 import type { ThemeDefinition } from '../../themes/types'
+import { readDeveloperMode, writeDeveloperMode } from '../../storage'
 import { SettingsSection } from './_SettingsSection'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { settingsInputCls } from './_SettingsInput'
@@ -52,6 +53,7 @@ type Props = { accessToken: string }
 type UsageState = {
   summary: MeUsageSummary | null
   daily: MeDailyUsageItem[]
+  hourly: MeHourlyUsageItem[]
   byModel: MeModelUsageItem[]
 }
 
@@ -92,12 +94,12 @@ function primaryBtnCls(disabled?: boolean) {
 
 function MetricCard({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Globe }) {
   return (
-    <SettingsSection className="h-full">
+    <SettingsSection className="h-full min-w-0">
       <div className="flex items-center gap-2 text-[var(--c-text-secondary)]">
         <Icon size={15} />
-        <span className="text-xs">{label}</span>
+        <span className="min-w-0 text-xs">{label}</span>
       </div>
-      <div className="mt-3 text-xl font-semibold text-[var(--c-text-heading)]">{value}</div>
+      <div className="mt-3 min-w-0 break-all text-xl font-semibold text-[var(--c-text-heading)]">{value}</div>
     </SettingsSection>
   )
 }
@@ -115,7 +117,7 @@ function UsageTable({
     return <p className="text-sm text-[var(--c-text-muted)]">{emptyText}</p>
   }
   return (
-    <div className="overflow-auto rounded-xl border border-[var(--c-border-subtle)]">
+    <div className="min-w-0 overflow-auto rounded-xl border border-[var(--c-border-subtle)]">
       <table className="w-full text-sm">
         <thead style={{ background: 'var(--c-bg-page)' }}>
           <tr>
@@ -138,20 +140,18 @@ function UsageTable({
   )
 }
 
-function LogBadge({ level }: { level: DesktopLogLevel }) {
-  const color =
-    level === 'error' ? 'var(--c-status-error)'
-    : level === 'warn' ? 'var(--c-status-warning)'
-    : level === 'debug' ? 'var(--c-accent)'
-    : 'var(--c-text-secondary)'
-  return (
-    <span
-      className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium uppercase"
-      style={{ color, background: 'color-mix(in srgb, currentColor 12%, transparent)' }}
-    >
-      {level}
-    </span>
-  )
+function logLevelColor(level: DesktopLogLevel): string {
+  switch (level) {
+    case 'error': return '#f87171'
+    case 'warn': return '#fbbf24'
+    case 'debug': return '#a78bfa'
+    case 'info': return '#60a5fa'
+    default: return '#9ca3af'
+  }
+}
+
+function logLevelTag(level: DesktopLogLevel): string {
+  return level.toUpperCase().padEnd(5, ' ')
 }
 
 // -- Sub-panes --
@@ -167,6 +167,7 @@ function AboutPane({
 }) {
   const { t } = useLocale()
   const ds = t.desktopSettings
+  const [devMode, setDevMode] = useState(() => readDeveloperMode())
 
   if (loading) {
     return (
@@ -225,6 +226,22 @@ function AboutPane({
 
       <SettingsSection>
         <UpdateSettingsContent />
+      </SettingsSection>
+
+      <SettingsSection>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-[var(--c-text-primary)]">{ds.developerTitle}</div>
+            <div className="text-xs text-[var(--c-text-muted)]">{ds.developerDesc}</div>
+          </div>
+          <PillToggle
+            checked={devMode}
+            onChange={(next) => {
+              setDevMode(next)
+              writeDeveloperMode(next)
+            }}
+          />
+        </div>
       </SettingsSection>
     </div>
   )
@@ -379,15 +396,19 @@ function UsagePane({
 }) {
   const { t } = useLocale()
   const ds = t.desktopSettings
-  const [usage, setUsage] = useState<UsageState>({ summary: null, daily: [], byModel: [] })
+  const [usage, setUsage] = useState<UsageState>({ summary: null, daily: [], hourly: [], byModel: [] })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [year, setYear] = useState(defaultYear)
   const [month, setMonth] = useState(defaultMonth)
   const [heatmapData, setHeatmapData] = useState<MeDailyUsageItem[]>([])
   const [chartTab, setChartTab] = useState<'spend' | 'trend' | 'model'>('spend')
+  const [trendGranularity, setTrendGranularity] = useState<'hourly' | 'daily'>('hourly')
   const [chartTooltip, setChartTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
   const chartRef = useRef<HTMLDivElement>(null)
+  const heatmapScrollRef = useRef<HTMLDivElement>(null)
+  const isShiftScrollingHeatmapRef = useRef(false)
+  const heatmapShiftScrollResetRef = useRef<number | null>(null)
 
   const loadUsage = useCallback(async () => {
     setLoading(true)
@@ -396,12 +417,13 @@ function UsagePane({
       const monthStart = `${year}-${String(month).padStart(2, '0')}-01`
       const nextMonth = new Date(Date.UTC(month === 12 ? year + 1 : year, month === 12 ? 0 : month, 1))
       const monthEnd = nextMonth.toISOString().slice(0, 10)
-      const [summary, daily, byModel] = await Promise.all([
+      const [summary, daily, hourly, byModel] = await Promise.all([
         getMyUsage(accessToken, year, month),
         getMyDailyUsage(accessToken, monthStart, monthEnd),
+        getMyHourlyUsage(accessToken, monthStart, monthEnd),
         getMyUsageByModel(accessToken, year, month),
       ])
-      setUsage({ summary, daily, byModel })
+      setUsage({ summary, daily, hourly, byModel })
     } catch (err) {
       setError(err instanceof Error ? err.message : t.requestFailed)
     } finally {
@@ -426,9 +448,12 @@ function UsagePane({
 
   // build heatmap grid: 53 columns x 7 rows
   const heatmap = useMemo(() => {
-    const costMap = new Map<string, number>()
+    const tokenMap = new Map<string, number>()
+    let totalTokens = 0
     for (const d of heatmapData) {
-      costMap.set(d.date, d.cost_usd)
+      const tokens = d.input_tokens + d.output_tokens
+      tokenMap.set(d.date, tokens)
+      totalTokens += tokens
     }
     const today = new Date()
     // end of current week (Saturday)
@@ -446,7 +471,7 @@ function UsagePane({
       const week: Array<{ date: string; value: number; inRange: boolean }> = []
       for (let d = 0; d < 7; d++) {
         const ds = cursor.toISOString().slice(0, 10)
-        const val = costMap.get(ds) ?? 0
+        const val = tokenMap.get(ds) ?? 0
         const inRange = cursor <= today
         week.push({ date: ds, value: val, inRange })
         if (val > maxVal) maxVal = val
@@ -468,7 +493,7 @@ function UsagePane({
       }
     }
 
-    return { weeks, maxVal, monthLabels }
+    return { weeks, maxVal, monthLabels, totalTokens }
   }, [heatmapData])
 
   function heatColor(value: number, max: number): string {
@@ -480,17 +505,52 @@ function UsagePane({
     return '#39d353'
   }
 
-  // SVG chart builders
-  const chartPadding = { top: 20, right: 16, bottom: 30, left: 56 }
-  const chartH = 320
+  // measure chart container width
+  const [chartWidth, setChartWidth] = useState(0)
 
-  function renderSpendDistChart(daily: MeDailyUsageItem[], width: number) {
-    if (daily.length === 0 || width <= 0) return null
+  // SVG chart builders
+  const compactChart = chartWidth > 0 && chartWidth < 560
+  const chartPadding = compactChart
+    ? { top: 20, right: 12, bottom: 26, left: 44 }
+    : { top: 20, right: 16, bottom: 30, left: 56 }
+  const chartH = 320
+  const modelLabelMaxLength = compactChart ? 10 : chartWidth < 720 ? 14 : 18
+
+  useEffect(() => {
+    const node = heatmapScrollRef.current
+    if (!node) return
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.shiftKey) return
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+      if (delta === 0) return
+      isShiftScrollingHeatmapRef.current = true
+      node.scrollLeft += delta
+      event.preventDefault()
+      if (heatmapShiftScrollResetRef.current) window.clearTimeout(heatmapShiftScrollResetRef.current)
+      heatmapShiftScrollResetRef.current = window.setTimeout(() => {
+        isShiftScrollingHeatmapRef.current = false
+      }, 120)
+    }
+
+    node.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      node.removeEventListener('wheel', handleWheel)
+      if (heatmapShiftScrollResetRef.current) window.clearTimeout(heatmapShiftScrollResetRef.current)
+    }
+  }, [])
+
+  function renderSpendDistChart(
+    items: Array<{ label: string; input_tokens: number; output_tokens: number }>,
+    width: number,
+  ) {
+    if (items.length === 0 || width <= 0) return null
     const cw = width - chartPadding.left - chartPadding.right
     const ch = chartH - chartPadding.top - chartPadding.bottom
-    const maxVal = Math.max(...daily.map((d) => d.cost_usd), 0.0001)
-    const barW = Math.max(2, (cw / daily.length) - 2)
-    const step = cw / daily.length
+    const totals = items.map((d) => d.input_tokens + d.output_tokens)
+    const maxVal = Math.max(...totals, 1)
+    const barW = Math.max(2, (cw / items.length) - 2)
+    const step = cw / items.length
 
     // y-axis ticks
     const yTicks = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal]
@@ -503,18 +563,18 @@ function UsagePane({
           return (
             <g key={i}>
               <line x1={chartPadding.left} y1={y} x2={width - chartPadding.right} y2={y} stroke="var(--c-border-subtle)" strokeDasharray="3,3" />
-              <text x={chartPadding.left - 6} y={y + 4} textAnchor="end" fill="var(--c-text-muted)" fontSize={10}>${v.toFixed(2)}</text>
+              <text x={chartPadding.left - 6} y={y + 4} textAnchor="end" fill="var(--c-text-muted)" fontSize={compactChart ? 9 : 10}>{formatNumber(Math.round(v))}</text>
             </g>
           )
         })}
         {/* bars */}
-        {daily.map((d, i) => {
-          const barH = (d.cost_usd / maxVal) * ch
+        {items.map((d, i) => {
+          const barH = (totals[i] / maxVal) * ch
           const x = chartPadding.left + i * step + (step - barW) / 2
           const y = chartPadding.top + ch - barH
           return (
             <rect
-              key={d.date}
+              key={d.label}
               x={x}
               y={y}
               width={barW}
@@ -522,18 +582,18 @@ function UsagePane({
               rx={1}
               fill="var(--c-accent)"
               opacity={0.85}
-              onMouseEnter={(e) => setChartTooltip({ x: e.clientX, y: e.clientY, text: `${d.date}: $${d.cost_usd.toFixed(4)}` })}
+              onMouseEnter={(e) => setChartTooltip({ x: e.clientX, y: e.clientY, text: `${d.label}: ${formatNumber(d.input_tokens + d.output_tokens)} tokens` })}
               onMouseLeave={() => setChartTooltip(null)}
             />
           )
         })}
         {/* x-axis labels (sparse) */}
-        {daily.filter((_, i) => i % Math.max(1, Math.floor(daily.length / 6)) === 0).map((d) => {
-          const idx = daily.indexOf(d)
+        {items.filter((_, i) => i % Math.max(1, Math.floor(items.length / 6)) === 0).map((d) => {
+          const idx = items.indexOf(d)
           const x = chartPadding.left + idx * step + step / 2
           return (
-            <text key={d.date} x={x} y={chartH - 6} textAnchor="middle" fill="var(--c-text-muted)" fontSize={10}>
-              {d.date.slice(5)}
+            <text key={d.label} x={x} y={chartH - 6} textAnchor="middle" fill="var(--c-text-muted)" fontSize={compactChart ? 9 : 10}>
+              {d.label.includes(' ') ? d.label.slice(6) : d.label.slice(5)}
             </text>
           )
         })}
@@ -541,18 +601,21 @@ function UsagePane({
     )
   }
 
-  function renderTrendChart(daily: MeDailyUsageItem[], width: number) {
-    if (daily.length === 0 || width <= 0) return null
+  function renderTrendChart(
+    items: Array<{ label: string; input_tokens: number; output_tokens: number }>,
+    width: number,
+  ) {
+    if (items.length === 0 || width <= 0) return null
     const cw = width - chartPadding.left - chartPadding.right
     const ch = chartH - chartPadding.top - chartPadding.bottom
-    const totals = daily.map((d) => d.input_tokens + d.output_tokens)
+    const totals = items.map((d) => d.input_tokens + d.output_tokens)
     const maxVal = Math.max(...totals, 1)
-    const step = daily.length > 1 ? cw / (daily.length - 1) : cw
+    const step = items.length > 1 ? cw / (items.length - 1) : cw
 
     const yTicks = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal]
 
-    const points = daily.map((d, i) => {
-      const x = chartPadding.left + (daily.length > 1 ? i * step : cw / 2)
+    const points = items.map((d, i) => {
+      const x = chartPadding.left + (items.length > 1 ? i * step : cw / 2)
       const y = chartPadding.top + ch - (totals[i] / maxVal) * ch
       return { x, y, d }
     })
@@ -565,28 +628,28 @@ function UsagePane({
           return (
             <g key={i}>
               <line x1={chartPadding.left} y1={y} x2={width - chartPadding.right} y2={y} stroke="var(--c-border-subtle)" strokeDasharray="3,3" />
-              <text x={chartPadding.left - 6} y={y + 4} textAnchor="end" fill="var(--c-text-muted)" fontSize={10}>{formatNumber(Math.round(v))}</text>
+              <text x={chartPadding.left - 6} y={y + 4} textAnchor="end" fill="var(--c-text-muted)" fontSize={compactChart ? 9 : 10}>{formatNumber(Math.round(v))}</text>
             </g>
           )
         })}
         <path d={pathD} fill="none" stroke="var(--c-accent)" strokeWidth={2} />
         {points.map((p) => (
           <circle
-            key={p.d.date}
+            key={p.d.label}
             cx={p.x}
             cy={p.y}
             r={3}
             fill="var(--c-accent)"
-            onMouseEnter={(e) => setChartTooltip({ x: e.clientX, y: e.clientY, text: `${p.d.date}: ${formatNumber(p.d.input_tokens + p.d.output_tokens)} tokens` })}
+            onMouseEnter={(e) => setChartTooltip({ x: e.clientX, y: e.clientY, text: `${p.d.label}: ${formatNumber(p.d.input_tokens + p.d.output_tokens)} tokens` })}
             onMouseLeave={() => setChartTooltip(null)}
           />
         ))}
-        {daily.filter((_, i) => i % Math.max(1, Math.floor(daily.length / 6)) === 0).map((d) => {
-          const idx = daily.indexOf(d)
-          const x = chartPadding.left + (daily.length > 1 ? idx * step : cw / 2)
+        {items.filter((_, i) => i % Math.max(1, Math.floor(items.length / 6)) === 0).map((d) => {
+          const idx = items.indexOf(d)
+          const x = chartPadding.left + (items.length > 1 ? idx * step : cw / 2)
           return (
-            <text key={d.date} x={x} y={chartH - 6} textAnchor="middle" fill="var(--c-text-muted)" fontSize={10}>
-              {d.date.slice(5)}
+            <text key={d.label} x={x} y={chartH - 6} textAnchor="middle" fill="var(--c-text-muted)" fontSize={compactChart ? 9 : 10}>
+              {d.label.includes(' ') ? d.label.slice(6) : d.label.slice(5)}
             </text>
           )
         })}
@@ -597,8 +660,8 @@ function UsagePane({
   function renderModelChart(byModel: MeModelUsageItem[], width: number) {
     if (byModel.length === 0 || width <= 0) return null
     const maxVal = Math.max(...byModel.map((m) => m.cost_usd), 0.0001)
-    const barH = 28
-    const gap = 8
+    const barH = compactChart ? 22 : 28
+    const gap = compactChart ? 6 : 8
     const totalH = byModel.length * (barH + gap)
     const cw = width - chartPadding.left - chartPadding.right
     const colors = ['#4f8ff7', '#f5a623', '#7b61ff', '#36c5ab', '#ff6b81', '#c084fc', '#f472b6', '#34d399']
@@ -611,8 +674,8 @@ function UsagePane({
           const color = colors[i % colors.length]
           return (
             <g key={m.model}>
-              <text x={chartPadding.left - 6} y={y + barH / 2 + 4} textAnchor="end" fill="var(--c-text-secondary)" fontSize={11}>
-                {m.model.length > 18 ? m.model.slice(0, 18) + '...' : m.model}
+              <text x={chartPadding.left - 6} y={y + barH / 2 + 4} textAnchor="end" fill="var(--c-text-secondary)" fontSize={compactChart ? 10 : 11}>
+                {m.model.length > modelLabelMaxLength ? m.model.slice(0, modelLabelMaxLength) + '...' : m.model}
               </text>
               <rect
                 x={chartPadding.left}
@@ -625,7 +688,7 @@ function UsagePane({
                 onMouseEnter={(e) => setChartTooltip({ x: e.clientX, y: e.clientY, text: `${m.model}: $${m.cost_usd.toFixed(4)}` })}
                 onMouseLeave={() => setChartTooltip(null)}
               />
-              <text x={chartPadding.left + barW + 6} y={y + barH / 2 + 4} fill="var(--c-text-muted)" fontSize={10}>
+              <text x={width - 4} y={y + barH / 2 + 4} textAnchor="end" fill="var(--c-text-muted)" fontSize={compactChart ? 9 : 10}>
                 ${m.cost_usd.toFixed(4)}
               </text>
             </g>
@@ -635,8 +698,6 @@ function UsagePane({
     )
   }
 
-  // measure chart container width
-  const [chartWidth, setChartWidth] = useState(0)
   useEffect(() => {
     if (!chartRef.current) return
     const obs = new ResizeObserver((entries) => {
@@ -678,7 +739,7 @@ function UsagePane({
         </SettingsSection>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-3 gap-4">
         <MetricCard label={ds.advancedUsageCost} value={loading ? '...' : formatUsd(usage.summary?.total_cost_usd ?? 0)} icon={Globe} />
         <MetricCard label={ds.advancedUsageMessages} value={loading ? '...' : formatNumber(usage.summary?.record_count ?? 0)} icon={TerminalSquare} />
         <MetricCard label={ds.advancedUsageInput} value={loading ? '...' : formatNumber(usage.summary?.total_input_tokens ?? 0)} icon={Download} />
@@ -688,9 +749,21 @@ function UsagePane({
       </div>
 
       {/* heatmap */}
-      <SettingsSection className="overflow-hidden">
+      <SettingsSection overflow="visible">
         <SettingsSectionHeader title={ds.advancedUsageHeatmap} />
-        <div className="mt-4 max-w-full overflow-x-auto">
+        <div
+          ref={heatmapScrollRef}
+          className="mt-4 max-w-full overflow-x-auto overflow-y-hidden pb-1"
+          style={{ overscrollBehaviorX: 'contain' }}
+          onPointerDown={() => {
+            isShiftScrollingHeatmapRef.current = false
+          }}
+          onMouseMove={(event) => {
+            if (isShiftScrollingHeatmapRef.current || !heatmapScrollRef.current) return
+            if ((event.buttons & 1) !== 1) return
+            heatmapScrollRef.current.scrollLeft -= event.movementX
+          }}
+        >
           <div style={{ minWidth: heatmap.weeks.length * 12 + 36 + 8 }}>
             {/* month labels */}
             <div className="relative text-[10px] text-[var(--c-text-muted)]">
@@ -722,7 +795,11 @@ function UsagePane({
                   {week.map((cell) => (
                     <div
                       key={cell.date}
-                      title={`${cell.date}: $${cell.value.toFixed(4)}`}
+                      onMouseEnter={(e) => cell.inRange && cell.value > 0
+                        ? setChartTooltip({ x: e.clientX, y: e.clientY, text: `${cell.date}: ${formatNumber(cell.value)} tokens` })
+                        : undefined}
+                      onMouseMove={(e) => chartTooltip ? setChartTooltip({ x: e.clientX, y: e.clientY, text: chartTooltip.text }) : undefined}
+                      onMouseLeave={() => setChartTooltip(null)}
                       style={{
                         width: 10,
                         height: 10,
@@ -735,67 +812,71 @@ function UsagePane({
               ))}
             </div>
             {/* legend */}
-            <div className="mt-3 flex items-center gap-1.5 text-[10px] text-[var(--c-text-muted)]" style={{ paddingLeft: 36 }}>
-              <span>Less</span>
-              {['var(--c-bg-deep)', '#0e4429', '#006d32', '#26a641', '#39d353'].map((c) => (
-                <div key={c} style={{ width: 10, height: 10, borderRadius: 2, background: c }} />
-              ))}
-              <span>More</span>
+            <div className="mt-3 flex items-center justify-between text-[10px] text-[var(--c-text-muted)]" style={{ paddingLeft: 36 }}>
+              <span className="font-medium text-[var(--c-text-secondary)]">{formatNumber(heatmap.totalTokens)} Tokens</span>
+              <div className="flex items-center gap-1.5">
+                <span>Less</span>
+                {['var(--c-bg-deep)', '#0e4429', '#006d32', '#26a641', '#39d353'].map((c) => (
+                  <div key={c} style={{ width: 10, height: 10, borderRadius: 2, background: c }} />
+                ))}
+                <span>More</span>
+              </div>
             </div>
           </div>
         </div>
       </SettingsSection>
 
       {/* model analytics charts */}
-      <SettingsSection>
+      <SettingsSection overflow="visible">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-[var(--c-text-heading)]">
-            <TrendingUp size={16} />
-            <span className="text-sm font-semibold">{ds.advancedUsageModelAnalysis}</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-[var(--c-text-heading)]">
+              <TrendingUp size={16} />
+              <span className="text-sm font-semibold">{ds.advancedUsageModelAnalysis}</span>
+            </div>
+            {chartTab !== 'model' && (
+              <TabBar
+                className="!mb-0"
+                tabs={[
+                  { key: 'hourly' as const, label: ds.advancedUsageTrendHourly },
+                  { key: 'daily' as const, label: ds.advancedUsageTrendDaily },
+                ]}
+                active={trendGranularity}
+                onChange={setTrendGranularity}
+              />
+            )}
           </div>
-          <div className="flex gap-1 rounded-lg p-0.5" style={{ background: 'var(--c-bg-deep)' }}>
-            {chartTabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setChartTab(tab.key)}
-                className={[
-                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                  chartTab === tab.key
-                    ? 'bg-[var(--c-bg-page)] text-[var(--c-text-heading)] shadow-sm'
-                    : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]',
-                ].join(' ')}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <TabBar
+            className="!mb-0"
+            tabs={chartTabs}
+            active={chartTab}
+            onChange={setChartTab}
+          />
         </div>
-        <div ref={chartRef} className="relative mt-4 min-h-[320px]">
-          {chartTab === 'spend' && renderSpendDistChart(usage.daily, chartWidth)}
-          {chartTab === 'trend' && renderTrendChart(usage.daily, chartWidth)}
-          {chartTab === 'model' && renderModelChart(usage.byModel, chartWidth)}
-          {((chartTab === 'spend' || chartTab === 'trend') && usage.daily.length === 0) ||
-          (chartTab === 'model' && usage.byModel.length === 0) ? (
-            <p className="flex h-[320px] items-center justify-center text-sm text-[var(--c-text-muted)]">
-              {ds.advancedUsageEmpty}
-            </p>
-          ) : null}
+        <div ref={chartRef} className="relative mt-4 min-h-[320px] min-w-0 overflow-x-hidden">
+          {(chartTab === 'spend' || chartTab === 'trend') && (() => {
+            const items = trendGranularity === 'hourly'
+              ? usage.hourly.map((h) => {
+                  const d = new Date(h.hour)
+                  const label = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:00`
+                  return { label, input_tokens: h.input_tokens, output_tokens: h.output_tokens }
+                })
+              : usage.daily.map((d) => ({ label: d.date, input_tokens: d.input_tokens, output_tokens: d.output_tokens }))
+            if (items.length === 0) return (
+              <p className="flex h-[320px] items-center justify-center text-sm text-[var(--c-text-muted)]">
+                {ds.advancedUsageEmpty}
+              </p>
+            )
+            return chartTab === 'spend'
+              ? renderSpendDistChart(items, chartWidth)
+              : renderTrendChart(items, chartWidth)
+          })()}
+          {chartTab === 'model' && (
+            usage.byModel.length === 0
+              ? <p className="flex h-[320px] items-center justify-center text-sm text-[var(--c-text-muted)]">{ds.advancedUsageEmpty}</p>
+              : renderModelChart(usage.byModel, chartWidth)
+          )}
         </div>
-        {chartTooltip && (
-          <div
-            className="pointer-events-none fixed z-50 rounded-lg px-2.5 py-1.5 text-xs shadow-lg"
-            style={{
-              left: chartTooltip.x + 12,
-              top: chartTooltip.y - 8,
-              background: 'var(--c-bg-sub)',
-              color: 'var(--c-text-primary)',
-              border: '0.5px solid var(--c-border-subtle)',
-            }}
-          >
-            {chartTooltip.text}
-          </div>
-        )}
       </SettingsSection>
 
       <SettingsSection>
@@ -836,6 +917,23 @@ function UsagePane({
           />
         </div>
       </SettingsSection>
+
+      {chartTooltip && (
+        <div
+          className="pointer-events-none fixed z-50 rounded-lg px-2.5 py-1.5 text-xs shadow-lg"
+          style={{
+            left: chartTooltip.x,
+            top: chartTooltip.y - 8,
+            transform: 'translate(-50%, -100%)',
+            background: 'var(--c-bg-sub)',
+            color: 'var(--c-text-primary)',
+            border: '0.5px solid var(--c-border-subtle)',
+            animation: 'tooltip-in 120ms ease-out',
+          }}
+        >
+          {chartTooltip.text}
+        </div>
+      )}
     </div>
   )
 }
@@ -1066,6 +1164,7 @@ function LogsPane() {
   const [source, setSource] = useState<DesktopLogQuery['source']>('all')
   const [level, setLevel] = useState<DesktopLogQuery['level']>('all')
   const [search, setSearch] = useState('')
+  const termRef = useRef<HTMLDivElement>(null)
 
   const loadLogs = useCallback(async () => {
     if (!api?.advanced) return
@@ -1083,11 +1182,15 @@ function LogsPane() {
 
   useEffect(() => { void loadLogs() }, [loadLogs])
 
+  useEffect(() => {
+    if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight
+  }, [logs])
+
   return (
     <div className="flex flex-col gap-6">
       <SettingsSectionHeader title={ds.advancedLogs} description={ds.advancedLogsDesc} />
 
-      <SettingsSection>
+      <SettingsSection overflow="visible">
         <div className="flex flex-wrap gap-3">
           <SettingsSelect
             value={source ?? 'all'}
@@ -1130,31 +1233,41 @@ function LogsPane() {
         {error && <p className="mt-3 text-sm" style={{ color: 'var(--c-status-error)' }}>{error}</p>}
       </SettingsSection>
 
-      <SettingsSection>
+      <div
+        ref={termRef}
+        className="min-h-[320px] max-h-[600px] overflow-auto rounded-xl p-4"
+        style={{
+          background: '#0d1117',
+          border: '1px solid #21262d',
+          fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+        }}
+      >
         {loading ? (
           <div className="flex min-h-[180px] items-center justify-center">
-            <Loader2 size={18} className="animate-spin text-[var(--c-text-muted)]" />
+            <Loader2 size={18} className="animate-spin" style={{ color: '#8b949e' }} />
           </div>
         ) : logs.length === 0 ? (
-          <p className="text-sm text-[var(--c-text-muted)]">{ds.advancedLogsEmpty}</p>
+          <span style={{ color: '#8b949e', fontSize: 12 }}>{ds.advancedLogsEmpty}</span>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col">
             {logs.map((entry, i) => (
               <div
                 key={`${entry.source}-${entry.timestamp}-${i}`}
-                className="rounded-xl border border-[var(--c-border-subtle)] bg-[var(--c-bg-page)] px-4 py-3"
+                className="whitespace-pre-wrap break-all py-[1px] leading-[20px]"
+                style={{ fontSize: 12 }}
               >
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--c-text-muted)]">
-                  <LogBadge level={entry.level} />
-                  <span>{entry.source}</span>
-                  <span>{entry.timestamp}</span>
-                </div>
-                <pre className="whitespace-pre-wrap break-words text-xs text-[var(--c-text-primary)]">{entry.message}</pre>
+                <span style={{ color: '#8b949e' }}>{entry.timestamp}</span>
+                <span style={{ color: '#30363d' }}> | </span>
+                <span style={{ color: logLevelColor(entry.level), fontWeight: 500 }}>{logLevelTag(entry.level)}</span>
+                <span style={{ color: '#30363d' }}> | </span>
+                <span style={{ color: '#58a6ff' }}>{entry.source}</span>
+                <span style={{ color: '#30363d' }}> | </span>
+                <span style={{ color: entry.level === 'error' ? '#f87171' : '#c9d1d9' }}>{entry.message}</span>
               </div>
             ))}
           </div>
         )}
-      </SettingsSection>
+      </div>
     </div>
   )
 }
