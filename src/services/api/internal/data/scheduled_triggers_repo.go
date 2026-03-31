@@ -68,17 +68,18 @@ func (ScheduledTriggersRepository) UpsertHeartbeat(
 	}
 	intervalMin = normalizeHeartbeatInterval(intervalMin)
 	nextFire := time.Now().UTC().Add(time.Duration(intervalMin) * time.Minute)
+	triggerID := uuid.New()
 	_, err := db.Exec(ctx, `
 		INSERT INTO scheduled_triggers
-		    (id, channel_id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+		    (id, channel_id, channel_identity_id, persona_key, account_id, model, interval_min, next_fire_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
 		ON CONFLICT (channel_id, channel_identity_id) DO UPDATE
 		    SET persona_key   = excluded.persona_key,
 		        account_id    = excluded.account_id,
 		        model         = excluded.model,
 		        interval_min  = excluded.interval_min,
 		        updated_at    = now()`,
-		channelID, channelIdentityID, personaKey, accountID, model, intervalMin, nextFire,
+		triggerID, channelID, channelIdentityID, personaKey, accountID, model, intervalMin, nextFire,
 	)
 	return err
 }
