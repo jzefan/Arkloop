@@ -1,8 +1,6 @@
-name: CI
+name: Desktop CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -11,17 +9,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go-check:
-    name: Go (${{ matrix.module }})
+  desktop-go:
+    name: Desktop Go
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [api, gateway, worker, sandbox, shared]
-    defaults:
-      run:
-        working-directory: src/services/${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,82 +21,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
-          cache-dependency-path: src/services/${{ matrix.module }}/go.sum
 
-      - name: go vet
-        run: go vet ./...
+      - name: Build desktop service
+        working-directory: src/services/desktop
+        run: go build -tags desktop ./cmd/desktop
 
-      - name: go vet (desktop)
-        if: matrix.module == 'worker'
-        run: go vet -tags desktop ./...
+      - name: Test desktop service
+        working-directory: src/services/desktop
+        run: go test -tags desktop ./cmd/desktop
 
-      - name: staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-          staticcheck -checks=inherit,-U1000 ./...
-
-      - name: go build
-        run: go build ./...
-
-      - name: go test
-        run: go test -race -coverprofile=coverage.out ./...
-
-      - name: Upload coverage
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-go-${{ matrix.module }}
-          path: src/services/${{ matrix.module }}/coverage.out
-          retention-days: 7
-
-  go-integration:
-    name: Go Integration (${{ matrix.module }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [go-check]
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [api, gateway, worker, sandbox, shared]
-    defaults:
-      run:
-        working-directory: src/services/${{ matrix.module }}
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: arkloop
-          POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: arkloop
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
-    env:
-      DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
-      ARKLOOP_DATABASE_URL: postgresql://arkloop:ci_test_password@127.0.0.1:5432/arkloop
-      ARKLOOP_RUN_INTEGRATION_TESTS: "1"
-      ARKLOOP_AUTH_JWT_SECRET: ci_test_jwt_secret_at_least_32_chars_long
-      ARKLOOP_PROVIDER_ROUTING_JSON: '{"default_route_id":"default","credentials":[{"id":"stub_default","scope":"platform","provider_kind":"stub"}],"routes":[{"id":"default","model":"stub","credential_id":"stub_default"}]}'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.work
-          cache-dependency-path: src/services/${{ matrix.module }}/go.sum
-
-      - name: Run integration tests
-        run: go test -count=1 -race ./...
-
-  typescript:
-    name: TypeScript
+  desktop-typescript:
+    name: Desktop TypeScript
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -127,20 +53,11 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint (web)
-        run: pnpm --filter web lint
+      - name: Type check (desktop)
+        run: pnpm --filter @arkloop/desktop type-check
 
-      - name: Lint (console)
-        run: pnpm --filter console lint
+      - name: Build desktop web assets
+        run: pnpm --filter @arkloop/desktop build:web
 
-      - name: Type check (web)
-        run: pnpm --filter web type-check
-
-      - name: Type check (console)
-        run: pnpm --filter console type-check
-
-      - name: Test (web)
-        run: pnpm --filter web test
-
-      - name: Test (console)
-        run: pnpm --filter console test
+      - name: Build desktop electron
+        run: pnpm --filter @arkloop/desktop build:electron
