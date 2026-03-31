@@ -133,7 +133,7 @@ export type ArkloopDesktopApi = {
   advanced?: {
     getOverview: () => Promise<DesktopAdvancedOverview>
     chooseDataFolder: () => Promise<string | null>
-    exportDataBundle: () => Promise<DesktopExportResult>
+    exportDataBundle: (options: DesktopExportOptions) => Promise<DesktopExportResult>
     importDataBundle: () => Promise<DesktopImportResult>
     listLogs: (input?: DesktopLogQuery) => Promise<{ entries: DesktopLogEntry[] }>
   }
@@ -227,7 +227,7 @@ export type DesktopAdvancedOverview = {
   appVersion: string
   githubUrl: string
   telegramUrl: string | null
-  iconPath: string | null
+  iconDataUrl: string | null
   configPath: string
   dataDir: string
   logsDir: string
@@ -237,14 +237,37 @@ export type DesktopAdvancedOverview = {
   usage: DesktopUsageSummary | null
 }
 
+export type DesktopExportSection =
+  | 'settings'
+  | 'providers'
+  | 'history'
+  | 'personas'
+  | 'shortcuts'
+  | 'projects'
+  | 'mcp'
+  | 'themes'
+
+export type DesktopThemeExportPayload = {
+  customThemeId: string | null
+  customThemes: Record<string, unknown>
+}
+
+export type DesktopExportOptions = {
+  sections: DesktopExportSection[]
+  themes?: DesktopThemeExportPayload | null
+}
+
 export type DesktopExportResult = {
   ok: boolean
-  filePath: string
+  filePath?: string
+  canceled?: boolean
 }
 
 export type DesktopImportResult = {
   ok: boolean
-  importedFrom: string
+  importedFrom?: string
+  canceled?: boolean
+  themes?: DesktopThemeExportPayload | null
 }
 
 export type DesktopLogLevel = 'info' | 'warn' | 'error' | 'debug' | 'other'

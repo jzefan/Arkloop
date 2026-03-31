@@ -459,7 +459,7 @@ export function ChatInput({
       <form
         onSubmit={(e) => onSubmit(e, selectedPersonaKey, selectedModel ?? undefined)}
         style={{
-          padding: variant === 'welcome' ? '8px 14px 14px 22px' : '6px 12px 11px 20px',
+          padding: variant === 'welcome' ? '10px 14px 14px 22px' : '6px 12px 11px 20px',
         }}
       >
         <div

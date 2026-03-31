@@ -300,6 +300,7 @@ export function WelcomePage() {
           initialRunId: run.run_id,
           isSearch: personaKey === SEARCH_PERSONA_KEY,
           userEnterMessageId: userMessage.id,
+          welcomeUserMessage: userMessage,
         },
       })
     } catch (err) {

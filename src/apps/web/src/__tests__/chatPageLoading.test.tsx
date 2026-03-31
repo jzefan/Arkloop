@@ -147,6 +147,10 @@ vi.mock('../components/CopTimeline', () => ({
   CopTimeline: ({
     steps,
     codeExecutions,
+    subAgents,
+    fileOps,
+    webFetches,
+    genericTools,
     headerOverride,
     isComplete,
     preserveExpanded,
@@ -157,6 +161,10 @@ vi.mock('../components/CopTimeline', () => ({
   }: {
     steps?: Array<{ id: string; label: string; status?: string }>
     codeExecutions?: Array<{ id: string; code: string }>
+    subAgents?: Array<{ id: string; nickname?: string }>
+    fileOps?: Array<{ id: string; label: string }>
+    webFetches?: Array<{ id: string; url: string }>
+    genericTools?: Array<{ id: string; label: string }>
     headerOverride?: string
     isComplete?: boolean
     preserveExpanded?: boolean
@@ -170,8 +178,13 @@ vi.mock('../components/CopTimeline', () => ({
     const entries = [
       ...(steps?.map((step) => step.label) ?? []),
       ...(codeExecutions?.map((item) => item.code) ?? []),
+      ...(subAgents?.map((item) => item.nickname ?? item.id) ?? []),
+      ...(fileOps?.map((item) => item.label) ?? []),
+      ...(webFetches?.map((item) => item.url) ?? []),
+      ...(genericTools?.map((item) => item.label) ?? []),
     ]
     const hasThinking = (thinkingRows?.length ?? 0) > 0 || !!assistantThinking
+    const mixedWithThinking = hasThinking && entries.length > 0
     const autoHeader =
       headerOverride ??
       (entries.length > 0
@@ -185,11 +198,12 @@ vi.mock('../components/CopTimeline', () => ({
     return (
     <div data-preserve-expanded={preserveExpanded ? 'true' : 'false'}>
       {autoHeader ? <span>{autoHeader}</span> : null}
+      {mixedWithThinking ? <span>thought-summary</span> : null}
       {steps?.map((step) => (
         <span key={step.id}>{step.label}</span>
       ))}
       {assistantThinking ? <span>{`assistant-thinking:${assistantThinking.markdown}`}</span> : null}
-      {thinkingEntries.map((entry, index) => (
+      {!mixedWithThinking && thinkingEntries.map((entry, index) => (
         <span key={`${entry}-${index}`}>{entry}</span>
       ))}
       {inlineEntries.map((entry, index) => (
@@ -197,6 +211,18 @@ vi.mock('../components/CopTimeline', () => ({
       ))}
       {codeExecutions?.map((item) => (
         <span key={item.id}>{item.code}</span>
+      ))}
+      {subAgents?.map((item) => (
+        <span key={item.id}>{item.nickname ?? item.id}</span>
+      ))}
+      {fileOps?.map((item) => (
+        <span key={item.id}>{item.label}</span>
+      ))}
+      {webFetches?.map((item) => (
+        <span key={item.id}>{item.url}</span>
+      ))}
+      {genericTools?.map((item) => (
+        <span key={item.id}>{item.label}</span>
       ))}
     </div>
     )
@@ -262,6 +288,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
   const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 
   beforeEach(() => {
+    vi.useRealTimers()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
     mockedReadMessageCodeExecutions.mockReturnValue(null)
@@ -498,7 +525,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
       await flushMicrotasks()
     })
 
-    expect(container.textContent).toMatch(/Run interrupted|运行已中断/)
+    expect(container.textContent).toContain('hello')
 
     act(() => {
       root.unmount()
@@ -573,7 +600,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
       await flushMicrotasks()
     })
 
-    expect(container.textContent).toMatch(/模型服务商请求失败|Model provider request failed/)
+    expect(container.textContent).toContain('出了点问题，本次运行未能完成')
 
     act(() => {
       root.unmount()
@@ -1817,6 +1844,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
 
     const text = container.textContent ?? ''
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(text).toContain('Thought')
     expect(text).toContain('thinking:先想一下')
     expect(text).toContain('我要先')
     expect(text).toContain('再继续')
@@ -1828,6 +1856,267 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
       }),
     )
     expect(mockedWriteMessageTerminalStatus).toHaveBeenCalledWith('msg-2', 'cancelled')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('run.cancelled 落入历史消息后不应默认保留展开态', async () => {
+    mockedListMessages
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+        {
+          id: 'msg-2',
+          role: 'assistant',
+          content: '我要先再继续',
+          run_id: 'run-cancel-history-collapsed',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:01Z',
+        },
+      ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-cancel-history-collapsed',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    sseMock.state = 'connected'
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-cancel-history-collapsed',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          channel: 'thinking',
+          content_delta: '先想一下',
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-cancel-history-collapsed',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.cancelled',
+        data: {},
+      },
+    ]
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-preserve-expanded="true"]')).not.toBeNull()
+
+    sseMock.state = 'idle'
+    sseMock.events = []
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    const preserved = Array.from(container.querySelectorAll('[data-preserve-expanded="true"]'))
+    expect(preserved).toHaveLength(1)
+    expect((preserved[0] as HTMLElement).closest('[data-testid="current-run-handoff"]')).not.toBeNull()
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('run.cancelled 且仅有 thinking 时应继续保留 think 正文', async () => {
+    mockedListMessages
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+        {
+          id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          run_id: 'run-cancel-thinking-visible',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:01Z',
+        },
+      ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-cancel-thinking-visible',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    sseMock.state = 'connected'
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-cancel-thinking-visible',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          channel: 'thinking',
+          content_delta: '先想一下',
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-cancel-thinking-visible',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.cancelled',
+        data: {},
+      },
+    ]
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('thinking:先想一下')
+    expect(text).not.toContain('thought-summary')
 
     act(() => {
       root.unmount()

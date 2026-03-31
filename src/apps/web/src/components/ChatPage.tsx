@@ -70,7 +70,7 @@ import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copS
 import { applyRunEventToWebSearchSteps, isWebSearchToolName, webSearchSourcesFromResult } from '../webSearchTimelineFromRunEvent'
 import { useLocale } from '../contexts/LocaleContext'
 import { apiBaseUrl } from '@arkloop/shared/api'
-import { isACPDelegateEventData, Button } from '@arkloop/shared'
+import { isACPDelegateEventData } from '@arkloop/shared'
 import { ChatSkeleton } from './ChatSkeleton'
 import type { UserInputRequest, UserInputResponse, RequestedSchema } from '../userInputTypes'
 import {
@@ -960,7 +960,7 @@ export function ChatPage() {
   )
   const [sending, setSending] = useState(false)
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
-  const [error, setError] = useState<AppError | null>(null)
+  const [, setError] = useState<AppError | null>(null)
   const [injectionBlocked, setInjectionBlocked] = useState<string | null>(null)
   const injectionBlockedRunIdRef = useRef<string | null>(null)
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
@@ -1898,7 +1898,6 @@ export function ChatPage() {
         ) {
           setActiveRunId(locationState.initialRunId)
           setPendingThinking(true)
-          setCopThinkingStartedAtMs(Date.now())
           const hints = t.copThinkingHints
           setThinkingHint(hints[Math.floor(Math.random() * hints.length)])
           if (threadId) onRunStarted(threadId)
@@ -2711,6 +2710,7 @@ export function ChatPage() {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
+                markTerminalRunHistory(assistant.id, false)
               }
             })
         }
@@ -3025,7 +3025,6 @@ export function ChatPage() {
 
     setSending(true)
     setPendingThinking(true)
-    setCopThinkingStartedAtMs(Date.now())
     setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
     setError(null)
     setInjectionBlocked(null)
