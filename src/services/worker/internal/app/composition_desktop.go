@@ -1593,6 +1593,7 @@ func desktopAgentLoop(
 			runsRepo:              runsRepo,
 			eventsRepo:            eventsRepo,
 			projector:             projector,
+			usageRepo:             data.UsageRecordsRepository{},
 			responseDraftStore:    rc.ResponseDraftStore,
 			telegramBoundaryFlush: rc.TelegramToolBoundaryFlush,
 		}
@@ -1703,7 +1704,11 @@ type desktopEventWriter struct {
 	completed               bool
 	totalInputTokens        int64
 	totalOutputTokens       int64
+	totalCacheCreationTokens int64
+	totalCacheReadTokens     int64
+	totalCachedTokens        int64
 	totalCostUSD            float64
+	usageRepo               data.UsageRecordsRepository
 	telegramBoundaryFlush   func(context.Context, string) error
 	telegramFlushSentDeltas int
 	terminalUserMessage     string
@@ -1828,6 +1833,13 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		}); err != nil {
 			return err
 		}
+		if err := w.usageRepo.Insert(ctx, tx, w.run.AccountID, runID, w.model,
+			w.totalInputTokens, w.totalOutputTokens,
+			w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
+			w.totalCostUSD,
+		); err != nil {
+			return err
+		}
 		if w.projector != nil {
 			nextRunID, err := w.projector.ProjectRunTerminal(ctx, tx, w.run, status, ev.DataJSON, ev.ErrorClass)
 			if err != nil {
@@ -1881,6 +1893,13 @@ func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx,
 	if err := w.runsRepo.UpdateRunTerminalStatus(ctx, tx, runID, data.TerminalStatusUpdate{
 		Status: "cancelled", TotalInputTokens: w.totalInputTokens, TotalOutputTokens: w.totalOutputTokens, TotalCostUSD: w.totalCostUSD,
 	}); err != nil {
+		return nil, err
+	}
+	if err := w.usageRepo.Insert(ctx, tx, w.run.AccountID, runID, w.model,
+		w.totalInputTokens, w.totalOutputTokens,
+		w.totalCacheCreationTokens, w.totalCacheReadTokens, w.totalCachedTokens,
+		w.totalCostUSD,
+	); err != nil {
 		return nil, err
 	}
 	w.terminalUserMessage = ""
@@ -1986,6 +2005,21 @@ func (w *desktopEventWriter) accumUsage(dataJSON map[string]any) {
 	}
 	if v, ok := toDesktopInt64(usage["output_tokens"]); ok {
 		w.totalOutputTokens += v
+	}
+	if v, ok := toDesktopInt64(usage["cache_creation_input_tokens"]); ok {
+		w.totalCacheCreationTokens += v
+	}
+	if v, ok := toDesktopInt64(usage["cache_read_input_tokens"]); ok {
+		w.totalCacheReadTokens += v
+	}
+	if v, ok := toDesktopInt64(usage["cached_tokens"]); ok {
+		w.totalCachedTokens += v
+	}
+	if cost, ok := dataJSON["cost"].(map[string]any); ok {
+		if v, ok := toDesktopInt64(cost["amount_micros"]); ok {
+			w.totalCostUSD += float64(v) / 1_000_000.0
+			return
+		}
 	}
 	if v, ok := toDesktopFloat64(usage["cost_usd"]); ok {
 		w.totalCostUSD += v
