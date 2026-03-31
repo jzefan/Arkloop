@@ -47,3 +47,15 @@ export const USER_TEXT_LINE_HEIGHT = 25.6 // 16px * 1.6
 export const USER_TEXT_MAX_LINES = 9
 export const USER_TEXT_COLLAPSED_HEIGHT = USER_TEXT_LINE_HEIGHT * USER_TEXT_MAX_LINES
 export const USER_TEXT_FADE_HEIGHT = USER_TEXT_LINE_HEIGHT * 2
+
+export const USER_PROMPT_MAX_WIDTH = 663
+export const USER_PROMPT_ENTER_BASE_SCALE = 1.025
+export const USER_PROMPT_ENTER_MAX_SCALE = 1.06
+
+export function getUserPromptEnterScale(width: number): number {
+  const safeWidth = Number.isFinite(width) ? Math.max(0, width) : USER_PROMPT_MAX_WIDTH
+  const widthRatio = Math.min(safeWidth / USER_PROMPT_MAX_WIDTH, 1)
+  const compensationRatio = 1 - widthRatio
+  return USER_PROMPT_ENTER_BASE_SCALE
+    + (USER_PROMPT_ENTER_MAX_SCALE - USER_PROMPT_ENTER_BASE_SCALE) * compensationRatio
+}

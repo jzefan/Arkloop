@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react'
 import { Copy, Check, Pencil, Paperclip } from 'lucide-react'
 import type { MessageResponse } from '../../api'
 import type { ArtifactRef } from '../../storage'
@@ -8,7 +8,12 @@ import { ImageThumbnailCard } from './ImageThumbnailCard'
 import { PastedBubbleCard } from './PastedBubbleCard'
 import { ArtifactDownload } from '../ArtifactDownload'
 import { MessageDate } from './MessageDate'
-import { USER_TEXT_COLLAPSED_HEIGHT, USER_TEXT_FADE_HEIGHT } from './utils'
+import {
+  getUserPromptEnterScale,
+  USER_PROMPT_ENTER_BASE_SCALE,
+  USER_TEXT_COLLAPSED_HEIGHT,
+  USER_TEXT_FADE_HEIGHT,
+} from './utils'
 
 type Props = {
   message: MessageResponse
@@ -19,6 +24,8 @@ type Props = {
   accessToken?: string
 }
 
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
 export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnterAnimationEnd }: Props) {
   const { t } = useLocale()
   const [copied, setCopied] = useState(false)
@@ -26,6 +33,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
   const [editText, setEditText] = useState('')
   const [userTextExpanded, setUserTextExpanded] = useState(false)
   const [userTextOverflows, setUserTextOverflows] = useState(false)
+  const [enterScale, setEnterScale] = useState(USER_PROMPT_ENTER_BASE_SCALE)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const userTextRef = useRef<HTMLDivElement>(null)
   const enterBubbleRef = useRef<HTMLDivElement>(null)
@@ -115,6 +123,15 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
   const fileNames = attachmentParts.length > 0
     ? [...imageAttachments, ...allFileAttachments].map((part) => part.attachment.filename)
     : legacy.fileNames
+
+  useIsomorphicLayoutEffect(() => {
+    if (!animateEnter) {
+      setEnterScale(USER_PROMPT_ENTER_BASE_SCALE)
+      return
+    }
+    const width = enterBubbleRef.current?.getBoundingClientRect().width ?? 0
+    setEnterScale(getUserPromptEnterScale(width))
+  }, [animateEnter, displayText])
 
   if (editing) {
     return (
@@ -339,6 +356,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
               ref={enterBubbleRef}
               className={[animateEnter ? 'user-prompt-bubble-enter' : '', 'user-prompt-bubble'].filter(Boolean).join(' ')}
               style={{
+                '--user-prompt-enter-scale': String(enterScale),
                 borderRadius: '11px',
                 padding: '10px 16px',
                 fontSize: '16.5px',
@@ -346,7 +364,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
                 lineHeight: 1.6,
                 letterSpacing: '-0.64px',
                 wordBreak: 'break-word',
-              }}
+              } as CSSProperties}
             >
               <div
                 ref={userTextRef}

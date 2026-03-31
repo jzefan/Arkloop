@@ -3,6 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import { UserMessage } from '../components/messagebubble/UserMessage'
 import type { MessageResponse } from '../api'
+import {
+  getUserPromptEnterScale,
+  USER_PROMPT_ENTER_BASE_SCALE,
+  USER_PROMPT_ENTER_MAX_SCALE,
+  USER_PROMPT_MAX_WIDTH,
+} from '../components/messagebubble/utils'
 
 function makeMessage(overrides: Partial<MessageResponse>): MessageResponse {
   return {
@@ -68,5 +74,14 @@ describe('UserMessage attachments', () => {
 
     expect(html).toContain('notes.txt')
     expect(html).not.toContain('PASTED')
+  })
+})
+
+describe('UserMessage enter animation compensation', () => {
+  it('最宽消息保持基础倍率，短消息得到补偿', () => {
+    expect(getUserPromptEnterScale(USER_PROMPT_MAX_WIDTH)).toBe(USER_PROMPT_ENTER_BASE_SCALE)
+    expect(getUserPromptEnterScale(USER_PROMPT_MAX_WIDTH / 2)).toBeCloseTo(1.0425, 6)
+    expect(getUserPromptEnterScale(120)).toBeGreaterThan(USER_PROMPT_ENTER_BASE_SCALE)
+    expect(getUserPromptEnterScale(120)).toBeLessThanOrEqual(USER_PROMPT_ENTER_MAX_SCALE)
   })
 })

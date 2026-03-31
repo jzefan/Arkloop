@@ -22,9 +22,10 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { useToast } from '@arkloop/shared'
+import { Modal, useToast } from '@arkloop/shared'
 import type {
   DesktopAdvancedOverview,
+  DesktopExportSection,
   DesktopLogEntry,
   DesktopLogLevel,
   DesktopLogQuery,
@@ -51,6 +52,16 @@ type UsageState = {
   daily: MeDailyUsageItem[]
   byModel: MeModelUsageItem[]
 }
+
+const DESKTOP_EXPORT_SECTIONS: DesktopExportSection[] = [
+  'settings',
+  'providers',
+  'history',
+  'personas',
+  'projects',
+  'mcp',
+  'logs',
+]
 
 function formatUsd(value: number) {
   return `$${value.toFixed(4)}`
@@ -183,8 +194,8 @@ function AboutPane({
             className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-[var(--c-bg-deep)]"
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
           >
-            {overview.iconPath ? (
-              <img src={`file://${overview.iconPath}`} alt={overview.appName} className="h-full w-full object-cover" />
+            {overview.iconDataUrl ? (
+              <img src={overview.iconDataUrl} alt={overview.appName} className="h-full w-full object-cover" />
             ) : (
               <HardDrive size={22} className="text-[var(--c-text-muted)]" />
             )}
@@ -487,6 +498,26 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
   const { addToast } = useToast()
   const [actionLoading, setActionLoading] = useState<'choose' | 'export' | 'import' | null>(null)
   const [actionError, setActionError] = useState('')
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [selectedSections, setSelectedSections] = useState<DesktopExportSection[]>(DESKTOP_EXPORT_SECTIONS)
+
+  const exportOptions = [
+    { key: 'settings' as const, label: ds.advancedExportSettings },
+    { key: 'providers' as const, label: ds.advancedExportProviders },
+    { key: 'history' as const, label: ds.advancedExportHistory },
+    { key: 'personas' as const, label: ds.advancedExportPersonas },
+    { key: 'projects' as const, label: ds.advancedExportProjects },
+    { key: 'mcp' as const, label: ds.advancedExportMcp },
+    { key: 'logs' as const, label: ds.advancedExportLogs },
+  ]
+
+  const toggleSection = useCallback((section: DesktopExportSection) => {
+    setSelectedSections((prev) => (
+      prev.includes(section)
+        ? prev.filter((item) => item !== section)
+        : [...prev, section]
+    ))
+  }, [])
 
   const handleChoose = useCallback(async () => {
     if (!api?.advanced) return
@@ -504,24 +535,35 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
 
   const handleExport = useCallback(async () => {
     if (!api?.advanced) return
+    if (selectedSections.length === 0) return
     setActionLoading('export')
     setActionError('')
     try {
-      await api.advanced.exportDataBundle()
+      const result = await api.advanced.exportDataBundle({ sections: selectedSections })
+      if (result.canceled) {
+        addToast(ds.advancedExportCanceled, 'default')
+        setExportDialogOpen(false)
+        return
+      }
       addToast(ds.advancedExportDone, 'success')
+      setExportDialogOpen(false)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : t.requestFailed)
     } finally {
       setActionLoading(null)
     }
-  }, [api, addToast, ds.advancedExportDone, t.requestFailed])
+  }, [api, addToast, ds.advancedExportCanceled, ds.advancedExportDone, selectedSections, t.requestFailed])
 
   const handleImport = useCallback(async () => {
     if (!api?.advanced) return
     setActionLoading('import')
     setActionError('')
     try {
-      await api.advanced.importDataBundle()
+      const result = await api.advanced.importDataBundle()
+      if (result.canceled) {
+        addToast(ds.advancedImportCanceled, 'default')
+        return
+      }
       addToast(ds.advancedImportDone, 'success')
       await onReloadOverview()
     } catch (err) {
@@ -529,7 +571,7 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
     } finally {
       setActionLoading(null)
     }
-  }, [api, addToast, ds.advancedImportDone, onReloadOverview, t.requestFailed])
+  }, [api, addToast, ds.advancedImportCanceled, ds.advancedImportDone, onReloadOverview, t.requestFailed])
 
   const busy = actionLoading !== null
 
@@ -551,7 +593,7 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
           </button>
           <button
             type="button"
-            onClick={() => void handleExport()}
+            onClick={() => setExportDialogOpen(true)}
             disabled={busy}
             className={actionBtnCls(busy)}
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
@@ -572,6 +614,78 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
         </div>
         {actionError && <p className="mt-2 text-sm" style={{ color: 'var(--c-status-error)' }}>{actionError}</p>}
       </SettingsSection>
+
+      <Modal
+        open={exportDialogOpen}
+        onClose={() => {
+          if (actionLoading !== 'export') setExportDialogOpen(false)
+        }}
+        title={ds.advancedExportTitle}
+        width="520px"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-[var(--c-text-secondary)]">{ds.advancedExportDesc}</p>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-[var(--c-text-secondary)]">{selectedSections.length} / {exportOptions.length}</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={actionBtnCls()}
+                onClick={() => setSelectedSections(DESKTOP_EXPORT_SECTIONS)}
+              >
+                {ds.advancedExportSelectAll}
+              </button>
+              <button
+                type="button"
+                className={actionBtnCls()}
+                onClick={() => setSelectedSections([])}
+              >
+                {ds.advancedExportClearAll}
+              </button>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            {exportOptions.map((option) => {
+              const checked = selectedSections.includes(option.key)
+              return (
+                <label
+                  key={option.key}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm"
+                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSection(option.key)}
+                  />
+                  <span className="text-[var(--c-text-primary)]">{option.label}</span>
+                </label>
+              )
+            })}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setExportDialogOpen(false)}
+              disabled={actionLoading === 'export'}
+              className={actionBtnCls(actionLoading === 'export')}
+              style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            >
+              {t.settings.cancel}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleExport()}
+              disabled={actionLoading === 'export' || selectedSections.length === 0}
+              className={primaryBtnCls(actionLoading === 'export' || selectedSections.length === 0)}
+              style={{ background: 'var(--c-btn-bg)' }}
+            >
+              {actionLoading === 'export' && <Loader2 size={14} className="animate-spin" />}
+              <span>{ds.advancedExport}</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

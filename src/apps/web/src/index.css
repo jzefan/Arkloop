@@ -165,7 +165,7 @@ button:not(:disabled) {
     --c-md-inline-code-color: #7F2C29;
     --c-input-shadow: 0 2px 16px -4px rgba(0, 0, 0, 0.06);
     --c-input-border: 0.5px solid rgba(0, 0, 0, 0.16);
-    --c-input-border-color: rgba(0, 0, 0, 0.16);
+    --c-input-border-color: rgba(0, 0, 0, 0.19);
     --c-input-border-color-hover: rgba(0, 0, 0, 0.20);
     --c-input-border-color-focus: rgba(0, 0, 0, 0.28);
     --c-input-border-gradient: linear-gradient(180deg, rgba(0,0,0,0.16), rgba(0,0,0,0.16));
@@ -1153,8 +1153,8 @@ button:not(:disabled) {
 
 @keyframes user-prompt-enter-dark {
   from,
-  20% {
-    transform: scale(1.025);
+  12.5% {
+    transform: scale(var(--user-prompt-enter-scale, 1.025));
     background-color: color-mix(in srgb, var(--c-bg-deep) 88%, var(--c-bg-sub) 12%);
     color: color-mix(in srgb, var(--c-text-primary) 86%, var(--c-text-secondary) 14%);
   }
@@ -1167,8 +1167,8 @@ button:not(:disabled) {
 
 @keyframes user-prompt-enter-light {
   from,
-  20% {
-    transform: scale(1.025);
+  12.5% {
+    transform: scale(var(--user-prompt-enter-scale, 1.025));
     background-color: color-mix(in srgb, var(--c-bg-deep) 82%, var(--c-bg-sub) 18%);
     color: color-mix(in srgb, var(--c-text-primary) 88%, var(--c-text-secondary) 12%);
   }

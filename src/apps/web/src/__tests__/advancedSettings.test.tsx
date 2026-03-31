@@ -46,7 +46,7 @@ describe('AdvancedSettings', () => {
           appVersion: '1.2.3',
           githubUrl: 'https://github.com/qqqqqf-q/Arkloop',
           telegramUrl: null,
-          iconPath: null,
+          iconDataUrl: null,
           configPath: '/tmp/config.json',
           dataDir: '/tmp/data',
           logsDir: '/tmp/logs',
@@ -149,9 +149,9 @@ describe('AdvancedSettings', () => {
     })
     await flushEffects()
 
-    expect(container.textContent).toContain('高级')
+    expect(container.textContent).toContain('关于')
     expect(container.textContent).toContain('Arkloop')
-    expect(container.textContent).toContain('概览')
+    expect(container.textContent).toContain('模块')
 
     const logsButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('日志'))
     expect(logsButton).toBeTruthy()

@@ -1,9 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CopTimeline } from '../components/CopTimeline'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import type { SubAgentRef, WebSource } from '../storage'
 import type { CodeExecution } from '../components/CodeExecutionCard'
+
+globalThis.scrollTo = (() => {}) as typeof globalThis.scrollTo
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function renderTimeline(params: {
   isComplete: boolean
@@ -18,6 +26,9 @@ function renderTimeline(params: {
   genericTools?: Array<{ id: string; toolName: string; label: string; output?: string; status: 'running' | 'success' | 'failed'; errorMessage?: string; seq?: number }>
   thinkingRows?: Array<{ id: string; markdown: string; live?: boolean; seq: number; durationSec?: number }>
   thinkingStartedAt?: number
+  thinkingHint?: string
+  live?: boolean
+  shimmer?: boolean
 }): string {
   return renderToStaticMarkup(
     <LocaleProvider>
@@ -34,9 +45,50 @@ function renderTimeline(params: {
         genericTools={params.genericTools}
         thinkingRows={params.thinkingRows}
         thinkingStartedAt={params.thinkingStartedAt}
+        thinkingHint={params.thinkingHint}
+        live={params.live}
+        shimmer={params.shimmer}
       />
     </LocaleProvider>,
   )
+}
+
+async function renderTimelineDom(params: Parameters<typeof renderTimeline>[0]) {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <CopTimeline
+          steps={params.steps}
+          sources={params.sources}
+          narratives={params.narratives}
+          isComplete={params.isComplete}
+          preserveExpanded={params.preserveExpanded}
+          codeExecutions={params.codeExecutions}
+          subAgents={params.subAgents}
+          fileOps={params.fileOps}
+          webFetches={params.webFetches}
+          genericTools={params.genericTools}
+          thinkingRows={params.thinkingRows}
+          thinkingStartedAt={params.thinkingStartedAt}
+          thinkingHint={params.thinkingHint}
+          live={params.live}
+          shimmer={params.shimmer}
+        />
+      </LocaleProvider>,
+    )
+  })
+  return {
+    container,
+    cleanup: () => {
+      act(() => {
+        root.unmount()
+      })
+      container.remove()
+    },
+  }
 }
 
 describe('CopTimeline', () => {
@@ -80,6 +132,19 @@ describe('CopTimeline', () => {
 
     expect(html).toContain('Thought for 2s')
     expect(html).not.toContain('Thinking')
+  })
+
+  it('preserveExpanded 未开启时，完成态应保持折叠而不是自动展开内容', () => {
+    const html = renderTimeline({
+      isComplete: true,
+      steps: [
+        { id: 's1', kind: 'planning', label: 'Plan step', status: 'done' },
+      ],
+      sources: [],
+    })
+
+    expect(html).toContain('1 step completed')
+    expect(html).not.toContain('Plan step')
   })
 
   it('isComplete=false 时应默认展开内容', () => {
@@ -145,19 +210,23 @@ describe('CopTimeline', () => {
     expect(html).not.toContain('Finished')
   })
 
-  it('交错 thinking 流式时显示单行预览触发器', () => {
+  it('交错 thinking 流式时默认仅显示标题，不直接暴露 think 正文', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:03Z'))
     const html = renderTimeline({
       isComplete: false,
       steps: [],
       sources: [],
       fileOps: [{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }],
       thinkingRows: [{ id: 't1', markdown: 'hello world', live: true, seq: 1 }],
+      thinkingStartedAt: new Date('2026-03-10T00:00:00Z').getTime(),
+      thinkingHint: 'Planning next moves',
     })
-    expect(html).toContain('cop-thinking-preview-trigger')
-    expect(html).not.toContain('cop-thinking-only-body')
+    expect(html).toContain('Planning next moves for 3s')
+    expect(html).not.toContain('hello world')
   })
 
-  it('thinking 结束后子行显示 Thought for Xs', () => {
+  it('mixed segment 在默认折叠时不直接显示 thought 摘要行', () => {
     const html = renderTimeline({
       isComplete: false,
       steps: [],
@@ -165,34 +234,356 @@ describe('CopTimeline', () => {
       fileOps: [{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }],
       thinkingRows: [{ id: 't1', markdown: 'done', live: false, seq: 1, durationSec: 8 }],
     })
-    expect(html).toContain('cop-thinking-card-trigger')
-    expect(html).toMatch(/Thought for \d+s/)
-    expect(html).not.toContain('cop-thinking-preview-trigger')
+    expect(html).toContain('Thought for 8s')
+    expect(html).not.toContain('done')
   })
 
-  it('仅 thinking 时也在时间轴圆点列内显示预览 Segment', () => {
+  it('pending thinking shell 收到 think 前应先显示提示句，不立即追加 Thought', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const html = renderTimeline({
+      isComplete: false,
+      steps: [],
+      sources: [],
+      thinkingRows: [],
+      thinkingStartedAt: new Date('2026-03-10T00:00:00Z').getTime(),
+      thinkingHint: 'Planning next moves',
+      live: true,
+      shimmer: true,
+    })
+    expect(html).toContain('Planning next moves...')
+    expect(html).not.toContain('Thought for')
+  })
+
+  it('thinking 计时只从首个真实 think 开始，不把 TTFT 算进去', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:07Z'))
     const html = renderTimeline({
       isComplete: false,
       steps: [],
       sources: [],
       thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1 }],
+      thinkingStartedAt: new Date('2026-03-10T00:00:05Z').getTime(),
+      thinkingHint: 'Planning next moves',
     })
-    expect(html).toContain('cop-thinking-preview-trigger')
-    expect(html).toContain('left:-19px')
-    expect(html).not.toContain('cop-thinking-header-strip')
+    expect(html).toContain('Planning next moves for 2s')
+    expect(html).not.toContain('Planning next moves for 7s')
   })
 
-  it('仅 thinking 且已结束时点旁直接展开正文，不用内层折叠卡片', () => {
+  it('仅 thinking 时默认折叠，只显示标题', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const html = renderTimeline({
+      isComplete: false,
+      steps: [],
+      sources: [],
+      thinkingRows: [{ id: 't1', markdown: 'solo', live: true, seq: 1 }],
+      thinkingStartedAt: new Date('2026-03-10T00:00:00Z').getTime(),
+      thinkingHint: 'Planning next moves',
+    })
+    expect(html).toContain('Planning next moves for 2s')
+    expect(html).not.toContain('solo')
+  })
+
+  it('live thinking 计时递增时不应每秒重打整句', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: true, seq: 1 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000)
+    })
+
+    expect(container.textContent).toContain('Planning next moves for 3s')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('仅 thinking 且已结束时默认折叠，不直接显示正文', () => {
     const html = renderTimeline({
       isComplete: true,
       steps: [],
       sources: [],
       thinkingRows: [{ id: 't1', markdown: '内心独白一段', live: false, seq: 1, durationSec: 2 }],
     })
-    expect(html).toContain('cop-thinking-output-md')
-    expect(html).toContain('内心独白一段')
-    expect(html).not.toContain('cop-thinking-block')
-    expect(html).not.toContain('cop-thinking-card-trigger')
+    expect(html).toContain('Thought for 2s')
+    expect(html).not.toContain('内心独白一段')
+  })
+
+  it('仅 thinking 的 segment 展开后直接显示 think 正文', async () => {
+    const { container, cleanup } = await renderTimelineDom({
+      isComplete: true,
+      steps: [],
+      sources: [],
+      thinkingRows: [{ id: 't1', markdown: 'solo think body', live: false, seq: 1, durationSec: 2 }],
+    })
+
+    await act(async () => {
+      container.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('solo think body')
+    expect(container.querySelector('[data-testid="cop-thought-summary-row"]')).toBeNull()
+    cleanup()
+  })
+
+  it('标题从 thinking 切到 thought 后显示 Thought for 2s', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: true, seq: 1 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={true}
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: false, seq: 1, durationSec: 2 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500)
+    })
+    expect(container.textContent).toContain('Thought for 2s')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('标题从提示句切到带计时时显示 Planning next moves for Ns', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            thinkingRows={[]}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Planning next moves...')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: true, seq: 1 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const header = container.querySelector('button')
+    expect(header?.textContent ?? '').toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(header?.textContent ?? '').toMatch(/Planning next moves for 2s/)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('thinking live 结束过快时，标题仍至少保留一小段可见时间', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: true, seq: 1 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+            thinkingHint="Planning next moves"
+          />
+        </LocaleProvider>,
+      )
+    })
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete
+            steps={[]}
+            sources={[]}
+            thinkingRows={[{ id: 't1', markdown: 'solo', live: false, seq: 1, durationSec: 2 }]}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(360)
+    })
+    expect(container.textContent).not.toContain('Planning next moves for 2s')
+    expect(container.textContent).toMatch(/T|Th|Tho/)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('mixed summary 行从 Thinking 切到 Thought 时会先清空再重新打字', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            preserveExpanded
+            steps={[]}
+            sources={[]}
+            fileOps={[{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }]}
+            thinkingRows={[{ id: 't1', markdown: 'done', live: true, seq: 1 }]}
+            thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Thinking for 2s')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete
+            preserveExpanded
+            steps={[]}
+            sources={[]}
+            fileOps={[{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }]}
+            thinkingRows={[{ id: 't1', markdown: 'done', live: false, seq: 1, durationSec: 2 }]}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).not.toContain('Thought for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+    })
+    expect(container.textContent).toMatch(/T|Th|Tho/)
+    expect(container.textContent).not.toContain('Thought for 2s')
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(container.textContent).toContain('Thought for 2s')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('mixed segment 展开后不显示 think 正文，只显示 thought 摘要和工具链', async () => {
+    const { container, cleanup } = await renderTimelineDom({
+      isComplete: true,
+      steps: [],
+      sources: [],
+      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }],
+      thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 8 }],
+    })
+
+    await act(async () => {
+      container.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('Thought for 8s')
+    expect(container.textContent).toContain('search_tools "abc"')
+    expect(container.textContent).not.toContain('hidden think body')
+    expect(container.querySelector('[data-testid="cop-thought-summary-row"]')).not.toBeNull()
+    cleanup()
   })
 
   it('web_fetch 遇到 file 地址时不应渲染坏掉的 favicon', () => {
