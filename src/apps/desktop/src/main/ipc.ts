@@ -1,5 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import os from 'os'
+import { DatabaseSync } from 'node:sqlite'
+import path from 'path'
 import { loadConfig, saveConfig, getConfigPath } from './config'
 import {
   getSidecarStatus,
@@ -20,6 +22,50 @@ type DesktopController = {
   applyConfigUpdate: (config: AppConfig, options?: ApplyConfigUpdateOptions) => Promise<AppConfig>
   restartLocalSidecar: () => Promise<SidecarRuntime>
   getSidecarRuntime: () => Promise<SidecarRuntime>
+}
+
+type DesktopExportSection =
+  | 'settings'
+  | 'providers'
+  | 'history'
+  | 'personas'
+  | 'projects'
+  | 'mcp'
+  | 'themes'
+
+type DesktopThemeExportPayload = {
+  customThemeId: string | null
+  customThemes: Record<string, unknown>
+}
+
+type DesktopExportOptions = {
+  sections?: DesktopExportSection[]
+  themes?: DesktopThemeExportPayload | null
+}
+
+const DESKTOP_EXPORT_SECTION_SET = new Set<DesktopExportSection>([
+  'settings',
+  'providers',
+  'history',
+  'personas',
+  'projects',
+  'mcp',
+  'themes',
+])
+
+const DESKTOP_EXPORT_BUNDLE_FILE_SET = new Set([
+  'config.json',
+  'data.sqlite',
+  'themes.json',
+])
+
+type DesktopBundleFile = 'config.json' | 'data.sqlite' | 'themes.json'
+
+type DesktopBundleManifest = {
+  schema_version: number
+  exported_at: string
+  sections: DesktopExportSection[]
+  files: DesktopBundleFile[]
 }
 
 export function registerIpcHandlers(
@@ -62,33 +108,32 @@ export function registerIpcHandlers(
     return result.filePaths[0]
   })
 
-  ipcMain.handle('arkloop:advanced:export-data', async () => {
+  ipcMain.handle('arkloop:advanced:export-data', async (_event, options?: DesktopExportOptions) => {
     const { dialog } = require('electron') as typeof import('electron')
-    const path = require('path') as typeof import('path')
     const win = getWindow()
     const result = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
       properties: ['openDirectory', 'createDirectory'],
     })
     if (result.canceled || result.filePaths.length === 0) {
-      throw new Error('export canceled')
+      return { ok: false, canceled: true }
     }
-    const exportPath = exportDesktopBundle(result.filePaths[0], path)
+    const exportPath = exportDesktopBundle(result.filePaths[0], path, options)
     return { ok: true, filePath: exportPath }
   })
 
   ipcMain.handle('arkloop:advanced:import-data', async () => {
     const { dialog } = require('electron') as typeof import('electron')
-    const path = require('path') as typeof import('path')
     const win = getWindow()
     const result = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
       properties: ['openDirectory'],
     })
     if (result.canceled || result.filePaths.length === 0) {
-      throw new Error('import canceled')
+      return { ok: false, canceled: true }
     }
-    const importedConfig = importDesktopBundle(result.filePaths[0], path)
+    const imported = importDesktopBundle(result.filePaths[0])
+    const importedConfig = imported.config
     await controller.applyConfigUpdate(importedConfig, { forceLocalSidecarRestart: true })
-    return { ok: true, importedFrom: result.filePaths[0] }
+    return { ok: true, importedFrom: result.filePaths[0], themes: imported.themes }
   })
 
   ipcMain.handle('arkloop:advanced:logs', async (_event, input?: {
@@ -614,22 +659,18 @@ async function makeApiRequestRaw(url: string, method: string, token: string, bod
 }
 
 function desktopDataDir(): string {
-  const path = require('path') as typeof import('path')
   return path.dirname(getConfigPath())
 }
 
 function desktopSQLitePath(): string {
-  const path = require('path') as typeof import('path')
   return path.join(desktopDataDir(), 'data.db')
 }
 
 function desktopStoragePath(): string {
-  const path = require('path') as typeof import('path')
   return path.join(desktopDataDir(), 'storage')
 }
 
-function getDesktopIconPath(): string | null {
-  const path = require('path') as typeof import('path')
+function getDesktopIconDataUrl(): string | null {
   const fs = require('fs') as typeof import('fs')
   const { app } = require('electron') as typeof import('electron')
   const candidates = app.isPackaged
@@ -655,7 +696,15 @@ function getDesktopIconPath(): string | null {
       ]
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
+    if (!fs.existsSync(candidate)) continue
+    const ext = path.extname(candidate).slice(1).toLowerCase()
+    const mimeType = ext === 'icns'
+      ? 'image/icns'
+      : ext === 'ico'
+        ? 'image/x-icon'
+        : 'image/png'
+    const raw = fs.readFileSync(candidate)
+    return `data:${mimeType};base64,${raw.toString('base64')}`
   }
   return null
 }
@@ -665,7 +714,7 @@ async function buildAdvancedOverview(): Promise<{
   appVersion: string
   githubUrl: string
   telegramUrl: string | null
-  iconPath: string | null
+  iconDataUrl: string | null
   configPath: string
   dataDir: string
   logsDir: string
@@ -688,16 +737,16 @@ async function buildAdvancedOverview(): Promise<{
   return {
     appName: 'Arkloop',
     appVersion: app.getVersion(),
-    githubUrl: 'https://github.com/qqqqqf-q/Arkloop',
+    githubUrl: 'https://github.com/qqqqqf/Arkloop',
     telegramUrl: null,
-    iconPath: getDesktopIconPath(),
+    iconDataUrl: getDesktopIconDataUrl(),
     configPath: getConfigPath(),
     dataDir: desktopDataDir(),
     logsDir: getDesktopLogDir(),
     sqlitePath: desktopSQLitePath(),
     links: [
-      { label: 'GitHub', url: 'https://github.com/qqqqqf-q/Arkloop' },
-      { label: 'Releases', url: 'https://github.com/qqqqqf-q/Arkloop/releases' },
+      { label: 'GitHub', url: 'https://github.com/qqqqqf/Arkloop' },
+      { label: 'Releases', url: 'https://github.com/qqqqqf/Arkloop/releases' },
       { label: 'Follow on X', url: 'https://x.com/intent/follow?screen_name=qqqqqf_' },
     ],
     status: [
@@ -710,49 +759,279 @@ async function buildAdvancedOverview(): Promise<{
   }
 }
 
-function exportDesktopBundle(destRoot: string, path: typeof import('path')): string {
+function normalizeDesktopExportSections(input?: DesktopExportOptions): DesktopExportSection[] {
+  const raw = Array.isArray(input?.sections) ? input.sections : []
+  const sections = raw.filter((section): section is DesktopExportSection => DESKTOP_EXPORT_SECTION_SET.has(section))
+  return sections.length > 0 ? Array.from(new Set(sections)) : ['settings', 'providers', 'history', 'personas', 'projects', 'mcp', 'themes']
+}
+
+function exportDesktopBundle(destRoot: string, pathModule: typeof import('path'), options?: DesktopExportOptions): string {
   const fs = require('fs') as typeof import('fs')
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const outDir = path.join(destRoot, `arkloop-export-${stamp}`)
+  const outDir = pathModule.join(destRoot, `arkloop-export-${stamp}`)
   fs.mkdirSync(outDir, { recursive: true })
 
-  const copyIfExists = (src: string, dest: string) => {
-    if (!fs.existsSync(src)) return
-    fs.cpSync(src, dest, { recursive: true })
+  const sections = normalizeDesktopExportSections(options)
+  const exportedFiles: DesktopBundleFile[] = []
+  const config = loadConfig()
+
+  if (sections.includes('settings')) {
+    fs.writeFileSync(pathModule.join(outDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8')
+    exportedFiles.push('config.json')
   }
 
-  copyIfExists(getConfigPath(), path.join(outDir, 'config.json'))
-  copyIfExists(desktopSQLitePath(), path.join(outDir, 'data.db'))
-  copyIfExists(desktopStoragePath(), path.join(outDir, 'storage'))
-  copyIfExists(getDesktopLogDir(), path.join(outDir, 'logs'))
+  const shouldExportDb = sections.some((section) => section !== 'settings' && section !== 'themes')
+  if (shouldExportDb) {
+    const exportDbPath = pathModule.join(outDir, 'data.sqlite')
+    exportDesktopDatabase(exportDbPath, sections)
+    exportedFiles.push('data.sqlite')
+  }
 
-  fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify({
-    schema_version: 1,
+  if (sections.includes('themes')) {
+    fs.writeFileSync(
+      pathModule.join(outDir, 'themes.json'),
+      JSON.stringify(options?.themes ?? { customThemeId: null, customThemes: {} }, null, 2),
+      'utf-8',
+    )
+    exportedFiles.push('themes.json')
+  }
+
+  fs.writeFileSync(pathModule.join(outDir, 'manifest.json'), JSON.stringify({
+    schema_version: 2,
     exported_at: new Date().toISOString(),
-    files: ['config.json', 'data.db', 'storage', 'logs'],
+    sections,
+    files: exportedFiles,
   }, null, 2), 'utf-8')
 
   return outDir
 }
 
-function importDesktopBundle(srcDir: string, path: typeof import('path')): AppConfig {
+function importDesktopBundle(srcDir: string): { config: AppConfig; themes: DesktopThemeExportPayload | null } {
   const fs = require('fs') as typeof import('fs')
-  const copyIfExists = (src: string, dest: string) => {
-    if (!fs.existsSync(src)) return
-    fs.cpSync(src, dest, { recursive: true, force: true })
-  }
-
+  const manifest = readDesktopBundleManifest(srcDir)
   const nextConfigPath = path.join(srcDir, 'config.json')
-  if (!fs.existsSync(nextConfigPath)) {
-    throw new Error('config.json not found in import bundle')
+  const bundleDbPath = path.join(srcDir, 'data.sqlite')
+  const themesPath = path.join(srcDir, 'themes.json')
+  const hasFile = (fileName: DesktopBundleFile) => manifest.files.includes(fileName)
+
+  let nextConfig = loadConfig()
+  if (hasFile('config.json')) {
+    const raw = fs.readFileSync(nextConfigPath, 'utf-8')
+    nextConfig = JSON.parse(raw) as AppConfig
+    fs.copyFileSync(nextConfigPath, getConfigPath())
   }
 
-  copyIfExists(nextConfigPath, getConfigPath())
-  copyIfExists(path.join(srcDir, 'data.db'), desktopSQLitePath())
-  copyIfExists(path.join(srcDir, 'storage'), desktopStoragePath())
+  if (hasFile('data.sqlite')) {
+    importDesktopDatabase(bundleDbPath, manifest.sections)
+  }
 
-  const raw = fs.readFileSync(nextConfigPath, 'utf-8')
-  return JSON.parse(raw) as AppConfig
+  let themes: DesktopThemeExportPayload | null = null
+  if (hasFile('themes.json')) {
+    themes = JSON.parse(fs.readFileSync(themesPath, 'utf-8')) as DesktopThemeExportPayload
+  }
+
+  return { config: nextConfig, themes }
+}
+
+function exportDesktopDatabase(destPath: string, sections: DesktopExportSection[]): void {
+  const source = new DatabaseSync(desktopSQLitePath(), { readOnly: true })
+  const dest = new DatabaseSync(destPath)
+  try {
+    source.exec('PRAGMA foreign_keys = OFF')
+    dest.exec('PRAGMA foreign_keys = OFF')
+    replicateTableSchema(source, dest, '_sequences')
+    for (const tableName of tablesForDesktopExport(sections)) {
+      replicateTableSchema(source, dest, tableName)
+      copyTableRows(source, dest, tableName)
+    }
+  } finally {
+    dest.close()
+    source.close()
+  }
+}
+
+function importDesktopDatabase(bundlePath: string, sections: DesktopExportSection[]): void {
+  const source = new DatabaseSync(bundlePath, { readOnly: true })
+  const dest = new DatabaseSync(desktopSQLitePath())
+  try {
+    source.exec('PRAGMA foreign_keys = OFF')
+    dest.exec('PRAGMA foreign_keys = OFF')
+    const tableNames = tablesForDesktopExport(sections)
+    for (const tableName of tableNames) {
+      if (!tableExists(dest, tableName) && tableExists(source, tableName)) {
+        replicateTableSchema(source, dest, tableName)
+      }
+      if (tableExists(dest, tableName)) {
+        dest.exec(`DELETE FROM "${tableName}"`)
+      }
+    }
+    for (const tableName of tableNames) {
+      copyTableRows(source, dest, tableName)
+    }
+  } finally {
+    dest.close()
+    source.close()
+  }
+}
+
+function tablesForDesktopExport(sections: DesktopExportSection[]): string[] {
+  const tables = new Set<string>()
+  if (sections.includes('settings')) {
+    addTables(tables, ['platform_settings'])
+  }
+  if (sections.includes('providers')) {
+    addTables(tables, ['llm_credentials', 'llm_routes', 'secrets', 'asr_credentials', 'tool_provider_configs'])
+  }
+  if (sections.includes('history')) {
+    addTables(tables, [
+      'threads',
+      'messages',
+      'runs',
+      'run_events',
+      'thread_stars',
+      'thread_shares',
+      'thread_reports',
+      'channel_message_ledger',
+      'scheduled_triggers',
+      'channel_group_threads',
+      'channel_message_deliveries',
+      'channel_dm_threads',
+      'channel_message_receipts',
+      'channel_identities',
+      'channel_identity_bind_codes',
+      'channel_identity_links',
+    ])
+  }
+  if (sections.includes('personas')) {
+    addTables(tables, ['personas'])
+  }
+  if (sections.includes('projects')) {
+    addTables(tables, [
+      'projects',
+      'profile_registries',
+      'workspace_registries',
+      'browser_state_registries',
+      'default_workspace_bindings',
+      'shell_sessions',
+      'profile_skill_installs',
+      'workspace_skill_enablements',
+      'skill_packages',
+    ])
+  }
+  if (sections.includes('mcp')) {
+    addTables(tables, ['mcp_configs', 'profile_mcp_installs', 'workspace_mcp_enablements'])
+  }
+  addTables(tables, ['accounts', 'users', 'account_memberships'])
+  return Array.from(tables)
+}
+
+function bundleFilesForSections(sections: DesktopExportSection[]): DesktopBundleFile[] {
+  const files: DesktopBundleFile[] = []
+  if (sections.includes('settings')) {
+    files.push('config.json')
+  }
+  if (sections.some((section) => section !== 'settings' && section !== 'themes')) {
+    files.push('data.sqlite')
+  }
+  if (sections.includes('themes')) {
+    files.push('themes.json')
+  }
+  return files
+}
+
+function readDesktopBundleManifest(srcDir: string): DesktopBundleManifest {
+  const fs = require('fs') as typeof import('fs')
+  const manifestPath = path.join(srcDir, 'manifest.json')
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('manifest.json not found in import bundle')
+  }
+  const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>
+  if (raw.schema_version !== 2) {
+    throw new Error('unsupported import bundle schema')
+  }
+
+  const rawSections = raw.sections
+  if (!Array.isArray(rawSections) || rawSections.length === 0) {
+    throw new Error('manifest.json is missing export sections')
+  }
+  const sections = Array.from(new Set(rawSections))
+  if (!sections.every((section): section is DesktopExportSection => typeof section === 'string' && DESKTOP_EXPORT_SECTION_SET.has(section as DesktopExportSection))) {
+    throw new Error('manifest.json contains unsupported export sections')
+  }
+
+  const rawFiles = raw.files
+  if (!Array.isArray(rawFiles)) {
+    throw new Error('manifest.json is missing bundle files')
+  }
+  const files = Array.from(new Set(rawFiles))
+  if (!files.every((file): file is DesktopBundleFile => typeof file === 'string' && DESKTOP_EXPORT_BUNDLE_FILE_SET.has(file))) {
+    throw new Error('manifest.json contains unsupported bundle files')
+  }
+
+  const expectedFiles = bundleFilesForSections(sections)
+  if (files.length !== expectedFiles.length || expectedFiles.some((file) => !files.includes(file))) {
+    throw new Error('manifest.json files do not match export sections')
+  }
+  for (const file of files) {
+    if (!fs.existsSync(path.join(srcDir, file))) {
+      throw new Error(`${file} not found in import bundle`)
+    }
+  }
+
+  return {
+    schema_version: 2,
+    exported_at: typeof raw.exported_at === 'string' ? raw.exported_at : '',
+    sections,
+    files,
+  }
+}
+
+function addTables(set: Set<string>, names: string[]): void {
+  for (const name of names) set.add(name)
+}
+
+function replicateTableSchema(source: DatabaseSync, dest: DatabaseSync, tableName: string): void {
+  const createSQL = source.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = ?
+  `).get(tableName) as { sql?: string } | undefined
+  if (!createSQL?.sql) return
+  dest.exec(createSQL.sql)
+  const indexes = source.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL
+  `).all(tableName) as Array<{ sql?: string }>
+  for (const index of indexes) {
+    if (index.sql) dest.exec(index.sql)
+  }
+}
+
+function copyTableRows(source: DatabaseSync, dest: DatabaseSync, tableName: string): void {
+  if (!tableExists(source, tableName)) return
+  const rows = source.prepare(`SELECT * FROM "${tableName}"`).all() as Array<Record<string, unknown>>
+  if (rows.length === 0) return
+  const columns = Object.keys(rows[0])
+  const placeholders = columns.map(() => '?').join(', ')
+  const insert = dest.prepare(
+    `INSERT INTO "${tableName}" (${columns.map((column) => `"${column}"`).join(', ')}) VALUES (${placeholders})`,
+  )
+  for (const row of rows) {
+    insert.run(...columns.map((column) => {
+      const value = row[column]
+      return value === undefined ? null : (value as string | number | bigint | Uint8Array | null)
+    }))
+  }
+}
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  const row = db.prepare(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = ?
+  `).get(tableName)
+  return Boolean(row)
 }
 
 function listDesktopLogs(input?: {
@@ -775,7 +1054,7 @@ function listDesktopLogs(input?: {
   const limit = Math.min(Math.max(input?.limit ?? 200, 1), 1000)
   const entries = sources.flatMap(({ source, file }) => {
     if (!fs.existsSync(file)) return []
-    const lines = fs.readFileSync(file, 'utf-8').split(/\r?\n/).filter(Boolean)
+    const lines = readLogTailLines(file, Math.max(limit * 5, 200))
     return lines.map((line) => parseDesktopLogLine(source, line))
   })
 
@@ -784,6 +1063,42 @@ function listDesktopLogs(input?: {
     .filter((entry) => search ? entry.raw.toLowerCase().includes(search) || entry.message.toLowerCase().includes(search) : true)
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     .slice(0, limit)
+}
+
+function readLogTailLines(filePath: string, maxLines: number): string[] {
+  const fs = require('fs') as typeof import('fs')
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    const stat = fs.fstatSync(fd)
+    if (stat.size === 0) return []
+    const chunkSize = 64 * 1024
+    let position = stat.size
+    let pending = ''
+    const lines: string[] = []
+
+    while (position > 0 && lines.length <= maxLines) {
+      const start = Math.max(0, position - chunkSize)
+      const size = position - start
+      const buffer = Buffer.alloc(size)
+      fs.readSync(fd, buffer, 0, size, start)
+      const text = buffer.toString('utf-8') + pending
+      const parts = text.split(/\r?\n/)
+      pending = parts.shift() ?? ''
+      for (let i = parts.length - 1; i >= 0 && lines.length <= maxLines; i -= 1) {
+        const line = parts[i]?.trim()
+        if (line) lines.push(line)
+      }
+      position = start
+    }
+
+    if (pending.trim() && lines.length <= maxLines) {
+      lines.push(pending.trim())
+    }
+
+    return lines.reverse()
+  } finally {
+    fs.closeSync(fd)
+  }
 }
 
 function parseDesktopLogLine(source: 'main' | 'sidecar', line: string): {

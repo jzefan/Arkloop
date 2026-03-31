@@ -242,7 +242,6 @@ export type DesktopExportSection =
   | 'providers'
   | 'history'
   | 'personas'
-  | 'shortcuts'
   | 'projects'
   | 'mcp'
   | 'themes'
