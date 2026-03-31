@@ -4,16 +4,17 @@ type Props = {
   title?: string
   children: ReactNode
   className?: string
+  overflow?: 'hidden' | 'visible'
 }
 
-const base = 'rounded-xl border border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)] p-5'
+const base = 'min-w-0 rounded-xl border border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)] p-5'
 
 // eslint-disable-next-line react-refresh/only-export-components
-export const settingsSectionCls = base
+export const settingsSectionCls = `${base} overflow-hidden`
 
-export function SettingsSection({ title, children, className }: Props) {
+export function SettingsSection({ title, children, className, overflow = 'hidden' }: Props) {
   return (
-    <div className={`${base}${className ? ` ${className}` : ''}`}>
+    <div className={`${base} ${overflow === 'hidden' ? 'overflow-hidden' : 'overflow-visible'}${className ? ` ${className}` : ''}`}>
       {title && (
         <div className="mb-3 text-sm font-semibold text-[var(--c-text-heading)]">
           {title}

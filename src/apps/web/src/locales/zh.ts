@@ -1047,6 +1047,8 @@ export const zh: LocaleStrings = {
     advancedUsageSpendDist: "消耗分布",
     advancedUsageTrend: "消耗趋势",
     advancedUsageModelDist: "按模型分布",
+    advancedUsageTrendHourly: "按小时",
+    advancedUsageTrendDaily: "按天",
     advancedLogsAllSources: "全部来源",
     advancedLogsMain: "主进程",
     advancedLogsSidecar: "Sidecar",

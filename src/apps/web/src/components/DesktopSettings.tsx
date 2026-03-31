@@ -1,4 +1,4 @@
-import { Suspense, lazy, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -13,10 +13,12 @@ import {
   Route,
   MessageSquare,
   Wrench,
+  Code2,
   Loader2,
 } from "lucide-react";
 import type { MeResponse } from "../api";
 import { useLocale } from "../contexts/LocaleContext";
+import { readDeveloperMode } from "../storage";
 
 const GeneralSettings = lazy(async () => ({ default: (await import("./settings/GeneralSettings")).GeneralSettings }));
 const DesktopAppearanceSettings = lazy(async () => ({ default: (await import("./settings/DesktopAppearanceSettings")).DesktopAppearanceSettings }));
@@ -111,6 +113,19 @@ export function DesktopSettings({
     useState<DesktopSettingsKey>(initialSection);
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [devMode, setDevMode] = useState(() => readDeveloperMode());
+
+  useEffect(() => {
+    const handler = (e: Event) => setDevMode((e as CustomEvent<boolean>).detail);
+    window.addEventListener("arkloop:developer_mode", handler);
+    return () => window.removeEventListener("arkloop:developer_mode", handler);
+  }, []);
+
+  const navItems = useMemo(() => {
+    const items = [...NAV_ITEMS];
+    if (devMode) items.push({ key: "developer" as DesktopSettingsKey, icon: Code2 });
+    return items;
+  }, [devMode]);
 
   const handleTabChange = (key: DesktopSettingsKey) => {
     setActiveKey(key);
@@ -191,7 +206,7 @@ export function DesktopSettings({
 
   return (
     <motion.div
-      className="flex h-full min-h-0 flex-1"
+      className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden"
       initial={{ opacity: 0, x: 10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
@@ -213,7 +228,7 @@ export function DesktopSettings({
         </div>
 
         <div className="px-4">
-          <div className="flex flex-col gap-[3px]">{renderNav(NAV_ITEMS)}</div>
+          <div className="flex flex-col gap-[3px]">{renderNav(navItems)}</div>
         </div>
       </div>
 

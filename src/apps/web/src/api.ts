@@ -1042,6 +1042,26 @@ export async function getMyDailyUsage(
   })
 }
 
+export type MeHourlyUsageItem = {
+  hour: string
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
+  record_count: number
+}
+
+export async function getMyHourlyUsage(
+  accessToken: string,
+  start: string,
+  end: string,
+): Promise<MeHourlyUsageItem[]> {
+  const query = new URLSearchParams({ start, end }).toString()
+  return await apiFetch<MeHourlyUsageItem[]>(`/v1/me/usage/hourly?${query}`, {
+    method: 'GET',
+    accessToken,
+  })
+}
+
 export type MeModelUsageItem = {
   model: string
   input_tokens: number
