@@ -290,6 +290,84 @@ describe('completed run message sync', () => {
   })
 })
 
+describe('read tool provider mapping', () => {
+  it('应将 read 工具调用按 read_file 样式写入 file ops', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'r1',
+        seq: 1,
+        type: 'tool.call',
+        data: {
+          tool_name: 'read',
+          tool_call_id: 'c1',
+          arguments: {
+            source: { kind: 'file_path', file_path: '/tmp/demo.txt' },
+          },
+        },
+      }),
+      makeRunEvent({
+        runId: 'r1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'read',
+          tool_call_id: 'c1',
+          result: { content: 'hello' },
+        },
+      }),
+    ]
+
+    expect(buildMessageFileOpsFromRunEvents(events)).toEqual([
+      {
+        id: 'c1',
+        toolName: 'read_file',
+        label: 'demo.txt',
+        status: 'success',
+        seq: 1,
+        output: 'hello',
+      },
+    ])
+  })
+
+  it('应将 read.minimax 工具调用按 read_file 样式写入 file ops', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'r1',
+        seq: 1,
+        type: 'tool.call',
+        data: {
+          tool_name: 'read.minimax',
+          tool_call_id: 'c2',
+          arguments: {
+            source: { kind: 'file_path', file_path: '/tmp/demo.txt' },
+          },
+        },
+      }),
+      makeRunEvent({
+        runId: 'r1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'read',
+          tool_call_id: 'c2',
+          result: { content: 'hello' },
+        },
+      }),
+    ]
+
+    expect(buildMessageFileOpsFromRunEvents(events)).toEqual([
+      {
+        id: 'c2',
+        toolName: 'read_file',
+        label: 'demo.txt',
+        status: 'success',
+        seq: 1,
+        output: 'hello',
+      },
+    ])
+  })
+})
+
 describe('buildMessageWidgetsFromRunEvents', () => {
   it('应从 show_widget 的 tool.call 事件恢复 widget', () => {
     const events = [

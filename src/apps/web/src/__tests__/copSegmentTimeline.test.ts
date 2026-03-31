@@ -116,6 +116,18 @@ describe('copTimelinePayloadForSegment', () => {
     expect(r.genericTools).toBeUndefined()
   })
 
+  it('read provider 名不进入 generic fallback', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [call('r1', 'read.minimax', 1)],
+      },
+      { sources: [] },
+    )
+    expect(r.genericTools).toBeUndefined()
+  })
+
   it('toolCallIdsInCopTimelines 汇总 COP 时间轴已占用的 id', () => {
     const ids = toolCallIdsInCopTimelines(
       {

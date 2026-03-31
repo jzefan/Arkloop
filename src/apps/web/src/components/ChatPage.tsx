@@ -1041,8 +1041,6 @@ export function ChatPage() {
   const segmentsRef = useRef<Segment[]>([])
   // Enter 后、首包 thinking 前进来的占位（与 Cop 点线对齐）
   const [pendingThinking, setPendingThinking] = useState(false)
-  /** 本轮首条 thinking 到达时刻，供 COP 标题「思考 N 秒」 */
-  const [copThinkingStartedAtMs, setCopThinkingStartedAtMs] = useState<number | undefined>(undefined)
   /** thinking 等待期随机提示句 */
   const [thinkingHint, setThinkingHint] = useState('')
   const [completedTitleTailRunId, setCompletedTitleTailRunId] = useState<string | null>(null)
@@ -1545,20 +1543,6 @@ export function ChatPage() {
     pendingThinking &&
     !liveTurnHasThinkingSegment(liveAssistantTurn) &&
     (sending || activeRunId != null)
-
-  useEffect(() => {
-    if (!activeRunId && !pendingThinking) setCopThinkingStartedAtMs(undefined)
-  }, [activeRunId, pendingThinking])
-
-  useEffect(() => {
-    if (!activeRunId || !liveAssistantTurn) return
-    const hasThinking = liveAssistantTurn.segments.some(
-      (s) => s.type === 'cop' && s.items.some((i) => i.kind === 'thinking'),
-    )
-    if (hasThinking) {
-      setCopThinkingStartedAtMs((p) => p ?? Date.now())
-    }
-  }, [activeRunId, liveAssistantTurn])
 
   const canCancel =
     activeRunId != null &&
@@ -2300,7 +2284,6 @@ export function ChatPage() {
         const activeSeg = activeSegmentIdRef.current
         if (isThinking) {
           setPendingThinking(false)
-          setCopThinkingStartedAtMs((prev) => prev ?? Date.now())
           foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
           bumpAssistantTurnSnapshot()
           continue
@@ -2350,7 +2333,6 @@ export function ChatPage() {
       if (event.type === 'tool.call') {
         if (isACPDelegateEventData(event.data)) continue
         setPendingThinking(false)
-        setCopThinkingStartedAtMs(undefined)
         seenFirstToolCallInRunRef.current = true
         const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
         const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
@@ -3117,7 +3099,6 @@ export function ChatPage() {
       }
     } catch (err) {
       setPendingThinking(false)
-      setCopThinkingStartedAtMs(undefined)
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
         return
@@ -3359,7 +3340,7 @@ export function ChatPage() {
     const result: string[] = []
     const addOps = (ops: FileOpRef[]) => {
       for (const op of ops) {
-        if (op.toolName === 'read_file' && op.status === 'success' && op.label && op.label !== 'read file') {
+        if ((op.toolName === 'read_file' || op.toolName === 'read') && op.status === 'success' && op.label && op.label !== 'read file') {
           if (!seen.has(op.label)) { seen.add(op.label); result.push(op.label) }
         }
       }
@@ -3574,7 +3555,6 @@ export function ChatPage() {
           shimmer={copTimelineLive}
           live={copTimelineLive}
           preserveExpanded={preservingHandoffSegments}
-          thinkingStartedAt={copThinkingStartedAtMs}
           trailingAssistantTextPresent={trailingAssistantTextPresent}
           thinkingHint={thinkingHint}
           accessToken={accessToken}
@@ -3843,7 +3823,6 @@ export function ChatPage() {
                             live
                             shimmer
                             thinkingHint={thinkingHint}
-                            thinkingStartedAt={copThinkingStartedAtMs}
                             accessToken={accessToken}
                             baseUrl={baseUrl}
                           />
