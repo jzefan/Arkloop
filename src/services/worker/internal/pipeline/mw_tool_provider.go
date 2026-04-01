@@ -278,8 +278,24 @@ func injectSpawnAgentTools(ctx context.Context, rc *RunContext) {
 		rc.ToolExecutors[spec.Name] = executor
 		rc.AllowlistSet[spec.Name] = struct{}{}
 	}
-	rc.ToolSpecs = append(rc.ToolSpecs, llmSpecs...)
-	rc.ToolRegistry = ForkRegistry(rc.ToolRegistry, specs)
+	for _, spec := range llmSpecs {
+		if !containsToolSpecName(rc.ToolSpecs, spec.Name) {
+			rc.ToolSpecs = append(rc.ToolSpecs, spec)
+		}
+	}
+
+	if rc.ToolRegistry != nil {
+		var missingSpecs []tools.AgentToolSpec
+		for _, spec := range specs {
+			if _, ok := rc.ToolRegistry.Get(spec.Name); ok {
+				continue
+			}
+			missingSpecs = append(missingSpecs, spec)
+		}
+		if len(missingSpecs) > 0 {
+			rc.ToolRegistry = ForkRegistry(rc.ToolRegistry, missingSpecs)
+		}
+	}
 }
 
 // loadPersonaKeys 从 DB 加载当前 account 可用的 persona ID 列表
