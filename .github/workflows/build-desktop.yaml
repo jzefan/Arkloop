@@ -117,6 +117,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./src/apps/desktop/package.json').version")"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "label=${{ inputs.release_label || 'Early Access' }}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -144,7 +157,7 @@ jobs:
       - name: Generate release meta
         run: |
           mkdir -p src/apps/desktop/dist
-          echo '{"releaseLabel":"${{ inputs.release_label || 'Early Access' }}"}' > src/apps/desktop/dist/release-meta.json
+          echo '{"releaseLabel":"${{ steps.release_meta.outputs.label }}"}' > src/apps/desktop/dist/release-meta.json
 
       - name: Build Electron TypeScript
         run: pnpm --filter @arkloop/desktop build:electron
@@ -158,12 +171,12 @@ jobs:
           if [ -n "${{ secrets.APPLE_ID }}" ]; then export APPLE_ID="${{ secrets.APPLE_ID }}"; fi
           if [ -n "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" ]; then export APPLE_APP_SPECIFIC_PASSWORD="${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"; fi
           if [ -n "${{ secrets.APPLE_TEAM_ID }}" ]; then export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"; fi
-          pnpm exec electron-builder ${{ matrix.builder_args }} --publish never
+          pnpm exec electron-builder ${{ matrix.builder_args }} --publish never -c.extraMetadata.version=${{ steps.release_meta.outputs.version }}
 
       - name: Run electron-builder (Linux)
         if: matrix.platform == 'linux'
         working-directory: src/apps/desktop
-        run: pnpm exec electron-builder ${{ matrix.builder_args }} --publish never
+        run: pnpm exec electron-builder ${{ matrix.builder_args }} --publish never -c.extraMetadata.version=${{ steps.release_meta.outputs.version }}
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
@@ -191,12 +204,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all sidecar artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: sidecar-*
-          path: release-assets/sidecar/
-          merge-multiple: true
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./src/apps/desktop/package.json').version")"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "label=${{ inputs.release_label || 'Early Access' }}" >> "$GITHUB_OUTPUT"
 
       - name: Download all installer artifacts
         uses: actions/download-artifact@v4
@@ -211,23 +230,42 @@ jobs:
       - name: Collect release files
         run: |
           mkdir -p release-files
-          find release-assets -type f -exec cp {} release-files/ \;
+          find release-assets/installers -type f \( \
+            -name '*.dmg' -o \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.exe' -o \
+            -name 'latest*.yml' \
+          \) -exec cp {} release-files/ \;
           echo "--- Release files ---"
           ls -lh release-files/
 
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## 下载
+
+          - Windows：即将提供
+          - macOS Apple Silicon：下载 `Arkloop-${{ steps.release_meta.outputs.version }}-arm64.dmg`
+          - macOS Intel：下载 `Arkloop-${{ steps.release_meta.outputs.version }}-x64.dmg`
+          - Linux x64：下载 `Arkloop-${{ steps.release_meta.outputs.version }}-amd64.deb` 或 `Arkloop-${{ steps.release_meta.outputs.version }}-x86_64.AppImage`
+
+          ## 说明
+          EOF
+
       - name: Generate desktop manifest
         env:
-          ARKLOOP_RELEASE_VERSION: ${{ github.ref_name }}
+          ARKLOOP_RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
           ARKLOOP_DESKTOP_MANIFEST_OUTPUT: release-files/desktop-manifest.json
           ARKLOOP_RELEASE_DIR: release-files
           ARKLOOP_OPENVIKING_IMAGE: ghcr.io/volcengine/openviking:v0.1.18.dev0
           ARKLOOP_OPENVIKING_VERSION: v0.1.18.dev0
-          ARKLOOP_RELEASE_LABEL: ${{ inputs.release_label || 'Early Access' }}
+          ARKLOOP_RELEASE_LABEL: ${{ steps.release_meta.outputs.label }}
         run: node src/apps/desktop/scripts/generate-desktop-manifest.mjs
 
       - name: Validate desktop manifest
         env:
-          ARKLOOP_EXPECTED_VERSION: ${{ github.ref_name }}
+          ARKLOOP_EXPECTED_VERSION: ${{ steps.release_meta.outputs.version }}
         run: |
           python3 - <<'PY'
           import json
@@ -268,6 +306,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "${{ github.ref_name }} ${{ inputs.release_label || 'Early Access' }}"
+          name: "v${{ steps.release_meta.outputs.version }} ${{ steps.release_meta.outputs.label }}"
+          body_path: release-notes.md
           generate_release_notes: true
           files: release-files/*
