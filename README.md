@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/80f52321-aa48-48f1-bb5d-7fe7da95f0c2" alt="Arkloop" />
+  <img src="https://cdn.nodeimage.com/i/rvRvQavXMOx1ostIUyAqBc3mfy9SOGM4.png" alt="Arkloop" />
 </p>
 
-<h3 align="center">AI agents, without the clutter.</h3>
+<h3 align="center">Open-source / Clean / Powerful — Your AI Agent Platform</h3>
 
 <p align="center">
   <a href="./docs/zh-CN/README.md"><img alt="简体中文" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
@@ -14,92 +14,67 @@
 
 ---
 
-Arkloop is an open-source AI agent platform that prioritizes design over dashboards. Multi-model routing, sandboxed execution, persistent memory -- all behind a clean interface that stays out of your way.
+> **Early Access** — Arkloop is currently in early public access; all releases are Alpha. You may encounter bugs, data loss, API changes, or incomplete features. We are iterating rapidly, but stability has not been fully validated. If you are willing to use it at this stage and provide feedback, we greatly appreciate it.
 
-Available as a **desktop app** (macOS / Linux / Windows) and a self-hosted server.
+Arkloop is a design-focused open-source AI agent platform. Multi-model routing, sandboxed execution, persistent memory — a clean desktop app, ready out of the box.
 
 ## Download
 
-Download the latest release from [GitHub Releases](https://github.com/qqqqqf/Arkloop/releases).
+Download the latest release from [GitHub Releases](https://github.com/qqqqqf/Arkloop/releases), available for macOS, Linux, and Windows.
 
-The desktop app bundles everything locally -- no Docker, no configuration. Just open and use.
+The desktop app bundles the full runtime — no Docker, no configuration. Just open and use. Automatic updates via GitHub Releases.
 
-## Self-Hosting
+## Contributing
 
-> Requires Docker, Docker Compose, and Python 3. 2+ CPU cores, 4+ GiB RAM.
+We welcome contributions of all kinds.
 
-```bash
-git clone https://github.com/qqqqqf/Arkloop.git
-cd Arkloop
-./setup.sh install
-```
+Even if you're not a developer, just a regular user — if anything feels off while using it, even a bit of spacing, a color, a tiny detail, or a big-picture direction — please [open an issue](https://github.com/qqqqqf/Arkloop/issues). We take every UX detail seriously, and your feedback makes the experience better for everyone.
 
-For production deployment with pre-built images:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
 
-```bash
-./setup.sh install --prod --non-interactive ...
-```
-
-See the full [installation guide](docs/installation.md) for configuration options.
+## If you can, give us a Star
+![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
 
 ## Features
 
-**Desktop App** -- Native Electron app with a Go sidecar. Runs entirely on your machine with automatic updates via GitHub Releases.
+Arkloop does what other AI chat tools do — multi-model support, tool calling, code execution, memory — but we focus on doing it cleanly:
 
-**Multi-Model Routing** -- OpenAI, Anthropic, and any OpenAI-compatible provider. Priority-based routing with rate limit handling and provider-level caching.
+- **Multi-Model Routing** — OpenAI, Anthropic, and any compatible API; priority-based automatic routing with rate limit handling
+- **Sandboxed Execution** — Code runs in Firecracker microVMs or Docker containers with strict resource limits
+- **Persistent Memory** — System constraints, long-term facts, and session context preserved across conversations
+- **Prompt Injection Protection** — Semantic-level scanning that detects and blocks injection attacks
+- **Channel Integration** — Telegram integration with media handling and group context
+- **Custom Personas** — Independent system prompts, tool sets, and behavior configs; Lua scripting supported
+- **MCP / ACP** — Model Context Protocol and Agent Communication Protocol support
+- **Skill Ecosystem** — Import skills from ClawHub, compatible with OpenClaw SKILL.md format
 
-**Sandboxed Execution** -- Firecracker microVMs (Linux) or Docker containers (macOS/Windows). Python, data analysis, chart generation with strict resource limits.
-
-**Persistent Memory** -- System-level constraints, long-term facts, and session context that survive across conversations. Powered by OpenViking vector memory.
-
-**Prompt Injection Protection** -- Semantic-level scanning that detects and blocks injection attempts. A feature most alternatives don't bother implementing.
-
-**Channel Integration** -- Connect your agent to Telegram with full media support, group context handling, and rate limiting.
-
-**ACP Integration** -- Agent Communication Protocol support for inter-agent coordination inside sandboxed environments.
-
-**MCP Support** -- Model Context Protocol configuration for extending agent capabilities with external tools.
-
-**Custom Personas** -- Define specialized agent configurations with distinct system prompts, tool sets, and behavioral tiers. Optional Lua scripting for custom agent loops.
-
-**Skill Ecosystem** -- Search and import skills from ClawHub, compatible with OpenClaw `SKILL.md` layouts. Security scan status synced during import.
-
-**Admin Console** -- User management, persona configuration, LLM credential management, usage analytics, audit logs, and feature flags.
+Full documentation at [docs](https://arkloop.dev/docs).
 
 ## Architecture
 
 | Service | Stack | Role |
 |---------|-------|------|
 | API | Go | Authentication, RBAC, resource management, audit logging |
-| Gateway | Go | Reverse proxy, rate limiting, risk scoring, geo-IP |
+| Gateway | Go | Reverse proxy, rate limiting, risk scoring |
 | Worker | Go | Job execution, LLM routing, tool dispatch, agent loop |
-| Sandbox | Go | Code execution in Firecracker VMs or Docker containers |
+| Sandbox | Go | Code execution isolation |
 | Desktop | Electron + Go | Native desktop app with embedded sidecar |
-| Web | React / TypeScript | User-facing chat interface |
-| Console | React / TypeScript | Administration dashboard |
+| Web | React / TypeScript | User interface |
+| Console | React / TypeScript | Admin dashboard |
 
-Infrastructure: PostgreSQL + PgBouncer, Redis, SeaweedFS (S3-compatible) 或 filesystem (默认), OpenViking (vector memory).
+Infrastructure: PostgreSQL, Redis, SeaweedFS (or filesystem), OpenViking (vector memory).
 
 ## Development
 
 ```bash
-# Quick local CI check
-bin/ci-local quick
-
-# Go integration tests
-bin/ci-local integration
-
-# Full check
-bin/ci-local full
+bin/ci-local quick        # Quick local CI
+bin/ci-local integration  # Go integration tests
+bin/ci-local full          # Full check
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
+## Self-Hosting
 
-## Contributing
-
-We welcome contributions of all kinds.
-
-Even if you're not a developer -- if something feels off, a bit of spacing, a color that doesn't sit right, any tiny detail or even a big-picture direction -- please [open an issue](https://github.com/qqqqqf/Arkloop/issues). We take every UX detail seriously, and your feedback makes Arkloop better for everyone.
+> The self-hosting deployment path is still in development. While included in the current release, availability is not guaranteed. We are not focusing on this during the Alpha phase. We plan to provide full server deployment support once the desktop version stabilizes.
 
 ## Contributors
 
@@ -115,5 +90,5 @@ To report vulnerabilities, please email qingf622@outlook.com instead of opening 
 
 Licensed under the [Arkloop License](LICENSE), a modified Apache License 2.0 with additional conditions:
 
-- **Multi-tenant restriction**: Source code may not be used to operate a multi-tenant SaaS without written authorization.
-- **Brand protection**: LOGO and copyright information in the frontend components must not be removed or modified.
+- **Multi-tenant restriction** — Source code may not be used to operate a multi-tenant SaaS without written authorization.
+- **Brand protection** — LOGO and copyright information in the frontend components must not be removed or modified.
