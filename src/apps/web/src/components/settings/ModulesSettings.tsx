@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { SpinnerIcon } from "@arkloop/shared/components/auth-ui";
 import { useLocale } from "../../contexts/LocaleContext";
+import { secondaryButtonBorderStyle, secondaryButtonXsCls } from "../buttonStyles";
 import {
   bridgeClient,
   checkBridgeAvailable,
@@ -299,12 +300,8 @@ export function ModulesSettings() {
                     <button
                       onClick={() => void handleAction(id, action)}
                       disabled={isActing || actionInProgress !== null}
-                      className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                      style={{
-                        border: "0.5px solid var(--c-border-subtle)",
-                        background: "var(--c-bg-deep)",
-                        color: "var(--c-text-secondary)",
-                      }}
+                      className={`${secondaryButtonXsCls} rounded-md`}
+                      style={secondaryButtonBorderStyle}
                     >
                       {isActing ? <SpinnerIcon /> : actionLabel(action)}
                     </button>

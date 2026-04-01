@@ -45,6 +45,7 @@ import { SettingsSelect } from './_SettingsSelect'
 import { ConnectionSettings } from './ConnectionSettings'
 import { ModulesSettings } from './ModulesSettings'
 import { UpdateSettingsContent } from './UpdateSettings'
+import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 type AdvancedKey = 'about' | 'network' | 'usage' | 'modules' | 'data' | 'logs'
 
@@ -213,8 +214,8 @@ function AboutPane({
                 key={link.url}
                 type="button"
                 onClick={() => openExternal(link.url)}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                className={secondaryButtonSmCls}
+                style={secondaryButtonBorderStyle}
               >
                 {link.label === 'GitHub' ? <Github size={14} /> : <ExternalLink size={14} />}
                 <span>{link.label}</span>

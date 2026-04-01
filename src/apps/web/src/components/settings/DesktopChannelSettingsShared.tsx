@@ -3,6 +3,7 @@ import { Check, ChevronDown, Eye, EyeOff, Link2, Loader2, Plus, X } from 'lucide
 import type { ChannelBindingResponse, ChannelResponse, LlmProvider, Persona } from '../../api'
 import { DEFAULT_PERSONA_KEY } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
+import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 export type ModelOption = { value: string; label: string }
 
@@ -10,7 +11,7 @@ export const inputCls =
   'w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:border-[var(--c-border)] transition-colors'
 
 export const secondaryButtonCls =
-  'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50'
+  'button-secondary inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors disabled:opacity-50'
 
 export const primaryButtonCls =
   'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:opacity-50'
@@ -253,11 +254,8 @@ export function ListField({
         <button
           type="button"
           onClick={onAdd}
-          className={`${secondaryButtonCls} shrink-0`}
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            background: 'var(--c-bg-page)',
-          }}
+          className={`${secondaryButtonSmCls} shrink-0`}
+          style={secondaryButtonBorderStyle}
         >
           <Plus size={14} />
           {addLabel}
@@ -445,11 +443,8 @@ export function BindingsCard({
             type="button"
             onClick={onGenerate}
             disabled={generating}
-            className={`${secondaryButtonCls} shrink-0`}
-            style={{
-              border: '0.5px solid var(--c-border-subtle)',
-              background: 'var(--c-bg-page)',
-            }}
+            className={`${secondaryButtonSmCls} shrink-0`}
+            style={secondaryButtonBorderStyle}
           >
             {generating ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
             {generating ? generateLabel : bindCode ? regenerateLabel : generateLabel}

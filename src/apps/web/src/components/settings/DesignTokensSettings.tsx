@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Loader2, Check, Trash2, Eye, EyeOff, ChevronDown,
-  Plus, Settings, Info, Globe, Search, Key,
+  Plus, Settings, Info, Globe, Search, Key, Monitor, Moon, Sun,
   CheckCircle, XCircle,
 } from 'lucide-react'
 import { PillToggle } from '@arkloop/shared'
@@ -476,6 +476,56 @@ function ButtonsPreview() {
             >
               Reset
             </button>
+          </div>
+        </div>
+
+        {/* Appearance special controls */}
+        <div className="flex flex-col gap-1.5">
+          <span className={LABEL_CLS}>Appearance special controls · locale trigger + theme segmented</span>
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-[var(--c-text-muted)]">Locale trigger</span>
+              <button
+                className="flex h-9 w-[240px] items-center justify-between rounded-lg px-3 text-sm text-[var(--c-text-secondary)]"
+                style={{
+                  border: '0.5px solid var(--c-border-mid)',
+                  background: 'var(--c-bg-deep)',
+                  transition: 'border-color 0.15s, background-color 0.15s',
+                }}
+              >
+                <span>中文</span>
+                <ChevronDown size={13} />
+              </button>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-[var(--c-text-muted)]">Theme segmented</span>
+              <div
+                className="flex w-[240px] rounded-lg p-[3px]"
+                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+              >
+                <button
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
+                  style={{ background: 'var(--c-bg-deep)', color: 'var(--c-text-heading)', fontWeight: 500 }}
+                >
+                  <Monitor size={13} />
+                  <span>System</span>
+                </button>
+                <button
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
+                  style={{ background: 'transparent', color: 'var(--c-text-tertiary)', fontWeight: 400 }}
+                >
+                  <Sun size={13} />
+                  <span>Light</span>
+                </button>
+                <button
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
+                  style={{ background: 'transparent', color: 'var(--c-text-tertiary)', fontWeight: 400 }}
+                >
+                  <Moon size={13} />
+                  <span>Dark</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

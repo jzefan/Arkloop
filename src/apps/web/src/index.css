@@ -10,6 +10,14 @@ button:not(:disabled) {
   background: var(--c-bg-card-hover);
 }
 
+.button-secondary:hover:not(:disabled) {
+  background: var(--c-bg-deep);
+}
+
+.button-primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
 :root {
   color-scheme: dark;
   /* Font variables — overridden by AppearanceContext */

@@ -3,6 +3,7 @@ import { PillToggle } from '@arkloop/shared'
 import type { ViewSkill } from './types'
 import { formatDate } from './types'
 import { openExternal } from '../../openExternal'
+import { secondaryButtonBorderStyle, secondaryButtonSmCls, secondaryButtonXsCls } from '../buttonStyles'
 
 type SkillTextSubset = {
   sourceOfficial: string
@@ -118,8 +119,8 @@ export function SkillDetailModal({
                 onTrySkill?.(skillText.trySkillPrompt(item.skill_key))
               }}
               disabled={!item.installed}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-heading)' }}
+              className={secondaryButtonSmCls}
+              style={secondaryButtonBorderStyle}
             >
               <MessageSquare size={13} />
               {skillText.trySkill}
@@ -178,8 +179,8 @@ export function SkillDetailModal({
                 type="button"
                 disabled={!item.detail_url}
                 onClick={() => item.detail_url && openExternal(item.detail_url)}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                className={secondaryButtonXsCls}
+                style={secondaryButtonBorderStyle}
               >
                 <Download size={12} />
                 {skillText.download}

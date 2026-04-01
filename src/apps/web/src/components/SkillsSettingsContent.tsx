@@ -37,6 +37,7 @@ import { InstalledSkillsView } from './skills/InstalledSkillsView'
 import { MarketplaceView } from './skills/MarketplaceView'
 import { BuiltinSkillsView } from './skills/BuiltinSkillsView'
 import { SkillDetailModal } from './skills/SkillDetailModal'
+import { primaryButtonSmCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from './buttonStyles'
 
 type Props = {
   accessToken: string
@@ -427,7 +428,7 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
           <button
             type="button"
             onClick={() => setShowAddMenu((v) => !v)}
-            className="flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium"
+            className={primaryButtonSmCls}
             style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
           >
             <PackagePlus size={14} />
@@ -535,8 +536,8 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
             <button
               type="button"
               onClick={() => setUploadOpen(false)}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+              className={secondaryButtonSmCls}
+              style={secondaryButtonBorderStyle}
             >
               {skillText.cancelAction}
             </button>
@@ -586,8 +587,8 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
             <button
               type="button"
               onClick={() => setGitHubOpen(false)}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+              className={secondaryButtonSmCls}
+              style={secondaryButtonBorderStyle}
             >
               {skillText.cancelAction}
             </button>
