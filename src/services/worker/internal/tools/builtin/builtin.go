@@ -2,6 +2,7 @@ package builtin
 
 import (
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
@@ -12,8 +13,9 @@ import (
 	"arkloop/services/worker/internal/tools/builtin/glob"
 	"arkloop/services/worker/internal/tools/builtin/grep"
 	"arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
+	loadskill "arkloop/services/worker/internal/tools/builtin/load_skill"
+	loadtools "arkloop/services/worker/internal/tools/builtin/load_tools"
 	read "arkloop/services/worker/internal/tools/builtin/read"
-	searchtools "arkloop/services/worker/internal/tools/builtin/search_tools"
 	showwidget "arkloop/services/worker/internal/tools/builtin/show_widget"
 	spawnagent "arkloop/services/worker/internal/tools/builtin/spawn_agent"
 	summarizethread "arkloop/services/worker/internal/tools/builtin/summarize_thread"
@@ -29,7 +31,8 @@ import (
 
 func AgentSpecs() []tools.AgentToolSpec {
 	return []tools.AgentToolSpec{
-		searchtools.AgentSpec,
+		loadtools.AgentSpec,
+		loadskill.AgentSpec,
 		TimelineTitleAgentSpec,
 		visualizereadme.AgentSpec,
 		artifactguidelines.AgentSpec,
@@ -68,7 +71,8 @@ func AgentSpecs() []tools.AgentToolSpec {
 
 func LlmSpecs() []llm.ToolSpec {
 	return []llm.ToolSpec{
-		searchtools.LlmSpec,
+		loadtools.LlmSpec,
+		loadskill.LlmSpec,
 		TimelineTitleLlmSpec,
 		visualizereadme.LlmSpec,
 		artifactguidelines.LlmSpec,
@@ -95,10 +99,11 @@ func LlmSpecs() []llm.ToolSpec {
 
 // Executors 返回所有内置工具的 Executor 实例。
 // rdb 可选；非 nil 时用于跨实例通知推送。
-func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Resolver) map[string]tools.Executor {
+func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Resolver, skillStore objectstore.Store) map[string]tools.Executor {
 	tracker := fileops.NewFileTracker()
 	return map[string]tools.Executor{
 		TimelineTitleAgentSpec.Name:        TimelineTitleExecutor{},
+		loadskill.AgentSpec.Name:           loadskill.NewToolExecutor(skillStore),
 		visualizereadme.AgentSpec.Name:     visualizereadme.NewToolExecutor(),
 		artifactguidelines.AgentSpec.Name:  artifactguidelines.ToolExecutor{},
 		websearch.AgentSpec.Name:           websearch.NewToolExecutor(resolver),

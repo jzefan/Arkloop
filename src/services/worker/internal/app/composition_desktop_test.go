@@ -116,7 +116,7 @@ func TestDesktopNormalPersonaSearchableIncludesSpawnAgent(t *testing.T) {
 		}
 	}
 
-	executors := builtin.Executors(nil, nil, nil)
+	executors := builtin.Executors(nil, nil, nil, nil)
 	allowlist := map[string]struct{}{}
 	for _, name := range registry.ListNames() {
 		if executors[name] != nil {

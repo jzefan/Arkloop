@@ -111,7 +111,11 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
-	executors := builtin.Executors(pool, rdb, configResolver)
+	skillStore, err := buildSkillStore(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "load_skill: skill store init failed", "err", err.Error())
+	}
+	executors := builtin.Executors(pool, rdb, configResolver, skillStore)
 	allLlmSpecs := builtin.LlmSpecs()
 
 	// platform_manage executor (通过 PlatformToolsMiddleware 按需注入，不全局注册)
@@ -354,6 +358,17 @@ func buildRolloutStore(ctx context.Context) (objectstore.BlobStore, error) {
 		return nil, fmt.Errorf("rollout store does not implement blob store")
 	}
 	return blobStore, nil
+}
+
+func buildSkillStore(ctx context.Context) (objectstore.Store, error) {
+	bucketOpener, err := buildStorageBucketOpenerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if bucketOpener == nil {
+		return nil, nil
+	}
+	return bucketOpener.Open(ctx, objectstore.SkillStoreBucket)
 }
 
 func buildStorageBucketOpenerFromEnv() (objectstore.BucketOpener, error) {

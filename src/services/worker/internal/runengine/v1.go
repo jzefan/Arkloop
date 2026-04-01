@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +106,15 @@ type EngineV1Deps struct {
 
 	// ChannelTelegramLoader: Telegram Channel 工具取 token；nil 时不注入 telegram_react/reply
 	ChannelTelegramLoader channel_telegram.TokenLoader
+}
+
+func serviceExternalSkillDirs(_ context.Context) []string {
+	var dirs []string
+	if envDirs := strings.TrimSpace(os.Getenv("ARKLOOP_EXTERNAL_SKILL_DIRS")); envDirs != "" {
+		dirs = append(dirs, strings.Split(envDirs, string(os.PathListSeparator))...)
+	}
+	dirs = append(dirs, skillstore.WellKnownSkillDirs()...)
+	return dirs
 }
 
 func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
@@ -511,6 +521,7 @@ func buildCapabilityLayer(
 			Resolve: func(ctx context.Context, accountID uuid.UUID, profileRef, workspaceRef string) ([]skillstore.ResolvedSkill, error) {
 				return data.NewSkillsRepository(deps.DBPool).ResolveEnabledSkills(ctx, accountID, profileRef, workspaceRef)
 			},
+			ExternalDirs: serviceExternalSkillDirs,
 		}),
 		pipeline.NewMemoryMiddleware(nil, pipeline.NewPgxMemorySnapshotStore(deps.DBPool), deps.DBPool, deps.ConfigResolver),
 		pipeline.NewRuntimeContextMiddleware(),

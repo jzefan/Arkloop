@@ -1,4 +1,4 @@
-package searchtools
+package loadtools
 
 import (
 	"context"
@@ -66,7 +66,7 @@ func TestExactNameMatch(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search"}},
 		tools.ExecutionContext{},
 		"call_1",
@@ -107,7 +107,7 @@ func TestBatchQuery(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search", "exec_command"}},
 		tools.ExecutionContext{},
 		"call_2",
@@ -131,7 +131,7 @@ func TestDependencyToolAutoActivated(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"show_widget"}},
 		tools.ExecutionContext{},
 		"call_dep",
@@ -168,7 +168,7 @@ func TestSubstringMatch(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web"}},
 		tools.ExecutionContext{},
 		"call_3",
@@ -207,7 +207,7 @@ func TestSubstringMatchSkipsAlreadyActiveTools(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web"}},
 		tools.ExecutionContext{},
 		"call_substring",
@@ -234,7 +234,7 @@ func TestNoMatch(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"nonexistent_tool"}},
 		tools.ExecutionContext{},
 		"call_4",
@@ -267,7 +267,7 @@ func TestInvalidArgs(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{},
 		tools.ExecutionContext{},
 		"call_5",
@@ -299,7 +299,7 @@ func TestWildcardAll(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"*"}},
 		tools.ExecutionContext{},
 		"call_wildcard",
@@ -342,7 +342,7 @@ func TestActiveToolMatchReturnsAlreadyActive(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search"}},
 		tools.ExecutionContext{},
 		"call_active",
@@ -381,7 +381,7 @@ func TestDuplicateSearchDoesNotReactivate(t *testing.T) {
 	// First search activates web_search
 	exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search"}},
 		tools.ExecutionContext{},
 		"call_a",
@@ -396,7 +396,7 @@ func TestDuplicateSearchDoesNotReactivate(t *testing.T) {
 	// Second search for same tool should return it (schema info) but NOT re-activate
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search"}},
 		tools.ExecutionContext{},
 		"call_b",
@@ -430,7 +430,7 @@ func TestSearchableMapNotMutated(t *testing.T) {
 
 	exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"*"}},
 		tools.ExecutionContext{},
 		"call_mut",
@@ -483,7 +483,7 @@ func TestStatusBreakdownWithMixedMatches(t *testing.T) {
 
 	result := exec.Execute(
 		context.Background(),
-		"search_tools",
+		"load_tools",
 		map[string]any{"queries": []any{"web_search", "web_fetch"}},
 		tools.ExecutionContext{},
 		"call_mixed",

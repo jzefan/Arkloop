@@ -72,10 +72,10 @@ func TestEngineV1InjectsPersonaSystemPromptAndBudgets(t *testing.T) {
 
 	engine, err := runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
-		AuxGateway:            gateway,
+		AuxGateway:             gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
-		ToolExecutors:          builtin.Executors(nil, nil, nil),
+		ToolExecutors:          builtin.Executors(nil, nil, nil, nil),
 		AllLlmToolSpecs:        builtin.LlmSpecs(),
 		BaseToolAllowlistNames: []string{"echo"},
 		PersonaRegistryGetter:  func() *personas.Registry { return personaRegistry },
@@ -144,10 +144,10 @@ func TestEngineV1AppliesClawPersonaPromptAndToolAllowlist(t *testing.T) {
 
 	engine, err := runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                 router,
-		AuxGateway:            gateway,
+		AuxGateway:             gateway,
 		EmitDebugEvents:        false,
 		ToolRegistry:           toolRegistry,
-		ToolExecutors:          builtin.Executors(nil, nil, nil),
+		ToolExecutors:          builtin.Executors(nil, nil, nil, nil),
 		AllLlmToolSpecs:        builtin.LlmSpecs(),
 		BaseToolAllowlistNames: toolRegistry.ListNames(),
 		PersonaRegistryGetter:  func() *personas.Registry { return personaRegistry },

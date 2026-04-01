@@ -56,30 +56,31 @@ type RunStatusUpdater interface {
 // RunContext 承载单次 Execute 调用的全部运行时状态，在 Pipeline 各中间件间共享。
 type RunContext struct {
 	// -- 初始化时写入 --
-	Run          data.Run
-	DB           data.DB
-	RunStatusDB  RunStatusUpdater
-	Pool         *pgxpool.Pool
+	Run         data.Run
+	DB          data.DB
+	RunStatusDB RunStatusUpdater
+	Pool        *pgxpool.Pool
 	// MemoryServiceDB 供 memory run_events / usage 与快照刷新；桌面为 SQLite，服务端可与 Pool 相同。
 	MemoryServiceDB data.MemoryMiddlewareDB
 	// MemorySnapshotStore 由 Execute 注入，与 NewMemoryMiddleware 共用同一快照语义。
 	MemorySnapshotStore MemorySnapshotStore
-	DirectPool   *pgxpool.Pool     // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
-	BroadcastRDB *redis.Client     // 跨实例 SSE 广播，nil 时仅走 pg_notify
-	EventBus     eventbus.EventBus // 进程内 SSE 通知（Desktop 模式替代 pg_notify + Redis）
-	TraceID      string
-	Emitter      events.Emitter
-	Router       *routing.ProviderRouter
-	Runtime      *sharedtoolruntime.RuntimeSnapshot
+	DirectPool          *pgxpool.Pool     // LISTEN/NOTIFY 专用直连，不走 PgBouncer；由 Execute 保证非 nil
+	BroadcastRDB        *redis.Client     // 跨实例 SSE 广播，nil 时仅走 pg_notify
+	EventBus            eventbus.EventBus // 进程内 SSE 通知（Desktop 模式替代 pg_notify + Redis）
+	TraceID             string
+	Emitter             events.Emitter
+	Router              *routing.ProviderRouter
+	Runtime             *sharedtoolruntime.RuntimeSnapshot
 
 	// -- EngineV1.Execute 从 Run.CreatedByUserID 注入；nil 时 MemoryMiddleware 跳过写入 --
 	// agent_id 约定：默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]，adapter 层 sanitize
 	UserID *uuid.UUID
 	// 长期环境绑定，由 EngineV1.Execute 在 run 启动时解析并注入。
-	ProfileRef    string
-	WorkspaceRef  string
-	WorkDir       string // 用户选定的工作目录（Claw 模式），空字符串时由后端 fallback
-	EnabledSkills []skillstore.ResolvedSkill
+	ProfileRef     string
+	WorkspaceRef   string
+	WorkDir        string // 用户选定的工作目录（Claw 模式），空字符串时由后端 fallback
+	EnabledSkills  []skillstore.ResolvedSkill
+	ExternalSkills []skillstore.ExternalSkill
 
 	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 --
 	FinalAssistantOutput string

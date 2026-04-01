@@ -95,7 +95,6 @@ func (e *SimpleExecutor) Execute(
 		PipelineRC:      rc,
 		RolloutRecorder: rc.RolloutRecorder,
 	}
-
 	loop := agent.NewLoop(rc.Gateway, rc.ToolExecutor)
 	return loop.Run(ctx, runCtx, agentRequest, emitter, yield)
 }
