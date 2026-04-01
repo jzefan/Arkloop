@@ -19,8 +19,8 @@ type SkillLayoutResolver func(ctx context.Context, rc *RunContext) (skillstore.P
 type ExternalSkillDirsResolver func(ctx context.Context) []string
 
 const (
-	skillListingBudgetChars  = 4000
-	skillListingDescMaxChars = 140
+	skillListingBudgetChars  = 3000
+	skillListingDescMaxChars = 96
 )
 
 type SkillContextConfig struct {
@@ -123,7 +123,14 @@ func skillListingLines(enabled []skillstore.ResolvedSkill, external []skillstore
 			"external",
 		))
 	}
-	sort.Strings(lines)
+	sort.SliceStable(lines, func(i, j int) bool {
+		leftAuto := strings.Contains(lines[i], "(enabled)")
+		rightAuto := strings.Contains(lines[j], "(enabled)")
+		if leftAuto != rightAuto {
+			return leftAuto
+		}
+		return lines[i] < lines[j]
+	})
 	return trimSkillListing(lines)
 }
 

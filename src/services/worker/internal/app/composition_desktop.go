@@ -394,6 +394,9 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		AgentReasoningIterationsLimit: 0,
 		ToolContinuationBudgetLimit:   32,
 		MaxParallelTasks:              4,
+		RunWallClockTimeout:           15 * time.Minute,
+		PausedInputTimeout:            5 * time.Minute,
+		IdleHeartbeatInterval:         15 * time.Second,
 		CreditPerUSD:                  1000,
 		LlmMaxResponseBytes:           16384,
 

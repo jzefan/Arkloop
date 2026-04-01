@@ -4,4 +4,6 @@ package pipeline
 const (
 	EventTypeInputRequested = "run.input_requested"
 	EventTypeInputProvided  = "run.input_provided"
+	EventTypeRunPaused      = "run.paused"
+	EventTypeRunResumed     = "run.resumed"
 )

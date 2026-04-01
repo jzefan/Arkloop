@@ -15,14 +15,33 @@ const (
 	RiskLevelHigh   RiskLevel = "high"
 )
 
+type InterruptBehavior string
+
+const (
+	InterruptBehaviorBlock  InterruptBehavior = "block"
+	InterruptBehaviorCancel InterruptBehavior = "cancel"
+)
+
+type HardTimeoutMode string
+
+const (
+	HardTimeoutModeEnforced HardTimeoutMode = "enforced"
+	HardTimeoutModeIgnored  HardTimeoutMode = "ignored"
+)
+
 type AgentToolSpec struct {
-	Name           string
-	LlmName        string
-	Version        string
-	Description    string
-	RiskLevel      RiskLevel
-	RequiredScopes []string
-	SideEffects    bool
+	Name                      string
+	LlmName                   string
+	Version                   string
+	Description               string
+	RiskLevel                 RiskLevel
+	RequiredScopes            []string
+	SideEffects               bool
+	ConcurrencySafe           *bool
+	InterruptBehavior         InterruptBehavior
+	RequiresExclusiveAccess   bool
+	SupportsProgressHeartbeat bool
+	HardTimeoutMode           HardTimeoutMode
 }
 
 func (s AgentToolSpec) ToToolCallJSON() map[string]any {
@@ -36,6 +55,7 @@ func (s AgentToolSpec) ToToolCallJSON() map[string]any {
 	if s.LlmName != "" {
 		payload["llm_name"] = s.LlmName
 	}
+	payload["capabilities"] = s.Capabilities().ToJSON()
 	return payload
 }
 
@@ -59,3 +79,53 @@ func (s AgentToolSpec) Validate() error {
 }
 
 type LlmToolSpec = llm.ToolSpec
+
+type ToolCapabilities struct {
+	ConcurrencySafe           bool
+	InterruptBehavior         InterruptBehavior
+	RequiresExclusiveAccess   bool
+	SupportsProgressHeartbeat bool
+	HardTimeoutMode           HardTimeoutMode
+}
+
+func (s AgentToolSpec) Capabilities() ToolCapabilities {
+	concurrencySafe := !s.SideEffects
+	if s.ConcurrencySafe != nil {
+		concurrencySafe = *s.ConcurrencySafe
+	}
+	if s.RequiresExclusiveAccess {
+		concurrencySafe = false
+	}
+
+	interruptBehavior := s.InterruptBehavior
+	if interruptBehavior == "" {
+		if concurrencySafe {
+			interruptBehavior = InterruptBehaviorCancel
+		} else {
+			interruptBehavior = InterruptBehaviorBlock
+		}
+	}
+
+	hardTimeoutMode := s.HardTimeoutMode
+	if hardTimeoutMode == "" {
+		hardTimeoutMode = HardTimeoutModeEnforced
+	}
+
+	return ToolCapabilities{
+		ConcurrencySafe:           concurrencySafe,
+		InterruptBehavior:         interruptBehavior,
+		RequiresExclusiveAccess:   s.RequiresExclusiveAccess,
+		SupportsProgressHeartbeat: s.SupportsProgressHeartbeat,
+		HardTimeoutMode:           hardTimeoutMode,
+	}
+}
+
+func (c ToolCapabilities) ToJSON() map[string]any {
+	return map[string]any{
+		"concurrency_safe":            c.ConcurrencySafe,
+		"interrupt_behavior":          string(c.InterruptBehavior),
+		"requires_exclusive_access":   c.RequiresExclusiveAccess,
+		"supports_progress_heartbeat": c.SupportsProgressHeartbeat,
+		"hard_timeout_mode":           string(c.HardTimeoutMode),
+	}
+}

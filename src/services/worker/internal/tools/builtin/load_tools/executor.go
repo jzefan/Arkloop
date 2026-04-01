@@ -3,6 +3,7 @@ package loadtools
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -289,10 +290,24 @@ func BuildCatalogPrompt(searchable map[string]llm.ToolSpec) string {
 	sb.WriteString("load_tools queries must be a tool id or a word from a line below (this catalog only), not a web or research question.\n")
 	sb.WriteString("After load_tools returns, call a matched tool only if it appears in the real tool list in later phases of the same reasoning loop.\n")
 
+	names := make([]string, 0, len(searchable))
 	for name := range searchable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		shortDesc := name
 		if meta, ok := sharedtoolmeta.Lookup(name); ok && meta.ShortDesc != "" {
 			shortDesc = meta.ShortDesc
+		}
+		if meta, ok := sharedtoolmeta.Lookup(name); ok {
+			capabilityBits := make([]string, 0, 2)
+			if meta.Group != "" {
+				capabilityBits = append(capabilityBits, meta.Group)
+			}
+			if len(capabilityBits) > 0 {
+				shortDesc = shortDesc + " [" + strings.Join(capabilityBits, ", ") + "]"
+			}
 		}
 		sb.WriteString("- ")
 		sb.WriteString(name)

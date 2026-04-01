@@ -1631,6 +1631,25 @@ func (e *blockingToolExecutor) Execute(
 	return tools.ExecutionResult{ResultJSON: map[string]any{"ok": true}}
 }
 
+type erroringExecutor struct {
+	message string
+}
+
+func (e erroringExecutor) Execute(
+	_ context.Context,
+	_ string,
+	_ map[string]any,
+	_ tools.ExecutionContext,
+	_ string,
+) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: "tool.execution_failed",
+			Message:    e.message,
+		},
+	}
+}
+
 func sleep(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -2069,6 +2088,7 @@ func TestAskUserLoopIntercept(t *testing.T) {
 	}
 
 	var hasInputRequested, hasToolCall, hasToolResult, hasCompleted bool
+	var hasPaused, hasResumed bool
 	for _, ev := range got {
 		switch ev.Type {
 		case "run.input_requested":
@@ -2076,6 +2096,10 @@ func TestAskUserLoopIntercept(t *testing.T) {
 			if ev.DataJSON["request_id"] != "call_askuser" {
 				t.Fatalf("unexpected request_id: %v", ev.DataJSON["request_id"])
 			}
+		case EventTypeRunPaused:
+			hasPaused = true
+		case EventTypeRunResumed:
+			hasResumed = true
 		case "tool.call":
 			if ev.DataJSON["tool_name"] == "ask_user" {
 				hasToolCall = true
@@ -2094,6 +2118,12 @@ func TestAskUserLoopIntercept(t *testing.T) {
 	}
 	if !hasInputRequested {
 		t.Fatal("expected run.input_requested event")
+	}
+	if !hasPaused {
+		t.Fatal("expected run.paused event")
+	}
+	if !hasResumed {
+		t.Fatal("expected run.resumed event")
 	}
 	if !hasToolResult {
 		t.Fatal("expected tool.result for ask_user")
@@ -2141,6 +2171,155 @@ func TestAskUserNoWaitForInput(t *testing.T) {
 	}
 	if !hasToolResultError {
 		t.Fatal("expected ask_user tool.result with error")
+	}
+}
+
+func TestAskUserPausedTimeout(t *testing.T) {
+	gateway := &askUserGateway{}
+	loop := NewLoop(gateway, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 5,
+			CancelSignal:        func() bool { return false },
+			PausedInputTimeout:  10 * time.Millisecond,
+			WaitForInput: func(ctx context.Context) (string, bool) {
+				<-ctx.Done()
+				return "", false
+			},
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	assertHasToolResultError(t, got, ErrorClassRunPausedWaitingUser)
+}
+
+func TestAgentLoopSerialFailureMarksRemainingToolsSkipped(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{
+		Name:        "echo_serial",
+		Version:     "1",
+		Description: "serial echo",
+		RiskLevel:   tools.RiskLevelLow,
+		SideEffects: true,
+	}); err != nil {
+		t.Fatalf("register echo_serial failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo_serial"})
+	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
+	if err := dispatcher.Bind("echo_serial", erroringExecutor{message: "boom"}); err != nil {
+		t.Fatalf("bind echo_serial failed: %v", err)
+	}
+
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo_serial", ArgumentsJSON: map[string]any{"text": "a"}},
+			llm.ToolCall{ToolCallID: "call_2", ToolName: "echo_serial", ArgumentsJSON: map[string]any{"text": "b"}},
+			llm.StreamRunCompleted{},
+		},
+		{
+			llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}}
+
+	loop := NewLoop(gateway, dispatcher)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(context.Background(), RunContext{
+		RunID:                uuid.New(),
+		TraceID:              "trace",
+		InputJSON:            map[string]any{},
+		ReasoningIterations:  3,
+		ToolExecutor:         dispatcher,
+		MaxParallelToolCalls: 1,
+		CancelSignal:         func() bool { return false },
+	}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	foundSkipped := false
+	for _, ev := range got {
+		if ev.Type == "tool.result" && ev.ErrorClass != nil && *ev.ErrorClass == "tool.skipped_after_failure" {
+			foundSkipped = true
+			if ev.DataJSON["tool_call_id"] != "call_2" {
+				t.Fatalf("expected skipped second tool, got %#v", ev.DataJSON)
+			}
+		}
+	}
+	if !foundSkipped {
+		t.Fatalf("expected skipped tool.result, got %#v", got)
+	}
+}
+
+func TestAgentLoopRunDeadlineStopsBlockingTool(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
+		t.Fatalf("register echo failed: %v", err)
+	}
+	allowlist := tools.AllowlistFromNames([]string{"echo"})
+	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
+	blocking := &blockingToolExecutor{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	if err := dispatcher.Bind("echo", blocking); err != nil {
+		t.Fatalf("bind echo failed: %v", err)
+	}
+
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.ToolCall{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+			llm.StreamRunCompleted{},
+		},
+	}}
+
+	loop := NewLoop(gateway, dispatcher)
+	emitter := events.NewEmitter("trace")
+	var got []events.RunEvent
+	err := loop.Run(context.Background(), RunContext{
+		RunID:               uuid.New(),
+		TraceID:             "trace",
+		InputJSON:           map[string]any{},
+		ReasoningIterations: 3,
+		ToolExecutor:        dispatcher,
+		RunDeadline:         30 * time.Millisecond,
+		CancelSignal:        func() bool { return false },
+	}, llm.Request{Model: "stub"}, emitter, func(ev events.RunEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	found := false
+	for _, ev := range got {
+		if ev.Type == "run.failed" && ev.ErrorClass != nil && *ev.ErrorClass == ErrorClassRunDeadlineExceeded {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected run.failed with %s, got %#v", ErrorClassRunDeadlineExceeded, got)
 	}
 }
 

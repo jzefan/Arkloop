@@ -117,6 +117,7 @@ func (e *InteractiveExecutor) Execute(
 		InputJSON:                        rc.InputJSON,
 		ReasoningIterations:              rc.ReasoningIterations,
 		ToolContinuationBudget:           rc.ToolContinuationBudget,
+		MaxParallelToolCalls:             rc.MaxParallelTasks,
 		ToolExecutor:                     rc.ToolExecutor,
 		ToolTimeoutMs:                    rc.ToolTimeoutMs,
 		ToolBudget:                       rc.ToolBudget,
@@ -135,8 +136,11 @@ func (e *InteractiveExecutor) Execute(
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},
-		StreamThinking: rc.StreamThinking,
-		PipelineRC:     rc,
+		RunDeadline:           rc.RunWallClockTimeout,
+		PausedInputTimeout:    rc.PausedInputTimeout,
+		IdleHeartbeatInterval: rc.IdleHeartbeatInterval,
+		StreamThinking:        rc.StreamThinking,
+		PipelineRC:            rc,
 		PreIterHook: func(_ context.Context, iter int) error {
 			// 关闭上一轮 segment（第 2 轮开始时关闭第 1 轮）
 			if currentSegID != "" {
