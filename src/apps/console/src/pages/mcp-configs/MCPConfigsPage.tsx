@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Pencil, Plus, RefreshCw, Server, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 import { useToast } from '@arkloop/shared'
+import { AutoResizeTextarea } from '@arkloop/shared'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { DataTable, type Column } from '../../components/DataTable'
@@ -531,12 +532,12 @@ export function MCPConfigsPage() {
                 <input className={inputCls} value={form.cwd} onChange={(event) => setField('cwd', event.target.value)} placeholder="/workspace" />
               </FormField>
               <FormField label={tc.fieldEnvJson}>
-                <textarea className={textareaCls} value={form.envJson} onChange={(event) => setField('envJson', event.target.value)} />
+                <AutoResizeTextarea className={textareaCls} value={form.envJson} onChange={(event) => setField('envJson', event.target.value)} minRows={4} maxHeight={320} />
               </FormField>
             </>
           )}
           <FormField label={tc.fieldHeaders}>
-            <textarea className={textareaCls} value={form.headersJson} onChange={(event) => setField('headersJson', event.target.value)} />
+            <AutoResizeTextarea className={textareaCls} value={form.headersJson} onChange={(event) => setField('headersJson', event.target.value)} minRows={4} maxHeight={320} />
           </FormField>
         </div>
         {formError && <p className="mt-3 text-xs text-[var(--c-status-error-text)]">{formError}</p>}

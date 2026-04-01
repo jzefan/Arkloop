@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react'
-import { Modal } from '@arkloop/shared'
+import { AutoResizeTextarea, Modal } from '@arkloop/shared'
 import { SettingsLabel } from '../settings/_SettingsLabel'
 import { SettingsInput, settingsInputCls } from '../settings/_SettingsInput'
 import { SettingsSelect } from '../settings/_SettingsSelect'
@@ -118,11 +118,13 @@ export function MCPFormModal({
             </div>
             <div>
               <SettingsLabel>{copy.fieldEnv}</SettingsLabel>
-              <textarea
+              <AutoResizeTextarea
                 value={form.envJson}
                 onChange={(e) => setField('envJson', e.target.value)}
                 className={`${textareaCls} min-h-20`}
                 placeholder='{"KEY": "value"}'
+                minRows={4}
+                maxHeight={260}
               />
             </div>
           </>
@@ -140,11 +142,13 @@ export function MCPFormModal({
         {/* Headers JSON */}
         <div>
           <SettingsLabel>{copy.fieldHeaders}</SettingsLabel>
-          <textarea
+          <AutoResizeTextarea
             value={form.headersJson}
             onChange={(e) => setField('headersJson', e.target.value)}
             className={`${textareaCls} min-h-20`}
             placeholder='{"X-Custom-Header": "value"}'
+            minRows={4}
+            maxHeight={260}
           />
         </div>
 

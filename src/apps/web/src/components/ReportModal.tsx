@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { X, ImageOff, CalendarClock, FileText, FileWarning, ShieldAlert, Globe } from 'lucide-react'
 import { createThreadReport, isApiError } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { AutoResizeTextarea } from '@arkloop/shared'
 
 function SpinnerIcon() {
   return (
@@ -172,12 +173,14 @@ export function ReportModal({ accessToken, threadId, open, onClose }: Props) {
               <p className="mb-2 text-sm" style={{ color: 'var(--c-text-muted)' }}>
                 {t.reportFeedbackLabel}
               </p>
-              <textarea
+              <AutoResizeTextarea
                 value={feedback}
                 onChange={e => setFeedback(e.target.value)}
                 placeholder={t.reportFeedbackPlaceholder}
                 maxLength={2000}
                 rows={3}
+                minRows={3}
+                maxHeight={240}
                 className="w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none transition-colors focus:border-[var(--c-text-muted)]"
                 style={{
                   borderColor: 'var(--c-border-subtle)',

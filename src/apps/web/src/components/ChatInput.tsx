@@ -1,5 +1,5 @@
-import { useRef, useEffect, useCallback, useMemo, useState, useLayoutEffect } from 'react'
-import { ArrowUp, Square, Mic, X, Check, Loader2 } from 'lucide-react'
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
+import { ArrowUp, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -22,6 +22,7 @@ import {
 import { useAudioRecorder } from './chat-input/useAudioRecorder'
 import { useAttachments } from './chat-input/useAttachments'
 import { PersonaModelBar } from './chat-input/PersonaModelBar'
+import { AutoResizeTextarea } from '@arkloop/shared'
 
 export type Attachment = {
   id: string
@@ -102,7 +103,6 @@ export function ChatInput({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const textareaHeightRef = useRef<number | null>(null)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
   const accessTokenRef = useRef(accessToken)
@@ -183,6 +183,7 @@ export function ChatInput({
   }, [])
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY
+  const showSendButton = value.trim().length > 0 || attachments.length > 0
 
   const deactivateMode = useCallback(() => {
     setChipExiting(true)
@@ -216,28 +217,6 @@ export function ChatInput({
     })
     return () => cancelAnimationFrame(id)
   }, [persistSelectedPersona, searchMode, selectedPersonaKey])
-
-  const adjustHeight = useCallback(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.overflow = 'hidden'
-    el.style.height = 'auto'
-    const to = Math.min(el.scrollHeight, 300)
-    if (textareaHeightRef.current === to) {
-      if (el.style.height !== `${to}px`) {
-        el.style.height = `${to}px`
-      }
-      el.style.overflow = to >= 300 ? 'auto' : 'hidden'
-      return
-    }
-    textareaHeightRef.current = to
-    el.style.height = `${to}px`
-    el.style.overflow = to >= 300 ? 'auto' : 'hidden'
-  }, [])
-
-  useLayoutEffect(() => {
-    adjustHeight()
-  }, [value, adjustHeight])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -468,7 +447,7 @@ export function ChatInput({
             marginBottom: variant === 'welcome' ? '12px' : '9px',
           }}
         >
-          <textarea
+          <AutoResizeTextarea
             ref={textareaRef}
             rows={1}
             className="w-full resize-none bg-transparent outline-none placeholder:text-[var(--c-placeholder)] placeholder:font-[360] disabled:cursor-not-allowed"
@@ -480,6 +459,8 @@ export function ChatInput({
             onBlur={() => setFocused(false)}
             placeholder={placeholder}
             disabled={disabled}
+            minRows={1}
+            maxHeight={300}
             style={{
               fontFamily: 'inherit',
               fontSize: '16px',
@@ -489,7 +470,6 @@ export function ChatInput({
               marginTop: '0px',
               marginBottom: '0px',
               letterSpacing: '-0.16px',
-              overflow: 'auto',
             }}
           />
         </div>
@@ -525,10 +505,37 @@ export function ChatInput({
                 type="button"
                 onClick={onCancel}
                 disabled={cancelSubmitting}
-                className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] transition-[background-color,opacity] duration-[60ms] hover:bg-[var(--c-accent-send-hover)] active:opacity-[0.75] disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ position: 'absolute', inset: 0 }}
+                className="flex h-full w-full items-center justify-center rounded-[10px] transition-[opacity,transform,box-shadow] duration-[140ms] hover:shadow-[0_1px_3px_rgba(0,0,0,0.08)] active:scale-[0.97] active:opacity-[0.82] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: '#F8F8F6',
+                  border: '0.5px solid rgba(26, 26, 25, 0.18)',
+                }}
               >
-                <Square size={14} fill="currentColor" />
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '999px',
+                    border: '1.5px solid #1A1A19',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '1px',
+                      background: '#1A1A19',
+                      flexShrink: 0,
+                    }}
+                  />
+                </span>
               </button>
             ) : (
               <>
@@ -540,10 +547,10 @@ export function ChatInput({
                   style={{
                     position: 'absolute',
                     inset: 0,
-                    opacity: (value.trim() || attachments.length > 0) ? 0 : 0.65,
-                    transform: (value.trim() || attachments.length > 0) ? 'scale(0.7)' : 'scale(1)',
-                    transition: 'opacity 150ms ease, transform 150ms ease',
-                    pointerEvents: (value.trim() || attachments.length > 0) ? 'none' : 'auto',
+                    opacity: showSendButton ? 0 : 0.65,
+                    transform: showSendButton ? 'scale(0.7)' : 'scale(1)',
+                    transition: 'opacity 188ms ease, transform 188ms ease',
+                    pointerEvents: showSendButton ? 'none' : 'auto',
                   }}
                 >
                   <Mic size={18} />
@@ -555,10 +562,10 @@ export function ChatInput({
                   style={{
                     position: 'absolute',
                     inset: 0,
-                    transform: (value.trim() || attachments.length > 0) ? 'scale(1)' : 'scale(0)',
-                    opacity: (value.trim() || attachments.length > 0) ? 1 : 0,
-                    transition: 'transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 120ms ease, background-color 60ms ease',
-                    pointerEvents: (value.trim() || attachments.length > 0) ? 'auto' : 'none',
+                    transform: showSendButton ? 'scale(1)' : 'scale(0)',
+                    opacity: showSendButton ? 1 : 0,
+                    transition: 'transform 225ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 150ms ease, background-color 60ms ease',
+                    pointerEvents: showSendButton ? 'auto' : 'none',
                   }}
                 >
                   <ArrowUp size={16} />

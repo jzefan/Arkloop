@@ -7,7 +7,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { Badge, type BadgeVariant } from '../../components/Badge'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
-import { useToast } from '@arkloop/shared'
+import { AutoResizeTextarea, useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -283,17 +283,21 @@ export function BroadcastsPage() {
             />
           </FormField>
           <FormField label={tc.fieldBodyZh}>
-            <textarea
+            <AutoResizeTextarea
               value={form.bodyZh}
               onChange={(e) => setForm((f) => ({ ...f, bodyZh: e.target.value }))}
-              className={`${inputCls} min-h-[72px] resize-y`}
+              className={`${inputCls} min-h-[72px]`}
+              minRows={4}
+              maxHeight={320}
             />
           </FormField>
           <FormField label={tc.fieldBodyEn}>
-            <textarea
+            <AutoResizeTextarea
               value={form.bodyEn}
               onChange={(e) => setForm((f) => ({ ...f, bodyEn: e.target.value }))}
-              className={`${inputCls} min-h-[72px] resize-y`}
+              className={`${inputCls} min-h-[72px]`}
+              minRows={4}
+              maxHeight={320}
             />
           </FormField>
           <FormField label={tc.fieldTarget}>

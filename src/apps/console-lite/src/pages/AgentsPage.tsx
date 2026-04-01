@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Modal } from '../components/Modal'
 import { FormField } from '../components/FormField'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { useToast } from '@arkloop/shared'
+import { AutoResizeTextarea, useToast } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { isApiError } from '../api'
 import {
@@ -635,9 +635,11 @@ export function AgentsPage() {
 
               {tab === 'persona' && (
                 <FormField label="prompt.md">
-                  <textarea
-                    className={`${MONO_CLS} min-h-[240px] resize-y`}
+                  <AutoResizeTextarea
+                    className={`${MONO_CLS} min-h-[240px]`}
                     rows={10}
+                    minRows={10}
+                    maxHeight={520}
                     value={form.systemPrompt}
                     onChange={(e) => setForm((prev) => prev && { ...prev, systemPrompt: e.target.value })}
                   />

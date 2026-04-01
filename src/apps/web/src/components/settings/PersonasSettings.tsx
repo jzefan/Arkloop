@@ -9,7 +9,7 @@ import {
   CheckCheck,
   Minus,
 } from 'lucide-react'
-import { Modal, ConfirmDialog } from '@arkloop/shared'
+import { AutoResizeTextarea, Modal, ConfirmDialog } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isApiError } from '../../api'
 import { listLlmProviders, type LlmProvider } from '../../api'
@@ -648,9 +648,11 @@ export function PersonasSettings({ accessToken }: Props) {
                 <label className="text-xs font-medium text-[var(--c-text-muted)]">
                   {a.prompt}
                 </label>
-                <textarea
-                  className={`${MONO_CLS} min-h-[240px] resize-y`}
+                <AutoResizeTextarea
+                  className={`${MONO_CLS} min-h-[240px]`}
                   rows={12}
+                  minRows={12}
+                  maxHeight={480}
                   placeholder={a.promptPlaceholder}
                   value={form.systemPrompt}
                   onChange={(e) =>
