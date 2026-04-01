@@ -41,6 +41,7 @@ publish:
 
 mac:
   category: public.app-category.developer-tools
+  artifactName: "${productName}-${version}-${arch}.${ext}"
   target:
     - dmg
   icon: resources/icon.icns
