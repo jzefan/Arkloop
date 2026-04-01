@@ -38,3 +38,14 @@ func (r *Registry) ListNames() []string {
 	return names
 }
 
+func (r *Registry) ListSpecs() []AgentToolSpec {
+	names := r.ListNames()
+	out := make([]AgentToolSpec, 0, len(names))
+	for _, name := range names {
+		spec, ok := r.specByName[name]
+		if ok {
+			out = append(out, spec)
+		}
+	}
+	return out
+}

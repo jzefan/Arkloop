@@ -73,6 +73,7 @@ func (e *SimpleExecutor) Execute(
 		InputJSON:                        rc.InputJSON,
 		ReasoningIterations:              rc.ReasoningIterations,
 		ToolContinuationBudget:           rc.ToolContinuationBudget,
+		MaxParallelToolCalls:             rc.MaxParallelTasks,
 		ToolExecutor:                     rc.ToolExecutor,
 		ToolTimeoutMs:                    rc.ToolTimeoutMs,
 		ToolBudget:                       rc.ToolBudget,
@@ -91,9 +92,12 @@ func (e *SimpleExecutor) Execute(
 		CancelSignal: func() bool {
 			return ctx.Err() != nil
 		},
-		StreamThinking:  rc.StreamThinking,
-		PipelineRC:      rc,
-		RolloutRecorder: rc.RolloutRecorder,
+		RunDeadline:           rc.RunWallClockTimeout,
+		PausedInputTimeout:    rc.PausedInputTimeout,
+		IdleHeartbeatInterval: rc.IdleHeartbeatInterval,
+		StreamThinking:        rc.StreamThinking,
+		PipelineRC:            rc,
+		RolloutRecorder:       rc.RolloutRecorder,
 	}
 	loop := agent.NewLoop(rc.Gateway, rc.ToolExecutor)
 	return loop.Run(ctx, runCtx, agentRequest, emitter, yield)

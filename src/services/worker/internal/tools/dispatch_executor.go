@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 const (
 	ErrorClassToolNotRegistered   = "tool.not_registered"
 	ErrorClassToolExecutionFailed = "tool.execution_failed"
+	ErrorClassToolHardTimeout     = "tool.hard_timeout"
 )
 
 type ExecutionContext struct {
@@ -124,6 +126,24 @@ type DispatchingExecutor struct {
 	generativeUIReadMeSeen bool
 }
 
+func (e *DispatchingExecutor) ToolCapabilities(toolName string) ToolCapabilities {
+	resolved := e.resolveToolName(toolName)
+	if e.registry == nil {
+		return ToolCapabilities{
+			InterruptBehavior: InterruptBehaviorBlock,
+			HardTimeoutMode:   HardTimeoutModeEnforced,
+		}
+	}
+	spec, ok := e.registry.Get(resolved)
+	if !ok {
+		return ToolCapabilities{
+			InterruptBehavior: InterruptBehaviorBlock,
+			HardTimeoutMode:   HardTimeoutModeEnforced,
+		}
+	}
+	return spec.Capabilities()
+}
+
 func NewDispatchingExecutor(registry *Registry, policyEnforcer *PolicyEnforcer) *DispatchingExecutor {
 	return &DispatchingExecutor{
 		registry:        registry,
@@ -206,14 +226,14 @@ func (e *DispatchingExecutor) Execute(
 	ctx context.Context,
 	toolName string,
 	args map[string]any,
-	context ExecutionContext,
+	execContext ExecutionContext,
 	toolCallID string,
 ) ExecutionResult {
 	started := time.Now()
 
 	resolvedName := e.resolveToolName(toolName)
 
-	decision := e.policyEnforcer.RequestToolCall(context.Emitter, resolvedName, args, toolCallID)
+	decision := e.policyEnforcer.RequestToolCall(execContext.Emitter, resolvedName, args, toolCallID)
 	policyEvents := append([]events.RunEvent{}, decision.Events...)
 
 	if !decision.Allowed {
@@ -272,8 +292,28 @@ func (e *DispatchingExecutor) Execute(
 				}
 			}
 		}()
-		context.GenerativeUIReadMeSeen = e.generativeUIReadMeSeen
-		result = executor.Execute(ctx, resolvedName, args, context, decision.ToolCallID)
+		execContext.GenerativeUIReadMeSeen = e.generativeUIReadMeSeen
+		execCtx := ctx
+		cancelTimeout := func() {}
+		capabilities := e.ToolCapabilities(resolvedName)
+		if execContext.TimeoutMs != nil && *execContext.TimeoutMs > 0 && capabilities.HardTimeoutMode != HardTimeoutModeIgnored {
+			execCtx, cancelTimeout = context.WithTimeout(ctx, time.Duration(*execContext.TimeoutMs)*time.Millisecond)
+		}
+		defer cancelTimeout()
+		result = runExecutorWithHardTimeout(execCtx, executor, resolvedName, args, execContext, decision.ToolCallID)
+		if errors.Is(execCtx.Err(), context.DeadlineExceeded) && result.Error == nil {
+			result = ExecutionResult{
+				Error: &ExecutionError{
+					ErrorClass: ErrorClassToolHardTimeout,
+					Message:    "tool execution reached hard timeout",
+					Details: map[string]any{
+						"tool_name":    resolvedName,
+						"tool_call_id": decision.ToolCallID,
+						"timeout_ms":   *execContext.TimeoutMs,
+					},
+				},
+			}
+		}
 	}()
 
 	// Layer 1: smart truncation — use CompressTargetBytes as the LLM-facing budget,
@@ -295,6 +335,68 @@ func (e *DispatchingExecutor) Execute(
 	result.DurationMs = durationMs(started)
 	result.Events = append(policyEvents, result.Events...)
 	return result
+}
+
+func runExecutorWithHardTimeout(
+	ctx context.Context,
+	executor Executor,
+	toolName string,
+	args map[string]any,
+	execContext ExecutionContext,
+	toolCallID string,
+) ExecutionResult {
+	resultCh := make(chan ExecutionResult, 1)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				resultCh <- ExecutionResult{
+					Error: &ExecutionError{
+						ErrorClass: ErrorClassToolExecutionFailed,
+						Message:    "tool execution failed",
+						Details: map[string]any{
+							"tool_name":    toolName,
+							"tool_call_id": toolCallID,
+							"panic":        recovered,
+						},
+					},
+				}
+			}
+		}()
+		resultCh <- executor.Execute(ctx, toolName, args, execContext, toolCallID)
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			timeoutMs := 0
+			if execContext.TimeoutMs != nil && *execContext.TimeoutMs > 0 {
+				timeoutMs = *execContext.TimeoutMs
+			}
+			return ExecutionResult{
+				Error: &ExecutionError{
+					ErrorClass: ErrorClassToolHardTimeout,
+					Message:    "tool execution reached hard timeout",
+					Details: map[string]any{
+						"tool_name":    toolName,
+						"tool_call_id": toolCallID,
+						"timeout_ms":   timeoutMs,
+					},
+				},
+			}
+		}
+		return ExecutionResult{
+			Error: &ExecutionError{
+				ErrorClass: ErrorClassToolExecutionFailed,
+				Message:    "tool execution cancelled",
+				Details: map[string]any{
+					"tool_name":    toolName,
+					"tool_call_id": toolCallID,
+				},
+			},
+		}
+	}
 }
 
 func (e *DispatchingExecutor) resolveToolName(toolName string) string {

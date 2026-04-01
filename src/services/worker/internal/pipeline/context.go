@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"strings"
+	"time"
 
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/objectstore"
@@ -178,6 +179,9 @@ type RunContext struct {
 	AgentReasoningIterationsLimit int
 	ToolContinuationBudgetLimit   int
 	MaxParallelTasks              int
+	RunWallClockTimeout           time.Duration
+	PausedInputTimeout            time.Duration
+	IdleHeartbeatInterval         time.Duration
 	CreditPerUSD                  int
 	LlmMaxResponseBytes           int
 

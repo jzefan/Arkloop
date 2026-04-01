@@ -1510,6 +1510,7 @@ func (rt *luaRuntime) runAgentLoop(
 		InputJSON:              rt.rc.InputJSON,
 		ReasoningIterations:    maxIter,
 		ToolContinuationBudget: rt.rc.ToolContinuationBudget,
+		MaxParallelToolCalls:   rt.rc.MaxParallelTasks,
 		ToolExecutor:           rt.rc.ToolExecutor,
 		ToolTimeoutMs:          rt.rc.ToolTimeoutMs,
 		ToolBudget:             rt.rc.ToolBudget,
@@ -1528,8 +1529,11 @@ func (rt *luaRuntime) runAgentLoop(
 		CancelSignal: func() bool {
 			return rt.ctx.Err() != nil
 		},
-		StreamThinking: rt.rc.StreamThinking,
-		PipelineRC:     rt.rc,
+		RunDeadline:           rt.rc.RunWallClockTimeout,
+		PausedInputTimeout:    rt.rc.PausedInputTimeout,
+		IdleHeartbeatInterval: rt.rc.IdleHeartbeatInterval,
+		StreamThinking:        rt.rc.StreamThinking,
+		PipelineRC:            rt.rc,
 	}
 
 	capturedChunks := make([]string, 0, 16)

@@ -209,7 +209,7 @@ func (m *lifecycleManager) recoverRuns(ctx context.Context) error {
 		if snapshot.LastCancelRequested.Valid {
 			continue
 		}
-		if snapshot.LastEventType == "run.input_requested" || snapshot.LastEventType == "run.cancel_requested" {
+		if snapshot.LastEventType == "run.input_requested" || snapshot.LastEventType == "run.paused" || snapshot.LastEventType == "run.cancel_requested" {
 			continue
 		}
 		if !m.hasRecoveryMaterials(ctx, snapshot.RunID) {

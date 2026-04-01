@@ -53,6 +53,7 @@ type RunContext struct {
 	InputJSON                        map[string]any
 	ReasoningIterations              int
 	ToolContinuationBudget           int
+	MaxParallelToolCalls             int
 	SystemPrompt                     string
 	MaxOutputTokens                  *int
 	ToolTimeoutMs                    *int
@@ -65,6 +66,9 @@ type RunContext struct {
 	PendingMemoryWrites              *memory.PendingWriteBuffer
 	Runtime                          *sharedtoolruntime.RuntimeSnapshot
 	CancelSignal                     func() bool
+	RunDeadline                      time.Duration
+	PausedInputTimeout               time.Duration
+	IdleHeartbeatInterval            time.Duration
 
 	// LLM 调用重试配置，0 值表示不重试
 	LlmRetryMaxAttempts int
@@ -122,6 +126,8 @@ func (l *Loop) Run(
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
 ) error {
+	ctx, cancelDeadline := withRunDeadline(ctx, runCtx.RunDeadline)
+	defer cancelDeadline()
 	if runCtx.ReasoningIterations < 0 {
 		if runCtx.RolloutRecorder != nil {
 			appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
@@ -134,6 +140,7 @@ func (l *Loop) Run(
 	seenToolResultKeys := map[string]toolResultDedupInfo{}
 	completionTotals := newCompletionTotals()
 	reasoningTurnsUsed := 0
+	governor := NewLoopGovernor(runCtx)
 	continuationState := continuationBudgetState{
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
@@ -152,6 +159,12 @@ func (l *Loop) Run(
 	}
 
 	for turnIndex := 1; ; turnIndex++ {
+		if terminated, err := governor.Check(ctx, emitter, yield); err != nil {
+			return err
+		} else if terminated {
+			recordRunEnd(ctx, runCtx.RolloutRecorder, "failed")
+			return yieldRunDeadlineExceeded(emitter, yield, runCtx)
+		}
 		if cancelled(runCtx) {
 			return yield(emitter.Emit("run.cancelled", completionTotals.Apply(map[string]any{"reason": "cancel_signal"}), nil, nil))
 		}
@@ -217,6 +230,7 @@ func (l *Loop) Run(
 
 		hasToolCalls := len(turn.ToolCalls) > 0
 		for _, event := range turn.Events {
+			governor.Touch()
 			if event.Type == "message.delta" && !runCtx.StreamThinking {
 				if ch, _ := event.DataJSON["channel"].(string); ch == "thinking" {
 					continue
@@ -371,6 +385,7 @@ func (l *Loop) Run(
 			}
 			executedCalls := l.executePendingToolCalls(ctx, runCtx, preparedPending, emitter, yield, &continuationState)
 			for _, executed := range executedCalls {
+				governor.Touch()
 				call := executed.Call
 				result := executed.Result
 				if isContinuationBudgetError(result.Error) {
@@ -493,7 +508,10 @@ func (l *Loop) Run(
 
 			var answerResult llm.StreamToolResult
 			if runCtx.WaitForInput != nil {
-				text, ok := runCtx.WaitForInput(ctx)
+				text, ok, timedOut, waitErr := governor.WaitForUserInput(ctx, emitter, yield, requestID, runCtx.WaitForInput)
+				if waitErr != nil {
+					return waitErr
+				}
 				if ok && text != "" {
 					if runCtx.UserPromptScanFunc != nil {
 						if err := runCtx.UserPromptScanFunc(ctx, text, "ask_user"); err != nil {
@@ -524,7 +542,17 @@ func (l *Loop) Run(
 					answerResult = llm.StreamToolResult{
 						ToolCallID: requestID,
 						ToolName:   askUserToolName,
-						ResultJSON: map[string]any{"user_response": "", "dismissed": true},
+						ResultJSON: map[string]any{"user_response": "", "dismissed": true, "paused": true},
+					}
+					if timedOut {
+						answerResult.Error = &llm.GatewayError{
+							ErrorClass: ErrorClassRunPausedWaitingUser,
+							Message:    "waiting for user input timed out",
+							Details: map[string]any{
+								"request_id": requestID,
+								"timeout_ms": runCtx.PausedInputTimeout.Milliseconds(),
+							},
+						}
 					}
 				}
 			} else {
@@ -663,25 +691,134 @@ func (l *Loop) executePendingToolCalls(
 		regularIndexes = append(regularIndexes, idx)
 	}
 
+	if len(regularIndexes) == 0 {
+		return results
+	}
+
+	if l.shouldSerializeToolBatch(runCtx, pending, regularIndexes) {
+		for _, idx := range regularIndexes {
+			call := pending[idx]
+			result := l.executeToolCall(ctx, runCtx, call, emitter, yield)
+			results[idx] = pendingToolExecution{Call: call, Result: result}
+			if result.Error != nil {
+				markSkippedToolCalls(results, pending, regularIndexes, idx+1)
+				break
+			}
+		}
+		for _, idx := range regularIndexes {
+			updateContinuationTracking(continuation, results[idx].Call, results[idx].Result)
+		}
+		return results
+	}
+
+	parallelism := runCtx.MaxParallelToolCalls
+	if parallelism <= 0 {
+		parallelism = len(regularIndexes)
+	}
+	if parallelism > len(regularIndexes) {
+		parallelism = len(regularIndexes)
+	}
+
+	batchCtx, cancelSiblings := context.WithCancel(ctx)
+	defer cancelSiblings()
+
+	sem := make(chan struct{}, parallelism)
 	var wg sync.WaitGroup
-	wg.Add(len(regularIndexes))
+	var resultMu sync.Mutex
 	for _, idx := range regularIndexes {
 		idx := idx
 		call := pending[idx]
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result := l.executeToolCall(ctx, runCtx, call, emitter, yield)
+			select {
+			case sem <- struct{}{}:
+			case <-batchCtx.Done():
+				resultMu.Lock()
+				results[idx] = pendingToolExecution{Call: call, Result: cancelledSiblingToolResult(call)}
+				resultMu.Unlock()
+				return
+			}
+			defer func() { <-sem }()
+
+			result := l.executeToolCall(batchCtx, runCtx, call, emitter, yield)
+			resultMu.Lock()
 			results[idx] = pendingToolExecution{
 				Call:   call,
 				Result: result,
 			}
+			resultMu.Unlock()
+			if result.Error != nil {
+				cancelSiblings()
+			}
 		}()
 	}
 	wg.Wait()
+	markUnsetParallelResults(results, pending, regularIndexes)
 	for _, idx := range regularIndexes {
 		updateContinuationTracking(continuation, results[idx].Call, results[idx].Result)
 	}
 	return results
+}
+
+func (l *Loop) shouldSerializeToolBatch(runCtx RunContext, pending []llm.ToolCall, indexes []int) bool {
+	if len(indexes) <= 1 || runCtx.ToolExecutor == nil {
+		return len(indexes) <= 1
+	}
+	for _, idx := range indexes {
+		capabilities := runCtx.ToolExecutor.ToolCapabilities(pending[idx].ToolName)
+		if !capabilities.ConcurrencySafe || capabilities.RequiresExclusiveAccess {
+			return true
+		}
+	}
+	return false
+}
+
+func cancelledSiblingToolResult(call llm.ToolCall) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"cancelled": true},
+		Error: &tools.ExecutionError{
+			ErrorClass: "tool.cancelled_by_sibling",
+			Message:    "tool cancelled after sibling tool failed",
+			Details: map[string]any{
+				"tool_name": call.ToolName,
+			},
+		},
+	}
+}
+
+func skippedToolResult(call llm.ToolCall) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"skipped": true},
+		Error: &tools.ExecutionError{
+			ErrorClass: "tool.skipped_after_failure",
+			Message:    "tool skipped after an earlier tool failed",
+			Details: map[string]any{
+				"tool_name": call.ToolName,
+			},
+		},
+	}
+}
+
+func markSkippedToolCalls(results []pendingToolExecution, pending []llm.ToolCall, indexes []int, from int) {
+	for _, idx := range indexes[from:] {
+		results[idx] = pendingToolExecution{
+			Call:   pending[idx],
+			Result: skippedToolResult(pending[idx]),
+		}
+	}
+}
+
+func markUnsetParallelResults(results []pendingToolExecution, pending []llm.ToolCall, indexes []int) {
+	for _, idx := range indexes {
+		if results[idx].Call.ToolCallID != "" {
+			continue
+		}
+		results[idx] = pendingToolExecution{
+			Call:   pending[idx],
+			Result: cancelledSiblingToolResult(pending[idx]),
+		}
+	}
 }
 
 func (l *Loop) executeToolCall(
@@ -1907,6 +2044,27 @@ func cancelled(runCtx RunContext) bool {
 		return false
 	}
 	return runCtx.CancelSignal()
+}
+
+func withRunDeadline(ctx context.Context, deadline time.Duration) (context.Context, context.CancelFunc) {
+	if deadline <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, deadline)
+}
+
+func runDeadlineExceeded(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+func yieldRunDeadlineExceeded(emitter events.Emitter, yield func(events.RunEvent) error, runCtx RunContext) error {
+	return yield(emitter.Emit("run.failed", map[string]any{
+		"error_class": ErrorClassRunDeadlineExceeded,
+		"message":     "run exceeded wall clock deadline",
+		"details": map[string]any{
+			"timeout_ms": runCtx.RunDeadline.Milliseconds(),
+		},
+	}, nil, stringPtr(ErrorClassRunDeadlineExceeded)))
 }
 
 func copyMap(value map[string]any) map[string]any {
