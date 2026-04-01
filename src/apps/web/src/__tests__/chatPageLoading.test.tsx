@@ -15,6 +15,7 @@ import {
   createMessage,
   createRun,
   cancelRun,
+  retryThread,
 } from '../api'
 import {
   readMessageTerminalStatus,
@@ -277,11 +278,12 @@ describe('ChatPage loading state', () => {
   const mockedCreateMessage = vi.mocked(createMessage)
   const mockedCreateRun = vi.mocked(createRun)
   const mockedCancelRun = vi.mocked(cancelRun)
+  const mockedRetryThread = vi.mocked(retryThread)
   const mockedWriteMessageAssistantTurn = vi.mocked(writeMessageAssistantTurn)
-const mockedReadMessageTerminalStatus = vi.mocked(readMessageTerminalStatus)
-const mockedReadMessageAssistantTurn = vi.mocked(readMessageAssistantTurn)
-const mockedReadMessageCodeExecutions = vi.mocked(readMessageCodeExecutions)
-const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
+  const mockedReadMessageTerminalStatus = vi.mocked(readMessageTerminalStatus)
+  const mockedReadMessageAssistantTurn = vi.mocked(readMessageAssistantTurn)
+  const mockedReadMessageCodeExecutions = vi.mocked(readMessageCodeExecutions)
+  const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
   const mockedWriteMessageWidgets = vi.mocked(writeMessageWidgets)
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
@@ -338,6 +340,7 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
     })
     mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
     mockedCancelRun.mockResolvedValue({ ok: true })
+    mockedRetryThread.mockResolvedValue({ run_id: 'run-retried', trace_id: 'trace-retry' })
     mockedReadMessageTerminalStatus.mockReturnValue(null)
   })
 
@@ -1101,6 +1104,125 @@ const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
     })
 
     expect(mockedListMessages).toHaveBeenCalled()
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('加载到 cancelling run 时应继续保持 streaming 状态', async () => {
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-cancelling',
+        status: 'cancelling',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onRunStarted = vi.fn()
+    const onRunEnded = vi.fn()
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted,
+      onRunEnded,
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).toContain('streaming')
+    expect(onRunStarted).toHaveBeenCalledWith('thread-1')
+    expect(onRunEnded).not.toHaveBeenCalled()
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('cancelled 且没有 assistant 消息时不应展示 retry 按钮', async () => {
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-cancelled',
+        status: 'cancelled',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('.failed-run-retry-button')).toBeNull()
+    expect(mockedRetryThread).not.toHaveBeenCalled()
 
     act(() => {
       root.unmount()
