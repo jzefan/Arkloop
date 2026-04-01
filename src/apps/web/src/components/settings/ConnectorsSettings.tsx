@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Loader2,
   Shield,
@@ -35,6 +35,7 @@ import {
 
 type Props = {
   accessToken: string
+  nestedUnderTabs?: boolean
 }
 
 type CredentialModal = { group: string; provider: ToolProviderItem } | null
@@ -108,6 +109,7 @@ function flattenConfig(
 import { settingsInputCls } from './_SettingsInput'
 import { settingsLabelCls } from './_SettingsLabel'
 import { settingsSectionCls } from './_SettingsSection'
+import { SettingsSectionHeader } from './_SettingsSectionHeader'
 
 const inputCls = settingsInputCls('sm')
 const labelCls = settingsLabelCls('sm')
@@ -119,7 +121,7 @@ const btnIcon =
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ConnectorsSettings({ accessToken }: Props) {
+export function ConnectorsSettings({ accessToken, nestedUnderTabs = false }: Props) {
   const { t } = useLocale()
   const ds = t.desktopSettings
   const tt = t.adminTools
@@ -153,6 +155,7 @@ export function ConnectorsSettings({ accessToken }: Props) {
   const [descText, setDescText] = useState('')
   const [descSaving, setDescSaving] = useState(false)
   const [toolToggling, setToolToggling] = useState('')
+  const contentScrollRef = useRef<HTMLDivElement>(null)
 
   // ---- Data fetching ----
 
@@ -191,6 +194,12 @@ export function ConnectorsSettings({ accessToken }: Props) {
       return groupTabs[0]
     })
   }, [groupTabs])
+
+  useEffect(() => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0
+    }
+  }, [selectedGroup])
 
   // ---- Derived state ----
 
@@ -408,15 +417,8 @@ export function ConnectorsSettings({ accessToken }: Props) {
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-4">
-        <div>
-          <h3 className="text-base font-semibold text-[var(--c-text-heading)]">
-            {ds.connectorsTitle}
-          </h3>
-          <p className="mt-1 text-sm text-[var(--c-text-secondary)]">
-            {ds.connectorsDesc}
-          </p>
-        </div>
+      <div className="flex min-h-[240px] flex-col gap-4">
+        <SettingsSectionHeader title={ds.connectorsTitle} description={ds.connectorsDesc} />
         <div className="flex items-center justify-center py-16">
           <Loader2
             size={20}
@@ -429,12 +431,8 @@ export function ConnectorsSettings({ accessToken }: Props) {
 
   if (error) {
     return (
-      <div className="flex flex-col gap-4">
-        <div>
-          <h3 className="text-base font-semibold text-[var(--c-text-heading)]">
-            {ds.connectorsTitle}
-          </h3>
-        </div>
+      <div className="flex min-h-[240px] flex-col gap-4">
+        <SettingsSectionHeader title={ds.connectorsTitle} description={ds.connectorsDesc} />
         <div
           className="flex flex-col items-center justify-center rounded-xl bg-[var(--c-bg-menu)] py-16"
           style={{ border: '0.5px solid var(--c-border-subtle)' }}
@@ -453,15 +451,8 @@ export function ConnectorsSettings({ accessToken }: Props) {
 
   if (groups.length === 0) {
     return (
-      <div className="flex flex-col gap-4">
-        <div>
-          <h3 className="text-base font-semibold text-[var(--c-text-heading)]">
-            {ds.connectorsTitle}
-          </h3>
-          <p className="mt-1 text-sm text-[var(--c-text-secondary)]">
-            {ds.connectorsDesc}
-          </p>
-        </div>
+      <div className="flex min-h-[240px] flex-col gap-4">
+        <SettingsSectionHeader title={ds.connectorsTitle} description={ds.connectorsDesc} />
         <div
           className="flex flex-col items-center justify-center rounded-xl bg-[var(--c-bg-menu)] py-16"
           style={{ border: '0.5px solid var(--c-border-subtle)' }}
@@ -473,49 +464,47 @@ export function ConnectorsSettings({ accessToken }: Props) {
     )
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div>
-        <h3 className="text-base font-semibold text-[var(--c-text-heading)]">
-          {tt.title}
-        </h3>
-        <p className="mt-1 text-sm text-[var(--c-text-secondary)]">
-          {tt.subtitle}
-        </p>
-      </div>
+  const wrapperClassName = nestedUnderTabs
+    ? '-mx-6 -mb-6 flex min-h-0 min-w-0 overflow-hidden'
+    : '-m-6 flex min-h-0 min-w-0 overflow-hidden'
+  const wrapperStyle = nestedUnderTabs
+    ? { height: 'calc(100% + 24px)' }
+    : { height: 'calc(100% + 48px)' }
 
-      {/* Main layout: sidebar + content */}
-      <div
-        className="flex overflow-hidden rounded-xl"
-        style={{ border: '0.5px solid var(--c-border-subtle)' }}
-      >
-        {/* Left sidebar: group tabs */}
-        <div className="w-[160px] shrink-0 overflow-y-auto border-r border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)] p-2">
-          <div className="flex flex-col gap-[3px]">
-            {groupTabs.map((group) => {
-              const active = group === selectedGroup
-              return (
-                <button
-                  key={group}
-                  onClick={() => setSelectedGroup(group)}
-                  className={[
-                    'flex h-[30px] items-center rounded-md px-3 text-[13px] font-medium transition-colors',
-                    active
-                      ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
-                      : 'text-[var(--c-text-muted)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)]',
-                  ].join(' ')}
-                >
-                  {displayGroupName(group)}
-                </button>
-              )
-            })}
+  return (
+    <>
+      <div className={wrapperClassName} style={wrapperStyle}>
+        <div className="flex w-[176px] shrink-0 flex-col overflow-hidden border-r border-[var(--c-border-subtle)] max-[1230px]:w-[156px] xl:w-[196px]">
+          <div className="flex-1 overflow-y-auto px-2 py-1">
+            <div className="flex flex-col gap-[3px]">
+              {groupTabs.map((group) => {
+                const active = group === selectedGroup
+                return (
+                  <button
+                    key={group}
+                    onClick={() => setSelectedGroup(group)}
+                    className={[
+                      'flex h-[38px] items-center gap-2.5 truncate rounded-lg px-2.5 text-left text-[14px] font-medium transition-all duration-[120ms] active:scale-[0.96]',
+                      active
+                        ? 'rounded-[10px] bg-[var(--c-bg-deep)] text-[var(--c-text-heading)]'
+                        : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]',
+                    ].join(' ')}
+                  >
+                    {displayGroupName(group)}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
 
-        {/* Right panel */}
-        <div className="flex-1 overflow-y-auto bg-[var(--c-bg-menu)] p-5">
-          <div className="mx-auto max-w-xl space-y-5">
+        <div
+          ref={contentScrollRef}
+          className="min-w-0 flex-1 overflow-y-auto p-4 max-[1230px]:p-3 sm:p-5"
+        >
+          <div className="mx-auto min-w-0 max-w-4xl space-y-5">
+            <SettingsSectionHeader title={tt.title} description={tt.subtitle} />
+
             {/* Provider section */}
             {activeGroup && (
               <div className={sectionCls}>
@@ -802,7 +791,7 @@ export function ConnectorsSettings({ accessToken }: Props) {
           </div>
         )}
       </Modal>
-    </div>
+    </>
   )
 }
 
