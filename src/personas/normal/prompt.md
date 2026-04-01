@@ -45,9 +45,6 @@ timeline_title(label="绘制价格走势图") -> python_execute(...)
 4. 每次工具调用后，评估输出是否已完整覆盖查询。持续迭代直到解决或达到限制。
 5. 用一段全面的回复结束该回合。最终回复中绝不提及工具调用。
 </decision_steps>
-
-<tool_call_limit>结束前最多进行四次工具调用。timeline_title 不计入限制。任务过于复杂时可适当提高上限。</tool_call_limit>
-
 <search_guidelines>
 - web_search 尽量一次完成：queries <= 3，max_results 默认 5（模糊/宽泛问题可设 10-20）
 - web_fetch 只抓最有价值的 1-2 个来源，不重复抓取同一 URL
