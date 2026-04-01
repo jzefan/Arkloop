@@ -122,3 +122,66 @@ func TestSpawnAgentMiddleware_WithControlAddsTools(t *testing.T) {
 		t.Fatal("terminal handler was not called")
 	}
 }
+
+func TestSpawnAgentMiddleware_DoesNotDuplicateExistingSpecs(t *testing.T) {
+	mw := pipeline.NewSpawnAgentMiddleware()
+
+	registry := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		spawnagent.AgentSpec,
+		spawnagent.SendInputSpec,
+		spawnagent.WaitAgentSpec,
+		spawnagent.ResumeAgentSpec,
+		spawnagent.CloseAgentSpec,
+		spawnagent.InterruptAgentSpec,
+	} {
+		if err := registry.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+
+	rc := &pipeline.RunContext{
+		Emitter: events.NewEmitter("test"),
+		ToolRegistry: registry,
+		ToolExecutors: map[string]tools.Executor{},
+		AllowlistSet: map[string]struct{}{},
+		ToolSpecs: []llm.ToolSpec{
+			spawnagent.LlmSpecWithPersonas(nil),
+			spawnagent.SendInputLlmSpec,
+			spawnagent.WaitAgentLlmSpec,
+			spawnagent.ResumeAgentLlmSpec,
+			spawnagent.CloseAgentLlmSpec,
+			spawnagent.InterruptAgentLlmSpec,
+		},
+		SubAgentControl: noopSubAgentControl{},
+	}
+
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
+		expectedNames := []string{
+			spawnagent.AgentSpec.Name,
+			spawnagent.SendInputSpec.Name,
+			spawnagent.WaitAgentSpec.Name,
+			spawnagent.ResumeAgentSpec.Name,
+			spawnagent.CloseAgentSpec.Name,
+			spawnagent.InterruptAgentSpec.Name,
+		}
+		if len(rc.ToolSpecs) != len(expectedNames) {
+			t.Fatalf("unexpected tool spec count: %d", len(rc.ToolSpecs))
+		}
+		for _, name := range expectedNames {
+			count := 0
+			for _, spec := range rc.ToolSpecs {
+				if spec.Name == name {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("expected one %s spec, got %d", name, count)
+			}
+		}
+		return nil
+	})
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
