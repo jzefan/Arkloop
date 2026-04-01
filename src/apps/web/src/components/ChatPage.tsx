@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, Check, ChevronDown, Glasses, Info, Loader2, Pencil, Share2, Star, Trash2, X, AlertCircle } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
-import { AutoResizeTextarea } from '@arkloop/shared'
+import { AutoResizeTextarea, Button } from '@arkloop/shared'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
@@ -271,7 +271,7 @@ function FailedRunRetryCard({
 }) {
   return (
     <div
-      className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-3"
+      className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
       style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
     >
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
@@ -279,17 +279,15 @@ function FailedRunRetryCard({
         <span className="truncate text-[14px]">{title}</span>
       </div>
       {actionLabel && (
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="md"
           onClick={onRetry}
           disabled={!onRetry}
-          className="shrink-0 rounded-lg border border-[var(--c-border)] px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-all hover:border-[var(--c-border-mid)] disabled:cursor-default disabled:opacity-50"
-          style={{ background: 'transparent' }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.07)' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+          className="failed-run-retry-button shrink-0"
         >
           {actionLabel}
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -824,8 +822,8 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
             {msg.role === 'assistant' && (effectiveTerminalStatus === 'failed' || effectiveTerminalStatus === 'interrupted' || effectiveTerminalStatus === 'cancelled') && (
               <FailedRunRetryCard
                 title={effectiveTerminalStatus === 'interrupted' ? t.runInterrupted : effectiveTerminalStatus === 'cancelled' ? t.runCancelled : t.failedRunRetryTitle}
-                actionLabel={effectiveTerminalStatus === 'cancelled' ? undefined : t.retryAction}
-                onRetry={effectiveTerminalStatus !== 'cancelled' && !isStreaming && !sending ? handleRetry : undefined}
+                actionLabel={!isStreaming && !sending ? t.retryAction : undefined}
+                onRetry={!isStreaming && !sending ? handleRetry : undefined}
               />
             )}
             {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
@@ -1879,7 +1877,7 @@ export function ChatPage() {
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
         if (
           locationState?.initialRunId &&
-          (!latest || (latest.run_id === locationState.initialRunId && latest.status === 'running'))
+          (!latest || (latest.run_id === locationState.initialRunId && (latest.status === 'running' || latest.status === 'cancelling')))
         ) {
           setActiveRunId(locationState.initialRunId)
           setPendingThinking(true)
@@ -1887,9 +1885,9 @@ export function ChatPage() {
           setThinkingHint(hints[Math.floor(Math.random() * hints.length)])
           if (threadId) onRunStarted(threadId)
         } else {
-          const isRunning = latest?.status === 'running'
-          setActiveRunId(isRunning ? latest.run_id : null)
-          if (isRunning && threadId) onRunStarted(threadId)
+          const isActiveRun = latest?.status === 'running' || latest?.status === 'cancelling'
+          setActiveRunId(isActiveRun ? latest.run_id : null)
+          if (isActiveRun && threadId) onRunStarted(threadId)
           else if (threadId) onRunEnded(threadId)
         }
       } catch (err) {
@@ -3963,8 +3961,8 @@ export function ChatPage() {
               {(terminalRunHandoffStatus === 'failed' || terminalRunHandoffStatus === 'interrupted' || terminalRunHandoffStatus === 'cancelled') && terminalRunDisplayId && !messages.some((msg) => msg.role === 'assistant' && msg.run_id === terminalRunDisplayId) && (
                 <FailedRunRetryCard
                   title={terminalRunHandoffStatus === 'interrupted' ? t.runInterrupted : terminalRunHandoffStatus === 'cancelled' ? t.runCancelled : t.failedRunRetryTitle}
-                  actionLabel={terminalRunHandoffStatus === 'cancelled' ? undefined : t.retryAction}
-                  onRetry={terminalRunHandoffStatus !== 'cancelled' && !isStreaming && !sending ? handleRetry : undefined}
+                  actionLabel={undefined}
+                  onRetry={undefined}
                 />
               )}
               <div ref={bottomRef} />
