@@ -140,7 +140,7 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		rc.AllowlistSet[heartbeattool.ToolName] = struct{}{}
 
 		// heartbeat_decision 必须在 core 层，否则被 splitToolSpecs 踢到 searchable 层 LLM 看不到
-		if rc.PersonaDefinition != nil && len(rc.PersonaDefinition.CoreTools) > 0 {
+		if rc.PersonaDefinition != nil && len(rc.PersonaDefinition.CoreTools) > 0 && !containsToolName(rc.PersonaDefinition.CoreTools, heartbeattool.ToolName) {
 			rc.PersonaDefinition.CoreTools = append(rc.PersonaDefinition.CoreTools, heartbeattool.ToolName)
 		}
 
@@ -156,7 +156,9 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			rc.ToolExecutors = map[string]tools.Executor{}
 		}
 		rc.ToolExecutors[heartbeattool.ToolName] = heartbeattool.New()
-		rc.ToolSpecs = append(rc.ToolSpecs, heartbeattool.Spec)
+		if !containsToolSpecName(rc.ToolSpecs, heartbeattool.ToolName) {
+			rc.ToolSpecs = append(rc.ToolSpecs, heartbeattool.Spec)
+		}
 
 		err := next(ctx, rc)
 
@@ -184,6 +186,24 @@ func appendSystemPromptBlock(base string, block string) string {
 		return trimmedBlock
 	}
 	return trimmedBase + "\n\n" + trimmedBlock
+}
+
+func containsToolName(names []string, target string) bool {
+	for _, name := range names {
+		if name == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsToolSpecName(specs []llm.ToolSpec, target string) bool {
+	for _, spec := range specs {
+		if spec.Name == target {
+			return true
+		}
+	}
+	return false
 }
 
 func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {

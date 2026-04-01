@@ -10,8 +10,12 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/testutil"
+	"arkloop/services/worker/internal/tools"
+	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -373,6 +377,44 @@ func TestHeartbeatFragmentsCommitRunsAsyncAndEmitsEvents(t *testing.T) {
 		eventTypeMemoryHeartbeatCommitted,
 		"memory.heartbeat.snapshot_pending",
 	)
+}
+
+func TestHeartbeatPrepareMiddlewareDoesNotDuplicateHeartbeatDecisionTool(t *testing.T) {
+	rc := &RunContext{
+		InputJSON:     map[string]any{"run_kind": "heartbeat"},
+		JobPayload:    map[string]any{"run_kind": "heartbeat"},
+		AllowlistSet:  map[string]struct{}{},
+		ToolExecutors: map[string]tools.Executor{},
+		ToolSpecs:     []llm.ToolSpec{heartbeattool.Spec},
+		PersonaDefinition: &personas.Definition{
+			CoreTools: []string{heartbeattool.ToolName},
+		},
+	}
+
+	mw := NewHeartbeatPrepareMiddleware()
+	if err := mw(context.Background(), rc, func(_ context.Context, rc *RunContext) error {
+		count := 0
+		for _, spec := range rc.ToolSpecs {
+			if spec.Name == heartbeattool.ToolName {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("expected one heartbeat tool spec, got %d", count)
+		}
+		coreCount := 0
+		for _, name := range rc.PersonaDefinition.CoreTools {
+			if name == heartbeattool.ToolName {
+				coreCount++
+			}
+		}
+		if coreCount != 1 {
+			t.Fatalf("expected one heartbeat core tool, got %d", coreCount)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("heartbeat middleware: %v", err)
+	}
 }
 
 func TestScheduleSnapshotRefreshKeepsRetryingAfterTransientErrors(t *testing.T) {
