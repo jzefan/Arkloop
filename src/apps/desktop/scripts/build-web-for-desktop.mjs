@@ -7,7 +7,8 @@ const desktopRoot = resolve(__dirname, '..')
 const webRoot = resolve(desktopRoot, '..', 'web')
 
 function resolveCommand(command) {
-  return process.platform === 'win32' ? `${command}.cmd` : command
+  if (process.platform !== 'win32') return command
+  return command === 'pnpm' ? 'pnpm.cmd' : command
 }
 
 function shouldUseShell(command) {

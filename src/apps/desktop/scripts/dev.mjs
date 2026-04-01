@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { createRequire } from 'module'
 import { resolve, dirname } from 'path'
 import { mkdirSync } from 'fs'
+import { createServer } from 'net'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -18,7 +19,8 @@ const desktopBin = resolve(
 )
 
 function resolveCommand(command) {
-  return process.platform === 'win32' ? `${command}.cmd` : command
+  if (process.platform !== 'win32') return command
+  return command === 'pnpm' ? 'pnpm.cmd' : command
 }
 
 function shouldUseShell(command) {
@@ -62,8 +64,29 @@ async function waitForVite(url, timeoutMs = 30000) {
   throw new Error(`vite dev server not ready after ${timeoutMs}ms`)
 }
 
+function canListenOnPort(port) {
+  return new Promise((resolvePromise) => {
+    const server = createServer()
+    server.once('error', () => resolvePromise(false))
+    server.once('listening', () => {
+      server.close(() => resolvePromise(true))
+    })
+    server.listen(port, '127.0.0.1')
+  })
+}
+
+async function findAvailablePort(startPort) {
+  for (let port = startPort; port < startPort + 20; port += 1) {
+    if (await canListenOnPort(port)) {
+      return port
+    }
+  }
+  throw new Error(`no available vite port found from ${startPort}`)
+}
+
 async function main() {
-  const viteUrl = 'http://localhost:5173'
+  const vitePort = await findAvailablePort(5173)
+  const viteUrl = `http://localhost:${vitePort}`
 
   console.log('building desktop sidecar...')
   mkdirSync(resolve(desktopBin, '..'), { recursive: true })
@@ -74,7 +97,7 @@ async function main() {
   // Start Vite directly with sidecar proxy target, overriding .env.local
   console.log('starting vite dev server...')
   const viteCommand = resolveCommand('pnpm')
-  const vite = spawn(viteCommand, ['exec', 'vite'], {
+  const vite = spawn(viteCommand, ['exec', 'vite', '--port', String(vitePort), '--strictPort'], {
     cwd: webRoot,
     stdio: 'inherit',
     shell: shouldUseShell(viteCommand),
@@ -105,6 +128,7 @@ async function main() {
   const electron = spawn(electronPath, ['.'], {
     cwd: root,
     stdio: 'inherit',
+    shell: shouldUseShell(electronPath),
     env: {
       ...process.env,
       ELECTRON_DEV: 'true',
