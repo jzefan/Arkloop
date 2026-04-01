@@ -136,57 +136,54 @@ export function getSidecarPath(): string {
   return path.join(SIDECAR_DIR, getSidecarBinaryName())
 }
 
-export function isSidecarAvailable(): boolean {
+function getBundledSidecarPath(): string {
+  const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
+  return path.join(process.resourcesPath, 'sidecar', bundledName)
+}
+
+function getDevBuiltSidecarPath(): string {
+  return path.resolve(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    'services',
+    'desktop',
+    'bin',
+    process.platform === 'win32' ? 'desktop.exe' : 'desktop',
+  )
+}
+
+function getDevPackagedSidecarPath(): string {
+  return path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'sidecar-bin',
+    getSidecarBinaryName(),
+  )
+}
+
+function getSidecarBinaryCandidates(): string[] {
   if (app.isPackaged) {
-    const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
-    const bundledPath = path.join(process.resourcesPath, 'sidecar', bundledName)
-    try {
-      fs.accessSync(bundledPath, fs.constants.X_OK)
-      return true
-    } catch {}
-
-    try {
-      fs.accessSync(getSidecarPath(), fs.constants.X_OK)
-      return true
-    } catch {}
-    return false
+    return [getSidecarPath(), getBundledSidecarPath()]
   }
+  return [
+    getSidecarPath(),
+    getDevBuiltSidecarPath(),
+    getDevPackagedSidecarPath(),
+    getBundledSidecarPath(),
+  ]
+}
 
-  try {
-    fs.accessSync(getSidecarPath(), fs.constants.X_OK)
-    return true
-  } catch {}
-
-  if (!app.isPackaged) {
-    const devBuiltPath = path.resolve(
-      __dirname,
-      '..',
-      '..',
-      'sidecar-bin',
-      getSidecarBinaryName(),
-    )
+export function isSidecarAvailable(): boolean {
+  for (const candidate of getSidecarBinaryCandidates()) {
     try {
-      fs.accessSync(devBuiltPath, fs.constants.X_OK)
-      return true
-    } catch {}
-
-    const devPath = path.resolve(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      'services',
-      'desktop',
-      'bin',
-      process.platform === 'win32' ? 'desktop.exe' : 'desktop',
-    )
-    try {
-      fs.accessSync(devPath, fs.constants.X_OK)
+      fs.accessSync(candidate, fs.constants.X_OK)
       return true
     } catch {}
   }
-
   return false
 }
 
@@ -459,45 +456,10 @@ export async function ensureOpenCLI(): Promise<void> {
 }
 
 function resolveBinaryPath(): string {
-  if (app.isPackaged) {
-    const downloaded = getSidecarPath()
-    if (fs.existsSync(downloaded)) return downloaded
-
-    const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
-    const bundledPath = path.join(process.resourcesPath, 'sidecar', bundledName)
-    if (fs.existsSync(bundledPath)) return bundledPath
-    return bundledPath
+  for (const candidate of getSidecarBinaryCandidates()) {
+    if (fs.existsSync(candidate)) return candidate
   }
-
-  const downloaded = getSidecarPath()
-  if (fs.existsSync(downloaded)) return downloaded
-
-  if (!app.isPackaged) {
-    const devBuiltPath = path.resolve(
-      __dirname,
-      '..',
-      '..',
-      'sidecar-bin',
-      getSidecarBinaryName(),
-    )
-    if (fs.existsSync(devBuiltPath)) return devBuiltPath
-
-    const devPath = path.resolve(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      '..',
-      'services',
-      'desktop',
-      'bin',
-      process.platform === 'win32' ? 'desktop.exe' : 'desktop',
-    )
-    if (fs.existsSync(devPath)) return devPath
-  }
-
-  const bundledName = process.platform === 'win32' ? 'desktop.exe' : 'desktop'
-  return path.join(process.resourcesPath, 'sidecar', bundledName)
+  return getBundledSidecarPath()
 }
 
 function resolveBundledProjectDir(): string | null {
