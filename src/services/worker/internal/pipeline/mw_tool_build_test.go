@@ -14,6 +14,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	loadskill "arkloop/services/worker/internal/tools/builtin/load_skill"
 	readtool "arkloop/services/worker/internal/tools/builtin/read"
 
 	"github.com/google/uuid"
@@ -398,9 +399,13 @@ func TestToolBuildMiddleware_ReadSearchableWhenNotCore(t *testing.T) {
 	if err := registry.Register(readtool.AgentSpec); err != nil {
 		t.Fatalf("register read: %v", err)
 	}
+	if err := registry.Register(loadskill.AgentSpec); err != nil {
+		t.Fatalf("register load_skill: %v", err)
+	}
 
 	executors := map[string]tools.Executor{
-		readtool.AgentSpec.Name: readtool.NewToolExecutorWithProvider(&stubImageProvider{}),
+		readtool.AgentSpec.Name:  readtool.NewToolExecutorWithProvider(&stubImageProvider{}),
+		loadskill.AgentSpec.Name: loadskill.NewToolExecutor(nil),
 	}
 
 	rc := &pipeline.RunContext{
@@ -408,8 +413,8 @@ func TestToolBuildMiddleware_ReadSearchableWhenNotCore(t *testing.T) {
 		Emitter:                   events.NewEmitter("test"),
 		ToolRegistry:              registry,
 		ToolExecutors:             executors,
-		AllowlistSet:              map[string]struct{}{"read": {}},
-		ToolSpecs:                 []llm.ToolSpec{readtool.LlmSpec},
+		AllowlistSet:              map[string]struct{}{"read": {}, "load_skill": {}},
+		ToolSpecs:                 []llm.ToolSpec{readtool.LlmSpec, loadskill.LlmSpec},
 		PersonaDefinition:         &personas.Definition{CoreTools: []string{"timeline_title"}},
 		ActiveToolProviderByGroup: nil,
 	}
@@ -419,8 +424,11 @@ func TestToolBuildMiddleware_ReadSearchableWhenNotCore(t *testing.T) {
 		if hasToolSpecName(rc.FinalSpecs, "read") {
 			t.Fatal("did not expect read in final specs")
 		}
-		if !hasToolSpecName(rc.FinalSpecs, "search_tools") {
-			t.Fatal("expected search_tools in final specs")
+		if !hasToolSpecName(rc.FinalSpecs, "load_tools") {
+			t.Fatal("expected load_tools in final specs")
+		}
+		if !hasToolSpecName(rc.FinalSpecs, "load_skill") {
+			t.Fatal("expected load_skill in final specs")
 		}
 
 		searchable := rc.ToolExecutor.SearchableSpecs()
@@ -440,9 +448,13 @@ func TestToolBuildMiddleware_ReadSearchableWithoutProviderConfig(t *testing.T) {
 	if err := registry.Register(readtool.AgentSpec); err != nil {
 		t.Fatalf("register read: %v", err)
 	}
+	if err := registry.Register(loadskill.AgentSpec); err != nil {
+		t.Fatalf("register load_skill: %v", err)
+	}
 
 	executors := map[string]tools.Executor{
-		readtool.AgentSpec.Name: readtool.NewToolExecutor(),
+		readtool.AgentSpec.Name:  readtool.NewToolExecutor(),
+		loadskill.AgentSpec.Name: loadskill.NewToolExecutor(nil),
 	}
 
 	rc := &pipeline.RunContext{
@@ -450,8 +462,8 @@ func TestToolBuildMiddleware_ReadSearchableWithoutProviderConfig(t *testing.T) {
 		Emitter:                   events.NewEmitter("test"),
 		ToolRegistry:              registry,
 		ToolExecutors:             executors,
-		AllowlistSet:              map[string]struct{}{"read": {}},
-		ToolSpecs:                 []llm.ToolSpec{readtool.LlmSpec},
+		AllowlistSet:              map[string]struct{}{"read": {}, "load_skill": {}},
+		ToolSpecs:                 []llm.ToolSpec{readtool.LlmSpec, loadskill.LlmSpec},
 		PersonaDefinition:         &personas.Definition{CoreTools: []string{"timeline_title"}},
 		ActiveToolProviderByGroup: nil,
 	}
@@ -461,8 +473,11 @@ func TestToolBuildMiddleware_ReadSearchableWithoutProviderConfig(t *testing.T) {
 		if hasToolSpecName(rc.FinalSpecs, "read") {
 			t.Fatal("did not expect read in final specs")
 		}
-		if !hasToolSpecName(rc.FinalSpecs, "search_tools") {
-			t.Fatal("expected search_tools in final specs")
+		if !hasToolSpecName(rc.FinalSpecs, "load_tools") {
+			t.Fatal("expected load_tools in final specs")
+		}
+		if !hasToolSpecName(rc.FinalSpecs, "load_skill") {
+			t.Fatal("expected load_skill in final specs")
 		}
 
 		searchable := rc.ToolExecutor.SearchableSpecs()

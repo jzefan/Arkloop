@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"arkloop/services/shared/skillstore"
@@ -17,6 +18,11 @@ type SkillLayoutResolver func(ctx context.Context, rc *RunContext) (skillstore.P
 
 type ExternalSkillDirsResolver func(ctx context.Context) []string
 
+const (
+	skillListingBudgetChars  = 4000
+	skillListingDescMaxChars = 140
+)
+
 type SkillContextConfig struct {
 	Resolve        SkillResolver
 	Prepare        SkillPreparer
@@ -27,14 +33,18 @@ type SkillContextConfig struct {
 
 func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		var externalSkills []skillstore.ExternalSkill
+		if cfg.ExternalDirs != nil {
+			externalSkills = skillstore.DiscoverExternalSkills(cfg.ExternalDirs(ctx))
+			rc.ExternalSkills = append([]skillstore.ExternalSkill(nil), externalSkills...)
+		}
 		if cfg.Resolve == nil || rc.Run.AccountID == uuid.Nil {
-			if cfg.ExternalDirs != nil {
-				if extSkills := skillstore.DiscoverExternalSkills(cfg.ExternalDirs(ctx)); len(extSkills) > 0 {
-					rc.SystemPrompt += buildExternalSkillPromptBlock(extSkills)
-				}
+			if block := buildAvailableSkillsPromptBlock(nil, externalSkills); block != "" {
+				rc.SystemPrompt += block
 			}
 			return next(ctx, rc)
 		}
+
 		skills, err := cfg.Resolve(ctx, rc.Run.AccountID, rc.ProfileRef, rc.WorkspaceRef)
 		if err != nil {
 			return fmt.Errorf("resolve enabled skills: %w", err)
@@ -50,13 +60,8 @@ func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 			}
 		}
 		rc.EnabledSkills = append([]skillstore.ResolvedSkill(nil), skills...)
-		if block := buildSkillPromptBlock(skills, layout); block != "" {
+		if block := buildAvailableSkillsPromptBlock(skills, externalSkills); block != "" {
 			rc.SystemPrompt += block
-		}
-		if cfg.ExternalDirs != nil {
-			if extSkills := skillstore.DiscoverExternalSkills(cfg.ExternalDirs(ctx)); len(extSkills) > 0 {
-				rc.SystemPrompt += buildExternalSkillPromptBlock(extSkills)
-			}
 		}
 		return next(ctx, rc)
 	}
@@ -85,61 +90,101 @@ func applySkillLayout(skills []skillstore.ResolvedSkill, layout skillstore.PathL
 	return out
 }
 
-func buildExternalSkillPromptBlock(skills []skillstore.ExternalSkill) string {
-	if len(skills) == 0 {
+func buildAvailableSkillsPromptBlock(enabled []skillstore.ResolvedSkill, external []skillstore.ExternalSkill) string {
+	lines := skillListingLines(enabled, external)
+	if len(lines) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("\n\n<external_skills>\n")
-	sb.WriteString("- External skill directories detected. Read the SKILL.md in each directory before using.\n")
-	for _, s := range skills {
+	sb.WriteString("\n\n<available_skills>\n")
+	sb.WriteString("Use load_skill with the exact skill name below before relying on a skill.\n")
+	for _, line := range lines {
 		sb.WriteString("- ")
-		sb.WriteString(s.Name)
-		if s.Description != "" {
-			sb.WriteString(": ")
-			sb.WriteString(s.Description)
-		}
+		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
-	sb.WriteString("</external_skills>")
+	sb.WriteString("</available_skills>")
 	return sb.String()
 }
 
-func buildSkillPromptBlock(skills []skillstore.ResolvedSkill, layout skillstore.PathLayout) string {
-	if len(skills) == 0 {
-		return ""
+func skillListingLines(enabled []skillstore.ResolvedSkill, external []skillstore.ExternalSkill) []string {
+	lines := make([]string, 0, len(enabled)+len(external))
+	for _, item := range enabled {
+		lines = append(lines, formatSkillListingLine(
+			formatEnabledSkillName(item),
+			firstNonEmpty(strings.TrimSpace(item.Description), strings.TrimSpace(item.DisplayName)),
+			"enabled",
+		))
 	}
-	var autoSkills []skillstore.ResolvedSkill
-	for _, s := range skills {
-		if s.AutoInject {
-			autoSkills = append(autoSkills, s)
-		}
+	for _, item := range external {
+		lines = append(lines, formatSkillListingLine(
+			strings.TrimSpace(item.Name),
+			strings.TrimSpace(item.Description),
+			"external",
+		))
 	}
-	if len(autoSkills) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("\n\n<skills>\n")
-	sb.WriteString("- Enabled skill index: ")
-	sb.WriteString(layout.IndexPath)
-	sb.WriteString("\n")
-	sb.WriteString("- Skill files are available under ")
-	sb.WriteString(layout.MountRoot)
-	sb.WriteString(". Read the relevant SKILL.md before using a skill.\n")
-	for _, item := range autoSkills {
-		sb.WriteString("- ")
-		sb.WriteString(formatSkillIdentifier(item))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("</skills>")
-	return sb.String()
+	sort.Strings(lines)
+	return trimSkillListing(lines)
 }
 
-func formatSkillIdentifier(skill skillstore.ResolvedSkill) string {
-	key := strings.TrimSpace(skill.SkillKey)
-	version := strings.TrimSpace(skill.Version)
-	if version == "" {
+func formatSkillListingLine(name, description, source string) string {
+	label := name
+	desc := truncateSkillDescription(description)
+	if desc == "" {
+		if source != "" {
+			return label + " (" + source + ")"
+		}
+		return label
+	}
+	if source != "" {
+		desc += " (" + source + ")"
+	}
+	return label + ": " + desc
+}
+
+func formatEnabledSkillName(item skillstore.ResolvedSkill) string {
+	key := strings.TrimSpace(item.SkillKey)
+	version := strings.TrimSpace(item.Version)
+	if key == "" || version == "" {
 		return key
 	}
 	return key + "@" + version
+}
+
+func trimSkillListing(lines []string) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	total := 0
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		width := len(line) + 1
+		if total+width > skillListingBudgetChars {
+			break
+		}
+		out = append(out, line)
+		total += width
+	}
+	return out
+}
+
+func truncateSkillDescription(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= skillListingDescMaxChars {
+		return value
+	}
+	return string(runes[:skillListingDescMaxChars-1]) + "…"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

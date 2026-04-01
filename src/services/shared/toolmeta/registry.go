@@ -22,8 +22,8 @@ type ToolMeta struct {
 	Name           string
 	Group          string
 	Label          string
-	ShortDesc      string // ~20 tokens, always injected into context for search_tools catalog
-	LLMDescription string // full description, loaded on demand via search_tools
+	ShortDesc      string // ~20 tokens, always injected into context for load_tools catalog
+	LLMDescription string // full description, loaded on demand via load_tools
 }
 
 type ToolGroup struct {
@@ -45,11 +45,11 @@ var groupOrder = []string{
 var registry = []ToolMeta{
 	// ── discovery ──
 	{
-		Name:      "search_tools",
+		Name:      "load_tools",
 		Group:     GroupDiscovery,
-		Label:     "Search tools",
-		ShortDesc: "look up tools in this runtime catalog by tool name or catalog keyword (not web search)",
-		LLMDescription: "search this platform's tool registry only: match by exact or partial tool name, or by words that appear in each tool's short catalog description. " +
+		Label:     "Load tools",
+		ShortDesc: "load tools from this runtime catalog by tool name or catalog keyword",
+		LLMDescription: "load tools from this platform's runtime catalog only: match by exact or partial tool name, or by words that appear in each tool's short catalog description. " +
 			"Not for the public web, not for project names, papers, news, or general questions — use web_search (or answer from training) for those. " +
 			"Do not pass full natural-language research prompts as queries; they will not match any tool. " +
 			"Use when you need a callable tool that is not in your current tool set. " +
@@ -57,6 +57,16 @@ var registry = []ToolMeta{
 			"Think ahead: if you will need a group of tools together (e.g. spawn_agent + wait_agent, read + edit), load all of them in a single call. " +
 			"After this call succeeds, matched tools may be injected into the real tool list in later phases of the same reasoning loop. " +
 			"Only call them after they actually appear there.",
+	},
+	{
+		Name:      "load_skill",
+		Group:     GroupDiscovery,
+		Label:     "Load skill",
+		ShortDesc: "load one available skill into the current conversation by exact skill name",
+		LLMDescription: "load one skill from <available_skills> into the current conversation. " +
+			"Use the exact skill name shown in the skill catalog. " +
+			"Call this before relying on a skill's instructions or specialized workflow. " +
+			"This tool only loads skills visible to the current run; it does not search the web or arbitrary filesystem paths.",
 	},
 	// ── web ──
 	{
@@ -312,7 +322,7 @@ var registry = []ToolMeta{
 			"Returns a handle_id immediately without blocking. " +
 			"Use wait_acp to retrieve the result when ready. " +
 			"After wait_acp returns completed, the agent session remains alive — use send_acp to continue the conversation. " +
-			"spawn_acp and wait_acp are always used together — load both in one search_tools call. " +
+			"spawn_acp and wait_acp are always used together — load both in one load_tools call. " +
 			"To run multiple ACP tasks in parallel: call spawn_acp N times, then wait_acp for each. " +
 			"Use interrupt_acp to cancel the current turn without closing the session. " +
 			"Use close_acp to terminate the process when no further interaction is needed.",
@@ -365,7 +375,7 @@ var registry = []ToolMeta{
 		LLMDescription: "create an Arkloop sub-agent that runs as an independent child run with its own persona, tools, and context. " +
 			"Use to delegate a self-contained subtask to a specific internal persona (e.g. research, specialized analysis). " +
 			"Returns a handle (sub_agent_id) immediately; use wait_agent to retrieve the result. " +
-			"IMPORTANT: spawn_agent and wait_agent are always used together — if either is missing from your tool list, load BOTH in one search_tools call: queries=[\"spawn_agent\", \"wait_agent\"]. " +
+			"IMPORTANT: spawn_agent and wait_agent are always used together — if either is missing from your tool list, load BOTH in one load_tools call: queries=[\"spawn_agent\", \"wait_agent\"]. " +
 			"To run tasks in parallel: call spawn_agent N times in the same turn (one per subtask), then call wait_agent once with all ids to return the first to complete. " +
 			"persona_id must be one of the registered personas in this project — an invalid ID will fail. " +
 			"Do NOT confuse with acp_agent, which delegates to an external sandbox agent.",

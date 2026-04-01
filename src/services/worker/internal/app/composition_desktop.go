@@ -130,7 +130,11 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 
-	executors := builtin.Executors(nil, nil, nil)
+	skillStore, err := openDesktopSkillStore(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "desktop: skill store init failed", "err", err.Error())
+	}
+	executors := builtin.Executors(nil, nil, nil, skillStore)
 	for _, name := range []string{
 		acptool.AgentSpec.Name,
 		acptool.SpawnACPAgentSpec.Name,
@@ -1686,36 +1690,36 @@ var errDesktopStopProcessing = errors.New("desktop_stop_processing")
 type desktopEventWriter struct {
 	mu sync.Mutex
 
-	db                      data.DesktopDB
-	bus                     eventbus.EventBus
-	run                     data.Run
-	traceID                 string
-	model                   string
-	runsRepo                data.DesktopRunsRepository
-	eventsRepo              data.DesktopRunEventsRepository
-	projector               *subagentctl.SubAgentStateProjector
-	assistantDeltas         []string
-	latestAssistantSeq      int64
-	lastDraftFlushAt        time.Time
-	responseDraftStore      objectstore.BlobStore
-	assistantMessage        *llm.Message
-	toolCallCount           int
-	iterationCount          int
-	completed               bool
-	totalInputTokens        int64
-	totalOutputTokens       int64
+	db                       data.DesktopDB
+	bus                      eventbus.EventBus
+	run                      data.Run
+	traceID                  string
+	model                    string
+	runsRepo                 data.DesktopRunsRepository
+	eventsRepo               data.DesktopRunEventsRepository
+	projector                *subagentctl.SubAgentStateProjector
+	assistantDeltas          []string
+	latestAssistantSeq       int64
+	lastDraftFlushAt         time.Time
+	responseDraftStore       objectstore.BlobStore
+	assistantMessage         *llm.Message
+	toolCallCount            int
+	iterationCount           int
+	completed                bool
+	totalInputTokens         int64
+	totalOutputTokens        int64
 	totalCacheCreationTokens int64
 	totalCacheReadTokens     int64
 	totalCachedTokens        int64
-	totalCostUSD            float64
-	usageRepo               data.UsageRecordsRepository
-	telegramBoundaryFlush   func(context.Context, string) error
-	telegramFlushSentDeltas int
-	terminalUserMessage     string
-	terminalStatus          string
-	visibleAssistantText    string
-	draftVisibleContent     string
-	draftUseVisible         bool
+	totalCostUSD             float64
+	usageRepo                data.UsageRecordsRepository
+	telegramBoundaryFlush    func(context.Context, string) error
+	telegramFlushSentDeltas  int
+	terminalUserMessage      string
+	terminalStatus           string
+	visibleAssistantText     string
+	draftVisibleContent      string
+	draftUseVisible          bool
 }
 
 func (w *desktopEventWriter) telegramStreamRemainder() string {

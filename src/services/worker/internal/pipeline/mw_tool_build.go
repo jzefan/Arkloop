@@ -8,7 +8,7 @@ import (
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
-	searchtools "arkloop/services/worker/internal/tools/builtin/search_tools"
+	loadtools "arkloop/services/worker/internal/tools/builtin/load_tools"
 )
 
 var runtimeManagedToolNames = map[string]struct{}{
@@ -29,7 +29,7 @@ var runtimeManagedToolNames = map[string]struct{}{
 }
 
 // NewToolBuildMiddleware 根据最终的 allowlist 构建 DispatchingExecutor 和过滤后的 ToolSpecs。
-// 当 persona 定义了 core_tools 时，将工具分为 core（直接可见）和 searchable（需要 search_tools 激活）两层。
+// 当 persona 定义了 core_tools 时，将工具分为 core（直接可见）和 searchable（需要 load_tools 激活）两层。
 func NewToolBuildMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		effectiveAllowlist := CopyStringSet(rc.AllowlistSet)
@@ -40,24 +40,25 @@ func NewToolBuildMiddleware() RunMiddleware {
 		}
 		resolvedAllowlist = filterAllowlistByRuntime(resolvedAllowlist, rc.Runtime, rc.ToolRegistry, rc.ActiveToolProviderByGroup)
 
-		// When core_tools is configured, search_tools must be available regardless
+		// When core_tools is configured, load_tools and load_skill must be available regardless
 		// of whether it was in the original allowlist (DB persona might not include it).
 		hasCoreTools := rc.PersonaDefinition != nil && len(rc.PersonaDefinition.CoreTools) > 0
 		if hasCoreTools {
-			resolvedAllowlist["search_tools"] = struct{}{}
-			if _, ok := rc.ToolRegistry.Get("search_tools"); !ok {
-				_ = rc.ToolRegistry.Register(searchtools.AgentSpec)
+			resolvedAllowlist["load_tools"] = struct{}{}
+			resolvedAllowlist["load_skill"] = struct{}{}
+			if _, ok := rc.ToolRegistry.Get("load_tools"); !ok {
+				_ = rc.ToolRegistry.Register(loadtools.AgentSpec)
 			}
 		}
 
-		// Pre-bind search_tools executor before filtering so it survives
+		// Pre-bind load_tools executor before filtering so it survives
 		// FilterAllowlistToBoundExecutors. Uses lazy reference because
 		// DispatchingExecutor is created after this point.
 		// coreSpecsMap is populated after splitToolSpecs; the closure captures it by reference.
 		var dispatchRef *tools.DispatchingExecutor
 		var coreSpecsMap map[string]llm.ToolSpec
-		if _, inAllowlist := resolvedAllowlist["search_tools"]; inAllowlist {
-			rc.ToolExecutors["search_tools"] = searchtools.NewExecutor(
+		if _, inAllowlist := resolvedAllowlist["load_tools"]; inAllowlist {
+			rc.ToolExecutors["load_tools"] = loadtools.NewExecutor(
 				&lazyActivator{ref: &dispatchRef},
 				func() map[string]llm.ToolSpec {
 					if dispatchRef == nil {
@@ -88,18 +89,18 @@ func NewToolBuildMiddleware() RunMiddleware {
 		readImageBridgeEnabled := hasImageBridgeProvider(rc.ActiveToolProviderByGroup)
 		allSpecs = ApplyReadImageSourceVisibility(allSpecs, readImageBridgeEnabled)
 
-		// Ensure search_tools LLM spec is present when core_tools is active.
+		// Ensure load_tools LLM spec is present when core_tools is active.
 		// It might be missing if the persona's tool_allowlist narrowed ToolSpecs earlier.
 		if hasCoreTools {
 			hasSearchSpec := false
 			for _, s := range allSpecs {
-				if s.Name == "search_tools" {
+				if s.Name == "load_tools" {
 					hasSearchSpec = true
 					break
 				}
 			}
 			if !hasSearchSpec {
-				allSpecs = append(allSpecs, searchtools.LlmSpec)
+				allSpecs = append(allSpecs, loadtools.LlmSpec)
 			}
 		}
 
@@ -107,7 +108,7 @@ func NewToolBuildMiddleware() RunMiddleware {
 		if coreSet != nil {
 			coreSpecs, searchableSpecs := splitToolSpecs(allSpecs, coreSet)
 
-			// Populate coreSpecsMap so search_tools can resolve queries against active tools.
+			// Populate coreSpecsMap so load_tools can resolve queries against active tools.
 			if len(coreSpecs) > 0 {
 				coreSpecsMap = make(map[string]llm.ToolSpec, len(coreSpecs))
 				for _, spec := range coreSpecs {
@@ -122,7 +123,7 @@ func NewToolBuildMiddleware() RunMiddleware {
 				}
 				executor.SetSearchableSpecs(searchableMap)
 
-				catalog := searchtools.BuildCatalogPrompt(searchableMap)
+				catalog := loadtools.BuildCatalogPrompt(searchableMap)
 				if catalog != "" {
 					rc.SystemPrompt = strings.TrimRight(rc.SystemPrompt, "\n") + "\n" + catalog
 				}
@@ -152,8 +153,9 @@ func resolveCoreToolSet(rc *RunContext) map[string]struct{} {
 	for _, name := range rc.PersonaDefinition.CoreTools {
 		set[name] = struct{}{}
 	}
-	// search_tools is always core when core_tools is configured
-	set["search_tools"] = struct{}{}
+	// load_tools and load_skill are always core when core_tools is configured
+	set["load_tools"] = struct{}{}
+	set["load_skill"] = struct{}{}
 	return set
 }
 
@@ -170,7 +172,7 @@ func splitToolSpecs(specs []llm.ToolSpec, coreSet map[string]struct{}) (core, se
 }
 
 // lazyActivator wraps a pointer-to-pointer to DispatchingExecutor,
-// allowing search_tools executor to be created before the DispatchingExecutor exists.
+// allowing load_tools executor to be created before the DispatchingExecutor exists.
 type lazyActivator struct {
 	ref **tools.DispatchingExecutor
 }

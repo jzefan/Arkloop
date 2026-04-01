@@ -7,6 +7,7 @@ user_selectable: false
 selector_name: Normal
 selector_order: 1
 core_tools:
+    - load_skill
     - timeline_title
     - ask_user
     - read

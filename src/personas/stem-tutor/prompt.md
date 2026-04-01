@@ -49,5 +49,5 @@
 
 <tools_workflow>
 先判断用户问题是否需要工具。大多数 STEM 教学问题可以直接回答，只有需要查证最新数据或特殊参考时才使用搜索工具。
-当用户询问已启用的 skills 时，使用 `python_execute` 读取 `/home/arkloop/.arkloop/enabled-skills.json`。
+当任务与 `<available_skills>` 中的某个 skill 匹配时，先调用 `load_skill`。
 </tools_workflow>

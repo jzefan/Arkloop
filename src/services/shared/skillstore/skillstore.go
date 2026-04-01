@@ -59,6 +59,8 @@ type BundleImage struct {
 type ResolvedSkill struct {
 	SkillKey        string `json:"skill_key"`
 	Version         string `json:"version"`
+	DisplayName     string `json:"display_name,omitempty"`
+	Description     string `json:"description,omitempty"`
 	ManifestRef     string `json:"manifest_ref"`
 	BundleRef       string `json:"bundle_ref"`
 	MountPath       string `json:"mount_path"`

@@ -561,7 +561,7 @@ func (l *Loop) Run(
 			runCtx.PipelineRC.HeartbeatReplyGranted = true
 		}
 
-		// search_tools dynamic activation: inject newly activated tool specs
+		// load_tools dynamic activation: inject newly activated tool specs
 		if l.toolExecutor != nil {
 			if activated := l.toolExecutor.DrainActivated(); len(activated) > 0 {
 				request.Tools = append(request.Tools, activated...)
@@ -700,6 +700,10 @@ func (l *Loop) executeToolCall(
 	streamEvent := func(ev events.RunEvent) error {
 		return yield(ev)
 	}
+	var externalSkills []skillstore.ExternalSkill
+	if runCtx.PipelineRC != nil {
+		externalSkills = append([]skillstore.ExternalSkill(nil), runCtx.PipelineRC.ExternalSkills...)
+	}
 	execCtx := tools.ExecutionContext{
 		RunID:                            runCtx.RunID,
 		TraceID:                          runCtx.TraceID,
@@ -711,6 +715,7 @@ func (l *Loop) executeToolCall(
 		WorkspaceRef:                     runCtx.WorkspaceRef,
 		WorkDir:                          runCtx.WorkDir,
 		EnabledSkills:                    append([]skillstore.ResolvedSkill(nil), runCtx.EnabledSkills...),
+		ExternalSkills:                   externalSkills,
 		ToolAllowlist:                    append([]string(nil), runCtx.ToolAllowlist...),
 		ToolDenylist:                     append([]string(nil), runCtx.ToolDenylist...),
 		ActiveToolProviderConfigsByGroup: copyProviderConfigs(runCtx.ActiveToolProviderConfigsByGroup),
