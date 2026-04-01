@@ -149,6 +149,14 @@ jobs:
       - name: Build Electron TypeScript
         run: pnpm --filter @arkloop/desktop build:electron
 
+      - name: Build sidecar binary (macOS x64)
+        if: matrix.platform == 'darwin' && matrix.electron_arch == 'x64'
+        run: pnpm --filter @arkloop/desktop exec node scripts/build-sidecar.mjs --platform darwin --arch x64
+
+      - name: Build sidecar binary (Linux x64)
+        if: matrix.platform == 'linux' && matrix.electron_arch == 'x64'
+        run: pnpm --filter @arkloop/desktop exec node scripts/build-sidecar.mjs --platform linux --arch x64
+
       - name: Run electron-builder (macOS)
         if: matrix.platform == 'darwin'
         working-directory: src/apps/desktop
@@ -158,12 +166,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder ${{ matrix.builder_args }}
+        run: pnpm exec electron-builder ${{ matrix.builder_args }} --publish never
 
       - name: Run electron-builder (Linux)
         if: matrix.platform == 'linux'
         working-directory: src/apps/desktop
-        run: npx electron-builder ${{ matrix.builder_args }}
+        run: pnpm exec electron-builder ${{ matrix.builder_args }} --publish never
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4

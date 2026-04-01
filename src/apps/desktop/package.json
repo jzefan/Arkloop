@@ -3,6 +3,13 @@
   "productName": "Arkloop",
   "version": "26.3.27",
   "private": true,
+  "description": "Arkloop desktop app",
+  "homepage": "https://github.com/qqqqqf-q/Arkloop",
+  "author": {
+    "name": "Arkloop",
+    "email": "security@arkloop.ai"
+  },
+  "packageManager": "pnpm@10.29.3",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
