@@ -7,7 +7,7 @@ import { FormField } from '../../components/FormField'
 import { Modal } from '../../components/Modal'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Badge } from '../../components/Badge'
-import { useToast, PillToggle } from '@arkloop/shared'
+import { AutoResizeTextarea, useToast, PillToggle } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -648,9 +648,11 @@ export function ProvidersPage() {
                     />
                   </FormField>
                   <FormField label={tc.fieldAdvancedJson}>
-                    <textarea
+                    <AutoResizeTextarea
                       className={TEXTAREA_CLS}
                       rows={8}
+                      minRows={8}
+                      maxHeight={360}
                       value={providerForm.advancedJSON}
                       onChange={(e) => setProviderForm((prev) => ({ ...prev, advancedJSON: e.target.value }))}
                     />
@@ -745,7 +747,7 @@ export function ProvidersPage() {
             </FormField>
           </div>
           <FormField label={tc.fieldAdvancedJson}>
-            <textarea className={TEXTAREA_CLS} rows={8} value={createForm.advancedJSON} onChange={(e) => { setCreateForm((prev) => ({ ...prev, advancedJSON: e.target.value })); setCreateError('') }} />
+            <AutoResizeTextarea className={TEXTAREA_CLS} rows={8} minRows={8} maxHeight={360} value={createForm.advancedJSON} onChange={(e) => { setCreateForm((prev) => ({ ...prev, advancedJSON: e.target.value })); setCreateError('') }} />
           </FormField>
           {createError ? <div className="text-sm text-red-500">{createError}</div> : null}
           <div className="flex justify-end gap-2">
@@ -776,10 +778,10 @@ export function ProvidersPage() {
             {tc.routeDefault}
           </label>
           <FormField label={tc.routeWhen}>
-            <textarea className={TEXTAREA_CLS} rows={5} value={modelForm.whenJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, whenJSON: e.target.value })); setModelError('') }} />
+            <AutoResizeTextarea className={TEXTAREA_CLS} rows={5} minRows={5} maxHeight={320} value={modelForm.whenJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, whenJSON: e.target.value })); setModelError('') }} />
           </FormField>
           <FormField label={tc.routeAdvancedJson}>
-            <textarea className={TEXTAREA_CLS} rows={6} value={modelForm.advancedJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, advancedJSON: e.target.value })); setModelError('') }} />
+            <AutoResizeTextarea className={TEXTAREA_CLS} rows={6} minRows={6} maxHeight={360} value={modelForm.advancedJSON} onChange={(e) => { setModelForm((prev) => ({ ...prev, advancedJSON: e.target.value })); setModelError('') }} />
           </FormField>
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label={tc.routeCostInput}>

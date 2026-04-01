@@ -15,6 +15,7 @@ import {
   isApiError,
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { AutoResizeTextarea } from '@arkloop/shared'
 
 type Props = {
   accessToken: string
@@ -226,11 +227,13 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
           {formType === 'telegram' && (
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.allowedUsers}</label>
-              <textarea
+              <AutoResizeTextarea
                 value={formAllowedUsers}
                 onChange={(e) => setFormAllowedUsers(e.target.value)}
                 placeholder={ct.allowedUsersPlaceholder}
                 rows={3}
+                minRows={3}
+                maxHeight={220}
                 className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
                 style={{ border: '0.5px solid var(--c-border-subtle)' }}
               />

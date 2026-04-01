@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom'
 import type { ConsoleOutletContext } from '../../layouts/ConsoleLayout'
 import { PageHeader } from '../../components/PageHeader'
 import { FormField } from '../../components/FormField'
-import { useToast } from '@arkloop/shared'
+import { AutoResizeTextarea, useToast } from '@arkloop/shared'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getGatewayConfig, updateGatewayConfig, type GatewayConfig } from '../../api/gateway-config'
@@ -101,10 +101,12 @@ export function GatewayConfigPage() {
             </FormField>
 
             <FormField label={tc.fieldTrustedCIDRs}>
-              <textarea
+              <AutoResizeTextarea
                 value={trustedCIDRs}
                 onChange={(e) => setTrustedCIDRs(e.target.value)}
                 rows={6}
+                minRows={6}
+                maxHeight={320}
                 placeholder="103.21.244.0/22&#10;103.22.200.0/22"
                 className={`${inputCls} resize-y font-mono text-xs`}
               />

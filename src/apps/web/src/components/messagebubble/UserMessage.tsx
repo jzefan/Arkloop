@@ -8,6 +8,7 @@ import { ImageThumbnailCard } from './ImageThumbnailCard'
 import { PastedBubbleCard } from './PastedBubbleCard'
 import { ArtifactDownload } from '../ArtifactDownload'
 import { MessageDate } from './MessageDate'
+import { AutoResizeTextarea } from '@arkloop/shared'
 import {
   getUserPromptEnterScale,
   USER_PROMPT_ENTER_BASE_SCALE,
@@ -91,19 +92,10 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
   useEffect(() => {
     if (editing && textareaRef.current) {
       const el = textareaRef.current
-      el.style.height = 'auto'
-      el.style.height = `${el.scrollHeight}px`
       el.focus()
       el.setSelectionRange(el.value.length, el.value.length)
     }
   }, [editing])
-
-  const handleTextareaInput = () => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-    }
-  }
 
   useEffect(() => {
     if (!userTextRef.current) return
@@ -163,14 +155,14 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
             </div>
           )}
           <div style={{ position: 'relative', background: 'var(--c-bg-deep)', borderRadius: '11px', padding: '10px 16px' }}>
-            <textarea
+            <AutoResizeTextarea
               ref={textareaRef}
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
-              onInput={handleTextareaInput}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') handleEditCancel()
               }}
+              minRows={1}
               style={{
                 width: '100%',
                 background: 'transparent',
@@ -183,7 +175,6 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
                 letterSpacing: '-0.64px',
                 fontFamily: 'inherit',
                 minHeight: '28px',
-                overflow: 'hidden',
               }}
             />
           </div>
@@ -232,7 +223,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
       style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
     >
       <div
-        className="opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-[60ms]"
+        className="pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 transition-[opacity] duration-[180ms] ease-out"
         style={{
           display: 'flex',
           flexDirection: 'column',

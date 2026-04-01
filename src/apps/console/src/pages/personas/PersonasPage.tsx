@@ -7,7 +7,7 @@ import { Badge } from '../../components/Badge'
 import { Modal } from '../../components/Modal'
 import { FormField } from '../../components/FormField'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { useToast } from '@arkloop/shared'
+import { AutoResizeTextarea, useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isApiError } from '../../api'
 import {
@@ -669,18 +669,22 @@ export function PersonasPage() {
 
 
                   <FormField label={tc.fieldBudgetsJSON}>
-                    <textarea
-                      className={`${MONO_CLS} min-h-[80px] resize-y`}
+                    <AutoResizeTextarea
+                      className={`${MONO_CLS} min-h-[80px]`}
                       rows={3}
+                      minRows={3}
+                      maxHeight={260}
                       value={form.budgetsJSON}
                       onChange={(e) => setForm((prev) => prev && { ...prev, budgetsJSON: e.target.value })}
                     />
                   </FormField>
 
                   <FormField label={tc.fieldExecutorConfig}>
-                    <textarea
-                      className={`${MONO_CLS} min-h-[80px] resize-y`}
+                    <AutoResizeTextarea
+                      className={`${MONO_CLS} min-h-[80px]`}
                       rows={3}
+                      minRows={3}
+                      maxHeight={260}
                       value={form.executorConfigJSON}
                       onChange={(e) => setForm((prev) => prev && { ...prev, executorConfigJSON: e.target.value })}
                     />
@@ -691,18 +695,22 @@ export function PersonasPage() {
               {tab === 'prompt' && (
                 <div className="flex flex-col gap-5">
                   <FormField label={tc.fieldPrompt}>
-                    <textarea
-                      className={`${MONO_CLS} min-h-[240px] resize-y`}
+                    <AutoResizeTextarea
+                      className={`${MONO_CLS} min-h-[240px]`}
                       rows={10}
+                      minRows={10}
+                      maxHeight={520}
                       value={form.prompt}
                       onChange={(e) => setForm((prev) => prev && { ...prev, prompt: e.target.value })}
                     />
                   </FormField>
                   {isHybridPersona(form.executorType) && (
                     <FormField label={tc.fieldLuaScript}>
-                      <textarea
-                        className={`${MONO_CLS} min-h-[240px] resize-y`}
+                      <AutoResizeTextarea
+                        className={`${MONO_CLS} min-h-[240px]`}
                         rows={10}
+                        minRows={10}
+                        maxHeight={520}
                         value={form.luaScript}
                         onChange={(e) => setForm((prev) => prev && { ...prev, luaScript: e.target.value })}
                       />

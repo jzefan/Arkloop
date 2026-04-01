@@ -3,6 +3,7 @@ import { HelpCircle, ArrowUpRight, Flag, X } from 'lucide-react'
 import { isApiError, createSuggestionFeedback } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { openExternal } from '../../openExternal'
+import { AutoResizeTextarea } from '@arkloop/shared'
 
 export function HelpContent({ label }: { label: string }) {
   return (
@@ -94,12 +95,14 @@ export function ReportFeedbackContent({ accessToken }: { accessToken: string }) 
               </button>
             </div>
 
-            <textarea
+            <AutoResizeTextarea
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
               placeholder={t.suggestionPlaceholder}
               maxLength={2000}
               rows={5}
+              minRows={5}
+              maxHeight={240}
               disabled={submitting || success}
               className="w-full resize-none rounded-lg border px-3 py-2 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
               style={{ borderColor: 'var(--c-border-subtle)', background: 'var(--c-bg-page)' }}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Eye, Image as ImageIcon, Database, Loader2, X } from 'lucide-react'
-import { FormField } from '@arkloop/shared'
+import { AutoResizeTextarea, FormField } from '@arkloop/shared'
 import type { AvailableModel, LlmProviderModel } from '../api'
 import {
   AVAILABLE_CATALOG_ADVANCED_KEY,
@@ -330,8 +330,10 @@ export function ModelOptionsModal({
             <p className="text-xs text-[var(--c-text-muted)]">{labels.visionBridgeHint}</p>
 
             <FormField label={labels.providerOptionsJson} error={error}>
-              <textarea
+              <AutoResizeTextarea
                 rows={8}
+                minRows={8}
+                maxHeight={320}
                 value={draft.providerOptionsJSON}
                 onChange={(e) => setDraft((prev) => ({ ...prev, providerOptionsJSON: e.target.value }))}
                 className={TEXTAREA_CLS}

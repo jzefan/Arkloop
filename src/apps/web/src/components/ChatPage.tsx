@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, Check, ChevronDown, Glasses, Info, Loader2, Pencil, Share2, Star, Trash2, X, AlertCircle } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
+import { AutoResizeTextarea } from '@arkloop/shared'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
@@ -3913,9 +3914,11 @@ export function ChatPage() {
                   className="flex flex-col gap-2 rounded-xl px-4 py-3"
                   style={{ background: 'var(--c-bg-sub)', border: '0.5px solid var(--c-border-subtle)' }}
                 >
-                  <textarea
+                  <AutoResizeTextarea
                     autoFocus
                     rows={3}
+                    minRows={3}
+                    maxHeight={240}
                     value={checkInDraft}
                     onChange={(e) => setCheckInDraft(e.target.value)}
                     onKeyDown={(e) => {

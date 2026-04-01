@@ -65,6 +65,7 @@ export { EmptyState } from './components/EmptyState'
 export { Modal } from './components/Modal'
 
 export { FormField } from './components/FormField'
+export { AutoResizeTextarea } from './components/AutoResizeTextarea'
 
 export { DataTable } from './components/DataTable'
 export type { Column as DataTableColumn } from './components/DataTable'
@@ -109,6 +110,8 @@ export { ACP_DELEGATE_LAYER, isACPDelegateEventData } from './runEventDelegate'
 export { buildThreadTurns, threadMessageTextContent } from './thread-turns'
 export type { ThreadMessage, ThreadTurn } from './thread-turns'
 export { redactDataUrlsInString, jsonStringifyForDebugDisplay } from './debugPayloadRedact'
+export { measureTextareaHeight } from './text/measureTextareaHeight'
+export { useAutoResizeTextarea } from './text/useAutoResizeTextarea'
 
 export { Button } from './components/Button'
 export type { ButtonProps } from './components/Button'
