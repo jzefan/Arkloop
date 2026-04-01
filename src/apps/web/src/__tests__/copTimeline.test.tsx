@@ -214,11 +214,11 @@ describe('CopTimeline', () => {
         { id: 'n1', text: '先整理一下现有工具。', seq: 20 },
       ],
       fileOps: [
-        { id: 'op1', toolName: 'search_tools', label: 'search_tools "exec_command"', status: 'success', seq: 10 },
+        { id: 'op1', toolName: 'load_tools', label: 'load_tools "exec_command"', status: 'success', seq: 10 },
       ],
     })
 
-    const fileOpIndex = html.indexOf('search_tools &quot;exec_command&quot;')
+    const fileOpIndex = html.indexOf('load_tools &quot;exec_command&quot;')
     const narrativeIndex = html.indexOf('先整理一下现有工具。')
     const stepIndex = html.lastIndexOf('Searching')
     expect(fileOpIndex).toBeGreaterThanOrEqual(0)
@@ -364,6 +364,26 @@ describe('CopTimeline', () => {
 
     expect(container.textContent).toContain('solo think body')
     expect(container.querySelector('[data-testid="cop-thought-summary-row"]')).toBeNull()
+    cleanup()
+  })
+
+  it('仅 thinking live 展开时应使用 timeline-plain 排版而不是 think card 排版', async () => {
+    const { container, cleanup } = await renderTimelineDom({
+      isComplete: false,
+      live: true,
+      trailingAssistantTextPresent: true,
+      steps: [],
+      sources: [],
+      thinkingRows: [{ id: 't1', markdown: 'solo think body', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
+      thinkingHint: 'Planning next moves',
+    })
+
+    await act(async () => {
+      container.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.querySelector('.cop-thinking-output-md--timeline-plain')).not.toBeNull()
+    expect(container.querySelector('.cop-thinking-card-outer')).toBeNull()
     cleanup()
   })
 
@@ -589,7 +609,7 @@ describe('CopTimeline', () => {
       isComplete: true,
       steps: [],
       sources: [],
-      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }],
+      fileOps: [{ id: 'op1', toolName: 'load_tools', label: 'load_tools "abc"', status: 'success', seq: 2 }],
       thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 8, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
     })
 
@@ -598,7 +618,7 @@ describe('CopTimeline', () => {
     })
 
     expect(container.textContent).toContain('Thought for 8s')
-    expect(container.textContent).toContain('search_tools "abc"')
+    expect(container.textContent).toContain('load_tools "abc"')
     expect(container.textContent).not.toContain('hidden think body')
     expect(container.querySelector('[data-testid="cop-thought-summary-row"]')).not.toBeNull()
     cleanup()
@@ -612,7 +632,7 @@ describe('CopTimeline', () => {
       live: true,
       steps: [],
       sources: [],
-      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'running', seq: 2 }],
+      fileOps: [{ id: 'op1', toolName: 'load_tools', label: 'load_tools "abc"', status: 'running', seq: 2 }],
       thinkingRows: [{ id: 't1', markdown: 'hidden think body', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
       thinkingHint: 'Planning next moves',
     })
@@ -621,7 +641,7 @@ describe('CopTimeline', () => {
       vi.advanceTimersByTime(400)
     })
 
-    expect(container.textContent).toContain('search_tools "abc"')
+    expect(container.textContent).toContain('load_tools "abc"')
     expect(container.textContent).toContain('Thinking for 2s')
     expect(container.textContent).not.toContain('hidden think body')
     cleanup()
@@ -633,7 +653,7 @@ describe('CopTimeline', () => {
       preserveExpanded: true,
       steps: [],
       sources: [],
-      fileOps: [{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }],
+      fileOps: [{ id: 'op1', toolName: 'load_tools', label: 'load_tools "abc"', status: 'success', seq: 2 }],
       thinkingRows: [{ id: 't1', markdown: 'recover previous think', live: false, seq: 1, durationSec: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }],
     })
 
@@ -665,7 +685,7 @@ describe('CopTimeline', () => {
             live
             steps={[]}
             sources={[]}
-            fileOps={[{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'running', seq: 2 }]}
+            fileOps={[{ id: 'op1', toolName: 'load_tools', label: 'load_tools "abc"', status: 'running', seq: 2 }]}
             thinkingRows={[{ id: 't1', markdown: 'hidden think body', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }]}
             thinkingHint="Planning next moves"
           />
@@ -677,7 +697,7 @@ describe('CopTimeline', () => {
       vi.advanceTimersByTime(400)
     })
 
-    expect(container.textContent).toContain('search_tools "abc"')
+    expect(container.textContent).toContain('load_tools "abc"')
 
     await act(async () => {
       root.render(
@@ -686,7 +706,7 @@ describe('CopTimeline', () => {
             isComplete={false}
             steps={[]}
             sources={[]}
-            fileOps={[{ id: 'op1', toolName: 'search_tools', label: 'search_tools "abc"', status: 'success', seq: 2 }]}
+            fileOps={[{ id: 'op1', toolName: 'load_tools', label: 'load_tools "abc"', status: 'success', seq: 2 }]}
             thinkingRows={[{ id: 't1', markdown: 'hidden think body', live: false, seq: 1, durationSec: 2, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }]}
           />
         </LocaleProvider>,

@@ -1031,7 +1031,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
       : t.copTimelineThinkingDoneNoDuration
   const showPendingThinkingHeader = pendingShowThinkingHeader
 
-  /** 仅 thinking、无工具：流式结束后内层不再用折叠卡片，避免与标题重复「Thought for Xs」 */
+  /** 仅 thinking：正文直接复用 timeline-plain 排版；完成后再在末尾补一条 done 行。 */
   const thinkingOnlyCompletedPlain =
     thinkingOnlyUnified && isComplete && !anyThinkingLive && hasThinkingOnly
   const unifiedEntries: UEntry[] = thinkingOnlyCompletedPlain
@@ -1314,7 +1314,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                               thoughtDurationSeconds={entry.item.durationSec ?? 0}
                               startedAtMs={entry.item.startedAtMs}
                             />
-                          ) : thinkingOnlyCompletedPlain ? (
+                          ) : hasThinkingOnly ? (
                             <div
                               style={{
                                 paddingTop: Math.max(
@@ -1325,7 +1325,11 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
                                 ),
                               }}
                             >
-                              <AssistantThinkingMarkdown markdown={entry.item.markdown} live={false} variant="timeline-plain" />
+                              <AssistantThinkingMarkdown
+                                markdown={entry.item.markdown}
+                                live={entry.item.live && !thinkingOnlyCompletedPlain}
+                                variant="timeline-plain"
+                              />
                             </div>
                           ) : (
                             <AssistantThinkingMarkdown markdown={entry.item.markdown} live={entry.item.live} />
