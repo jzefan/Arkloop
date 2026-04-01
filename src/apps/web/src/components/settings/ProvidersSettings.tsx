@@ -28,6 +28,7 @@ import { routeAdvancedJsonFromAvailableCatalog } from '@arkloop/shared/llm/avail
 import { PillToggle } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { ModelOptionsModal } from '../ModelOptionsModal'
+import { destructiveButtonSmCls, primaryButtonSmCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 const VENDOR_PRESETS = [
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
@@ -678,14 +679,14 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
         <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{p.modelsSection}</h4>
         <div className="flex flex-wrap items-center gap-2">
           {provider.models.length > 0 && (
-            <button onClick={() => void handleDeleteAll()} disabled={deletingAll} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-muted)] transition-colors duration-150 hover:border-red-500/30 hover:text-red-500 disabled:opacity-50">
+            <button onClick={() => void handleDeleteAll()} disabled={deletingAll} className={destructiveButtonSmCls} style={secondaryButtonBorderStyle}>
               {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
               {p.deleteAll ?? 'Delete all'}
             </button>
           )}
           {(loadingAvailable || importing) && !available && <Loader2 size={12} className="animate-spin text-[var(--c-text-muted)]" />}
           {(unconfiguredCount > 0 || !hasLoadedAvailable) && (
-            <button onClick={() => void handleImportAll()} disabled={importing || loadingAvailable} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] disabled:opacity-50">
+            <button onClick={() => void handleImportAll()} disabled={importing || loadingAvailable} className={secondaryButtonSmCls} style={secondaryButtonBorderStyle}>
               <Download size={12} />
               {loadingAvailable || importing
                 ? (p.importing ?? '...')
@@ -694,7 +695,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
                   : (p.importModels ?? 'Import models')}
             </button>
           )}
-          <button onClick={() => { setAddingModel(true); setNewModel('') }} className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--c-btn-text)] transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]" style={{ background: 'var(--c-btn-bg)' }}>
+          <button onClick={() => { setAddingModel(true); setNewModel('') }} className={primaryButtonSmCls} style={{ background: 'var(--c-btn-bg)' }}>
             {p.addModel}
           </button>
         </div>

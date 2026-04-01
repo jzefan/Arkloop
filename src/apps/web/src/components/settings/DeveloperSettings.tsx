@@ -7,6 +7,7 @@ import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents } from '../../s
 import { RunsSettings } from './RunsSettings'
 import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
+import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 type Props = {
   accessToken?: string
@@ -25,8 +26,8 @@ function PanelButton({ onClick, disabled, children }: PanelBtnProps) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-40"
-      style={{ border: '0.5px solid var(--c-border-subtle)' }}
+      className={secondaryButtonSmCls}
+      style={secondaryButtonBorderStyle}
     >
       {children}
     </button>

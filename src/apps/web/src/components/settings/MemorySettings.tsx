@@ -28,6 +28,7 @@ import {
   setSpawnProfile,
   type LlmProvider,
 } from '../../api'
+import { secondaryButtonBorderStyle, secondaryButtonXsCls } from '../buttonStyles'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
 import type { LocaleStrings } from '../../locales'
@@ -299,8 +300,8 @@ function OVModuleCard({
                 type="button"
                 onClick={() => onRefreshModules()}
                 disabled={actionInProgress}
-                className="rounded-md px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ border: '0.5px solid var(--c-border-subtle)', color: 'var(--c-text-secondary)' }}
+                className={`${secondaryButtonXsCls} rounded-md px-2`}
+                style={secondaryButtonBorderStyle}
                 title={ds.memoryRetryModuleList}
               >
                 <RefreshCw size={14} className={statusChecking ? 'animate-spin' : ''} />
@@ -310,8 +311,8 @@ function OVModuleCard({
                   type="button"
                   onClick={() => onAction(action)}
                   disabled={actionInProgress}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-deep)', color: 'var(--c-text-secondary)' }}
+                  className={`${secondaryButtonXsCls} rounded-md`}
+                  style={secondaryButtonBorderStyle}
                 >
                   {actionInProgress ? <SpinnerIcon /> : actionLabel(action, ds)}
                 </button>

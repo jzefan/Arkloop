@@ -3,6 +3,7 @@ import { PillToggle } from '@arkloop/shared'
 import { listPlatformSkills, setPlatformSkillOverride, type PlatformSkillItem } from '../../api'
 import type { ViewSkill } from './types'
 import { matchesSkillQuery } from './types'
+import { secondaryButtonBorderStyle, secondaryButtonXsCls } from '../buttonStyles'
 
 type SkillTextSubset = {
   builtinTitle: string
@@ -133,8 +134,8 @@ export function BuiltinSkillsView({
                         setBusySkillId(null)
                       }
                     }}
-                    className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--c-bg-deep)]"
-                    style={{ border: '0.5px solid var(--c-border-subtle)', color: 'var(--c-text-heading)' }}
+                    className={secondaryButtonXsCls}
+                    style={secondaryButtonBorderStyle}
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                     {skillText.restore}

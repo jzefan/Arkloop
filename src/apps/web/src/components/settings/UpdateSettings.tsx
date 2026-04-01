@@ -4,6 +4,7 @@ import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi, type UpdaterComponent, type AppUpdaterState } from '@arkloop/shared/desktop'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
+import { primaryButtonXsCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 type ComponentStatus = {
   current: string | null
@@ -221,13 +222,8 @@ export function UpdateSettingsContent() {
         <button
           onClick={checkUpdates}
           disabled={checking || isAppUpdaterBusy(appUpdateState)}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors"
-          style={{
-            border: '1px solid var(--c-border-subtle)',
-            background: 'var(--c-bg-sub)',
-            color: checking || isAppUpdaterBusy(appUpdateState) ? 'var(--c-text-muted)' : 'var(--c-text-primary)',
-            cursor: checking || isAppUpdaterBusy(appUpdateState) ? 'not-allowed' : 'pointer',
-          }}
+          className={secondaryButtonSmCls}
+          style={secondaryButtonBorderStyle}
         >
           {checking ? <SpinnerIcon /> : <RefreshCw size={14} />}
           <span>{t.desktopSettings.checkForUpdates}</span>
@@ -273,7 +269,7 @@ export function UpdateSettingsContent() {
             ) : appUpdateState?.phase === 'available' ? (
               <button
                 onClick={handleDownloadApp}
-                className="rounded-lg px-3 py-1 text-sm transition-colors"
+                className={primaryButtonXsCls}
                 style={{
                   background: 'var(--c-accent)',
                   color: 'var(--c-accent-fg)',
@@ -284,7 +280,7 @@ export function UpdateSettingsContent() {
             ) : appUpdateState?.phase === 'downloaded' ? (
               <button
                 onClick={handleInstallApp}
-                className="rounded-lg px-3 py-1 text-sm transition-colors"
+                className={primaryButtonXsCls}
                 style={{
                   background: 'var(--c-accent)',
                   color: 'var(--c-accent-fg)',
@@ -359,7 +355,7 @@ export function UpdateSettingsContent() {
                   ) : row.status.available ? (
                     <button
                       onClick={() => handleApply(row.key)}
-                      className="rounded-lg px-3 py-1 text-sm transition-colors"
+                      className={primaryButtonXsCls}
                       style={{
                         background: 'var(--c-accent)',
                         color: 'var(--c-accent-fg)',

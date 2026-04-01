@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, FolderOpen, Loader2, Plus, Trash2 } from 'lu
 import { discoverExternalSkills, getExternalDirs, setExternalDirs, type ExternalSkillDir } from '../../api'
 import type { ViewSkill } from './types'
 import { SkillList } from './SkillList'
+import { secondaryButtonBorderStyle, secondaryButtonXsCls } from '../buttonStyles'
 
 type SkillTextSubset = {
   searchResults: (count: number) => string
@@ -277,8 +278,8 @@ export function InstalledSkillsView(props: Props) {
                 type="button"
                 disabled={saving || !newDir.trim()}
                 onClick={() => void handleAddDir()}
-                className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors disabled:opacity-40"
-                style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+                className={`${secondaryButtonXsCls} h-8 shrink-0 px-3`}
+                style={secondaryButtonBorderStyle}
               >
                 {saving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
                 {skillText.externalAddDir}
