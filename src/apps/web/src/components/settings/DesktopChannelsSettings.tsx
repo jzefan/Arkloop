@@ -11,6 +11,7 @@ import {
 import { useLocale } from '../../contexts/LocaleContext'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { DesktopDiscordSettingsPanel } from './DesktopDiscordSettingsPanel'
+import { DesktopQQSettingsPanel } from './DesktopQQSettingsPanel'
 import { DesktopTelegramSettingsPanel } from './DesktopTelegramSettingsPanel'
 import { TabBar } from '@arkloop/shared/components/prompt-injection'
 
@@ -18,7 +19,7 @@ type Props = {
   accessToken: string
 }
 
-type IntegrationTab = 'telegram' | 'discord'
+type IntegrationTab = 'telegram' | 'discord' | 'qq'
 
 export function DesktopChannelsSettings({ accessToken }: Props) {
   const { t } = useLocale()
@@ -59,9 +60,14 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
     () => channels.find((channel) => channel.channel_type === 'discord') ?? null,
     [channels],
   )
+  const qqChannel = useMemo(
+    () => channels.find((channel) => channel.channel_type === 'qq') ?? null,
+    [channels],
+  )
   const tabItems: { key: IntegrationTab; label: string }[] = [
     { key: 'telegram', label: ct.telegram },
     { key: 'discord', label: ct.discord },
+    { key: 'qq', label: ct.qq },
   ]
 
   return (
@@ -81,10 +87,18 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
           providers={providers}
           reload={load}
         />
-      ) : (
+      ) : activeTab === 'discord' ? (
         <DesktopDiscordSettingsPanel
           accessToken={accessToken}
           channel={discordChannel}
+          personas={personas}
+          providers={providers}
+          reload={load}
+        />
+      ) : (
+        <DesktopQQSettingsPanel
+          accessToken={accessToken}
+          channel={qqChannel}
           personas={personas}
           providers={providers}
           reload={load}
