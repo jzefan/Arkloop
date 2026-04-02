@@ -7,6 +7,7 @@ import (
 	nethttp "net/http"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/http/adminapi"
@@ -398,6 +399,16 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	memoryapi.RegisterRoutes(mux, memoryapi.Deps{
 		Pool: cfg.Pool,
+	})
+
+	// NapCat (QQ channel) lifecycle API -- desktop only
+	napCatBaseDir, napCatErr := desktop.ResolveDataDir("")
+	if napCatErr != nil {
+		cfg.Logger.Warn("napcat: failed to resolve data dir", "err", napCatErr)
+	}
+	accountapi.RegisterNapCatRoutes(mux, accountapi.NapCatDeps{
+		AuthService: cfg.AuthService,
+		DataDir:     filepath.Join(napCatBaseDir, "napcat"),
 	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

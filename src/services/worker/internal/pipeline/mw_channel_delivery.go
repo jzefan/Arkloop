@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 
@@ -52,7 +54,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		var preloaded *data.DeliveryChannelRecord
 		var ux TelegramChannelUX
 		channelType := normalizedChannelTypeFromContext(rc)
-		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord") {
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -105,7 +107,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)
-		if pool == nil || (channelType != "telegram" && channelType != "discord") {
+		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq") {
 			return err
 		}
 		if ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
@@ -163,6 +165,12 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			if finalRecordErr := deliverDiscordChannelOutput(ctx, pool, repo, ledgerRepo, rc, discordClient, discordAPIBase, channel, output); finalRecordErr != nil {
 				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "discord channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+				return err
+			}
+		case "qq":
+			if finalRecordErr := deliverOneBotChannelOutput(ctx, pool, repo, ledgerRepo, rc, channel, output); finalRecordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "qq channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
 			}
 		}
@@ -236,6 +244,60 @@ func deliverDiscordChannelOutput(
 		return err
 	}
 	return nil
+}
+
+func deliverOneBotChannelOutput(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	obBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_ONEBOT_API_BASE_URL"))
+	if obBaseURL == "" {
+		obBaseURL = fmt.Sprintf("http://127.0.0.1:%d", resolveOneBotAPIPort(channel))
+	}
+	obToken := strings.TrimSpace(channel.Token)
+	client := onebotclient.NewClient(obBaseURL, obToken, nil)
+	sender := NewOneBotChannelSender(client, resolveSegmentDelay())
+
+	metadata := map[string]any{}
+	if rc.ChannelContext.ConversationType == "group" {
+		metadata["message_type"] = "group"
+	}
+
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		Metadata:     metadata,
+	}, output)
+	if err != nil {
+		return err
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, nil, messageIDs); err != nil {
+		slog.WarnContext(ctx, "qq channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+		return err
+	}
+	return nil
+}
+
+// resolveOneBotAPIPort 从 channel 配置读取 OneBot HTTP 端口，默认 3000
+func resolveOneBotAPIPort(channel *data.DeliveryChannelRecord) int {
+	if channel == nil || len(channel.ConfigJSON) == 0 {
+		return 3000
+	}
+	var cfg struct {
+		OneBotPort int `json:"onebot_port"`
+	}
+	if json.Unmarshal(channel.ConfigJSON, &cfg) == nil && cfg.OneBotPort > 0 {
+		return cfg.OneBotPort
+	}
+	return 3000
 }
 
 func discordReplyReference(rc *RunContext) *ChannelMessageRef {

@@ -28,6 +28,7 @@ var validChannelTypes = map[string]struct{}{
 	"telegram": {},
 	"discord":  {},
 	"feishu":   {},
+	"qq":       {},
 }
 
 type channelResponse struct {
@@ -265,7 +266,7 @@ func createChannel(
 	}
 
 	req.BotToken = strings.TrimSpace(req.BotToken)
-	if req.BotToken == "" {
+	if req.BotToken == "" && req.ChannelType != "qq" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "bot_token must not be empty", traceID, nil)
 		return
 	}
@@ -354,7 +355,7 @@ func createChannel(
 	defer tx.Rollback(r.Context()) //nolint:errcheck
 
 	var credentialsID *uuid.UUID
-	if secretsRepo != nil {
+	if secretsRepo != nil && req.BotToken != "" {
 		secret, err := secretsRepo.WithTx(tx).Create(r.Context(), actor.UserID, data.ChannelSecretName(channelID), req.BotToken)
 		if err != nil {
 			slog.Error("createChannel.secrets.Create", "err", err)

@@ -1879,6 +1879,53 @@ export async function deleteChannelBinding(accessToken: string, channelID: strin
   })
 }
 
+// --- NapCat (QQ channel) ---
+
+export type NapCatStatus = {
+  installed: boolean
+  running: boolean
+  logged_in: boolean
+  qq?: string
+  nickname?: string
+  qrcode_url?: string
+  qrcode_text_url?: string
+  login_error?: string
+  version?: string
+  setup_phase?: string
+  setup_progress?: number
+  setup_total?: number
+  setup_error?: string
+  logs?: string[]
+}
+
+export async function getNapCatStatus(accessToken: string): Promise<NapCatStatus> {
+  return apiFetch<NapCatStatus>('/v1/napcat/status', { accessToken })
+}
+
+export async function napCatDownload(accessToken: string): Promise<void> {
+  await apiFetch<void>('/v1/napcat/download', { method: 'POST', accessToken })
+}
+
+export async function napCatStart(accessToken: string): Promise<void> {
+  await apiFetch<void>('/v1/napcat/start', { method: 'POST', accessToken })
+}
+
+export async function napCatStop(accessToken: string): Promise<void> {
+  await apiFetch<void>('/v1/napcat/stop', { method: 'POST', accessToken })
+}
+
+export async function napCatRefreshQR(accessToken: string): Promise<void> {
+  await apiFetch<void>('/v1/napcat/refresh-qr', { method: 'POST', accessToken })
+}
+
+export async function napCatFetchQRCode(accessToken: string): Promise<string> {
+  const headers: HeadersInit = { Authorization: `Bearer ${accessToken}` }
+  const resp = await fetch(buildUrl('/v1/napcat/qrcode.png'), { headers, credentials: 'include' })
+  if (!resp.ok) throw new Error(`qrcode fetch failed: ${resp.status}`)
+  const blob = await resp.blob()
+  return URL.createObjectURL(blob)
+}
+
 // external skills
 
 export interface ExternalSkill {

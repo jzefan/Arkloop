@@ -1,0 +1,141 @@
+package onebotclient
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Client 是 OneBot11 HTTP API 客户端
+type Client struct {
+	baseURL    string
+	token      string
+	httpClient HTTPClient
+}
+
+func NewClient(baseURL string, token string, httpClient HTTPClient) *Client {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &Client{
+		baseURL:    base,
+		token:      strings.TrimSpace(token),
+		httpClient: httpClient,
+	}
+}
+
+// callJSON 通用 POST 请求
+func (c *Client) callJSON(ctx context.Context, action string, body any, out any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("onebot marshal %s: %w", action, err)
+	}
+	url := c.baseURL + "/" + action
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("onebot request %s: %w", action, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("onebot call %s: %w", action, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("onebot read %s: %w", action, err)
+	}
+
+	var envelope struct {
+		Status  string          `json:"status"`
+		RetCode int             `json:"retcode"`
+		Data    json.RawMessage `json:"data"`
+		Message string          `json:"message,omitempty"`
+		Wording string          `json:"wording,omitempty"`
+	}
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return fmt.Errorf("onebot decode %s: %w (body: %s)", action, err, string(respBody))
+	}
+	if envelope.RetCode != 0 {
+		msg := envelope.Message
+		if msg == "" {
+			msg = envelope.Wording
+		}
+		return fmt.Errorf("onebot %s failed: retcode=%d msg=%s", action, envelope.RetCode, msg)
+	}
+	if out != nil && len(envelope.Data) > 0 {
+		if err := json.Unmarshal(envelope.Data, out); err != nil {
+			return fmt.Errorf("onebot decode %s data: %w", action, err)
+		}
+	}
+	return nil
+}
+
+// SendPrivateMsg 发送私聊消息
+func (c *Client) SendPrivateMsg(ctx context.Context, userID string, message []MessageSegment) (*SendMsgResponse, error) {
+	req := map[string]any{
+		"user_id": userID,
+		"message": message,
+	}
+	var resp SendMsgResponse
+	if err := c.callJSON(ctx, "send_private_msg", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SendGroupMsg 发送群聊消息
+func (c *Client) SendGroupMsg(ctx context.Context, groupID string, message []MessageSegment) (*SendMsgResponse, error) {
+	req := map[string]any{
+		"group_id": groupID,
+		"message":  message,
+	}
+	var resp SendMsgResponse
+	if err := c.callJSON(ctx, "send_group_msg", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SendMsg 通用发送（自动区分私聊/群聊）
+func (c *Client) SendMsg(ctx context.Context, messageType, userID, groupID string, message []MessageSegment) (*SendMsgResponse, error) {
+	req := map[string]any{
+		"message_type": messageType,
+		"message":      message,
+	}
+	if userID != "" {
+		req["user_id"] = userID
+	}
+	if groupID != "" {
+		req["group_id"] = groupID
+	}
+	var resp SendMsgResponse
+	if err := c.callJSON(ctx, "send_msg", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetLoginInfo 获取当前登录的 QQ 号和昵称
+func (c *Client) GetLoginInfo(ctx context.Context) (*LoginInfo, error) {
+	var info LoginInfo
+	if err := c.callJSON(ctx, "get_login_info", struct{}{}, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}

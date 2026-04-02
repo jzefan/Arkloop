@@ -1,0 +1,674 @@
+package napcat
+
+import (
+	"archive/zip"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+const (
+	githubReleaseAPI = "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest"
+)
+
+func shellAssetName() string {
+	if runtime.GOOS == "windows" {
+		return "NapCat.Shell.Windows.Node.zip"
+	}
+	return "NapCat.Shell.zip"
+}
+
+type SetupPhase string
+
+const (
+	SetupPhaseNone        SetupPhase = ""
+	SetupPhaseFetchInfo   SetupPhase = "fetch_info"
+	SetupPhaseDownloading SetupPhase = "downloading"
+	SetupPhaseExtracting  SetupPhase = "extracting"
+	SetupPhaseStarting    SetupPhase = "starting"
+	SetupPhaseDone        SetupPhase = "done"
+	SetupPhaseError       SetupPhase = "error"
+)
+
+type Status struct {
+	Installed      bool       `json:"installed"`
+	Running        bool       `json:"running"`
+	LoggedIn       bool       `json:"logged_in"`
+	QQ             string     `json:"qq,omitempty"`
+	Nickname       string     `json:"nickname,omitempty"`
+	QRCodeURL      string     `json:"qrcode_url,omitempty"`
+	QRCodeTextURL  string     `json:"qrcode_text_url,omitempty"`
+	LoginError     string     `json:"login_error,omitempty"`
+	Version        string     `json:"version,omitempty"`
+	SetupPhase     SetupPhase `json:"setup_phase,omitempty"`
+	SetupProgress  int64      `json:"setup_progress,omitempty"`
+	SetupTotal     int64      `json:"setup_total,omitempty"`
+	SetupError     string     `json:"setup_error,omitempty"`
+	Logs           []string   `json:"logs,omitempty"`
+}
+
+type Manager struct {
+	mu         sync.Mutex
+	dataDir    string
+	installDir string
+	cmd        *exec.Cmd
+	cancel     context.CancelFunc
+	webuiPort  int
+	webuiToken string // 写入 webui.json 的原始 token
+	wsPort     int
+	wsToken    string
+	version    string
+	logger     *slog.Logger
+
+	// NapCat WebUI 鉴权凭证（base64 编码的 credential JSON）
+	webuiCredential string
+
+	// shared http clients
+	longClient  *http.Client // downloads
+	shortClient *http.Client // webui calls
+
+	// log ring buffer (separate lock to avoid contention with mu)
+	logMu  sync.Mutex
+	logBuf []string
+
+	// setup progress (lock-free reads)
+	setupPhase    atomic.Value // SetupPhase
+	setupProgress atomic.Int64
+	setupTotal    atomic.Int64
+	setupError    atomic.Value // string
+}
+
+func NewManager(dataDir string, logger *slog.Logger) *Manager {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	m := &Manager{
+		dataDir:     dataDir,
+		installDir:  filepath.Join(dataDir, "shell"),
+		longClient:  &http.Client{Timeout: 10 * time.Minute},
+		shortClient: &http.Client{Timeout: 5 * time.Second},
+		logger:      logger,
+		logBuf:      make([]string, 0, 200),
+	}
+	m.setupPhase.Store(SetupPhaseNone)
+	m.setupError.Store("")
+	return m
+}
+
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s := Status{
+		Installed:     m.isInstalled(),
+		Running:       m.cmd != nil && m.cmd.Process != nil,
+		Version:       m.version,
+		SetupPhase:    m.setupPhase.Load().(SetupPhase),
+		SetupProgress: m.setupProgress.Load(),
+		SetupTotal:    m.setupTotal.Load(),
+		SetupError:    m.setupError.Load().(string),
+	}
+
+	// snapshot logs
+	m.logMu.Lock()
+	if len(m.logBuf) > 0 {
+		s.Logs = make([]string, len(m.logBuf))
+		copy(s.Logs, m.logBuf)
+	}
+	m.logMu.Unlock()
+
+	if s.Running {
+		login := m.checkLoginStatus()
+		// isLogin=false + isOffline=false 意味着未登录（显示二维码）
+		// isLogin=true 意味着已登录在线
+		// isOffline=true 意味着曾登录但掉线（对我们来说也算已登录）
+		s.LoggedIn = login.IsLogin || login.IsOffline
+		s.QRCodeTextURL = login.QRCodeURL
+		s.LoginError = login.LoginError
+		// 用文件 mtime 做版本号，前端据此判断是否需要重新 fetch
+		if fi, err := os.Stat(m.qrcodePNGPath()); err == nil {
+			s.QRCodeURL = fmt.Sprintf("/v1/napcat/qrcode.png?v=%d", fi.ModTime().UnixMilli())
+		}
+		if s.LoggedIn {
+			info := m.getLoginInfo()
+			s.QQ = info.QQ
+			s.Nickname = info.Nickname
+		}
+	}
+	return s
+}
+
+// Setup triggers background download (if needed) + start.
+func (m *Manager) Setup() error {
+	phase := m.setupPhase.Load().(SetupPhase)
+	if phase == SetupPhaseFetchInfo || phase == SetupPhaseDownloading || phase == SetupPhaseExtracting || phase == SetupPhaseStarting {
+		return fmt.Errorf("napcat: setup already in progress")
+	}
+
+	m.setupPhase.Store(SetupPhaseFetchInfo)
+	m.setupProgress.Store(0)
+	m.setupTotal.Store(0)
+	m.setupError.Store("")
+
+	go m.runSetup()
+	return nil
+}
+
+func (m *Manager) runSetup() {
+	ctx := context.Background()
+
+	if m.isInstalled() {
+		m.appendLog("napcat: already installed, skipping download")
+	} else {
+		if err := m.download(ctx); err != nil {
+			m.logger.Error("napcat: download failed", "err", err)
+			m.setupError.Store(err.Error())
+			m.setupPhase.Store(SetupPhaseError)
+			return
+		}
+	}
+
+	m.setupPhase.Store(SetupPhaseStarting)
+	if err := m.Start(ctx); err != nil {
+		m.logger.Error("napcat: start failed", "err", err)
+		m.setupError.Store(err.Error())
+		m.setupPhase.Store(SetupPhaseError)
+		return
+	}
+
+	m.setupPhase.Store(SetupPhaseDone)
+}
+
+func (m *Manager) download(ctx context.Context) error {
+	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
+		return fmt.Errorf("napcat mkdir: %w", err)
+	}
+
+	m.setupPhase.Store(SetupPhaseFetchInfo)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubReleaseAPI, nil)
+	if err != nil {
+		return fmt.Errorf("napcat: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := m.longClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("napcat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			Size               int64  `json:"size"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return fmt.Errorf("napcat parse release: %w", err)
+	}
+
+	wantAsset := shellAssetName()
+	var downloadURL string
+	var assetSize int64
+	for _, a := range release.Assets {
+		if a.Name == wantAsset {
+			downloadURL = a.BrowserDownloadURL
+			assetSize = a.Size
+			break
+		}
+	}
+	if downloadURL == "" {
+		return fmt.Errorf("napcat: %s not found in release %s", wantAsset, release.TagName)
+	}
+
+	m.setupPhase.Store(SetupPhaseDownloading)
+	m.setupTotal.Store(assetSize)
+	m.setupProgress.Store(0)
+
+	m.appendLog(fmt.Sprintf("downloading %s (%s)", wantAsset, release.TagName))
+
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+	dlResp, err := m.longClient.Do(dlReq)
+	if err != nil {
+		return fmt.Errorf("napcat download: %w", err)
+	}
+	defer dlResp.Body.Close()
+
+	if assetSize == 0 && dlResp.ContentLength > 0 {
+		m.setupTotal.Store(dlResp.ContentLength)
+	}
+
+	tmpFile, err := os.CreateTemp(m.dataDir, "napcat-*.zip")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	pr := &progressReader{r: dlResp.Body, progress: &m.setupProgress}
+	if _, err := io.Copy(tmpFile, pr); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("napcat save: %w", err)
+	}
+	tmpFile.Close()
+
+	m.setupPhase.Store(SetupPhaseExtracting)
+	m.appendLog("extracting...")
+
+	if err := os.RemoveAll(m.installDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.installDir, 0755); err != nil {
+		return err
+	}
+	if err := unzip(tmpPath, m.installDir); err != nil {
+		return fmt.Errorf("napcat unzip: %w", err)
+	}
+
+	m.mu.Lock()
+	m.version = release.TagName
+	m.mu.Unlock()
+
+	m.appendLog(fmt.Sprintf("installed %s", release.TagName))
+	return nil
+}
+
+// Start launches the NapCat Shell subprocess.
+// NapCat handles wrapper.node resolution internally.
+func (m *Manager) Start(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cmd != nil && m.cmd.Process != nil {
+		return fmt.Errorf("napcat: already running")
+	}
+	if !m.isInstalled() {
+		return fmt.Errorf("napcat: not installed")
+	}
+
+	nodeExe := m.resolveBundledNode()
+	if nodeExe == "" {
+		var err error
+		nodeExe, err = FindNodeBinary()
+		if err != nil {
+			return fmt.Errorf("napcat: node not found")
+		}
+	}
+
+	m.webuiPort = 6099
+	m.wsPort = 6098
+	m.webuiToken = randomHex(16)
+	m.wsToken = randomHex(16)
+
+	configDir := filepath.Join(m.installDir, "napcat", "config")
+	if err := WriteWebUIConfig(configDir, m.webuiPort, m.webuiToken); err != nil {
+		return fmt.Errorf("napcat config: %w", err)
+	}
+
+	// let NapCat resolve wrapper.node on its own
+	sysEnv := os.Environ()
+	env := make([]string, len(sysEnv), len(sysEnv)+1)
+	copy(env, sysEnv)
+	env = append(env, "NAPCAT_DISABLE_MULTI_PROCESS=1")
+
+	entryScript := m.resolveEntryScript()
+	if entryScript == "" {
+		return fmt.Errorf("napcat: entry script not found in %s", m.installDir)
+	}
+
+	procCtx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+
+	cmd := exec.CommandContext(procCtx, nodeExe, entryScript)
+	cmd.Dir = m.installDir
+	cmd.Env = env
+	cmd.Stdout = m.newLogWriter()
+	cmd.Stderr = m.newLogWriter()
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return fmt.Errorf("napcat start: %w", err)
+	}
+	m.cmd = cmd
+
+	go func() {
+		err := cmd.Wait()
+		m.mu.Lock()
+		m.cmd = nil
+		m.cancel = nil
+		m.mu.Unlock()
+		if err != nil && !strings.Contains(err.Error(), "signal: killed") {
+			m.appendLog(fmt.Sprintf("process exited: %v", err))
+		}
+	}()
+
+	m.appendLog(fmt.Sprintf("started (pid %d)", cmd.Process.Pid))
+
+	// 获取 WebUI 鉴权凭证（启动后 WebUI 可能需要几秒就绪）
+	go m.acquireCredential()
+
+	return nil
+}
+
+// acquireCredential 通过 NapCat WebUI 的 /api/auth/login 获取签名凭证。
+// NapCat 不接受原始 token 作为 Bearer，需要先登录拿 credential。
+func (m *Manager) acquireCredential() {
+	m.mu.Lock()
+	port, token := m.webuiPort, m.webuiToken
+	m.mu.Unlock()
+
+	hash := sha256Hex(token + ".napcat")
+
+	loginURL := fmt.Sprintf("http://127.0.0.1:%d/api/auth/login", port)
+	payload := map[string]string{"hash": hash}
+
+	// WebUI 启动需要时间，重试几次
+	var credential string
+	for i := 0; i < 10; i++ {
+		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
+		body, err := m.webuiPost(loginURL, "", payload)
+		if err != nil {
+			continue
+		}
+		var resp struct {
+			Code int `json:"code"`
+			Data struct {
+				Credential string `json:"Credential"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(body, &resp) != nil {
+			continue
+		}
+		if resp.Code == 0 && resp.Data.Credential != "" {
+			credential = resp.Data.Credential
+			break
+		}
+	}
+
+	m.mu.Lock()
+	m.webuiCredential = credential
+	m.mu.Unlock()
+
+	if credential != "" {
+		m.appendLog("webui credential acquired")
+	} else {
+		m.appendLog("webui credential acquisition failed")
+	}
+}
+
+func (m *Manager) Stop() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	if m.cmd != nil && m.cmd.Process != nil {
+		m.cmd.Process.Kill()
+		m.cmd = nil
+	}
+	m.appendLog("stopped")
+	return nil
+}
+
+func (m *Manager) RefreshQRCode() error {
+	m.mu.Lock()
+	port, credential := m.webuiPort, m.webuiCredential
+	m.mu.Unlock()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/RefreshQRcode", port)
+	_, err := m.webuiPost(url, credential, nil)
+	return err
+}
+
+func (m *Manager) WSEndpoint() (addr string, token string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return fmt.Sprintf("ws://127.0.0.1:%d", m.wsPort), m.wsToken
+}
+
+// --- internal ---
+
+func (m *Manager) qrcodePNGPath() string {
+	return filepath.Join(m.installDir, "napcat", "cache", "qrcode.png")
+}
+
+// QRCodeImagePath 返回本地 qrcode.png 的绝对路径
+func (m *Manager) QRCodeImagePath() string {
+	return m.qrcodePNGPath()
+}
+
+func (m *Manager) isInstalled() bool {
+	return m.resolveEntryScript() != ""
+}
+
+func (m *Manager) resolveEntryScript() string {
+	// index.js is the correct Shell entry -- it sets NAPCAT_WRAPPER_PATH,
+	// NAPCAT_QQ_PACKAGE_INFO_PATH, NAPCAT_QQ_VERSION_CONFIG_PATH
+	// before importing napcat/napcat.mjs.
+	p := filepath.Join(m.installDir, "index.js")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
+func (m *Manager) resolveBundledNode() string {
+	for _, c := range []string{
+		filepath.Join(m.installDir, "node.exe"),
+		filepath.Join(m.installDir, "node", "node.exe"),
+	} {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	// search node-v*/node.exe (common in portable node zips)
+	matches, _ := filepath.Glob(filepath.Join(m.installDir, "node-v*", "node.exe"))
+	if len(matches) > 0 {
+		return matches[0]
+	}
+	return ""
+}
+
+type loginStatusResponse struct {
+	IsLogin    bool   `json:"isLogin"`
+	IsOffline  bool   `json:"isOffline"`
+	QRCodeURL  string `json:"qrcodeurl"`
+	LoginError string `json:"loginError"`
+}
+
+func (m *Manager) checkLoginStatus() loginStatusResponse {
+	if m.webuiPort == 0 {
+		return loginStatusResponse{}
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/CheckLoginStatus", m.webuiPort)
+	body, err := m.webuiGetRaw(url, m.webuiCredential)
+	if err != nil {
+		return loginStatusResponse{}
+	}
+	var resp struct {
+		Code int                 `json:"code"`
+		Data loginStatusResponse `json:"data"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return loginStatusResponse{}
+	}
+	return resp.Data
+}
+
+type loginInfoResult struct {
+	QQ       string `json:"uin"`
+	Nickname string `json:"nick"`
+}
+
+func (m *Manager) getLoginInfo() loginInfoResult {
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/GetLoginInfo", m.webuiPort)
+	body, err := m.webuiGetRaw(url, m.webuiCredential)
+	if err != nil {
+		return loginInfoResult{}
+	}
+	var resp struct {
+		Code int             `json:"code"`
+		Data loginInfoResult `json:"data"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return loginInfoResult{}
+	}
+	return resp.Data
+}
+
+func (m *Manager) webuiGetRaw(url, credential string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if credential != "" {
+		req.Header.Set("Authorization", "Bearer "+credential)
+	}
+	resp, err := m.shortClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+func (m *Manager) webuiPost(url, credential string, body any) ([]byte, error) {
+	var reader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		reader = strings.NewReader(string(data))
+	}
+	req, err := http.NewRequest(http.MethodPost, url, reader)
+	if err != nil {
+		return nil, err
+	}
+	if credential != "" {
+		req.Header.Set("Authorization", "Bearer "+credential)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := m.shortClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// --- log ring buffer ---
+
+const maxLogLines = 200
+
+func (m *Manager) appendLog(line string) {
+	m.logMu.Lock()
+	if len(m.logBuf) >= maxLogLines {
+		m.logBuf = m.logBuf[1:]
+	}
+	m.logBuf = append(m.logBuf, line)
+	m.logMu.Unlock()
+}
+
+type logWriter struct {
+	mgr *Manager
+}
+
+func (m *Manager) newLogWriter() *logWriter {
+	return &logWriter{mgr: m}
+}
+
+func (w *logWriter) Write(p []byte) (n int, err error) {
+	lines := strings.Split(strings.TrimRight(string(p), "\n"), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			w.mgr.appendLog(line)
+		}
+	}
+	return len(p), nil
+}
+
+// --- progress reader ---
+
+type progressReader struct {
+	r        io.Reader
+	progress *atomic.Int64
+}
+
+func (pr *progressReader) Read(p []byte) (n int, err error) {
+	n, err = pr.r.Read(p)
+	if n > 0 {
+		pr.progress.Add(int64(n))
+	}
+	return
+}
+
+// --- zip ---
+
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		fpath := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(filepath.Clean(fpath), filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("invalid zip path: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, 0755)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+			return err
+		}
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
