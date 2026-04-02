@@ -219,7 +219,7 @@ func (p *Provider) Delete(ctx context.Context, ident memory.MemoryIdentity, uri 
 // current entries so the notebook injection stays up to date.
 func (p *Provider) rebuildSnapshot(ctx context.Context, ident memory.MemoryIdentity) error {
 	rows, err := p.db.Query(ctx,
-		`SELECT scope, category, entry_key, content
+		`SELECT id, scope, category, entry_key, content
 		 FROM desktop_memory_entries
 		 WHERE account_id = $1 AND user_id = $2 AND agent_id = $3
 		 ORDER BY created_at ASC`,
@@ -232,11 +232,11 @@ func (p *Provider) rebuildSnapshot(ctx context.Context, ident memory.MemoryIdent
 
 	var lines []string
 	for rows.Next() {
-		var sc, cat, key, content string
-		if err := rows.Scan(&sc, &cat, &key, &content); err != nil {
+		var id, sc, cat, key, content string
+		if err := rows.Scan(&id, &sc, &cat, &key, &content); err != nil {
 			return fmt.Errorf("memory rebuild scan: %w", err)
 		}
-		lines = append(lines, buildAbstract(sc, cat, key, content))
+		lines = append(lines, buildSnapshotLine(id, sc, cat, key, content))
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("memory rebuild rows: %w", err)
@@ -350,6 +350,11 @@ func buildAbstract(scope, category, key, content string) string {
 		return fmt.Sprintf("[%s/%s/%s] %s", scope, category, key, content)
 	}
 	return fmt.Sprintf("[%s/%s] %s", scope, category, content)
+}
+
+func buildSnapshotLine(id, scope, category, key, content string) string {
+	uri := idToURI(id)
+	return fmt.Sprintf("(%s) %s", uri, buildAbstract(scope, category, key, content))
 }
 
 // parseWritableContent extracts scope/category/key from the formatted content
