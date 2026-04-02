@@ -149,7 +149,8 @@ function extractMessageText(msg: Record<string, unknown>): string {
         if (typeof part === 'string') return part
         if (typeof part === 'object' && part !== null) {
           const record = part as Record<string, unknown>
-          return typeof record.text === 'string' ? record.text : JSON.stringify(record)
+          if (record.type === 'tool_use' || record.type === 'tool_result') return ''
+          return typeof record.text === 'string' ? record.text : ''
         }
         return ''
       })
