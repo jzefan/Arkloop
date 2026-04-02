@@ -5,6 +5,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -393,14 +394,15 @@ func TestHeartbeatPrepareMiddlewareDoesNotDuplicateHeartbeatDecisionTool(t *test
 
 	mw := NewHeartbeatPrepareMiddleware()
 	if err := mw(context.Background(), rc, func(_ context.Context, rc *RunContext) error {
-		if len(rc.Messages) != 2 {
-			t.Fatalf("expected heartbeat system message and trigger, got %d", len(rc.Messages))
+		if len(rc.Messages) != 1 {
+			t.Fatalf("expected single heartbeat user message, got %d", len(rc.Messages))
 		}
-		if rc.Messages[0].Role != "system" {
-			t.Fatalf("expected heartbeat info as system message, got %#v", rc.Messages[0])
+		if rc.Messages[0].Role != "user" {
+			t.Fatalf("expected heartbeat check as user message, got %#v", rc.Messages[0])
 		}
-		if rc.Messages[1].Role != "user" || llm.PartPromptText(rc.Messages[1].Content[0]) != heartbeatTriggerText {
-			t.Fatalf("expected heartbeat trigger user message, got %#v", rc.Messages[1])
+		text := llm.PartPromptText(rc.Messages[0].Content[0])
+		if !strings.Contains(text, "[SYSTEM_HEARTBEAT_CHECK]") {
+			t.Fatalf("expected SYSTEM_HEARTBEAT_CHECK marker, got %q", text)
 		}
 		count := 0
 		for _, spec := range rc.ToolSpecs {
