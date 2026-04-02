@@ -965,6 +965,17 @@ export interface LocaleStrings {
     memoryNoCompatibleModels: string;
     memoryProviderActivated: string;
     memoryNoEmbeddingModels: string;
+    // notebook settings tab
+    notebook: string;
+    notebookSettingsTitle: string;
+    notebookSettingsDesc: string;
+    notebookAddPlaceholder: string;
+    notebookAddButton: string;
+    notebookSearchPlaceholder: string;
+    // memory config modal
+    memoryConfigureButton: string;
+    memoryConfigureModalTitle: string;
+    memoryNotConfiguredHint: string;
     // tool model
     toolModel: string;
     toolModelDesc: string;

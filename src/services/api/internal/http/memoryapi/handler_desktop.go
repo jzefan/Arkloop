@@ -54,6 +54,8 @@ func (h *handler) dispatchEntries(w nethttp.ResponseWriter, r *nethttp.Request) 
 	switch r.Method {
 	case nethttp.MethodGet:
 		h.listEntries(w, r)
+	case nethttp.MethodPost:
+		h.addEntry(w, r)
 	default:
 		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
 	}
@@ -105,6 +107,46 @@ func (h *handler) listEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
 		entries = []MemoryEntry{}
 	}
 	writeJSON(w, map[string]any{"entries": entries})
+}
+
+func (h *handler) addEntry(w nethttp.ResponseWriter, r *nethttp.Request) {
+	type addRequest struct {
+		Content  string `json:"content"`
+		Category string `json:"category"`
+	}
+	var req addRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpkit.WriteError(w, nethttp.StatusBadRequest, "bad_request", "invalid json body", "", nil)
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	if req.Content == "" {
+		httpkit.WriteError(w, nethttp.StatusBadRequest, "bad_request", "content is required", "", nil)
+		return
+	}
+	if req.Category == "" {
+		req.Category = "general"
+	}
+
+	accountID := auth.DesktopAccountID.String()
+	userID := auth.DesktopUserID.String()
+	agentID := agentIDFromQuery(r)
+
+	var entry MemoryEntry
+	err := h.pool.QueryRow(r.Context(),
+		`INSERT INTO desktop_memory_entries (account_id, user_id, agent_id, scope, category, entry_key, content)
+		 VALUES ($1, $2, $3, 'user', $4, '', $5)
+		 RETURNING id, scope, category, entry_key, content, created_at`,
+		accountID, userID, agentID, req.Category, req.Content,
+	).Scan(&entry.ID, &entry.Scope, &entry.Category, &entry.Key, &entry.Content, &entry.CreatedAt)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+	if err := rebuildMemoryBlock(r.Context(), h.pool, accountID, userID, agentID); err != nil {
+		_ = err // Non-fatal; entry is already inserted.
+	}
+	writeJSON(w, map[string]any{"entry": entry})
 }
 
 func (h *handler) deleteEntry(w nethttp.ResponseWriter, r *nethttp.Request, id string) {
@@ -176,7 +218,7 @@ func listMemoryEntries(ctx context.Context, pool data.DB, accountID, userID, _ s
 func getMemoryBlock(ctx context.Context, pool data.DB, accountID, userID, agentID string) (string, error) {
 	var block string
 	err := pool.QueryRow(ctx,
-		`SELECT notebook_block FROM user_notebook_snapshots
+		`SELECT memory_block FROM user_memory_snapshots
 		 WHERE account_id = $1 AND user_id = $2 AND agent_id = $3`,
 		accountID, userID, agentID,
 	).Scan(&block)

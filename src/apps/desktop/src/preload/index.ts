@@ -275,6 +275,7 @@ export type ArkloopDesktopApi = {
     list: (agentId?: string) => Promise<{ entries: MemoryEntry[] }>
     delete: (id: string, agentId?: string) => Promise<{ status: string }>
     getSnapshot: (agentId?: string) => Promise<{ memory_block: string }>
+    add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
   }
   app: {
     getVersion: () => Promise<string>
@@ -439,6 +440,7 @@ const api: ArkloopDesktopApi = {
     list: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:list', agentId),
     delete: (id: string, agentId?: string) => ipcRenderer.invoke('arkloop:memory:delete', id, agentId),
     getSnapshot: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:get-snapshot', agentId),
+    add: (content: string, category?: string) => ipcRenderer.invoke('arkloop:memory:add', content, category),
   },
 
   app: {

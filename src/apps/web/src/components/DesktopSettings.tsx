@@ -6,6 +6,7 @@ import {
   Settings,
   Cpu,
   Brain,
+  Database,
   Bot,
   Radio,
   Puzzle,
@@ -35,6 +36,7 @@ import { MCPSettings } from "./settings/MCPSettings";
 import { ToolsSettings } from "./settings/ToolsSettings";
 import { AdvancedSettings } from "./settings/AdvancedSettings";
 import { MemorySettings } from "./settings/MemorySettings";
+import { NotebookSettings } from "./settings/NotebookSettings";
 import { ConnectionSettings } from "./settings/ConnectionSettings";
 import { ChatSettings } from "./settings/ChatSettings";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings";
@@ -55,6 +57,7 @@ export type DesktopSettingsKey =
   | "mcp"
   | "tools"
   | "advanced"
+  | "notebook"
   | "memory"
   | "connection"
   | "chat"
@@ -80,7 +83,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: "skills",     icon: Puzzle },
   { key: "mcp",        icon: Server },
   { key: "tools",      icon: Wrench },
-  { key: "memory",     icon: Brain },
+  { key: "notebook",   icon: Brain },
+  { key: "memory",     icon: Database },
   { key: "chat",       icon: MessageSquare },
   { key: "advanced",   icon: SlidersHorizontal },
 ];
@@ -256,6 +260,8 @@ export function DesktopSettings({
         return <ToolsSettings accessToken={accessToken} />;
       case "advanced":
         return <AdvancedSettings accessToken={accessToken} />;
+      case "notebook":
+        return <NotebookSettings />;
       case "memory":
         return <MemorySettings accessToken={accessToken} />;
       case "connection":
@@ -338,6 +344,7 @@ export function DesktopSettings({
         <div
           ref={scrollRef}
           className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6"
+          style={{ scrollbarGutter: 'stable' }}
           onScroll={(e) => setScrolled((e.currentTarget as HTMLDivElement).scrollTop > 8)}
         >
           {hydrationLoading ? <SettingsPaneFallback /> : renderContent()}

@@ -272,6 +272,21 @@ export function registerIpcHandlers(
     return resp
   })
 
+  ipcMain.handle('arkloop:memory:add', async (_event, content: string, category?: string) => {
+    const apiBaseUrl = getLocalApiBaseUrl()
+    if (!apiBaseUrl) return { entry: null }
+    const token = getDesktopAccessToken()
+    const url = `${apiBaseUrl}/v1/desktop/memory/entries`
+    const body = JSON.stringify({ content, category: category || undefined })
+    const result = await makeApiRequestRaw(url, 'POST', token, body)
+    if (!result.body) return { entry: null }
+    try {
+      return JSON.parse(result.body)
+    } catch {
+      return { entry: null }
+    }
+  })
+
   ipcMain.handle('arkloop:app:version', () => {
     const { app } = require('electron')
     return app.getVersion()
