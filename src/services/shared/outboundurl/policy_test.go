@@ -16,13 +16,15 @@ func TestNormalizeBaseURL(t *testing.T) {
 		wantReason string
 	}{
 		{name: "https public allowed", raw: "https://example.com/v1/", want: "https://example.com/v1"},
-		{name: "http public denied", raw: "http://example.com/v1", wantReason: "insecure_scheme_denied"},
+		{name: "http public allowed", raw: "http://example.com/v1", want: "http://example.com/v1"},
 		{name: "userinfo denied", raw: "https://user:pass@example.com/v1", wantReason: "userinfo_denied"},
 		{name: "query denied", raw: "https://example.com/v1?q=1", wantReason: "query_denied"},
 		{name: "fragment denied", raw: "https://example.com/v1#frag", wantReason: "fragment_denied"},
-		{name: "private ip denied", raw: "https://10.0.0.1/v1", wantReason: "private_ip_denied"},
-		{name: "fake ip denied by default", raw: "https://198.18.0.1/v1", wantReason: "private_ip_denied"},
-		{name: "localhost denied", raw: "https://localhost:8443/v1", wantReason: "localhost_denied"},
+		{name: "private ip allowed", raw: "https://10.0.0.1/v1", want: "https://10.0.0.1/v1"},
+		{name: "fake ip allowed", raw: "https://198.18.0.1/v1", want: "https://198.18.0.1/v1"},
+		{name: "localhost allowed", raw: "https://localhost:8443/v1", want: "https://localhost:8443/v1"},
+		{name: "loopback http allowed", raw: "http://127.0.0.1:8080/v1", want: "http://127.0.0.1:8080/v1"},
+		{name: "private ip http allowed", raw: "http://192.168.1.100:8080/v1", want: "http://192.168.1.100:8080/v1"},
 	}
 
 	for _, tt := range tests {
@@ -40,20 +42,6 @@ func TestNormalizeBaseURL(t *testing.T) {
 			assertDeniedReason(t, err, tt.wantReason)
 		})
 	}
-}
-
-func TestNormalizeBaseURLAllowLoopbackHTTP(t *testing.T) {
-	policy := Policy{AllowLoopbackHTTP: true}
-	got, err := policy.NormalizeBaseURL("http://127.0.0.1:8080/v1/")
-	if err != nil {
-		t.Fatalf("NormalizeBaseURL() error = %v", err)
-	}
-	if got != "http://127.0.0.1:8080/v1" {
-		t.Fatalf("NormalizeBaseURL() = %q", got)
-	}
-
-	_, err = policy.NormalizeBaseURL("http://example.com/v1")
-	assertDeniedReason(t, err, "insecure_scheme_denied")
 }
 
 func TestNormalizeBaseURLTrustFakeIP(t *testing.T) {
