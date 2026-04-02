@@ -378,7 +378,9 @@ func (w *eventWriter) Append(
 		w.captureAssistantTurnOutput()
 	}
 
-	w.accumUsage(ev.DataJSON)
+	if shouldAccumulateUsageForEvent(ev.Type) {
+		w.accumUsage(ev.DataJSON)
+	}
 
 	if ev.Type == "tool.call" {
 		if w.telegramToolBoundaryFlush != nil && len(w.assistantDeltas) > w.telegramFlushSentDeltas {
@@ -695,6 +697,15 @@ func (w *eventWriter) accumUsage(dataJSON map[string]any) {
 		if v, ok := toInt64(cost["amount_micros"]); ok {
 			w.totalCostUSD += float64(v) / 1_000_000.0
 		}
+	}
+}
+
+func shouldAccumulateUsageForEvent(eventType string) bool {
+	switch eventType {
+	case "run.completed", "run.failed", "run.cancelled", "run.interrupted":
+		return false
+	default:
+		return true
 	}
 }
 

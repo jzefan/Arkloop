@@ -1905,7 +1905,9 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		w.captureAssistantTurnOutput()
 	}
 
-	w.accumUsage(ev.DataJSON)
+	if shouldAccumulateUsageForDesktopEvent(ev.Type) {
+		w.accumUsage(ev.DataJSON)
+	}
 
 	flushChunk := ""
 	if ev.Type == "tool.call" {
@@ -2175,6 +2177,15 @@ func (w *desktopEventWriter) accumUsage(dataJSON map[string]any) {
 	}
 	if v, ok := toDesktopFloat64(usage["cost_usd"]); ok {
 		w.totalCostUSD += v
+	}
+}
+
+func shouldAccumulateUsageForDesktopEvent(eventType string) bool {
+	switch eventType {
+	case "run.completed", "run.failed", "run.cancelled", "run.interrupted":
+		return false
+	default:
+		return true
 	}
 }
 
