@@ -155,8 +155,8 @@ time: "2026-03-28T13:31:16Z"
 		t.Fatalf("expected compacted envelope burst to be 1 text part, got %d", got)
 	}
 	text := llm.PartPromptText(rc.Messages[1].Content[0])
-	if strings.Count(text, `conversation-title: "Arkloop"`) != 1 {
-		t.Fatalf("expected single public conversation title header, got %q", text)
+	if strings.Contains(text, "---") {
+		t.Fatalf("expected compacted burst to omit yaml separators, got %q", text)
 	}
 	for _, forbidden := range []string{`platform-username:`, `sender-ref:`, `[Telegram in Arkloop]`} {
 		if strings.Contains(text, forbidden) {
@@ -164,15 +164,71 @@ time: "2026-03-28T13:31:16Z"
 		}
 	}
 	for _, want := range []string{
-		`channel: "telegram"`,
-		`conversation-type: "supergroup"`,
-		`[13:31:00] A ck: xhelogo`,
-		`[13:31:05] A ck: 怎么那么像`,
+		`Telegram supergroup`,
+		`title: Arkloop`,
+		`[13:31:00-13:31:05] A ck:`,
+		`  xhelogo`,
+		`  怎么那么像`,
 		`[13:31:16] 清凤: 哈`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected compacted burst to contain %q, got %q", want, text)
 		}
+	}
+}
+
+func TestCompactTelegramGroupEnvelopeBurst_mergesConsecutiveMessagesFromSameSpeaker(t *testing.T) {
+	tail := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "A ck"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "3e4496b5-9544-4669-b4a7-790b11224c3e"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:00Z"
+---
+[Telegram in Arkloop] 第一条`}}},
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "A ck"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "3e4496b5-9544-4669-b4a7-790b11224c3e"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:05Z"
+---
+[Telegram in Arkloop] 第二条
+
+换行`}}},
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "清凤"
+channel: "telegram"
+conversation-type: "supergroup"
+sender-ref: "509cb603-ae05-43f1-be4b-a8728a68e16f"
+conversation-title: "Arkloop"
+time: "2026-03-28T13:31:16Z"
+---
+[Telegram in Arkloop] 第三条`}}},
+	}
+
+	text, ok := compactTelegramGroupEnvelopeBurst(tail)
+	if !ok {
+		t.Fatal("expected telegram burst to compact")
+	}
+	for _, want := range []string{
+		`Telegram supergroup`,
+		`title: Arkloop`,
+		`[13:31:00-13:31:05] A ck:`,
+		`  第一条`,
+		`  第二条`,
+		`  换行`,
+		`[13:31:16] 清凤: 第三条`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected compacted burst to contain %q, got %q", want, text)
+		}
+	}
+	if strings.Contains(text, `[13:31:05] A ck:`) {
+		t.Fatalf("expected same speaker lines to merge, got %q", text)
 	}
 }
 

@@ -15,6 +15,7 @@ import {
   type WebSearchPhaseStep,
 } from './CopTimeline'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { recordPerfCount, recordPerfValue } from '../perfDebug'
 import { useTypewriter } from '../hooks/useTypewriter'
 import { ArtifactStreamBlock, extractPartialArtifactFields, type StreamingArtifactEntry } from './ArtifactStreamBlock'
 import { WidgetBlock } from './WidgetBlock'
@@ -461,6 +462,17 @@ function LiveTurnMarkdown({
   typewriterDone: boolean
 } & Omit<ComponentProps<typeof MarkdownRenderer>, 'content'>) {
   const displayed = useTypewriter(content, typewriterDone)
+  useEffect(() => {
+    recordPerfCount('live_turn_markdown_render', 1, {
+      contentLength: content.length,
+      displayedLength: displayed.length,
+      typewriterDone,
+    })
+    recordPerfValue('live_turn_markdown_displayed', displayed.length, 'chars', {
+      contentLength: content.length,
+      typewriterDone,
+    })
+  }, [content.length, displayed.length, typewriterDone])
   return <MarkdownRenderer content={displayed} {...rest} />
 }
 

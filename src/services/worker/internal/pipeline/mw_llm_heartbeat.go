@@ -22,6 +22,7 @@ const (
 	eventTypeMemoryHeartbeatAppendFailed = "memory.heartbeat.append_failed"
 	eventTypeMemoryHeartbeatCommitFailed = "memory.heartbeat.commit_failed"
 	eventTypeMemoryHeartbeatCommitted    = "memory.heartbeat.committed"
+	heartbeatTriggerText                 = "HEARTBEAT_TRIGGER"
 )
 
 // isHeartbeatRun checks whether run_kind=heartbeat is set in InputJSON or JobPayload.
@@ -84,7 +85,7 @@ func IsHeartbeatRunContext(rc *RunContext) bool {
 	return rc.HeartbeatRun || isHeartbeatRun(rc.InputJSON, rc.JobPayload)
 }
 
-// NewHeartbeatPrepareMiddleware 为心跳 run 注入合成 user 消息，并在 next 返回后将
+// NewHeartbeatPrepareMiddleware 为心跳 run 注入独立 system heartbeat 消息和最小 user trigger，并在 next 返回后将
 // heartbeat_decision 工具报告的 memory_fragments 提交到 MemoryProvider。
 // 非心跳 run 直接透传。
 func NewHeartbeatPrepareMiddleware() RunMiddleware {
@@ -124,8 +125,13 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		sb.WriteString(fmt.Sprintf("new_user_messages: %d\n", newUserMessages))
 
 		rc.Messages = append(rc.Messages, llm.Message{
-			Role:    "user",
+			Role:    "system",
 			Content: []llm.ContentPart{{Type: "text", Text: sb.String()}},
+		})
+		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
+		rc.Messages = append(rc.Messages, llm.Message{
+			Role:    "user",
+			Content: []llm.ContentPart{{Type: "text", Text: heartbeatTriggerText}},
 		})
 		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
 
