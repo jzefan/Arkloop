@@ -5,6 +5,7 @@ import {
   CheckCircle, XCircle,
 } from 'lucide-react'
 import { PillToggle } from '@arkloop/shared'
+import { TabBar } from '@arkloop/shared/components/prompt-injection'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 
 // ---------------------------------------------------------------------------
@@ -498,33 +499,16 @@ function ButtonsPreview() {
               </button>
             </div>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-[var(--c-text-muted)]">Theme segmented</span>
-              <div
-                className="flex w-[240px] rounded-lg p-[3px]"
-                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-              >
-                <button
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
-                  style={{ background: 'var(--c-bg-deep)', color: 'var(--c-text-heading)', fontWeight: 500 }}
-                >
-                  <Monitor size={13} />
-                  <span>System</span>
-                </button>
-                <button
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
-                  style={{ background: 'transparent', color: 'var(--c-text-tertiary)', fontWeight: 400 }}
-                >
-                  <Sun size={13} />
-                  <span>Light</span>
-                </button>
-                <button
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs transition-colors duration-100"
-                  style={{ background: 'transparent', color: 'var(--c-text-tertiary)', fontWeight: 400 }}
-                >
-                  <Moon size={13} />
-                  <span>Dark</span>
-                </button>
-              </div>
+              <span className="text-xs text-[var(--c-text-muted)]">TabBar (mode-switch)</span>
+              <TabBar
+                tabs={[
+                  { key: 'system', label: 'System' },
+                  { key: 'light', label: 'Light' },
+                  { key: 'dark', label: 'Dark' },
+                ]}
+                active="system"
+                onChange={() => {}}
+              />
             </div>
           </div>
         </div>

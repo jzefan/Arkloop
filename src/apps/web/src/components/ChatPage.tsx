@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, Check, ChevronDown, Glasses, Info, Loader2, Pencil, Share2, Star, Trash2, X, AlertCircle } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
-import { AutoResizeTextarea, Button } from '@arkloop/shared'
+import { AutoResizeTextarea, Button, DebugTrigger } from '@arkloop/shared'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
@@ -144,6 +144,7 @@ import {
   type WidgetRef,
   migrateMessageMetadata,
   readDeveloperShowRunEvents,
+  readDeveloperShowDebugPanel,
   readMsgRunEvents,
   writeMsgRunEvents,
   type MsgRunEvent,
@@ -1087,6 +1088,7 @@ export function ChatPage() {
 
   // --- 开发者调试 ---
   const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [runDetailPanelRunId, setRunDetailPanelRunId] = useState<string | null>(null)
   const [_msgRunEventsMap, setMsgRunEventsMap] = useState<Map<string, MsgRunEvent[]>>(new Map())
 
@@ -1096,6 +1098,14 @@ export function ChatPage() {
     }
     window.addEventListener('arkloop:developer_show_run_events', handleChange)
     return () => window.removeEventListener('arkloop:developer_show_run_events', handleChange)
+  }, [])
+
+  useEffect(() => {
+    const handleChange = (e: Event) => {
+      setShowDebugPanel((e as CustomEvent<boolean>).detail)
+    }
+    window.addEventListener('arkloop:developer_show_debug_panel', handleChange)
+    return () => window.removeEventListener('arkloop:developer_show_debug_panel', handleChange)
   }, [])
 
   // --- 标题下拉菜单 ---
@@ -4521,6 +4531,8 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
           onClose={() => setRunDetailPanelRunId(null)}
         />
       )}
+
+      {showDebugPanel && <DebugTrigger />}
     </div>
   )
 }

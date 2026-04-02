@@ -506,7 +506,15 @@ export function writeMessageSearchSteps(messageId: string, steps: MessageSearchS
 
 export type MemoryActionRef = {
   id: string
-  toolName: 'memory_write' | 'memory_search' | 'memory_read' | 'memory_forget'
+  toolName:
+    | 'memory_write'
+    | 'memory_search'
+    | 'memory_read'
+    | 'memory_forget'
+    | 'notebook_write'
+    | 'notebook_read'
+    | 'notebook_edit'
+    | 'notebook_forget'
   args: { category?: string; key?: string; query?: string; uri?: string }
   status: 'active' | 'done' | 'error'
   resultSummary?: string
@@ -532,7 +540,16 @@ export function readMessageMemoryActions(messageId: string): MemoryActionRef[] |
         const status = item.status
         const resultSummary = typeof item.resultSummary === 'string' ? item.resultSummary : undefined
         if (!id) return null
-        if (toolName !== 'memory_write' && toolName !== 'memory_search' && toolName !== 'memory_read' && toolName !== 'memory_forget') return null
+        if (
+          toolName !== 'memory_write'
+          && toolName !== 'memory_search'
+          && toolName !== 'memory_read'
+          && toolName !== 'memory_forget'
+          && toolName !== 'notebook_write'
+          && toolName !== 'notebook_read'
+          && toolName !== 'notebook_edit'
+          && toolName !== 'notebook_forget'
+        ) return null
         if (status !== 'active' && status !== 'done' && status !== 'error') return null
         return { id, toolName, args, status, resultSummary }
       })
@@ -1158,6 +1175,23 @@ export function writeDeveloperMode(value: boolean): void {
   try {
     localStorage.setItem(DEVELOPER_MODE_KEY, value ? 'true' : 'false')
     window.dispatchEvent(new CustomEvent('arkloop:developer_mode', { detail: value }))
+  } catch { /* ignore */ }
+}
+
+const DEVELOPER_SHOW_DEBUG_PANEL_KEY = 'arkloop:web:developer_show_debug_panel'
+
+export function readDeveloperShowDebugPanel(): boolean {
+  if (!canUseLocalStorage()) return false
+  try {
+    return localStorage.getItem(DEVELOPER_SHOW_DEBUG_PANEL_KEY) === 'true'
+  } catch { return false }
+}
+
+export function writeDeveloperShowDebugPanel(value: boolean): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(DEVELOPER_SHOW_DEBUG_PANEL_KEY, value ? 'true' : 'false')
+    window.dispatchEvent(new CustomEvent('arkloop:developer_show_debug_panel', { detail: value }))
   } catch { /* ignore */ }
 }
 

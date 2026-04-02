@@ -439,6 +439,8 @@ export interface LocaleStrings {
   copTimelineThinkingForSeconds: (sec: number) => string
   copTimelineShowMoreSources: (count: number) => string
   copTimelineShowFewerSources: string
+  copThinkShowMore: string
+  copThinkShowLess: string
   /** COP 时间轴：thinking 折叠行左侧标签 */
   copThinkingInlineTitle: string
   /** COP thinking 卡片顶栏（流式中） */
@@ -788,6 +790,8 @@ export interface LocaleStrings {
     logLevelError: string;
     showRunEvents: string;
     showRunEventsDesc: string;
+    showDebugPanel: string;
+    showDebugPanelDesc: string;
     viewRunDetail: string;
     runDetailTitle: string;
     runDetailOverview: string;
