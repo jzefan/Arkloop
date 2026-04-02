@@ -470,6 +470,10 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 	rc.ContextCompact = cc
 
+	if e.useOV && e.memProvider != nil {
+		rc.MemoryProvider = e.memProvider
+	}
+
 	var memMiddleware pipeline.RunMiddleware
 	if e.useOV {
 		notebookMW := desktopMemoryInjection(e.db)

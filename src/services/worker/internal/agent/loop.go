@@ -592,11 +592,17 @@ func (l *Loop) Run(
 		}
 
 		if heartbeatDecisionFinalized(runCtx) {
-			reasoningTurnsUsed++
-			if runCtx.RolloutRecorder != nil {
-				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			if !runCtx.PipelineRC.HeartbeatToolOutcome.Reply {
+				reasoningTurnsUsed++
+				if runCtx.RolloutRecorder != nil {
+					appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+				}
+				return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 			}
-			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
+			// reply=true: 解除 tool_choice 约束，继续 loop
+			if request.ToolChoice != nil {
+				request.ToolChoice = nil
+			}
 		}
 		if terminalSideEffectOnly && terminalSideEffectSucceeded {
 			reasoningTurnsUsed++
@@ -1759,6 +1765,10 @@ func shouldSuppressToolResultReplay(runCtx RunContext, toolName string, success 
 	if runCtx.PipelineRC != nil &&
 		pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) &&
 		toolName == "heartbeat_decision" {
+		// reply=true 时 loop 继续，必须保留 tool_result 给下一轮 LLM
+		if runCtx.PipelineRC.HeartbeatToolOutcome != nil && runCtx.PipelineRC.HeartbeatToolOutcome.Reply {
+			return false
+		}
 		return true
 	}
 	return isTerminalSideEffectTool(toolName)
