@@ -119,3 +119,8 @@ export type { ButtonProps } from './components/Button'
 export { PillToggle } from './components/PillToggle'
 
 export { TabBar } from './components/prompt-injection/TabBar'
+
+export { DebugPanel } from './components/DebugPanel'
+export { DebugTrigger } from './components/DebugTrigger'
+export { debugBus } from './debug-bus'
+export type { DebugEntry } from './debug-bus'
