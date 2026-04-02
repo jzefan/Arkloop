@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, Plus, Trash2, Star, X, Eye, EyeOff, Mic, ChevronDown, Pencil } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
+import type { DesktopConfig } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
   listAsrCredentials,
@@ -17,6 +18,7 @@ import { PillToggle } from '@arkloop/shared'
 
 type Props = {
   accessToken: string
+  initialConfig?: DesktopConfig | null
 }
 
 const PROVIDERS = [
@@ -483,7 +485,7 @@ function EditCredentialModal({
 
 // -- Main VoiceSettings --
 
-export function VoiceSettings({ accessToken }: Props) {
+export function VoiceSettings({ accessToken, initialConfig = null }: Props) {
   const { t } = useLocale()
   const ds = t.desktopSettings
   const api = getDesktopApi()
@@ -507,13 +509,18 @@ export function VoiceSettings({ accessToken }: Props) {
   // Read initial voice config
   useEffect(() => {
     if (!api) { setConfigLoading(false); return }
-    void api.config.get().then((cfg) => {
+    const applyConfig = (cfg: DesktopConfig) => {
       setVoiceEnabled(cfg.voice?.enabled ?? false)
       voiceEnabledRef.current = cfg.voice?.enabled ?? false
       setVoiceLanguage(cfg.voice?.language ?? '')
       setConfigLoading(false)
-    })
-  }, [api])
+    }
+    if (initialConfig) {
+      applyConfig(initialConfig)
+      return
+    }
+    void api.config.get().then(applyConfig)
+  }, [api, initialConfig])
 
   // Listen for config changes from other sources (e.g. VoiceInput writing via ChatInput)
   useEffect(() => {

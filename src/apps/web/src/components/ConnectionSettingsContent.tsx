@@ -32,6 +32,10 @@ type ModeCardProps = {
   onSelect: () => void
 }
 
+type Props = {
+  initialConfig?: DesktopConfig | null
+}
+
 const DEFAULT_RUNTIME: SidecarRuntime = {
   status: 'stopped',
   port: null,
@@ -117,7 +121,7 @@ function applyConfigToState(config: DesktopConfig, setters: {
   setters.setLocalPortMode(config.local.portMode)
 }
 
-export function ConnectionSettingsContent() {
+export function ConnectionSettingsContent({ initialConfig = null }: Props) {
   const { t, locale } = useLocale()
   const ct = t.connection
   const api = getDesktopApi()
@@ -148,7 +152,11 @@ export function ConnectionSettingsContent() {
       })
     }
 
-    void api.config.get().then(applyConfig)
+    if (initialConfig) {
+      applyConfig(initialConfig)
+    } else {
+      void api.config.get().then(applyConfig)
+    }
     void api.sidecar.getRuntime().then(setSidecarRuntime)
 
     const unsubConfig = api.config.onChanged((config) => {
@@ -162,7 +170,7 @@ export function ConnectionSettingsContent() {
       unsubConfig()
       unsubRuntime()
     }
-  }, [api])
+  }, [api, initialConfig])
 
   useEffect(() => {
     if (!api || mode !== 'local' || sidecarRuntime.status !== 'running') return

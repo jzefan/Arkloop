@@ -1,5 +1,10 @@
+import type { DesktopConfig } from '@arkloop/shared/desktop'
 import { ConnectionSettingsContent } from '../ConnectionSettingsContent'
 
-export function ConnectionSettings() {
-  return <ConnectionSettingsContent />
+type Props = {
+  initialConfig?: DesktopConfig | null
+}
+
+export function ConnectionSettings({ initialConfig }: Props) {
+  return <ConnectionSettingsContent initialConfig={initialConfig} />
 }
