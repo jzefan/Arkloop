@@ -960,7 +960,7 @@ export const en: LocaleStrings = {
     // Memory settings tab
     memory: "Memory",
     memorySettingsTitle: "Memory",
-    memorySettingsDesc: "Configure stable Notebook notes and optional recalled Memory.",
+    memorySettingsDesc: "Enable and manage the AI's auto-organized memory.",
     memoryLocalProvider: "Notebook",
     memoryLocalProviderDesc: "Stable notes stored locally and injected every conversation.",
     memoryOpenvikingProvider: "Memory",
@@ -974,8 +974,8 @@ export const en: LocaleStrings = {
     memoryDeleteConfirm: "Delete this memory entry?",
     memorySnapshotTitle: "Memory Recall",
     // Memory enable + system selector
-    memoryEnabled: "Enable Notebook / Memory",
-    memoryEnabledDesc: "Enable stable Notebook notes and optional recalled Memory.",
+    memoryEnabled: "Enable Memory",
+    memoryEnabledDesc: "When enabled, the AI will automatically organize important information from conversations.",
     memorySummarizeSectionTitle: "Memory recall",
     memoryAutoSummarizeLabel: "Summarize after each turn",
     memoryAutoSummarizeDesc:
@@ -1022,6 +1022,17 @@ export const en: LocaleStrings = {
     memoryNoCompatibleModels: "No compatible models available",
     memoryProviderActivated: "OpenViking is now active.",
     memoryNoEmbeddingModels: "No embedding models found. Configure one in Provider Settings and add the embedding tag.",
+    // Notebook settings tab
+    notebook: "Notebook",
+    notebookSettingsTitle: "Notebook",
+    notebookSettingsDesc: "View and manage the AI's long-term notes.",
+    notebookAddPlaceholder: "Enter something you want the AI to remember...",
+    notebookAddButton: "Add",
+    notebookSearchPlaceholder: "Search notes...",
+    // Memory config modal
+    memoryConfigureButton: "Configure",
+    memoryConfigureModalTitle: "Memory Service Configuration",
+    memoryNotConfiguredHint: "Memory service is not configured yet. Please configure it first.",
     toolModel: "Tool Model",
     toolModelDesc: "Model used for background tasks such as title generation.",
     toolModelPlatformDefault: "Platform Default",
