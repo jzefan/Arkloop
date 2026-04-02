@@ -37,10 +37,21 @@ function executionPreview(segments: TurnSegment[]): string {
     .join(' · ')
 }
 
+function requestPreview(turn: LlmTurn): string {
+  const latest = turn.requests[turn.requests.length - 1]
+  if (!latest) return 'Request unavailable'
+  const previewText = latest.messages
+    .slice(0, 3)
+    .map((message) => `${message.role}: ${preview(message.text || '∅')}`)
+    .join(' · ')
+  return previewText || 'Request unavailable'
+}
+
 export function TurnView({ turn, index }: TurnViewProps) {
   const inputMetaChips = [turn.inputMeta?.channel, turn.inputMeta?.['conversation-type'], turn.inputMeta?.['display-name']]
     .filter((value): value is string => !!value)
   const orderedSegments = executionSegments(turn)
+  const contextTokens = turn.contextTokens ?? turn.estimatedInputTokens
 
   return (
     <div className="space-y-1.5 rounded-lg border border-[var(--c-border)] p-3">
@@ -52,14 +63,14 @@ export function TurnView({ turn, index }: TurnViewProps) {
           {turn.model && <span className="font-medium text-[var(--c-text-secondary)]">{turn.model}</span>}
           {turn.apiMode && <span className="opacity-60">· {turn.apiMode}</span>}
         </div>
-        {((turn.estimatedInputTokens != null && turn.estimatedInputTokens > 0) || turn.inputTokens != null) && (
+        {((contextTokens != null && contextTokens > 0) || turn.inputTokens != null) && (
           <div className="tabular-nums text-[var(--c-text-muted)]">
-            {turn.estimatedInputTokens != null && turn.estimatedInputTokens > 0 && (
-              <span>{turn.estimatedInputTokens} ctx</span>
+            {contextTokens != null && contextTokens > 0 && (
+              <span>{contextTokens} ctx</span>
             )}
             {turn.inputTokens != null && (
               <>
-                {turn.estimatedInputTokens != null && turn.estimatedInputTokens > 0 && ' · '}
+                {contextTokens != null && contextTokens > 0 && ' · '}
                 {turn.inputTokens}in
                 {turn.cachedTokens != null && ` · ${turn.cachedTokens}cache`}
                 {turn.outputTokens != null && ` / ${turn.outputTokens}out`}
@@ -174,6 +185,37 @@ export function TurnView({ turn, index }: TurnViewProps) {
                 <span className="font-mono">{turn.stablePrefixHash}</span>
               </div>
             )}
+          </div>
+        </CollapseBlock>
+      )}
+
+      {turn.requests.length > 0 && (
+        <CollapseBlock
+          label={`Request${turn.requests.length > 1 ? ` (${turn.requests.length})` : ''}`}
+          preview={requestPreview(turn)}
+          defaultOpen
+        >
+          <div className="space-y-3">
+            {turn.requests.map((request, requestIndex) => (
+              <div key={request.llmCallId || requestIndex} className="space-y-2 rounded border border-[var(--c-border-subtle)] bg-[var(--c-bg-sub)]/30 p-2">
+                <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--c-text-muted)]">
+                  <span className="font-mono">{request.llmCallId || `request_${requestIndex + 1}`}</span>
+                  {request.messageCount != null && (
+                    <span>{request.messageCount} msgs</span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {request.messages.map((message, messageIndex) => (
+                    <div key={`${request.llmCallId || requestIndex}-${messageIndex}`} className="rounded border border-[var(--c-border-subtle)] bg-[var(--c-bg-deep)] p-2">
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--c-text-muted)]">
+                        {message.role}
+                      </div>
+                      <PreText text={message.text || '∅'} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </CollapseBlock>
       )}

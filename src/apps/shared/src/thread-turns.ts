@@ -1,5 +1,7 @@
 import { redactDataUrlsInString } from './debugPayloadRedact'
 
+import type { LlmTurn, RequestMessageView } from './run-turns'
+
 export type ThreadMessageContentPart = {
   type: string
   text?: string
@@ -19,6 +21,13 @@ export type ThreadMessage = {
 export type ThreadTurn = {
   key: string
   userText: string
+  assistantText: string
+  isCurrent: boolean
+}
+
+export type RequestThreadTurn = {
+  key: string
+  messages: RequestMessageView[]
   assistantText: string
   isCurrent: boolean
 }
@@ -78,4 +87,18 @@ export function buildThreadTurns(
       isCurrent: currentIndex >= 0 && index === visibleTurns.length - 1,
     }))
     .filter((turn) => turn.userText || turn.assistantText)
+}
+
+export function buildRequestThreadTurns(turns: LlmTurn[]): RequestThreadTurn[] {
+  return turns
+    .map((turn, index) => {
+      const latestRequest = turn.requests[turn.requests.length - 1]
+      return {
+        key: latestRequest?.llmCallId || turn.llmCallId || `turn-${index + 1}`,
+        messages: latestRequest?.messages ?? [],
+        assistantText: turn.assistantText,
+        isCurrent: index === turns.length - 1,
+      }
+    })
+    .filter((turn) => turn.messages.length > 0 || turn.assistantText)
 }

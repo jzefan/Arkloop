@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ACP_DELEGATE_LAYER } from './runEventDelegate'
 import { buildTurns, type RunEventRaw } from './run-turns'
+import { buildRequestThreadTurns } from './thread-turns'
 
 function makeEvent(params: {
   seq: number
@@ -351,6 +352,151 @@ conversation-title: "Arkloop"
     expect(turns).toHaveLength(1)
     expect(turns[0]?.estimatedInputTokens).toBe(Math.floor((400 + 3) / 4))
     expect(turns[0]?.inputTokens).toBe(9000)
+  })
+
+  it('uses completed usage as final context and preserves estimate for debug', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          system_bytes: 40,
+          tools_bytes: 40,
+          messages_bytes: 320,
+          payload: { messages: [{ role: 'user', content: 'hi' }] },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_1',
+          last_request_context_estimate_tokens: 123,
+          usage: {
+            input_tokens: 9000,
+            cache_read_input_tokens: 200,
+            cache_creation_input_tokens: 50,
+            output_tokens: 10,
+          },
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.estimatedInputTokens).toBe(123)
+    expect(turns[0]?.contextTokens).toBe(9250)
+    expect(turns[0]?.inputTokens).toBe(9000)
+  })
+
+  it('captures actual request messages for each llm request', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          payload: {
+            messages: [
+              { role: 'system', content: 'system prompt' },
+              { role: 'user', content: 'first input' },
+            ],
+          },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'tool.call',
+        data: {
+          tool_call_id: 'tool_1',
+          tool_name: 'test_tool',
+          arguments: { ok: true },
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_2',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          payload: {
+            messages: [
+              { role: 'system', content: 'system prompt' },
+              { role: 'user', content: 'first input' },
+              { role: 'assistant', content: 'thinking' },
+              { role: 'tool', content: '{"ok":true}' },
+            ],
+          },
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.requests).toEqual([
+      {
+        llmCallId: 'call_1',
+        messageCount: 2,
+        messages: [
+          { role: 'system', text: 'system prompt' },
+          { role: 'user', text: 'first input' },
+        ],
+      },
+      {
+        llmCallId: 'call_2',
+        messageCount: 4,
+        messages: [
+          { role: 'system', text: 'system prompt' },
+          { role: 'user', text: 'first input' },
+          { role: 'assistant', text: 'thinking' },
+          { role: 'tool', text: '{"ok":true}' },
+        ],
+      },
+    ])
+  })
+
+  it('builds thread tab data from latest request snapshot instead of database thread history', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          payload: {
+            messages: [
+              { role: 'system', content: 'sys' },
+              { role: 'user', content: '07:03 message' },
+            ],
+          },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_1',
+          assistant_text: 'done',
+        },
+      }),
+    ])
+
+    expect(buildRequestThreadTurns(turns)).toEqual([
+      {
+        key: 'call_1',
+        messages: [
+          { role: 'system', text: 'sys' },
+          { role: 'user', text: '07:03 message' },
+        ],
+        assistantText: 'done',
+        isCurrent: true,
+      },
+    ])
   })
 
   it('ignores ACP delegate deltas/tools and inner run.completed; keeps host acp_agent tool result', () => {
