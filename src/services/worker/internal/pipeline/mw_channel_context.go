@@ -48,6 +48,14 @@ func NewChannelContextMiddleware(pool *pgxpool.Pool) RunMiddleware {
 				channelCtx.SenderUserID = identity.UserID
 			}
 		}
+		// channel 场景下 bot 的 memory 归属于 channel owner
+		if pool != nil && channelCtx.SenderUserID == nil && channelCtx.ChannelID != uuid.Nil {
+			ownerID, err := repo.GetChannelOwner(ctx, pool, channelCtx.ChannelID)
+			if err != nil {
+				return err
+			}
+			channelCtx.SenderUserID = ownerID
+		}
 		rc.ChannelContext = channelCtx
 		rc.ChannelToolSurface = NewChannelToolSurfaceFromContext(channelCtx)
 		if channelCtx.SenderUserID != nil {
