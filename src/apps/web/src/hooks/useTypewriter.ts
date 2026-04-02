@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { recordPerfCount, recordPerfValue } from '../perfDebug'
 
 const EWMA_ALPHA = 0.38
 
@@ -94,6 +95,17 @@ export function useTypewriter(targetText: string, isComplete = false): string {
 
       prevLenRef.current = len
       lastGrowthAtRef.current = now
+      recordPerfCount('typewriter_target_growth', 1, {
+        deltaChars: delta,
+        nextLength: len,
+        complete: isComplete,
+      })
+      if (pastFirstChunkRef.current) {
+        recordPerfValue('typewriter_growth_gap', Math.max(dt, 0), 'ms', {
+          deltaChars: delta,
+          nextLength: len,
+        })
+      }
     } else if (len < prev) {
       prevLenRef.current = len
       lastGrowthAtRef.current = now
@@ -175,6 +187,12 @@ export function useTypewriter(targetText: string, isComplete = false): string {
           lenRef.current = next
           setDisplayedLen(next)
           prevTickRef.current = now
+          recordPerfCount('typewriter_tick', 1, {
+            step,
+            pending,
+            targetLength: target,
+            nextLength: next,
+          })
         }
         rafRef.current = requestAnimationFrame(tick)
       } else {

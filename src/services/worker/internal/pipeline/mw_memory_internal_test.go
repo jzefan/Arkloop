@@ -393,6 +393,15 @@ func TestHeartbeatPrepareMiddlewareDoesNotDuplicateHeartbeatDecisionTool(t *test
 
 	mw := NewHeartbeatPrepareMiddleware()
 	if err := mw(context.Background(), rc, func(_ context.Context, rc *RunContext) error {
+		if len(rc.Messages) != 2 {
+			t.Fatalf("expected heartbeat system message and trigger, got %d", len(rc.Messages))
+		}
+		if rc.Messages[0].Role != "system" {
+			t.Fatalf("expected heartbeat info as system message, got %#v", rc.Messages[0])
+		}
+		if rc.Messages[1].Role != "user" || llm.PartPromptText(rc.Messages[1].Content[0]) != heartbeatTriggerText {
+			t.Fatalf("expected heartbeat trigger user message, got %#v", rc.Messages[1])
+		}
 		count := 0
 		for _, spec := range rc.ToolSpecs {
 			if spec.Name == heartbeattool.ToolName {

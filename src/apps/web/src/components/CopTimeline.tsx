@@ -10,6 +10,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { useLocale } from '../contexts/LocaleContext'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
+import { recordPerfCount, recordPerfValue } from '../perfDebug'
 
 /** CopTimeline 左轴点线几何；ChatPage 顶层条与之对齐 */
 export const COP_TIMELINE_DOT_NUDGE_Y = 1
@@ -855,10 +856,36 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const fileOpCount = fileOps?.length ?? 0
   const webFetchCount = webFetches?.length ?? 0
   const genericToolCount = genericTools?.length ?? 0
+  const sourceCount = sources.length
   const effectiveStepCount = visibleSteps.length || (codeExecCount + subAgentCount + fileOpCount + webFetchCount + genericToolCount)
-  const hasThinkingOnly = hasAnyThinking && effectiveStepCount === 0 && sources.length === 0
+  const hasThinkingOnly = hasAnyThinking && effectiveStepCount === 0 && sourceCount === 0
   const mixedSegmentWithThinking = hasAnyThinking && !hasThinkingOnly
   const timelineIsLive = !!live || anyThinkingLive
+  const timelinePerfSample = useMemo(() => ({
+    steps: visibleSteps.length,
+    narratives: textEntries.length,
+    thinkingRows: thinkingRowList.length,
+    inlineRows: copInlineList.length,
+    sources: sourceCount,
+    codes: codeExecCount,
+    subAgents: subAgentCount,
+    fileOps: fileOpCount,
+    webFetches: webFetchCount,
+    genericTools: genericToolCount,
+    live: !!live,
+  }), [
+    codeExecCount,
+    copInlineList.length,
+    fileOpCount,
+    genericToolCount,
+    live,
+    sourceCount,
+    subAgentCount,
+    textEntries.length,
+    thinkingRowList.length,
+    visibleSteps.length,
+    webFetchCount,
+  ])
 
   const [collapsed, setCollapsed] = useState(() => {
     if (preserveExpanded) return false
@@ -952,14 +979,14 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     thinkingRowList.length +
     copInlineList.length +
     (legacyThinkingVisible ? 1 : 0)
-  ) > 0 || sources.length > 0
+  ) > 0 || sourceCount > 0
   const pendingShowThinkingHeader = !!live && !hasAnyThinking && !pendingHasContent && !!thinkingHint
   const thinkingTimerActive = anyThinkingLive || (hasAnyThinking && !!live)
   const activeThinkingElapsed = useThinkingElapsedSeconds(thinkingTimerActive, segmentThinkingStartedAtMs)
   const thinkingLiveHeaderLabel = formatThinkingHeaderLabel(thinkingHint, activeThinkingElapsed, t)
 
   const [hovered, setHovered] = useState(false)
-  if (
+  const shouldRender = !(
     visibleSteps.length === 0 &&
     textEntries.length === 0 &&
     codeExecCount === 0 &&
@@ -971,9 +998,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     !hasAnyThinking &&
     !thinkingHint &&
     copInlineList.length === 0
-  ) {
-    return null
-  }
+  )
 
   type UEntry =
     | { kind: 'thinking'; id: string; seq: number; item: { markdown: string; live: boolean; durationSec?: number; startedAtMs?: number } }
@@ -1053,7 +1078,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     thinkingRowList.length +
     copInlineList.length +
     (legacyThinkingVisible ? 1 : 0)
-  const hasContent = totalUnifiableItems > 0 || sources.length > 0
+  const hasContent = totalUnifiableItems > 0 || sourceCount > 0
   const useUnified = allUnified.length === totalUnifiableItems && totalUnifiableItems > 0
   if (useUnified) {
     const priority: Record<UEntry['kind'], number> = {
@@ -1097,6 +1122,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
         },
       ]
     : allUnified
+
   // run 活跃期间 thinking 暂停也保持 thinking-live phase，不闪变到 thought
   const headerPhaseKey = (anyThinkingLive || (hasAnyThinking && !!live))
     ? 'thinking-live'
@@ -1117,8 +1143,8 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     ? thinkingLiveHeaderLabel
     : hasAnyThinking
       ? isComplete && !hasThinkingOnly
-        ? sources.length > 0
-          ? `Reviewed ${sources.length} sources`
+        ? sourceCount > 0
+          ? `Reviewed ${sourceCount} sources`
           : effectiveStepCount > 0
             ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
             : thoughtDurationLabel
@@ -1126,8 +1152,8 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
       : showPendingThinkingHeader
         ? `${thinkingHint}...`
         : isComplete
-          ? sources.length > 0
-            ? `Reviewed ${sources.length} sources`
+          ? sourceCount > 0
+            ? `Reviewed ${sourceCount} sources`
             : effectiveStepCount > 0
               ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
               : 'Completed'
@@ -1140,6 +1166,17 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const headerLabel = headerOverride ?? autoLabel
   const resolvedHeaderLabel = headerLabel
   const dottedStepCount = visibleSteps.length
+
+  useEffect(() => {
+    recordPerfCount('cop_timeline_render', 1, timelinePerfSample)
+    recordPerfValue('cop_timeline_visible_nodes', unifiedEntries.length, 'nodes', {
+      collapsed,
+      live: !!live,
+      unified: useUnified,
+    })
+  }, [collapsed, live, timelinePerfSample, unifiedEntries.length, useUnified])
+
+  if (!shouldRender) return null
 
   return (
     <div
