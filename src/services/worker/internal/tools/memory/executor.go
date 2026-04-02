@@ -107,6 +107,18 @@ func (e *ToolExecutor) notebookRead(ctx context.Context, args map[string]any, id
 	uri, _ := args["uri"].(string)
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
+		if getter, ok := e.provider.(interface {
+			GetSnapshot(context.Context, uuid.UUID, uuid.UUID, string) (string, error)
+		}); ok {
+			content, err := getter.GetSnapshot(ctx, ident.AccountID, ident.UserID, ident.AgentID)
+			if err != nil {
+				return providerError("notebook_read", err, started)
+			}
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{"content": content},
+				DurationMs: durationMs(started),
+			}
+		}
 		return tools.ExecutionResult{
 			ResultJSON: map[string]any{"content": ""},
 			DurationMs: durationMs(started),
