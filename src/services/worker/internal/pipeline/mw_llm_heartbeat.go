@@ -22,7 +22,6 @@ const (
 	eventTypeMemoryHeartbeatAppendFailed = "memory.heartbeat.append_failed"
 	eventTypeMemoryHeartbeatCommitFailed = "memory.heartbeat.commit_failed"
 	eventTypeMemoryHeartbeatCommitted    = "memory.heartbeat.committed"
-	heartbeatTriggerText                 = "HEARTBEAT_TRIGGER"
 )
 
 // isHeartbeatRun checks whether run_kind=heartbeat is set in InputJSON or JobPayload.
@@ -85,8 +84,9 @@ func IsHeartbeatRunContext(rc *RunContext) bool {
 	return rc.HeartbeatRun || isHeartbeatRun(rc.InputJSON, rc.JobPayload)
 }
 
-// NewHeartbeatPrepareMiddleware 为心跳 run 注入独立 system heartbeat 消息和最小 user trigger，并在 next 返回后将
-// heartbeat_decision 工具报告的 memory_fragments 提交到 MemoryProvider。
+// NewHeartbeatPrepareMiddleware 为心跳 run 构建尾部 user message（包含完整 heartbeat 指令），
+// 注册 heartbeat_decision 工具并设置 tool_choice=specific，
+// 在 next 返回后将 memory_fragments 提交到 MemoryProvider。
 // 非心跳 run 直接透传。
 func NewHeartbeatPrepareMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
@@ -118,26 +118,27 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			}
 		}
 
+		// 构建尾部 user message：元数据 + heartbeat.md 合并为一条，
+		// 放在消息尾部的注意力焦点位置，用结构化标记避免模型误认为人类发言。
 		var sb strings.Builder
-		sb.WriteString("** 系统心跳 **\n")
+		sb.WriteString("[SYSTEM_HEARTBEAT_CHECK]\n")
 		sb.WriteString(fmt.Sprintf("time_utc: %s\n", time.Now().UTC().Format(time.RFC3339)))
 		sb.WriteString(fmt.Sprintf("interval_minutes: %d\n", interval))
 		sb.WriteString(fmt.Sprintf("new_user_messages: %d\n", newUserMessages))
+		if rc.PersonaDefinition != nil && strings.TrimSpace(rc.PersonaDefinition.HeartbeatMD) != "" {
+			sb.WriteString("\n")
+			sb.WriteString(strings.TrimSpace(rc.PersonaDefinition.HeartbeatMD))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("[/SYSTEM_HEARTBEAT_CHECK]")
 
 		rc.Messages = append(rc.Messages, llm.Message{
-			Role:    "system",
+			Role:    "user",
 			Content: []llm.ContentPart{{Type: "text", Text: sb.String()}},
 		})
 		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
-		rc.Messages = append(rc.Messages, llm.Message{
-			Role:    "user",
-			Content: []llm.ContentPart{{Type: "text", Text: heartbeatTriggerText}},
-		})
-		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
 
-		if rc.PersonaDefinition != nil && strings.TrimSpace(rc.PersonaDefinition.HeartbeatMD) != "" {
-			rc.SystemPrompt = appendSystemPromptBlock(rc.SystemPrompt, rc.PersonaDefinition.HeartbeatMD)
-		}
+		// SystemProtocolSnippet 保留在 system prompt：机制约束放 system 层
 		rc.SystemPrompt = appendSystemPromptBlock(rc.SystemPrompt, heartbeattool.SystemProtocolSnippet())
 
 		if rc.AllowlistSet == nil {
