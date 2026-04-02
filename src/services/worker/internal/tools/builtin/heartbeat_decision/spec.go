@@ -44,12 +44,11 @@ func strPtr(s string) *string { return &s }
 func SystemProtocolSnippet() string {
 	return "You are in an LLM heartbeat turn. " +
 		"SYSTEM CONSTRAINT: calling `" + ToolName + "` with reply=true is the ONLY way any message reaches the user. " +
-		"Text you write without calling the tool first is silently discarded by the runtime — the user never sees it. " +
 		"There is no fallback path. " +
-		"Step 1 — call `" + ToolName + "` exactly once, before writing any message text: " +
+		"Call `" + ToolName + "` exactly once in this turn: " +
 		"reply=false if you have nothing to say (run ends immediately, write no text); " +
-		"reply=true if you want to send a message (run continues so you can write the message body). " +
-		"Step 2 — only if reply=true: write the message body after the tool result. " +
-		"Do not call any other tool in the same step as `" + ToolName + "`. " +
+		"reply=true if you want the visible text from this turn to reach the user. " +
+		"There is no second step after the tool call in this turn. " +
+		"Do not call any other tool in the same turn as `" + ToolName + "`. " +
 		"If this turn surfaced facts worth remembering long-term, include them in memory_fragments."
 }

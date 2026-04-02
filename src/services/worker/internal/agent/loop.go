@@ -371,6 +371,8 @@ func (l *Loop) Run(
 
 		// 执行非 ask_user 的常规工具
 		continuationRejected := false
+		terminalSideEffectOnly := len(regularPending) > 0
+		terminalSideEffectSucceeded := len(regularPending) > 0
 		if len(regularPending) > 0 {
 			if runCtx.ToolExecutor == nil {
 				return fmt.Errorf("tool executor not initialized")
@@ -388,6 +390,12 @@ func (l *Loop) Run(
 				governor.Touch()
 				call := executed.Call
 				result := executed.Result
+				if !isTerminalSideEffectTool(call.ToolName) {
+					terminalSideEffectOnly = false
+				}
+				if result.Error != nil {
+					terminalSideEffectSucceeded = false
+				}
 				if isContinuationBudgetError(result.Error) {
 					continuationRejected = true
 				}
@@ -415,19 +423,22 @@ func (l *Loop) Run(
 					}
 				}
 
-				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
-				if ok {
-					if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
-						messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
-					} else {
-						seenToolResultKeys[dedupKey] = toolResultDedupInfo{
-							ToolCallID: toolResult.ToolCallID,
-							Signature:  sig,
+				suppressResultReplay := shouldSuppressToolResultReplay(runCtx, call.ToolName, toolResult.Error == nil)
+				if !suppressResultReplay {
+					dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
+					if ok {
+						if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
+							messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
+						} else {
+							seenToolResultKeys[dedupKey] = toolResultDedupInfo{
+								ToolCallID: toolResult.ToolCallID,
+								Signature:  sig,
+							}
+							messages = append(messages, toolResultMessage(toolResult))
 						}
+					} else {
 						messages = append(messages, toolResultMessage(toolResult))
 					}
-				} else {
-					messages = append(messages, toolResultMessage(toolResult))
 				}
 
 				var errorClass *string
@@ -448,8 +459,10 @@ func (l *Loop) Run(
 					appendRollout(ctx, runCtx.RolloutRecorder, MakeToolResult(toolResult.ToolCallID, outputJSON, errMsg))
 				}
 
-				if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
-					return err
+				if !suppressResultReplay {
+					if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -472,6 +485,8 @@ func (l *Loop) Run(
 
 		// ask_user 拦截：不走 dispatcher，直接 yield 事件并阻塞等待用户输入
 		if askUserCall != nil {
+			terminalSideEffectOnly = false
+			terminalSideEffectSucceeded = false
 			preparedAskUserCall, startEvent := prepareToolCallStart(emitter, nil, *askUserCall)
 			if err := yield(startEvent); err != nil {
 				return err
@@ -582,11 +597,13 @@ func (l *Loop) Run(
 				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
 			}
 			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
-		} else if runCtx.PipelineRC != nil &&
-			runCtx.PipelineRC.HeartbeatToolOutcome != nil &&
-			runCtx.PipelineRC.HeartbeatToolOutcome.Reply &&
-			!runCtx.PipelineRC.HeartbeatReplyGranted {
-			runCtx.PipelineRC.HeartbeatReplyGranted = true
+		}
+		if terminalSideEffectOnly && terminalSideEffectSucceeded {
+			reasoningTurnsUsed++
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
+			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
 		}
 
 		// load_tools dynamic activation: inject newly activated tool specs
@@ -1730,10 +1747,28 @@ func heartbeatDecisionFinalized(runCtx RunContext) bool {
 	if outcome == nil {
 		return false
 	}
-	if !outcome.Reply {
+	return true
+}
+
+func shouldSuppressToolResultReplay(runCtx RunContext, toolName string, success bool) bool {
+	if !success {
+		return false
+	}
+	if runCtx.PipelineRC != nil &&
+		pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) &&
+		toolName == "heartbeat_decision" {
 		return true
 	}
-	return runCtx.PipelineRC.HeartbeatReplyGranted
+	return isTerminalSideEffectTool(toolName)
+}
+
+func isTerminalSideEffectTool(toolName string) bool {
+	switch toolName {
+	case "telegram_reply", "telegram_react", "telegram_send_file":
+		return true
+	default:
+		return false
+	}
 }
 
 func assistantMessageOrFallback(message *llm.Message, assistantChunks []string) llm.Message {

@@ -6,8 +6,8 @@
 
 **执行顺序：**
 1. 先判断本次是否有实质内容值得发送
-2. 调用 `heartbeat_decision`：有内容发送用 `reply=true`，静默用 `reply=false`
-3. 仅 `reply=true` 时：工具调用结果返回后，再输出消息正文
+2. 在本轮内调用 `heartbeat_decision`：有内容发送用 `reply=true`，静默用 `reply=false`
+3. `reply=true` 时，本轮里已经写出的正文会直接发送；不会再开启一个由工具结果驱动的新回合
 
 **何时 reply=true：**
 - 有未被回复的问题或遗留的讨论事项

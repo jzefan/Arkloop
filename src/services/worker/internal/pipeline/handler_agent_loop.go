@@ -151,6 +151,7 @@ func NewAgentLoopHandler(
 					return err
 				}
 				rc.FinalAssistantOutput = writer.AssistantOutput()
+				rc.FinalAssistantOutputs = writer.AssistantOutputs()
 				rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
 			}
 		}
@@ -189,6 +190,9 @@ type eventWriter struct {
 	lastCommitAt             time.Time
 	assistantDeltas          []string
 	assistantMessage         *llm.Message
+	assistantMessageFresh    bool
+	assistantOutputs         []string
+	lastTurnDeltaCount       int
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
@@ -368,6 +372,10 @@ func (w *eventWriter) Append(
 	w.pendingEventsSinceCommit++
 	if assistantMessage, ok := assistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
+		w.assistantMessageFresh = true
+	}
+	if ev.Type == "llm.turn.completed" {
+		w.captureAssistantTurnOutput()
 	}
 
 	w.accumUsage(ev.DataJSON)
@@ -528,6 +536,26 @@ func (w *eventWriter) AssistantOutput() string {
 	return strings.Join(w.assistantDeltas, "")
 }
 
+func (w *eventWriter) AssistantOutputs() []string {
+	if len(w.assistantOutputs) == 0 {
+		output := strings.TrimSpace(w.AssistantOutput())
+		if output == "" {
+			return nil
+		}
+		return []string{output}
+	}
+	out := make([]string, 0, len(w.assistantOutputs))
+	for _, item := range w.assistantOutputs {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (w *eventWriter) InsertAssistantMessage(
 	ctx context.Context,
 	repo data.MessagesRepository,
@@ -567,6 +595,20 @@ func (w *eventWriter) finalAssistantMessage() llm.Message {
 	return llm.Message{
 		Role:    "assistant",
 		Content: []llm.TextPart{{Text: content}},
+	}
+}
+
+func (w *eventWriter) captureAssistantTurnOutput() {
+	text := ""
+	if w.assistantMessageFresh && w.assistantMessage != nil {
+		text = llm.VisibleMessageText(*w.assistantMessage)
+	} else if w.lastTurnDeltaCount < len(w.assistantDeltas) {
+		text = strings.Join(w.assistantDeltas[w.lastTurnDeltaCount:], "")
+	}
+	w.lastTurnDeltaCount = len(w.assistantDeltas)
+	w.assistantMessageFresh = false
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		w.assistantOutputs = append(w.assistantOutputs, trimmed)
 	}
 }
 

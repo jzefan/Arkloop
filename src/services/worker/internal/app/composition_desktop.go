@@ -887,11 +887,13 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if db == nil || (channelType != "telegram" && channelType != "discord") {
 			return err
 		}
-		if pipeline.ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
+		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
+		finalOutputs := pipelineNormalizedAssistantOutputs(rc.FinalAssistantOutputs, finalOutput)
+		if pipeline.ShouldSuppressHeartbeatOutput(rc, finalOutput) {
 			return err
 		}
 
-		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
+		fullOut := finalOutput
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
 		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
 		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
@@ -911,6 +913,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if strings.TrimSpace(output) == "" && notice != "" {
 			output = notice
 		}
+		if streamFlush != nil {
+			finalOutputs = nil
+		}
 
 		channel := preloaded
 		var lookupErr error
@@ -929,7 +934,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		switch channelType {
 		case "telegram":
 			uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
-			if finalRecordErr := deliverDesktopTelegramChannelOutput(ctx, db, rc, client, channel, output); finalRecordErr != nil {
+			if finalRecordErr := deliverDesktopTelegramChannelOutputs(ctx, db, rc, client, channel, output, finalOutputs); finalRecordErr != nil {
 				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
@@ -990,6 +995,54 @@ func deliverDesktopTelegramChannelOutput(
 	)
 }
 
+func deliverDesktopTelegramChannelOutputs(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	client *telegrambot.Client,
+	channel *desktopDeliveryChannelRecord,
+	output string,
+	outputs []string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	if len(outputs) <= 1 {
+		return deliverDesktopTelegramChannelOutput(ctx, db, rc, client, channel, output)
+	}
+	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+	replyTo := desktopTelegramReplyReference(rc)
+	for _, item := range outputs {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      replyTo,
+		}, trimmed)
+		if err != nil {
+			return err
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx,
+			db,
+			rc.Run.ID,
+			rc.Run.ThreadID,
+			rc.ChannelContext.ChannelID,
+			rc.ChannelContext.ChannelType,
+			rc.ChannelContext.Conversation.Target,
+			replyTo,
+			rc.ChannelContext.Conversation.ThreadID,
+			messageIDs,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func deliverDesktopDiscordChannelOutput(
 	ctx context.Context,
 	db data.DesktopDB,
@@ -1023,6 +1076,22 @@ func deliverDesktopDiscordChannelOutput(
 		rc.ChannelContext.Conversation.ThreadID,
 		messageIDs,
 	)
+}
+
+func pipelineNormalizedAssistantOutputs(outputs []string, fallback string) []string {
+	normalized := make([]string, 0, len(outputs))
+	for _, item := range outputs {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+		return []string{trimmed}
+	}
+	return nil
 }
 
 func desktopDiscordReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
@@ -1681,6 +1750,7 @@ func desktopAgentLoop(
 			}
 			if w.completed {
 				rc.FinalAssistantOutput = content
+				rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
 				rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
 			}
 		}
@@ -1705,10 +1775,12 @@ type desktopEventWriter struct {
 	eventsRepo               data.DesktopRunEventsRepository
 	projector                *subagentctl.SubAgentStateProjector
 	assistantDeltas          []string
+	lastTurnDeltaCount       int
 	latestAssistantSeq       int64
 	lastDraftFlushAt         time.Time
 	responseDraftStore       objectstore.BlobStore
 	assistantMessage         *llm.Message
+	assistantMessageFresh    bool
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
@@ -1724,6 +1796,7 @@ type desktopEventWriter struct {
 	terminalUserMessage      string
 	terminalStatus           string
 	visibleAssistantText     string
+	visibleAssistantTexts    []string
 	draftVisibleContent      string
 	draftUseVisible          bool
 }
@@ -1799,6 +1872,10 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	}
 	if assistantMessage, ok := desktopAssistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
+		w.assistantMessageFresh = true
+	}
+	if ev.Type == "llm.turn.completed" {
+		w.captureAssistantTurnOutput()
 	}
 
 	w.accumUsage(ev.DataJSON)
@@ -1918,10 +1995,48 @@ func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx,
 }
 
 func (w *desktopEventWriter) visibleAssistantOutput() string {
+	if len(w.visibleAssistantTexts) > 0 {
+		return strings.Join(w.visibleAssistantTexts, "")
+	}
 	if strings.TrimSpace(w.visibleAssistantText) != "" {
-		return w.visibleAssistantText
+		return strings.TrimSpace(w.visibleAssistantText)
 	}
 	return strings.Join(w.assistantDeltas, "")
+}
+
+func (w *desktopEventWriter) visibleAssistantOutputs() []string {
+	if len(w.visibleAssistantTexts) == 0 {
+		output := strings.TrimSpace(w.visibleAssistantOutput())
+		if output == "" {
+			return nil
+		}
+		return []string{output}
+	}
+	out := make([]string, 0, len(w.visibleAssistantTexts))
+	for _, item := range w.visibleAssistantTexts {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (w *desktopEventWriter) captureAssistantTurnOutput() {
+	text := ""
+	if w.assistantMessageFresh && w.assistantMessage != nil {
+		text = llm.VisibleMessageText(*w.assistantMessage)
+	} else if w.lastTurnDeltaCount < len(w.assistantDeltas) {
+		text = strings.Join(w.assistantDeltas[w.lastTurnDeltaCount:], "")
+	}
+	w.lastTurnDeltaCount = len(w.assistantDeltas)
+	w.assistantMessageFresh = false
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		w.visibleAssistantTexts = append(w.visibleAssistantTexts, trimmed)
+		w.visibleAssistantText = strings.Join(w.visibleAssistantTexts, "")
+	}
 }
 
 func (w *desktopEventWriter) maybeFlushResponseDraft(ctx context.Context, force bool) error {

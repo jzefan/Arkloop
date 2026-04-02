@@ -108,11 +108,13 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		if pool == nil || (channelType != "telegram" && channelType != "discord") {
 			return err
 		}
-		if ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
+		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
+		finalOutputs := normalizedAssistantOutputs(rc.FinalAssistantOutputs, finalOutput)
+		if ShouldSuppressHeartbeatOutput(rc, finalOutput) {
 			return err
 		}
 
-		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
+		fullOut := finalOutput
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
 		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
 		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
@@ -133,6 +135,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		if strings.TrimSpace(output) == "" && notice != "" {
 			output = notice
 		}
+		if streamFlush != nil {
+			finalOutputs = nil
+		}
 
 		channel := preloaded
 		var lookupErr error
@@ -151,7 +156,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		switch channelType {
 		case "telegram":
 			uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
-			if finalRecordErr := deliverTelegramChannelOutput(ctx, pool, repo, ledgerRepo, rc, tgClient, channel, output); finalRecordErr != nil {
+			if finalRecordErr := deliverTelegramChannelOutputs(ctx, pool, repo, ledgerRepo, rc, tgClient, channel, output, finalOutputs); finalRecordErr != nil {
 				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "telegram channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
@@ -207,6 +212,46 @@ func deliverTelegramChannelOutput(
 	return nil
 }
 
+func deliverTelegramChannelOutputs(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	client *telegrambot.Client,
+	channel *data.DeliveryChannelRecord,
+	output string,
+	outputs []string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	if len(outputs) <= 1 {
+		return deliverTelegramChannelOutput(ctx, pool, deliveryRepo, ledgerRepo, rc, client, channel, output)
+	}
+	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
+	replyTo := telegramReplyReference(rc)
+	for _, item := range outputs {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      replyTo,
+		}, trimmed)
+		if err != nil {
+			return err
+		}
+		if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
+			slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+			return err
+		}
+	}
+	return nil
+}
+
 func deliverDiscordChannelOutput(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -234,6 +279,22 @@ func deliverDiscordChannelOutput(
 	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
 		slog.WarnContext(ctx, "discord channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
 		return err
+	}
+	return nil
+}
+
+func normalizedAssistantOutputs(outputs []string, fallback string) []string {
+	normalized := make([]string, 0, len(outputs))
+	for _, item := range outputs {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+		return []string{trimmed}
 	}
 	return nil
 }
