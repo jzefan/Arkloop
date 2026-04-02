@@ -1055,10 +1055,24 @@ button:not(:disabled) {
   100% { transform: translateX(350%) skewX(-15deg); }
 }
 
+/* warm up GPU blur shader on first paint, then self-remove */
+.blur-warmup {
+  position: fixed;
+  top: -1px;
+  left: -1px;
+  width: 1px;
+  height: 1px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: none;
+  opacity: 0;
+  z-index: -1;
+}
+
 @keyframes freeze-overlay-in {
-  0% { opacity: 0; }
-  30% { opacity: 0.1; }
-  60% { opacity: 0.35; }
+  0% { opacity: 0.2; }
+  40% { opacity: 0.3; }
+  75% { opacity: 0.6; }
   100% { opacity: 1; }
 }
 
@@ -1202,11 +1216,11 @@ button:not(:disabled) {
     color: color-mix(in srgb, var(--c-text-primary) 86%, var(--c-text-secondary) 14%);
     opacity: 0.7;
   }
-  12.5% {
+  15% {
     transform: scale(var(--user-prompt-enter-scale, 1.025));
     background-color: color-mix(in srgb, var(--c-bg-deep) 88%, var(--c-bg-sub) 12%);
     color: color-mix(in srgb, var(--c-text-primary) 86%, var(--c-text-secondary) 14%);
-    opacity: 0.85;
+    opacity: 1;
   }
   to {
     transform: scale(1);
@@ -1223,11 +1237,11 @@ button:not(:disabled) {
     color: color-mix(in srgb, var(--c-text-primary) 88%, var(--c-text-secondary) 12%);
     opacity: 0.7;
   }
-  12.5% {
+  15% {
     transform: scale(var(--user-prompt-enter-scale, 1.025));
     background-color: color-mix(in srgb, var(--c-bg-deep) 82%, var(--c-bg-sub) 18%);
     color: color-mix(in srgb, var(--c-text-primary) 88%, var(--c-text-secondary) 12%);
-    opacity: 0.85;
+    opacity: 1;
   }
   to {
     transform: scale(1);
@@ -1244,7 +1258,7 @@ button:not(:disabled) {
 
 .user-prompt-bubble-enter {
   transform-origin: center center;
-  animation: user-prompt-enter-dark 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: user-prompt-enter-dark 0.775s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
