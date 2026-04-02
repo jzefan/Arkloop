@@ -85,6 +85,8 @@ type RunContext struct {
 
 	// -- AgentLoopHandler 写入：run 完成后的 assistant 最终拼接文本，供 MemoryMiddleware 写入 --
 	FinalAssistantOutput string
+	// -- AgentLoopHandler 写入：按 turn 保留的 assistant 输出，供 Channel 逐条投递 --
+	FinalAssistantOutputs []string
 
 	// -- AgentLoopHandler 写入：本次 run 的 tool call 总数和 LLM 迭代轮数，供 MemoryMiddleware 判断提炼条件 --
 	RunToolCallCount  int
@@ -240,7 +242,6 @@ type RunContext struct {
 	HeartbeatRun          bool
 	HeartbeatSilent       bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
 	HeartbeatToolOutcome  *HeartbeatDecisionOutcome
-	HeartbeatReplyGranted bool // reply=true 后已给过一轮输出机会，防止无限循环
 
 	// -- Rollout --
 	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录
