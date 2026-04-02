@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Share2, Split, Terminal } from 'lucide-react'
 import type { MessageResponse } from '../../api'
 import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../storage'
@@ -81,6 +81,7 @@ export function AssistantMessage({
   plainTextForCopy,
 }: Props) {
   const { t } = useLocale()
+  const [pressedBtn, setPressedBtn] = useState<string | null>(null)
   const renderedContent = contentOverride ?? (contentPrefix && message.content.startsWith(contentPrefix) ? message.content.slice(contentPrefix.length).trimStart() : message.content)
   const textForCopy = plainTextForCopy ?? renderedContent
   const displayedAssistantMd = useTypewriter(renderedContent, !streamMarkdown)
@@ -164,6 +165,10 @@ export function AssistantMessage({
               <button
                 onClick={onShare}
                 disabled={!onShare || shareState === 'sharing'}
+                onPointerDown={() => { if (onShare && shareState !== 'sharing') setPressedBtn('share') }}
+                onPointerUp={() => setPressedBtn(null)}
+                onPointerLeave={() => setPressedBtn(null)}
+                style={{ transform: pressedBtn === 'share' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
                 className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onShare && shareState !== 'sharing' ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
               >
                 {shareState === 'shared' ? <Check size={16} /> : <Share2 size={16} />}
@@ -189,6 +194,10 @@ export function AssistantMessage({
             <button
               onClick={onFork}
               disabled={!onFork}
+              onPointerDown={() => { if (onFork) setPressedBtn('fork') }}
+              onPointerUp={() => setPressedBtn(null)}
+              onPointerLeave={() => setPressedBtn(null)}
+              style={{ transform: pressedBtn === 'fork' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
               className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onFork ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
             >
               <Split size={16} />
@@ -196,6 +205,10 @@ export function AssistantMessage({
             {onViewRunDetail && (
               <button
                 onClick={onViewRunDetail}
+                onPointerDown={() => setPressedBtn('terminal')}
+                onPointerUp={() => setPressedBtn(null)}
+                onPointerLeave={() => setPressedBtn(null)}
+                style={{ transform: pressedBtn === 'terminal' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
                 className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,background,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
                 title={t.desktopSettings.viewRunDetail}
               >

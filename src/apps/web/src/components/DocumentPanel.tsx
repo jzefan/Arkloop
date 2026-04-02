@@ -4,6 +4,7 @@ import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ArtifactIframe } from './ArtifactIframe'
+import { AnimatedCheck } from './AnimatedCheck'
 import { useLocale } from '../contexts/LocaleContext'
 
 const toggleButtonWidth = 36
@@ -91,6 +92,9 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
   const [downloading, setDownloading] = useState(false)
   const [mode, setMode] = useState<ViewMode>('preview')
+  const [downloadDone, setDownloadDone] = useState(false)
+  const [downloadPressed, setDownloadPressed] = useState(false)
+  const [closePressed, setClosePressed] = useState(false)
 
   useEffect(() => {
     setLoadState({ status: 'loading' })
@@ -127,6 +131,8 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(blobUrl)
+      setDownloadDone(true)
+      setTimeout(() => setDownloadDone(false), 1500)
     } catch {
       // 静默失败
     } finally {
@@ -245,6 +251,9 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
             onClick={() => void handleDownload()}
             disabled={downloading}
             title={t.documentPanel.download}
+            onPointerDown={() => setDownloadPressed(true)}
+            onPointerUp={() => setDownloadPressed(false)}
+            onPointerLeave={() => setDownloadPressed(false)}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -257,7 +266,8 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               color: 'var(--c-text-secondary)',
               cursor: downloading ? 'default' : 'pointer',
               opacity: downloading ? 0.5 : 1,
-              transition: 'background 150ms',
+              transform: downloadPressed ? 'scale(0.96)' : 'scale(1)',
+              transition: 'background 150ms, transform 80ms ease-out',
             }}
             onMouseEnter={(e) => {
               if (!downloading) (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
@@ -266,10 +276,13 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
             }}
           >
-            <Download size={16} />
+            {downloadDone ? <AnimatedCheck size={16} /> : <Download size={16} />}
           </button>
           <button
             onClick={onClose}
+            onPointerDown={() => setClosePressed(true)}
+            onPointerUp={() => setClosePressed(false)}
+            onPointerLeave={() => setClosePressed(false)}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -281,7 +294,8 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
               background: 'transparent',
               color: 'var(--c-text-secondary)',
               cursor: 'pointer',
-              transition: 'background 150ms',
+              transform: closePressed ? 'scale(0.96)' : 'scale(1)',
+              transition: 'background 150ms, transform 80ms ease-out',
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
@@ -364,6 +378,9 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
             <button
               onClick={() => void handleDownload()}
               disabled={downloading}
+              onPointerDown={() => setDownloadPressed(true)}
+              onPointerUp={() => setDownloadPressed(false)}
+              onPointerLeave={() => setDownloadPressed(false)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -376,7 +393,8 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
                 fontSize: '13px',
                 cursor: downloading ? 'default' : 'pointer',
                 fontFamily: 'inherit',
-                transition: 'background 150ms',
+                transform: downloadPressed ? 'scale(0.96)' : 'scale(1)',
+                transition: 'background 150ms, transform 80ms ease-out',
               }}
               onMouseEnter={(e) => {
                 if (!downloading) (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
@@ -385,7 +403,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
                 (e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)'
               }}
             >
-              <Download size={14} />
+              {downloadDone ? <AnimatedCheck size={14} /> : <Download size={14} />}
               {t.documentPanel.downloadFile}
             </button>
           </div>
