@@ -501,6 +501,7 @@ export interface LocaleStrings {
     availableFetchFailed: string
     noModelsAvailable: string
     visionBridgeHint: string
+    addModelTitle: string
   }
   // agent settings
   agentSettings: {
