@@ -961,6 +961,7 @@ export const zh: LocaleStrings = {
     memoryClearAllConfirm: "这将永久删除所有已存储的记忆，确定继续？",
     memoryDeleteConfirm: "删除这条记忆？",
     memorySnapshotTitle: "Memory 召回",
+    memoryRebuildSnapshot: "重建快照",
     memoryEnabled: "启用记忆",
     memoryEnabledDesc: "启用后，AI 将自动整理对话中的重要信息。",
     memorySummarizeSectionTitle: "Memory 召回",

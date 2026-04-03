@@ -973,6 +973,7 @@ export const en: LocaleStrings = {
     memoryClearAllConfirm: "This will permanently delete all stored memories. Continue?",
     memoryDeleteConfirm: "Delete this memory entry?",
     memorySnapshotTitle: "Memory Recall",
+    memoryRebuildSnapshot: "Rebuild Snapshot",
     // Memory enable + system selector
     memoryEnabled: "Enable Memory",
     memoryEnabledDesc: "When enabled, the AI will automatically organize important information from conversations.",
