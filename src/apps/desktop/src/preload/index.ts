@@ -66,6 +66,14 @@ export type MemoryEntry = {
   created_at: string
 }
 
+export type SnapshotHit = {
+  uri: string
+  abstract: string
+  score: number
+  match_reason: string
+  is_leaf: boolean
+}
+
 export type AppConfig = {
   mode: ConnectionMode
   saas: { baseUrl: string }
@@ -274,7 +282,9 @@ export type ArkloopDesktopApi = {
     setConfig: (config: MemoryConfig) => Promise<{ ok: boolean }>
     list: (agentId?: string) => Promise<{ entries: MemoryEntry[] }>
     delete: (id: string, agentId?: string) => Promise<{ status: string }>
-    getSnapshot: (agentId?: string) => Promise<{ memory_block: string }>
+    getSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
+    rebuildSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
+    getContent: (uri: string, layer?: 'overview' | 'read') => Promise<{ content: string }>
     add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
   }
   app: {
@@ -440,6 +450,8 @@ const api: ArkloopDesktopApi = {
     list: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:list', agentId),
     delete: (id: string, agentId?: string) => ipcRenderer.invoke('arkloop:memory:delete', id, agentId),
     getSnapshot: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:get-snapshot', agentId),
+    rebuildSnapshot: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:rebuild-snapshot', agentId),
+    getContent: (uri: string, layer?: 'overview' | 'read') => ipcRenderer.invoke('arkloop:memory:get-content', uri, layer),
     add: (content: string, category?: string) => ipcRenderer.invoke('arkloop:memory:add', content, category),
   },
 

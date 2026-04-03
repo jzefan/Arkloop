@@ -168,6 +168,7 @@ export type ArkloopDesktopApi = {
     list: (agentId?: string) => Promise<{ entries: MemoryEntry[] }>
     delete: (id: string, agentId?: string) => Promise<{ status: string }>
     getSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
+    rebuildSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
     getContent: (uri: string, layer?: 'overview' | 'read') => Promise<{ content: string }>
     add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
   }
