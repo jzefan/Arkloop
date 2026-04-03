@@ -920,6 +920,7 @@ export interface LocaleStrings {
     memoryClearAllConfirm: string;
     memoryDeleteConfirm: string;
     memorySnapshotTitle: string;
+    memoryRebuildSnapshot: string;
     memoryEnabled: string;
     memoryEnabledDesc: string;
     memorySummarizeSectionTitle: string;

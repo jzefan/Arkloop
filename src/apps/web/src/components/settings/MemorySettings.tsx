@@ -6,7 +6,7 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
 import type { MemoryConfig, SnapshotHit } from '@arkloop/shared/desktop'
 import { checkBridgeAvailable, bridgeClient, type ModuleStatus } from '../../api-bridge'
-import { secondaryButtonSmCls, secondaryButtonBorderStyle } from '../buttonStyles'
+import { secondaryButtonSmCls, secondaryButtonXsCls, secondaryButtonBorderStyle } from '../buttonStyles'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { MemoryConfigModal } from './MemoryConfigModal'
 
@@ -133,6 +133,7 @@ function HitCard({ hit, onLoadContent }: {
   const [expanded, setExpanded] = useState(false)
   const [overview, setOverview] = useState<string | null>(null)
   const [fullText, setFullText] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [fullExpanded, setFullExpanded] = useState(false)
   const [needsTruncation, setNeedsTruncation] = useState(false)
@@ -140,11 +141,12 @@ function HitCard({ hit, onLoadContent }: {
   const fullRef = useRef<HTMLPreElement>(null)
 
   const loadBoth = useCallback(async () => {
-    if (overview !== null || loading) return
+    if (loading) return
+    // 已加载且至少有一个层有内容，不重复请求
+    if (loaded && (overview || fullText)) return
     setLoading(true)
     try {
       if (hit.is_leaf) {
-        // leaf node: overview 接口不支持文件，只请求 read
         setOverview('')
         const rd = await onLoadContent(hit.uri, 'read').catch(() => '')
         setFullText(rd || '')
@@ -156,13 +158,15 @@ function HitCard({ hit, onLoadContent }: {
         setOverview(ov || '')
         setFullText(rd || '')
       }
+      setLoaded(true)
     } catch {
       setOverview('')
       setFullText('')
+      // 不设 loaded=true，下次展开会重试
     } finally {
       setLoading(false)
     }
-  }, [overview, loading, hit.uri, hit.is_leaf, onLoadContent])
+  }, [loaded, loading, overview, fullText, hit.uri, hit.is_leaf, onLoadContent])
 
   const handleToggle = () => {
     const next = !expanded
@@ -300,7 +304,7 @@ export function MemorySettings({ accessToken }: Props) {
   const [snapshot, setSnapshot] = useState<string>('')
   const [hits, setHits] = useState<SnapshotHit[]>([])
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [rebuilding, setRebuilding] = useState(false)
   const [configModalOpen, setConfigModalOpen] = useState(false)
 
   // Runtime health probe (lightweight — no full Bridge UI, just status)
@@ -355,7 +359,7 @@ export function MemorySettings({ accessToken }: Props) {
 
   const loadData = useCallback(async (quiet = false) => {
     if (!api?.memory) { setLoading(false); return }
-    if (!quiet) setLoading(true); else setRefreshing(true)
+    if (!quiet) setLoading(true)
     try {
       const cfg = await api.memory.getConfig()
       setMemConfigState(cfg)
@@ -366,9 +370,21 @@ export function MemorySettings({ accessToken }: Props) {
         setHits(snap.hits ?? [])
       }
     } catch { /* ignore */ } finally {
-      setLoading(false); setRefreshing(false)
+      setLoading(false)
     }
   }, [api, probeHealth])
+
+  const rebuildSnapshot = useCallback(async () => {
+    if (!api?.memory?.rebuildSnapshot) return
+    setRebuilding(true)
+    try {
+      const snap = await api.memory.rebuildSnapshot()
+      setSnapshot(snap.memory_block ?? '')
+      setHits(snap.hits ?? [])
+    } catch { /* ignore */ } finally {
+      setRebuilding(false)
+    }
+  }, [api])
 
   useEffect(() => { void loadData() }, [loadData])
 
@@ -504,11 +520,14 @@ export function MemorySettings({ accessToken }: Props) {
               <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">{ds.memorySnapshotTitle}</h4>
             </div>
             <button
-              onClick={() => void loadData(true)}
-              disabled={refreshing}
-              className="shrink-0 rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)] disabled:opacity-40"
+              type="button"
+              onClick={() => void rebuildSnapshot()}
+              disabled={rebuilding}
+              className={secondaryButtonXsCls}
+              style={secondaryButtonBorderStyle}
             >
-              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+              <RefreshCw size={13} className={rebuilding ? 'animate-spin' : ''} />
+              {ds.memoryRebuildSnapshot}
             </button>
           </div>
 
