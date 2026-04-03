@@ -46,6 +46,7 @@ type telegramChannelConfig struct {
 	TelegramBotUserID     int64    `json:"telegram_bot_user_id,omitempty"`
 	TelegramTypingSignal  *bool    `json:"telegram_typing_indicator,omitempty"`
 	TelegramReactionEmoji string   `json:"telegram_reaction_emoji,omitempty"`
+	TriggerKeywords       []string `json:"trigger_keywords,omitempty"`
 }
 
 type telegramUpdate struct {
@@ -189,6 +190,7 @@ func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.R
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
 	cfg.BotUsername = strings.TrimSpace(strings.TrimPrefix(cfg.BotUsername, "@"))
 	cfg.TelegramReactionEmoji = strings.TrimSpace(cfg.TelegramReactionEmoji)
+	cfg.TriggerKeywords = normalizeTelegramTriggerKeywords(cfg.TriggerKeywords)
 	normalized, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -218,6 +220,47 @@ func normalizeTelegramAllowedUserIDs(values []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func normalizeTelegramTriggerKeywords(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		kw := strings.ToLower(strings.TrimSpace(v))
+		if kw == "" {
+			continue
+		}
+		if _, ok := seen[kw]; ok {
+			continue
+		}
+		seen[kw] = struct{}{}
+		out = append(out, kw)
+	}
+	return out
+}
+
+// buildTelegramTriggerKeywords 合并显式配置的关键词与从 bot profile 派生的名称。
+func buildTelegramTriggerKeywords(cfg telegramChannelConfig) []string {
+	seen := make(map[string]struct{}, len(cfg.TriggerKeywords)+2)
+	out := make([]string, 0, len(cfg.TriggerKeywords)+2)
+	add := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, kw := range cfg.TriggerKeywords {
+		add(kw)
+	}
+	if name := strings.TrimSpace(cfg.BotFirstName); name != "" {
+		add(name)
+	}
+	return out
 }
 
 func resolveTelegramConfig(channelType string, raw json.RawMessage) (telegramChannelConfig, error) {
@@ -778,7 +821,7 @@ func syncTelegramBotUserIDToConfig(
 	if err != nil {
 		return nil
 	}
-	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" {
+	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" && strings.TrimSpace(cfg.BotFirstName) != "" {
 		return nil
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
@@ -845,7 +888,7 @@ func (c telegramConnector) refreshTelegramBotProfile(ctx context.Context, token 
 	if err != nil {
 		return
 	}
-	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" {
+	if cfg.TelegramBotUserID != 0 && strings.TrimSpace(cfg.BotUsername) != "" && strings.TrimSpace(cfg.BotFirstName) != "" {
 		return
 	}
 	remoteCtx, cancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
@@ -990,7 +1033,7 @@ func (c telegramConnector) HandleUpdate(
 	if err != nil {
 		return err
 	}
-	incoming, err := normalizeTelegramIncomingMessage(ch.ID, ch.ChannelType, rawPayload, update, cfg.BotUsername, cfg.TelegramBotUserID)
+	incoming, err := normalizeTelegramIncomingMessage(ch.ID, ch.ChannelType, rawPayload, update, cfg.BotUsername, cfg.TelegramBotUserID, buildTelegramTriggerKeywords(cfg))
 	if err != nil {
 		return err
 	}
@@ -2127,7 +2170,7 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if err != nil {
 		return err
 	}
-	incoming, err := normalizeTelegramIncomingMessage(ch.ID, ch.ChannelType, rawPayload, update, cfg.BotUsername, cfg.TelegramBotUserID)
+	incoming, err := normalizeTelegramIncomingMessage(ch.ID, ch.ChannelType, rawPayload, update, cfg.BotUsername, cfg.TelegramBotUserID, buildTelegramTriggerKeywords(cfg))
 	if err != nil {
 		return err
 	}

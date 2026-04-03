@@ -43,6 +43,7 @@ type telegramIncomingMessage struct {
 	ReplyToPreview    string
 	MentionsBot       bool
 	IsReplyToBot      bool
+	MatchesKeyword    bool
 	MessageThreadID   *string
 	RawPayload        json.RawMessage
 }
@@ -56,7 +57,7 @@ func (m telegramIncomingMessage) HasContent() bool {
 }
 
 func (m telegramIncomingMessage) ShouldCreateRun() bool {
-	return m.IsPrivate() || m.MentionsBot || m.IsReplyToBot
+	return m.IsPrivate() || m.MentionsBot || m.IsReplyToBot || m.MatchesKeyword
 }
 
 func normalizeTelegramIncomingMessage(
@@ -66,6 +67,7 @@ func normalizeTelegramIncomingMessage(
 	update telegramUpdate,
 	botUsername string,
 	telegramBotUserID int64,
+	triggerKeywords []string,
 ) (*telegramIncomingMessage, error) {
 	if update.Message == nil || update.Message.From == nil {
 		return nil, nil
@@ -96,6 +98,7 @@ func normalizeTelegramIncomingMessage(
 		ReplyToPreview:    replyToPreview,
 		MentionsBot:       telegramMessageMentionsBot(msg, botUsername),
 		IsReplyToBot:      telegramMessageRepliesToBot(msg, telegramBotUserID),
+		MatchesKeyword:    telegramMessageMatchesKeyword(msg, triggerKeywords),
 		MessageThreadID:   messageThreadID,
 		RawPayload:        json.RawMessage(rawPayload),
 	}
@@ -146,6 +149,23 @@ func telegramMessageRepliesToBot(msg *telegramMessage, telegramBotUserID int64) 
 	}
 	if telegramBotUserID != 0 {
 		return msg.ReplyToMessage.From.ID == telegramBotUserID
+	}
+	return false
+}
+
+func telegramMessageMatchesKeyword(msg *telegramMessage, keywords []string) bool {
+	if msg == nil || len(keywords) == 0 {
+		return false
+	}
+	text := strings.ToLower(resolveTelegramMessageBody(msg))
+	if text == "" {
+		return false
+	}
+	for _, kw := range keywords {
+		kw = strings.ToLower(strings.TrimSpace(kw))
+		if kw != "" && strings.Contains(text, kw) {
+			return true
+		}
 	}
 	return false
 }
@@ -272,6 +292,7 @@ func telegramInboundMetadataJSON(identity data.ChannelIdentity, incoming telegra
 		"conversation_title":  incoming.ConversationTitle,
 		"mentions_bot":        incoming.MentionsBot,
 		"is_reply_to_bot":     incoming.IsReplyToBot,
+		"matches_keyword":     incoming.MatchesKeyword,
 		"media_attachments":   incoming.MediaAttachments,
 		"reply_to_message_id": incoming.ReplyToMsgID,
 		"message_thread_id":   incoming.MessageThreadID,

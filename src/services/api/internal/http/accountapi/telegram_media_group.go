@@ -137,7 +137,7 @@ func flushTelegramMediaGroupBucket(key string) {
 		slog.Error("telegram_media_group_flush", "phase", "config", "err", err)
 		return
 	}
-	merged, err := mergeTelegramAlbumIncoming(ch.ID, ch.ChannelType, items, cfg.BotUsername, cfg.TelegramBotUserID)
+	merged, err := mergeTelegramAlbumIncoming(ch.ID, ch.ChannelType, items, cfg.BotUsername, cfg.TelegramBotUserID, buildTelegramTriggerKeywords(cfg))
 	if err != nil || merged == nil {
 		slog.Error("telegram_media_group_flush", "phase", "merge", "err", err)
 		return
@@ -154,6 +154,7 @@ func mergeTelegramAlbumIncoming(
 	items []telegramUpdate,
 	botUsername string,
 	botUID int64,
+	triggerKeywords []string,
 ) (*telegramIncomingMessage, error) {
 	var merged *telegramIncomingMessage
 	for _, u := range items {
@@ -161,7 +162,7 @@ func mergeTelegramAlbumIncoming(
 		if err != nil {
 			return nil, err
 		}
-		inc, err := normalizeTelegramIncomingMessage(channelID, channelType, raw, u, botUsername, botUID)
+		inc, err := normalizeTelegramIncomingMessage(channelID, channelType, raw, u, botUsername, botUID, triggerKeywords)
 		if err != nil {
 			return nil, err
 		}
