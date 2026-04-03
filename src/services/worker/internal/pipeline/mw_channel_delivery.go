@@ -68,10 +68,13 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		messagesRepo := data.MessagesRepository{}
 		var streamFlush func(context.Context, string) error
 		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && channelType == "telegram" &&
-			!rc.HeartbeatRun &&
 			tgClient != nil && strings.TrimSpace(preloaded.Token) != "" {
 			sender := NewTelegramChannelSenderWithClient(tgClient, preloaded.Token, resolveSegmentDelay())
 			streamFlush = func(ctx2 context.Context, text string) error {
+				// heartbeat Turn 1 阶段不 stream
+				if rc.HeartbeatRun && (rc.HeartbeatToolOutcome == nil || !rc.HeartbeatToolOutcome.Reply) {
+					return nil
+				}
 				ids, sendErr := sender.SendText(ctx2, ChannelDeliveryTarget{
 					ChannelType:  rc.ChannelContext.ChannelType,
 					Conversation: rc.ChannelContext.Conversation,
