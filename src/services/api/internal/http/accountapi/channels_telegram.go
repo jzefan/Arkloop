@@ -1338,9 +1338,24 @@ func (c telegramConnector) HandleUpdate(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "absorbed_by_heartbeat",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+			)
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {
@@ -1606,17 +1621,17 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 	incoming telegramIncomingMessage,
 	content, traceID string,
 	preTailMessageID string,
-) (bool, error) {
+) (delivered bool, heartbeatAbsorbed bool, err error) {
 	if run == nil {
-		return false, nil
+		return false, false, nil
 	}
 	if strings.TrimSpace(content) == "" {
-		return false, nil
+		return false, false, nil
 	}
 	if incoming.ShouldCreateRun() {
 		events, err := repo.ListEvents(ctx, run.ID, 0, 1)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if len(events) > 0 {
 			if startedData, ok := events[0].DataJSON.(map[string]any); ok {
@@ -1624,20 +1639,18 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 					heartbeatTail, _ := startedData["thread_tail_message_id"].(string)
 					heartbeatTail = strings.TrimSpace(heartbeatTail)
 					if heartbeatTail == strings.TrimSpace(preTailMessageID) {
-						// 上下文相同：检查 heartbeat 是否已向第三方发送
 						if c.channelLedgerRepo != nil {
 							hasOutbound, ledgerErr := c.channelLedgerRepo.HasOutboundForRun(ctx, run.ID)
 							if ledgerErr != nil {
-								return false, ledgerErr
+								return false, false, ledgerErr
 							}
 							if hasOutbound {
-								return true, nil // heartbeat 已发送，视为已处理
+								return false, true, nil
 							}
 						}
-						// heartbeat 未发送，cancel 后让上层创建 normal run
 						_, _ = repo.RequestCancel(ctx, run.ID, nil, "heartbeat_superseded", 0, nil)
 					}
-					return false, nil
+					return false, false, nil
 				}
 			}
 		}
@@ -1645,11 +1658,11 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 	if _, err := repo.ProvideInput(ctx, run.ID, content, traceID); err != nil {
 		var notActive data.RunNotActiveError
 		if errors.As(err, &notActive) {
-			return false, nil
+			return false, false, nil
 		}
-		return false, err
+		return false, false, err
 	}
-	return true, nil
+	return true, false, nil
 }
 
 func (c telegramConnector) notifyActiveRunInput(ctx context.Context, runID uuid.UUID) {
@@ -2479,9 +2492,24 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "absorbed_by_heartbeat",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+			)
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {
