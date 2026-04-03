@@ -401,9 +401,15 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, incoming, content, traceID, preTailMessageID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {
