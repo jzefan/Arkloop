@@ -752,21 +752,6 @@ export type UploadedThreadAttachment = {
   extracted_text?: string
 }
 
-export async function uploadThreadAttachment(
-  accessToken: string,
-  threadId: string,
-  file: File,
-): Promise<UploadedThreadAttachment> {
-  const body = new FormData()
-  body.append('file', file)
-  return await apiFetch<UploadedThreadAttachment>(`/v1/threads/${threadId}/attachments`, {
-    method: 'POST',
-    accessToken,
-    body,
-    headers: {},
-  })
-}
-
 export async function uploadStagingAttachment(
   accessToken: string,
   file: File,

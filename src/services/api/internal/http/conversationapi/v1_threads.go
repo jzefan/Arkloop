@@ -727,7 +727,7 @@ func threadEntry(
 	get := getThread(authService, membershipRepo, threadRepo, projectRepo, teamRepo, auditWriter, apiKeysRepo)
 	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, auditWriter, apiKeysRepo)
 	del := deleteThread(authService, membershipRepo, threadRepo, messageRepo, attachmentStore, auditWriter, apiKeysRepo)
-	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
+	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService, attachmentStore)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo)
@@ -737,7 +737,6 @@ func threadEntry(
 	share := shareEntry(authService, membershipRepo, threadRepo, threadShareRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	report := reportEntry(authService, membershipRepo, threadRepo, threadReportRepo, auditWriter, apiKeysRepo, flagService)
 	fork := forkThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
-	uploadAttachment := uploadThreadAttachment(authService, membershipRepo, threadRepo, auditWriter, apiKeysRepo, attachmentStore)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path == "/v1/threads/" {
 			threadsEntry(authService, membershipRepo, threadRepo, projectRepo, pool, apiKeysRepo, auditWriter)(w, r)
@@ -837,13 +836,6 @@ func threadEntry(
 				createRun(w, r, threadID)
 			case nethttp.MethodGet:
 				listRuns(w, r, threadID)
-			default:
-				httpkit.WriteMethodNotAllowed(w, r)
-			}
-		case "attachments":
-			switch r.Method {
-			case nethttp.MethodPost:
-				uploadAttachment(w, r, threadID)
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
