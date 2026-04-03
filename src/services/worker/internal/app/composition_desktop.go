@@ -96,6 +96,8 @@ type DesktopEngine struct {
 	rolloutStore           objectstore.BlobStore
 	promptInjection        securitycap.Runtime
 	groupSearchExec        tools.Executor
+	mcpPool                *mcp.Pool
+	mcpDiscoveryCache      *mcp.DiscoveryCache
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -342,6 +344,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		routing.DefaultRoutingConfig(),
 	)
 
+	mcpPool := mcp.NewPool()
+	mcpDiscoveryCache := mcp.NewDiscoveryCache(30*time.Second, mcpPool)
+
 	if err := cleanupOrphanSkillRuntimes(ctx, db); err != nil {
 		slog.WarnContext(ctx, "desktop: orphan skill runtime cleanup failed", "err", err.Error())
 	}
@@ -370,6 +375,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		rolloutStore:           rolloutStore,
 		promptInjection:        promptInjection,
 		groupSearchExec:        groupSearchExec,
+		mcpPool:                mcpPool,
+		mcpDiscoveryCache:      mcpDiscoveryCache,
 	}, nil
 }
 
@@ -518,7 +525,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore),
 		pipeline.NewHeartbeatScheduleMiddleware(e.db),
 		pipeline.NewMCPDiscoveryMiddleware(
-			nil,
+			e.mcpDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return e.db },
 			e.toolExecutors,
 			e.allLlmSpecs,
