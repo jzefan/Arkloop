@@ -45,6 +45,7 @@ import (
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
+	"arkloop/services/worker/internal/tools/builtin/read"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	"arkloop/services/worker/internal/tools/localshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
@@ -84,6 +85,7 @@ type DesktopEngine struct {
 	baseAllowlist          map[string]struct{}
 	executorRegistry       pipeline.AgentExecutorBuilder
 	personaRegistry        func() *personas.Registry
+	notebookProvider       memory.MemoryProvider
 	memProvider            memory.MemoryProvider
 	useOV                  bool
 	useVM                  bool
@@ -94,6 +96,7 @@ type DesktopEngine struct {
 	messageAttachmentStore objectstore.Store
 	rolloutStore           objectstore.BlobStore
 	promptInjection        securitycap.Runtime
+	groupSearchExec        tools.Executor
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -186,32 +189,55 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		executors[spec.Name] = convExec
 	}
 
+	groupSearchExec := conversationtool.NewGroupSearchExecutor(db, nil)
+	if err := toolRegistry.Register(conversationtool.GroupSearchAgentSpec); err != nil {
+		return nil, err
+	}
+	executors[conversationtool.GroupSearchAgentSpec.Name] = groupSearchExec
+
 	memEnabled := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_ENABLED")) != "false"
 	ovURL := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"))
 	ovKey := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"))
 
+	var notebookProvider memory.MemoryProvider
 	var memProvider memory.MemoryProvider
 	useOV := false
+	if memEnabled {
+		notebookProvider = localmemory.NewProvider(db)
+		slog.Info("desktop: notebook enabled")
+	}
 	if memEnabled && ovURL != "" {
 		memProvider = openviking.NewProvider(openviking.Config{BaseURL: ovURL, RootAPIKey: ovKey})
 		useOV = true
 		desktop.SetMemoryRuntime("openviking")
 		slog.Info("desktop: using OpenViking memory provider", "url", ovURL)
 	} else if memEnabled {
-		memProvider = localmemory.NewProvider(db)
-		desktop.SetMemoryRuntime("local")
-		slog.Info("desktop: using local SQLite memory provider")
+		desktop.SetMemoryRuntime("notebook")
+		slog.Info("desktop: using notebook-only memory mode")
 	} else {
 		desktop.SetMemoryRuntime("")
 		slog.Info("desktop: memory disabled")
 	}
 
-	if memProvider != nil {
-		memExec := memorytool.NewToolExecutor(memProvider, db, nil)
-		for _, spec := range memorytool.AgentSpecs() {
+	if notebookProvider != nil {
+		memExec := memorytool.NewToolExecutor(notebookProvider, db, nil)
+		notebookSpecs := memorytool.NotebookAgentSpecs()
+		for _, spec := range notebookSpecs {
 			executors[spec.Name] = memExec
 		}
-		for _, spec := range memorytool.AgentSpecs() {
+		for _, spec := range notebookSpecs {
+			if err := toolRegistry.Register(spec); err != nil {
+				slog.WarnContext(ctx, "desktop: skip notebook tool registration", "name", spec.Name, "err", err)
+			}
+		}
+	}
+
+	if useOV && memProvider != nil {
+		memExec := memorytool.NewToolExecutor(memProvider, db, nil)
+		for _, spec := range memorytool.MemoryAgentSpecs() {
+			executors[spec.Name] = memExec
+		}
+		for _, spec := range memorytool.MemoryAgentSpecs() {
 			if err := toolRegistry.Register(spec); err != nil {
 				slog.WarnContext(ctx, "desktop: skip memory tool registration", "name", spec.Name, "err", err)
 			}
@@ -228,6 +254,15 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.WarnContext(ctx, "desktop: message attachment store init failed", "err", err.Error())
 	} else {
 		messageAttachmentStore = mas
+	}
+	if messageAttachmentStore != nil {
+		for _, name := range []string{read.AgentSpec.Name, read.AgentSpecMiniMax.Name} {
+			if exec, ok := executors[name]; ok {
+				if readExec, ok := exec.(*read.Executor); ok {
+					readExec.AttachmentStore = messageAttachmentStore
+				}
+			}
+		}
 	}
 	var rolloutStore objectstore.BlobStore
 	if rs, err := openDesktopRolloutStore(ctx); err != nil {
@@ -248,8 +283,12 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	shellLlmSpecs := localshell.LlmSpecs()
 	allLlmSpecs := append(builtin.LlmSpecs(), shellLlmSpecs...)
 	allLlmSpecs = append(allLlmSpecs, conversationtool.LlmSpecs()...)
-	if memProvider != nil {
-		allLlmSpecs = append(allLlmSpecs, memorytool.LlmSpecs()...)
+	allLlmSpecs = append(allLlmSpecs, conversationtool.GroupSearchLlmSpec)
+	if notebookProvider != nil {
+		allLlmSpecs = append(allLlmSpecs, memorytool.NotebookLlmSpecs()...)
+	}
+	if useOV && memProvider != nil {
+		allLlmSpecs = append(allLlmSpecs, memorytool.MemoryLlmSpecs()...)
 	}
 	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore)
 	if err != nil {
@@ -260,7 +299,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 
 	envSnap, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
-		HasConversationSearch:  true,
+		HasConversationSearch:   true,
+		HasGroupHistorySearch:   true,
 		ArtifactStoreAvailable: artifactToolsRegistered,
 		ConfigResolver:         nil,
 	})
@@ -268,9 +308,14 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		return nil, fmt.Errorf("desktop: env runtime snapshot: %w", err)
 	}
 	mergedRT := (*runtimeSnapshot).MergeBuiltinToolNamesFrom(envSnap)
-	if memProvider != nil {
+	if notebookProvider != nil {
 		mergedRT = mergedRT.WithMergedBuiltinToolNames(
-			"memory_search", "memory_read", "memory_write", "memory_forget",
+			"notebook_read", "notebook_write", "notebook_edit", "notebook_forget",
+		)
+	}
+	if useOV && memProvider != nil {
+		mergedRT = mergedRT.WithMergedBuiltinToolNames(
+			"memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget",
 		)
 	}
 	runtimeSnapshot = &mergedRT
@@ -314,6 +359,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		baseAllowlist:          filtered,
 		executorRegistry:       execRegistry,
 		personaRegistry:        personaGetter,
+		notebookProvider:       notebookProvider,
 		memProvider:            memProvider,
 		useOV:                  useOV,
 		useVM:                  useVM,
@@ -324,6 +370,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		messageAttachmentStore: messageAttachmentStore,
 		rolloutStore:           rolloutStore,
 		promptInjection:        promptInjection,
+		groupSearchExec:        groupSearchExec,
 	}, nil
 }
 
@@ -444,14 +491,24 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 	rc.ContextCompact = cc
 
+	if e.useOV && e.memProvider != nil {
+		rc.MemoryProvider = e.memProvider
+	}
+
 	var memMiddleware pipeline.RunMiddleware
 	if e.useOV {
-		memMiddleware = pipeline.NewMemoryMiddleware(
+		notebookMW := desktopMemoryInjection(e.db)
+		memoryMW := pipeline.NewMemoryMiddleware(
 			e.memProvider,
 			pipeline.NewDesktopMemorySnapshotStore(e.db),
 			e.db,
 			e.promptInjection.Resolver,
 		)
+		memMiddleware = func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+			return notebookMW(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
+				return memoryMW(ctx, rc, next)
+			})
+		}
 	} else {
 		// Local SQLite: lightweight snapshot injection
 		memMiddleware = desktopMemoryInjection(e.db)
@@ -473,9 +530,21 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewSpawnAgentMiddleware(),
 		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
 		desktopChannelContext(e.db),
+		pipeline.NewChannelAdminTagMiddleware(e.db),
 		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(),
-		pipeline.NewChannelTelegramToolsMiddleware(&desktopTelegramTokenLoader{db: e.db}, nil),
+		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
+			Pool:            e.db,
+			MessagesRepo:    data.MessagesRepository{},
+			EventsRepo:      data.DesktopRunEventsRepository{},
+			AuxGateway:      e.auxGateway,
+			EmitDebugEvents: e.emitDebugEvents,
+			ConfigLoader:    e.routingLoader,
+		}),
+		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
+			TokenLoader:        &desktopTelegramTokenLoader{db: e.db},
+			GroupSearchExec:    e.groupSearchExec,
+			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
+		}),
 		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
 		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve:        desktopSkillResolver(e.db),
@@ -506,7 +575,10 @@ func desktopCapabilityMiddlewares(
 	promptInjection securitycap.Runtime,
 	eventsRepo data.RunEventStore,
 ) []pipeline.RunMiddleware {
-	middlewares := []pipeline.RunMiddleware{memMiddleware}
+	middlewares := []pipeline.RunMiddleware{
+		memMiddleware,
+		pipeline.NewRuntimeContextMiddleware(),
+	}
 	return append(middlewares, promptInjection.Middlewares(eventsRepo)...)
 }
 
@@ -519,27 +591,21 @@ func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.
 
 // --------------- desktop middleware ---------------
 
-// desktopMemoryInjection reads the saved memory_block from user_memory_snapshots
-// and appends it to the run's system prompt. This is the desktop equivalent of
-// NewMemoryMiddleware — lightweight and synchronous, no vector search required.
-// Desktop memory is user-level and must read the same stable bucket that
-// memory tools write to.
+// desktopMemoryInjection reads the saved notebook block from
+// user_notebook_snapshots and appends it to the run's system prompt.
 func desktopMemoryInjection(db data.DesktopDB) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		if rc.UserID == nil {
+		if rc.UserID == nil || db == nil {
 			return next(ctx, rc)
 		}
-		var block string
-		err := db.QueryRow(ctx,
-			`SELECT memory_block FROM user_memory_snapshots
-			 WHERE account_id = $1 AND user_id = $2 AND agent_id = $3`,
-			rc.Run.AccountID.String(), rc.UserID.String(), pipeline.StableAgentID(rc),
-		).Scan(&block)
+		provider := localmemory.NewProvider(db)
+		block, err := provider.GetSnapshot(ctx, rc.Run.AccountID, *rc.UserID, pipeline.StableAgentID(rc))
 		if err == nil && strings.TrimSpace(block) != "" {
+			notebookBlock := strings.TrimSpace(block)
 			if strings.TrimSpace(rc.SystemPrompt) != "" {
-				rc.SystemPrompt = rc.SystemPrompt + "\n\n" + strings.TrimSpace(block)
+				rc.SystemPrompt = rc.SystemPrompt + "\n\n" + notebookBlock
 			} else {
-				rc.SystemPrompt = strings.TrimSpace(block)
+				rc.SystemPrompt = notebookBlock
 			}
 		}
 		// Ignore ErrNoRows / any DB errors — no memory is a valid state.
@@ -803,6 +869,22 @@ func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
 				channelCtx.SenderUserID = identity.UserID
 			}
 		}
+		// channel 场景下 bot 的 memory 归属于 channel owner
+		if db != nil && channelCtx.SenderUserID == nil && channelCtx.ChannelID != uuid.Nil {
+			ownerID, err := loadDesktopChannelOwner(ctx, db, channelCtx.ChannelID)
+			if err != nil {
+				return err
+			}
+			channelCtx.SenderUserID = ownerID
+		}
+		if db != nil && channelCtx.ChannelID != uuid.Nil && channelCtx.ChannelType == "telegram" {
+			configJSON, err := loadDesktopChannelConfigJSON(ctx, db, channelCtx.ChannelID)
+			if err == nil && len(configJSON) > 0 {
+				ux := pipeline.ParseTelegramChannelUX(configJSON)
+				channelCtx.BotDisplayName = ux.BotFirstName
+				channelCtx.BotUsername = ux.BotUsername
+			}
+		}
 		rc.ChannelContext = channelCtx
 		rc.ChannelToolSurface = pipeline.NewChannelToolSurfaceFromContext(channelCtx)
 		if channelCtx.SenderUserID != nil {
@@ -871,6 +953,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				); err != nil {
 					return err
 				}
+				if err := persistDesktopStreamChunkMessage(ctx2, db, rc.Run, text); err != nil {
+					slog.WarnContext(ctx2, "desktop: persist stream chunk message failed", "run_id", rc.Run.ID, "err", err.Error())
+				}
 				streamMidCount++
 				return nil
 			}
@@ -897,11 +982,13 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq") {
 			return err
 		}
-		if pipeline.ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
+		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
+		finalOutputs := pipelineNormalizedAssistantOutputs(rc.FinalAssistantOutputs, finalOutput)
+		if pipeline.ShouldSuppressHeartbeatOutput(rc, finalOutput) {
 			return err
 		}
 
-		fullOut := strings.TrimSpace(rc.FinalAssistantOutput)
+		fullOut := finalOutput
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
 		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
 		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
@@ -921,6 +1008,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if strings.TrimSpace(output) == "" && notice != "" {
 			output = notice
 		}
+		if streamFlush != nil {
+			finalOutputs = nil
+		}
 
 		channel := preloaded
 		var lookupErr error
@@ -939,7 +1029,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		switch channelType {
 		case "telegram":
 			uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
-			if finalRecordErr := deliverDesktopTelegramChannelOutput(ctx, db, rc, client, channel, output); finalRecordErr != nil {
+			if finalRecordErr := deliverDesktopTelegramChannelOutputs(ctx, db, rc, client, channel, output, finalOutputs); finalRecordErr != nil {
 				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "desktop telegram channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
@@ -1018,6 +1108,54 @@ func deliverDesktopTelegramChannelOutput(
 		rc.ChannelContext.Conversation.ThreadID,
 		messageIDs,
 	)
+}
+
+func deliverDesktopTelegramChannelOutputs(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	client *telegrambot.Client,
+	channel *desktopDeliveryChannelRecord,
+	output string,
+	outputs []string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	if len(outputs) <= 1 {
+		return deliverDesktopTelegramChannelOutput(ctx, db, rc, client, channel, output)
+	}
+	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
+	replyTo := desktopTelegramReplyReference(rc)
+	for _, item := range outputs {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      replyTo,
+		}, trimmed)
+		if err != nil {
+			return err
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx,
+			db,
+			rc.Run.ID,
+			rc.Run.ThreadID,
+			rc.ChannelContext.ChannelID,
+			rc.ChannelContext.ChannelType,
+			rc.ChannelContext.Conversation.Target,
+			replyTo,
+			rc.ChannelContext.Conversation.ThreadID,
+			messageIDs,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func deliverDesktopDiscordChannelOutput(
@@ -1136,6 +1274,22 @@ func deliverDesktopOneBotChannelOutput(
 	)
 }
 
+func pipelineNormalizedAssistantOutputs(outputs []string, fallback string) []string {
+	normalized := make([]string, 0, len(outputs))
+	for _, item := range outputs {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+		return []string{trimmed}
+	}
+	return nil
+}
+
 func desktopDiscordReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
 		return nil
@@ -1190,6 +1344,42 @@ func loadDesktopChannelIdentity(ctx context.Context, db data.DesktopDB, identity
 		return nil, fmt.Errorf("desktop channel identity lookup: %w", err)
 	}
 	return &item, nil
+}
+
+func loadDesktopChannelOwner(ctx context.Context, db data.DesktopDB, channelID uuid.UUID) (*uuid.UUID, error) {
+	if db == nil {
+		return nil, nil
+	}
+	var ownerUserID *uuid.UUID
+	err := db.QueryRow(ctx,
+		`SELECT owner_user_id FROM channels WHERE id = $1`,
+		channelID,
+	).Scan(&ownerUserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("desktop channel owner lookup: %w", err)
+	}
+	return ownerUserID, nil
+}
+
+func loadDesktopChannelConfigJSON(ctx context.Context, db data.DesktopDB, channelID uuid.UUID) ([]byte, error) {
+	if db == nil {
+		return nil, nil
+	}
+	var configJSON []byte
+	err := db.QueryRow(ctx,
+		`SELECT COALESCE(config_json, '{}') FROM channels WHERE id = $1`,
+		channelID,
+	).Scan(&configJSON)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("desktop channel config lookup: %w", err)
+	}
+	return configJSON, nil
 }
 
 func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelID uuid.UUID) (*desktopDeliveryChannelRecord, error) {
@@ -1774,6 +1964,7 @@ func desktopAgentLoop(
 			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
 		}
 		content := w.visibleAssistantOutput()
+		hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
 		shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
 		if shouldPersistAssistantOutput && !pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
 			metadata := map[string]any{
@@ -1784,14 +1975,25 @@ func desktopAgentLoop(
 				metadata["completion_state"] = "complete"
 				metadata["finish_reason"] = "completed"
 			}
-			if err := desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata); err != nil {
-				slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
+			if hasStreamedChunks {
+				remainder := w.telegramStreamRemainder()
+				if strings.TrimSpace(remainder) != "" {
+					metadata["stream_chunk"] = true
+					if err := persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata); err != nil {
+						slog.WarnContext(ctx, "desktop: insert assistant remainder failed", "err", err)
+					}
+				}
+			} else {
+				if err := desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata); err != nil {
+					slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
+				}
 			}
 			if err := pipeline.DeleteResponseDraft(ctx, rc.ResponseDraftStore, rc.Run.ID); err != nil {
 				slog.WarnContext(ctx, "desktop: delete response draft failed", "err", err)
 			}
 			if w.completed {
 				rc.FinalAssistantOutput = content
+				rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
 				rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
 			}
 		}
@@ -1816,10 +2018,12 @@ type desktopEventWriter struct {
 	eventsRepo               data.DesktopRunEventsRepository
 	projector                *subagentctl.SubAgentStateProjector
 	assistantDeltas          []string
+	lastTurnDeltaCount       int
 	latestAssistantSeq       int64
 	lastDraftFlushAt         time.Time
 	responseDraftStore       objectstore.BlobStore
 	assistantMessage         *llm.Message
+	assistantMessageFresh    bool
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
@@ -1835,6 +2039,7 @@ type desktopEventWriter struct {
 	terminalUserMessage      string
 	terminalStatus           string
 	visibleAssistantText     string
+	visibleAssistantTexts    []string
 	draftVisibleContent      string
 	draftUseVisible          bool
 }
@@ -1910,9 +2115,15 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	}
 	if assistantMessage, ok := desktopAssistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
+		w.assistantMessageFresh = true
+	}
+	if ev.Type == "llm.turn.completed" {
+		w.captureAssistantTurnOutput()
 	}
 
-	w.accumUsage(ev.DataJSON)
+	if shouldAccumulateUsageForDesktopEvent(ev.Type) {
+		w.accumUsage(ev.DataJSON)
+	}
 
 	flushChunk := ""
 	if ev.Type == "tool.call" {
@@ -2029,10 +2240,48 @@ func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx,
 }
 
 func (w *desktopEventWriter) visibleAssistantOutput() string {
+	if len(w.visibleAssistantTexts) > 0 {
+		return strings.Join(w.visibleAssistantTexts, "")
+	}
 	if strings.TrimSpace(w.visibleAssistantText) != "" {
-		return w.visibleAssistantText
+		return strings.TrimSpace(w.visibleAssistantText)
 	}
 	return strings.Join(w.assistantDeltas, "")
+}
+
+func (w *desktopEventWriter) visibleAssistantOutputs() []string {
+	if len(w.visibleAssistantTexts) == 0 {
+		output := strings.TrimSpace(w.visibleAssistantOutput())
+		if output == "" {
+			return nil
+		}
+		return []string{output}
+	}
+	out := make([]string, 0, len(w.visibleAssistantTexts))
+	for _, item := range w.visibleAssistantTexts {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (w *desktopEventWriter) captureAssistantTurnOutput() {
+	text := ""
+	if w.assistantMessageFresh && w.assistantMessage != nil {
+		text = llm.VisibleMessageText(*w.assistantMessage)
+	} else if w.lastTurnDeltaCount < len(w.assistantDeltas) {
+		text = strings.Join(w.assistantDeltas[w.lastTurnDeltaCount:], "")
+	}
+	w.lastTurnDeltaCount = len(w.assistantDeltas)
+	w.assistantMessageFresh = false
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		w.visibleAssistantTexts = append(w.visibleAssistantTexts, trimmed)
+		w.visibleAssistantText = strings.Join(w.visibleAssistantTexts, "")
+	}
 }
 
 func (w *desktopEventWriter) maybeFlushResponseDraft(ctx context.Context, force bool) error {
@@ -2144,6 +2393,15 @@ func (w *desktopEventWriter) accumUsage(dataJSON map[string]any) {
 	}
 	if v, ok := toDesktopFloat64(usage["cost_usd"]); ok {
 		w.totalCostUSD += v
+	}
+}
+
+func shouldAccumulateUsageForDesktopEvent(eventType string) bool {
+	switch eventType {
+	case "run.completed", "run.failed", "run.cancelled", "run.interrupted":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -2301,6 +2559,30 @@ func desktopInsertAssistantMessage(ctx context.Context, db data.DesktopDB, run d
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if _, err := (data.MessagesRepository{}).InsertAssistantMessageWithMetadata(ctx, tx, run.AccountID, run.ThreadID, run.ID, content, contentJSON, false, metadata); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func persistDesktopStreamChunkMessage(ctx context.Context, db data.DesktopDB, run data.Run, text string) error {
+	return persistDesktopStreamChunkMessageWithMetadata(ctx, db, run, text, map[string]any{"stream_chunk": true})
+}
+
+func persistDesktopStreamChunkMessageWithMetadata(ctx context.Context, db data.DesktopDB, run data.Run, text string, metadata map[string]any) error {
+	if db == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := (data.MessagesRepository{}).InsertAssistantMessageWithMetadata(
+		ctx, tx,
+		run.AccountID, run.ThreadID, run.ID,
+		text, nil, false,
+		metadata,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -126,6 +126,21 @@ func trimOptionalStringPtr(value *string) *string {
 	return &trimmed
 }
 
+func (r *ChannelMessageLedgerRepository) HasOutboundForRun(ctx context.Context, runID uuid.UUID) (bool, error) {
+	if runID == uuid.Nil {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM channel_message_ledger WHERE run_id = $1 AND direction = 'outbound')`,
+		runID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("channel_message_ledger.HasOutboundForRun: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *ChannelMessageLedgerRepository) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	tag, err := r.db.Exec(ctx, `DELETE FROM channel_message_ledger WHERE created_at < $1`, cutoff.UTC())
 	if err != nil {

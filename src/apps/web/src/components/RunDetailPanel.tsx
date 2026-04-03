@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { TurnView, buildThreadTurns, buildTurns, jsonStringifyForDebugDisplay } from '@arkloop/shared'
-import type { LlmTurn, RunEventRaw, ThreadTurn } from '@arkloop/shared'
+import { TurnView, buildRequestThreadTurns, buildTurns, jsonStringifyForDebugDisplay } from '@arkloop/shared'
+import type { LlmTurn, RequestThreadTurn, RunEventRaw } from '@arkloop/shared'
 import type { RunDetail, RunEvent } from '../api'
 import { getRunDetail, listRunEvents } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -68,7 +68,51 @@ function formatEventJSON(event: RunEvent): string {
   )
 }
 
-function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
+function ThreadTurnCard({ turn, index }: { turn: RequestThreadTurn; index: number }) {
+  return (
+    <div
+      className={[
+        'space-y-2 rounded-lg border bg-[var(--c-bg-deep)] p-3',
+        turn.isCurrent ? 'border-[var(--c-accent)] shadow-[inset_0_0_0_1px_var(--c-accent)]' : 'border-[var(--c-border)]',
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-2 text-xs text-[var(--c-text-muted)]">
+        <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono font-medium text-[var(--c-text-secondary)]">
+          Thread {index + 1}
+        </span>
+        {turn.isCurrent && (
+          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-secondary)]">
+            current run
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {turn.messages.map((message, messageIndex) => (
+          <div key={`${turn.key}-${messageIndex}`} className="rounded border border-[var(--c-border)] overflow-hidden">
+            <div className="px-2.5 py-1.5 text-[11px] font-medium uppercase text-[var(--c-text-secondary)]">{message.role}</div>
+            <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">
+                {message.text || '∅'}
+              </pre>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded border border-[var(--c-border)] overflow-hidden">
+        <div className="px-2.5 py-1.5 text-[11px] font-medium text-[var(--c-text-secondary)]">Assistant</div>
+        <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">
+            {turn.assistantText || 'Assistant output unavailable'}
+          </pre>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RequestThreadTurnCard({ turn, index }: { turn: RequestThreadTurn; index: number }) {
   return (
     <div
       className={[
@@ -87,13 +131,17 @@ function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
         )}
       </div>
 
-      <div className="rounded border border-[var(--c-border)] overflow-hidden">
-        <div className="px-2.5 py-1.5 text-[11px] font-medium text-[var(--c-text-secondary)]">Input</div>
-        <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
-          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">
-            {turn.userText || 'Input unavailable'}
-          </pre>
-        </div>
+      <div className="space-y-2">
+        {turn.messages.map((message, messageIndex) => (
+          <div key={`${turn.key}-${messageIndex}`} className="rounded border border-[var(--c-border)] overflow-hidden">
+            <div className="px-2.5 py-1.5 text-[11px] font-medium uppercase text-[var(--c-text-secondary)]">{message.role}</div>
+            <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">
+                {message.text || '∅'}
+              </pre>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="rounded border border-[var(--c-border)] overflow-hidden">
@@ -177,10 +225,8 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
     () => buildTurns((events ?? []) as unknown as RunEventRaw[]),
     [events],
   )
-  const threadTurns = useMemo(
-    () => buildThreadTurns(detail?.thread_messages ?? [], runId, detail?.user_prompt),
-    [detail?.thread_messages, detail?.user_prompt, runId],
-  )
+  const threadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
+  const requestThreadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
   const executionTurns = useMemo(() => {
     return turns
   }, [turns])
@@ -237,9 +283,9 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
                   {events.length}
                 </span>
               )}
-              {tab.key === 'thread' && threadTurns.length > 0 && (
+              {tab.key === 'thread' && requestThreadTurns.length > 0 && (
                 <span className="ml-1.5 rounded bg-[var(--c-bg-sub)] px-1 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                  {threadTurns.length}
+                  {requestThreadTurns.length}
                 </span>
               )}
               {tab.key === 'execution' && executionTurns.length > 0 && (
@@ -321,14 +367,14 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
                 Loading…
               </div>
-            ) : threadTurns.length === 0 ? (
+            ) : requestThreadTurns.length === 0 ? (
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
                 No thread turns.
               </div>
             ) : (
               <div className="space-y-2.5">
-                {threadTurns.map((turn, index) => (
-                  <ThreadTurnCard key={turn.key} turn={turn} index={index} />
+                {requestThreadTurns.map((turn, index) => (
+                  <RequestThreadTurnCard key={turn.key} turn={turn} index={index} />
                 ))}
               </div>
             )

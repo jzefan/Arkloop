@@ -14,15 +14,16 @@ import (
 )
 
 type telegramInboundAttachment struct {
-	Type       string `json:"type"`
-	FileID     string `json:"file_id,omitempty"`
-	FileName   string `json:"file_name,omitempty"`
-	MimeType   string `json:"mime_type,omitempty"`
-	Size       int64  `json:"size,omitempty"`
-	Width      int    `json:"width,omitempty"`
-	Height     int    `json:"height,omitempty"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
-	Caption    string `json:"caption,omitempty"`
+	Type            string `json:"type"`
+	FileID          string `json:"file_id,omitempty"`
+	ThumbnailFileID string `json:"thumbnail_file_id,omitempty"`
+	FileName        string `json:"file_name,omitempty"`
+	MimeType        string `json:"mime_type,omitempty"`
+	Size            int64  `json:"size,omitempty"`
+	Width           int    `json:"width,omitempty"`
+	Height          int    `json:"height,omitempty"`
+	DurationMs      int64  `json:"duration_ms,omitempty"`
+	Caption         string `json:"caption,omitempty"`
 }
 
 type telegramIncomingMessage struct {
@@ -39,6 +40,7 @@ type telegramIncomingMessage struct {
 	CommandText       string
 	MediaAttachments  []telegramInboundAttachment
 	ReplyToMsgID      *string
+	ReplyToPreview    string
 	MentionsBot       bool
 	IsReplyToBot      bool
 	MessageThreadID   *string
@@ -75,6 +77,7 @@ func normalizeTelegramIncomingMessage(
 		return nil, nil
 	}
 	replyToMessageID := optionalTelegramMessageID(msg.ReplyToMessage)
+	replyToPreview := buildTelegramReplyPreview(msg.ReplyToMessage)
 	messageThreadID := optionalTelegramThreadID(msg.MessageThreadID)
 	incoming := &telegramIncomingMessage{
 		ChannelID:         channelID,
@@ -90,6 +93,7 @@ func normalizeTelegramIncomingMessage(
 		CommandText:       bodyText,
 		MediaAttachments:  attachments,
 		ReplyToMsgID:      replyToMessageID,
+		ReplyToPreview:    replyToPreview,
 		MentionsBot:       telegramMessageMentionsBot(msg, botUsername),
 		IsReplyToBot:      telegramMessageRepliesToBot(msg, telegramBotUserID),
 		MessageThreadID:   messageThreadID,
@@ -214,7 +218,7 @@ func collectTelegramInboundAttachments(msg *telegramMessage) []telegramInboundAt
 		})
 	}
 	if msg.Animation != nil {
-		items = append(items, telegramInboundAttachment{
+		att := telegramInboundAttachment{
 			Type:       "animation",
 			FileID:     strings.TrimSpace(msg.Animation.FileID),
 			FileName:   strings.TrimSpace(msg.Animation.FileName),
@@ -224,17 +228,25 @@ func collectTelegramInboundAttachments(msg *telegramMessage) []telegramInboundAt
 			Height:     msg.Animation.Height,
 			DurationMs: int64(msg.Animation.Duration) * 1000,
 			Caption:    caption,
-		})
+		}
+		if msg.Animation.Thumbnail != nil {
+			att.ThumbnailFileID = strings.TrimSpace(msg.Animation.Thumbnail.FileID)
+		}
+		items = append(items, att)
 	}
 	if msg.Sticker != nil {
-		items = append(items, telegramInboundAttachment{
+		att := telegramInboundAttachment{
 			Type:    "sticker",
 			FileID:  strings.TrimSpace(msg.Sticker.FileID),
 			Size:    msg.Sticker.FileSize,
 			Width:   msg.Sticker.Width,
 			Height:  msg.Sticker.Height,
 			Caption: caption,
-		})
+		}
+		if msg.Sticker.Thumbnail != nil {
+			att.ThumbnailFileID = strings.TrimSpace(msg.Sticker.Thumbnail.FileID)
+		}
+		items = append(items, att)
 	}
 	return items
 }
@@ -321,9 +333,15 @@ func buildTelegramEnvelopeText(identityID uuid.UUID, incoming telegramIncomingMe
 	}
 	if incoming.ReplyToMsgID != nil && strings.TrimSpace(*incoming.ReplyToMsgID) != "" {
 		lines = append(lines, fmt.Sprintf(`reply-to-message-id: "%s"`, escapeTelegramEnvelopeValue(strings.TrimSpace(*incoming.ReplyToMsgID))))
+		if strings.TrimSpace(incoming.ReplyToPreview) != "" {
+			lines = append(lines, fmt.Sprintf(`reply-to-preview: "%s"`, escapeTelegramEnvelopeValue(incoming.ReplyToPreview)))
+		}
 	}
 	if incoming.MessageThreadID != nil && strings.TrimSpace(*incoming.MessageThreadID) != "" {
 		lines = append(lines, fmt.Sprintf(`message-thread-id: "%s"`, escapeTelegramEnvelopeValue(strings.TrimSpace(*incoming.MessageThreadID))))
+	}
+	if strings.TrimSpace(incoming.PlatformMsgID) != "" {
+		lines = append(lines, fmt.Sprintf(`message-id: "%s"`, escapeTelegramEnvelopeValue(incoming.PlatformMsgID)))
 	}
 	lines = append(lines, fmt.Sprintf(`time: "%s"`, escapeTelegramEnvelopeValue(formatTelegramTimestamp(incoming.DateUnix))))
 	return "---\n" + strings.Join(lines, "\n") + "\n---\n" + body
@@ -382,6 +400,36 @@ func optionalTelegramMessageID(msg *telegramMessage) *string {
 	}
 	value := strconv.FormatInt(msg.MessageID, 10)
 	return &value
+}
+
+const telegramReplyPreviewMaxRunes = 80
+
+func buildTelegramReplyPreview(msg *telegramMessage) string {
+	if msg == nil {
+		return ""
+	}
+	senderName := ""
+	if msg.From != nil {
+		parts := []string{trimOptional(msg.From.FirstName), trimOptional(msg.From.LastName)}
+		senderName = strings.TrimSpace(strings.Join(parts, " "))
+		if senderName == "" {
+			senderName = trimOptional(msg.From.Username)
+		}
+	}
+	text := strings.TrimSpace(resolveTelegramMessageBody(msg))
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) > telegramReplyPreviewMaxRunes {
+		text = string(runes[:telegramReplyPreviewMaxRunes]) + "..."
+	}
+	// 折叠换行，模拟 Telegram 客户端的单行预览
+	text = strings.Join(strings.Fields(text), " ")
+	if senderName != "" {
+		return senderName + ": " + text
+	}
+	return text
 }
 
 func optionalTelegramThreadID(threadID *int64) *string {

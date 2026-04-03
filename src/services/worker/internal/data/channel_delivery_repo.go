@@ -88,6 +88,42 @@ func (ChannelDeliveryRepository) GetChannel(ctx context.Context, pool *pgxpool.P
 	return &item, nil
 }
 
+func (ChannelDeliveryRepository) GetChannelOwner(ctx context.Context, pool *pgxpool.Pool, channelID uuid.UUID) (*uuid.UUID, error) {
+	if pool == nil {
+		return nil, nil
+	}
+	var ownerUserID *uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT owner_user_id FROM channels WHERE id = $1`,
+		channelID,
+	).Scan(&ownerUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("channel_delivery.GetChannelOwner: %w", err)
+	}
+	return ownerUserID, nil
+}
+
+func (ChannelDeliveryRepository) GetChannelConfigJSON(ctx context.Context, pool *pgxpool.Pool, channelID uuid.UUID) ([]byte, error) {
+	if pool == nil {
+		return nil, nil
+	}
+	var configJSON []byte
+	err := pool.QueryRow(ctx,
+		`SELECT COALESCE(config_json, '{}'::jsonb) FROM channels WHERE id = $1`,
+		channelID,
+	).Scan(&configJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("channel_delivery.GetChannelConfigJSON: %w", err)
+	}
+	return configJSON, nil
+}
+
 func (ChannelDeliveryRepository) RecordDelivery(
 	ctx context.Context,
 	db channelDeliveryExecer,

@@ -5,9 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
-
-	"arkloop/services/worker/internal/data"
 )
 
 func NewRuntimeContextMiddleware() RunMiddleware {
@@ -41,26 +38,24 @@ func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
 		line += fmt.Sprintf(" | Sender: %s", senderHash)
 	}
 
+	if identity := formatBotIdentity(rc.ChannelContext); identity != "" {
+		line += fmt.Sprintf(" | Identity: %s", identity)
+	}
+
 	return "## Runtime Context\n" + line
 }
 
-func checkSenderIsAdmin(ctx context.Context, rc *RunContext) bool {
-	if rc.ChannelContext == nil || rc.ChannelContext.SenderUserID == nil {
-		return false
+func formatBotIdentity(cc *ChannelContext) string {
+	name := cc.BotDisplayName
+	uname := cc.BotUsername
+	if name == "" && uname == "" {
+		return ""
 	}
-	if rc.Pool == nil {
-		return false
+	if name != "" && uname != "" {
+		return fmt.Sprintf("%s (@%s)", name, uname)
 	}
-
-	repo := data.AccountMembershipsRepository{}
-	membership, err := repo.GetByAccountAndUser(ctx, rc.Pool, rc.Run.AccountID, *rc.ChannelContext.SenderUserID)
-	if err != nil {
-		slog.WarnContext(ctx, "runtime_context: failed to query sender membership", "error", err)
-		return false
+	if uname != "" {
+		return "@" + uname
 	}
-	if membership == nil {
-		return false
-	}
-
-	return membership.Role == "account_admin" || membership.Role == "platform_admin"
+	return name
 }

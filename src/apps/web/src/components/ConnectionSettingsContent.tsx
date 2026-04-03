@@ -21,6 +21,7 @@ import type {
   SidecarRuntime,
 } from '@arkloop/shared/desktop'
 import { useLocale } from '../contexts/LocaleContext'
+import { SettingsSelect } from './settings/_SettingsSelect'
 
 type ModeCardProps = {
   mode: ConnectionMode
@@ -29,6 +30,10 @@ type ModeCardProps = {
   desc: string
   selected: boolean
   onSelect: () => void
+}
+
+type Props = {
+  initialConfig?: DesktopConfig | null
 }
 
 const DEFAULT_RUNTIME: SidecarRuntime = {
@@ -116,7 +121,7 @@ function applyConfigToState(config: DesktopConfig, setters: {
   setters.setLocalPortMode(config.local.portMode)
 }
 
-export function ConnectionSettingsContent() {
+export function ConnectionSettingsContent({ initialConfig = null }: Props) {
   const { t, locale } = useLocale()
   const ct = t.connection
   const api = getDesktopApi()
@@ -147,7 +152,11 @@ export function ConnectionSettingsContent() {
       })
     }
 
-    void api.config.get().then(applyConfig)
+    if (initialConfig) {
+      applyConfig(initialConfig)
+    } else {
+      void api.config.get().then(applyConfig)
+    }
     void api.sidecar.getRuntime().then(setSidecarRuntime)
 
     const unsubConfig = api.config.onChanged((config) => {
@@ -161,7 +170,7 @@ export function ConnectionSettingsContent() {
       unsubConfig()
       unsubRuntime()
     }
-  }, [api])
+  }, [api, initialConfig])
 
   useEffect(() => {
     if (!api || mode !== 'local' || sidecarRuntime.status !== 'running') return
@@ -368,15 +377,14 @@ export function ConnectionSettingsContent() {
 
               <div className="flex flex-col gap-2">
                 <label className="text-sm text-[var(--c-text-secondary)]">{ct.portMode}</label>
-                <select
+                <SettingsSelect
                   value={localPortMode}
-                  onChange={(event) => setLocalPortMode(event.target.value as LocalPortMode)}
-                  className="h-9 rounded-lg px-3 text-sm text-[var(--c-text-primary)] outline-none"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                >
-                  <option value="auto">{ct.portModeAuto}</option>
-                  <option value="manual">{ct.portModeManual}</option>
-                </select>
+                  onChange={(value) => setLocalPortMode(value as LocalPortMode)}
+                  options={[
+                    { value: 'auto', label: ct.portModeAuto },
+                    { value: 'manual', label: ct.portModeManual },
+                  ]}
+                />
               </div>
 
               {localPortMode === 'manual' && (

@@ -11,9 +11,14 @@ type Props = {
 function getToolLabel(toolName: MemoryActionRef['toolName']): string {
   switch (toolName) {
     case 'memory_write': return '写入记忆'
+    case 'memory_edit': return '编辑记忆'
     case 'memory_search': return '搜索记忆'
     case 'memory_read': return '读取记忆'
     case 'memory_forget': return '删除记忆'
+    case 'notebook_write': return '写入笔记'
+    case 'notebook_read': return '读取笔记'
+    case 'notebook_edit': return '编辑笔记'
+    case 'notebook_forget': return '删除笔记'
   }
 }
 
@@ -28,28 +33,39 @@ function MemoryToolGlyph({
 }) {
   switch (toolName) {
     case 'memory_write':
+    case 'memory_edit':
       return <Pencil size={size} style={style} />
     case 'memory_search':
       return <Search size={size} style={style} />
     case 'memory_read':
       return <Eye size={size} style={style} />
     case 'memory_forget':
+    case 'notebook_forget':
       return <Trash2 size={size} style={style} />
+    case 'notebook_edit':
+      return <Pencil size={size} style={style} />
   }
 }
 
 function getArgSummary(action: MemoryActionRef): string {
   const { toolName, args } = action
-  if (toolName === 'memory_write') {
+  if (toolName === 'memory_write' || toolName === 'notebook_write' || toolName === 'notebook_edit') {
     const parts: string[] = []
     if (args.category) parts.push(args.category)
     if (args.key) parts.push(args.key)
     return parts.join('/') || ''
   }
+  if (toolName === 'memory_edit') {
+    if (args.uri) {
+      const id = args.uri.replace('local://memory/', '')
+      return id.length > 8 ? id.slice(0, 8) + '…' : id
+    }
+    return ''
+  }
   if (toolName === 'memory_search') {
     return args.query ? `"${args.query}"` : ''
   }
-  if (toolName === 'memory_read' || toolName === 'memory_forget') {
+  if (toolName === 'memory_read' || toolName === 'memory_forget' || toolName === 'notebook_read' || toolName === 'notebook_forget') {
     if (args.uri) {
       const id = args.uri.replace('local://memory/', '')
       return id.length > 8 ? id.slice(0, 8) + '…' : id

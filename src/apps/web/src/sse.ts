@@ -3,6 +3,8 @@
  * 支持 after_seq 断线续传
  */
 
+import { recordPerfCount, recordPerfValue } from './perfDebug'
+
 const TRACE_ID_HEADER = 'X-Trace-Id'
 
 export type SSEEvent = {
@@ -314,6 +316,11 @@ export class SSEClient {
         }
 
         scheduleReadTimeout()
+
+        if (value) {
+          recordPerfValue('sse_chunk_bytes', value.byteLength, 'bytes')
+          recordPerfCount('sse_chunk_count')
+        }
 
         buffer += decoder.decode(value, { stream: true })
         const { events, remaining } = parseSSEChunk(buffer)

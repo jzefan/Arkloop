@@ -399,8 +399,7 @@ function ModelsSection({
   const [availableError, setAvailableError] = useState('')
   const [importing, setImporting] = useState(false)
   const [deletingAll, setDeletingAll] = useState(false)
-  const [addingModel, setAddingModel] = useState(false)
-  const [newModel, setNewModel] = useState('')
+  const [creatingModel, setCreatingModel] = useState(false)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
   const [editingModel, setEditingModel] = useState<LlmProviderModel | null>(null)
@@ -471,18 +470,23 @@ function ModelsSection({
     }
   }
 
-  const handleAddModel = async () => {
-    if (!newModel.trim()) return
-    setErr('')
+  const handleCreateModel = useCallback(async (payload: {
+    model: string
+    advancedJSON: Record<string, unknown> | null
+    tags: string[]
+  }) => {
     try {
-      await createProviderModel(accessToken, provider.id, { model: newModel.trim() })
-      setNewModel('')
-      setAddingModel(false)
+      await createProviderModel(accessToken, provider.id, {
+        model: payload.model,
+        advanced_json: payload.advancedJSON ?? undefined,
+        tags: payload.tags,
+      })
+      setCreatingModel(false)
       onChanged()
     } catch (e) {
-      setErr(isApiError(e) ? e.message : m.saveFailed)
+      throw new Error(isApiError(e) ? e.message : m.saveFailed)
     }
-  }
+  }, [accessToken, provider.id, m.saveFailed, onChanged])
 
   const handleDeleteModel = async (modelId: string) => {
     try {
@@ -572,7 +576,7 @@ function ModelsSection({
             </button>
           )}
           <button
-            onClick={() => { setAddingModel(true); setNewModel('') }}
+            onClick={() => setCreatingModel(true)}
             className="rounded-md bg-[var(--c-btn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--c-btn-text)] transition-colors hover:opacity-90"
           >
             {m.addModel}
@@ -581,22 +585,6 @@ function ModelsSection({
       </div>
       {availableError && (
         <p className="mt-1 text-xs text-red-400">{availableError}</p>
-      )}
-
-      {addingModel && (
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            value={newModel}
-            onChange={(e) => setNewModel(e.target.value)}
-            placeholder={m.modelNamePlaceholder}
-            className={inputCls + ' flex-1'}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddModel(); if (e.key === 'Escape') setAddingModel(false) }}
-            autoFocus
-          />
-          <button onClick={() => setAddingModel(false)} className="rounded p-1.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]">
-            <X size={14} />
-          </button>
-        </div>
       )}
 
       {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
@@ -613,7 +601,7 @@ function ModelsSection({
       )}
 
       <div className="mt-2 space-y-1 overflow-y-auto" style={{ maxHeight: '320px' }}>
-        {provider.models.length === 0 && !addingModel ? (
+        {provider.models.length === 0 ? (
           <p className="py-8 text-center text-sm text-[var(--c-text-muted)]">--</p>
         ) : filteredModels.length === 0 ? (
           <p className="py-4 text-center text-sm text-[var(--c-text-muted)]">--</p>
@@ -671,9 +659,43 @@ function ModelsSection({
           invalidJson: m.invalidJson,
           invalidNumber: m.invalidNumber,
           visionBridgeHint: m.visionBridgeHint,
+          addModelTitle: m.addModelTitle,
+          modelNameLabel: m.modelName,
+          modelNamePlaceholder: m.modelNamePlaceholder,
         }}
         onClose={() => setEditingModel(null)}
         onSave={handleSaveModelOptions}
+      />
+
+      <ModelOptionsModal
+        open={creatingModel}
+        mode="create"
+        model={null}
+        availableModels={available}
+        labels={{
+          modelOptionsTitle: m.modelOptionsTitle,
+          modelOptionsFor: m.modelOptionsFor,
+          modelCapabilities: m.modelCapabilities,
+          vision: m.vision,
+          imageOutput: m.imageOutput,
+          embedding: m.embedding,
+          contextWindow: m.contextWindow,
+          maxOutputTokens: m.maxOutputTokens,
+          providerOptionsJson: m.providerOptionsJson,
+          providerOptionsHint: m.providerOptionsHint,
+          save: m.save,
+          cancel: m.cancel,
+          reset: m.reset,
+          invalidJson: m.invalidJson,
+          invalidNumber: m.invalidNumber,
+          visionBridgeHint: m.visionBridgeHint,
+          addModelTitle: m.addModelTitle,
+          modelNameLabel: m.modelName,
+          modelNamePlaceholder: m.modelNamePlaceholder,
+        }}
+        onClose={() => setCreatingModel(false)}
+        onSave={handleSaveModelOptions}
+        onCreate={handleCreateModel}
       />
     </div>
   )

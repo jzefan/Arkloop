@@ -6,11 +6,11 @@ import type { GlobalRun, AdminRunDetail, AdminRunUsageItem, AdminRunUsageAggrega
 import { getAdminRunDetail, fetchRunEventsOnce } from '../api/runs'
 import { TurnView } from './TurnView'
 import {
-  buildThreadTurns,
+  buildRequestThreadTurns,
   buildTurns,
   jsonStringifyForDebugDisplay,
   redactDataUrlsInString,
-  type ThreadTurn,
+  type RequestThreadTurn,
 } from '@arkloop/shared'
 import { Badge, type BadgeVariant } from './Badge'
 import { useLocale } from '../contexts/LocaleContext'
@@ -114,7 +114,7 @@ type MemoryDebugFlow = {
   total: number
 }
 
-function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
+function ThreadTurnCard({ turn, index }: { turn: RequestThreadTurn; index: number }) {
   return (
     <div
       className={[
@@ -124,7 +124,7 @@ function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
     >
       <div className="flex items-center gap-2 text-xs text-[var(--c-text-muted)]">
         <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono font-medium text-[var(--c-text-secondary)]">
-          Turn {index + 1}
+          Thread {index + 1}
         </span>
         {turn.isCurrent && (
           <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-secondary)]">
@@ -132,11 +132,15 @@ function ThreadTurnCard({ turn, index }: { turn: ThreadTurn; index: number }) {
           </span>
         )}
       </div>
-      <div className="rounded border border-[var(--c-border)] overflow-hidden">
-        <div className="px-2.5 py-1.5 text-[11px] font-medium text-[var(--c-text-secondary)]">Input</div>
-        <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
-          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">{turn.userText || 'Input unavailable'}</pre>
-        </div>
+      <div className="space-y-2">
+        {turn.messages.map((message, messageIndex) => (
+          <div key={`${turn.key}-${messageIndex}`} className="rounded border border-[var(--c-border)] overflow-hidden">
+            <div className="px-2.5 py-1.5 text-[11px] font-medium uppercase text-[var(--c-text-secondary)]">{message.role}</div>
+            <div className="border-t border-[var(--c-border)] bg-[var(--c-bg-deep2)] px-2.5 py-2">
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--c-text-secondary)]">{message.text || '∅'}</pre>
+            </div>
+          </div>
+        ))}
       </div>
       <div className="rounded border border-[var(--c-border)] overflow-hidden">
         <div className="px-2.5 py-1.5 text-[11px] font-medium text-[var(--c-text-secondary)]">Assistant</div>
@@ -265,10 +269,7 @@ export function RunDetailPanel({ run, accessToken, onClose }: Props) {
   const r = currentRun ?? run
   const d = detail
   const turns = useMemo(() => (events ? buildTurns(events) : []), [events])
-  const threadTurns = useMemo(
-    () => buildThreadTurns(d?.thread_messages ?? [], r?.run_id ?? '', d?.user_prompt),
-    [d?.thread_messages, d?.user_prompt, r?.run_id],
-  )
+  const threadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
   const executionTurns = turns
   const threadLabel = locale.startsWith('zh') ? '对话线程' : 'Thread'
   const executionLabel = locale.startsWith('zh') ? '本轮执行' : 'Execution'

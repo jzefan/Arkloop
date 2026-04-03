@@ -36,11 +36,17 @@ func TestResolveBuiltinArtifactToolsReflectStorageAvailability(t *testing.T) {
 func TestRuntimeSnapshotWithMergedBuiltinToolNames(t *testing.T) {
 	snap := RuntimeSnapshot{}
 	snap.builtinAvailability = BuiltinAvailability{toolNames: []string{"grep"}}
-	merged := snap.WithMergedBuiltinToolNames("memory_search", "memory_read", "")
+	merged := snap.WithMergedBuiltinToolNames("memory_search", "memory_read", "memory_edit", "notebook_read", "")
 	if !merged.BuiltinAvailable("grep") {
 		t.Fatal("expected grep preserved")
 	}
 	if !merged.BuiltinAvailable("memory_search") || !merged.BuiltinAvailable("memory_read") {
+		t.Fatalf("unexpected set: %v", merged.BuiltinToolNames())
+	}
+	if !merged.BuiltinAvailable("memory_edit") {
+		t.Fatalf("unexpected set: %v", merged.BuiltinToolNames())
+	}
+	if !merged.BuiltinAvailable("notebook_read") {
 		t.Fatalf("unexpected set: %v", merged.BuiltinToolNames())
 	}
 }
@@ -104,6 +110,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"glob",
 		"grep",
 		"interrupt_agent",
+		"memory_edit",
 		"memory_forget",
 		"memory_read",
 		"memory_search",

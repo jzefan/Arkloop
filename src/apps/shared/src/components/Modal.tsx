@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef, type ReactNode, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 
 type Props = {
   open: boolean
@@ -51,6 +52,13 @@ export function Modal({ open, onClose, title, children, width = '480px' }: Props
         {title && (
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '0.5px solid var(--c-border-subtle)' }}>
             <h3 className="text-[15px] font-semibold text-[var(--c-text-heading)]">{title}</h3>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)]"
+            >
+              <X size={16} />
+            </button>
           </div>
         )}
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>

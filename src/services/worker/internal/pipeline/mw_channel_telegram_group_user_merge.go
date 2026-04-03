@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// NewChannelTelegramGroupUserMergeMiddleware 将 Telegram 群聊线程尾部、自最后一条 assistant 起的连续多条 user
-// 合并为单条 user 再交给后续中间件与 LLM。入库仍为每人一条；合并后 ThreadMessageIDs 仅保留尾段最后一条 user 的 id，
-// 中间几条 id 不再出现在数组中（与 context compact 的 id 对齐语义一致）。
+// NewChannelTelegramGroupUserMergeMiddleware 遍历整个消息列表，将每一段连续 user 消息
+// compact 为单条 user 再交给后续中间件与 LLM。每段 burst 的 ThreadMessageIDs 仅保留该段最后一条 id。
+// InjectionScanUserTexts 仍取物理上最后一条 user 输入。
 func NewChannelTelegramGroupUserMergeMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		_ = ctx
@@ -27,58 +27,85 @@ func NewChannelTelegramGroupUserMergeMiddleware() RunMiddleware {
 		if !IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType) {
 			return next(ctx, rc)
 		}
-		msgs, ids, lastTailScan := mergeTelegramGroupTrailingUserBurst(rc.Messages, rc.ThreadMessageIDs)
+		msgs, ids, lastScan := mergeAllTelegramGroupUserBursts(rc.Messages, rc.ThreadMessageIDs)
 		rc.Messages = msgs
 		rc.ThreadMessageIDs = ids
-		if len(lastTailScan) > 0 {
-			rc.InjectionScanUserTexts = lastTailScan
+		if len(lastScan) > 0 {
+			rc.InjectionScanUserTexts = lastScan
 		}
 		return next(ctx, rc)
 	}
 }
 
-func mergeTelegramGroupTrailingUserBurst(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uuid.UUID, []string) {
-	if len(msgs) != len(ids) || len(msgs) < 2 {
+// mergeAllTelegramGroupUserBursts 遍历全部消息，对每一段连续 user 消息都做 compact。
+// 每段 burst 的 ThreadMessageIDs 只保留该段最后一条 id。
+// lastScan 取物理上最后一条 user 消息的 scan text。
+func mergeAllTelegramGroupUserBursts(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uuid.UUID, []string) {
+	if len(msgs) != len(ids) {
 		return msgs, ids, nil
 	}
-	lastAsst := -1
-	for i := range msgs {
-		if strings.EqualFold(strings.TrimSpace(msgs[i].Role), "assistant") {
-			lastAsst = i
+
+	outMsgs := make([]llm.Message, 0, len(msgs))
+	outIDs := make([]uuid.UUID, 0, len(ids))
+	var lastScan []string
+
+	i := 0
+	for i < len(msgs) {
+		if !isPlainUserMessage(msgs[i]) {
+			outMsgs = append(outMsgs, msgs[i])
+			outIDs = append(outIDs, ids[i])
+			i++
+			continue
 		}
-	}
-	tailStart := lastAsst + 1
-	tail := msgs[tailStart:]
-	tailIDs := ids[tailStart:]
-	if len(tail) < 2 {
-		return msgs, ids, nil
-	}
-	for _, m := range tail {
-		if !strings.EqualFold(strings.TrimSpace(m.Role), "user") {
-			return msgs, ids, nil
+		// 收集连续 user burst
+		burstStart := i
+		for i < len(msgs) && isPlainUserMessage(msgs[i]) {
+			i++
 		}
-		if len(m.ToolCalls) > 0 {
-			return msgs, ids, nil
+		burst := msgs[burstStart:i]
+		burstIDs := ids[burstStart:i]
+
+		lastScan = userMessageScanTextVariants(burst[len(burst)-1])
+
+		if len(burst) == 1 {
+			content := compactSingleUserMessage(burst[0])
+			if content != nil {
+				outMsgs = append(outMsgs, llm.Message{Role: "user", Content: content})
+			} else {
+				outMsgs = append(outMsgs, burst[0])
+			}
+			outIDs = append(outIDs, burstIDs[0])
+			continue
 		}
+
+		mergedContent := mergeUserBurstContent(burst)
+		outMsgs = append(outMsgs, llm.Message{Role: "user", Content: mergedContent})
+		outIDs = append(outIDs, burstIDs[len(burstIDs)-1])
 	}
-	lastTailScan := userMessageScanTextVariants(tail[len(tail)-1])
-	mergedContent := mergeUserBurstContent(tail)
-	merged := llm.Message{
-		Role:    "user",
-		Content: mergedContent,
+
+	return outMsgs, outIDs, lastScan
+}
+
+func isPlainUserMessage(m llm.Message) bool {
+	return strings.EqualFold(strings.TrimSpace(m.Role), "user") && len(m.ToolCalls) == 0
+}
+
+// compactSingleUserMessage 尝试将单条 telegram envelope user 消息 compact 化。
+func compactSingleUserMessage(msg llm.Message) []llm.ContentPart {
+	compacted, extras, ok := compactTelegramGroupEnvelopeBurst([]llm.Message{msg})
+	if !ok {
+		return nil
 	}
-	outMsgs := make([]llm.Message, 0, len(msgs)-len(tail)+1)
-	outMsgs = append(outMsgs, msgs[:tailStart]...)
-	outMsgs = append(outMsgs, merged)
-	outIDs := make([]uuid.UUID, 0, len(ids)-len(tail)+1)
-	outIDs = append(outIDs, ids[:tailStart]...)
-	outIDs = append(outIDs, tailIDs[len(tailIDs)-1])
-	return outMsgs, outIDs, lastTailScan
+	parts := []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: compacted}}
+	parts = append(parts, extras...)
+	return parts
 }
 
 func mergeUserBurstContent(tail []llm.Message) []llm.ContentPart {
-	if compacted, ok := compactTelegramGroupEnvelopeBurst(tail); ok {
-		return []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: compacted}}
+	if compacted, extras, ok := compactTelegramGroupEnvelopeBurst(tail); ok {
+		parts := []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: compacted}}
+		parts = append(parts, extras...)
+		return parts
 	}
 	if mergedText, ok := mergePureTextBurst(tail); ok {
 		return []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: mergedText}}
@@ -104,34 +131,52 @@ type telegramEnvelopeMessage struct {
 	body string
 }
 
-func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, bool) {
-	if len(tail) < 2 {
-		return "", false
+// telegramCompactBurstEntry 存储单条消息在 burst block 中的内容和 reply 信息。
+type telegramCompactBurstEntry struct {
+	body         string
+	time         string // 完整时间 "15:04:05"
+	messageID    string
+	replyToID    string
+	replyPreview string
+}
+
+type telegramCompactBurstBlock struct {
+	startTime  string
+	endTime    string
+	speaker    string
+	entries    []telegramCompactBurstEntry
+	messageIDs []string
+}
+
+// compactTelegramGroupEnvelopeBurst 将 telegram envelope 消息合并为紧凑时间线。
+// 支持单条和多条消息。返回 compact 文本、非 text parts（图片/文件等）和成功标志。
+func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, []llm.ContentPart, bool) {
+	if len(tail) == 0 {
+		return "", nil, false
 	}
 	items := make([]telegramEnvelopeMessage, 0, len(tail))
+	var extraParts []llm.ContentPart
 	for _, msg := range tail {
-		text, ok := singleTextMessage(msg)
+		text, nonTextParts, ok := extractEnvelopeText(msg)
 		if !ok {
-			return "", false
+			return "", nil, false
 		}
 		meta, body, ok := parseTelegramEnvelopeText(text)
 		if !ok {
-			return "", false
+			return "", nil, false
 		}
 		if !strings.EqualFold(strings.TrimSpace(meta["channel"]), "telegram") {
-			return "", false
+			return "", nil, false
 		}
 		body = compactTelegramEnvelopeBody(meta, body)
-		if strings.TrimSpace(body) == "" {
-			return "", false
-		}
 		items = append(items, telegramEnvelopeMessage{meta: meta, body: body})
+		extraParts = append(extraParts, nonTextParts...)
 	}
 
 	channel := commonEnvelopeValue(items, "channel")
 	conversationType := commonEnvelopeValue(items, "conversation-type")
 	if channel == "" || conversationType == "" {
-		return "", false
+		return "", nil, false
 	}
 	conversationTitle := commonEnvelopeValue(items, "conversation-title")
 	messageThreadID := commonEnvelopeValue(items, "message-thread-id")
@@ -151,18 +196,16 @@ func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, bool) {
 		bucket[ref] = struct{}{}
 	}
 
-	lines := []string{
-		fmt.Sprintf(`channel: %q`, channel),
-		fmt.Sprintf(`conversation-type: %q`, conversationType),
-	}
+	header := fmt.Sprintf("Telegram %s", conversationType)
 	if conversationTitle != "" {
-		lines = append(lines, fmt.Sprintf(`conversation-title: %q`, conversationTitle))
+		header += fmt.Sprintf(" %q", conversationTitle)
 	}
+	lines := []string{header}
 	if messageThreadID != "" {
-		lines = append(lines, fmt.Sprintf(`message-thread-id: %q`, messageThreadID))
+		lines = append(lines, fmt.Sprintf("thread: %s", messageThreadID))
 	}
 
-	var bodyLines []string
+	blocks := make([]telegramCompactBurstBlock, 0, len(items))
 	for _, item := range items {
 		name := strings.TrimSpace(item.meta["display-name"])
 		duplicateDisplay := false
@@ -171,10 +214,41 @@ func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, bool) {
 		}
 		speaker := compactTelegramBurstSpeaker(item.meta, duplicateDisplay)
 		ts := compactTelegramBurstTime(item.meta["time"])
-		bodyLines = append(bodyLines, renderCompactTelegramBurstLine(ts, speaker, item.body))
+		msgID := strings.TrimSpace(item.meta["message-id"])
+		entry := telegramCompactBurstEntry{
+			body:         item.body,
+			time:         ts,
+			messageID:    msgID,
+			replyToID:    strings.TrimSpace(item.meta["reply-to-message-id"]),
+			replyPreview: strings.TrimSpace(item.meta["reply-to-preview"]),
+		}
+		if len(blocks) > 0 && blocks[len(blocks)-1].speaker == speaker {
+			blocks[len(blocks)-1].endTime = ts
+			blocks[len(blocks)-1].entries = append(blocks[len(blocks)-1].entries, entry)
+			if msgID != "" {
+				blocks[len(blocks)-1].messageIDs = append(blocks[len(blocks)-1].messageIDs, msgID)
+			}
+			continue
+		}
+		var mids []string
+		if msgID != "" {
+			mids = []string{msgID}
+		}
+		blocks = append(blocks, telegramCompactBurstBlock{
+			startTime:  ts,
+			endTime:    ts,
+			speaker:    speaker,
+			entries:    []telegramCompactBurstEntry{entry},
+			messageIDs: mids,
+		})
 	}
 
-	return "---\n" + strings.Join(lines, "\n") + "\n---\n" + strings.Join(bodyLines, "\n"), true
+	bodyLines := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		bodyLines = append(bodyLines, renderCompactTelegramBurstBlock(block))
+	}
+
+	return strings.Join(append(lines, "", strings.Join(bodyLines, "\n")), "\n"), extraParts, true
 }
 
 func mergePureTextBurst(tail []llm.Message) (string, bool) {
@@ -206,6 +280,28 @@ func singleTextMessage(msg llm.Message) (string, bool) {
 	return sb.String(), true
 }
 
+// extractEnvelopeText 从消息中提取 text 部分和非 text parts。
+// text 部分用于 envelope 解析，非 text parts（图片/文件）原样保留。
+func extractEnvelopeText(msg llm.Message) (string, []llm.ContentPart, bool) {
+	if len(msg.Content) == 0 {
+		return "", nil, false
+	}
+	var sb strings.Builder
+	var nonText []llm.ContentPart
+	for _, part := range msg.Content {
+		if strings.EqualFold(strings.TrimSpace(part.Type), messagecontent.PartTypeText) {
+			sb.WriteString(part.Text)
+		} else {
+			nonText = append(nonText, part)
+		}
+	}
+	text := sb.String()
+	if strings.TrimSpace(text) == "" && len(nonText) == 0 {
+		return "", nil, false
+	}
+	return text, nonText, true
+}
+
 func parseTelegramEnvelopeText(text string) (map[string]string, string, bool) {
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	if !strings.HasPrefix(normalized, "---\n") {
@@ -229,7 +325,7 @@ func parseTelegramEnvelopeText(text string) (map[string]string, string, bool) {
 		meta[key] = strings.Trim(value, `"`)
 	}
 	body := strings.TrimSpace(parts[1])
-	if len(meta) == 0 || body == "" {
+	if len(meta) == 0 {
 		return nil, "", false
 	}
 	return meta, body, true
@@ -269,16 +365,22 @@ func compactTelegramEnvelopeBody(meta map[string]string, body string) string {
 func compactTelegramBurstSpeaker(meta map[string]string, duplicateDisplay bool) string {
 	displayName := strings.TrimSpace(meta["display-name"])
 	shortRef := compactTelegramSenderRef(meta["sender-ref"])
+	isAdmin := strings.TrimSpace(meta["admin"]) == "true"
+	var speaker string
 	switch {
 	case displayName == "" && shortRef == "":
-		return "user"
+		speaker = "user"
 	case displayName == "":
-		return shortRef
+		speaker = shortRef
 	case duplicateDisplay && shortRef != "":
-		return displayName + " <" + shortRef + ">"
+		speaker = displayName + " <" + shortRef + ">"
 	default:
-		return displayName
+		speaker = displayName
 	}
+	if isAdmin {
+		speaker += " [admin]"
+	}
+	return speaker
 }
 
 func compactTelegramSenderRef(ref string) string {
@@ -306,18 +408,30 @@ func compactTelegramBurstTime(raw string) string {
 	return cleaned
 }
 
-func renderCompactTelegramBurstLine(ts, speaker, body string) string {
-	text := strings.TrimSpace(body)
-	if text == "" {
-		return fmt.Sprintf("[%s] %s", ts, speaker)
+func renderCompactTelegramBurstLine(ts, msgIDSuffix, speaker string, entry telegramCompactBurstEntry) string {
+	text := strings.TrimSpace(entry.body)
+	replyLine := ""
+	if entry.replyToID != "" {
+		replyLine = "> Reply to #" + entry.replyToID
+		if entry.replyPreview != "" {
+			replyLine += ` "` + entry.replyPreview + `"`
+		}
 	}
-	lines := strings.Split(text, "\n")
+	if text == "" && replyLine == "" {
+		return fmt.Sprintf("[%s%s] %s", ts, msgIDSuffix, speaker)
+	}
 	var sb strings.Builder
 	sb.WriteString("[")
 	sb.WriteString(ts)
+	sb.WriteString(msgIDSuffix)
 	sb.WriteString("] ")
 	sb.WriteString(strings.TrimSpace(speaker))
 	sb.WriteString(": ")
+	if replyLine != "" {
+		sb.WriteString(replyLine)
+		sb.WriteString("\n  ")
+	}
+	lines := strings.Split(text, "\n")
 	sb.WriteString(strings.TrimSpace(lines[0]))
 	for _, line := range lines[1:] {
 		trimmed := strings.TrimSpace(line)
@@ -328,4 +442,98 @@ func renderCompactTelegramBurstLine(ts, speaker, body string) string {
 		sb.WriteString(trimmed)
 	}
 	return sb.String()
+}
+
+func renderCompactTelegramBurstBlock(block telegramCompactBurstBlock) string {
+	entries := make([]telegramCompactBurstEntry, 0, len(block.entries))
+	for _, e := range block.entries {
+		trimmed := strings.TrimSpace(e.body)
+		if trimmed != "" || e.replyToID != "" {
+			entries = append(entries, telegramCompactBurstEntry{
+				body: trimmed, time: e.time, messageID: e.messageID,
+				replyToID: e.replyToID, replyPreview: e.replyPreview,
+			})
+		}
+	}
+	tsRange := compactTelegramBurstRange(block.startTime, block.endTime)
+	idSuffix := formatMessageIDSuffix(block.messageIDs)
+	if len(entries) == 0 {
+		return fmt.Sprintf("[%s%s] %s", tsRange, idSuffix, strings.TrimSpace(block.speaker))
+	}
+	if len(entries) == 1 {
+		return renderCompactTelegramBurstLine(tsRange, idSuffix, block.speaker, entries[0])
+	}
+	// 合并 block：头部只放时间范围和说话人，每条消息带分钟级时间 + id
+	var sb strings.Builder
+	sb.WriteString("[")
+	sb.WriteString(tsRange)
+	sb.WriteString("] ")
+	sb.WriteString(strings.TrimSpace(block.speaker))
+	sb.WriteString(":")
+	for _, entry := range entries {
+		sb.WriteString("\n  ")
+		sb.WriteString(entryMinuteTime(entry.time))
+		if entry.messageID != "" {
+			sb.WriteString(" #")
+			sb.WriteString(entry.messageID)
+		}
+		sb.WriteString(", ")
+		if entry.replyToID != "" {
+			sb.WriteString("> Reply to #")
+			sb.WriteString(entry.replyToID)
+			if entry.replyPreview != "" {
+				sb.WriteString(` "`)
+				sb.WriteString(entry.replyPreview)
+				sb.WriteString(`"`)
+			}
+			sb.WriteString("\n  ")
+		}
+		for i, line := range strings.Split(entry.body, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if i > 0 {
+				sb.WriteString("\n  ")
+			}
+			sb.WriteString(trimmed)
+		}
+	}
+	return sb.String()
+}
+
+// entryMinuteTime 将 "15:04:05" 缩短为 "15:04"。
+func entryMinuteTime(ts string) string {
+	if len(ts) >= 5 {
+		return ts[:5]
+	}
+	return ts
+}
+
+func formatMessageIDSuffix(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(" #")
+	for i, id := range ids {
+		if i > 0 {
+			sb.WriteString(",#")
+		}
+		sb.WriteString(id)
+	}
+	return sb.String()
+}
+
+func compactTelegramBurstRange(start, end string) string {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	switch {
+	case start == "":
+		return end
+	case end == "", start == end:
+		return start
+	default:
+		return start + "-" + end
+	}
 }

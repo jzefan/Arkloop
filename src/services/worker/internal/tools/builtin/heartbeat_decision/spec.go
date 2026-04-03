@@ -42,14 +42,11 @@ func strPtr(s string) *string { return &s }
 
 // SystemProtocolSnippet 返回注入 system prompt 的心跳协议说明。
 func SystemProtocolSnippet() string {
-	return "You are in an LLM heartbeat turn. " +
-		"SYSTEM CONSTRAINT: calling `" + ToolName + "` with reply=true is the ONLY way any message reaches the user. " +
-		"Text you write without calling the tool first is silently discarded by the runtime — the user never sees it. " +
-		"There is no fallback path. " +
-		"Step 1 — call `" + ToolName + "` exactly once, before writing any message text: " +
-		"reply=false if you have nothing to say (run ends immediately, write no text); " +
-		"reply=true if you want to send a message (run continues so you can write the message body). " +
-		"Step 2 — only if reply=true: write the message body after the tool result. " +
-		"Do not call any other tool in the same step as `" + ToolName + "`. " +
+	return "You are in an LLM heartbeat turn. This is a two-phase process:\n" +
+		"Phase 1 (this turn): call `" + ToolName + "` exactly once. Do NOT output any text before the tool call — any text produced before the call is invisible to the user and wastes tokens.\n" +
+		"  - reply=false → run ends immediately, no output.\n" +
+		"  - reply=true → you proceed to Phase 2 with full tool access.\n" +
+		"Phase 2 (after reply=true): all your tools are unlocked. " +
+		"Use them freely to compose your reply to the user.\n" +
 		"If this turn surfaced facts worth remembering long-term, include them in memory_fragments."
 }

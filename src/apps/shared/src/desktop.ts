@@ -22,7 +22,7 @@ export type ConnectorsConfig = {
   search: SearchConnectorConfig
 }
 
-export type MemoryProvider = 'local' | 'openviking'
+export type MemoryProvider = 'notebook' | 'openviking'
 
 export type OpenVikingDesktopConfig = {
   rootApiKey?: string
@@ -160,6 +160,7 @@ export type ArkloopDesktopApi = {
     list: (agentId?: string) => Promise<{ entries: MemoryEntry[] }>
     delete: (id: string, agentId?: string) => Promise<{ status: string }>
     getSnapshot: (agentId?: string) => Promise<{ memory_block: string }>
+    add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
   }
   sidecar: {
     getStatus: () => Promise<'stopped' | 'starting' | 'running' | 'crashed'>

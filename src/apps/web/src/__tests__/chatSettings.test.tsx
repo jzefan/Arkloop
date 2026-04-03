@@ -6,8 +6,6 @@ let container: HTMLDivElement
 let root: ReturnType<typeof createRoot> | null
 const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
-const originalLocalStorage = globalThis.localStorage
-
 const addToast = vi.fn()
 const getExecutionMode = vi.fn(async () => 'local' as const)
 const setExecutionMode = vi.fn(async () => {})
@@ -63,11 +61,6 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: window.localStorage,
-    configurable: true,
-    writable: true,
-  })
   addToast.mockReset()
   getExecutionMode.mockClear()
   setExecutionMode.mockClear()
@@ -89,11 +82,6 @@ afterEach(() => {
   vi.doUnmock('@arkloop/shared')
   vi.resetModules()
   vi.clearAllMocks()
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: originalLocalStorage,
-    configurable: true,
-    writable: true,
-  })
   if (originalActEnvironment === undefined) {
     delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
   } else {
@@ -128,5 +116,37 @@ describe('ChatSettings', () => {
     expect(updatePlatformSetting).not.toHaveBeenCalled()
     expect(addToast).not.toHaveBeenCalledWith('已保存', 'success')
     expect(container.textContent).not.toContain('请求失败')
+  })
+
+  it('命中统一快照时不再重复首屏请求 execution mode 和 platform settings', async () => {
+    const { ChatSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ChatSettings
+            accessToken="token"
+            initialSnapshot={{
+              config: null,
+              platformSettings: {
+                'context.compact.enabled': 'true',
+                'context.compact.persist_enabled': 'true',
+                'context.compact.persist_trigger_context_pct': '70',
+                'context.compact.persist_keep_last_messages': '8',
+              },
+              executionMode: 'vm',
+              platformSettingsError: '',
+              executionModeError: '',
+            }}
+          />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    expect(listPlatformSettings).not.toHaveBeenCalled()
+    expect(getExecutionMode).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('70%')
+    expect(container.textContent).toContain('沙箱：命令在隔离的沙箱中运行')
   })
 })

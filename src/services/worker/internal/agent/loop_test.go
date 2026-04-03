@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
 	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
+	channeltelegram "arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"github.com/google/uuid"
 )
 
@@ -189,8 +191,12 @@ func TestAgentLoopHeartbeatDecisionEndsRunWithoutSecondLlmTurn(t *testing.T) {
 	if gateway.calls != 1 {
 		t.Fatalf("expected heartbeat to stop after first llm call, got %d calls", gateway.calls)
 	}
-	assertHasEvent(t, got, "tool.result")
 	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type == "tool.result" {
+			t.Fatalf("heartbeat_decision should not emit tool.result: %#v", got)
+		}
+	}
 	for _, ev := range got {
 		if ev.Type != "message.delta" {
 			continue
@@ -199,6 +205,277 @@ func TestAgentLoopHeartbeatDecisionEndsRunWithoutSecondLlmTurn(t *testing.T) {
 			t.Fatalf("unexpected second-turn assistant output: %#v", got)
 		}
 	}
+}
+
+func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(heartbeattool.AgentSpec); err != nil {
+		t.Fatalf("register heartbeat_decision failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{heartbeattool.ToolName})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(heartbeattool.ToolName, heartbeattool.New()); err != nil {
+		t.Fatalf("bind heartbeat_decision failed: %v", err)
+	}
+
+	gateway := &heartbeatReplyGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+	pipelineRC := &pipeline.RunContext{HeartbeatRun: true}
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{"run_kind": "heartbeat"},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          pipelineRC,
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 2 {
+		t.Fatalf("expected heartbeat reply=true to trigger Phase 2, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type == "message.delta" {
+			text, _ := ev.DataJSON["content_delta"].(string)
+			if text == "这是" || text == "正文" {
+				t.Fatalf("Phase 1 assistant text should not be streamed to client: %q", text)
+			}
+		}
+	}
+}
+
+func TestAgentLoopTelegramReplySuccessStopsWithoutReplay(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(channeltelegram.ReplyAgentSpec); err != nil {
+		t.Fatalf("register telegram_reply failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{channeltelegram.ToolReply})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(channeltelegram.ToolReply, stubToolExecutor{
+		result: tools.ExecutionResult{
+			ResultJSON: map[string]any{"ok": true, "message_ids": []string{"42"}},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_reply failed: %v", err)
+	}
+
+	gateway := &singleTelegramReplyGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("expected telegram_reply success to stop after first llm call, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type == "tool.result" {
+			t.Fatalf("telegram_reply success should not emit tool.result: %#v", got)
+		}
+		if ev.Type == "message.delta" {
+			if text, _ := ev.DataJSON["content_delta"].(string); text == "第二轮重复" {
+				t.Fatalf("unexpected second-turn output: %#v", got)
+			}
+		}
+	}
+}
+
+func TestAgentLoopTelegramReplyFailureKeepsToolResultReplay(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(channeltelegram.ReplyAgentSpec); err != nil {
+		t.Fatalf("register telegram_reply failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{channeltelegram.ToolReply})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(channeltelegram.ToolReply, stubToolExecutor{
+		result: tools.ExecutionResult{
+			Error: &tools.ExecutionError{
+				ErrorClass: tools.ErrorClassToolExecutionFailed,
+				Message:    "telegram send failed",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_reply failed: %v", err)
+	}
+
+	gateway := &singleTelegramReplyGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err == nil {
+		assertHasEvent(t, got, "run.failed")
+	} else if !errors.Is(err, errRetryGatewayCalled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gateway.calls != 2 {
+		t.Fatalf("expected telegram_reply failure to continue to second llm call, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "tool.result")
+}
+
+func TestAgentLoopTelegramSendFileSuccessStopsWithoutReplay(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(channeltelegram.SendFileAgentSpec); err != nil {
+		t.Fatalf("register telegram_send_file failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{channeltelegram.ToolSendFile})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(channeltelegram.ToolSendFile, stubToolExecutor{
+		result: tools.ExecutionResult{
+			ResultJSON: map[string]any{"ok": true, "message_id": "99"},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_send_file failed: %v", err)
+	}
+
+	gateway := &singleTelegramSendFileGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("expected telegram_send_file success to stop after first llm call, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "run.completed")
+	for _, ev := range got {
+		if ev.Type == "tool.result" {
+			t.Fatalf("telegram_send_file success should not emit tool.result: %#v", got)
+		}
+	}
+}
+
+func TestAgentLoopTelegramSendFileFailureKeepsToolResultReplay(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(channeltelegram.SendFileAgentSpec); err != nil {
+		t.Fatalf("register telegram_send_file failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{channeltelegram.ToolSendFile})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(channeltelegram.ToolSendFile, stubToolExecutor{
+		result: tools.ExecutionResult{
+			Error: &tools.ExecutionError{
+				ErrorClass: tools.ErrorClassToolExecutionFailed,
+				Message:    "telegram file send failed",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_send_file failed: %v", err)
+	}
+
+	gateway := &singleTelegramSendFileGateway{}
+	loop := NewLoop(gateway, executor)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err == nil {
+		assertHasEvent(t, got, "run.failed")
+	} else if !errors.Is(err, errRetryGatewayCalled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gateway.calls != 2 {
+		t.Fatalf("expected telegram_send_file failure to continue to second llm call, got %d calls", gateway.calls)
+	}
+	assertHasEvent(t, got, "tool.result")
 }
 
 func TestAssistantControlTokenFilterStripsSplitEndTurn(t *testing.T) {
@@ -1396,6 +1673,33 @@ type heartbeatDecisionGateway struct {
 	calls int
 }
 
+type heartbeatReplyGateway struct {
+	calls int
+}
+
+var errRetryGatewayCalled = errors.New("retry gateway called")
+
+type singleTelegramReplyGateway struct {
+	calls int
+}
+
+type singleTelegramSendFileGateway struct {
+	calls int
+}
+
+type stubToolExecutor struct {
+	result tools.ExecutionResult
+}
+
+func (s stubToolExecutor) Execute(ctx context.Context, toolName string, args map[string]any, execCtx tools.ExecutionContext, traceID string) tools.ExecutionResult {
+	_ = ctx
+	_ = toolName
+	_ = args
+	_ = execCtx
+	_ = traceID
+	return s.result
+}
+
 func (g *scriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	_ = ctx
 	_ = request
@@ -1445,6 +1749,79 @@ func (g *heartbeatDecisionGateway) Stream(ctx context.Context, request llm.Reque
 		return err
 	}
 	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *heartbeatReplyGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.StreamMessageDelta{ContentDelta: "这是", Role: "assistant"}); err != nil {
+			return err
+		}
+		if err := yield(llm.StreamMessageDelta{ContentDelta: "正文", Role: "assistant"}); err != nil {
+			return err
+		}
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "hb_reply",
+			ToolName:      heartbeattool.ToolName,
+			ArgumentsJSON: map[string]any{"reply": true},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "再次重复", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *singleTelegramReplyGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "tg_reply_1",
+			ToolName:      channeltelegram.ToolReply,
+			ArgumentsJSON: map[string]any{"text": "hello", "reply_to_message_id": "42"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "第二轮重复", Role: "assistant"}); err != nil {
+		return err
+	}
+	if err := yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: "test.retry", Message: "retry happened"}}); err != nil {
+		return err
+	}
+	return errRetryGatewayCalled
+}
+
+func (g *singleTelegramSendFileGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "tg_file_1",
+			ToolName:      channeltelegram.ToolSendFile,
+			ArgumentsJSON: map[string]any{"file_url": "https://example.com/a.png", "kind": "photo"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "发文件后又重复", Role: "assistant"}); err != nil {
+		return err
+	}
+	if err := yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: "test.retry", Message: "retry happened"}}); err != nil {
+		return err
+	}
+	return errRetryGatewayCalled
 }
 
 type multiToolCallGateway struct {

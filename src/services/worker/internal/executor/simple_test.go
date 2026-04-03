@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"arkloop/services/shared/messagecontent"
@@ -188,10 +189,10 @@ func TestSimpleExecutor_HeartbeatWithCompactSnapshotStillSendsSingleSystemMessag
 		}
 	}
 	if systemCount != 1 {
-		t.Fatalf("expected exactly 1 system message, got %d: %#v", systemCount, capturedMessages)
+		t.Fatalf("expected only persona system message, got %d: %#v", systemCount, capturedMessages)
 	}
 	if len(capturedMessages) < 4 {
-		t.Fatalf("expected system + snapshot + latest user + heartbeat payload, got %#v", capturedMessages)
+		t.Fatalf("expected system + snapshot + latest user + heartbeat check, got %#v", capturedMessages)
 	}
 	if capturedMessages[1].Role != "user" || capturedMessages[1].Content[0].Text != "[Context summary for continuation]\n<state_snapshot>\nexisting summary\n</state_snapshot>" {
 		t.Fatalf("unexpected compact snapshot message: %#v", capturedMessages[1])
@@ -199,8 +200,19 @@ func TestSimpleExecutor_HeartbeatWithCompactSnapshotStillSendsSingleSystemMessag
 	if capturedMessages[2].Role != "user" || capturedMessages[2].Content[0].Text != "latest real user input" {
 		t.Fatalf("unexpected latest user message: %#v", capturedMessages[2])
 	}
-	if capturedMessages[3].Role != "user" || capturedMessages[3].Content[0].Text == "" {
-		t.Fatalf("expected synthetic heartbeat user message, got %#v", capturedMessages[3])
+	hbMsg := capturedMessages[3]
+	if hbMsg.Role != "user" {
+		t.Fatalf("expected heartbeat check as user message, got role=%s", hbMsg.Role)
+	}
+	for _, want := range []string{
+		"[SYSTEM_HEARTBEAT_CHECK]",
+		"interval_minutes: 30",
+		"new_user_messages: 1",
+		"[/SYSTEM_HEARTBEAT_CHECK]",
+	} {
+		if !strings.Contains(hbMsg.Content[0].Text, want) {
+			t.Fatalf("expected heartbeat message to contain %q, got %q", want, hbMsg.Content[0].Text)
+		}
 	}
 }
 

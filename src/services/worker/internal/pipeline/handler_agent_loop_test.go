@@ -209,6 +209,28 @@ func TestShouldSuppressHeartbeatOutput(t *testing.T) {
 	}
 }
 
+func TestShouldAccumulateUsageForEvent(t *testing.T) {
+	tests := []struct {
+		eventType string
+		want      bool
+	}{
+		{eventType: "llm.turn.completed", want: true},
+		{eventType: "tool.result", want: true},
+		{eventType: "run.completed", want: false},
+		{eventType: "run.failed", want: false},
+		{eventType: "run.cancelled", want: false},
+		{eventType: "run.interrupted", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.eventType, func(t *testing.T) {
+			if got := shouldAccumulateUsageForEvent(tt.eventType); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func f64ptr(v float64) *float64 {
 	return &v
 }
