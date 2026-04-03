@@ -44,7 +44,7 @@ func formatNaturalPrefix(f *envelopeFields) string {
 		meta = append(meta, "#"+f.MessageID)
 	}
 	if f.ReplyToMsgID != "" {
-		replyPart := "> #" + f.ReplyToMsgID
+		replyPart := "> Reply to #" + f.ReplyToMsgID
 		if f.ReplyToPreview != "" {
 			replyPart += ` "` + f.ReplyToPreview + `"`
 		}

@@ -412,7 +412,7 @@ func renderCompactTelegramBurstLine(ts, msgIDSuffix, speaker string, entry teleg
 	text := strings.TrimSpace(entry.body)
 	replyLine := ""
 	if entry.replyToID != "" {
-		replyLine = "> #" + entry.replyToID
+		replyLine = "> Reply to #" + entry.replyToID
 		if entry.replyPreview != "" {
 			replyLine += ` "` + entry.replyPreview + `"`
 		}
@@ -479,7 +479,7 @@ func renderCompactTelegramBurstBlock(block telegramCompactBurstBlock) string {
 		}
 		sb.WriteString(", ")
 		if entry.replyToID != "" {
-			sb.WriteString("> #")
+			sb.WriteString("> Reply to #")
 			sb.WriteString(entry.replyToID)
 			if entry.replyPreview != "" {
 				sb.WriteString(` "`)
