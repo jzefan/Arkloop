@@ -1304,6 +1304,14 @@ func (c telegramConnector) HandleUpdate(
 	if err != nil {
 		return err
 	}
+	preTailMsg, err := c.messageRepo.WithTx(tx).GetLatestVisibleMessage(ctx, ch.AccountID, threadID)
+	if err != nil {
+		return err
+	}
+	preTailMessageID := ""
+	if preTailMsg != nil {
+		preTailMessageID = preTailMsg.ID.String()
+	}
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
 		ctx,
 		ch.AccountID,
@@ -1324,7 +1332,7 @@ func (c telegramConnector) HandleUpdate(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID)
+		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
 		}
@@ -1591,6 +1599,7 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 	run *data.Run,
 	incoming telegramIncomingMessage,
 	content, traceID string,
+	preTailMessageID string,
 ) (bool, error) {
 	if run == nil {
 		return false, nil
@@ -1606,6 +1615,22 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 		if len(events) > 0 {
 			if startedData, ok := events[0].DataJSON.(map[string]any); ok {
 				if runKind, _ := startedData["run_kind"].(string); strings.EqualFold(strings.TrimSpace(runKind), runkind.Heartbeat) {
+					heartbeatTail, _ := startedData["thread_tail_message_id"].(string)
+					heartbeatTail = strings.TrimSpace(heartbeatTail)
+					if heartbeatTail == strings.TrimSpace(preTailMessageID) {
+						// 上下文相同：检查 heartbeat 是否已向第三方发送
+						if c.channelLedgerRepo != nil {
+							hasOutbound, ledgerErr := c.channelLedgerRepo.HasOutboundForRun(ctx, run.ID)
+							if ledgerErr != nil {
+								return false, ledgerErr
+							}
+							if hasOutbound {
+								return true, nil // heartbeat 已发送，视为已处理
+							}
+						}
+						// heartbeat 未发送，cancel 后让上层创建 normal run
+						_, _ = repo.RequestCancel(ctx, run.ID, nil, "heartbeat_superseded", 0, nil)
+					}
 					return false, nil
 				}
 			}
@@ -2420,6 +2445,14 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if err != nil {
 		return err
 	}
+	preTailMsg, err := c.messageRepo.WithTx(tx).GetLatestVisibleMessage(ctx, ch.AccountID, threadID)
+	if err != nil {
+		return err
+	}
+	preTailMessageID := ""
+	if preTailMsg != nil {
+		preTailMessageID = preTailMsg.ID.String()
+	}
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
 		ctx,
 		ch.AccountID,
@@ -2440,7 +2473,7 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID)
+		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
 		}

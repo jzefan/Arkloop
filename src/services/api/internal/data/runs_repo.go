@@ -205,7 +205,9 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 				return Run{}, RunEvent{}, err
 			}
 			if strings.EqualFold(runKindFromData(activeData), runkind.Heartbeat) {
-				// active 是 heartbeat，incoming 是 normal，放行
+				if err := r.resolveHeartbeatConflict(ctx, active, activeData, threadID); err != nil {
+					return Run{}, RunEvent{}, err
+				}
 			} else {
 				return Run{}, RunEvent{}, ErrThreadBusy
 			}
@@ -278,6 +280,48 @@ func runKindFromData(data map[string]any) string {
 	}
 	raw, _ := data[runStartedRunKindKey].(string)
 	return strings.TrimSpace(raw)
+}
+
+// resolveHeartbeatConflict 在 normal run 放行 heartbeat 时决定是否 cancel heartbeat。
+// 上下文相同（tail message 一致）+ heartbeat 未向第三方发送过消息 -> cancel heartbeat
+// 上下文相同 + heartbeat 已发送 -> 阻塞 normal run (ErrThreadBusy)
+// 上下文不同 -> 放行并发，不 cancel
+func (r *RunEventRepository) resolveHeartbeatConflict(ctx context.Context, active *Run, activeData map[string]any, threadID uuid.UUID) error {
+	activeTail := threadTailMessageIDFromData(activeData)
+	currentTail, err := r.getLatestThreadMessage(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	currentTailID := ""
+	if currentTail != nil {
+		currentTailID = currentTail.ID.String()
+	}
+	if activeTail != currentTailID {
+		return nil // 上下文不同，并发放行
+	}
+	// 上下文相同，检查 heartbeat 是否已向第三方发送过消息
+	hasOutbound, err := r.hasOutboundForRun(ctx, active.ID)
+	if err != nil {
+		return err
+	}
+	if hasOutbound {
+		return ErrThreadBusy
+	}
+	// 无外发输出，cancel heartbeat
+	_, err = r.RequestCancel(ctx, active.ID, nil, "heartbeat_superseded", 0, nil)
+	return err
+}
+
+func (r *RunEventRepository) hasOutboundForRun(ctx context.Context, runID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM channel_message_ledger WHERE run_id = $1 AND direction = 'outbound')`,
+		runID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("hasOutboundForRun: %w", err)
+	}
+	return exists, nil
 }
 
 func applyContinuationMetadata(data map[string]any, resumeFromRunID *uuid.UUID) map[string]any {
