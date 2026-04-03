@@ -14,6 +14,7 @@ import { secondaryButtonSmCls, secondaryButtonBorderStyle } from './buttonStyles
 type Props = {
   accessToken: string
   channelId: string
+  onStatusChange?: (status: NapCatStatus | null) => void
 }
 
 function formatBytes(bytes: number): string {
@@ -22,7 +23,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function QQLoginFlow({ accessToken, channelId: _channelId }: Props) {
+export function QQLoginFlow({ accessToken, channelId: _channelId, onStatusChange }: Props) {
   const { t } = useLocale()
   const ct = t.channels
   const [status, setStatus] = useState<NapCatStatus | null>(null)
@@ -40,11 +41,12 @@ export function QQLoginFlow({ accessToken, channelId: _channelId }: Props) {
     try {
       const s = await getNapCatStatus(accessToken)
       setStatus(s)
+      onStatusChange?.(s)
       return s
     } catch {
       return null
     }
-  }, [accessToken])
+  }, [accessToken, onStatusChange])
 
   // poll status
   useEffect(() => {

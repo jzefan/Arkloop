@@ -325,6 +325,15 @@ func createChannel(
 		}
 		personaID = resolvedPersonaID
 	}
+	if req.ChannelType == "qq" && personaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, personaID)
+		if err != nil {
+			slog.Error("createChannel.ensureProjectScopedPersona", "err", err)
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		personaID = resolvedPersonaID
+	}
 
 	existing, err := channelsRepo.GetByAccountAndType(r.Context(), actor.AccountID, req.ChannelType)
 	if err != nil {
@@ -619,6 +628,17 @@ func updateChannel(
 		}
 	}
 	if ch.ChannelType == "discord" && desiredPersonaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if resolvedPersonaID != nil && *resolvedPersonaID != derefUUID(desiredPersonaID) {
+			desiredPersonaID = resolvedPersonaID
+			upd.PersonaID = &resolvedPersonaID
+		}
+	}
+	if ch.ChannelType == "qq" && desiredPersonaID != nil {
 		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)

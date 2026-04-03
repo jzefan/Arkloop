@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/api/internal/data"
 	"arkloop/services/shared/napcat"
 )
 
@@ -16,10 +17,15 @@ var (
 	napCatManager *napcat.Manager
 )
 
-func getOrCreateNapCatManager(dataDir string) *napcat.Manager {
+func getOrCreateNapCatManager(dataDir string, apiPort int) *napcat.Manager {
 	napCatOnce.Do(func() {
-		napCatManager = napcat.NewManager(dataDir, nil)
+		napCatManager = napcat.NewManager(dataDir, nil, apiPort)
 	})
+	return napCatManager
+}
+
+// getNapCatManagerIfExists 返回已初始化的 NapCat Manager，未初始化返回 nil。
+func getNapCatManagerIfExists() *napcat.Manager {
 	return napCatManager
 }
 
@@ -27,11 +33,48 @@ func getOrCreateNapCatManager(dataDir string) *napcat.Manager {
 type NapCatDeps struct {
 	AuthService *auth.Service
 	DataDir     string
+	APIPort     int
+}
+
+// QQCallbackDeps holds dependencies for the QQ OneBot callback endpoint.
+type QQCallbackDeps struct {
+	ChannelsRepo            *data.ChannelsRepository
+	ChannelIdentitiesRepo   *data.ChannelIdentitiesRepository
+	ChannelDMThreadsRepo    *data.ChannelDMThreadsRepository
+	ChannelGroupThreadsRepo *data.ChannelGroupThreadsRepository
+	ChannelReceiptsRepo     *data.ChannelMessageReceiptsRepository
+	PersonasRepo            *data.PersonasRepository
+	ThreadRepo              *data.ThreadRepository
+	MessageRepo             *data.MessageRepository
+	RunEventRepo            *data.RunEventRepository
+	JobRepo                 *data.JobRepository
+	Pool                    data.DB
+}
+
+// RegisterQQCallbackRoute registers POST /v1/napcat/onebot-callback (no auth, NapCat calls directly).
+func RegisterQQCallbackRoute(mux *nethttp.ServeMux, deps QQCallbackDeps) {
+	handler := qqOneBotCallbackHandler(
+		deps.ChannelsRepo,
+		deps.ChannelIdentitiesRepo,
+		deps.ChannelDMThreadsRepo,
+		deps.ChannelGroupThreadsRepo,
+		deps.ChannelReceiptsRepo,
+		deps.PersonasRepo,
+		deps.ThreadRepo,
+		deps.MessageRepo,
+		deps.RunEventRepo,
+		deps.JobRepo,
+		deps.Pool,
+	)
+	mux.HandleFunc("POST /v1/napcat/onebot-callback", handler)
 }
 
 // RegisterNapCatRoutes adds /v1/napcat/* endpoints to the mux.
 func RegisterNapCatRoutes(mux *nethttp.ServeMux, deps NapCatDeps) {
-	mgr := getOrCreateNapCatManager(deps.DataDir)
+	mgr := getOrCreateNapCatManager(deps.DataDir, deps.APIPort)
+
+	// 之前登录过的 NapCat 自动恢复启动
+	mgr.AutoStartIfReady()
 
 	mux.HandleFunc("GET /v1/napcat/status", napCatHandler(deps.AuthService, func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeNapCatJSON(w, nethttp.StatusOK, mgr.Status())

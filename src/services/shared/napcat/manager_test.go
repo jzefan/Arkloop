@@ -7,7 +7,7 @@ import (
 )
 
 func TestGenerateOneBotConfig(t *testing.T) {
-	cfg := GenerateOneBotConfig(6098, "test-token")
+	cfg := GenerateOneBotConfig(6098, "test-token", "http://127.0.0.1:19001/v1/napcat/onebot-callback", "cb-token", 3000, "http-token")
 	if len(cfg.Network.WebsocketServers) != 1 {
 		t.Fatalf("expected 1 ws server, got %d", len(cfg.Network.WebsocketServers))
 	}
@@ -21,15 +21,32 @@ func TestGenerateOneBotConfig(t *testing.T) {
 	if !ws.Enable {
 		t.Error("expected ws enabled")
 	}
+	if len(cfg.Network.HTTPClients) != 1 {
+		t.Fatalf("expected 1 http client, got %d", len(cfg.Network.HTTPClients))
+	}
+	hc := cfg.Network.HTTPClients[0]
+	if hc.URL != "http://127.0.0.1:19001/v1/napcat/onebot-callback" {
+		t.Errorf("unexpected http client url: %s", hc.URL)
+	}
+	if hc.Token != "cb-token" {
+		t.Errorf("unexpected http client token: %s", hc.Token)
+	}
+	if len(cfg.Network.HTTPServers) != 1 {
+		t.Fatalf("expected 1 http server, got %d", len(cfg.Network.HTTPServers))
+	}
+	hs := cfg.Network.HTTPServers[0]
+	if hs.Port != 3000 {
+		t.Errorf("expected http server port 3000, got %d", hs.Port)
+	}
 }
 
 func TestWriteOneBotConfig(t *testing.T) {
 	dir := t.TempDir()
-	cfg := GenerateOneBotConfig(6098, "tok")
-	if err := WriteOneBotConfig(dir, "12345", cfg); err != nil {
+	cfg := GenerateOneBotConfig(6098, "tok", "", "", 0, "")
+	if err := WriteOneBotConfig(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "onebot11_12345.json")
+	path := filepath.Join(dir, "onebot11.json")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("config file not created: %v", err)
 	}

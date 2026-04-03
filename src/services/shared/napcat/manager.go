@@ -62,6 +62,8 @@ type Status struct {
 	SetupTotal     int64               `json:"setup_total,omitempty"`
 	SetupError     string              `json:"setup_error,omitempty"`
 	Logs           []string            `json:"logs,omitempty"`
+	OneBotWSURL    string              `json:"onebot_ws_url,omitempty"`
+	OneBotHTTPURL  string              `json:"onebot_http_url,omitempty"`
 }
 
 type QuickLoginAccount struct {
@@ -83,6 +85,16 @@ type Manager struct {
 	version    string
 	logger     *slog.Logger
 
+	// OneBot HTTP Server（Arkloop 通过它发出站消息）
+	httpServerPort  int
+	httpServerToken string
+
+	// OneBot HTTP Client 回调 token（NapCat 主动 POST 到 Arkloop）
+	httpCallbackToken string
+
+	// Arkloop API 监听端口，用于构造回调 URL
+	apiPort int
+
 	// NapCat WebUI 鉴权凭证（base64 编码的 credential JSON）
 	webuiCredential string
 
@@ -101,13 +113,71 @@ type Manager struct {
 	setupError    atomic.Value // string
 }
 
-func NewManager(dataDir string, logger *slog.Logger) *Manager {
+// pidFilePath 返回存放 NapCat 子进程 PID 的文件路径
+func (m *Manager) pidFilePath() string {
+	return filepath.Join(m.dataDir, "napcat.pid")
+}
+
+// savePID 将 PID 写入文件
+func (m *Manager) savePID(pid int) {
+	_ = os.MkdirAll(m.dataDir, 0755)
+	_ = os.WriteFile(m.pidFilePath(), []byte(strconv.Itoa(pid)), 0644)
+}
+
+// removePID 删除 PID 文件
+func (m *Manager) removePID() {
+	_ = os.Remove(m.pidFilePath())
+}
+
+// cleanStaleProcess 清理上次残留的 NapCat 进程。
+// 通过 PID 文件找到进程，验证它确实是 node 进程后再 kill。
+func (m *Manager) cleanStaleProcess() {
+	data, err := os.ReadFile(m.pidFilePath())
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		m.removePID()
+		return
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		m.removePID()
+		return
+	}
+
+	// 验证进程是否存活：发送信号 0 不影响进程，仅检查是否存在
+	if !isProcessAlive(pid) {
+		m.removePID()
+		return
+	}
+
+	m.logger.Info("napcat: killing stale process", "pid", pid)
+	_ = proc.Kill()
+	// 等一小段让进程退出
+	done := make(chan struct{})
+	go func() {
+		proc.Wait() //nolint:errcheck
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+	m.removePID()
+	m.appendLog(fmt.Sprintf("killed stale napcat process (pid %d)", pid))
+}
+
+func NewManager(dataDir string, logger *slog.Logger, apiPort int) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	m := &Manager{
 		dataDir:     dataDir,
 		installDir:  filepath.Join(dataDir, "shell"),
+		apiPort:     apiPort,
 		longClient:  &http.Client{Timeout: 10 * time.Minute},
 		shortClient: &http.Client{Timeout: 5 * time.Second},
 		logger:      logger,
@@ -156,6 +226,8 @@ func (m *Manager) Status() Status {
 			info := m.getLoginInfo()
 			s.QQ = info.QQ
 			s.Nickname = info.Nickname
+			s.OneBotWSURL = fmt.Sprintf("ws://127.0.0.1:%d", m.wsPort)
+			s.OneBotHTTPURL = fmt.Sprintf("http://127.0.0.1:%d", m.httpServerPort)
 		} else {
 			s.QuickLoginList = m.getQuickLoginList()
 		}
@@ -313,6 +385,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.cmd != nil && m.cmd.Process != nil {
 		return fmt.Errorf("napcat: already running")
 	}
+
+	// 清理上次残留的 NapCat 进程（应用非正常退出后遗留）
+	m.cleanStaleProcess()
+
 	if !m.isInstalled() {
 		return fmt.Errorf("napcat: not installed")
 	}
@@ -328,12 +404,40 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.webuiPort = 0 // 从 stdout 解析实际端口
 	m.wsPort = 6098
+	m.httpServerPort = 3000
 	m.webuiToken = randomHex(16)
-	m.wsToken = randomHex(16)
 
 	configDir := filepath.Join(m.installDir, "napcat", "config")
+
+	// 从磁盘上已有的全局配置恢复 token，保持跨重启一致
+	if loaded, err := LoadOneBotTokens(configDir); err == nil {
+		if loaded.WSPort > 0 {
+			m.wsPort = loaded.WSPort
+		}
+		m.wsToken = loaded.WSToken
+		m.httpCallbackToken = loaded.CallbackToken
+		if loaded.HTTPServerPort > 0 {
+			m.httpServerPort = loaded.HTTPServerPort
+		}
+		m.httpServerToken = loaded.HTTPServerToken
+	} else {
+		m.wsToken = randomHex(16)
+		m.httpCallbackToken = randomHex(16)
+		m.httpServerToken = randomHex(16)
+	}
+
+	// 写入全局 OneBot 配置（onebot11.json），NapCat 启动时立即加载
+	callbackURL := ""
+	if m.apiPort > 0 {
+		callbackURL = fmt.Sprintf("http://127.0.0.1:%d/v1/napcat/onebot-callback", m.apiPort)
+	}
+	obCfg := GenerateOneBotConfig(m.wsPort, m.wsToken, callbackURL, m.httpCallbackToken, m.httpServerPort, m.httpServerToken)
+	if err := WriteOneBotConfig(configDir, obCfg); err != nil {
+		return fmt.Errorf("napcat onebot config: %w", err)
+	}
+
 	if err := WriteWebUIConfig(configDir, 6099, m.webuiToken); err != nil {
-		return fmt.Errorf("napcat config: %w", err)
+		return fmt.Errorf("napcat webui config: %w", err)
 	}
 
 	// let NapCat resolve wrapper.node on its own
@@ -361,6 +465,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("napcat start: %w", err)
 	}
 	m.cmd = cmd
+	m.savePID(cmd.Process.Pid)
 
 	go func() {
 		err := cmd.Wait()
@@ -368,6 +473,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.cmd = nil
 		m.cancel = nil
 		m.mu.Unlock()
+		m.removePID()
 		if err != nil && !strings.Contains(err.Error(), "signal: killed") {
 			m.appendLog(fmt.Sprintf("process exited: %v", err))
 		}
@@ -453,6 +559,7 @@ func (m *Manager) Stop() error {
 		m.cmd.Process.Kill()
 		m.cmd = nil
 	}
+	m.removePID()
 	m.appendLog("stopped")
 	return nil
 }
@@ -473,7 +580,41 @@ func (m *Manager) WSEndpoint() (addr string, token string) {
 	return fmt.Sprintf("ws://127.0.0.1:%d", m.wsPort), m.wsToken
 }
 
+// OneBotHTTPEndpoint 返回 NapCat OneBot HTTP Server 地址和 token（用于发出站消息）
+func (m *Manager) OneBotHTTPEndpoint() (addr string, token string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return fmt.Sprintf("http://127.0.0.1:%d", m.httpServerPort), m.httpServerToken
+}
+
+// HTTPCallbackToken 返回 NapCat HTTP Client 回调使用的 token
+func (m *Manager) HTTPCallbackToken() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.httpCallbackToken
+}
+
 // --- internal ---
+
+// AutoStartIfReady 如果 NapCat 已安装，自动后台启动。
+// NapCat 启动后由 Status() 检测登录状态并写入 OneBot 配置。
+func (m *Manager) AutoStartIfReady() {
+	m.mu.Lock()
+	installed := m.isInstalled()
+	running := m.cmd != nil && m.cmd.Process != nil
+	m.mu.Unlock()
+
+	if running || !installed {
+		return
+	}
+
+	m.logger.Info("napcat: auto-starting")
+	go func() {
+		if err := m.Start(context.Background()); err != nil {
+			m.logger.Warn("napcat: auto-start failed", "err", err)
+		}
+	}()
+}
 
 func (m *Manager) qrcodePNGPath() string {
 	return filepath.Join(m.installDir, "napcat", "cache", "qrcode.png")

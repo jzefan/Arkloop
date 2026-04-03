@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/http/adminapi"
@@ -406,9 +408,31 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	if napCatErr != nil {
 		cfg.Logger.Warn("napcat: failed to resolve data dir", "err", napCatErr)
 	}
+	napCatAPIPort := 19001
+	if parts := strings.SplitN(strings.TrimSpace(os.Getenv("ARKLOOP_GO_ADDR")), ":", 2); len(parts) == 2 {
+		if p, err := strconv.Atoi(parts[1]); err == nil && p > 0 {
+			napCatAPIPort = p
+		}
+	}
 	accountapi.RegisterNapCatRoutes(mux, accountapi.NapCatDeps{
 		AuthService: cfg.AuthService,
 		DataDir:     filepath.Join(napCatBaseDir, "napcat"),
+		APIPort:     napCatAPIPort,
+	})
+
+	// QQ OneBot11 HTTP callback (NapCat -> Arkloop)
+	accountapi.RegisterQQCallbackRoute(mux, accountapi.QQCallbackDeps{
+		ChannelsRepo:            cfg.ChannelsRepo,
+		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
+		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
+		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
+		ChannelReceiptsRepo:     cfg.ChannelReceiptsRepo,
+		PersonasRepo:            cfg.PersonasRepo,
+		ThreadRepo:              cfg.ThreadRepo,
+		MessageRepo:             cfg.MessageRepo,
+		RunEventRepo:            cfg.RunEventRepo,
+		JobRepo:                 cfg.JobRepo,
+		Pool:                    cfg.Pool,
 	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
