@@ -84,7 +84,7 @@ func TestFormatNaturalPrefix_withReply(t *testing.T) {
 		Body:           "我同意",
 	}
 	got := formatNaturalPrefix(f)
-	want := "Alice (#42, > #38 \"Bob: 昨天的方案不错\"):\n我同意"
+	want := "Alice (#42, > Reply to #38 \"Bob: 昨天的方案不错\"):\n我同意"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -135,7 +135,7 @@ func TestProjectGroupEnvelopes_mixedMessages(t *testing.T) {
 
 	// 第一条 user 消息应被投影
 	got := rc.Messages[0].Content[0].Text
-	want := "Alice (#12, > #10 \"Bob: hi\"):\n回复内容"
+	want := "Alice (#12, > Reply to #10 \"Bob: hi\"):\n回复内容"
 	if got != want {
 		t.Fatalf("projected msg[0]:\n%s\nwant:\n%s", got, want)
 	}

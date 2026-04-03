@@ -665,7 +665,7 @@ message-id: "105"
 	if !ok {
 		t.Fatal("expected compact to succeed")
 	}
-	if !strings.Contains(text, `> #100 "Bob: 昨天说的方案"`) {
+	if !strings.Contains(text, `> Reply to #100 "Bob: 昨天说的方案"`) {
 		t.Fatalf("expected reply reference in output, got %q", text)
 	}
 	if !strings.Contains(text, `我同意`) {
@@ -703,7 +703,7 @@ message-id: "106"
 		t.Fatal("expected compact to succeed")
 	}
 	// 合并到同一个 block，第二条带 reply
-	if !strings.Contains(text, `> #99 "Charlie: 你好"`) {
+	if !strings.Contains(text, `> Reply to #99 "Charlie: 你好"`) {
 		t.Fatalf("expected reply in merged block, got %q", text)
 	}
 	if !strings.Contains(text, `普通消息`) {
@@ -732,7 +732,7 @@ message-id: "55"
 	if !ok {
 		t.Fatal("expected compact to succeed")
 	}
-	if !strings.Contains(text, `> #50`) {
+	if !strings.Contains(text, `> Reply to #50`) {
 		t.Fatalf("expected reply-to id, got %q", text)
 	}
 	// 没有 preview 时不应有引号
